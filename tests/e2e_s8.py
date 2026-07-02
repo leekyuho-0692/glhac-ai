@@ -113,13 +113,14 @@ cb = httpx.post(f"{B}/cases", headers=HC, json={"company_name": "FilterReg", "or
 ok("필터 케이스 A 생성", "case_id" in ca, ca)
 ok("필터 케이스 B 생성", "case_id" in cb, cb)
 
-# pathway 확정
+# pathway 확정 — v3: /pathway/confirm은 가드 필요 → 필터 검증 목적상 DB에 직접 설정(자립 테스트)
+_pconn = sqlite3.connect(DB_PATH)
 if "case_id" in ca:
-    httpx.post(f"{B}/cases/{ca['case_id']}/pathway", headers=HC,
-               json={"pathway": "self_declare"})
+    _pconn.execute("UPDATE case_application SET pathway=? WHERE case_id=?", ("self_declare", ca["case_id"]))
 if "case_id" in cb:
-    httpx.post(f"{B}/cases/{cb['case_id']}/pathway", headers=HC,
-               json={"pathway": "reguler"})
+    _pconn.execute("UPDATE case_application SET pathway=? WHERE case_id=?", ("reguler", cb["case_id"]))
+_pconn.commit()
+_pconn.close()
 
 # /cases 목록 — FE 필터 기반이므로 전체 목록 필드 확인
 all_c = httpx.get(f"{B}/cases", headers=HC).json()

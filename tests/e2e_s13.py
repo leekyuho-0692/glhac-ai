@@ -49,10 +49,9 @@ doc_ids = []
 for doc_type, rev_status in [("halal_cert", "approved"), ("nib", "pending"), ("sjph_doc", "rejected")]:
     did = uuid.uuid4().hex
     conn.execute(
-        "INSERT INTO document_asset (document_id, case_id, org_id, doc_type, filename, "
-        "doc_type_ko, review_status, confidence, has_file) VALUES (?,?,?,?,?,?,?,?,?)",
-        (did, CID, "org_demo", doc_type, f"s13_test_{doc_type}.pdf",
-         doc_type, rev_status, 0.9, 0)
+        "INSERT INTO document_asset (document_id, case_id, doc_type, filename, "
+        "review_status, confidence) VALUES (?,?,?,?,?,?)",
+        (did, CID, doc_type, f"s13_test_{doc_type}.pdf", rev_status, 0.9)
     )
     doc_ids.append(did)
 conn.commit()
@@ -103,7 +102,7 @@ ok("checklist 항목 ≥1", len(ck.get("checklist", [])) >= 1, len(ck.get("check
 print("\n=== S13-2 Fatwa 결정문 ===")
 
 # fatwa 결정 저장
-r_fatwa = httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HC,
+r_fatwa = httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HA,
                       json={"decision": "approved",
                             "committee_head": "Ust. Ahmad S13",
                             "committee_secretary": "Ust. Budi S13",
@@ -112,7 +111,7 @@ r_fatwa = httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HC,
 ok("fatwa 결정 저장 → 200", r_fatwa.status_code == 200, r_fatwa.status_code)
 
 # GET fatwa 상태 확인
-fw = httpx.get(f"{B}/cases/{CID}/fatwa", headers=HC).json()
+fw = httpx.get(f"{B}/cases/{CID}/fatwa", headers=HA).json()
 ok("fatwa decision 반환", "decision" in fw, list(fw.keys()))
 ok("fatwa decision=approved", fw.get("decision") == "approved", fw.get("decision"))
 ok("committee_head 저장됨", fw.get("committee_head") == "Ust. Ahmad S13", fw.get("committee_head"))
@@ -131,12 +130,12 @@ if r_doc.status_code == 200:
        doc_text[:80])
 
 # 조건부 결정 → conditional 저장
-r_cond = httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HC,
+r_cond = httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HA,
                      json={"decision": "conditional",
                            "committee_note": "조건: 원재료 E471 증빙 제출 후 재심의"})
 ok("조건부 결정 저장 → 200", r_cond.status_code == 200, r_cond.status_code)
 if r_cond.status_code == 200:
-    fw2 = httpx.get(f"{B}/cases/{CID}/fatwa", headers=HC).json()
+    fw2 = httpx.get(f"{B}/cases/{CID}/fatwa", headers=HA).json()
     ok("conditional 결정 저장됨", fw2.get("decision") == "conditional", fw2.get("decision"))
     ok("committee_note(조건) 저장됨", "E471" in (fw2.get("committee_note") or ""),
        fw2.get("committee_note"))
@@ -146,7 +145,7 @@ print("\n=== S13-3 Certificate 만료임박 경보 ===")
 
 # 인증서 발급: fatwa approve → scope freeze → issue
 # 먼저 fatwa를 approved로 되돌림
-httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HC,
+httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HA,
             json={"decision": "approved"})
 
 # 제품 추가 (scope freeze 위해)
@@ -157,10 +156,10 @@ PID = prod.get("product_id", "")
 
 # fatwa scope 설정 후 인증서 발급 시도
 if PID:
-    httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HC,
+    httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HA,
                 json={"decision": "approved", "product_scope": [PID]})
 
-r_issue = httpx.post(f"{B}/cases/{CID}/certificate/issue", headers=HC)
+r_issue = httpx.post(f"{B}/cases/{CID}/certificate/issue", headers=HA)
 ok("인증서 발급 시도 → 200 or 400", r_issue.status_code in (200, 400), r_issue.status_code)
 
 # 직접 DB에 cert 레코드 삽입 (발급 가드 우회)
@@ -168,15 +167,15 @@ conn2 = sqlite3.connect(DB_PATH)
 expiry_near = (date.today() + timedelta(days=45)).isoformat()  # 45일 후 → 경보 대상
 expiry_far = (date.today() + timedelta(days=200)).isoformat()  # 200일 후 → 경보 없음
 existing_cert = conn2.execute(
-    "SELECT cert_id FROM certificate WHERE case_id=?", (CID,)).fetchone()
+    "SELECT id FROM halal_certificate WHERE case_id=?", (CID,)).fetchone()
 if existing_cert:
     conn2.execute(
-        "UPDATE certificate SET expiry_date=?, issue_date=?, status='active', "
+        "UPDATE halal_certificate SET expiry_date=?, issue_date=?, status='active', "
         "certificate_no='S13-CERT-001' WHERE case_id=?",
         (expiry_near, date.today().isoformat(), CID))
 else:
     conn2.execute(
-        "INSERT INTO certificate (cert_id, case_id, certificate_no, issue_date, expiry_date, status, scope) "
+        "INSERT INTO halal_certificate (id, case_id, certificate_no, issue_date, expiry_date, status, scope) "
         "VALUES (?,?,?,?,?,?,?)",
         (uuid.uuid4().hex, CID, "S13-CERT-001",
          date.today().isoformat(), expiry_near, "active", "[]"))
@@ -196,7 +195,7 @@ ok("expiry_date 반환", "expiry_date" in ct, ct.get("expiry_date"))
 # 만료 이미 지난 경우 (days_to_expiry < 0) 시뮬
 conn3 = sqlite3.connect(DB_PATH)
 past_expiry = (date.today() - timedelta(days=10)).isoformat()
-conn3.execute("UPDATE certificate SET expiry_date=? WHERE case_id=?", (past_expiry, CID))
+conn3.execute("UPDATE halal_certificate SET expiry_date=? WHERE case_id=?", (past_expiry, CID))
 conn3.commit()
 conn3.close()
 ct2 = httpx.get(f"{B}/cases/{CID}/certificate", headers=HC).json()
@@ -204,7 +203,7 @@ ok("만료 경과 시 days_to_expiry < 0", (ct2.get("days_to_expiry") or 0) < 0,
 
 # 200일 후 만료 → 경보 없음 기준 확인
 conn4 = sqlite3.connect(DB_PATH)
-conn4.execute("UPDATE certificate SET expiry_date=? WHERE case_id=?", (expiry_far, CID))
+conn4.execute("UPDATE halal_certificate SET expiry_date=? WHERE case_id=?", (expiry_far, CID))
 conn4.commit()
 conn4.close()
 ct3 = httpx.get(f"{B}/cases/{CID}/certificate", headers=HC).json()
