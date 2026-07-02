@@ -11,6 +11,15 @@ from app.main import app  # noqa: E402
 ORG = "org_test"
 
 
+def _auth(client, u="admin", p="admin"):
+    """v3: RBAC 도입 → 로그인 후 토큰을 클라이언트 기본 헤더에 설정.
+    admin은 모든 require_roles 우회 + 조직 격리 무시 → 워크플로우(상태머신/가드) 검증에 적합."""
+    r = client.post("/auth/login", json={"username": u, "password": p})
+    assert r.status_code == 200, r.text
+    client.headers.update({"Authorization": "Bearer " + r.json()["token"]})
+    return client
+
+
 def _walk(client, cid, states):
     for s in states:
         r = client.post(f"/cases/{cid}/transition", json={"to_state": s})
@@ -19,6 +28,7 @@ def _walk(client, cid, states):
 
 def test_self_declare_happy_path():
     with TestClient(app) as client:
+        _auth(client)
         assert client.get("/health").json()["status"] == "ok"
         client.post(f"/orgs/{ORG}/penyelia", json={"name": "Budi", "training_cert": "PH-1"})
         cid = client.post("/cases", json={"org_id": ORG, "company_name": "ABC", "is_msme": True}).json()["case_id"]
@@ -43,6 +53,7 @@ def test_self_declare_happy_path():
 
 def test_haram_blocks_selfdeclare():
     with TestClient(app) as client:
+        _auth(client)
         client.post(f"/orgs/{ORG}/penyelia", json={"name": "Budi"})
         cid = client.post("/cases", json={"org_id": ORG, "is_msme": True}).json()["case_id"]
         client.post(f"/cases/{cid}/materials", json={"name": "lard"})  # haram → BLOCK
@@ -58,6 +69,7 @@ def test_haram_blocks_selfdeclare():
 
 def test_selfdeclare_submit_blocked_without_sihalal():
     with TestClient(app) as client:
+        _auth(client)
         client.post(f"/orgs/{ORG}/penyelia", json={"name": "Budi"})
         cid = client.post("/cases", json={"org_id": ORG, "is_msme": True}).json()["case_id"]
         client.post(f"/cases/{cid}/materials", json={"name": "sugar"})  # unknown→비임계
