@@ -62,9 +62,32 @@ def test_mockaudit_decision_validation():
         assert r.status_code != 403, r.text
 
 
+def test_mockaudit_decision_recorded_and_retrieved():
+    """판정(pass/reject) → 이력 조회 루프. 거부 사유 누락은 422."""
+    with TestClient(app) as c:
+        adm = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"company_name": "MockAudit Co", "org_id": "org_demo"},
+                     headers=_h(adm)).json()["case_id"]
+        # 거부인데 사유 없음 → 422
+        assert c.post(f"/cases/{cid}/mock-audit/decision", json={"result": "reject"},
+                      headers=_h(adm)).status_code == 422
+        # 통과 판정 기록
+        assert c.post(f"/cases/{cid}/mock-audit/decision", json={"result": "pass"},
+                      headers=_h(adm)).json()["result"] == "pass"
+        # 거부 판정(사유 포함) 기록
+        c.post(f"/cases/{cid}/mock-audit/decision",
+               json={"result": "reject", "reason": "증빙 부족"}, headers=_h(adm))
+        # 이력 조회 — 2건, 최신이 reject
+        hist = c.get(f"/cases/{cid}/mock-audit", headers=_h(adm)).json()
+        results = [d["result"] for d in hist["decisions"]]
+        assert "pass" in results and "reject" in results, results
+        assert any(d.get("reason") == "증빙 부족" for d in hist["decisions"]), hist
+
+
 if __name__ == "__main__":
     tests = [test_operator_role_seeded, test_mockaudit_rbac,
-             test_permission_transfer_cert_issue, test_mockaudit_decision_validation]
+             test_permission_transfer_cert_issue, test_mockaudit_decision_validation,
+             test_mockaudit_decision_recorded_and_retrieved]
     ok = 0
     for fn in tests:
         try:
