@@ -1,12 +1,17 @@
-"""P-6 백엔드 RBAC 강제 검증 — 역할 × 엔드포인트 403/허용 매트릭스."""
+"""v3 백엔드 RBAC 강제 검증 — 역할 × 엔드포인트 403/허용 매트릭스 (회의 6역할 + operator).
+
+v3 변경: LPH배정·인증서발급·파트와결정 = fatwa_liaison·operator (consultant 아님) · operator(최고운영자) 신설 · mockAudit.
+실행: 서버 기동(:8800) 후 <venv>/bin/python tests/e2e_rbac.py
+"""
 import sys
 import httpx
 
 B = "http://127.0.0.1:8800"
-ROLES = {"consultant1": "pw", "applicant1": "pw", "penyelia1": "pw",
-         "pendamping1": "pw", "auditor1": "pw", "fatwa1": "pw", "admin": "admin"}
+ROLES = {"consultant1": "pw", "applicant1": "pw", "penyelia1": "pw", "pendamping1": "pw",
+         "auditor1": "pw", "fatwa1": "pw", "operator1": "pw", "admin": "admin"}
 RN = {"consultant1": "consultant", "applicant1": "applicant", "penyelia1": "penyelia_halal",
-      "pendamping1": "pendamping_pph", "auditor1": "auditor", "fatwa1": "fatwa_liaison", "admin": "admin"}
+      "pendamping1": "pendamping_pph", "auditor1": "auditor", "fatwa1": "fatwa_liaison",
+      "operator1": "operator", "admin": "admin"}
 
 
 def tok(u, p):
@@ -29,9 +34,11 @@ CASES = [
     ("경로 확정", "POST", f"/cases/{CID}/pathway/confirm", {"pathway": "self_declare"}, {"consultant", "admin"}),
     ("SIHALAL 검증", "POST", "/sihalal/identity/nope/verify", {"expected_identifier": "x"}, {"consultant", "admin"}),
     ("심사 지적", "POST", f"/cases/{CID}/findings", {"finding": "x", "severity": "minor"}, {"consultant", "auditor", "admin"}),
-    ("LPH 배정", "POST", f"/cases/{CID}/lph-assignment", {"lph_name": "x"}, {"consultant", "admin"}),
-    ("파트와 결정", "PATCH", f"/cases/{CID}/fatwa", {"decision": "approved"}, {"consultant", "fatwa_liaison", "admin"}),
-    ("인증서 발급", "POST", f"/cases/{CID}/certificate/issue", None, {"consultant", "admin"}),
+    ("LPH 배정", "POST", f"/cases/{CID}/lph-assignment", {"lph_name": "x"}, {"fatwa_liaison", "operator", "admin"}),
+    ("파트와 결정", "PATCH", f"/cases/{CID}/fatwa", {"decision": "approved"}, {"fatwa_liaison", "operator", "admin"}),
+    ("인증서 발급", "POST", f"/cases/{CID}/certificate/issue", None, {"fatwa_liaison", "operator", "admin"}),
+    ("모의심사 큐", "GET", "/mock-audit/queue", None, {"auditor", "fatwa_liaison", "operator", "admin"}),
+    ("모의심사 결정", "POST", f"/cases/{CID}/mock-audit/decision", {"result": "pass"}, {"auditor", "fatwa_liaison", "operator", "admin"}),
     ("자기선언 검증", "POST", f"/cases/{CID}/pendamping/verify", {"decision": "verified"}, {"pendamping_pph", "admin"}),
     ("결제 표시", "PATCH", "/invoices/nope/pay", None, {"consultant", "applicant", "admin"}),
     ("admin 사용자목록", "GET", "/admin/users", None, {"admin"}),
