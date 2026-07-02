@@ -45,7 +45,7 @@ print(f"\n=== S3-2 파트와 위원회 (case={cid[:8]}) ===")
 pid = httpx.post(f"{B}/cases/{cid}/products", headers=HC,
                  json={"name": "HalalNoodle", "category": "food"}).json()["product_id"]
 
-r_fw = httpx.patch(f"{B}/cases/{cid}/fatwa", headers=HC, json={
+r_fw = httpx.patch(f"{B}/cases/{cid}/fatwa", headers=HA, json={
     "decision": "approved",
     "committee_head": "Dr. Ahmad",
     "committee_secretary": "Budi",
@@ -54,7 +54,7 @@ r_fw = httpx.patch(f"{B}/cases/{cid}/fatwa", headers=HC, json={
 }).json()
 ok("PATCH fatwa 성공", "decision" in r_fw or r_fw.get("ok") is True, r_fw)
 
-fw = httpx.get(f"{B}/cases/{cid}/fatwa", headers=HC).json()
+fw = httpx.get(f"{B}/cases/{cid}/fatwa", headers=HA).json()
 ok("committee_head 저장", fw.get("committee_head") == "Dr. Ahmad", fw.get("committee_head"))
 ok("committee_secretary 저장", fw.get("committee_secretary") == "Budi", fw.get("committee_secretary"))
 ok("committee_members 3명", isinstance(fw.get("committee_members"), list) and
@@ -63,7 +63,7 @@ ok("product_scope 제품 포함", pid in (fw.get("product_scope") or []), fw.get
 
 # ── S3-3: 인증서 발급 → 동결 → 언락 ───────────────────────
 print(f"\n=== S3-3 인증서 동결/언락 (case={cid[:8]}) ===")
-rc = httpx.post(f"{B}/cases/{cid}/certificate/issue", headers=HC).json()
+rc = httpx.post(f"{B}/cases/{cid}/certificate/issue", headers=HA).json()
 ok("인증서 발급", "certificate_no" in rc or rc.get("ok") is True, rc)
 
 cert = httpx.get(f"{B}/cases/{cid}/certificate", headers=HC).json()
