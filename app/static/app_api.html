@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>GL-HAC AI - AI supported Halal Certification System</title>
+<style>
+:root{--bg:#0f172a;--panel:#111827;--card:#ffffff;--muted:#64748b;--text:#0f172a;--soft:#f8fafc;--line:#e2e8f0;--green:#16a34a;--amber:#d97706;--red:#dc2626;--blue:#2563eb;--purple:#7c3aed;--shadow:0 20px 45px rgba(15,23,42,.14);--radius:20px}
+*{box-sizing:border-box} body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR",sans-serif;background:linear-gradient(135deg,#f8fafc 0%,#eef2ff 100%);color:var(--text)}
+.app{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:100vh} aside{background:linear-gradient(180deg,#0f172a,#111827 55%,#064e3b);color:white;padding:24px;position:sticky;top:0;height:100vh;overflow:auto}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}.logo{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,#22c55e,#60a5fa);display:grid;place-items:center;font-weight:900;color:white;box-shadow:0 8px 25px rgba(34,197,94,.25)}.brand h1{font-size:16px;line-height:1.15;margin:0}.brand p{margin:2px 0 0;color:#cbd5e1;font-size:12px}
+.langbox{margin:0 0 18px;padding:12px;border:1px solid rgba(255,255,255,.14);border-radius:16px;background:rgba(255,255,255,.08)}.langbox label{color:#dbeafe;margin-bottom:8px;display:block;font-weight:800;font-size:13px}.langbox select{background:#0f172a;color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:12px;padding:10px;width:100%}
+nav button{width:100%;display:flex;align-items:center;gap:10px;border:0;background:transparent;color:#cbd5e1;padding:12px 14px;border-radius:14px;cursor:pointer;text-align:left;font-weight:650;margin:4px 0}nav button:hover,nav button.active{background:rgba(255,255,255,.12);color:white}.sidebar-note{margin-top:24px;padding:14px;border:1px solid rgba(255,255,255,.16);border-radius:16px;background:rgba(255,255,255,.08);font-size:12px;line-height:1.45;color:#dbeafe}
+main{padding:28px;max-width:1280px;width:100%;margin:0 auto}.topbar{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px}.title h2{margin:0;font-size:28px}.title p{margin:6px 0 0;color:var(--muted)}.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.btn{border:0;border-radius:12px;padding:10px 14px;font-weight:800;cursor:pointer;background:#e2e8f0;color:#0f172a}.btn.primary{background:var(--green);color:white}.btn.blue{background:var(--blue);color:white}.btn.red{background:#fee2e2;color:#991b1b}.btn.dark{background:#0f172a;color:white}.btn.small{padding:7px 10px;font-size:12px}.btn:disabled{opacity:.45;cursor:not-allowed}
+.grid{display:grid;gap:18px}.grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.grid.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.card{background:rgba(255,255,255,.92);border:1px solid rgba(226,232,240,.9);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px}.card h3{margin:0 0 12px}.card .hint{color:var(--muted);font-size:13px;margin-top:-6px;margin-bottom:16px}
+.stat{display:flex;justify-content:space-between;align-items:flex-end;gap:14px}.stat .num{font-size:30px;font-weight:900}.stat .label{color:var(--muted);font-weight:650;font-size:13px}.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 10px;font-weight:850;font-size:12px}.pill.green{background:#dcfce7;color:#166534}.pill.amber{background:#fef3c7;color:#92400e}.pill.red{background:#fee2e2;color:#991b1b}.pill.blue{background:#dbeafe;color:#1e40af}.pill.gray{background:#f1f5f9;color:#475569}.pill.purple{background:#ede9fe;color:#5b21b6}
+.flow{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:10px}.flow .step{padding:14px;border:1px solid var(--line);border-radius:16px;background:var(--soft)}.flow .step b{display:block;margin-bottom:4px}.flow .step small{color:var(--muted)}
+label{font-weight:800;font-size:13px;display:block;margin:0 0 6px}input,select,textarea{width:100%;border:1px solid #cbd5e1;border-radius:12px;padding:10px 12px;font:inherit;background:white}.form-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-bottom:14px}.form-row.one{grid-template-columns:1fr}
+table{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;border-radius:16px;border:1px solid var(--line);background:white}th,td{text-align:left;padding:12px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}th{background:#f8fafc;color:#334155;font-size:12px;text-transform:uppercase;letter-spacing:.04em}tr:last-child td{border-bottom:0}.empty{padding:20px;border:1px dashed #cbd5e1;border-radius:16px;color:var(--muted);background:#f8fafc}
+.ai-box{border:1px solid #bfdbfe;background:linear-gradient(135deg,#eff6ff,#f0fdf4);border-radius:18px;padding:16px}.ai-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.ai-head b{font-size:15px}.list{display:grid;gap:10px}.item{border:1px solid var(--line);border-radius:14px;background:white;padding:12px}.item .row{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}.item p{margin:6px 0 0;color:var(--muted);font-size:13px}
+.timeline{display:grid;gap:10px}.timeline .event{display:grid;grid-template-columns:28px 1fr;gap:10px}.dot{width:14px;height:14px;border-radius:999px;background:#cbd5e1;margin-top:4px}.dot.done{background:#22c55e}.dot.current{background:#2563eb;box-shadow:0 0 0 5px #dbeafe}
+.case-item{padding:11px 13px;border:1px solid var(--line);border-radius:14px;margin-bottom:9px;cursor:pointer;background:white}.case-item:hover{border-color:var(--blue)}.case-item.sel{border-color:var(--blue);box-shadow:0 0 0 3px #dbeafe}
+.expl{background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:12px;font-size:13px;white-space:pre-wrap;color:#334155}
+.risk-high{border-left:5px solid var(--red)}.risk-med{border-left:5px solid var(--amber)}.risk-low{border-left:5px solid var(--green)}
+.auth-hidden{display:none!important}.auth-screen{min-height:100vh;display:grid;place-items:center;padding:28px;background:linear-gradient(135deg,#0f172a 0%,#064e3b 48%,#eef2ff 48%,#f8fafc 100%)}
+.auth-shell{width:min(1120px,100%);display:grid;grid-template-columns:1.05fr .95fr;gap:22px;align-items:stretch}.auth-panel{border-radius:28px;padding:32px;color:white;background:linear-gradient(150deg,rgba(15,23,42,.96),rgba(6,78,59,.9));box-shadow:0 30px 90px rgba(15,23,42,.32);min-height:520px;display:flex;flex-direction:column;justify-content:space-between}.auth-panel h1{font-size:34px;line-height:1.08;margin:18px 0 10px}.auth-panel p{color:#dbeafe;line-height:1.65}.auth-feature{display:flex;gap:12px;align-items:flex-start;margin-top:14px;padding:12px;border:1px solid rgba(255,255,255,.15);border-radius:16px;background:rgba(255,255,255,.08)}.auth-feature b{display:block;margin-bottom:4px}.auth-feature .emoji{font-size:20px}
+.auth-card{background:rgba(255,255,255,.96);border:1px solid rgba(226,232,240,.9);border-radius:28px;padding:28px;box-shadow:0 30px 90px rgba(15,23,42,.18)}.auth-card h2{font-size:26px;margin:0 0 6px}.auth-card .hint{color:var(--muted);margin:0 0 18px;line-height:1.55}.auth-form{display:grid;gap:14px}.auth-language{max-width:220px}.auth-language label{color:#dbeafe}.auth-language select{background:#0f172a;color:white;border-color:rgba(255,255,255,.28)}.err{color:#dc2626;font-size:13px;font-weight:700}
+@media(max-width:1000px){.auth-shell{grid-template-columns:1fr}.auth-panel{min-height:auto}.app{grid-template-columns:1fr}aside{position:relative;height:auto}.flow,.grid.cols-4,.grid.cols-3,.grid.cols-2{grid-template-columns:1fr}.form-row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<!-- ===== 로그인 (원본 auth-screen 구조 채용) ===== -->
+<div id="authScreen" class="auth-screen">
+  <div class="auth-shell">
+    <div class="auth-panel">
+      <div>
+        <div class="brand"><div class="logo">AI</div><div><h1>GL-HAC AI</h1><p>AI supported Halal Certification System</p></div></div>
+        <h1 data-i="authTitle"></h1>
+        <p data-i="authText"></p>
+        <div class="auth-feature"><div class="emoji">🛣️</div><div><b data-i="f1t"></b><span data-i="f1x"></span></div></div>
+        <div class="auth-feature"><div class="emoji">🔬</div><div><b data-i="f2t"></b><span data-i="f2x"></span></div></div>
+        <div class="auth-feature"><div class="emoji">🔒</div><div><b data-i="f3t"></b><span data-i="f3x"></span></div></div>
+      </div>
+      <div class="auth-language"><label data-i="language"></label>
+        <select onchange="setLang(this.value)" id="lang1"><option value="ko">🇰🇷 한국어</option><option value="en">🇬🇧 English</option><option value="id">🇮🇩 Bahasa</option></select></div>
+    </div>
+    <div class="auth-card">
+      <h2 data-i="loginTitle"></h2>
+      <p class="hint" data-i="loginSub"></p>
+      <div class="auth-form">
+        <div><label data-i="username"></label><input id="u" placeholder="consultant1"/></div>
+        <div><label data-i="password"></label><input id="p" type="password" placeholder="pw"/></div>
+        <button class="btn primary" onclick="doLogin()" data-i="loginBtn"></button>
+        <div class="err" id="loginErr"></div>
+        <div class="hint" style="margin:6px 0 0" data-i="democlick"></div>
+        <div class="actions" id="demoBtns"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 앱 셸 (원본 aside + main 구조 채용) ===== -->
+<div class="app auth-hidden" id="appShell">
+  <aside>
+    <div class="brand"><div class="logo">AI</div><div><h1>GL-HAC AI</h1><p data-i="brandSub"></p></div></div>
+    <div class="langbox"><label data-i="language"></label>
+      <select onchange="setLang(this.value)" id="lang2"><option value="ko">🇰🇷 한국어</option><option value="en">🇬🇧 English</option><option value="id">🇮🇩 Bahasa</option></select></div>
+    <nav id="nav"></nav>
+    <div class="sidebar-note" id="sidebarNote"></div>
+  </aside>
+  <main>
+    <div class="topbar">
+      <div class="title"><h2 id="pageTitle"></h2><p id="pageDesc"></p></div>
+      <div class="actions"><span class="pill gray" id="who"></span><button class="btn dark" onclick="logout()" data-i="logout"></button></div>
+    </div>
+    <section id="view"></section>
+  </main>
+</div>
+
+<script>
+const I={
+  language:{ko:"언어",en:"Language",id:"Bahasa"}, brandSub:{ko:"AI 지원 할랄 인증 시스템",en:"AI supported Halal Certification",id:"Sistem Sertifikasi Halal AI"},
+  authTitle:{ko:"AI 할랄 인증 워크스페이스",en:"AI Halal Certification Workspace",id:"Workspace Sertifikasi Halal AI"},
+  authText:{ko:"BPJPH/SIHALAL 준비, 문서, 원재료, 심사, 인증서를 하나의 워크스페이스에서 관리하세요.",en:"Manage BPJPH/SIHALAL readiness, documents, materials, audit, and certificates in one workspace.",id:"Kelola kesiapan BPJPH/SIHALAL dalam satu workspace."},
+  f1t:{ko:"이중 경로 워크플로우",en:"Dual-pathway workflow",id:"Alur dual-pathway"}, f1x:{ko:"자기선언(SEHATI)·정규 경로를 자동 판정합니다.",en:"Auto-routes self-declare (SEHATI) vs reguler.",id:"Rute otomatis self-declare vs reguler."},
+  f2t:{ko:"AI 성분 판정",en:"AI ingredient screening",id:"Pemeriksaan bahan AI"}, f2x:{ko:"라벨 사진 → OCR → 할랄 위험 판정.",en:"Label photo → OCR → halal risk.",id:"Foto label → OCR → risiko halal."},
+  f3t:{ko:"감사 가능·로컬 AI",en:"Auditable · local AI",id:"Dapat diaudit · AI lokal"}, f3x:{ko:"모든 판정은 근거·감사로그에 연결됩니다.",en:"Every decision linked to evidence & audit log.",id:"Setiap keputusan terhubung bukti & log."},
+  loginTitle:{ko:"로그인",en:"Login",id:"Masuk"}, loginSub:{ko:"아이디와 비밀번호를 입력하세요.",en:"Enter your username and password.",id:"Masukkan username dan password."},
+  username:{ko:"아이디",en:"Username",id:"Username"}, password:{ko:"비밀번호",en:"Password",id:"Password"}, loginBtn:{ko:"로그인",en:"Login",id:"Masuk"},
+  democlick:{ko:"데모 계정 (클릭하면 바로 로그인)",en:"Demo accounts (click to log in)",id:"Akun demo (klik untuk masuk)"}, logout:{ko:"로그아웃",en:"Logout",id:"Keluar"},
+  nav_dashboard:{ko:"대시보드",en:"Dashboard",id:"Dasbor"}, nav_scanner:{ko:"AI 성분 스캐너",en:"AI Ingredient Scanner",id:"Scanner AI"},
+  desc_dashboard:{ko:"케이스 준비도 및 이중경로 상태",en:"Case readiness & dual-pathway status",id:"Kesiapan kasus & dual-pathway"},
+  desc_scanner:{ko:"라벨 사진 → OCR → 성분 할랄 판정",en:"Label photo → OCR → halal screening",id:"Foto label → OCR → screening"},
+  newcase:{ko:"새 케이스",en:"New Case",id:"Kasus Baru"}, create:{ko:"생성",en:"Create",id:"Buat"}, cases:{ko:"케이스",en:"Cases",id:"Kasus"},
+  materials:{ko:"원재료",en:"Materials",id:"Bahan"}, addmat:{ko:"추가",en:"Add",id:"Tambah"}, uplabel:{ko:"라벨 사진 업로드 (OCR 자동등록)",en:"Upload label photo (OCR)",id:"Unggah foto label"},
+  pathway:{ko:"경로 판정",en:"Pathway",id:"Jalur"}, assess:{ko:"AI 판정",en:"Assess",id:"Nilai"}, blockers:{ko:"차단 사유",en:"Blockers",id:"Penghalang"},
+  timeline:{ko:"타임라인",en:"Timeline",id:"Linimasa"}, transition:{ko:"상태 전이",en:"Transition",id:"Transisi"}, go:{ko:"이동",en:"Go",id:"Jalan"}, pick:{ko:"왼쪽에서 케이스를 선택하세요",en:"Select a case on the left",id:"Pilih kasus"},
+  sidenote:{ko:"내부 준비 도구입니다. 공식 발급은 BPJPH/SIHALAL에서 진행됩니다.",en:"Internal preparation tool. Official issuance via BPJPH/SIHALAL.",id:"Alat persiapan internal."},
+};
+const DEMO=[["consultant1","pw","consultant"],["applicant1","pw","applicant"],["penyelia1","pw","penyelia_halal"],["pendamping1","pw","pendamping_pph"],["admin","admin","admin"]];
+const NAV=[["dashboard","🏠"],["scanner","🔬"]];
+const NEXT={onboarding:["application_draft"],application_draft:["ai_pre_assessment_ready"],ai_pre_assessment_ready:["ai_pre_assessment_running"],ai_pre_assessment_running:["pathway_determination"],pathway_determination:[],self_declare_eligible:["sjph_lite_prepared"],sjph_lite_prepared:["pendamping_verification"],pendamping_verification:["self_declaration_submitted"],self_declaration_submitted:["committee_verification"],committee_verification:["certificate_issued"],supplementation_required:["supplementation_submitted"],supplementation_submitted:["consultant_review"],consultant_review:["document_pre_audit_requested"],document_pre_audit_requested:["document_pre_audit_in_review"],document_pre_audit_in_review:["document_pre_audit_approved"],document_pre_audit_approved:["lph_assignment"],lph_assignment:["onsite_audit_scheduled"],onsite_audit_scheduled:["onsite_audit_in_progress"],onsite_audit_in_progress:["corrective_action_required","audit_closed"],corrective_action_required:["corrective_action_submitted"],corrective_action_submitted:["audit_closed"],audit_closed:["hpas_evaluation_ready"],hpas_evaluation_ready:["final_package_preparation"],final_package_preparation:["fatwa_review"],fatwa_review:["fatwa_approved"],fatwa_approved:["certificate_issued"],certificate_issued:["post_certification_monitoring"],post_certification_monitoring:["renewal_preparation","change_impact"]};
+let LANG=localStorage.getItem("lang")||"ko",TOK=localStorage.getItem("tok"),ME=null,SEL=null,PAGE="dashboard";
+
+function t(k){return (I[k]&&I[k][LANG])||k}
+function setLang(l){LANG=l;localStorage.setItem("lang",l);applyI();if(ME){renderNav();route();}}
+function applyI(){document.querySelectorAll("[data-i]").forEach(e=>e.textContent=t(e.dataset.i));
+  ["lang1","lang2"].forEach(id=>{const s=document.getElementById(id);if(s)s.value=LANG});}
+async function api(path,opt={}){opt.headers=Object.assign({"Content-Type":"application/json"},opt.headers||{},TOK?{Authorization:"Bearer "+TOK}:{});
+  const r=await fetch(path,opt);if(r.status==401){logout();throw new Error("auth")}const j=await r.json().catch(()=>({}));if(!r.ok)throw j;return j;}
+
+function quickLogin(u,p){document.getElementById("u").value=u;document.getElementById("p").value=p;doLogin();}
+function renderDemo(){const el=document.getElementById("demoBtns");el.innerHTML="";DEMO.forEach(([u,p,r])=>{const b=document.createElement("button");b.className="btn small";b.textContent=r;b.title=u+" / "+p;b.onclick=()=>quickLogin(u,p);el.appendChild(b);});}
+async function doLogin(){try{const j=await api("/auth/login",{method:"POST",body:JSON.stringify({username:u.value,password:p.value})});TOK=j.token;localStorage.setItem("tok",TOK);await boot();}catch(e){document.getElementById("loginErr").textContent="로그인 실패 / login failed"}}
+function logout(){TOK=null;localStorage.removeItem("tok");ME=null;location.reload();}
+async function boot(){try{ME=await api("/auth/me");authScreen.classList.add("auth-hidden");appShell.classList.remove("auth-hidden");
+  document.getElementById("who").textContent=ME.username+" · "+ME.role;document.getElementById("sidebarNote").textContent=t("sidenote");
+  renderNav();PAGE="dashboard";route();applyI();}catch(e){showLogin()}}
+function showLogin(){authScreen.classList.remove("auth-hidden");appShell.classList.add("auth-hidden");applyI();renderDemo();}
+function renderNav(){const el=document.getElementById("nav");el.innerHTML="";NAV.forEach(([id,ic])=>{const b=document.createElement("button");b.className=PAGE==id?"active":"";b.innerHTML=`<span>${ic}</span> ${t("nav_"+id)}`;b.onclick=()=>{PAGE=id;renderNav();route();};el.appendChild(b);});}
+function route(){document.getElementById("pageTitle").textContent=t("nav_"+PAGE);document.getElementById("pageDesc").textContent=t("desc_"+PAGE);
+  if(PAGE=="dashboard")renderDashboard();else renderScanner();}
+
+async function renderDashboard(){const cs=await api("/cases");
+  const list=cs.map(c=>`<div class="case-item ${SEL==c.case_id?'sel':''}" onclick="openCase('${c.case_id}')"><b>${esc(c.company_name)||c.case_id.slice(0,8)}</b><div style="margin-top:4px"><span class="pill blue">${c.status}</span> <span class="pill gray">${c.pathway}</span></div></div>`).join("")||`<div class="empty">${t('cases')} —</div>`;
+  document.getElementById("view").innerHTML=`<div class="grid cols-2" style="grid-template-columns:340px 1fr">
+    <div><div class="card"><h3>${t('newcase')}</h3><div class="form-row one"><input id="cn" placeholder="company"/></div>
+      <div class="actions"><label style="display:flex;gap:6px;align-items:center;font-weight:700"><input type="checkbox" id="ms" style="width:auto"/> MSME</label><button class="btn primary" onclick="createCase()">${t('create')}</button></div></div>
+      <div class="card"><h3>${t('cases')}</h3>${list}</div></div>
+    <div id="detail"><div class="card empty">${t('pick')}</div></div></div>`;}
+async function createCase(){await api("/cases",{method:"POST",body:JSON.stringify({company_name:cn.value,is_msme:ms.checked,org_id:ME.org_id})});renderDashboard();}
+
+async function openCase(id){SEL=id;const tl=await api(`/cases/${id}/timeline`),mats=await api(`/cases/${id}/materials`),c=tl.case;
+  document.querySelectorAll(".case-item").forEach(e=>e.classList.remove("sel"));
+  const canC=ME.role=="consultant"||ME.role=="admin";const nx=NEXT[c.status]||[];
+  const matRows=mats.map(m=>`<tr><td>${esc(m.name)}</td><td>${m.e_number||''}</td><td>${rb(m.result)}</td><td>${m.severity||''}</td></tr>`).join("")||`<tr><td colspan=4 class="mut">—</td></tr>`;
+  const blk=tl.blockers.map(b=>`<span class="pill red">⛔ ${b.code}${b.target?': '+esc(b.target):''}</span>`).join(" ")||`<span class="pill green">✓ none</span>`;
+  const evs=tl.events.map((e,i)=>`<div class="event"><div class="dot ${i==tl.events.length-1?'current':'done'}"></div><div><b>${e.from||'∅'} → ${e.to}</b><div class="mut" style="color:var(--muted);font-size:12px">${e.action} · ${e.actor} · #${e.hash}</div></div></div>`).join("");
+  document.getElementById("detail").innerHTML=`
+   <div class="card"><h3>${esc(c.company_name)||''} <span class="mut" style="color:var(--muted);font-weight:600">${c.case_id.slice(0,8)}</span></h3>
+     <div class="actions" style="margin-bottom:8px"><span class="pill blue">📍 ${c.status}</span><span class="pill purple">🛣 ${c.pathway}</span><span class="pill ${c.risk_category=='high'?'red':c.risk_category=='medium'?'amber':'gray'}">⚠ ${c.risk_category||'-'}</span><span class="pill gray">MSME ${c.is_msme?'✔':'✗'}</span></div>
+     <div><b>${t('blockers')}:</b> ${blk}</div></div>
+   <div class="card"><h3>${t('materials')}</h3><table><thead><tr><th>${t('materials')}</th><th>E</th><th>AI</th><th>Risk</th></tr></thead><tbody>${matRows}</tbody></table>
+     <div class="form-row" style="margin-top:12px"><input id="mn" placeholder="name"/><div class="actions"><input id="me" placeholder="E-num" style="width:90px"/><button class="btn" onclick="addMat('${id}')">${t('addmat')}</button></div></div>
+     <label style="margin-top:8px">${t('uplabel')}</label>
+     <div class="actions"><input type="file" id="lf" accept="image/*" style="width:auto"/><button class="btn blue" onclick="upLabel('${id}')">OCR</button></div>
+     <div class="expl" id="expl" style="display:none;margin-top:10px"></div></div>
+   <div class="card ai-box"><div class="ai-head"><b>🤖 ${t('pathway')}</b><button class="btn small blue" onclick="assess('${id}')">${t('assess')}</button></div>
+     <div id="assessOut" class="mut" style="color:var(--muted)">—</div>
+     ${c.status=='pathway_determination'&&canC?`<div class="actions" style="margin-top:10px"><button class="btn primary" onclick="confirmP('${id}','self_declare')">→ self_declare</button><button class="btn" onclick="confirmP('${id}','reguler')">→ reguler</button></div>`:''}</div>
+   <div class="card"><h3>${t('transition')}</h3><div class="actions"><select id="ts" style="width:auto;flex:1">${nx.map(s=>`<option>${s}</option>`).join("")||'<option disabled>—</option>'}</select><button class="btn dark" onclick="doTrans('${id}')" ${nx.length?'':'disabled'}>${t('go')}</button></div></div>
+   <div class="card"><h3>${t('timeline')}</h3><div class="timeline">${evs}</div></div>`;}
+
+function esc(s){return (s||"").replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]))}
+function rb(r){const m={PASS:"green",NEEDS_EVIDENCE:"amber",BLOCK:"red",CLEARED:"blue",UNKNOWN:"gray"};return `<span class="pill ${m[r]||'gray'}">${r||'?'}</span>`}
+async function addMat(id){try{await api(`/cases/${id}/materials`,{method:"POST",body:JSON.stringify({name:mn.value,e_number:me.value||null})});openCase(id);}catch(e){alert(JSON.stringify(e))}}
+async function upLabel(id){const f=lf.files[0];if(!f)return;const b=await f.arrayBuffer();const b64=btoa(String.fromCharCode(...new Uint8Array(b)));
+  expl.style.display="block";expl.textContent="OCR 처리중...";
+  try{const r=await api(`/cases/${id}/materials/from-label-b64`,{method:"POST",body:JSON.stringify({image_b64:b64,filename:f.name})});
+    expl.textContent=`등록 ${r.count}건 · critical ${r.critical_count} · ${r.pathway_implication}\n\n${r.explanation||''}`;openCase(id);}catch(e){expl.textContent="실패: "+JSON.stringify(e)}}
+async function assess(id){const a=await api(`/cases/${id}/pathway/assess`,{method:"POST"});document.getElementById("assessOut").textContent=`→ ${a.suggested_pathway} · risk ${a.risk_category} · critical ${a.critical_ingredient_count} · evidence ${a.evidence_complete}`;}
+async function confirmP(id,pw){try{await api(`/cases/${id}/pathway/confirm`,{method:"POST",body:JSON.stringify({pathway:pw})});openCase(id);}catch(e){alert("⛔ "+JSON.stringify(e.detail||e))}}
+async function doTrans(id){try{await api(`/cases/${id}/transition`,{method:"POST",body:JSON.stringify({to_state:ts.value})});openCase(id);}catch(e){alert("⛔ "+JSON.stringify(e.detail||e))}}
+
+function renderScanner(){document.getElementById("view").innerHTML=`<div class="card" style="max-width:760px">
+  <h3>🔬 ${t('nav_scanner')}</h3><p class="hint">${t('desc_scanner')}</p>
+  <label>${t('uplabel')}</label><div class="actions"><input type="file" id="sf" accept="image/*" style="width:auto"/><button class="btn blue" onclick="scan()">OCR + AI</button></div>
+  <div class="expl" id="sout" style="display:none;margin-top:12px"></div></div>`;}
+async function scan(){const f=document.getElementById("sf").files[0];if(!f)return;const b=await f.arrayBuffer();const b64=btoa(String.fromCharCode(...new Uint8Array(b)));
+  const o=document.getElementById("sout");o.style.display="block";o.textContent="OCR 처리중...";
+  // 임시 케이스 생성 후 판정 (스캐너 단독)
+  try{const c=await api("/cases",{method:"POST",body:JSON.stringify({company_name:"scan",is_msme:true,org_id:ME.org_id})});
+    const r=await api(`/cases/${c.case_id}/materials/from-label-b64`,{method:"POST",body:JSON.stringify({image_b64:b64,filename:f.name})});
+    o.textContent=`성분 ${r.count}건 · 임계 ${r.critical_count} · 경로추정 ${r.pathway_implication}\n\n${r.explanation||''}`;}catch(e){o.textContent="실패: "+JSON.stringify(e)}}
+
+applyI();if(TOK)boot();else showLogin();
+</script>
+</body>
+</html>
