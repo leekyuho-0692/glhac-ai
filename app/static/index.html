@@ -1878,24 +1878,45 @@ async function renderMockAudit(){
    +  '<span class="pill amber">내부 심사 · Internal (클라이언트 미노출)</span></div>'
    +  '<div id="mockAuditQueue" style="margin-top:12px">불러오는 중… · Loading…</div></div>'
    +'<div class="grid cols-2" style="margin-top:16px">'
-   +  '<div class="card"><h3>제출 자료 · Submitted media</h3><div class="empty">사진/자료 갤러리 (다음 단계 연동)</div></div>'
-   +  '<div class="card"><h3>체크리스트 · Checklist</h3>'
+   +  '<div class="card"><h3>제출 자료 · Submitted media</h3>'
+   +    '<div id="mockAuditGallery"><div class="empty">케이스를 선택하세요 · Select a case</div></div></div>'
+   +  '<div class="card"><h3>체크리스트 · 판정 · Decision</h3>'
    +    '<p class="hint">선택 케이스 · Selected: <b id="mockAuditSel">'+esc(window.__mockAuditSel||'(없음)')+'</b></p>'
    +    '<div class="actions" style="margin-top:12px">'
    +      '<button class="btn green" onclick="mockAuditDecide(\'pass\')">통과 · Pass</button> '
    +      '<button class="btn red" onclick="mockAuditDecide(\'reject\')">거부(사유) · Reject</button>'
-   +    '</div></div>'
+   +    '</div>'
+   +    '<div style="margin-top:14px"><b style="font-size:12px">판정 이력 · History</b>'
+   +      '<div id="mockAuditHistory" class="list"><div class="empty">—</div></div></div>'
+   +    '</div>'
    +'</div>';
   var rows=[]; try{ rows=await glhacApi('/mock-audit/queue'); }catch(e){ rows=[]; }
   if(!window.__mockAuditSel && rows[0]) window.__mockAuditSel=rows[0].case_id;
-  var selEl=document.getElementById('mockAuditSel'); if(selEl) selEl.textContent=window.__mockAuditSel||'(없음)';
   if(typeof dlRender==='function'){
     dlRender('mockAuditQueue',{idKey:'case_id',
       columns:[{key:'case_id',label:'케이스'},{key:'company',label:'기업'},{key:'stage',label:'단계',sort:true},{key:'pathway',label:'경로'}],
       rows:rows, empty:'모의심사 대상이 없습니다 · No targets', onRow:"mockAuditSelect('{id}')"});
   }
+  if(window.__mockAuditSel) mockAuditSelect(window.__mockAuditSel);
 }
-function mockAuditSelect(id){ window.__mockAuditSel=id; var s=document.getElementById('mockAuditSel'); if(s)s.textContent=id; }
+async function mockAuditSelect(id){
+  window.__mockAuditSel=id;
+  var s=document.getElementById('mockAuditSel'); if(s)s.textContent=id;
+  // 제출 자료(문서) 갤러리
+  var g=document.getElementById('mockAuditGallery');
+  if(g){ try{ var docs=await glhacApi('/cases/'+id+'/documents');
+      g.innerHTML = (docs&&docs.length)
+        ? '<div class="list">'+docs.map(function(d){return '<div class="item"><b>📄 '+esc(d.filename||d.doc_type||'문서')+'</b> <span class="pill '+((d.review_status==='approved')?'green':(d.review_status==='rejected')?'red':'gray')+'">'+esc(d.review_status||'-')+'</span></div>';}).join('')+'</div>'
+        : '<div class="empty">제출 문서 없음 · No documents</div>';
+    }catch(e){ g.innerHTML='<div class="empty">불러오기 실패</div>'; } }
+  // 판정 이력
+  var h=document.getElementById('mockAuditHistory');
+  if(h){ try{ var mh=await glhacApi('/cases/'+id+'/mock-audit'); var ds=(mh&&mh.decisions)||[];
+      h.innerHTML = ds.length
+        ? ds.map(function(x){return '<div class="item"><span class="pill '+((x.result==='pass')?'green':'red')+'">'+esc(x.result||'-')+'</span> '+(x.reason?esc(x.reason):'')+' <span class="mini-muted">'+esc((x.at||'').slice(0,19))+' · '+esc(x.actor||'')+'</span></div>';}).join('')
+        : '<div class="empty">판정 이력 없음 · No decisions</div>';
+    }catch(e){ h.innerHTML='<div class="empty">—</div>'; } }
+}
 async function mockAuditDecide(kind){
   var cid=window.__mockAuditSel; if(!cid){ alert('큐에서 케이스를 먼저 선택하세요 · Select a case'); return; }
   var reason=''; if(kind==='reject'){ reason=prompt('거부 사유 · Reject reason')||''; if(!reason.trim())return; }
