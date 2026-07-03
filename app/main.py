@@ -17,7 +17,9 @@ app = FastAPI(title="GL-HAC AI Dual-Pathway API", version="0.2.0")
 def _migrate():
     """경량 마이그레이션 — 기존 SQLite에 신규 컬럼 idempotent 추가(create_all은 ALTER 안 함)."""
     from sqlalchemy import text as _sql
-    adds = [("case_application", "due_date", "VARCHAR")]
+    adds = [("case_application", "due_date", "VARCHAR"),
+            ("fatwa_decision", "final_approved_at", "DATETIME"),
+            ("fatwa_decision", "final_approver", "VARCHAR")]
     with engine.begin() as conn:
         for tbl, col, typ in adds:
             try:
@@ -1036,7 +1038,7 @@ def get_auditor_pool(case_id: str, user=Depends(auth.get_current_user),
 
 @app.post("/cases/{case_id}/auditor-pool")
 def add_auditor_pool(case_id: str, body: schemas.AuditorPoolReq,
-                     user=Depends(auth.require_roles("consultant")),
+                     user=Depends(auth.require_roles("operator")),
                      db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     cur = db.query(models.AuditorPool).filter_by(case_id=case_id).count()
@@ -1053,7 +1055,7 @@ def add_auditor_pool(case_id: str, body: schemas.AuditorPoolReq,
 
 @app.delete("/cases/{case_id}/auditor-pool/{pool_id}")
 def delete_auditor_pool(case_id: str, pool_id: str,
-                        user=Depends(auth.require_roles("consultant")),
+                        user=Depends(auth.require_roles("operator")),
                         db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     row = db.query(models.AuditorPool).filter_by(id=pool_id, case_id=case_id).first()
@@ -1106,7 +1108,7 @@ def add_lph(case_id: str, body: schemas.LphAssignReq,
 
 
 @app.post("/cases/{case_id}/certificate/issue")
-def issue_certificate(case_id: str, user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+def issue_certificate(case_id: str, user=Depends(auth.require_roles("operator")),
                       db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     if c.fatwa_status != "approved":
@@ -1256,7 +1258,32 @@ def get_fatwa(case_id: str, user=Depends(auth.get_current_user), db: Session = D
             "committee_members": fd.committee_members if fd else [],
             "product_scope": fd.product_scope if fd else [],
             "products": [{"product_id": p.product_id, "name": p.name} for p in prods],
-            "fatwa_status": c.fatwa_status, "scope_frozen": c.scope_frozen}
+            "fatwa_status": c.fatwa_status, "scope_frozen": c.scope_frozen,
+            "final_approved_at": str(fd.final_approved_at) if fd and fd.final_approved_at else None,
+            "final_approver": fd.final_approver if fd else None}
+
+
+@app.post("/cases/{case_id}/fatwa/final-approve")
+def fatwa_final_approve(case_id: str, user=Depends(auth.require_roles("operator")),
+                        db: Session = Depends(get_db)):
+    """2단계 승인 — 최고운영자(최종 결제자) 최종승인. 샤리아 가승인(provisional) 선행 필요."""
+    c = _get_case(db, case_id, user)
+    fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
+    if not fd or fd.decision != "approved":
+        raise HTTPException(409, {"code": "NO_PROVISIONAL_APPROVAL"})
+    if c.fatwa_status == "approved":
+        return {"ok": True, "already_final": True, "fatwa_status": "approved"}
+    if c.fatwa_status != "provisional":
+        raise HTTPException(409, {"code": "NOT_PROVISIONAL", "have": c.fatwa_status})
+    fd.final_approved_at = datetime.utcnow()
+    fd.final_approver = user["uid"]
+    c.fatwa_status = "approved"
+    c.scope_frozen = True
+    if c.status == "fatwa_review" and sm.allowed(c.status, "fatwa_approved"):
+        c.status = "fatwa_approved"
+    sm.record_event(db, c, c.status, c.status, "fatwa.final_approve", user["role"], user["uid"], {})
+    db.commit()
+    return {"ok": True, "fatwa_status": "approved", "final_approved_at": str(fd.final_approved_at)}
 
 
 @app.patch("/cases/{case_id}/fatwa")
@@ -1282,14 +1309,14 @@ def patch_fatwa(case_id: str, body: schemas.FatwaReq,
     if body.product_scope is not None:
         fd.product_scope = body.product_scope
     if body.decision == "approved":
+        # 샤리아 가승인(provisional) — 최종승인은 최고운영자가 별도로 (2단계 승인)
         fd.decided_at = datetime.utcnow()
         if not fd.decision_no:
             fd.decision_no = "FD-" + fd.id[:8].upper()
-        c.fatwa_status = "approved"
-        c.scope_frozen = True   # 패키지 freeze
+        c.fatwa_status = "provisional"   # 가승인 — scope는 최종승인 시 동결
     elif body.decision in ("rejected", "conditional"):
         c.fatwa_status = body.decision
-    sm.record_event(db, c, c.status, c.status, "fatwa.decision", user["role"], user["uid"],
+    sm.record_event(db, c, c.status, c.status, "fatwa.provisional", user["role"], user["uid"],
                     {"decision": body.decision})
     db.commit()
     return {"decision": fd.decision, "decision_no": fd.decision_no,
