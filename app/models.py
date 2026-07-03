@@ -34,6 +34,22 @@ class CaseApplication(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Notification(Base):
+    """자동 알림 (Rizky #5) — 이벤트 발생 시 생성, 채널 프로바이더로 발송."""
+    __tablename__ = "notification"
+    notification_id = Column(String, primary_key=True, default=uid)
+    org_id = Column(String, index=True)
+    case_id = Column(String)
+    role = Column(String)          # 대상 역할(None=조직 전체)
+    event_type = Column(String)    # document_requested|audit_scheduled|audit_closed|fatwa_approved|certificate_issued|expiry_soon
+    channels = Column(JSON)        # ["inapp","sms","kakao","whatsapp"]
+    title = Column(String)
+    body = Column(Text)
+    status = Column(String, default="unsent")  # unsent|sent
+    read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ChangeImpact(Base):
     """인증서 변경영향 분석 이력 — 사후관리(설계 8.3)."""
     __tablename__ = "change_impact"
