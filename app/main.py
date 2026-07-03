@@ -351,6 +351,36 @@ def mock_audit_decide(case_id: str, body: schemas.MockAuditDecisionReq,
     return {"ok": True, "result": result}
 
 
+# ── v3: 역할별 작업 큐(worklist) — 조직 스코프, read-only ──────────────
+AUDIT_STAGES = {"document_pre_audit_requested", "document_pre_audit_in_review",
+                "document_pre_audit_approved", "lph_assignment", "onsite_audit_scheduled",
+                "onsite_audit_in_progress", "corrective_action_required",
+                "corrective_action_submitted"}
+FATWA_STAGES = {"fatwa_review"}
+
+
+def _stage_queue(db, user, stages):
+    q = db.query(models.CaseApplication)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    return [{"case_id": c.case_id, "company": c.company_name, "stage": c.status, "pathway": c.pathway}
+            for c in q.order_by(models.CaseApplication.created_at.desc()).all() if c.status in stages]
+
+
+@app.get("/audit/queue")
+def audit_queue(user=Depends(auth.require_roles("auditor", "operator")),
+                db: Session = Depends(get_db)):
+    """심사 큐 — 사전심사~시정조치 단계 케이스(오디터·운영자)."""
+    return _stage_queue(db, user, AUDIT_STAGES)
+
+
+@app.get("/fatwa/queue")
+def fatwa_queue(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+                db: Session = Depends(get_db)):
+    """파트와 심의 대기 큐 — fatwa_review 단계 케이스(샤리아·운영자)."""
+    return _stage_queue(db, user, FATWA_STAGES)
+
+
 @app.get("/cases/{case_id}")
 def get_case(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     return _case_dict(_get_case(db, case_id, user))

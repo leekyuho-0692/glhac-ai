@@ -84,6 +84,21 @@ def test_mockaudit_decision_recorded_and_retrieved():
         assert any(d.get("reason") == "증빙 부족" for d in hist["decisions"]), hist
 
 
+def test_worklist_queues_rbac():
+    """작업 큐 RBAC: audit=오디터·operator / fatwa=샤리아·operator, applicant 차단."""
+    with TestClient(app) as c:
+        aud = _tok(c, "auditor1", "pw")
+        fat = _tok(c, "fatwa1", "pw")
+        op = _tok(c, "operator1", "pw")
+        ap = _tok(c, "applicant1", "pw")
+        assert c.get("/audit/queue", headers=_h(aud)).status_code == 200
+        assert c.get("/audit/queue", headers=_h(op)).status_code == 200
+        assert c.get("/audit/queue", headers=_h(ap)).status_code == 403
+        assert c.get("/fatwa/queue", headers=_h(fat)).status_code == 200
+        assert c.get("/fatwa/queue", headers=_h(op)).status_code == 200
+        assert c.get("/fatwa/queue", headers=_h(ap)).status_code == 403
+
+
 def test_ask_injects_domain_ontology():
     """도메인 시스템(온톨로지)에서 질문 관련 할랄 근거를 직접 회수해 주입(학습 불필요)."""
     with TestClient(app) as c:
@@ -118,6 +133,7 @@ if __name__ == "__main__":
     tests = [test_operator_role_seeded, test_mockaudit_rbac,
              test_permission_transfer_cert_issue, test_mockaudit_decision_validation,
              test_mockaudit_decision_recorded_and_retrieved,
+             test_worklist_queues_rbac,
              test_ask_injects_domain_ontology,
              test_context_health_endpoint, test_search_context_fallback_returns_list]
     ok = 0
