@@ -919,6 +919,8 @@ SCREEN.application=async()=>{
         <div class="field"><label>할랄감독자 · Supervisor</label><input class="v" id="apSup" value="${esc(c.halal_supervisor||"")}"></div>
         <div class="field"><label>공장 주소 · Factory address <span class="muted">(지역맵 집계)</span></label><input class="v" id="apFactory" value="${esc(c.factory_address||"")}" placeholder="예: Jl. Industri, Bekasi, Jawa Barat"></div>
         <div class="field"><label>처리 기한 · Due date <span class="muted">(기한 경보)</span></label><input class="v" id="apDue" type="date" value="${esc(c.due_date||"")}"> ${c.due_date?dueBadge(c.due_date):''}</div>
+        <div class="field"><label>연락처 · Phone <span class="muted">(WhatsApp/SMS 알림)</span></label><input class="v" id="apPhone" value="${esc(c.phone||"")}" placeholder="0812... 또는 +62812..."></div>
+        <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="apConsent" ${c.notify_consent?"checked":""} style="width:auto"> 알림 수신 동의 · Notification opt-in (SMS·WhatsApp)</label></div>
         <button class="btn pri" onclick="saveProfile('${id}')">프로필 저장 · Save</button>
       </div></div>
     <div class="card"><h3>③ 경로 판정 <span class="en">· Pathway</span></h3>
@@ -965,7 +967,8 @@ async function assignPendamping(id){const pendamping_id=v("pdId");if(!pendamping
 async function verifyPendamping(id,decision){try{await API(`/cases/${id}/pendamping/verify`,{method:"POST",body:JSON.stringify({decision})});toast("검증 · "+decision);applyView();}catch(e){toast("검증 실패 · "+(e&&e.code?e.code:""));}}
 async function sihalalLink(id){const external_username=v("shUser");if(!external_username){toast("사용자명 입력");return}try{const r=await API(`/cases/${id}/sihalal/identity/link`,{method:"POST",body:JSON.stringify({external_username})});if(r.external_identity_id)SIHALAL_EID[id]=r.external_identity_id;toast("SIHALAL 연동");applyView();}catch(e){toast("연동 실패 · "+(e&&e.code?e.code:""));}}
 async function saveProfile(id){
-  const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),factory_address:v("apFactory"),due_date:v("apDue")};
+  const cel=document.getElementById("apConsent");
+  const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),factory_address:v("apFactory"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];toast("저장됨");await loadCases(true);}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
 }
