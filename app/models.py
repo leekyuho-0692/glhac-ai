@@ -211,7 +211,9 @@ class FatwaDecision(Base):
     committee_secretary = Column(String)  # 간사 — S3-2
     committee_members = Column(JSON)      # 위원 목록 — S3-2
     product_scope = Column(JSON)          # 파트와 대상 제품 ID 목록 — S3-2
-    decided_at = Column(DateTime)
+    decided_at = Column(DateTime)         # 샤리아 가승인 시각
+    final_approved_at = Column(DateTime)  # 최고운영자 최종승인 시각 — 2단계 승인
+    final_approver = Column(String)       # 최종 승인자 uid
 
 
 class Invoice(Base):

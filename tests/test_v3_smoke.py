@@ -41,16 +41,36 @@ def test_mockaudit_rbac():
 
 
 def test_permission_transfer_cert_issue():
-    """인증서 발급 권한 이관: consultant 차단(403) / operator·fatwa 역할 게이트 통과(≠403)."""
+    """인증서 발급 = 최고운영자(최종 결제자) 전용: consultant·fatwa 차단(403) / operator 통과(≠403)."""
     with TestClient(app) as c:
         cons = _tok(c, "consultant1", "pw")
         op = _tok(c, "operator1", "pw")
         fat = _tok(c, "fatwa1", "pw")
-        # consultant는 이제 발급 불가
+        # consultant·fatwa_liaison(샤리아)는 발급 불가 — 발급은 최고운영자만
         assert c.post("/cases/none/certificate/issue", headers=_h(cons)).status_code == 403
-        # operator·fatwa_liaison는 역할 통과(케이스 없어 403이 아닌 404 등)
+        assert c.post("/cases/none/certificate/issue", headers=_h(fat)).status_code == 403
+        # operator는 역할 통과(케이스 없어 403이 아닌 404 등)
         assert c.post("/cases/none/certificate/issue", headers=_h(op)).status_code != 403
-        assert c.post("/cases/none/certificate/issue", headers=_h(fat)).status_code != 403
+
+
+def test_two_stage_fatwa_approval():
+    """2단계 승인: 샤리아 가승인(provisional) → 최고운영자 최종승인(approved)."""
+    with TestClient(app) as c:
+        adm = _tok(c, "admin", "admin")
+        fat = _tok(c, "fatwa1", "pw")
+        op = _tok(c, "operator1", "pw")
+        cid = c.post("/cases", json={"company_name": "2Stage", "org_id": "org_demo"},
+                     headers=_h(adm)).json()["case_id"]
+        # 샤리아 가승인 → fatwa_status=provisional (최종 아님)
+        assert c.patch(f"/cases/{cid}/fatwa", json={"decision": "approved"},
+                       headers=_h(fat)).status_code == 200
+        assert c.get(f"/cases/{cid}", headers=_h(adm)).json()["fatwa_status"] == "provisional"
+        # 샤리아는 최종승인 불가(403)
+        assert c.post(f"/cases/{cid}/fatwa/final-approve", headers=_h(fat)).status_code == 403
+        # 최고운영자 최종승인 → approved + scope 동결
+        assert c.post(f"/cases/{cid}/fatwa/final-approve", headers=_h(op)).status_code == 200
+        d = c.get(f"/cases/{cid}", headers=_h(adm)).json()
+        assert d["fatwa_status"] == "approved" and d["scope_frozen"] is True
 
 
 def test_mockaudit_decision_validation():
@@ -162,7 +182,8 @@ def test_search_context_fallback_returns_list():
 
 if __name__ == "__main__":
     tests = [test_operator_role_seeded, test_mockaudit_rbac,
-             test_permission_transfer_cert_issue, test_mockaudit_decision_validation,
+             test_permission_transfer_cert_issue, test_two_stage_fatwa_approval,
+             test_mockaudit_decision_validation,
              test_mockaudit_decision_recorded_and_retrieved,
              test_mockaudit_reject_transitions_to_corrective,
              test_mockaudit_no_transition_on_non_mock_state,

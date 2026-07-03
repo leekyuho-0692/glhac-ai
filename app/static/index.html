@@ -1021,7 +1021,8 @@ SCREEN.audit=async()=>{
     API(`/cases/${id}/auditor-pool`).catch(()=>[])]);
   const canEdit=["auditor","sharia","ops","admin"].includes(ROLE);
   const canTeam=["sharia","ops","admin"].includes(ROLE);  // LPH 배정: fatwa_liaison·operator
-  const canPool=ROLE==="admin";  // auditor-pool: 백엔드 consultant 전용 → 심사화면에선 admin만
+  const canPool=["ops","admin"].includes(ROLE);  // auditor-pool: operator(최종 결제자)
+  const cur=curCaseObj();const onsiteActive=cur&&cur.status==="onsite_audit_in_progress";
   const poolHtml=pool.length?pool.map(a=>`<div class="li" style="padding:5px 0"><div class="ic t-info">🧑‍⚖️</div><div class="tx"><b>${esc(a.name)}</b><div>${esc(a.role_in_team||"")} ${esc(a.cert_no||"")}</div></div>${canPool?`<div class="when"><button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delAuditorPool('${id}','${a.auditor_pool_id||a.pool_id||a.id}')">✕</button></div>`:''}</div>`).join(""):'<div class="muted small">등록된 심사원 없음</div>';
   const fpg=pageSlice("findings",find,10);
   const fRows=fpg.items.length?fpg.items.map(f=>`<tr>
@@ -1072,8 +1073,14 @@ SCREEN.audit=async()=>{
       <tbody>${fRows}</tbody></table></div>
     ${pager("findings",fpg)}
     <div class="body btnrow" style="border-top:1px solid var(--line)">
-      ${canEdit?`<button class="btn pri" onclick="addFinding('${id}')">＋ 지적 추가</button>`:'<span class="chip">🔒 편집 불가</span>'}</div></div>`;
+      ${canEdit?`<button class="btn pri" onclick="addFinding('${id}')">＋ 지적 추가</button>`:'<span class="chip">🔒 편집 불가</span>'}
+      ${["auditor","ops","admin"].includes(ROLE)&&onsiteActive?`<button class="btn ok" style="margin-left:auto" onclick="closeOnsite('${id}')">🏭 현장심사 완료 · Close audit</button>`:''}</div></div>`;
 };
+async function closeOnsite(id){
+  if(!confirm("현장심사를 완료(audit_closed) 처리할까요?"))return;
+  try{await API(`/cases/${id}/transition`,{method:"POST",body:JSON.stringify({to_state:"audit_closed",action:"onsite.complete"})});toast("현장심사 완료");await loadCases(true);applyView();}
+  catch(e){toast("실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}
+}
 async function setFinding(fid,status){try{await API(`/findings/${fid}`,{method:"PATCH",body:JSON.stringify({status})});toast("지적 "+(status==='closed'?'종결':'재개'));applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function delFinding(fid){if(!confirm("이 지적을 삭제할까요?"))return;try{await API(`/findings/${fid}`,{method:"DELETE"});toast("지적 삭제");applyView();}catch(e){toast("삭제 실패 · "+(e&&e.code?e.code:""));}}
 async function cycleOnsite(id,key,cur){
@@ -1226,20 +1233,31 @@ SCREEN.fatwa=async()=>{
   const memHtml=(Array.isArray(members)?members:[]).map(m=>{
     const nm=typeof m==="string"?m:(m.name||"");const av=(nm||"?").slice(0,2).toUpperCase();
     return `<div class="mem"><div class="av">${esc(av)}</div><div style="flex:1"><b>${esc(nm)}</b><div class="muted small">${esc(typeof m==="object"?(m.role||"위원"):"위원")}</div></div>${tag("ok","등록")}</div>`;}).join("")||'<div class="muted small">위원 정보 없음</div>';
-  const canDecide=["sharia","ops","admin"].includes(ROLE);
+  const fst=fd.fatwa_status||"none";
+  const isProvisional=fst==="provisional", isFinal=fst==="approved";
+  const canProvisional=["sharia","admin"].includes(ROLE);   // 샤리아 가승인
+  const canFinal=["ops","admin"].includes(ROLE);            // 최고운영자 최종승인
+  const stageBanner=isFinal?["ok","✓ 최종 승인 완료 (최고운영자)"]
+    :isProvisional?["info","⏳ 가승인 (샤리아) — 최종 결제자 최종승인 대기"]
+    :fst==="rejected"?["bad","⛔ 반려됨"]:fst==="conditional"?["warn","조건부 승인"]:["mute","심의 전"];
   return `
   <div class="grid side">
-    <div class="card"><h3>파트와 위원회 심의 <span class="en">· Committee</span><span class="r">${esc(fd.decision||"pending")}</span></h3>
+    <div class="card"><h3>파트와 위원회 심의 <span class="en">· Committee</span><span class="r">${esc(fst)}</span></h3>
       <div class="body">
-        <div class="banner ${statusColor(fd.decision)==='ok'?'ok':'info'}" style="margin-bottom:12px">현재 결정 · <b>${esc(fd.decision||"심의 전")}</b>${fd.decision_no?" · "+esc(fd.decision_no):""}</div>
+        <div class="banner ${stageBanner[0]==='mute'?'info':stageBanner[0]}" style="margin-bottom:12px">${stageBanner[1]}${fd.decision_no?" · "+esc(fd.decision_no):""}${fd.final_approved_at?" · 최종 "+esc(String(fd.final_approved_at).slice(0,16)):""}</div>
         <div class="field"><label>심의 요지 · Note</label><div class="v small">${esc(fd.committee_note||"—")}</div></div>
         <div class="field"><label>위원장 · Head</label><div class="v small">${esc(fd.committee_head||"—")} / 간사 ${esc(fd.committee_secretary||"—")}</div></div>
         <div class="divide"></div>
-        <div style="font-size:12.5px;margin-bottom:8px"><b>결정 · Decision</b> ${canDecide?"":'<span class="chip">🔒 샤리아·최고운영자만</span>'}</div>
-        ${canDecide?`<div class="btnrow"><button class="btn ok" onclick="fatwaDecide('${id}','approved')">승인</button>
-          <button class="btn gold" onclick="fatwaDecide('${id}','conditional')">조건부</button>
-          <button class="btn bad" onclick="fatwaDecide('${id}','rejected')">반려</button></div>
-          <button class="btn pri" style="margin-top:10px" onclick="fatwaDoc('${id}')">결정문 생성 → scope 동결</button>`:""}
+        <div style="font-size:12.5px;margin-bottom:8px"><b>승인 단계 · 2-stage approval</b></div>
+        ${canProvisional&&!isFinal?`<div class="field"><label>① 샤리아 가승인 · Provisional</label>
+          <div class="btnrow"><button class="btn ok" onclick="fatwaDecide('${id}','approved')">가승인</button>
+            <button class="btn gold" onclick="fatwaDecide('${id}','conditional')">조건부</button>
+            <button class="btn bad" onclick="fatwaDecide('${id}','rejected')">반려</button></div></div>`:''}
+        ${canFinal?`<div class="field"><label>② 최고운영자 최종승인 · Final approval</label>
+          <button class="btn pri" ${isProvisional?'':'disabled'} onclick="fatwaFinalApprove('${id}')">${isFinal?'✓ 최종승인 완료':'최종승인 (scope 동결)'}</button>
+          ${!isProvisional&&!isFinal?'<span class="chip" style="margin-left:6px">샤리아 가승인 후 활성화</span>':''}</div>`:''}
+        ${!canProvisional&&!canFinal?'<span class="chip">🔒 샤리아(가승인)·최고운영자(최종승인) 전용</span>':''}
+        <button class="btn" style="margin-top:10px" onclick="fatwaDoc('${id}')">📄 결정문 생성·다운로드</button>
       </div></div>
     <div class="card"><h3>위원 구성 <span class="en">· Members</span></h3>
       <div class="body"><div class="committee">${memHtml}</div>
@@ -1249,7 +1267,8 @@ SCREEN.fatwa=async()=>{
       </div></div>
   </div>`;
 };
-async function fatwaDecide(id,decision){try{await API(`/cases/${id}/fatwa`,{method:"PATCH",body:JSON.stringify({decision})});toast("결정 · "+decision);await loadCases(true);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
+async function fatwaDecide(id,decision){try{await API(`/cases/${id}/fatwa`,{method:"PATCH",body:JSON.stringify({decision})});toast(decision==='approved'?"가승인 완료":"결정 · "+decision);await loadCases(true);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
+async function fatwaFinalApprove(id){if(!confirm("최종 승인하시겠습니까? (scope 동결·인증서 발급 가능)"))return;try{await API(`/cases/${id}/fatwa/final-approve`,{method:"POST",body:"{}"});toast("최종 승인 완료");await loadCases(true);applyView();}catch(e){toast("최종승인 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
 async function fatwaDoc(id){try{const r=await API(`/cases/${id}/fatwa/document`,{method:"POST",body:"{}"});downloadText("fatwa_"+short(id)+".txt",r.document||"");toast("결정문 생성·다운로드");}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
 
 /* 13) Certificate */
@@ -1257,7 +1276,7 @@ SCREEN.certificate=async()=>{
   const id=CURCASE;
   const [c,ciHist]=await Promise.all([API(`/cases/${id}/certificate`).catch(()=>({issued:false})),API(`/cases/${id}/certificate/change-impact-history`).catch(()=>[])]);
   const co=curCaseObj();
-  const canIssue=["sharia","ops","admin"].includes(ROLE);
+  const canIssue=["ops","admin"].includes(ROLE);  // 인증서 발급 = 최고운영자(최종 결제자)
   const certCard=c.issued?`<div class="cert">
       <div class="seal">☪</div>
       <div class="small" style="letter-spacing:2px;color:var(--gold)">SERTIFIKAT HALAL</div>
@@ -1284,7 +1303,7 @@ SCREEN.certificate=async()=>{
           ${c.issued?`<button class="btn" onclick="changeImpact('${id}')">변경영향 분석</button>`:''}
           ${c.issued&&["client","consultant","admin"].includes(ROLE)?`<button class="btn" onclick="renewCert('${id}')">갱신 · Renew</button>`:''}
           ${c.issued&&["consultant","admin"].includes(ROLE)?`<button class="btn" onclick="unlockCert('${id}')">잠금해제 · Unlock</button>`:''}
-          ${!canIssue?'<span class="chip">🔒 발급 — 샤리아·최고운영자</span>':''}</div></div></div>
+          ${!canIssue?'<span class="chip">🔒 발급 — 최고운영자(최종 결제자)</span>':''}</div></div></div>
   </div>
   <div class="card" style="margin-top:16px"><h3>변경영향 분석 이력 <span class="en">· Change-impact history</span><span class="r">${(ciHist||[]).length}건</span></h3>
     <div class="body tight"><table><thead><tr><th>일시</th><th>변경 유형</th><th>위험도</th><th>점수</th><th>영향 제품</th><th>조치</th></tr></thead>
