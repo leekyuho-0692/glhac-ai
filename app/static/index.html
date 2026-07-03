@@ -1591,13 +1591,24 @@ async function renderInvoice(){const el=document.getElementById('invoice');if(!e
   if(typeof renderInvoiceV1==='function'){try{renderInvoiceV1()}catch(e){}}
   if(!glhacToken())return;
   let cid,inv=[];try{cid=await glhacEnsureCase();inv=await glhacApi('/cases/'+cid+'/invoices')}catch(e){return}
-  const rows=inv.map(function(i){return '<tr><td>'+esc(i.invoice_no||'-')+'</td><td>'+esc(i.service_type||'')+'</td><td style="text-align:right">'+(i.amount||0).toLocaleString()+'</td><td style="text-align:right">'+(i.ppn||0).toLocaleString()+'</td><td style="text-align:right"><b>'+(i.total||0).toLocaleString()+'</b></td><td><span class="pill '+(i.status==='paid'?'green':'amber')+'">'+i.status+'</span></td><td>'+(i.status==='unpaid'?'<button class="btn small primary" onclick="glhacPayInvoice(\''+i.invoice_id+'\')">결제 표시</button>':'✅')+'</td></tr>'}).join('')||'<tr><td colspan="7" class="empty" style="border:0">청구 없음</td></tr>';
   const unpaid=inv.filter(function(i){return i.status==='unpaid'}).length;
   const html='<div class="card" style="margin-top:18px;border-left:5px solid #652672"><div class="ai-head"><b>🔗 청구/인보이스 (백엔드, PPN 11%)</b><span class="pill purple">v2</span></div>'
    +'<div class="actions" style="margin-bottom:8px"><span class="pill '+(unpaid?'red':'green')+'">미결제 '+unpaid+'</span><span class="mini-muted">미결제 시 사전심사 검토 전이가 차단됩니다.</span></div>'
    +glhacBtn('invoice_create','<div class="form-row" style="margin-bottom:8px"><select id="ivType"><option value="pre_audit">사전심사</option><option value="onsite">현장심사</option></select><div class="actions"><input id="ivAmt" type="number" placeholder="금액(IDR)" value="1000000"/><button class="btn primary" onclick="glhacAddInvoice()">청구 생성</button></div></div>')
-   +'<table><thead><tr><th>인보이스번호</th><th>서비스</th><th style="text-align:right">금액</th><th style="text-align:right">PPN(11%)</th><th style="text-align:right">합계</th><th>상태</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+   +'<div id="invoiceTable"></div></div>';
   el.insertAdjacentHTML('beforeend',html);
+  // v3: C0 DataList 적용 (정렬·검색·페이지·CSV) — 액션(결제 표시) 컬럼 보존
+  if(typeof dlRender==='function') dlRender('invoiceTable',{idKey:'invoice_id',pageSize:15,empty:'청구 없음 · No invoices',
+    columns:[
+      {key:'invoice_no',label:'인보이스번호 · No',fmt:function(v){return esc(v||'-')}},
+      {key:'service_type',label:'서비스 · Service'},
+      {key:'amount',label:'금액 · Amount',fmt:function(v){return (v||0).toLocaleString()}},
+      {key:'ppn',label:'PPN(11%)',fmt:function(v){return (v||0).toLocaleString()}},
+      {key:'total',label:'합계 · Total',fmt:function(v){return '<b>'+(v||0).toLocaleString()+'</b>'}},
+      {key:'status',label:'상태 · Status',fmt:function(v){return '<span class="pill '+(v==='paid'?'green':'amber')+'">'+esc(v)+'</span>'}},
+      {key:'_act',label:'',sort:false,fmt:function(_v,r){return r.status==='unpaid'?'<button class="btn small primary" onclick="glhacPayInvoice(\''+r.invoice_id+'\')">결제 표시</button>':'✅'}}
+    ],
+    rows:inv});
 }
 async function glhacAddInvoice(){const amt=parseFloat(document.getElementById('ivAmt').value||'0');if(!amt){toast('금액 입력');return}try{const cid=await glhacEnsureCase();await glhacApi('/cases/'+cid+'/invoices',{method:'POST',body:JSON.stringify({service_type:document.getElementById('ivType').value,amount:amt})});renderInvoice();}catch(e){toast('청구 실패: '+JSON.stringify(e))}}
 async function glhacPayInvoice(id){try{await glhacApi('/invoices/'+id+'/pay',{method:'PATCH'});renderInvoice();}catch(e){toast('결제 실패')}}
