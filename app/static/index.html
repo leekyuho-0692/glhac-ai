@@ -237,7 +237,7 @@
     <input id="loginUser" placeholder="아이디 · Username" autocomplete="username" autofocus>
     <input id="loginPass" type="password" placeholder="비밀번호 · Password" autocomplete="current-password">
     <button class="btn pri" style="width:100%;justify-content:center;padding:11px" type="submit">로그인 · Sign in</button>
-    <div class="demo">
+    <div class="demo" id="demoPanel" style="display:none">
       <b>데모 계정 · demo — 클릭하여 로그인</b>
       <div class="demogrid">
         <button type="button" class="btn" onclick="quickLogin('applicant1','pw')">🏢 클라이언트<span>applicant1</span></button>
@@ -394,8 +394,9 @@ async function doLogin(e){
 }
 function logout(){
   ["glhac_token","glhac_role","glhac_org","glhac_user","glhac_case"].forEach(k=>{try{localStorage.removeItem(k)}catch(_){}} );
-  document.getElementById("appView").style.display="none";
-  document.getElementById("loginView").style.display="grid";
+  // 보안: JS 전역(CHAT·SIHALAL_EID·선택상태 등) 잔존 → 같은 탭 다음 사용자에게 누수.
+  // 전체 리로드로 모든 인메모리 상태를 초기화.
+  try{location.reload();}catch(_){document.getElementById("appView").style.display="none";document.getElementById("loginView").style.display="grid";}
 }
 function showRegister(on){document.getElementById("loginForm").style.display=on?"none":"";document.getElementById("registerForm").style.display=on?"":"none";}
 function quickLogin(u,p){document.getElementById("loginUser").value=u;document.getElementById("loginPass").value=p;doLogin();}
@@ -657,11 +658,10 @@ async function loadDocPreview(docId){
   box.innerHTML='<div class="muted small">미리보기 불러오는 중…</div>';
   try{const r=await fetch(`/documents/${docId}/file`,{headers:{Authorization:"Bearer "+token()}});
     if(!r.ok){box.innerHTML='<div class="muted small">첨부 파일이 없습니다 · no file</div>';return;}
-    const blob=await r.blob();const url=URL.createObjectURL(blob);const ct=(blob.type||"").toLowerCase();
-    if(ct.includes("pdf")){box.innerHTML=`<iframe src="${url}" title="PDF" style="width:100%;height:540px;border:1px solid var(--line);border-radius:10px;background:#fff"></iframe>`;}
-    else if(ct.startsWith("image/")){box.innerHTML=`<img src="${url}" alt="preview" style="max-width:100%;border:1px solid var(--line);border-radius:10px">`;}
-    else{box.innerHTML=`<div class="banner info">이 형식은 인라인 미리보기를 지원하지 않습니다 · <a href="${url}" target="_blank" style="color:inherit;text-decoration:underline">새 탭에서 열기 ↗</a></div>`;}
-    setTimeout(()=>URL.revokeObjectURL(url),120000);
+    const blob=await r.blob();const ct=(blob.type||"").toLowerCase();
+    if(ct.includes("pdf")){const url=URL.createObjectURL(blob);box.innerHTML=`<iframe src="${url}" title="PDF" sandbox style="width:100%;height:540px;border:1px solid var(--line);border-radius:10px;background:#fff"></iframe>`;setTimeout(()=>URL.revokeObjectURL(url),120000);}
+    else if(ct.startsWith("image/")&&ct!=="image/svg+xml"){const url=URL.createObjectURL(blob);box.innerHTML=`<img src="${url}" alt="preview" style="max-width:100%;border:1px solid var(--line);border-radius:10px">`;setTimeout(()=>URL.revokeObjectURL(url),120000);}
+    else{box.innerHTML=`<div class="banner info">이 형식은 인라인 미리보기를 지원하지 않습니다 · <a href="#" onclick="viewDoc('${esc(docId)}');return false" style="color:inherit;text-decoration:underline">파일 내려받기 ↓</a></div>`;}
   }catch(e){box.innerHTML='<div class="muted small">미리보기 실패</div>';}
 }
 function errCard(err){
@@ -1187,8 +1187,16 @@ function selectDoc(did){DOC_SEL=did;applyView();}
 async function exportCaseJson(id){try{const r=await fetch(`/cases/${id}/export.json`,{headers:{Authorization:"Bearer "+token()}});if(!r.ok)throw 0;const d=await r.json();downloadText("case_"+short(id)+".json",JSON.stringify(d,null,2));toast("JSON 내보내기 완료");}catch(_){toast("내보내기 실패");}}
 async function exportReport(id){try{const r=await API(`/cases/${id}/report`,{method:"POST",body:"{}"});downloadText("report_"+short(id)+".txt",r.report||"");toast("종합 보고서 생성·다운로드");}catch(e){toast("보고서 실패 · "+(e&&e.code?e.code:""));}}
 async function viewDoc(docId){
+  // 보안: blob:은 동일 출처 → HTML/SVG를 새 탭에서 열면 앱 origin에서 스크립트 실행(토큰 탈취).
+  // 실행 불가한 다운로드로 강제하고, 파일명은 Content-Disposition에서 취득.
   try{const r=await fetch(`/documents/${docId}/file`,{headers:{Authorization:"Bearer "+token()}});
-    if(!r.ok){toast("파일 없음");return;}const b=await r.blob();const u=URL.createObjectURL(b);window.open(u,"_blank");setTimeout(()=>URL.revokeObjectURL(u),60000);}
+    if(!r.ok){toast("파일 없음");return;}
+    const cd=r.headers.get("Content-Disposition")||"";const m=cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+    const fname=m?decodeURIComponent(m[1].replace(/"/g,"")):("document_"+short(docId));
+    const b=await r.blob();
+    const dl=b.slice(0,b.size,"application/octet-stream");   // MIME 중화 → 실행 방지
+    const u=URL.createObjectURL(dl);const a=document.createElement("a");a.href=u;a.download=fname;a.click();
+    setTimeout(()=>URL.revokeObjectURL(u),60000);}
   catch(_){toast("열기 실패");}
 }
 async function reviewDoc(docId,st){if(!st)return;try{await API(`/documents/${docId}/review`,{method:"PATCH",body:JSON.stringify({review_status:st})});toast("검수 · "+st);applyView();}catch(e){toast("검수 실패 · "+(e&&e.code?e.code:""));}}
@@ -1705,7 +1713,9 @@ function parseHash(){
   return {screen:parts[0]||"dashboard",filters:q};
 }
 async function boot(){
-  if(!token()){document.getElementById("appView").style.display="none";document.getElementById("loginView").style.display="grid";return;}
+  if(!token()){document.getElementById("appView").style.display="none";document.getElementById("loginView").style.display="grid";
+    try{const cfg=await fetch("/public-config").then(r=>r.json());if(cfg&&cfg.dev_mode){const dp=document.getElementById("demoPanel");if(dp)dp.style.display="";}}catch(_){}
+    return;}
   try{const th=localStorage.getItem("glhac_theme")||"light";document.documentElement.setAttribute("data-theme",th);document.getElementById("themePill").textContent=th==="dark"?"☀️ 라이트":"🌙 다크";}catch(_){}
   try{LANG=parseInt(localStorage.getItem("glhac_lang")||"0",10)||0;applyLang();}catch(_){}
   let me;try{me=await API("/auth/me");}catch(_){logout();return;}

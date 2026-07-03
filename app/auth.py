@@ -1,15 +1,44 @@
-"""인증·RBAC/ABAC — 설계 B.4 / 24.1.3. stdlib HMAC 토큰(외부 의존 없음)."""
+"""인증·RBAC/ABAC — 설계 B.4 / 24.1.3. stdlib HMAC 토큰(외부 의존 없음).
+
+보안 Phase A:
+- 비밀번호: PBKDF2-HMAC-SHA256(per-user salt, algo-tagged). 레거시 sha256 로그인 시 자동 재해시.
+- 시크릿: 기본값이면 dev 모드에서만 허용(프로덕션 부팅 실패).
+- 데모 계정: GLHAC_DEV=1 일 때만 시드(프로덕션 우회). 프로덕션은 GLHAC_ADMIN_USER/PASSWORD로 부트스트랩.
+- 로그인 레이트리밋(인메모리 슬라이딩 윈도).
+"""
 import os
 import time
 import json
 import hmac
 import base64
 import hashlib
+import secrets
 from fastapi import Depends, HTTPException, Header
 from . import models
 
-SECRET = os.environ.get("GLHAC_SECRET", "dev-secret-change-me").encode()
+_DEFAULT_SECRET = "dev-secret-change-me"
+SECRET = os.environ.get("GLHAC_SECRET", _DEFAULT_SECRET).encode()
 
+
+def dev_mode() -> bool:
+    """개발 모드 — 데모 계정 시드 + 기본 시크릿 허용."""
+    return os.environ.get("GLHAC_DEV") == "1"
+
+
+def secret_is_default() -> bool:
+    return SECRET == _DEFAULT_SECRET.encode()
+
+
+def enforce_secret():
+    """프로덕션(비-dev)에서 기본 시크릿이면 부팅 실패 — 토큰 위조 방지."""
+    if secret_is_default() and not dev_mode():
+        raise RuntimeError(
+            "GLHAC_SECRET 미설정(기본값). 프로덕션 부팅 차단. "
+            "GLHAC_SECRET에 강한 랜덤값을 설정하거나 개발 시 GLHAC_DEV=1."
+        )
+
+
+# 데모/시드 계정 — 프로덕션에서는 시드하지 않음(GLHAC_DEV=1 전용).
 DEFAULT_USERS = [
     ("admin", "admin", "admin", "*"),
     ("consultant1", "pw", "consultant", "org_demo"),
@@ -21,9 +50,59 @@ DEFAULT_USERS = [
     ("operator1", "pw", "operator", "org_demo"),   # v3: 최고 업무운영자(최종승인자)
 ]
 
+# ---- 비밀번호 해시: PBKDF2-HMAC-SHA256 (stdlib, 신규 의존성 없음) ----
+_PBKDF2_ROUNDS = 200_000
 
-def hash_pw(pw, salt="glhac"):
-    return hashlib.sha256((salt + pw).encode()).hexdigest()
+
+def hash_pw(pw, salt=None):
+    """새 해시 포맷: pbkdf2_sha256$rounds$salt_hex$hash_hex (per-user 랜덤 salt)."""
+    salt_hex = salt if salt else secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", (pw or "").encode(), bytes.fromhex(salt_hex), _PBKDF2_ROUNDS)
+    return f"pbkdf2_sha256${_PBKDF2_ROUNDS}${salt_hex}${dk.hex()}"
+
+
+def _hash_legacy(pw, salt="glhac"):
+    return hashlib.sha256((salt + (pw or "")).encode()).hexdigest()
+
+
+def verify_pw(pw, stored) -> bool:
+    """상수시간 비교. pbkdf2 우선, 레거시 sha256 fallback."""
+    if not stored:
+        return False
+    if stored.startswith("pbkdf2_sha256$"):
+        try:
+            _, rounds, salt_hex, hexhash = stored.split("$")
+            dk = hashlib.pbkdf2_hmac("sha256", (pw or "").encode(), bytes.fromhex(salt_hex), int(rounds))
+            return hmac.compare_digest(dk.hex(), hexhash)
+        except Exception:  # noqa: BLE001
+            return False
+    return hmac.compare_digest(_hash_legacy(pw), stored)
+
+
+def needs_rehash(stored) -> bool:
+    """레거시(비-pbkdf2) 해시면 로그인 성공 시 재해시 필요."""
+    return not (stored or "").startswith("pbkdf2_sha256$")
+
+
+# ---- 로그인 레이트리밋 (인메모리 슬라이딩 윈도; 단일 프로세스 가정) ----
+_LOGIN_ATTEMPTS = {}   # key -> [timestamps]
+_RL_WINDOW = 300       # 5분
+_RL_MAX = 10           # 윈도당 최대 실패
+
+
+def rate_limited(key) -> bool:
+    now = time.time()
+    arr = [t for t in _LOGIN_ATTEMPTS.get(key, []) if now - t < _RL_WINDOW]
+    _LOGIN_ATTEMPTS[key] = arr
+    return len(arr) >= _RL_MAX
+
+
+def record_attempt(key):
+    _LOGIN_ATTEMPTS.setdefault(key, []).append(time.time())
+
+
+def clear_attempts(key):
+    _LOGIN_ATTEMPTS.pop(key, None)
 
 
 def make_token(user, ttl=86400):
@@ -72,7 +151,16 @@ def check_org(user, case):
 
 
 def seed_users(db):
-    if db.query(models.User).count() == 0:
+    """데모 계정은 GLHAC_DEV=1 에서만. 프로덕션은 GLHAC_ADMIN_USER/PASSWORD로 admin 1개 부트스트랩."""
+    if db.query(models.User).count() != 0:
+        return
+    if dev_mode():
         for u, pw, role, org in DEFAULT_USERS:
             db.add(models.User(username=u, password_hash=hash_pw(pw), role=role, org_id=org))
+        db.commit()
+        return
+    admin_u = os.environ.get("GLHAC_ADMIN_USER")
+    admin_p = os.environ.get("GLHAC_ADMIN_PASSWORD")
+    if admin_u and admin_p:
+        db.add(models.User(username=admin_u, password_hash=hash_pw(admin_p), role="admin", org_id="*"))
         db.commit()

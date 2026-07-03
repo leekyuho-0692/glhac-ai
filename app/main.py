@@ -2,16 +2,54 @@
 import io
 import os
 import base64
+import logging
 from datetime import datetime, date
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+
+logging.basicConfig(
+    level=os.environ.get("GLHAC_LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
+log = logging.getLogger("glhac")
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db, SessionLocal
 from . import models, schemas, state_machine as sm, screening, ai_local, auth
 from .ontology_seed import seed
 
 app = FastAPI(title="GL-HAC AI Dual-Pathway API", version="0.2.0")
+
+# CORS — 기본은 동일 출처만. GLHAC_CORS_ORIGINS(콤마구분)로 SPA 출처 명시 허용.
+_cors_env = os.environ.get("GLHAC_CORS_ORIGINS", "").strip()
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exc(request: Request, exc: Exception):
+    """미처리 예외 — 스택 유출 없이 일반화된 500 반환, 서버에는 상세 로깅."""
+    log.exception("unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"code": "INTERNAL_ERROR"})
+
+
+def _sandboxed_path(raw_path: str) -> str:
+    """경로 traversal 방지 — GLHAC_UPLOAD_DIR 접두만 허용(P0)."""
+    import os as _os
+    p = _os.path.realpath(raw_path or "")
+    sandbox = _os.path.realpath(_os.environ.get("GLHAC_UPLOAD_DIR", "/tmp"))
+    if not p.startswith(sandbox + _os.sep):
+        raise HTTPException(400, {"code": "PATH_NOT_ALLOWED", "sandbox": sandbox})
+    return p
 
 
 def _migrate():
@@ -34,6 +72,56 @@ def _migrate():
                     pass
 
 
+# Phase B: 핫 컬럼 인덱스(테이블스캔 제거) — SQLite/Postgres 양립, 기존 DB 포함.
+_HOT_INDEXES = [
+    ("material", "case_id"), ("document_asset", "case_id"), ("product", "case_id"),
+    ("workflow_event", "case_id"), ("invoice", "case_id"), ("audit_finding", "case_id"),
+    ("halal_certificate", "case_id"), ("fatwa_decision", "case_id"),
+    ("product_material", "case_id"), ("onsite_checklist", "case_id"),
+    ("hpas_evaluation", "case_id"), ("sjph_evidence", "case_id"),
+    ("discussion", "case_id"), ("pendamping_assignment", "case_id"),
+    ("lph_assignment", "case_id"), ("external_identity", "case_id"),
+    ("document_asset", "material_id"), ("document_asset", "product_id"),
+]
+# 복합/부분 유니크(경합 시 중복행 방지) — CREATE UNIQUE INDEX 는 양 엔진 모두 지원.
+_UNIQUE_INDEXES = [
+    ("uq_product_material", "product_material", "case_id, product_id, material_id", None),
+    ("uq_onsite_item", "onsite_checklist", "case_id, item_key", None),
+    ("uq_hpas_element", "hpas_evaluation", "case_id, element", None),
+    ("uq_gendoc_version", "generated_document", "case_id, doc_type, version", None),
+    ("uq_cert_active", "halal_certificate", "case_id", "status = 'active'"),  # 부분 유니크
+]
+
+
+def _ensure_indexes():
+    """인덱스·유니크 인덱스 idempotent 생성. 기존 데이터에 중복이 있으면 유니크 생성만 skip(로그)."""
+    from sqlalchemy import text as _sql, inspect as _inspect
+    import logging
+    log = logging.getLogger("glhac.migrate")
+    insp = _inspect(engine)
+    tables = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table, col in _HOT_INDEXES:
+            if table not in tables:
+                continue
+            name = f"ix_{table}_{col}"
+            try:
+                conn.execute(_sql(f'CREATE INDEX IF NOT EXISTS {name} ON {table} ({col})'))
+            except Exception as e:  # noqa: BLE001
+                log.warning("index %s skipped: %s", name, e)
+    for name, table, cols, where in _UNIQUE_INDEXES:
+        if table not in tables:
+            continue
+        ddl = f'CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {table} ({cols})'
+        if where:
+            ddl += f' WHERE {where}'
+        try:
+            with engine.begin() as conn:   # 개별 트랜잭션 — 중복으로 실패해도 나머지 진행
+                conn.execute(_sql(ddl))
+        except Exception as e:  # noqa: BLE001
+            log.warning("unique index %s skipped (기존 중복 가능): %s", name, e)
+
+
 def _notify_worker_loop(interval=30):
     """비동기 발송 워커 — GLHAC_NOTIFY_WORKER=1 일 때만 기동. 주기적으로 큐 드레인."""
     import time
@@ -51,8 +139,10 @@ def _notify_worker_loop(interval=30):
 
 @app.on_event("startup")
 def _startup():
+    auth.enforce_secret()   # 프로덕션에서 기본 시크릿이면 부팅 차단(토큰 위조 방지)
     Base.metadata.create_all(bind=engine)
     _migrate()
+    _ensure_indexes()   # Phase B: 핫 인덱스 + 경합 방지 유니크
     db = SessionLocal()
     try:
         seed(db)
@@ -127,34 +217,60 @@ def _notify(db, case, event_type, title, body="", channels=None, role=None):
     return n
 
 
+_NOTIFY_NONRETRY = ("no_credentials", "no_contact", "not_implemented")
+
+
 def drain_notifications(db, batch=50, max_attempts=3):
-    """미발송 알림 큐를 드레인 — 채널 프로바이더로 발송, 실패 시 재시도(최대 max_attempts)."""
+    """미발송 알림 큐를 드레인 — 원자 클레임(중복발송 방지) + 수신동의 게이트 + 재시도."""
     from . import notify as _nt
-    rows = (db.query(models.Notification).filter(models.Notification.status == "unsent")
-            .order_by(models.Notification.created_at).limit(batch).all())
-    stats = {"processed": 0, "sent": 0, "retried": 0, "failed": 0}
-    for n in rows:
+    # 크래시로 남은 'sending'(고아) 회수 — 단일 워커 가정. 멀티워커는 리스 타임스탬프 필요.
+    db.query(models.Notification).filter(models.Notification.status == "sending").update(
+        {"status": "unsent"}, synchronize_session=False)
+    db.commit()
+    # 원자적 클레임: unsent → sending. 동시 드레인/워커가 같은 행을 이중 발송하지 못하게.
+    candidates = (db.query(models.Notification).filter(models.Notification.status == "unsent")
+                  .order_by(models.Notification.created_at).limit(batch).all())
+    claimed = []
+    for n in candidates:
+        got = (db.query(models.Notification)
+               .filter(models.Notification.notification_id == n.notification_id,
+                       models.Notification.status == "unsent")
+               .update({"status": "sending"}, synchronize_session=False))
+        if got:
+            claimed.append(n)
+    db.commit()
+
+    stats = {"processed": 0, "sent": 0, "retried": 0, "failed": 0, "consent_skipped": 0}
+    for n in claimed:
         stats["processed"] += 1
-        contact = None
+        contact, consent = None, False
         if n.case_id:
             c = db.get(models.CaseApplication, n.case_id)
             contact = c.phone if c else None
+            consent = bool(c.notify_consent) if c else False
+        # 수신동의 게이트 — 외부채널(sms/whatsapp/kakao)은 동의 시에만. inapp은 항상 발송.
+        requested = n.channels or ["inapp"]
+        eff = [ch for ch in requested if ch == "inapp" or consent]
+        dropped = [ch for ch in requested if ch != "inapp" and not consent]
         try:
-            results = _nt.dispatch(n, contact=contact)
+            results = _nt.dispatch(n, contact=contact, channels=eff)
         except Exception as e:  # noqa: BLE001
             results = [{"channel": "?", "ok": False, "reason": str(e)}]
-        # no_credentials/no_contact = 재시도 불가(프로바이더 미구성), 그 외 실패는 재시도
-        retryable = any((not r.get("ok")) and r.get("reason") not in ("no_credentials", "no_contact")
+        retryable = any((not r.get("ok")) and r.get("reason") not in _NOTIFY_NONRETRY
                         for r in results)
         n.attempts = (n.attempts or 0) + 1
         if not retryable:
             n.status = "sent"
             stats["sent"] += 1
+            if dropped:
+                n.last_error = "consent_skipped:" + ",".join(dropped)
+                stats["consent_skipped"] += 1
         elif n.attempts >= max_attempts:
             n.status = "failed"
             n.last_error = "max_attempts"
             stats["failed"] += 1
         else:
+            n.status = "unsent"   # 재시도 위해 큐로 복귀
             n.last_error = "; ".join(r.get("reason", "") for r in results if not r.get("ok"))
             stats["retried"] += 1
     db.commit()
@@ -186,8 +302,23 @@ def _register_from_judgment(db, c, res):
 
 # ---------- health / auth ----------
 @app.get("/health")
-def health():
-    return {"status": "ok", "service": "glhac-ai", "version": "0.2.0"}
+def health(db: Session = Depends(get_db)):
+    """라이브니스+DB 체크 — 로드밸런서/오케스트레이터용."""
+    try:
+        from sqlalchemy import text as _sql
+        db.execute(_sql("SELECT 1"))
+        dbok = True
+    except Exception:  # noqa: BLE001
+        dbok = False
+    status = "ok" if dbok else "degraded"
+    return JSONResponse(status_code=200 if dbok else 503,
+                        content={"status": status, "service": "glhac-ai", "version": "0.2.0", "db": dbok})
+
+
+@app.get("/public-config")
+def public_config():
+    """로그인 화면용 공개 설정 — dev 모드에서만 데모 계정 노출."""
+    return {"dev_mode": auth.dev_mode()}
 
 
 @app.get("/ai/health")
@@ -197,9 +328,17 @@ def ai_health():
 
 @app.post("/auth/login")
 def login(body: schemas.LoginReq, db: Session = Depends(get_db)):
+    rl_key = (body.username or "").lower()
+    if auth.rate_limited(rl_key):
+        raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS", "retry_after_sec": auth._RL_WINDOW})
     u = db.query(models.User).filter_by(username=body.username).first()
-    if not u or u.password_hash != auth.hash_pw(body.password):
+    if not u or not auth.verify_pw(body.password, u.password_hash):
+        auth.record_attempt(rl_key)
         raise HTTPException(401, {"code": "BAD_CREDENTIALS"})
+    auth.clear_attempts(rl_key)
+    if auth.needs_rehash(u.password_hash):   # 레거시 sha256 → pbkdf2 자동 승격
+        u.password_hash = auth.hash_pw(body.password)
+        db.commit()
     return {"token": auth.make_token(u), "role": u.role, "org_id": u.org_id, "username": u.username}
 
 
@@ -289,9 +428,11 @@ _ALL_ROLES = ["applicant", "consultant", "penyelia_halal", "pendamping_pph",
 
 
 @app.get("/admin/users")
-def admin_list_users(user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+def admin_list_users(user=Depends(auth.require_roles()), db: Session = Depends(get_db),
+                     limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0)):
     return [{"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id}
-            for u in db.query(models.User).order_by(models.User.username).all()]
+            for u in db.query(models.User).order_by(models.User.username)
+            .offset(offset).limit(limit).all()]
 
 
 @app.post("/admin/users")
@@ -358,8 +499,10 @@ def admin_create_org(body: schemas.AdminOrgReq, user=Depends(auth.require_roles(
 
 
 @app.get("/admin/cases")
-def admin_all_cases(user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
-    rows = db.query(models.CaseApplication).order_by(models.CaseApplication.created_at.desc()).all()
+def admin_all_cases(user=Depends(auth.require_roles()), db: Session = Depends(get_db),
+                    limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0)):
+    rows = (db.query(models.CaseApplication).order_by(models.CaseApplication.created_at.desc())
+            .offset(offset).limit(limit).all())
     return [{"case_id": c.case_id, "org_id": c.org_id, "company_name": c.company_name,
              "status": c.status, "pathway": c.pathway, "fatwa_status": c.fatwa_status} for c in rows]
 
@@ -399,6 +542,8 @@ def admin_global_audit(user=Depends(auth.require_roles()), db: Session = Depends
 @app.post("/admin/seed-reset")
 def admin_seed_reset(body: schemas.SeedResetReq, user=Depends(auth.require_roles()),
                      db: Session = Depends(get_db)):
+    if not auth.dev_mode():
+        raise HTTPException(403, {"code": "DEMO_SEED_DISABLED", "hint": "GLHAC_DEV=1 에서만 허용"})
     if body.confirm != "RESET":
         raise HTTPException(400, {"code": "CONFIRM_REQUIRED", "hint": "confirm='RESET'"})
     added = []
@@ -461,14 +606,17 @@ def gen_report(case_id: str, user=Depends(auth.get_current_user), db: Session = 
 
 # ---------- cases ----------
 @app.get("/cases")
-def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db),
+               limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0)):
     q = db.query(models.CaseApplication)
     if user["role"] != "admin":
         q = q.filter_by(org_id=user["org_id"])
+    rows = (q.order_by(models.CaseApplication.created_at.desc())
+            .offset(offset).limit(limit).all())
     return [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
              "pathway": c.pathway, "due_date": c.due_date,
              "province": _province_of(c.factory_address or c.address)}
-            for c in q.order_by(models.CaseApplication.created_at.desc()).all()]
+            for c in rows]
 
 
 # ===================== 알림 (Rizky #5) =====================
@@ -907,9 +1055,15 @@ def matrix_link(case_id: str, body: schemas.MatrixLinkReq,
     if body.linked and not existing:
         db.add(models.ProductMaterial(case_id=case_id, product_id=body.product_id,
                                       material_id=body.material_id))
+        try:
+            db.commit()
+        except IntegrityError:   # 동시 더블서밋 — 유니크 인덱스가 중복 차단, 이미 링크됨으로 취급
+            db.rollback()
     elif not body.linked and existing:
         db.delete(existing)
-    db.commit()
+        db.commit()
+    else:
+        db.commit()
     return {"product_id": body.product_id, "material_id": body.material_id, "linked": body.linked}
 
 
@@ -1358,6 +1512,8 @@ def update_onsite_checklist(case_id: str, body: schemas.OnsiteChecklistReq,
     _get_case(db, case_id, user)
     if body.item_key not in {k for k, _ in ONSITE_ITEMS}:
         raise HTTPException(400, {"code": "INVALID_ITEM_KEY"})
+    if body.result not in ("not_checked", "comply", "nonconformity"):
+        raise HTTPException(400, {"code": "INVALID_RESULT", "allowed": ["not_checked", "comply", "nonconformity"]})
     row = db.query(models.OnsiteChecklist).filter_by(case_id=case_id, item_key=body.item_key).first()
     if not row:
         row = models.OnsiteChecklist(case_id=case_id, item_key=body.item_key)
@@ -1365,7 +1521,16 @@ def update_onsite_checklist(case_id: str, body: schemas.OnsiteChecklistReq,
     row.result = body.result
     row.note = body.note
     row.updated_at = datetime.utcnow()
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:   # 동시 생성 경합 — 기존 행에 반영
+        db.rollback()
+        row = db.query(models.OnsiteChecklist).filter_by(case_id=case_id, item_key=body.item_key).first()
+        if row:
+            row.result = body.result
+            row.note = body.note
+            row.updated_at = datetime.utcnow()
+            db.commit()
     return {"item_key": body.item_key, "result": body.result, "ok": True}
 
 
@@ -1487,7 +1652,15 @@ def issue_certificate(case_id: str, user=Depends(auth.require_roles("operator"))
     _notify(db, c, "certificate_issued", "인증서 발급",
             "%s — 할랄 인증서 %s 발급 완료." % (c.company_name or "", cert.certificate_no),
             channels=["inapp", "sms", "kakao", "whatsapp"], role="applicant")
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:   # 동시 발급 경합 — 부분 유니크가 이중 활성 인증서 차단
+        db.rollback()
+        ex = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
+        if ex:
+            return {"certificate_no": ex.certificate_no, "issue_date": ex.issue_date,
+                    "expiry_date": ex.expiry_date, "scope": ex.scope, "existing": True}
+        raise
     return {"certificate_no": cert.certificate_no, "issue_date": str(today),
             "expiry_date": str(expiry), "scope": prods,
             "frozen_product_ids": prod_ids, "frozen_material_ids": mat_ids}
@@ -1863,10 +2036,14 @@ def dashboard_summary(user=Depends(auth.get_current_user), db: Session = Depends
         rd = _calc_readiness(db, c.case_id)
         readiness.append({"case_id": c.case_id, "company": c.company_name,
                           "pathway": c.pathway, "readiness": rd["readiness"], "band": rd["band"]})
+    # 조직 격리 — 자기 조직 케이스의 이벤트만(admin은 전체). 타조직 워크플로 누수 차단.
+    eq = db.query(models.WorkflowEvent)
+    if user["role"] != "admin":
+        case_ids = [c.case_id for c in cases]
+        eq = eq.filter(models.WorkflowEvent.case_id.in_(case_ids)) if case_ids else eq.filter(False)
     events = [{"case_id": e.case_id, "from": e.from_status, "to": e.to_status, "action": e.action,
                "actor": e.actor_type, "hash": (e.row_hash or "")[:10]}
-              for e in (db.query(models.WorkflowEvent)
-                        .order_by(models.WorkflowEvent.created_at.desc()).limit(6).all())]
+              for e in eq.order_by(models.WorkflowEvent.created_at.desc()).limit(6).all()]
     return {"kpi": {"total": len(cases), "issued": issued, "action": action,
                     "in_progress": len(cases) - issued - action},
             "by_status": by_status, "regions": regions,
@@ -2137,19 +2314,14 @@ def screen_material(material_id: str, user=Depends(auth.get_current_user), db: S
 # ---------- AI: OCR / label judgment ----------
 @app.post("/ai/ocr")
 def ai_ocr(body: schemas.OCRReq, user=Depends(auth.get_current_user)):
-    # P0-3: 경로 traversal 방지 — 업로드 샌드박스 접두만 허용
-    import os as _os
-    p = _os.path.realpath(body.image_path or "")
-    sandbox = _os.path.realpath(_os.environ.get("GLHAC_UPLOAD_DIR", "/tmp"))
-    if not p.startswith(sandbox + _os.sep):
-        raise HTTPException(400, {"code": "PATH_NOT_ALLOWED", "sandbox": sandbox})
-    return ai_local.ocr_image(p, body.lang or "korean")
+    # P0: 경로 traversal 방지 — 업로드 샌드박스 접두만 허용
+    return ai_local.ocr_image(_sandboxed_path(body.image_path), body.lang or "korean")
 
 
 @app.post("/ai/label-judgment")
 def ai_label_judgment(body: schemas.LabelJudgmentReq, user=Depends(auth.get_current_user)):
     from .ocr_pipeline import judge_label
-    return judge_label(body.image_path, body.locale or "ko-KR")
+    return judge_label(_sandboxed_path(body.image_path), body.locale or "ko-KR")
 
 
 @app.post("/cases/{case_id}/materials/from-label")
@@ -2158,7 +2330,7 @@ def materials_from_label(case_id: str, body: schemas.LabelJudgmentReq,
                          db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     from .ocr_pipeline import judge_label
-    res = judge_label(body.image_path, body.locale or "ko-KR")
+    res = judge_label(_sandboxed_path(body.image_path), body.locale or "ko-KR")
     if not res.get("ok"):
         raise HTTPException(422, res)
     return _register_from_judgment(db, c, res)
@@ -2169,12 +2341,21 @@ def materials_from_label_b64(case_id: str, body: schemas.LabelB64Req,
                              user=Depends(auth.require_roles("applicant", "consultant")),
                              db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    import tempfile
     raw = base64.b64decode(body.image_b64.split(",")[-1])
-    path = os.path.join("/tmp", f"glhac_upload_{case_id}.png")
-    with open(path, "wb") as f:
-        f.write(raw)
-    from .ocr_pipeline import judge_label
-    res = judge_label(path, body.locale or "ko-KR")
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(raw)
+            path = f.name
+        from .ocr_pipeline import judge_label
+        res = judge_label(path, body.locale or "ko-KR")
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except Exception:  # noqa: BLE001
+                pass
     if not res.get("ok"):
         raise HTTPException(422, res)
     return _register_from_judgment(db, c, res)

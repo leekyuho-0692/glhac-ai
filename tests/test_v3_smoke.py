@@ -6,6 +6,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("GLHAC_DB_URL", "sqlite:///./glhac_v3_test.db")
+os.environ.setdefault("GLHAC_DEV", "1")   # 데모 계정 시드(테스트 전용)
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
@@ -19,6 +20,94 @@ def _tok(c, u, p):
 
 def _h(tok):
     return {"Authorization": "Bearer " + tok}
+
+
+def test_password_pbkdf2_and_legacy_upgrade():
+    """비밀번호가 pbkdf2로 저장·검증되고, 레거시 sha256 해시는 로그인 시 자동 승격."""
+    from app import auth, models
+    from app.db import SessionLocal
+    h = auth.hash_pw("secret1")
+    assert h.startswith("pbkdf2_sha256$") and auth.verify_pw("secret1", h) and not auth.verify_pw("x", h)
+    assert auth.needs_rehash(auth._hash_legacy("secret1")) and not auth.needs_rehash(h)
+    # 레거시 해시 사용자 심어 로그인 → pbkdf2로 재해시되는지 (TestClient 컨텍스트가 테이블 생성)
+    with TestClient(app) as c:
+        db = SessionLocal()
+        try:
+            db.add(models.User(username="legacyuser", password_hash=auth._hash_legacy("pw"),
+                               role="applicant", org_id="org_demo"))
+            db.commit()
+        finally:
+            db.close()
+        assert c.post("/auth/login", json={"username": "legacyuser", "password": "pw"}).status_code == 200
+        db = SessionLocal()
+        try:
+            u = db.query(models.User).filter_by(username="legacyuser").first()
+            assert u.password_hash.startswith("pbkdf2_sha256$"), "레거시 해시가 승격되지 않음"
+        finally:
+            db.close()
+
+
+def test_login_rate_limited():
+    """동일 계정 실패 10회 초과 시 429."""
+    from app import auth
+    auth.clear_attempts("rl_probe")
+    with TestClient(app) as c:
+        codes = [c.post("/auth/login", json={"username": "rl_probe", "password": "bad"}).status_code
+                 for _ in range(12)]
+    assert 429 in codes and codes[:10] == [401] * 10, codes
+    auth.clear_attempts("rl_probe")
+
+
+def test_label_judgment_path_traversal_blocked():
+    """/ai/label-judgment 임의파일 읽기 차단(P0)."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        r = c.post("/ai/label-judgment", json={"image_path": "/etc/passwd"}, headers=_h(tok))
+        assert r.status_code == 400 and r.json()["detail"]["code"] == "PATH_NOT_ALLOWED", r.text
+
+
+def test_public_config_reports_dev():
+    with TestClient(app) as c:
+        assert c.get("/public-config").json()["dev_mode"] is True
+
+
+def test_notify_consent_gate():
+    """수신동의 없으면 외부채널(sms) 미발송·inapp만 발송(Phase C 컴플라이언스)."""
+    from app import models
+    from app.db import SessionLocal
+    from app.main import drain_notifications
+    with TestClient(app):
+        db = SessionLocal()
+        try:
+            c = models.CaseApplication(company_name="NoConsent Co", org_id="org_demo",
+                                       phone="0812", notify_consent=False, status="draft")
+            db.add(c); db.flush()
+            n = models.Notification(org_id="org_demo", case_id=c.case_id,
+                                    channels=["inapp", "sms"], title="t", status="unsent")
+            db.add(n); db.commit(); nid = n.notification_id
+            drain_notifications(db)
+            db.expire_all()
+            row = db.get(models.Notification, nid)
+            assert row.status == "sent", row.status
+            assert "consent_skipped" in (row.last_error or ""), row.last_error
+        finally:
+            db.close()
+
+
+def test_phase_b_indexes_created():
+    """핫 인덱스 + 경합 방지 유니크 인덱스가 생성됐는지(Phase B)."""
+    from sqlalchemy import inspect as _inspect
+    from app.db import engine
+    with TestClient(app):   # startup에서 _ensure_indexes 실행
+        insp = _inspect(engine)
+        names = set()
+        for t in insp.get_table_names():
+            names |= {ix["name"] for ix in insp.get_indexes(t)}
+    for uq in ["uq_product_material", "uq_onsite_item", "uq_hpas_element",
+               "uq_gendoc_version", "uq_cert_active"]:
+        assert uq in names, f"유니크 인덱스 누락: {uq}"
+    for ix in ["ix_material_case_id", "ix_document_asset_case_id", "ix_workflow_event_case_id"]:
+        assert ix in names, f"핫 인덱스 누락: {ix}"
 
 
 def test_operator_role_seeded():
@@ -233,7 +322,13 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_operator_role_seeded, test_mockaudit_rbac,
+    tests = [test_password_pbkdf2_and_legacy_upgrade,
+             test_login_rate_limited,
+             test_label_judgment_path_traversal_blocked,
+             test_public_config_reports_dev,
+             test_notify_consent_gate,
+             test_phase_b_indexes_created,
+             test_operator_role_seeded, test_mockaudit_rbac,
              test_permission_transfer_cert_issue, test_transition_bypass_blocked,
              test_operator_provisionable, test_sod_and_severity_enum,
              test_two_stage_fatwa_approval,
