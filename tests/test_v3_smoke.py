@@ -84,6 +84,37 @@ def test_mockaudit_decision_recorded_and_retrieved():
         assert any(d.get("reason") == "증빙 부족" for d in hist["decisions"]), hist
 
 
+def test_mockaudit_reject_transitions_to_corrective():
+    """② 상태전이: onsite_audit_in_progress에서 reject → corrective_action_required 전이."""
+    import os
+    import sqlite3
+    dbfile = os.environ["GLHAC_DB_URL"].replace("sqlite:///", "")
+    with TestClient(app) as c:
+        adm = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"company_name": "MT", "org_id": "org_demo"},
+                     headers=_h(adm)).json()["case_id"]
+        conn = sqlite3.connect(dbfile)
+        conn.execute("UPDATE case_application SET status=? WHERE case_id=?",
+                     ("onsite_audit_in_progress", cid))
+        conn.commit()
+        conn.close()
+        r = c.post(f"/cases/{cid}/mock-audit/decision",
+                   json={"result": "reject", "reason": "gap"}, headers=_h(adm)).json()
+        assert r.get("transitioned_to") == "corrective_action_required", r
+        assert c.get(f"/cases/{cid}", headers=_h(adm)).json()["status"] == "corrective_action_required"
+
+
+def test_mockaudit_no_transition_on_non_mock_state():
+    """비-모의심사 단계(onboarding)에서는 판정해도 전이 없음(기록만)."""
+    with TestClient(app) as c:
+        adm = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"company_name": "NM", "org_id": "org_demo"},
+                     headers=_h(adm)).json()["case_id"]
+        r = c.post(f"/cases/{cid}/mock-audit/decision", json={"result": "pass"},
+                   headers=_h(adm)).json()
+        assert r.get("transitioned_to") is None, r
+
+
 def test_worklist_queues_rbac():
     """작업 큐 RBAC: audit=오디터·operator / fatwa=샤리아·operator, applicant 차단."""
     with TestClient(app) as c:
@@ -133,6 +164,8 @@ if __name__ == "__main__":
     tests = [test_operator_role_seeded, test_mockaudit_rbac,
              test_permission_transfer_cert_issue, test_mockaudit_decision_validation,
              test_mockaudit_decision_recorded_and_retrieved,
+             test_mockaudit_reject_transitions_to_corrective,
+             test_mockaudit_no_transition_on_non_mock_state,
              test_worklist_queues_rbac,
              test_ask_injects_domain_ontology,
              test_context_health_endpoint, test_search_context_fallback_returns_list]
