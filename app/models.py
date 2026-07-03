@@ -1,7 +1,7 @@
 """SQLAlchemy 모델 — 설계서 v2 24.9(마이그레이션)/24.13(ontology)/Part 9 매핑."""
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, Date, JSON, Text, Float
+from sqlalchemy import Column, String, Boolean, DateTime, Date, JSON, Text, Float, Integer
 from .db import Base
 
 
@@ -31,6 +31,20 @@ class CaseApplication(Base):
     sehati_eligible = Column(String)
     fatwa_status = Column(String, default="none")
     scope_frozen = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GeneratedDocument(Base):
+    """생성 문서 버전관리 (Rizky #3·#4·#11) — SJPH Manual·Audit Report."""
+    __tablename__ = "generated_document"
+    gen_doc_id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, index=True)
+    org_id = Column(String)
+    doc_type = Column(String)   # sjph_manual | audit_report
+    version = Column(Integer, default=1)
+    content = Column(Text)
+    status = Column(String, default="draft")  # draft | approved
+    created_by = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

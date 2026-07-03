@@ -1074,7 +1074,89 @@ def sjph_manual(case_id: str, user=Depends(auth.get_current_user), db: Session =
                                      (" — " + have[el].note) if have[el].note else ""))
     lines += ["", "원재료 %d건, 증빙 필요/차단 %d건: %s" % (len(mats), len(crit), ", ".join(crit[:8]) or "없음"),
               "※ 본 매뉴얼은 준비용. 공식 SJPH는 BPJPH/SIHALAL 절차로 확정."]
-    return {"manual": "\n".join(lines)}
+    manual = "\n".join(lines)
+    g = _save_gendoc(db, c, "sjph_manual", manual, user)  # 버전 저장(Rizky #3·#11)
+    db.commit()
+    return {"manual": manual, "version": g.version, "gen_doc_id": g.gen_doc_id}
+
+
+def _next_version(db, case_id, doc_type):
+    return db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type=doc_type).count() + 1
+
+
+def _save_gendoc(db, c, doc_type, content, user, status="draft"):
+    g = models.GeneratedDocument(case_id=c.case_id, org_id=c.org_id, doc_type=doc_type,
+                                 version=_next_version(db, c.case_id, doc_type), content=content,
+                                 status=status, created_by=user["uid"])
+    db.add(g)
+    db.flush()
+    return g
+
+
+@app.post("/cases/{case_id}/audit-report")
+def gen_audit_report(case_id: str,
+                     user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator")),
+                     db: Session = Depends(get_db)):
+    """현장심사 보고서 자동 생성 (Rizky #4) — Findings·부적합·시정조치·권고. draft로 저장 후 오디터 승인."""
+    c = _get_case(db, case_id, user)
+    finds = db.query(models.AuditFinding).filter_by(case_id=case_id).all()
+    major_open = [f for f in finds if f.severity == "major" and f.status == "open"]
+    onsite = {r.item_key: r for r in db.query(models.OnsiteChecklist).filter_by(case_id=case_id).all()}
+    nc = sum(1 for r in onsite.values() if r.result == "nonconformity")
+    comply = sum(1 for r in onsite.values() if r.result == "comply")
+    L = ["[현장심사 보고서 · Audit Report — %s]" % (c.company_name or c.case_id[:8]),
+         "경로: %s · 상태: %s" % (c.pathway, c.status),
+         "현장 체크리스트: 충족 %d · 부적합 %d" % (comply, nc), "",
+         "■ 지적사항 · Findings (%d건)" % len(finds)]
+    L += ["- [%s/%s] %s%s" % (f.severity, f.status, f.finding, (" (" + f.area + ")") if f.area else "")
+          for f in finds] or ["- 없음"]
+    L += ["", "■ 부적합 · Nonconformity — 미해결 중대 %d건" % len(major_open)]
+    L += ["- %s" % f.finding for f in major_open] or ["- 없음"]
+    L += ["", "■ 시정조치 · Corrective actions"]
+    ca = ["- %s → %s" % (f.finding, f.corrective_action) for f in finds if f.corrective_action]
+    L += ca or ["- 없음"]
+    L += ["", "■ 권고사항 · Recommendations",
+          ("- 미해결 중대 부적합 종결 후 최종 패키지 상정" if major_open else "- 모든 지적 종결 — 파트와 상정 가능"),
+          "", "※ 오디터 검토·승인 필요."]
+    content = "\n".join(L)
+    g = _save_gendoc(db, c, "audit_report", content, user)
+    db.commit()
+    return {"report": content, "version": g.version, "gen_doc_id": g.gen_doc_id, "status": g.status}
+
+
+@app.get("/cases/{case_id}/gen-docs")
+def list_gendocs(case_id: str, doc_type: str = None,
+                 user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    q = db.query(models.GeneratedDocument).filter_by(case_id=case_id)
+    if doc_type:
+        q = q.filter_by(doc_type=doc_type)
+    rows = q.order_by(models.GeneratedDocument.doc_type,
+                      models.GeneratedDocument.version.desc()).all()
+    return [{"gen_doc_id": g.gen_doc_id, "doc_type": g.doc_type, "version": g.version,
+             "status": g.status, "created_at": str(g.created_at)} for g in rows]
+
+
+@app.get("/gen-docs/{gen_doc_id}")
+def get_gendoc(gen_doc_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    g = db.get(models.GeneratedDocument, gen_doc_id)
+    if not g:
+        raise HTTPException(404, {"code": "GENDOC_NOT_FOUND"})
+    _get_case(db, g.case_id, user)  # 조직격리
+    return {"gen_doc_id": g.gen_doc_id, "doc_type": g.doc_type, "version": g.version,
+            "status": g.status, "content": g.content, "created_at": str(g.created_at)}
+
+
+@app.post("/gen-docs/{gen_doc_id}/approve")
+def approve_gendoc(gen_doc_id: str, user=Depends(auth.require_roles("auditor", "operator")),
+                   db: Session = Depends(get_db)):
+    g = db.get(models.GeneratedDocument, gen_doc_id)
+    if not g:
+        raise HTTPException(404, {"code": "GENDOC_NOT_FOUND"})
+    _get_case(db, g.case_id, user)
+    g.status = "approved"
+    db.commit()
+    return {"ok": True, "status": "approved", "version": g.version}
 
 
 @app.get("/cases/{case_id}/findings")
