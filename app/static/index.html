@@ -392,7 +392,7 @@ const KO_LABEL={
   self_declare:"자기선언",reguler:"정규",undetermined:"미정",none:"없음",
   approved:"승인",provisional:"가승인",rejected:"반려",conditional:"조건부",pending:"대기",rework:"재작업",
   major:"중대",minor:"경미",critical:"치명",observation:"관찰",open:"미해결",closed:"종결",
-  ready:"준비완료",warn:"주의",blocked:"차단",paid:"결제완료",unpaid:"미결제",
+  ready:"준비완료",warn:"주의",not_ready:"미준비",blocked:"차단",paid:"결제완료",unpaid:"미결제",
   comply:"충족",nonconformity:"부적합",not_checked:"미확인",active:"활성",inactive:"비활성",
   ok:"양호",gap:"보완",verified:"검증완료",submitted:"제출됨",submitted_by_applicant:"신청자 제출",
   ketua:"팀장",anggota:"팀원",halal:"할랄",haram:"하람",mushbooh:"의심",
@@ -649,7 +649,7 @@ SCREEN.dashboard=async()=>{
   const rdRows=rdCases.map((c,i)=>{const rd=rds[i];if(!rd)return"";const sc=rd.readiness||0;
     return `<tr class="clickable" onclick="openCase('${c.case_id}')"><td><b>${esc(c.company_name||short(c.case_id))}</b></td>
       <td><span class="tag t-${sc>=80?'ok':sc>=50?'warn':'bad'}">${sc}%</span></td>
-      <td>${tag(rd.band==='ready'?'ok':rd.band==='warn'?'warn':'bad',rd.band||'—')}</td>
+      <td>${bTag(rd.band==='ready'?'ok':rd.band==='warn'?'warn':'bad',rd.band||'—')}</td>
       <td>${bTag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')}</td></tr>`;}).filter(Boolean).join("");
   const roleTip={client:"신청·원재료·문서 준비 상태를 확인하세요.",consultant:"담당 케이스 진행과 청구를 관리하세요.",auditor:"현장 실사·모의심사 대상을 확인하세요.",sharia:"파트와 심의·인증서 발급 대기를 확인하세요.",ops:"전 과정 총괄·최종 승인 대기를 확인하세요.",admin:"시스템 전체 현황입니다."}[ROLE]||"";
   return `
@@ -1473,7 +1473,7 @@ async function renderCaseDetail(id, tab){
         </div></div>
       <div class="card"><h3>준비도 <span class="en">· Readiness</span></h3>
         <div class="body">
-          <div class="scorebox" style="margin-bottom:12px"><span class="big" style="color:var(--${rd.band==='ready'?'ok':rd.band==='warn'?'warn':'bad'})">${rd.readiness==null?"—":rd.readiness}</span><span class="muted">% · ${esc(rd.band||"—")}</span></div>
+          <div class="scorebox" style="margin-bottom:12px"><span class="big" style="color:var(--${rd.band==='ready'?'ok':rd.band==='warn'?'warn':'bad'})">${rd.readiness==null?"—":rd.readiness}</span><span class="muted">% · ${bSpan(rd.band)}</span></div>
           ${rd.breakdown?Object.entries(rd.breakdown).map(([k,vv])=>`<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px"><span>${esc(k)}</span><b>${vv}%</b></div><div class="bar"><i style="width:${vv}%"></i></div></div>`).join(""):""}
           <div class="btnrow" style="margin-top:12px">
             <button class="btn" onclick="openCaseTab('materials')">🧪 원재료 →</button>
