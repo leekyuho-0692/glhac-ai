@@ -167,6 +167,7 @@ class CaseProfileReq(BaseModel):
     factory_reg_no: Optional[str] = None
     factory_address: Optional[str] = None
     due_date: Optional[str] = None   # 처리 목표 기한(ISO date) — 기한 경보
+    notify_consent: Optional[bool] = None  # 알림 수신 동의
 
 
 class PathwayConfirm(BaseModel):

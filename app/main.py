@@ -34,6 +34,21 @@ def _migrate():
                     pass
 
 
+def _notify_worker_loop(interval=30):
+    """비동기 발송 워커 — GLHAC_NOTIFY_WORKER=1 일 때만 기동. 주기적으로 큐 드레인."""
+    import time
+    while True:
+        time.sleep(interval)
+        try:
+            db = SessionLocal()
+            try:
+                drain_notifications(db)
+            finally:
+                db.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @app.on_event("startup")
 def _startup():
     Base.metadata.create_all(bind=engine)
@@ -45,6 +60,9 @@ def _startup():
         screening.load_ontology(db)
     finally:
         db.close()
+    if os.environ.get("GLHAC_NOTIFY_WORKER") == "1":
+        import threading
+        threading.Thread(target=_notify_worker_loop, daemon=True).start()
 
 
 def _get_case(db, case_id, user=None) -> models.CaseApplication:
@@ -95,22 +113,58 @@ def _case_dict(c):
             "nib": c.nib, "responsible_person": c.responsible_person,
             "halal_supervisor": c.halal_supervisor, "email": c.email, "phone": c.phone,
             "address": c.address, "factory_reg_no": c.factory_reg_no,
-            "factory_address": c.factory_address, "due_date": c.due_date}
+            "factory_address": c.factory_address, "due_date": c.due_date,
+            "notify_consent": bool(c.notify_consent)}
 
 
 def _notify(db, case, event_type, title, body="", channels=None, role=None):
-    """이벤트 알림 생성 + 채널 발송(프로바이더). Rizky #5 자동 알림 엔진."""
+    """이벤트 알림을 큐(unsent)에 적재. 실제 발송은 비동기 워커(drain)가 처리 — Rizky #5."""
     n = models.Notification(
         org_id=(case.org_id if case else None), case_id=(case.case_id if case else None),
-        role=role, event_type=event_type, channels=channels or ["inapp"], title=title, body=body)
+        role=role, event_type=event_type, channels=channels or ["inapp"],
+        title=title, body=body, status="unsent")
     db.add(n)
-    try:
-        from . import notify as _nt
-        _nt.dispatch(n)
-        n.status = "sent"
-    except Exception:  # noqa: BLE001
-        pass
     return n
+
+
+def drain_notifications(db, batch=50, max_attempts=3):
+    """미발송 알림 큐를 드레인 — 채널 프로바이더로 발송, 실패 시 재시도(최대 max_attempts)."""
+    from . import notify as _nt
+    rows = (db.query(models.Notification).filter(models.Notification.status == "unsent")
+            .order_by(models.Notification.created_at).limit(batch).all())
+    stats = {"processed": 0, "sent": 0, "retried": 0, "failed": 0}
+    for n in rows:
+        stats["processed"] += 1
+        contact = None
+        if n.case_id:
+            c = db.get(models.CaseApplication, n.case_id)
+            contact = c.phone if c else None
+        try:
+            results = _nt.dispatch(n, contact=contact)
+        except Exception as e:  # noqa: BLE001
+            results = [{"channel": "?", "ok": False, "reason": str(e)}]
+        # no_credentials/no_contact = 재시도 불가(프로바이더 미구성), 그 외 실패는 재시도
+        retryable = any((not r.get("ok")) and r.get("reason") not in ("no_credentials", "no_contact")
+                        for r in results)
+        n.attempts = (n.attempts or 0) + 1
+        if not retryable:
+            n.status = "sent"
+            stats["sent"] += 1
+        elif n.attempts >= max_attempts:
+            n.status = "failed"
+            n.last_error = "max_attempts"
+            stats["failed"] += 1
+        else:
+            n.last_error = "; ".join(r.get("reason", "") for r in results if not r.get("ok"))
+            stats["retried"] += 1
+    db.commit()
+    return stats
+
+
+@app.post("/admin/notify-drain")
+def notify_drain(user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    """미발송 알림 큐 드레인(관리자/cron 트리거) — 운영 시 주기 실행."""
+    return drain_notifications(db)
 
 
 def _register_from_judgment(db, c, res):
@@ -950,8 +1004,26 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
         v = getattr(body, f)
         if v is not None:
             setattr(c, f, v)
+    if body.notify_consent is not None:
+        c.notify_consent = bool(body.notify_consent)
+    if body.phone is not None:
+        c.phone = _normalize_phone(body.phone)   # 국가코드 정규화
     db.commit()
     return _case_dict(c)
+
+
+def _normalize_phone(p):
+    """전화 정규화 — 인니(+62) 기본. 이미 +면 유지, 0 시작이면 +62로 치환."""
+    if not p:
+        return p
+    s = "".join(ch for ch in str(p) if ch.isdigit() or ch == "+")
+    if s.startswith("+"):
+        return s
+    if s.startswith("0"):
+        return "+62" + s[1:]
+    if s.startswith("62"):
+        return "+" + s
+    return "+" + s if s else s
 
 
 @app.post("/cases/{case_id}/parse-file")

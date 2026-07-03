@@ -24,6 +24,7 @@ class CaseApplication(Base):
     factory_reg_no = Column(String)
     factory_address = Column(String)
     due_date = Column(String)  # 처리 목표 기한(ISO date) — 기한 경보용
+    notify_consent = Column(Boolean, default=False)  # 알림 수신 동의(WhatsApp opt-in 등)
     status = Column(String, nullable=False, default="onboarding")
     pathway = Column(String, nullable=False, default="undetermined")  # 24.9
     risk_category = Column(String)
@@ -59,7 +60,9 @@ class Notification(Base):
     channels = Column(JSON)        # ["inapp","sms","kakao","whatsapp"]
     title = Column(String)
     body = Column(Text)
-    status = Column(String, default="unsent")  # unsent|sent
+    status = Column(String, default="unsent")  # unsent|sent|failed
+    attempts = Column(Integer, default=0)      # 발송 시도 횟수(비동기 워커)
+    last_error = Column(String)
     read = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
