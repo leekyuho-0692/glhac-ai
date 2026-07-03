@@ -71,6 +71,20 @@ def test_public_config_reports_dev():
         assert c.get("/public-config").json()["dev_mode"] is True
 
 
+def test_datalist_meta_search_sort():
+    """DataList 표준(§8.2): meta(total)·서버검색(q)·정렬(sort/dir) + 하위호환(array)."""
+    with TestClient(app) as c:
+        atok = _tok(c, "admin", "admin")
+        for nm in ["Alpha Co", "Beta Co"]:
+            c.post("/cases", json={"org_id": "org_demo", "company_name": nm}, headers=_h(atok))
+        r = c.get("/admin/cases?meta=1&limit=1&offset=0&q=Alpha&sort=company_name&dir=asc",
+                  headers=_h(atok)).json()
+        assert "total" in r and "items" in r and r["total"] >= 1, r
+        assert all("Alpha" in (it["company_name"] or "") for it in r["items"]), r
+        # 하위호환: meta 없으면 배열
+        assert isinstance(c.get("/admin/cases", headers=_h(atok)).json(), list)
+
+
 def test_rbac_action_matrix_contract():
     """단일 매트릭스 계약 — ACTION_ENDPOINTS를 순회, 매트릭스대로 403/허용 자동검증(§12.1)."""
     from app import rbac
@@ -456,7 +470,8 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_qr_public_verify, test_ai_extractions_endpoints,
+    tests = [test_datalist_meta_search_sort,
+             test_qr_public_verify, test_ai_extractions_endpoints,
              test_rbac_action_matrix_contract,
              test_unlock_requires_operator, test_fatwa_document_restricted,
              test_get_fatwa_masks_committee, test_renew_operator_only,

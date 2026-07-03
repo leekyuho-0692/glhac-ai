@@ -246,6 +246,14 @@
   .notif-item.unread{background:color-mix(in srgb,var(--accent) 7%,transparent)}
   .notif-item .nic{font-size:16px}
   .notif-item b{font-size:12.5px} .notif-item div{font-size:11.5px;color:var(--ink3)}
+  /* DataList 공통 컴포넌트(§8.2) */
+  .dl-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+  .dl-bar input{flex:1;min-width:130px}
+  .dl th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+  .dl th.sortable:hover{color:var(--accent)}
+  .dl-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;font-size:12.5px;color:var(--ink3);flex-wrap:wrap}
+  .dl-foot .btn{padding:4px 10px}
+  .dl-foot .btn[disabled]{opacity:.4;cursor:default}
 </style>
 </head>
 <body>
@@ -1661,6 +1669,43 @@ async function askQ(id){
 }
 
 /* 15) System */
+/* ===== DataList 공통 컴포넌트(§8.2): 서버 페이지네이션·검색·정렬·CSV·상태 ===== */
+const _DL_CFG={}, _DL_STATE={}; let _DL_PENDING=[];
+function dataList(cfg){
+  _DL_CFG[cfg.id]=cfg;
+  if(!_DL_STATE[cfg.id])_DL_STATE[cfg.id]={q:"",sort:cfg.sort||cfg.columns[0].key,dir:cfg.dir||"desc",offset:0,limit:cfg.pageSize||20};
+  _DL_PENDING.push(cfg.id);
+  const prev=AFTER_RENDER;
+  AFTER_RENDER=function(){if(prev)try{prev()}catch(_){} const ids=_DL_PENDING;_DL_PENDING=[];ids.forEach(dataListRender);};
+  return `<div class="dl" id="${esc(cfg.id)}">
+    <div class="dl-bar">${cfg.search!==false?`<input class="v" aria-label="검색" placeholder="🔍 검색 · Search" onkeydown="if(event.key==='Enter')dlSearch('${cfg.id}',this.value)" onchange="dlSearch('${cfg.id}',this.value)">`:''}${cfg.csv?`<button class="btn" onclick="dlCsv('${cfg.id}')">⬇ CSV</button>`:''}</div>
+    <div class="dl-body"><div class="muted small">불러오는 중… · loading</div></div>
+    <div class="dl-foot"></div></div>`;
+}
+async function dataListRender(id){
+  const cfg=_DL_CFG[id], st=_DL_STATE[id], box=document.getElementById(id); if(!cfg||!box)return;
+  const body=box.querySelector(".dl-body"), foot=box.querySelector(".dl-foot");
+  try{
+    const qs=`meta=1&limit=${st.limit}&offset=${st.offset}&q=${encodeURIComponent(st.q)}&sort=${encodeURIComponent(st.sort)}&dir=${st.dir}`;
+    const res=await API(`${cfg.endpoint}?${qs}`);
+    const items=res.items||[], total=res.total||0; st._items=items;
+    const th=cfg.columns.map(c=>{const on=st.sort===c.key, ar=on?(st.dir==='asc'?' ▲':' ▼'):'';const s=c.sortable!==false;
+      return `<th class="${s?'sortable':''}"${s?` onclick="dlSort('${id}','${c.key}')"`:''}>${esc(c.label)}${c.en?` <span class="en">${esc(c.en)}</span>`:''}${ar}</th>`;}).join("");
+    const rows=items.length?items.map(r=>`<tr>${cfg.columns.map(c=>`<td>${c.render?c.render(r):esc(r[c.key]==null?'':r[c.key])}</td>`).join("")}</tr>`).join("")
+      :`<tr><td colspan="${cfg.columns.length}" class="muted" style="text-align:center;padding:16px">${st.q?'검색 결과 없음 · no match':'데이터 없음 · empty'}</td></tr>`;
+    body.innerHTML=`<table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table>`;
+    const from=total?st.offset+1:0, to=Math.min(st.offset+st.limit,total), pages=Math.max(1,Math.ceil(total/st.limit)), pg=Math.floor(st.offset/st.limit)+1;
+    foot.innerHTML=`<span>${from}–${to} / ${total}</span><span><button class="btn" ${st.offset<=0?'disabled':''} onclick="dlPage('${id}',-1)">‹ 이전</button><span style="margin:0 8px">${pg}/${pages}</span><button class="btn" ${to>=total?'disabled':''} onclick="dlPage('${id}',1)">다음 ›</button></span>`;
+  }catch(e){body.innerHTML=`<div class="banner bad">불러오기 실패 · ${esc(e&&e.code?e.code:'error')}</div>`;foot.innerHTML='';}
+}
+function dlSearch(id,q){const st=_DL_STATE[id];if(!st)return;st.q=(q||"").trim();st.offset=0;dataListRender(id);}
+function dlSort(id,key){const st=_DL_STATE[id];if(!st)return;if(st.sort===key)st.dir=st.dir==='asc'?'desc':'asc';else{st.sort=key;st.dir='asc';}st.offset=0;dataListRender(id);}
+function dlPage(id,d){const st=_DL_STATE[id];if(!st)return;st.offset=Math.max(0,st.offset+d*st.limit);dataListRender(id);}
+function dlCsv(id){const cfg=_DL_CFG[id],st=_DL_STATE[id],items=(st&&st._items)||[];const cols=cfg.columns.filter(c=>c.csv!==false);
+  const head=cols.map(c=>c.label).join(",");
+  const lines=items.map(r=>cols.map(c=>{const v=c.csvVal?c.csvVal(r):(r[c.key]==null?'':r[c.key]);return '"'+String(v).replace(/"/g,'""')+'"';}).join(",")).join("\n");
+  downloadText((cfg.csvName||id)+".csv",head+"\n"+lines);}
+
 SCREEN.system=async()=>{
   const [users,orgs,onto,lphrefs,kma,admCases]=await Promise.all([
     API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({})),API("/admin/lph-references").catch(()=>[]),
@@ -1706,7 +1751,16 @@ SCREEN.system=async()=>{
         <div class="kpi"><span class="n" style="font-size:20px">${(kma.terms||[]).length}</span><span class="l">KMA1360 면제 용어</span></div>
       </div>
       <div class="btnrow">${(kma.terms||[]).slice(0,40).map(t=>`<span class="chip">${esc(typeof t==='string'?t:(t.term||t.name||t.keyword||""))}</span>`).join("")||'<span class="muted small">면제 용어 없음</span>'}</div>
-    </div></div>`;
+    </div></div>
+  <div class="card dl" style="margin-top:16px"><h3>전체 케이스 <span class="en">· All cases (DataList)</span></h3>
+    <div class="body">${dataList({id:"dlAdminCases",endpoint:"/admin/cases",pageSize:15,sort:"created_at",dir:"desc",search:true,csv:true,csvName:"admin_cases",
+      columns:[
+        {key:"company_name",label:"기업",en:"Company",render:r=>`<b>${esc(r.company_name||"—")}</b>`},
+        {key:"status",label:"상태",en:"Status"},
+        {key:"pathway",label:"경로",en:"Pathway"},
+        {key:"fatwa_status",label:"파트와",en:"Fatwa",sortable:false},
+        {key:"org_id",label:"조직",en:"Org"}
+      ]})}</div></div>`;
 };
 function roleOpts(sel){const rs=[["applicant","신청기업"],["consultant","컨설턴트"],["auditor","오디터"],["fatwa_liaison","샤리아"],["operator","최고운영자"],["penyelia_halal","할랄감독자"],["pendamping_pph","동반자"],["admin","ITO 관리자"]];return rs.map(([vv,k])=>`<option value="${vv}"${vv===sel?" selected":""}>${k}</option>`).join("");}
 async function createUser(){const username=v("nuUser"),password=v("nuPass")||"pw",role=v("nuRole");if(!username){toast("아이디 입력");return}try{await API("/admin/users",{method:"POST",body:JSON.stringify({username,password,role})});toast("사용자 생성 · "+username);applyView();}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}

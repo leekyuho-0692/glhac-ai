@@ -13,7 +13,7 @@ logging.basicConfig(
     level=os.environ.get("GLHAC_LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 log = logging.getLogger("glhac")
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db, SessionLocal
@@ -523,10 +523,21 @@ _ALL_ROLES = ["applicant", "consultant", "penyelia_halal", "pendamping_pph",
 
 @app.get("/admin/users")
 def admin_list_users(user=Depends(auth.require_roles()), db: Session = Depends(get_db),
-                     limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0)):
-    return [{"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id}
-            for u in db.query(models.User).order_by(models.User.username)
-            .offset(offset).limit(limit).all()]
+                     limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0),
+                     q: str = Query(""), sort: str = Query("username"),
+                     dir: str = Query("asc"), meta: int = Query(0)):
+    """DataList 표준(§8.2): 서버 검색·정렬·페이지네이션·meta(total)."""
+    M = models.User
+    Q = db.query(M)
+    if q:
+        like = "%%%s%%" % q
+        Q = Q.filter(or_(M.username.ilike(like), M.role.ilike(like), M.org_id.ilike(like)))
+    total = Q.count()
+    col = {"username": M.username, "role": M.role, "org_id": M.org_id}.get(sort, M.username)
+    Q = Q.order_by(col.desc() if dir == "desc" else col.asc())
+    rows = Q.offset(offset).limit(limit).all()
+    items = [{"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id} for u in rows]
+    return {"items": items, "total": total, "limit": limit, "offset": offset} if meta else items
 
 
 @app.post("/admin/users")
@@ -594,11 +605,23 @@ def admin_create_org(body: schemas.AdminOrgReq, user=Depends(auth.require_roles(
 
 @app.get("/admin/cases")
 def admin_all_cases(user=Depends(auth.require_roles()), db: Session = Depends(get_db),
-                    limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0)):
-    rows = (db.query(models.CaseApplication).order_by(models.CaseApplication.created_at.desc())
-            .offset(offset).limit(limit).all())
-    return [{"case_id": c.case_id, "org_id": c.org_id, "company_name": c.company_name,
-             "status": c.status, "pathway": c.pathway, "fatwa_status": c.fatwa_status} for c in rows]
+                    limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0),
+                    q: str = Query(""), sort: str = Query("created_at"),
+                    dir: str = Query("desc"), meta: int = Query(0)):
+    """DataList 표준(§8.2): 서버 검색(q)·정렬(sort/dir)·페이지네이션(limit/offset)·meta(total)."""
+    M = models.CaseApplication
+    Q = db.query(M)
+    if q:
+        like = "%%%s%%" % q
+        Q = Q.filter(or_(M.company_name.ilike(like), M.status.ilike(like), M.org_id.ilike(like)))
+    total = Q.count()
+    col = {"company_name": M.company_name, "status": M.status,
+           "org_id": M.org_id, "created_at": M.created_at}.get(sort, M.created_at)
+    Q = Q.order_by(col.asc() if dir == "asc" else col.desc())
+    rows = Q.offset(offset).limit(limit).all()
+    items = [{"case_id": c.case_id, "org_id": c.org_id, "company_name": c.company_name,
+              "status": c.status, "pathway": c.pathway, "fatwa_status": c.fatwa_status} for c in rows]
+    return {"items": items, "total": total, "limit": limit, "offset": offset} if meta else items
 
 
 @app.get("/admin/ontology/stats")
