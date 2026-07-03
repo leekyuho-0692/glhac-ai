@@ -14,9 +14,24 @@ from .ontology_seed import seed
 app = FastAPI(title="GL-HAC AI Dual-Pathway API", version="0.2.0")
 
 
+def _migrate():
+    """경량 마이그레이션 — 기존 SQLite에 신규 컬럼 idempotent 추가(create_all은 ALTER 안 함)."""
+    from sqlalchemy import text as _sql
+    adds = [("case_application", "due_date", "VARCHAR")]
+    with engine.begin() as conn:
+        for tbl, col, typ in adds:
+            try:
+                cols = [r[1] for r in conn.execute(_sql(f"PRAGMA table_info({tbl})"))]
+                if col not in cols:
+                    conn.execute(_sql(f"ALTER TABLE {tbl} ADD COLUMN {col} {typ}"))
+            except Exception:  # noqa: BLE001
+                pass
+
+
 @app.on_event("startup")
 def _startup():
     Base.metadata.create_all(bind=engine)
+    _migrate()
     db = SessionLocal()
     try:
         seed(db)
@@ -43,7 +58,7 @@ def _case_dict(c):
             "nib": c.nib, "responsible_person": c.responsible_person,
             "halal_supervisor": c.halal_supervisor, "email": c.email, "phone": c.phone,
             "address": c.address, "factory_reg_no": c.factory_reg_no,
-            "factory_address": c.factory_address}
+            "factory_address": c.factory_address, "due_date": c.due_date}
 
 
 def _register_from_judgment(db, c, res):
@@ -282,7 +297,8 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     if user["role"] != "admin":
         q = q.filter_by(org_id=user["org_id"])
     return [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
-             "pathway": c.pathway} for c in q.order_by(models.CaseApplication.created_at.desc()).all()]
+             "pathway": c.pathway, "due_date": c.due_date}
+            for c in q.order_by(models.CaseApplication.created_at.desc()).all()]
 
 
 @app.post("/cases")
@@ -741,7 +757,7 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
                    db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     for f in ("company_name", "nib", "responsible_person", "halal_supervisor", "email",
-              "phone", "address", "factory_reg_no", "factory_address"):
+              "phone", "address", "factory_reg_no", "factory_address", "due_date"):
         v = getattr(body, f)
         if v is not None:
             setattr(c, f, v)
@@ -1203,9 +1219,29 @@ def change_impact(case_id: str, body: schemas.ChangeImpactReq,
                "process_changed": ["공정 교차오염 재검토"],
                "material_source_changed": ["원산지 선언 업로드"]}.get(body.change_type, ["consultant 검토"])
     prods = [p.name for p in db.query(models.Product).filter_by(case_id=case_id)]
-    return {"change_type": body.change_type, "impact_score": score, "risk_level": level,
-            "affected_products": prods, "required_actions": actions,
-            "reason_chain": ["임계원재료 %d건" % len(crit)] + ([", ".join(crit[:5])] if crit else [])}
+    reason_chain = ["임계원재료 %d건" % len(crit)] + ([", ".join(crit[:5])] if crit else [])
+    ci = models.ChangeImpact(case_id=case_id, change_type=body.change_type, impact_score=score,
+                             risk_level=level, affected_products=prods, required_actions=actions,
+                             reason=" · ".join(reason_chain), actor=user["role"])
+    db.add(ci)
+    db.commit()
+    return {"change_impact_id": ci.change_impact_id, "change_type": body.change_type,
+            "impact_score": score, "risk_level": level, "affected_products": prods,
+            "required_actions": actions, "reason_chain": reason_chain}
+
+
+@app.get("/cases/{case_id}/certificate/change-impact-history")
+def change_impact_history(case_id: str, user=Depends(auth.get_current_user),
+                          db: Session = Depends(get_db)):
+    """변경영향 분석 이력 — 사후관리(설계 8.3)."""
+    _get_case(db, case_id, user)
+    rows = (db.query(models.ChangeImpact).filter_by(case_id=case_id)
+            .order_by(models.ChangeImpact.created_at.desc()).all())
+    return [{"change_impact_id": r.change_impact_id, "change_type": r.change_type,
+             "impact_score": r.impact_score, "risk_level": r.risk_level,
+             "affected_products": r.affected_products, "required_actions": r.required_actions,
+             "reason": r.reason, "actor": r.actor,
+             "created_at": str(r.created_at)} for r in rows]
 
 
 @app.get("/cases/{case_id}/fatwa")

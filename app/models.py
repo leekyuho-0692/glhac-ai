@@ -23,6 +23,7 @@ class CaseApplication(Base):
     address = Column(String)
     factory_reg_no = Column(String)
     factory_address = Column(String)
+    due_date = Column(String)  # 처리 목표 기한(ISO date) — 기한 경보용
     status = Column(String, nullable=False, default="onboarding")
     pathway = Column(String, nullable=False, default="undetermined")  # 24.9
     risk_category = Column(String)
@@ -30,6 +31,21 @@ class CaseApplication(Base):
     sehati_eligible = Column(String)
     fatwa_status = Column(String, default="none")
     scope_frozen = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ChangeImpact(Base):
+    """인증서 변경영향 분석 이력 — 사후관리(설계 8.3)."""
+    __tablename__ = "change_impact"
+    change_impact_id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    change_type = Column(String, nullable=False)
+    impact_score = Column(Float)
+    risk_level = Column(String)
+    affected_products = Column(JSON)
+    required_actions = Column(JSON)
+    reason = Column(Text)
+    actor = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
