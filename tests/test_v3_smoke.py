@@ -84,6 +84,21 @@ def test_mockaudit_decision_recorded_and_retrieved():
         assert any(d.get("reason") == "증빙 부족" for d in hist["decisions"]), hist
 
 
+def test_ask_injects_domain_ontology():
+    """도메인 시스템(온톨로지)에서 질문 관련 할랄 근거를 직접 회수해 주입(학습 불필요)."""
+    with TestClient(app) as c:
+        adm = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"company_name": "Ask Co", "org_id": "org_demo"},
+                     headers=_h(adm)).json()["case_id"]
+        r = c.post(f"/cases/{cid}/ask", json={"question": "gelatin 원료 써도 되나요?"},
+                   headers=_h(adm))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "domain_sources" in body and "long_term_sources" in body
+        names = [str(s.get("name", "")).lower() for s in body["domain_sources"]]
+        assert any("gelatin" in n for n in names), body["domain_sources"]
+
+
 def test_context_health_endpoint():
     """CHU-1 장기기억 연동 상태 — CHU-1 미가동 시에도 200 + ok 키(폴백)."""
     with TestClient(app) as c:
@@ -103,6 +118,7 @@ if __name__ == "__main__":
     tests = [test_operator_role_seeded, test_mockaudit_rbac,
              test_permission_transfer_cert_issue, test_mockaudit_decision_validation,
              test_mockaudit_decision_recorded_and_retrieved,
+             test_ask_injects_domain_ontology,
              test_context_health_endpoint, test_search_context_fallback_returns_list]
     ok = 0
     for fn in tests:

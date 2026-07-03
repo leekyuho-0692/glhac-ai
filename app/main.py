@@ -1431,6 +1431,35 @@ def explain_ingredient(body: schemas.ExplainReq, user=Depends(auth.get_current_u
     return exp
 
 
+def _domain_facts(db, question):
+    """도메인 시스템(IngredientOntology)에서 질문 관련 할랄 근거를 직접 회수.
+    별도 학습 없이 이미 큐레이션된 성분 온톨로지(할랄/하람/의심 + 심각도 + 대체)를 끌어온다."""
+    q = (question or "").lower()
+    if not q.strip():
+        return "", []
+    matched = []
+    for o in db.query(models.IngredientOntology).all():
+        names = [o.canonical_name or ""]
+        if isinstance(o.aliases, list):
+            names += [str(a) for a in o.aliases]
+        if o.e_number:
+            names.append(str(o.e_number))
+        if any(len(str(nm).lower().strip()) >= 3 and str(nm).lower().strip() in q for nm in names):
+            matched.append(o)
+    facts = []
+    for o in matched[:8]:
+        line = "- %s: %s (심각도 %s, %s)" % (o.canonical_name, o.default_status, o.severity, o.category)
+        if isinstance(o.alternatives, list) and o.alternatives:
+            line += " · 대체: " + ", ".join(str(a) for a in o.alternatives[:3])
+        facts.append(line)
+    rules = [r.code for r in db.query(models.RuleVersion).filter_by(status="active").all()]
+    text = ""
+    if facts:
+        text = "[할랄 도메인 온톨로지 근거 · 규칙 %s]\n%s" % (", ".join(rules) or "-", "\n".join(facts))
+    return text, [{"name": o.canonical_name, "status": o.default_status,
+                   "severity": o.severity, "category": o.category} for o in matched[:8]]
+
+
 @app.post("/cases/{case_id}/ask")
 def ask_ai(case_id: str, body: schemas.AskReq,
            user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -1458,18 +1487,22 @@ def ask_ai(case_id: str, body: schemas.AskReq,
     ])
     sysmsg = ("당신은 BPJPH/SIHALAL 할랄인증 준비 어시스턴트입니다. 아래 케이스 정보만 근거로 한국어로 "
               "간결히 답하세요. 정보에 없으면 모른다고 하세요.\n\n[케이스 정보]\n" + ctx)
-    # 홍익AI/CHU-1 장기기억(RAG) — 보조 근거 주입. 장애 시 로컬만(폴백, 차단 없음).
+    # ① 도메인 온톨로지 근거(우선) — 도메인 시스템에 이미 있는 할랄 지식 직접 회수(학습 불필요)
+    dom_text, domain_sources = _domain_facts(db, body.question)
+    if dom_text:
+        sysmsg += "\n\n" + dom_text
+    # ② 홍익AI/CHU-1 장기기억(보조·일반) — 장애 시 로컬만(폴백, 차단 없음)
     long_term_sources = []
     for h in ai_local.search_context(body.question, top_k=3):
         txt = (h.get("text") or "").strip()
         if txt:
             long_term_sources.append({"text": txt[:200], "score": h.get("score")})
     if long_term_sources:
-        sysmsg += ("\n\n[장기기억 참고 · CHU-1 (보조 근거, 케이스 정보와 상충 시 무시)]\n"
+        sysmsg += ("\n\n[장기기억 참고 · CHU-1 (보조 근거, 케이스/도메인 정보와 상충 시 무시)]\n"
                    + "\n".join("- " + s["text"] for s in long_term_sources[:3]))
     ans = ai_local.llm_text(sysmsg, body.question)
     return {"answer": ans or "(LLM 응답 없음)", "context_facts": ctx,
-            "long_term_sources": long_term_sources}
+            "domain_sources": domain_sources, "long_term_sources": long_term_sources}
 
 
 @app.get("/ai/context/health")
