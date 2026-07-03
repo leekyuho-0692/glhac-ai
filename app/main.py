@@ -458,6 +458,38 @@ def read_all_notifications(user=Depends(auth.get_current_user), db: Session = De
     return {"ok": True}
 
 
+@app.post("/admin/scan-expiry")
+def scan_expiry(user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    """만료 임박 인증서 스캔 → 90/60/30일 알림 생성 (Rizky #7). 운영 시 cron 주기 실행."""
+    from datetime import date as _date
+    today = _date.today()
+    created = 0
+    for cert in db.query(models.HalalCertificate).filter_by(status="active").all():
+        try:
+            days = (_date.fromisoformat(cert.expiry_date) - today).days
+        except Exception:  # noqa: BLE001
+            continue
+        th = next((t for t in (30, 60, 90) if days <= t), None)
+        if th is None or days < 0:
+            continue
+        c = db.get(models.CaseApplication, cert.case_id)
+        if not c:
+            continue
+        dup = (db.query(models.Notification)
+               .filter(models.Notification.case_id == cert.case_id,
+                       models.Notification.event_type == "expiry_soon",
+                       models.Notification.title.like("%%%d일 전%%" % th)).first())
+        if dup:
+            continue
+        _notify(db, c, "expiry_soon", "인증서 만료 임박 · %d일 전" % th,
+                "%s — 인증서 %s 만료 D-%d (만료 %s). 갱신하세요." % (
+                    c.company_name or "", cert.certificate_no or "", days, cert.expiry_date),
+                channels=["inapp", "sms", "kakao", "whatsapp"], role="applicant")
+        created += 1
+    db.commit()
+    return {"created": created}
+
+
 @app.post("/cases")
 def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("applicant", "consultant")),
                 db: Session = Depends(get_db)):

@@ -338,7 +338,7 @@ const BR2ROLE = {applicant:"client", consultant:"consultant", auditor:"auditor",
   penyelia_halal:"client", pendamping_pph:"client"};
 const MENU_ACCESS = {
   dashboard:["client","consultant","auditor","sharia","ops","admin"],
-  caseList: ["client","consultant","sharia","ops","admin"],
+  caseList: ["client","consultant","auditor","sharia","ops","admin"],
   workflow: ["client","consultant","ops","admin"],
   application:["client","consultant","admin"],
   materials:["client","auditor","admin"],
@@ -349,7 +349,7 @@ const MENU_ACCESS = {
   evaluation:["client","auditor","sharia","ops","admin"],
   invoice:  ["client","consultant","ops","admin"],
   fatwa:    ["sharia","ops","admin"],
-  certificate:["sharia","ops","admin"],
+  certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
   system:   ["admin"],
 };
@@ -359,6 +359,7 @@ const CASE_SCOPED = new Set(["workflow","application","materials","integration",
 let ROLE="client", CUR="dashboard", FILTERS={}, DETAIL=null;
 let CURCASE=null, CASES_CACHE=[];
 let INV_SEL=null, DOC_SEL=null, SIHALAL_EID={};
+let CASE_SORT="recent";
 let LANG=0; const LANGS=["🌐 KO · EN","🌐 한국어","🌐 Bahasa"];
 
 /* ---- auth / api ---- */
@@ -816,6 +817,7 @@ SCREEN.caseList=async()=>{
   if(FILTERS.status)cases=cases.filter(c=>c.status===FILTERS.status);
   if(FILTERS.q){const q=FILTERS.q.toLowerCase();cases=cases.filter(c=>(c.company_name||"").toLowerCase().includes(q)||c.case_id.toLowerCase().includes(q));}
   if(FILTERS.region){cases=cases.filter(c=>c.province===FILTERS.region);}
+  if(CASE_SORT==="due")cases=cases.slice().sort((a,b)=>{const da=dueDays(a.due_date),db=dueDays(b.due_date);if(da==null&&db==null)return 0;if(da==null)return 1;if(db==null)return -1;return da-db;});
   const pg=pageSlice("caseList",cases,10);
   const rows=pg.items.length?pg.items.map(c=>`<tr class="clickable" onclick="openCase('${c.case_id}')">
       <td style="font-family:ui-monospace,monospace;font-size:12px">${short(c.case_id)} <span class="go-arrow">→</span></td>
@@ -826,7 +828,14 @@ SCREEN.caseList=async()=>{
     : `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">조건에 맞는 케이스 없음 · No cases</td></tr>`;
   const canNew=["client","consultant","admin"].includes(ROLE);
   return `${filterChips()}
-  <div class="card"><h3>케이스 테이블 <span class="en">· Case table</span><span class="r">row 클릭 → 상세</span></h3>
+  <div class="chipbar" style="margin-bottom:12px">
+    <input class="v" style="width:auto;flex:1;max-width:280px" placeholder="🔍 검색 (기업·번호) — Enter" value="${esc(FILTERS.q||'')}" onkeydown="if(event.key==='Enter'){FILTERS.q=this.value;PAGES={};applyView();}">
+    <select class="v" style="width:auto" onchange="CASE_SORT=this.value;applyView()">
+      <option value="recent"${CASE_SORT==='recent'?' selected':''}>정렬: 최근순</option>
+      <option value="due"${CASE_SORT==='due'?' selected':''}>정렬: 기한 우선</option></select>
+    ${FILTERS.q?`<span class="fchip">검색: ${esc(FILTERS.q)} <b onclick="delete FILTERS.q;applyView()">✕</b></span>`:''}
+  </div>
+  <div class="card"><h3>케이스 테이블 <span class="en">· Case table</span><span class="r">${ROLE==='auditor'?'배정 심사 관리':'row 클릭 → 상세'}</span></h3>
     <div class="body tight"><table>
       <thead><tr><th>번호 · ID</th><th>기업 · Company</th><th>경로</th><th>상태 · Status</th><th>기한 · Due</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
@@ -1466,10 +1475,13 @@ SCREEN.certificate=async()=>{
   return `
   <div class="grid side">
     <div class="card"><h3>할랄 인증서 <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
-      <div class="body">${certCard}</div></div>
+      <div class="body">${certCard}
+        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="printCert('${id}')">🖨 인증서 다운로드·인쇄 · PDF</button></div>`:''}</div></div>
     <div class="card"><h3>발급·사후관리 <span class="en">· Post-cert</span></h3>
       <div class="body">
-        ${c.issued&&c.days_to_expiry!=null&&c.days_to_expiry<90?`<div class="banner ${c.days_to_expiry<30?'bad':'warn'}" style="margin-bottom:12px">⏰ 인증서 만료 <b>D-${c.days_to_expiry}</b> — 갱신이 필요합니다 (만료 ${esc(c.expiry_date||"")})</div>`:''}
+        ${c.issued&&c.days_to_expiry!=null?(()=>{const d=c.days_to_expiry;const th=d<=30?["bad","D-30"]:d<=60?["warn","D-60"]:d<=90?["info","D-90"]:null;
+          return th?`<div class="banner ${th[0]}" style="margin-bottom:8px">⏰ 인증서 만료 <b>D-${d}</b> (만료 ${esc(c.expiry_date||"")}) — <b>${th[1]} 알림 구간</b></div>
+          <div class="btnrow" style="margin-bottom:12px">${[90,60,30].map(t=>`<span class="tag t-${d<=t?'bad':'mute'}">${d<=t?'✓ ':''}${t}일 전</span>`).join("")}</div>`:'';})():''}
         <div class="list" style="margin:0 -16px 12px">
           ${[["사후 모니터링","연 1회 정기","info"],["갱신 · Renewal","만료 90일 전","mute"],["변경영향","원료 변경 시 재평가","warn"]]
             .map(([t,s,cl])=>`<div class="li"><div class="ic t-${cl}">🔁</div><div class="tx"><b>${t}</b></div><div class="when">${tag(cl,s)}</div></div>`).join("")}
@@ -1496,6 +1508,24 @@ async function changeImpact(id){
   const r=await dialog("변경영향 분석 · Change impact",[{key:"change_type",label:"변경 유형",type:"select",options:[{value:"material_source_changed",label:"원료 원산지 변경"},{value:"supplier_changed",label:"공급사 변경"},{value:"material_added",label:"원료 추가"},{value:"process_changed",label:"공정 변경"}]}]);
   if(!r)return;
   try{const res=await API(`/cases/${id}/certificate/change-impact`,{method:"POST",body:JSON.stringify({change_type:r.change_type})});toast("변경영향 · "+(res.risk_level||"분석 완료")+(res.impact_score!=null?" ("+Math.round(res.impact_score*100)+"%)":""));applyView();}catch(e){toast("분석 실패 · "+(e&&e.code?e.code:""));}}
+async function printCert(id){
+  try{const c=await API(`/cases/${id}/certificate`);if(!c.issued){toast("미발급");return;}
+    const co=curCaseObj();const w=window.open("","_blank");if(!w){toast("팝업 차단");return;}
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Halal Certificate ${esc(c.certificate_no||"")}</title></head>
+    <body style="font:14px/1.7 -apple-system,'Malgun Gothic',sans-serif;color:#3a2606;display:grid;place-items:center;min-height:100vh;margin:0">
+    <div style="width:640px;border:3px solid #B45309;border-radius:16px;padding:48px;text-align:center;background:linear-gradient(180deg,#FEF3C7,#fff)">
+      <div style="font-size:44px">☪</div>
+      <div style="letter-spacing:4px;color:#B45309;font-weight:700">SERTIFIKAT HALAL · 할랄 인증서</div>
+      <h1 style="margin:14px 0 4px;color:#7c3f06">${esc((co&&co.company_name)||"")}</h1>
+      <div style="color:#64748b">${esc(c.scope||"")}</div>
+      <hr style="border:none;border-top:1px solid #e5cfa0;margin:22px 0">
+      <p>본 제품은 SJPH 및 샤리아 기준에 따라 <b>할랄(HALAL)</b> 인증되었음을 증명합니다.<br>This product is certified <b>HALAL</b> per SJPH and Sharia standards.</p>
+      <div style="font-family:monospace;margin-top:20px;color:#475569">No. ${esc(c.certificate_no||"—")}<br>Issued ${esc(c.issue_date||"—")} · Valid until ${esc(c.expiry_date||"—")}</div>
+      <div style="margin-top:28px;color:#94a3b8;font-size:12px">GL-HAC AI · Halal Certification Platform</div>
+    </div></body></html>`);
+    w.document.close();setTimeout(()=>w.print(),300);
+  }catch(e){toast("인쇄 실패");}
+}
 async function renewCert(id){if(!confirm("인증서를 갱신할까요?"))return;try{await API(`/cases/${id}/renew`,{method:"POST",body:"{}"});toast("갱신 요청");await loadCases(true);applyView();}catch(e){toast("갱신 실패 · "+(e&&e.code?e.code:""));}}
 async function unlockCert(id){if(!confirm("scope 잠금을 해제할까요?"))return;try{await API(`/cases/${id}/certificate/unlock`,{method:"POST",body:"{}"});toast("잠금해제");await loadCases(true);applyView();}catch(e){toast("해제 실패 · "+(e&&e.code?e.code:""));}}
 
