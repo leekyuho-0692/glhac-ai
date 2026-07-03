@@ -15,19 +15,23 @@ app = FastAPI(title="GL-HAC AI Dual-Pathway API", version="0.2.0")
 
 
 def _migrate():
-    """경량 마이그레이션 — 기존 SQLite에 신규 컬럼 idempotent 추가(create_all은 ALTER 안 함)."""
-    from sqlalchemy import text as _sql
-    adds = [("case_application", "due_date", "VARCHAR"),
-            ("fatwa_decision", "final_approved_at", "DATETIME"),
-            ("fatwa_decision", "final_approver", "VARCHAR")]
+    """경량 마이그레이션 — 모델 정의와 기존 테이블을 대조해 누락 컬럼 idempotent 추가.
+    create_all은 기존 테이블을 ALTER하지 않으므로, baseline 이후 추가된 전 컬럼을 자동 보강(P0-5)."""
+    from sqlalchemy import text as _sql, inspect as _inspect
+    insp = _inspect(engine)
     with engine.begin() as conn:
-        for tbl, col, typ in adds:
-            try:
-                cols = [r[1] for r in conn.execute(_sql(f"PRAGMA table_info({tbl})"))]
-                if col not in cols:
-                    conn.execute(_sql(f"ALTER TABLE {tbl} ADD COLUMN {col} {typ}"))
-            except Exception:  # noqa: BLE001
-                pass
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue  # create_all이 신규 테이블은 처리
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in existing:
+                    continue
+                try:
+                    typ = col.type.compile(engine.dialect)
+                    conn.execute(_sql(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {typ}'))
+                except Exception:  # noqa: BLE001 — 제약 있는 컬럼 등은 skip
+                    pass
 
 
 @app.on_event("startup")
@@ -118,7 +122,7 @@ def me(user=Depends(auth.get_current_user)):
 
 # ===================== admin 시스템 설정 (admin 전용) =====================
 _ALL_ROLES = ["applicant", "consultant", "penyelia_halal", "pendamping_pph",
-              "auditor", "fatwa_liaison", "admin"]
+              "auditor", "fatwa_liaison", "operator", "admin"]
 
 
 @app.get("/admin/users")
@@ -1495,7 +1499,8 @@ _ENUMS = {
     "review_status": [("pending", "대기"), ("approved", "승인"), ("rejected", "반려"), ("rework", "재작업")],
     "pathway": [("undetermined", "미정"), ("self_declare", "자기선언"), ("reguler", "정규")],
     "role": [("applicant", "신청기업"), ("consultant", "컨설턴트"), ("penyelia_halal", "할랄감독자"),
-             ("pendamping_pph", "동반자"), ("auditor", "심사원"), ("fatwa_liaison", "파트와"), ("admin", "관리자")],
+             ("pendamping_pph", "동반자"), ("auditor", "심사원"), ("fatwa_liaison", "파트와"),
+             ("operator", "최고운영자"), ("admin", "관리자")],
     "finding_severity": [("major", "중대"), ("minor", "경미"), ("observation", "관찰")],
     "finding_status": [("open", "진행"), ("closed", "종결")],
     "sjph_element": [("commitment", "책임과 약속"), ("materials", "원재료"), ("process", "할랄제품공정"),
@@ -1719,6 +1724,7 @@ def screen_material(material_id: str, user=Depends(auth.get_current_user), db: S
     m = db.get(models.Material, material_id)
     if not m:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
+    _get_case(db, m.case_id, user)  # P0-2 조직격리
     r = screening.apply_screen(m)
     db.commit()
     return r
@@ -1727,7 +1733,13 @@ def screen_material(material_id: str, user=Depends(auth.get_current_user), db: S
 # ---------- AI: OCR / label judgment ----------
 @app.post("/ai/ocr")
 def ai_ocr(body: schemas.OCRReq, user=Depends(auth.get_current_user)):
-    return ai_local.ocr_image(body.image_path, body.lang or "korean")
+    # P0-3: 경로 traversal 방지 — 업로드 샌드박스 접두만 허용
+    import os as _os
+    p = _os.path.realpath(body.image_path or "")
+    sandbox = _os.path.realpath(_os.environ.get("GLHAC_UPLOAD_DIR", "/tmp"))
+    if not p.startswith(sandbox + _os.sep):
+        raise HTTPException(400, {"code": "PATH_NOT_ALLOWED", "sandbox": sandbox})
+    return ai_local.ocr_image(p, body.lang or "korean")
 
 
 @app.post("/ai/label-judgment")
@@ -1801,6 +1813,12 @@ def pathway_confirm(case_id: str, body: schemas.PathwayConfirm,
 def transition(case_id: str, body: schemas.TransitionReq,
                user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    # P0-1: 승인·발급 상태는 raw 전이 금지(전용 엔드포인트만), 그 외는 역할 게이트
+    if body.to_state in sm.PROTECTED_STATES:
+        raise HTTPException(403, {"code": "USE_DEDICATED_ENDPOINT", "state": body.to_state})
+    if user["role"] != "admin" and user["role"] not in sm.transition_roles(body.to_state):
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED_TRANSITION",
+                                  "to": body.to_state, "need": sorted(sm.transition_roles(body.to_state))})
     ok, blockers = sm.can_transition(db, c, body.to_state)
     if not ok:
         raise HTTPException(409, {"code": "TRANSITION_BLOCKED", "blockers": blockers})
@@ -1829,6 +1847,8 @@ def add_penyelia(org_id: str, body: schemas.PenyeliaCreate,
 
 @app.get("/orgs/{org_id}/penyelia")
 def list_penyelia(org_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    if user["role"] != "admin" and org_id != user["org_id"]:  # P0-2 조직격리
+        raise HTTPException(403, {"code": "FORBIDDEN_ORG"})
     rows = db.query(models.PenyeliaHalal).filter_by(org_id=org_id).all()
     return {"active_count": sum(1 for r in rows if r.status == "active"),
             "items": [{"penyelia_id": r.penyelia_id, "name": r.name, "status": r.status} for r in rows]}
@@ -1907,6 +1927,8 @@ def sihalal_verify(eid: str, body: schemas.SihalalVerify,
     ei = db.get(models.ExternalIdentity, eid)
     if not ei:
         raise HTTPException(404, {"code": "IDENTITY_NOT_FOUND"})
+    if user["role"] != "admin" and ei.org_id != user["org_id"]:  # P0-2 조직격리
+        raise HTTPException(403, {"code": "FORBIDDEN_ORG"})
     stored = (ei.external_email or ei.external_username or "").strip().lower()
     match = bool(stored) and body.expected_identifier.strip().lower() == stored
     ei.identifier_match = match

@@ -53,6 +53,37 @@ def test_permission_transfer_cert_issue():
         assert c.post("/cases/none/certificate/issue", headers=_h(op)).status_code != 403
 
 
+def test_transition_bypass_blocked():
+    """P0-1: applicant가 /transition으로 승인·발급 상태 직접 진입 차단(403)."""
+    import sqlite3
+    dbfile = os.environ["GLHAC_DB_URL"].replace("sqlite:///", "")
+    with TestClient(app) as c:
+        adm = _tok(c, "admin", "admin")
+        ap = _tok(c, "applicant1", "pw")
+        cid = c.post("/cases", json={"company_name": "Bypass", "org_id": "org_demo"},
+                     headers=_h(adm)).json()["case_id"]
+        conn = sqlite3.connect(dbfile)
+        conn.execute("UPDATE case_application SET status='fatwa_review' WHERE case_id=?", (cid,))
+        conn.commit()
+        conn.close()
+        # PROTECTED_STATES — raw 전이 금지
+        assert c.post(f"/cases/{cid}/transition", json={"to_state": "fatwa_approved"},
+                      headers=_h(ap)).status_code == 403
+        assert c.post(f"/cases/{cid}/transition", json={"to_state": "certificate_issued"},
+                      headers=_h(ap)).status_code == 403
+        # fatwa_status는 여전히 승인 아님
+        assert c.get(f"/cases/{cid}", headers=_h(adm)).json()["fatwa_status"] != "approved"
+
+
+def test_operator_provisionable():
+    """P0-4: admin이 operator 역할 사용자를 생성할 수 있어야 함."""
+    with TestClient(app) as c:
+        adm = _tok(c, "admin", "admin")
+        r = c.post("/admin/users", json={"username": "op_new", "password": "pw", "role": "operator"},
+                   headers=_h(adm))
+        assert r.status_code == 200, r.text
+
+
 def test_two_stage_fatwa_approval():
     """2단계 승인: 샤리아 가승인(provisional) → 최고운영자 최종승인(approved)."""
     with TestClient(app) as c:
@@ -182,7 +213,8 @@ def test_search_context_fallback_returns_list():
 
 if __name__ == "__main__":
     tests = [test_operator_role_seeded, test_mockaudit_rbac,
-             test_permission_transfer_cert_issue, test_two_stage_fatwa_approval,
+             test_permission_transfer_cert_issue, test_transition_bypass_blocked,
+             test_operator_provisionable, test_two_stage_fatwa_approval,
              test_mockaudit_decision_validation,
              test_mockaudit_decision_recorded_and_retrieved,
              test_mockaudit_reject_transitions_to_corrective,
