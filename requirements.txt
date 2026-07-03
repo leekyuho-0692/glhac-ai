@@ -4,6 +4,7 @@ sqlalchemy>=2.0
 pydantic>=2.5
 httpx>=0.26
 pytest>=8.0
+alembic>=1.13          # DB 마이그레이션(§6.1) — SQLite/Postgres 양립
 # 비밀번호 해시는 stdlib PBKDF2 사용(추가 의존성 없음).
-# Postgres 전환 시 주석 해제:
+# Postgres 사용 시 주석 해제(SQLite만 쓰면 불필요):
 # psycopg2-binary>=2.9

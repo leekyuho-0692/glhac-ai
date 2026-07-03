@@ -23,6 +23,27 @@ python3.11 -m venv .venv
 .venv/bin/python tests/test_smoke.py        # 또는 .venv/bin/pytest -q
 ```
 
+## DB 마이그레이션 (Alembic · §6.1)
+개발은 SQLite 기본(startup의 create_all로 자동 생성). 프로덕션은 **Alembic + PostgreSQL** 권장.
+
+```bash
+# DB 지정(SQLite 기본, Postgres는 아래)
+export GLHAC_DB_URL="postgresql+psycopg2://glhac:glhac@localhost:5432/glhac"   # 또는 sqlite:///./glhac.db
+
+# 신규 DB: 전체 스키마 적용
+.venv/bin/alembic upgrade head
+
+# 기존 DB(이미 create_all로 생성됨): 기준선만 표시
+.venv/bin/alembic stamp 0001_baseline
+
+# 스키마 변경 후 마이그레이션 자동생성 → 검토 → 적용
+.venv/bin/alembic revision --autogenerate -m "설명"
+.venv/bin/alembic upgrade head
+```
+- `alembic/env.py` 는 앱과 동일한 `GLHAC_DB_URL`·`Base.metadata` 사용(SQLite/Postgres 양립, SQLite는 batch 모드).
+- Postgres 사용 시 `requirements.txt`의 `psycopg2-binary` 주석 해제. `docker compose --profile pg up` 로 Postgres 기동.
+- 앱 startup의 create_all은 idempotent — Alembic과 공존(테이블 있으면 no-op).
+
 ## 핵심 흐름 (자기선언/정규 이중경로)
 ```
 onboarding → … → pathway_determination

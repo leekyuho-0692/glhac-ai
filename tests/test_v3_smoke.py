@@ -71,6 +71,24 @@ def test_public_config_reports_dev():
         assert c.get("/public-config").json()["dev_mode"] is True
 
 
+def test_alembic_scaffolding():
+    """Alembic 스캐폴딩·기준선 무결성(§6.1). 실제 upgrade는 subprocess/CI로 검증."""
+    import os
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    assert os.path.exists(os.path.join(root, "alembic.ini"))
+    assert os.path.exists(os.path.join(root, "alembic", "env.py"))
+    p = os.path.join(root, "alembic", "versions", "0001_baseline.py")
+    spec = importlib.util.spec_from_file_location("baseline_rev", p)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    assert m.revision == "0001_baseline" and m.down_revision is None
+    assert callable(m.upgrade) and callable(m.downgrade)
+    from app.db import Base
+    import app.models  # noqa: F401 — 메타데이터 등록
+    assert "case_application" in Base.metadata.tables and "ai_extraction" in Base.metadata.tables
+
+
 def test_datalist_meta_search_sort():
     """DataList 표준(§8.2): meta(total)·서버검색(q)·정렬(sort/dir) + 하위호환(array)."""
     with TestClient(app) as c:
@@ -470,7 +488,7 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_datalist_meta_search_sort,
+    tests = [test_alembic_scaffolding, test_datalist_meta_search_sort,
              test_qr_public_verify, test_ai_extractions_endpoints,
              test_rbac_action_matrix_contract,
              test_unlock_requires_operator, test_fatwa_document_restricted,
