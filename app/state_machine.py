@@ -47,6 +47,31 @@ def allowed(frm, to):
     return to in TRANSITIONS.get(frm, set())
 
 
+# ---- 전이 권한 (P0-1) — /transition 우회로 승인·발급 무력화 방지 ----
+# raw /transition으로 진입 금지(전용 엔드포인트만): 최종승인·발급
+PROTECTED_STATES = {"fatwa_approved", "certificate_issued"}
+# 진입(to_state)에 필요한 역할. admin은 항상 허용. 미정의 상태는 DEFAULT.
+TRANSITION_ROLES = {
+    "committee_verification": {"operator"},                     # SEHATI ketetapan = 최종 결제자
+    "final_package_preparation": {"fatwa_liaison", "operator"},
+    "fatwa_review": {"fatwa_liaison", "operator"},
+    "lph_assignment": {"fatwa_liaison", "operator"},
+    "onsite_audit_scheduled": {"auditor", "fatwa_liaison", "operator"},
+    "onsite_audit_in_progress": {"auditor", "operator"},
+    "corrective_action_required": {"auditor", "operator"},
+    "corrective_action_submitted": {"auditor", "consultant", "operator"},
+    "audit_closed": {"auditor", "operator"},                    # 오디터 현장심사 완료
+    "hpas_evaluation_ready": {"auditor", "fatwa_liaison", "operator"},
+}
+# 그 외 상태(초기 워크플로 등)는 신청·컨설턴트 등 스태프 진행 허용(applicant 포함)
+DEFAULT_TRANSITION_ROLES = {"applicant", "consultant", "penyelia_halal",
+                            "pendamping_pph", "auditor", "fatwa_liaison", "operator"}
+
+
+def transition_roles(to_state):
+    return TRANSITION_ROLES.get(to_state, DEFAULT_TRANSITION_ROLES)
+
+
 # ---- 헬퍼 질의 ----
 def has_active_penyelia(db, org_id):
     return db.query(PenyeliaHalal).filter_by(org_id=org_id, status="active").count() > 0
@@ -184,13 +209,12 @@ def apply_side_effects(case, to_state):
         case.pathway = "self_declare"
     if to_state in ("supplementation_required", "consultant_review") and case.pathway == "undetermined":
         case.pathway = "reguler"
-    if to_state == "committee_verification":            # 자기선언 ketetapan
+    if to_state == "committee_verification":            # 자기선언 ketetapan (operator 전용 전이)
         case.fatwa_status = "approved"
         case.scope_frozen = True
     if to_state == "final_package_preparation":
         case.scope_frozen = True
-    if to_state == "fatwa_approved":
-        case.fatwa_status = "approved"
+    # NOTE(P0-1): fatwa_approved 자동 approved 제거 — 최종승인은 /fatwa/final-approve(operator)만 수행
 
 
 def assess_pathway(db, case):
