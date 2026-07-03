@@ -326,7 +326,7 @@ const CASE_SCOPED = new Set(["workflow","application","materials","integration",
 let ROLE="client", CUR="dashboard", FILTERS={}, DETAIL=null;
 let CURCASE=null, CASES_CACHE=[];
 let INV_SEL=null, DOC_SEL=null, SIHALAL_EID={};
-let LANG=0; const LANGS=["🌐 KO · EN","🌐 한국어","🌐 Bahasa (EN)"];
+let LANG=0; const LANGS=["🌐 KO · EN","🌐 한국어","🌐 Bahasa"];
 
 /* ---- auth / api ---- */
 const TK="glhac_token";
@@ -398,7 +398,31 @@ const KO_LABEL={
   ketua:"팀장",anggota:"팀원",halal:"할랄",haram:"하람",mushbooh:"의심",
   pre_audit:"사전심사",onsite:"현장심사",certification:"인증심사",supervision:"감독",
 };
-function koText(v){return KO_LABEL[String(v)]||null;}
+/* Bahasa Indonesia 라벨(상태·enum) — 언어 토글(LANG===2)에서 사용 */
+const ID_LABEL={
+  onboarding:"Pendaftaran",application_draft:"Draf aplikasi",ai_pre_assessment_ready:"Pra-penilaian AI siap",
+  ai_pre_assessment_running:"Pra-penilaian AI berjalan",pathway_determination:"Penentuan jalur",self_declare_eligible:"Layak self-declare",
+  sjph_lite_prepared:"SJPH ringkas disiapkan",pendamping_verification:"Verifikasi pendamping",self_declaration_submitted:"Self-declare diajukan",
+  committee_verification:"Verifikasi komite",supplementation_required:"Perlu pelengkapan",supplementation_submitted:"Pelengkapan diajukan",
+  consultant_review:"Tinjauan konsultan",document_pre_audit_requested:"Pra-audit dokumen diminta",document_pre_audit_in_review:"Pra-audit dokumen ditinjau",
+  document_pre_audit_approved:"Pra-audit dokumen disetujui",lph_assignment:"Penugasan LPH",onsite_audit_scheduled:"Audit lapangan dijadwalkan",
+  onsite_audit_in_progress:"Audit lapangan berlangsung",corrective_action_required:"Tindakan korektif diperlukan",corrective_action_submitted:"Tindakan korektif diajukan",
+  audit_closed:"Audit ditutup",hpas_evaluation_ready:"Evaluasi HPAS",final_package_preparation:"Persiapan paket akhir",
+  fatwa_review:"Tinjauan fatwa",fatwa_approved:"Fatwa disetujui",certificate_issued:"Sertifikat diterbitkan",
+  post_certification_monitoring:"Pemantauan pasca-sertifikasi",change_impact:"Dampak perubahan",renewal_preparation:"Persiapan perpanjangan",
+  self_declare:"Self-declare",reguler:"Reguler",undetermined:"Belum ditentukan",none:"Tidak ada",
+  approved:"Disetujui",provisional:"Persetujuan awal",rejected:"Ditolak",conditional:"Bersyarat",pending:"Menunggu",rework:"Perbaikan",
+  major:"Mayor",minor:"Minor",critical:"Kritis",observation:"Observasi",open:"Terbuka",closed:"Selesai",
+  ready:"Siap",warn:"Perhatian",not_ready:"Belum siap",blocked:"Terblokir",paid:"Lunas",unpaid:"Belum bayar",
+  comply:"Sesuai",nonconformity:"Ketidaksesuaian",not_checked:"Belum dicek",active:"Aktif",inactive:"Nonaktif",
+  ok:"Baik",gap:"Kurang",verified:"Terverifikasi",submitted:"Diajukan",submitted_by_applicant:"Diajukan pemohon",
+  ketua:"Ketua",anggota:"Anggota",halal:"Halal",haram:"Haram",mushbooh:"Meragukan",
+  pre_audit:"Pra-audit",onsite:"Lapangan",certification:"Sertifikasi",supervision:"Pengawasan",
+};
+const NAV_ID={dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",materials:"Bahan AI",
+  integration:"Integrasi",documents:"Dokumen",audit:"Audit",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
+  invoice:"Tagihan",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",system:"Sistem"};
+function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
 function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2600);}
@@ -485,7 +509,7 @@ function buildNav(){
   const nav=document.getElementById("nav");
   const allowed=NAV.filter(([id])=>MENU_ACCESS[id].includes(ROLE));
   nav.innerHTML=allowed.map(([id,ic,ko,en])=>
-    `<a data-id="${id}" onclick="go('${id}')"><span>${ic}</span><span>${ko}</span><span class="en">${en}</span></a>`).join("");
+    `<a data-id="${id}" onclick="go('${id}')"><span>${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`).join("");
   document.getElementById("navfoot").innerHTML=
     `노출 메뉴 ${allowed.length} / 15<br><span style="color:#64748B">scope · ${scopeLabel()}</span>`;
 }
@@ -546,7 +570,21 @@ async function applyView(){
       host.innerHTML=pageHead(CUR)+inner;
     }
   }catch(err){host.innerHTML=pageHead(CUR)+errCard(err);}
+  if(AFTER_RENDER){const f=AFTER_RENDER;AFTER_RENDER=null;try{f();}catch(_){}}
   window.scrollTo(0,0);
+}
+let AFTER_RENDER=null;
+async function loadDocPreview(docId){
+  const box=document.getElementById("docPreview");if(!box||!docId)return;
+  box.innerHTML='<div class="muted small">미리보기 불러오는 중…</div>';
+  try{const r=await fetch(`/documents/${docId}/file`,{headers:{Authorization:"Bearer "+token()}});
+    if(!r.ok){box.innerHTML='<div class="muted small">첨부 파일이 없습니다 · no file</div>';return;}
+    const blob=await r.blob();const url=URL.createObjectURL(blob);const ct=(blob.type||"").toLowerCase();
+    if(ct.includes("pdf")){box.innerHTML=`<iframe src="${url}" title="PDF" style="width:100%;height:540px;border:1px solid var(--line);border-radius:10px;background:#fff"></iframe>`;}
+    else if(ct.startsWith("image/")){box.innerHTML=`<img src="${url}" alt="preview" style="max-width:100%;border:1px solid var(--line);border-radius:10px">`;}
+    else{box.innerHTML=`<div class="banner info">이 형식은 인라인 미리보기를 지원하지 않습니다 · <a href="${url}" target="_blank" style="color:inherit;text-decoration:underline">새 탭에서 열기 ↗</a></div>`;}
+    setTimeout(()=>URL.revokeObjectURL(url),120000);
+  }catch(e){box.innerHTML='<div class="muted small">미리보기 실패</div>';}
 }
 function errCard(err){
   const code=(err&&(err.code||err.detail))||(typeof err==="string"?err:"오류");
@@ -566,7 +604,7 @@ function filterChips(){
 
 /* ---- lang / theme ---- */
 function applyLang(){const root=document.documentElement;if(LANG===1)root.setAttribute("data-lang","ko");else root.removeAttribute("data-lang");document.getElementById("langPill").textContent=LANGS[LANG];}
-function cycleLang(){LANG=(LANG+1)%LANGS.length;try{localStorage.setItem("glhac_lang",String(LANG))}catch(_){}applyLang();}
+function cycleLang(){LANG=(LANG+1)%LANGS.length;try{localStorage.setItem("glhac_lang",String(LANG))}catch(_){}applyLang();buildNav();applyView();}
 function toggleTheme(){
   const h=document.documentElement,d=h.getAttribute("data-theme")==="dark";
   h.setAttribute("data-theme",d?"light":"dark");
@@ -1008,10 +1046,13 @@ SCREEN.documents=async()=>{
         <span class="chip">신뢰도 ${Math.round((sel.confidence||0)*100)}%</span>
         ${sel.has_file?`<button class="btn" onclick="viewDoc('${sel.document_id}')">↗ 원본 열기</button>`:''}</div>
       ${sel.fields&&Object.keys(sel.fields).length?`<div style="margin-bottom:10px">${Object.entries(sel.fields).slice(0,8).map(([k,vv])=>`<div class="kv"><span>${esc(k)}</span><b>${esc(vv)}</b></div>`).join("")}</div>`:""}
-      <div style="border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:16px;min-height:180px;max-height:340px;overflow:auto;font-size:13px;white-space:pre-wrap;color:var(--ink2)">${esc(sel.excerpt||"추출된 텍스트가 없습니다. 원본을 열어 확인하세요.")}</div>`
-    :'<div class="muted small">좌측에서 문서를 선택하면 추출 텍스트·필드가 표시됩니다.</div>';
+      ${sel.has_file?`<div class="small" style="font-weight:600;margin-bottom:6px">📄 원본 미리보기 · Preview</div><div id="docPreview" style="margin-bottom:12px"></div>`:''}
+      <div class="small" style="font-weight:600;margin-bottom:6px">🔤 추출 텍스트 · Extracted</div>
+      <div style="border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:16px;min-height:120px;max-height:300px;overflow:auto;font-size:13px;white-space:pre-wrap;color:var(--ink2)">${esc(sel.excerpt||"추출된 텍스트가 없습니다. 원본을 미리보기하세요.")}</div>`
+    :'<div class="muted small">좌측에서 문서를 선택하면 원본 미리보기·추출 텍스트·필드가 표시됩니다.</div>';
+  if(sel&&sel.has_file)AFTER_RENDER=()=>loadDocPreview(sel.document_id);
   const rvw={};docs.forEach(d=>{const s=d.review_status||"pending";rvw[s]=(rvw[s]||0)+1;});
-  const rvwSummary=docs.length?`<div class="chipbar" style="margin-bottom:14px"><span class="muted small">검수 요약 · Review</span>${Object.entries(rvw).map(([k,vv])=>`<span class="tag t-${statusColor(k)}">${esc(k)} ${vv}</span>`).join("")}</div>`:"";
+  const rvwSummary=docs.length?`<div class="chipbar" style="margin-bottom:14px"><span class="muted small">검수 요약 · Review</span>${Object.entries(rvw).map(([k,vv])=>`${bTag(statusColor(k),k)} <b style="margin-right:8px">${vv}</b>`).join("")}</div>`:"";
   return `
   ${rvwSummary}
   <div class="grid side">
