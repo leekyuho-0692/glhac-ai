@@ -1642,7 +1642,11 @@ def issue_certificate(case_id: str, user=Depends(auth.require_roles("operator"))
     db.add(cert)
     db.flush()
     cert.certificate_no = "HC-" + cert.id[:8].upper()
-    sm.record_event(db, c, c.status, c.status, "certificate.issue", "system", user["uid"],
+    # 상태 전이 — certificate_issued는 보호상태(raw transition 금지). 이 전용 엔드포인트가 소유.
+    frm = c.status
+    if "certificate_issued" in sm.TRANSITIONS.get(c.status, set()):
+        c.status = "certificate_issued"
+    sm.record_event(db, c, frm, c.status, "certificate.issue", "system", user["uid"],
                     {"certificate_no": cert.certificate_no})
     # S3-3: freeze snapshot — 발급 시 제품/원재료 ID 동결
     prod_ids = [p.product_id for p in db.query(models.Product).filter_by(case_id=case_id)]

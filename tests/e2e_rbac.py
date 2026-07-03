@@ -35,8 +35,9 @@ CASES = [
     ("SIHALAL 검증", "POST", "/sihalal/identity/nope/verify", {"expected_identifier": "x"}, {"consultant", "admin"}),
     ("심사 지적", "POST", f"/cases/{CID}/findings", {"finding": "x", "severity": "minor"}, {"consultant", "auditor", "admin"}),
     ("LPH 배정", "POST", f"/cases/{CID}/lph-assignment", {"lph_name": "x"}, {"fatwa_liaison", "operator", "admin"}),
-    ("파트와 결정", "PATCH", f"/cases/{CID}/fatwa", {"decision": "approved"}, {"fatwa_liaison", "operator", "admin"}),
-    ("인증서 발급", "POST", f"/cases/{CID}/certificate/issue", None, {"fatwa_liaison", "operator", "admin"}),
+    # SoD(직무분리): 파트와 가승인은 fatwa_liaison만, 최종 인증서 발급은 operator만(+admin 우회)
+    ("파트와 결정", "PATCH", f"/cases/{CID}/fatwa", {"decision": "approved"}, {"fatwa_liaison", "admin"}),
+    ("인증서 발급", "POST", f"/cases/{CID}/certificate/issue", None, {"operator", "admin"}),
     ("모의심사 큐", "GET", "/mock-audit/queue", None, {"auditor", "fatwa_liaison", "operator", "admin"}),
     ("모의심사 결정", "POST", f"/cases/{CID}/mock-audit/decision", {"result": "pass"}, {"auditor", "fatwa_liaison", "operator", "admin"}),
     ("자기선언 검증", "POST", f"/cases/{CID}/pendamping/verify", {"decision": "verified"}, {"pendamping_pph", "admin"}),
