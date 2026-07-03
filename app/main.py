@@ -2313,6 +2313,92 @@ def pay_invoice(invoice_id: str, user=Depends(auth.require_roles("applicant", "c
     return {"invoice_id": invoice_id, "status": "paid"}
 
 
+# ---------- 결제 기록 (§P2 billing/payment) ----------
+@app.post("/invoices/{invoice_id}/payment")
+def record_payment(invoice_id: str, body: schemas.PaymentReq,
+                   user=Depends(auth.require_roles("applicant", "consultant", "operator")),
+                   db: Session = Depends(get_db)):
+    """결제 확인 기록 — Payment 생성 + 인보이스 paid 처리(결제 게이트웨이 시뮬레이션)."""
+    inv = db.get(models.Invoice, invoice_id)
+    if not inv:
+        raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    c = _get_case(db, inv.case_id, user)
+    if body.method not in ("bank_transfer", "va", "card", "manual"):
+        raise HTTPException(400, {"code": "BAD_METHOD"})
+    p = models.Payment(invoice_id=invoice_id, case_id=inv.case_id, amount=inv.total,
+                       method=body.method, reference=body.reference, status="confirmed",
+                       paid_by=user["uid"])
+    db.add(p)
+    inv.status = "paid"
+    sm.record_event(db, c, c.status, c.status, "invoice.payment", user["role"], user["uid"],
+                    {"invoice_id": invoice_id, "method": body.method, "amount": inv.total})
+    db.commit()
+    return {"payment_id": p.id, "invoice_id": invoice_id, "amount": p.amount,
+            "method": p.method, "status": p.status}
+
+
+@app.get("/cases/{case_id}/payments")
+def list_payments(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    rows = (db.query(models.Payment).filter_by(case_id=case_id)
+            .order_by(models.Payment.paid_at.desc()).all())
+    return [{"id": p.id, "invoice_id": p.invoice_id, "amount": p.amount, "method": p.method,
+             "reference": p.reference, "status": p.status, "paid_at": str(p.paid_at)} for p in rows]
+
+
+# ---------- 대시보드 분석 (§11.3 analytics) ----------
+@app.get("/analytics/summary")
+def analytics_summary(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """운영 분석 — 상태/경로/월별 추이·인증서·매출 집계(operator/admin)."""
+    q = db.query(models.CaseApplication)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    cases = q.all()
+    by_status, by_pathway, by_month = {}, {}, {}
+    for c in cases:
+        by_status[c.status] = by_status.get(c.status, 0) + 1
+        by_pathway[c.pathway or "undetermined"] = by_pathway.get(c.pathway or "undetermined", 0) + 1
+        if c.created_at:
+            mk = c.created_at.strftime("%Y-%m")
+            by_month[mk] = by_month.get(mk, 0) + 1
+    case_ids = [c.case_id for c in cases]
+    certs = (db.query(models.HalalCertificate)
+             .filter(models.HalalCertificate.case_id.in_(case_ids)).all() if case_ids else [])
+    certs_by_month = {}
+    for ct in certs:
+        try:
+            mk = ct.issue_date[:7]
+            certs_by_month[mk] = certs_by_month.get(mk, 0) + 1
+        except Exception:  # noqa: BLE001
+            pass
+    invs = (db.query(models.Invoice)
+            .filter(models.Invoice.case_id.in_(case_ids)).all() if case_ids else [])
+    revenue_paid = round(sum(i.total or 0 for i in invs if i.status == "paid"), 2)
+    revenue_outstanding = round(sum(i.total or 0 for i in invs if i.status == "unpaid"), 2)
+    return {"cases_total": len(cases), "cases_by_status": by_status, "cases_by_pathway": by_pathway,
+            "cases_by_month": by_month, "certificates_active": len([x for x in certs if x.status == "active"]),
+            "certs_by_month": certs_by_month, "revenue_paid": revenue_paid,
+            "revenue_outstanding": revenue_outstanding}
+
+
+@app.get("/admin/orgs/{org_id}/overview")
+def admin_org_overview(org_id: str, user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    """멀티테넌트 admin — 조직별 개요(admin 전용)."""
+    cases = db.query(models.CaseApplication).filter_by(org_id=org_id).all()
+    case_ids = [c.case_id for c in cases]
+    by_status = {}
+    for c in cases:
+        by_status[c.status] = by_status.get(c.status, 0) + 1
+    users = db.query(models.User).filter_by(org_id=org_id).count()
+    certs = (db.query(models.HalalCertificate)
+             .filter(models.HalalCertificate.case_id.in_(case_ids), models.HalalCertificate.status == "active").count()
+             if case_ids else 0)
+    invs = (db.query(models.Invoice).filter(models.Invoice.case_id.in_(case_ids)).all() if case_ids else [])
+    return {"org_id": org_id, "cases": len(cases), "users": users, "certificates": certs,
+            "by_status": by_status,
+            "revenue_paid": round(sum(i.total or 0 for i in invs if i.status == "paid"), 2)}
+
+
 @app.get("/cases/{case_id}/discussions")
 def list_discussions(case_id: str, target: str = None,
                      user=Depends(auth.get_current_user), db: Session = Depends(get_db)):

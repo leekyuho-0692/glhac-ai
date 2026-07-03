@@ -324,3 +324,8 @@ class IntegrationEventReq(BaseModel):
     external_id: Optional[str] = None
     case_id: Optional[str] = None
     payload: Optional[dict] = None
+
+
+class PaymentReq(BaseModel):
+    method: str                               # bank_transfer|va|card|manual
+    reference: Optional[str] = None

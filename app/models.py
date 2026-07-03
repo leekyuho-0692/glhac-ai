@@ -465,3 +465,17 @@ class Signature(Base):
     payload_hash = Column(String)     # sha256 canonical content
     signature_value = Column(String)  # HMAC(SECRET, payload)
     signed_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Payment(Base):
+    """결제 기록(§P2 billing/payment) — 인보이스 결제 확인."""
+    __tablename__ = "payment"
+    id = Column(String, primary_key=True, default=uid)
+    invoice_id = Column(String, index=True)
+    case_id = Column(String, index=True)
+    amount = Column(Float)
+    method = Column(String)           # bank_transfer|va|card|manual
+    reference = Column(String)
+    status = Column(String, default="confirmed")  # pending|confirmed
+    paid_by = Column(String)
+    paid_at = Column(DateTime, default=datetime.utcnow)

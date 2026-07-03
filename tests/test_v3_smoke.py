@@ -97,6 +97,39 @@ def test_alembic_scaffolding():
     assert "case_application" in Base.metadata.tables and "ai_extraction" in Base.metadata.tables
 
 
+def test_payment_and_analytics():
+    """§P2 billing/payment + §11.3 analytics: 결제 기록·매출 집계·권한."""
+    with TestClient(app) as c:
+        ctok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "PayCo"},
+                     headers=_h(ctok)).json()["case_id"]
+        inv = c.post(f"/cases/{cid}/invoices", json={"service_type": "onsite", "amount": 100},
+                     headers=_h(ctok)).json()
+        iid, total = inv["invoice_id"], inv["total"]
+        pay = c.post(f"/invoices/{iid}/payment", json={"method": "bank_transfer", "reference": "TRX1"},
+                     headers=_h(ctok))
+        assert pay.status_code == 200 and pay.json()["amount"] == total, pay.text
+        pays = c.get(f"/cases/{cid}/payments", headers=_h(ctok)).json()
+        assert len(pays) == 1 and pays[0]["method"] == "bank_transfer", pays
+        an = c.get("/analytics/summary", headers=_h(_tok(c, "operator1", "pw"))).json()
+        assert an["revenue_paid"] >= total and "cases_by_status" in an, an
+        assert c.post(f"/invoices/{iid}/payment", json={"method": "bitcoin"},
+                      headers=_h(ctok)).status_code == 400
+        assert c.get("/analytics/summary",
+                     headers=_h(_tok(c, "applicant1", "pw"))).status_code == 403
+
+
+def test_org_overview():
+    """§P2 multi-tenant admin: 조직별 개요(admin 전용)."""
+    with TestClient(app) as c:
+        atok = _tok(c, "admin", "admin")
+        c.post("/cases", json={"org_id": "org_demo", "company_name": "OvCo"}, headers=_h(atok))
+        ov = c.get("/admin/orgs/org_demo/overview", headers=_h(atok)).json()
+        assert ov["org_id"] == "org_demo" and ov["cases"] >= 1 and "by_status" in ov, ov
+        assert c.get("/admin/orgs/org_demo/overview",
+                     headers=_h(_tok(c, "operator1", "pw"))).status_code == 403
+
+
 def test_certificate_signature_and_verify():
     """§6.4 전자서명: 서명 생성·공개검증 signature_valid·권한(operator)."""
     from app import models
@@ -611,7 +644,8 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_certificate_signature_and_verify, test_integration_event_idempotency,
+    tests = [test_payment_and_analytics, test_org_overview,
+             test_certificate_signature_and_verify, test_integration_event_idempotency,
              test_audit_plan_lifecycle, test_fatwa_voting_quorum, test_car_lifecycle_closes_finding,
              test_alembic_scaffolding, test_datalist_meta_search_sort,
              test_qr_public_verify, test_ai_extractions_endpoints,
