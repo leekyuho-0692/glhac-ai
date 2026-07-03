@@ -4,6 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("GLHAC_DB_URL", "sqlite:///./glhac_test.db")
+os.environ.setdefault("GLHAC_DEV", "1")   # 데모 계정 시드 + 기본 시크릿 허용(테스트 전용)
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
@@ -47,8 +48,16 @@ def test_self_declare_happy_path():
         _walk(client, cid, ["sjph_lite_prepared", "pendamping_verification"])
         client.post(f"/cases/{cid}/pendamping/assign", json={"pendamping_id": "pp_1"})
         client.post(f"/cases/{cid}/pendamping/verify", json={"decision": "verified"})
-        _walk(client, cid, ["self_declaration_submitted", "committee_verification", "certificate_issued"])
+        _walk(client, cid, ["self_declaration_submitted", "committee_verification"])
+        # certificate_issued는 보호상태 — raw transition 금지, 전용 발급 엔드포인트만 허용
+        blocked = client.post(f"/cases/{cid}/transition", json={"to_state": "certificate_issued"})
+        assert blocked.status_code == 403 and blocked.json()["detail"]["code"] == "USE_DEDICATED_ENDPOINT", blocked.text
+        iss = client.post(f"/cases/{cid}/certificate/issue")
+        assert iss.status_code == 200 and iss.json().get("certificate_no"), iss.text
         assert client.get(f"/cases/{cid}").json()["status"] == "certificate_issued"
+        # 발급이 상태를 진행시키므로 갱신(certificate_issued 필요)이 동작해야 — 회귀 방지
+        rn = client.post(f"/cases/{cid}/renew")
+        assert rn.status_code == 200, rn.text
 
 
 def test_haram_blocks_selfdeclare():

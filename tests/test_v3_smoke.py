@@ -71,6 +71,30 @@ def test_public_config_reports_dev():
         assert c.get("/public-config").json()["dev_mode"] is True
 
 
+def test_invoice_negative_rejected():
+    """음수 청구액은 422(Phase B 검증)."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "InvTest"},
+                     headers=_h(tok)).json()["case_id"]
+        r = c.post(f"/cases/{cid}/invoices", json={"service_type": "onsite", "amount": -5},
+                   headers=_h(tok))
+        assert r.status_code == 422, r.text
+
+
+def test_dashboard_events_org_isolation():
+    """타 조직 워크플로 이벤트가 /dashboard/summary 로 누수되지 않아야(Phase A)."""
+    with TestClient(app) as c:
+        atok = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "EvtCo"},
+                     headers=_h(atok)).json()["case_id"]
+        c.post(f"/cases/{cid}/transition", json={"to_state": "application_draft"}, headers=_h(atok))
+        c.post("/auth/register", json={"username": "isouser2", "password": "pw"})
+        utok = _tok(c, "isouser2", "pw")
+        ev = c.get("/dashboard/summary", headers=_h(utok)).json()["events"]
+        assert all(e["case_id"] != cid for e in ev), ("타조직 이벤트 누수", ev)
+
+
 def test_notify_consent_gate():
     """수신동의 없으면 외부채널(sms) 미발송·inapp만 발송(Phase C 컴플라이언스)."""
     from app import models
@@ -326,6 +350,8 @@ if __name__ == "__main__":
              test_login_rate_limited,
              test_label_judgment_path_traversal_blocked,
              test_public_config_reports_dev,
+             test_invoice_negative_rejected,
+             test_dashboard_events_org_isolation,
              test_notify_consent_gate,
              test_phase_b_indexes_created,
              test_operator_role_seeded, test_mockaudit_rbac,
