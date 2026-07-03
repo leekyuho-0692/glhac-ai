@@ -213,6 +213,10 @@
   #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--shell);color:#fff;
     padding:10px 18px;border-radius:10px;font-size:13px;box-shadow:var(--shadow);z-index:99;opacity:0;transition:.2s;pointer-events:none}
   #toast.show{opacity:1}
+  #modalOverlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:80;display:none;place-items:center;padding:20px}
+  .modalbox{width:min(460px,94vw);background:var(--card);border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.4);padding:22px 24px;max-height:90vh;overflow:auto}
+  .modalbox h3{margin:0 0 14px;font-size:17px;border:none;padding:0}
+  .modalbox textarea.v,.modalbox input.v,.modalbox select.v{width:100%;font-family:inherit;font-size:14px;padding:10px 12px}
 </style>
 </head>
 <body>
@@ -270,6 +274,16 @@
   </main>
 </div>
 <div id="toast"></div>
+<div id="modalOverlay" onclick="if(event.target===this)modalResolve(null)">
+  <div class="modalbox">
+    <h3 id="modalTitle"></h3>
+    <div id="modalFields"></div>
+    <div class="btnrow" style="justify-content:flex-end;margin-top:16px">
+      <button class="btn" onclick="modalResolve(null)">취소 · Cancel</button>
+      <button class="btn pri" onclick="modalSubmit()">확인 · OK</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ============ GL-HAC AI v3 · interaction shell + live backend ============ */
@@ -429,6 +443,30 @@ function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k]
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
 function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2600);}
+/* 재사용 모달 폼 — prompt() 대체. fields:[{key,label,type:text|number|textarea|select,options,value,placeholder,required}] */
+let _modalCb=null,_modalFields=null;
+function dialog(title, fields){
+  return new Promise(res=>{
+    _modalCb=res;_modalFields=fields;
+    document.getElementById("modalTitle").textContent=title;
+    document.getElementById("modalFields").innerHTML=fields.map(f=>{
+      const id="mf_"+f.key;
+      if(f.type==="select")return `<div class="field"><label>${esc(f.label)}</label><select class="v" id="${id}">${(f.options||[]).map(o=>{const v=o.value!=null?o.value:o,l=o.label!=null?o.label:o;return `<option value="${esc(v)}"${f.value===v?" selected":""}>${esc(l)}</option>`;}).join("")}</select></div>`;
+      if(f.type==="textarea")return `<div class="field"><label>${esc(f.label)}</label><textarea class="v" id="${id}" rows="3" placeholder="${esc(f.placeholder||"")}">${esc(f.value||"")}</textarea></div>`;
+      return `<div class="field"><label>${esc(f.label)}</label><input class="v" id="${id}" type="${f.type||"text"}" value="${esc(f.value==null?"":f.value)}" placeholder="${esc(f.placeholder||"")}" onkeydown="if(event.key==='Enter')modalSubmit()"></div>`;
+    }).join("");
+    document.getElementById("modalOverlay").style.display="grid";
+    const first=document.querySelector("#modalFields .v");if(first)first.focus();
+  });
+}
+function modalSubmit(){
+  const out={};let bad=null;
+  _modalFields.forEach(f=>{const el=document.getElementById("mf_"+f.key);const v=el?el.value.trim():"";out[f.key]=v;if(f.required&&!v)bad=f.label;});
+  if(bad){toast(bad+" 입력");return;}
+  modalResolve(out);
+}
+function modalResolve(v){document.getElementById("modalOverlay").style.display="none";const cb=_modalCb;_modalCb=null;_modalFields=null;if(cb)cb(v);}
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&_modalCb)modalResolve(null);});
 function short(id){return id?String(id).slice(0,13):"—";}
 function fmtIDR(n){if(n==null)return"—";return"Rp "+Number(n).toLocaleString("id-ID");}
 function statusColor(s){s=String(s||"");
@@ -740,9 +778,9 @@ SCREEN.caseList=async()=>{
     </div></div>`;
 };
 async function newCase(){
-  const nm=prompt("새 케이스 기업명 · Company name","");
-  if(nm===null)return;
-  try{const c=await API("/cases",{method:"POST",body:JSON.stringify({company_name:nm||"My Company",is_msme:true})});
+  const r=await dialog("새 신청 · New case",[{key:"company_name",label:"기업명 · Company",required:true}]);
+  if(!r)return;
+  try{const c=await API("/cases",{method:"POST",body:JSON.stringify({company_name:r.company_name,is_msme:true})});
     toast("케이스 생성됨");await loadCases(true);openCase(c.case_id);}
   catch(e){toast("생성 실패 · "+(e&&e.code?e.code:"권한 확인"));}
 }
@@ -930,9 +968,9 @@ async function explainMaterial(){
   }catch(e){o.textContent="해설 실패 · "+(e&&e.code?e.code:"");}
 }
 async function screenText(id){
-  const txt=prompt("스크리닝할 원재료 텍스트 · ingredient text","");
-  if(!txt)return;
-  try{const r=await API("/ai/screen-text",{method:"POST",body:JSON.stringify({text:txt,case_id:id})});toast("스크리닝 완료 · "+(r.status||r.result||"OK"));applyView();}
+  const f=await dialog("원재료 텍스트 스크리닝",[{key:"text",label:"원재료 텍스트 · ingredients",type:"textarea",required:true}]);
+  if(!f)return;
+  try{const r=await API("/ai/screen-text",{method:"POST",body:JSON.stringify({text:f.text,case_id:id})});toast("스크리닝 완료 · "+(r.status||r.result||"OK"));applyView();}
   catch(e){toast("스크리닝 실패");}
 }
 function intakeZip(id){
@@ -947,12 +985,13 @@ function fileB64(file){return new Promise((res,rej)=>{const r=new FileReader();r
 function downloadText(fname,text){const blob=new Blob(["﻿"+String(text||"")],{type:"text/plain;charset=utf-8"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=fname;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 function dueDays(d){if(!d)return null;const now=new Date();now.setHours(0,0,0,0);const t=new Date(d);if(isNaN(t))return null;return Math.round((t-now)/86400000);}
 function dueBadge(d){const n=dueDays(d);if(n==null)return"";const c=n<0?"bad":n<=3?"warn":n<=7?"info":"mute";const lbl=n<0?`${Math.abs(n)}일 초과`:n===0?"오늘":`D-${n}`;return tag(c,"⏰ "+lbl);}
-function attachEvidence(cid,mid){
+async function attachEvidence(cid,mid){
+  const r=await dialog("증빙 첨부 · Evidence",[{key:"evidence_type",label:"증빙 유형",type:"select",options:[{value:"coa",label:"COA"},{value:"msds",label:"MSDS"},{value:"halal_certificate",label:"할랄 인증서"},{value:"supplier_declaration",label:"공급사 선언"},{value:"process_flow",label:"공정 흐름도"},{value:"facility_photo",label:"시설 사진"}]}]);
+  if(!r)return;
   const inp=document.createElement("input");inp.type="file";inp.accept="image/*,.pdf";
   inp.onchange=async()=>{const file=inp.files[0];if(!file)return;
-    const et=prompt("증빙 유형 · evidence_type\n(msds|coa|halal_certificate|supplier_declaration|process_flow|facility_photo)","coa");if(!et)return;
     const b64=await fileB64(file);
-    try{await API(`/cases/${cid}/materials/${mid}/evidence`,{method:"POST",body:JSON.stringify({evidence_type:et,file_b64:b64,filename:file.name})});toast("증빙 첨부");applyView();}catch(e){toast("첨부 실패 · "+(e&&e.code?e.code:""));}};
+    try{await API(`/cases/${cid}/materials/${mid}/evidence`,{method:"POST",body:JSON.stringify({evidence_type:r.evidence_type,file_b64:b64,filename:file.name})});toast("증빙 첨부");applyView();}catch(e){toast("첨부 실패 · "+(e&&e.code?e.code:""));}};
   inp.click();
 }
 async function rescreen(mid){try{const r=await API(`/materials/${mid}/screen`,{method:"POST",body:"{}"});toast("재스크리닝 · "+(r.status||r.result||"완료"));applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
@@ -1060,7 +1099,7 @@ async function viewDoc(docId){
   catch(_){toast("열기 실패");}
 }
 async function reviewDoc(docId,st){if(!st)return;try{await API(`/documents/${docId}/review`,{method:"PATCH",body:JSON.stringify({review_status:st})});toast("검수 · "+st);applyView();}catch(e){toast("검수 실패 · "+(e&&e.code?e.code:""));}}
-async function reclassifyDoc(docId){const dt=prompt("새 문서 유형 · doc_type","");if(!dt)return;try{await API(`/documents/${docId}/reclassify`,{method:"PATCH",body:JSON.stringify({doc_type:dt})});toast("재분류 · "+dt);applyView();}catch(e){toast("재분류 실패 · "+(e&&e.code?e.code:""));}}
+async function reclassifyDoc(docId){const en=await ENUMS();const r=await dialog("문서 재분류 · Reclassify",[{key:"doc_type",label:"문서 유형 · doc_type",type:"select",options:(en.doc_type||[]).map(o=>({value:o.value,label:o.label}))}]);if(!r)return;try{await API(`/documents/${docId}/reclassify`,{method:"PATCH",body:JSON.stringify({doc_type:r.doc_type})});toast("재분류 · "+r.doc_type);applyView();}catch(e){toast("재분류 실패 · "+(e&&e.code?e.code:""));}}
 
 /* 8) Audit */
 SCREEN.audit=async()=>{
@@ -1140,13 +1179,15 @@ async function cycleOnsite(id,key,cur){
   catch(e){toast("실패 · "+(e&&e.code?e.code:""));}
 }
 async function addFinding(id){
-  const finding=prompt("지적 내용 · finding","");if(!finding)return;
-  try{await API(`/cases/${id}/findings`,{method:"POST",body:JSON.stringify({area:"general",finding,severity:"minor"})});toast("지적 추가");applyView();}
+  const r=await dialog("지적 추가 · Finding",[{key:"finding",label:"지적 내용",type:"textarea",required:true},{key:"area",label:"구분 · area",value:"general"},{key:"severity",label:"심각도",type:"select",options:[{value:"minor",label:"경미 · minor"},{value:"major",label:"중대 · major"},{value:"observation",label:"관찰 · observation"}]}]);
+  if(!r)return;
+  try{await API(`/cases/${id}/findings`,{method:"POST",body:JSON.stringify({area:r.area||"general",finding:r.finding,severity:r.severity})});toast("지적 추가");applyView();}
   catch(e){toast("추가 실패 · "+(e&&e.code?e.code:""));}
 }
 async function addLph(id){
-  const lph_name=prompt("LPH 기관명 · LPH name","");if(!lph_name)return;
-  try{await API(`/cases/${id}/lph-assignment`,{method:"POST",body:JSON.stringify({lph_name})});toast("LPH 배정");applyView();}
+  const r=await dialog("LPH 배정 · Assign",[{key:"lph_name",label:"LPH 기관명",required:true},{key:"auditor_ref",label:"심사원 참조 (선택)"}]);
+  if(!r)return;
+  try{await API(`/cases/${id}/lph-assignment`,{method:"POST",body:JSON.stringify({lph_name:r.lph_name,auditor_ref:r.auditor_ref||null})});toast("LPH 배정");applyView();}
   catch(e){toast("배정 실패 · "+(e&&e.code?e.code:""));}
 }
 async function addAuditorPool(id){const name=v("apoolName");if(!name){toast("심사원명 입력");return}try{await API(`/cases/${id}/auditor-pool`,{method:"POST",body:JSON.stringify({name})});toast("심사원 추가");applyView();}catch(e){toast("추가 실패 · "+(e&&e.code?e.code:""));}}
@@ -1186,7 +1227,7 @@ SCREEN.mockAudit=async()=>{
 function openMock(id){CURCASE=id;applyView();}
 async function mockDecide(id,result){
   let reason=null;
-  if(result==="reject"){reason=prompt("거부 사유 · reason","");if(reason===null)return;}
+  if(result==="reject"){const rr=await dialog("거부 사유 · Reject reason",[{key:"reason",label:"사유",type:"textarea",required:true}]);if(!rr)return;reason=rr.reason;}
   try{const r=await API(`/cases/${id}/mock-audit/decision`,{method:"POST",body:JSON.stringify({result,reason})});
     toast("판정 기록 · "+result+(r.transitioned_to?" → "+r.transitioned_to:""));await loadCases(true);applyView();}
   catch(e){toast("판정 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}
@@ -1271,9 +1312,11 @@ SCREEN.invoice=async()=>{
 function selectInvoice(iid){INV_SEL=iid;applyView();}
 async function payInvoice(iid){try{await API(`/invoices/${iid}/pay`,{method:"PATCH",body:"{}"});toast("결제 표시");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function createInvoice(id){
-  const service_type=prompt("서비스 유형 · service","certification");if(service_type===null)return;
-  const amount=Number(prompt("금액(IDR) · amount","4500000"))||0;
-  try{await API(`/cases/${id}/invoices`,{method:"POST",body:JSON.stringify({service_type,amount})});toast("청구 생성");applyView();}
+  const en=await ENUMS();
+  const opts=(en.invoice_service_type||[{value:"pre_audit",label:"사전심사"},{value:"onsite",label:"현장심사"}]).map(o=>({value:o.value!=null?o.value:o,label:o.label!=null?o.label:o}));
+  const r=await dialog("청구 생성 · Invoice",[{key:"service_type",label:"서비스 유형",type:"select",options:opts},{key:"amount",label:"금액(IDR)",type:"number",value:"4500000",required:true}]);
+  if(!r)return;
+  try{await API(`/cases/${id}/invoices`,{method:"POST",body:JSON.stringify({service_type:r.service_type,amount:Number(r.amount)||0})});toast("청구 생성");applyView();}
   catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}
 }
 
@@ -1368,9 +1411,9 @@ SCREEN.certificate=async()=>{
 };
 async function issueCert(id){try{await API(`/cases/${id}/certificate/issue`,{method:"POST",body:"{}"});toast("인증서 발급");await loadCases(true);applyView();}catch(e){toast("발급 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
 async function changeImpact(id){
-  const ct=prompt("변경 유형 · change_type\n(supplier_changed | material_added | process_changed | material_source_changed)","material_source_changed");
-  if(!ct)return;
-  try{const r=await API(`/cases/${id}/certificate/change-impact`,{method:"POST",body:JSON.stringify({change_type:ct})});toast("변경영향 · "+(r.risk_level||"분석 완료")+(r.impact_score!=null?" ("+Math.round(r.impact_score*100)+"%)":""));applyView();}catch(e){toast("분석 실패 · "+(e&&e.code?e.code:""));}}
+  const r=await dialog("변경영향 분석 · Change impact",[{key:"change_type",label:"변경 유형",type:"select",options:[{value:"material_source_changed",label:"원료 원산지 변경"},{value:"supplier_changed",label:"공급사 변경"},{value:"material_added",label:"원료 추가"},{value:"process_changed",label:"공정 변경"}]}]);
+  if(!r)return;
+  try{const res=await API(`/cases/${id}/certificate/change-impact`,{method:"POST",body:JSON.stringify({change_type:r.change_type})});toast("변경영향 · "+(res.risk_level||"분석 완료")+(res.impact_score!=null?" ("+Math.round(res.impact_score*100)+"%)":""));applyView();}catch(e){toast("분석 실패 · "+(e&&e.code?e.code:""));}}
 async function renewCert(id){if(!confirm("인증서를 갱신할까요?"))return;try{await API(`/cases/${id}/renew`,{method:"POST",body:"{}"});toast("갱신 요청");await loadCases(true);applyView();}catch(e){toast("갱신 실패 · "+(e&&e.code?e.code:""));}}
 async function unlockCert(id){if(!confirm("scope 잠금을 해제할까요?"))return;try{await API(`/cases/${id}/certificate/unlock`,{method:"POST",body:"{}"});toast("잠금해제");await loadCases(true);applyView();}catch(e){toast("해제 실패 · "+(e&&e.code?e.code:""));}}
 
