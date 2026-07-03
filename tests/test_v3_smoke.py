@@ -84,10 +84,26 @@ def test_mockaudit_decision_recorded_and_retrieved():
         assert any(d.get("reason") == "증빙 부족" for d in hist["decisions"]), hist
 
 
+def test_context_health_endpoint():
+    """CHU-1 장기기억 연동 상태 — CHU-1 미가동 시에도 200 + ok 키(폴백)."""
+    with TestClient(app) as c:
+        r = c.get("/ai/context/health")
+        assert r.status_code == 200
+        assert "ok" in r.json(), r.json()
+
+
+def test_search_context_fallback_returns_list():
+    """CHU-1 검색 어댑터 — 미가동/장애 시 예외 없이 [] 리스트 폴백."""
+    from app import ai_local
+    res = ai_local.search_context("할랄 인증 절차", top_k=2)
+    assert isinstance(res, list)
+
+
 if __name__ == "__main__":
     tests = [test_operator_role_seeded, test_mockaudit_rbac,
              test_permission_transfer_cert_issue, test_mockaudit_decision_validation,
-             test_mockaudit_decision_recorded_and_retrieved]
+             test_mockaudit_decision_recorded_and_retrieved,
+             test_context_health_endpoint, test_search_context_fallback_returns_list]
     ok = 0
     for fn in tests:
         try:

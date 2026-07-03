@@ -1458,8 +1458,24 @@ def ask_ai(case_id: str, body: schemas.AskReq,
     ])
     sysmsg = ("당신은 BPJPH/SIHALAL 할랄인증 준비 어시스턴트입니다. 아래 케이스 정보만 근거로 한국어로 "
               "간결히 답하세요. 정보에 없으면 모른다고 하세요.\n\n[케이스 정보]\n" + ctx)
+    # 홍익AI/CHU-1 장기기억(RAG) — 보조 근거 주입. 장애 시 로컬만(폴백, 차단 없음).
+    long_term_sources = []
+    for h in ai_local.search_context(body.question, top_k=3):
+        txt = (h.get("text") or "").strip()
+        if txt:
+            long_term_sources.append({"text": txt[:200], "score": h.get("score")})
+    if long_term_sources:
+        sysmsg += ("\n\n[장기기억 참고 · CHU-1 (보조 근거, 케이스 정보와 상충 시 무시)]\n"
+                   + "\n".join("- " + s["text"] for s in long_term_sources[:3]))
     ans = ai_local.llm_text(sysmsg, body.question)
-    return {"answer": ans or "(LLM 응답 없음)", "context_facts": ctx}
+    return {"answer": ans or "(LLM 응답 없음)", "context_facts": ctx,
+            "long_term_sources": long_term_sources}
+
+
+@app.get("/ai/context/health")
+def ai_context_health():
+    """홍익AI/CHU-1 장기기억 연동 상태."""
+    return ai_local.context_health()
 
 
 SJPH_EVIDENCE_ITEMS = [

@@ -9,6 +9,36 @@ OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 MODEL = os.environ.get("GLHAC_LLM", "gemma3:12b")
 _ocr = None
 
+# 홍익AI/CHU-1 장기기억(장기 컨텍스트) — RAG 연동. 장애 시 로컬 폴백(차단 없음).
+CHU1_URL = os.environ.get("CHU1_URL", "http://localhost:7600")
+CHU1_CONTEXT = os.environ.get("CHU1_CONTEXT", "1") == "1"
+
+
+def search_context(query, top_k=3, timeout=3):
+    """CHU-1 /search 장기기억 시맨틱 검색. 비활성/장애/타임아웃 시 [] 반환(폴백)."""
+    if not CHU1_CONTEXT or not query or not str(query).strip():
+        return []
+    try:
+        r = httpx.post(f"{CHU1_URL}/search", timeout=timeout,
+                       json={"query": str(query)[:2000], "top_k": top_k})
+        r.raise_for_status()
+        return r.json().get("hits", []) or []
+    except Exception:
+        return []
+
+
+def context_health():
+    """CHU-1 장기기억 인덱스 상태(연결 여부 포함)."""
+    if not CHU1_CONTEXT:
+        return {"ok": False, "enabled": False}
+    try:
+        r = httpx.get(f"{CHU1_URL}/search/health", timeout=4)
+        d = r.json()
+        d["enabled"] = True
+        return d
+    except Exception as e:
+        return {"ok": False, "enabled": True, "error": str(e)}
+
 
 def health():
     try:
