@@ -98,6 +98,21 @@ def _case_dict(c):
             "factory_address": c.factory_address, "due_date": c.due_date}
 
 
+def _notify(db, case, event_type, title, body="", channels=None, role=None):
+    """이벤트 알림 생성 + 채널 발송(프로바이더). Rizky #5 자동 알림 엔진."""
+    n = models.Notification(
+        org_id=(case.org_id if case else None), case_id=(case.case_id if case else None),
+        role=role, event_type=event_type, channels=channels or ["inapp"], title=title, body=body)
+    db.add(n)
+    try:
+        from . import notify as _nt
+        _nt.dispatch(n)
+        n.status = "sent"
+    except Exception:  # noqa: BLE001
+        pass
+    return n
+
+
 def _register_from_judgment(db, c, res):
     created = []
     for ing in res["ingredients"]:
@@ -337,6 +352,47 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
              "pathway": c.pathway, "due_date": c.due_date,
              "province": _province_of(c.factory_address or c.address)}
             for c in q.order_by(models.CaseApplication.created_at.desc()).all()]
+
+
+# ===================== 알림 (Rizky #5) =====================
+def _my_notifs(db, user):
+    q = db.query(models.Notification)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    return [n for n in q.order_by(models.Notification.created_at.desc()).limit(80).all()
+            if not n.role or n.role == user["role"]]
+
+
+@app.get("/notifications")
+def list_notifications(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    return [{"id": n.notification_id, "case_id": n.case_id, "event_type": n.event_type,
+             "title": n.title, "body": n.body, "read": bool(n.read), "status": n.status,
+             "channels": n.channels, "created_at": str(n.created_at)} for n in _my_notifs(db, user)]
+
+
+@app.get("/notifications/unread-count")
+def unread_count(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    return {"count": sum(1 for n in _my_notifs(db, user) if not n.read)}
+
+
+@app.post("/notifications/{nid}/read")
+def read_notification(nid: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    n = db.get(models.Notification, nid)
+    if not n:
+        raise HTTPException(404, {"code": "NOTIF_NOT_FOUND"})
+    if user["role"] != "admin" and n.org_id != user["org_id"]:
+        raise HTTPException(403, {"code": "FORBIDDEN_ORG"})
+    n.read = True
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/notifications/read-all")
+def read_all_notifications(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    for n in _my_notifs(db, user):
+        n.read = True
+    db.commit()
+    return {"ok": True}
 
 
 @app.post("/cases")
@@ -1142,6 +1198,9 @@ def add_lph(case_id: str, body: schemas.LphAssignReq,
     db.add(x)
     sm.record_event(db, c, c.status, c.status, "audit.lph.assign", user["role"], user["uid"],
                     {"lph": body.lph_name})
+    _notify(db, c, "audit_scheduled", "심사 일정 · LPH 배정",
+            "%s — %s 배정, 현장심사가 예정되었습니다." % (c.company_name or "", body.lph_name),
+            channels=["inapp", "sms"], role="applicant")
     db.commit()
     return {"lph_assignment_id": x.lph_assignment_id}
 
@@ -1176,6 +1235,9 @@ def issue_certificate(case_id: str, user=Depends(auth.require_roles("operator"))
     mat_ids = [m.material_id for m in db.query(models.Material).filter_by(case_id=case_id)]
     cert.frozen_product_ids = prod_ids
     cert.frozen_material_ids = mat_ids
+    _notify(db, c, "certificate_issued", "인증서 발급",
+            "%s — 할랄 인증서 %s 발급 완료." % (c.company_name or "", cert.certificate_no),
+            channels=["inapp", "sms", "kakao", "whatsapp"], role="applicant")
     db.commit()
     return {"certificate_no": cert.certificate_no, "issue_date": str(today),
             "expiry_date": str(expiry), "scope": prods,
@@ -1326,6 +1388,9 @@ def fatwa_final_approve(case_id: str, user=Depends(auth.require_roles("operator"
     if c.status == "fatwa_review" and sm.allowed(c.status, "fatwa_approved"):
         c.status = "fatwa_approved"
     sm.record_event(db, c, c.status, c.status, "fatwa.final_approve", user["role"], user["uid"], {})
+    _notify(db, c, "fatwa_approved", "파트와 최종 승인",
+            "%s — 파트와 위원회 최종 승인 완료. 인증서 발급 가능." % (c.company_name or ""),
+            channels=["inapp"], role="applicant")
     db.commit()
     return {"ok": True, "fatwa_status": "approved", "final_approved_at": str(fd.final_approved_at)}
 
@@ -1916,6 +1981,13 @@ def transition(case_id: str, body: schemas.TransitionReq,
     sm.apply_side_effects(c, body.to_state)
     c.status = body.to_state
     sm.record_event(db, c, frm, body.to_state, body.action or "transition", user["role"], user["uid"])
+    _NOTIFY_ON = {"audit_closed": ("audit_closed", "심사 완료", "현장심사가 종결되었습니다."),
+                  "document_pre_audit_requested": ("document_requested", "문서 요청", "사전심사 문서 제출이 요청되었습니다."),
+                  "onsite_audit_scheduled": ("audit_scheduled", "심사 일정", "현장심사가 예정되었습니다.")}
+    if body.to_state in _NOTIFY_ON:
+        ev, ti, bo = _NOTIFY_ON[body.to_state]
+        _notify(db, c, ev, ti, "%s — %s" % (c.company_name or "", bo),
+                channels=["inapp", "sms"], role="applicant")
     db.commit()
     return {"from": frm, "to": body.to_state, "case": _case_dict(c)}
 

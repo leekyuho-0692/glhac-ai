@@ -217,6 +217,14 @@
   .modalbox{width:min(460px,94vw);background:var(--card);border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.4);padding:22px 24px;max-height:90vh;overflow:auto}
   .modalbox h3{margin:0 0 14px;font-size:17px;border:none;padding:0}
   .modalbox textarea.v,.modalbox input.v,.modalbox select.v{width:100%;font-family:inherit;font-size:14px;padding:10px 12px}
+  .notif-panel{position:absolute;right:0;top:40px;width:360px;max-height:440px;overflow:auto;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);z-index:30;display:none;padding:6px}
+  .notif-panel.open{display:block}
+  .notif-item{display:flex;gap:9px;padding:10px 11px;border-radius:9px;cursor:pointer;align-items:flex-start}
+  .notif-item:hover{background:var(--accent-soft)}
+  .notif-item.unread{background:color-mix(in srgb,var(--accent) 7%,transparent)}
+  .notif-item .nic{font-size:16px}
+  .notif-item b{font-size:12.5px} .notif-item div{font-size:11.5px;color:var(--ink3)}
 </style>
 </head>
 <body>
@@ -265,6 +273,8 @@
       <div class="crumb" id="crumb"><b>대시보드</b> · Dashboard</div>
       <div class="spacer"></div>
       <span class="pill" id="casePill" style="display:none">📁 <select id="caseSel" onchange="onCaseChange(this.value)"></select></span>
+      <span style="position:relative"><span class="pill" id="notifBell" onclick="toggleNotif()">🔔 <b id="notifCount" style="display:none;color:var(--bad)">0</b></span>
+        <div id="notifPanel" class="notif-panel"></div></span>
       <span class="pill" id="userPill">👤 —</span>
       <span class="pill" onclick="cycleLang()" id="langPill">🌐 KO · EN · ID</span>
       <span class="pill" onclick="toggleTheme()" id="themePill">🌙 다크</span>
@@ -655,6 +665,33 @@ function toggleTheme(){
   try{localStorage.setItem("glhac_theme",d?"light":"dark")}catch(_){}
   document.getElementById("themePill").textContent=d?"🌙 다크":"☀️ 라이트";
 }
+
+/* ---- 알림 센터 (Rizky #5) ---- */
+const NOTIF_ICON={certificate_issued:"🏅",fatwa_approved:"⚖️",audit_scheduled:"📅",audit_closed:"🏭",document_requested:"📁",expiry_soon:"⏰"};
+async function refreshNotifCount(){
+  try{const r=await API("/notifications/unread-count");const b=document.getElementById("notifCount");
+    if(r.count>0){b.textContent=r.count>99?"99+":r.count;b.style.display="";}else b.style.display="none";}catch(_){}
+}
+async function toggleNotif(){
+  const p=document.getElementById("notifPanel");
+  if(p.classList.contains("open")){p.classList.remove("open");return;}
+  p.innerHTML='<div class="muted small" style="padding:12px">불러오는 중…</div>';p.classList.add("open");
+  try{const ns=await API("/notifications");
+    p.innerHTML=`<div style="display:flex;align-items:center;padding:8px 11px 4px"><b style="font-size:12.5px;flex:1">알림 · Notifications</b><a onclick="notifReadAll()" style="font-size:11px;color:var(--accent);cursor:pointer">모두 읽음</a></div>`
+      +(ns.length?ns.map(n=>`<div class="notif-item ${n.read?'':'unread'}" onclick="openNotif('${n.id}','${n.case_id||''}')">
+        <span class="nic">${NOTIF_ICON[n.event_type]||"🔔"}</span>
+        <div style="flex:1"><b>${esc(n.title)}</b><div>${esc(n.body||"")}</div>
+          <div style="margin-top:3px">${(n.channels||[]).map(ch=>`<span class="chip" style="font-size:9.5px;padding:1px 5px">${esc(ch)}</span>`).join("")} <span style="font-size:10px">${esc((n.created_at||"").slice(5,16))}</span></div></div></div>`).join("")
+        :'<div class="muted small" style="padding:12px">알림이 없습니다.</div>');
+  }catch(e){p.innerHTML='<div class="muted small" style="padding:12px">불러오기 실패</div>';}
+}
+async function openNotif(id,cid){try{await API(`/notifications/${id}/read`,{method:"POST",body:"{}"});}catch(_){}
+  document.getElementById("notifPanel").classList.remove("open");refreshNotifCount();
+  if(cid){openCase(cid);}}
+async function notifReadAll(){try{await API("/notifications/read-all",{method:"POST",body:"{}"});}catch(_){}
+  document.getElementById("notifPanel").classList.remove("open");refreshNotifCount();}
+document.addEventListener("click",e=>{const b=document.getElementById("notifBell"),p=document.getElementById("notifPanel");
+  if(p&&p.classList.contains("open")&&!b.contains(e.target)&&!p.contains(e.target))p.classList.remove("open");});
 
 /* ---- case open ---- */
 function openCase(id){CURCASE=id;try{localStorage.setItem("glhac_case",id)}catch(_){}navigate({detail:id,tab:"overview"});}
@@ -1603,6 +1640,8 @@ async function boot(){
   buildNav();
   const init=parseHash();
   navigate(init,true);
+  refreshNotifCount();
+  if(!window._notifPoll)window._notifPoll=setInterval(refreshNotifCount,60000);
 }
 boot();
 </script>
