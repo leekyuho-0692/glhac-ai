@@ -377,6 +377,30 @@ async function doRegister(e){
 /* ---- helpers ---- */
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function tag(t,txt){return `<span class="tag t-${t}">${esc(txt)}</span>`;}
+/* 백엔드 영어 데이터값 → 한글 라벨(한영 병행). 한국어 모드에서 영어만 뜨던 문제 해소 */
+const KO_LABEL={
+  onboarding:"온보딩",application_draft:"신청서 작성",ai_pre_assessment_ready:"AI 사전평가 준비",
+  ai_pre_assessment_running:"AI 사전평가 진행",pathway_determination:"경로 판정",self_declare_eligible:"자기선언 적격",
+  sjph_lite_prepared:"간이 SJPH 준비",pendamping_verification:"동반자 검증",self_declaration_submitted:"자기선언 제출",
+  committee_verification:"위원회 확인",supplementation_required:"보완 요청",supplementation_submitted:"보완 제출",
+  consultant_review:"컨설턴트 검토",document_pre_audit_requested:"문서 사전심사 요청",document_pre_audit_in_review:"문서 사전심사 검토",
+  document_pre_audit_approved:"문서 사전심사 승인",lph_assignment:"LPH 배정",onsite_audit_scheduled:"현장심사 예정",
+  onsite_audit_in_progress:"현장심사 진행",corrective_action_required:"시정조치 요청",corrective_action_submitted:"시정조치 제출",
+  audit_closed:"심사 종결",hpas_evaluation_ready:"HPAS 평가",final_package_preparation:"최종 패키지 준비",
+  fatwa_review:"파트와 검토",fatwa_approved:"파트와 승인",certificate_issued:"인증서 발급",
+  post_certification_monitoring:"사후 모니터링",change_impact:"변경 영향",renewal_preparation:"갱신 준비",
+  self_declare:"자기선언",reguler:"정규",undetermined:"미정",none:"없음",
+  approved:"승인",provisional:"가승인",rejected:"반려",conditional:"조건부",pending:"대기",rework:"재작업",
+  major:"중대",minor:"경미",critical:"치명",observation:"관찰",open:"미해결",closed:"종결",
+  ready:"준비완료",warn:"주의",blocked:"차단",paid:"결제완료",unpaid:"미결제",
+  comply:"충족",nonconformity:"부적합",not_checked:"미확인",active:"활성",inactive:"비활성",
+  ok:"양호",gap:"보완",verified:"검증완료",submitted:"제출됨",submitted_by_applicant:"신청자 제출",
+  ketua:"팀장",anggota:"팀원",halal:"할랄",haram:"하람",mushbooh:"의심",
+  pre_audit:"사전심사",onsite:"현장심사",certification:"인증심사",supervision:"감독",
+};
+function koText(v){return KO_LABEL[String(v)]||null;}
+function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
+function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
 function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2600);}
 function short(id){return id?String(id).slice(0,13):"—";}
 function fmtIDR(n){if(n==null)return"—";return"Rp "+Number(n).toLocaleString("id-ID");}
@@ -618,7 +642,7 @@ SCREEN.dashboard=async()=>{
   else if(ROLE==="ops"||ROLE==="admin"){const[qa,qf]=await Promise.all([API("/audit/queue").catch(()=>[]),API("/fatwa/queue").catch(()=>[])]);workq=[...qa,...qf];workLabel="작업 큐(심사·파트와) · Worklist";}
   const workCard=workLabel?`<div class="card" style="margin-bottom:16px"><h3>🗂 ${workLabel}<span class="r">${workq.length}건 · 클릭→상세</span></h3>
     <div class="body tight"><table><thead><tr><th>ID</th><th>기업</th><th>단계</th><th>경로</th></tr></thead>
-      <tbody>${workq.length?workq.map(q=>`<tr class="clickable" onclick="openCase('${q.case_id}')"><td style="font-family:ui-monospace,monospace;font-size:11px">${short(q.case_id)}</td><td><b>${esc(q.company||q.company_name||"—")}</b></td><td>${tag("info",q.stage||q.status||"—")}</td><td>${tag(q.pathway==='self_declare'?'info':'mute',q.pathway||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">대기 항목 없음</td></tr>'}</tbody></table></div></div>`:'';
+      <tbody>${workq.length?workq.map(q=>`<tr class="clickable" onclick="openCase('${q.case_id}')"><td style="font-family:ui-monospace,monospace;font-size:11px">${short(q.case_id)}</td><td><b>${esc(q.company||q.company_name||"—")}</b></td><td>${tag("info",q.stage||q.status||"—")}</td><td>${bTag(q.pathway==='self_declare'?'info':'mute',q.pathway||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">대기 항목 없음</td></tr>'}</tbody></table></div></div>`:'';
   // 다중 케이스 준비도 비교 (S18-2)
   const rdCases=cases.slice(0,6);
   const rds=await Promise.all(rdCases.map(c=>API(`/cases/${c.case_id}/readiness`).catch(()=>null)));
@@ -626,7 +650,7 @@ SCREEN.dashboard=async()=>{
     return `<tr class="clickable" onclick="openCase('${c.case_id}')"><td><b>${esc(c.company_name||short(c.case_id))}</b></td>
       <td><span class="tag t-${sc>=80?'ok':sc>=50?'warn':'bad'}">${sc}%</span></td>
       <td>${tag(rd.band==='ready'?'ok':rd.band==='warn'?'warn':'bad',rd.band||'—')}</td>
-      <td>${tag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')}</td></tr>`;}).filter(Boolean).join("");
+      <td>${bTag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')}</td></tr>`;}).filter(Boolean).join("");
   const roleTip={client:"신청·원재료·문서 준비 상태를 확인하세요.",consultant:"담당 케이스 진행과 청구를 관리하세요.",auditor:"현장 실사·모의심사 대상을 확인하세요.",sharia:"파트와 심의·인증서 발급 대기를 확인하세요.",ops:"전 과정 총괄·최종 승인 대기를 확인하세요.",admin:"시스템 전체 현황입니다."}[ROLE]||"";
   return `
   <div class="banner info" style="margin-bottom:16px">👤 <b>${esc(ROLE_DEF[ROLE].ko)}</b> — ${esc(roleTip)}</div>
@@ -674,8 +698,8 @@ SCREEN.caseList=async()=>{
   const rows=pg.items.length?pg.items.map(c=>`<tr class="clickable" onclick="openCase('${c.case_id}')">
       <td style="font-family:ui-monospace,monospace;font-size:12px">${short(c.case_id)} <span class="go-arrow">→</span></td>
       <td><b>${esc(c.company_name||"—")}</b></td>
-      <td>${tag(c.pathway==="self_declare"?"info":"mute",c.pathway||"—")}</td>
-      <td>${tag(statusColor(c.status),c.status||"—")}</td>
+      <td>${bTag(c.pathway==="self_declare"?"info":"mute",c.pathway||"—")}</td>
+      <td>${bTag(statusColor(c.status),c.status||"—")}</td>
       <td>${c.due_date?dueBadge(c.due_date):'<span class="muted">—</span>'}</td></tr>`).join("")
     : `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">조건에 맞는 케이스 없음 · No cases</td></tr>`;
   const canNew=["client","consultant","admin"].includes(ROLE);
@@ -859,7 +883,7 @@ SCREEN.materials=async()=>{
     <div class="card"><h3>AI 스크리닝 <span class="en">· ontology</span></h3>
       <div class="body">
         ${bad.length?`<div class="banner bad" style="margin-bottom:12px">⛔ 하람/고위험 의심 ${bad.length}건 — 증빙 필수</div>
-          ${bad.map(m=>`<div class="field"><label>${esc(m.name)}</label><div class="v small">매칭: <b style="color:var(--bad)">${esc(m.result||m.status)}</b>${m.note?"<br>"+esc(m.note):""}</div></div>`).join("")}`
+          ${bad.map(m=>`<div class="field"><label>${esc(m.name)}</label><div class="v small">매칭: <b style="color:var(--bad)">${bSpan(m.result||m.status)}</b>${m.note?"<br>"+esc(m.note):""}</div></div>`).join("")}`
           :'<div class="banner ok">✓ 하람·고위험 의심 없음</div>'}
         ${(()=>{const ne=mats.filter(m=>(m.evidence_count||0)===0&&/needs|mushbooh|warn|의심/i.test((m.status||"")+(m.result||"")+(m.severity||"")));return ne.length?`<div class="divide"></div><div class="small" style="font-weight:600;margin-bottom:6px">📎 증빙 미제출 ${ne.length}건</div>${ne.map(m=>`<div class="li" style="padding:6px 0"><div class="tx"><b>${esc(m.name)}</b><div>${esc(m.status||m.result||"")}</div></div><div class="when">${canMatWrite?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="attachEvidence('${id}','${m.material_id}')">증빙</button>`:'미제출'}</div></div>`).join("")}`:"";})()}
         <div class="divide"></div>
@@ -971,7 +995,7 @@ SCREEN.documents=async()=>{
   const docHtml=docs.length?`<div class="filegrid">${docs.map(d=>`<div class="filecard" style="align-items:flex-start;${sel&&d.document_id===sel.document_id?'border-color:var(--accent);background:var(--accent-soft)':''}" onclick="selectDoc('${d.document_id}')">
       <div class="fico">${/png|jpg|jpeg|img/i.test(d.filename||"")?'🖼':'📄'}</div>
       <div class="fmeta" style="flex:1"><b>${esc(d.filename||"문서")}</b>
-        <span class="muted small">${esc(d.doc_type||"")} · ${tag(statusColor(d.review_status),d.review_status||"미검수")} ${d.has_file?'· 미리보기 ↓':''}</span>
+        <span class="muted small">${esc(d.doc_type||"")} · ${bTag(statusColor(d.review_status),d.review_status||"미검수")} ${d.has_file?'· 미리보기 ↓':''}</span>
         ${canReview?`<div class="btnrow" style="margin-top:7px">
           <select class="v" style="font-size:11px;padding:3px 6px;width:auto" onclick="event.stopPropagation()" onchange="event.stopPropagation();reviewDoc('${d.document_id}',this.value)">
             <option value="">검수…</option><option value="approved">승인</option><option value="rejected">반려</option><option value="rework">재작업</option><option value="pending">보류</option></select>
@@ -980,7 +1004,7 @@ SCREEN.documents=async()=>{
     :'<div class="muted small">업로드된 문서 없음</div>';
   const viewer=sel?`
       <div class="btnrow" style="margin-bottom:10px">
-        <span class="chip">${esc(sel.doc_type||"—")}</span>${tag(statusColor(sel.review_status),sel.review_status||"미검수")}
+        <span class="chip">${esc(sel.doc_type||"—")}</span>${bTag(statusColor(sel.review_status),sel.review_status||"미검수")}
         <span class="chip">신뢰도 ${Math.round((sel.confidence||0)*100)}%</span>
         ${sel.has_file?`<button class="btn" onclick="viewDoc('${sel.document_id}')">↗ 원본 열기</button>`:''}</div>
       ${sel.fields&&Object.keys(sel.fields).length?`<div style="margin-bottom:10px">${Object.entries(sel.fields).slice(0,8).map(([k,vv])=>`<div class="kv"><span>${esc(k)}</span><b>${esc(vv)}</b></div>`).join("")}</div>`:""}
@@ -1028,8 +1052,8 @@ SCREEN.audit=async()=>{
   const fRows=fpg.items.length?fpg.items.map(f=>`<tr>
       <td style="font-family:ui-monospace,monospace;font-size:11px">${esc((f.finding_id||"").slice(0,6))}</td>
       <td><b>${esc(f.finding)}</b><div class="muted small">${esc(f.area||"")}</div></td>
-      <td>${tag(statusColor(f.severity),f.severity||"—")}</td>
-      <td>${tag(statusColor(f.status),f.status||"—")}</td>
+      <td>${bTag(statusColor(f.severity),f.severity||"—")}</td>
+      <td>${bTag(statusColor(f.status),f.status||"—")}</td>
       <td style="text-align:right;white-space:nowrap">${canEdit?`
         ${f.status==='closed'?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="setFinding('${f.finding_id}','open')">재개</button>`:`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="setFinding('${f.finding_id}','closed')">종결</button>`}
         <button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="delFinding('${f.finding_id}')">삭제</button>`:''}</td></tr>`).join("")
@@ -1107,7 +1131,7 @@ SCREEN.mockAudit=async()=>{
   const qpg=pageSlice("mockq",queue,10);
   const rows=qpg.items.length?qpg.items.map(q=>`<tr class="clickable" onclick="openMock('${q.case_id}')">
       <td style="font-family:ui-monospace,monospace;font-size:11px">${short(q.case_id)}</td>
-      <td><b>${esc(q.company)}</b></td><td>${tag("info",q.stage)}</td><td>${tag(q.pathway==='self_declare'?'info':'mute',q.pathway||"—")}</td></tr>`).join("")
+      <td><b>${esc(q.company)}</b></td><td>${tag("info",q.stage)}</td><td>${bTag(q.pathway==='self_declare'?'info':'mute',q.pathway||"—")}</td></tr>`).join("")
     :`<tr><td colspan="4" class="muted" style="text-align:center;padding:20px">모의심사 대상 없음</td></tr>`;
   let panel='<div class="card"><h3>제출 자료·판정 <span class="en">· Decision</span></h3><div class="body muted">좌측 큐에서 케이스를 선택하세요.</div></div>';
   if(CURCASE && queue.find(q=>q.case_id===CURCASE)){
@@ -1185,19 +1209,19 @@ SCREEN.invoice=async()=>{
   const sel=inv.find(i=>i.invoice_id===INV_SEL)||inv[0]||null;
   const rows=ipg.items.length?ipg.items.map(i=>`<tr class="clickable${sel&&i.invoice_id===sel.invoice_id?' ':' '}" onclick="selectInvoice('${i.invoice_id}')">
       <td style="font-family:ui-monospace,monospace;font-size:12px">${esc(i.invoice_no||short(i.invoice_id))}</td>
-      <td class="muted">${esc(i.service_type||"")}</td><td><b>${fmtIDR(i.total==null?i.amount:i.total)}</b></td>
-      <td>${tag(statusColor(i.status),i.status||"—")} ${(canMark&&i.status!=='paid')?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();payInvoice('${i.invoice_id}')">결제표시</button>`:''}</td></tr>`).join("")
+      <td class="muted">${bSpan(i.service_type)}</td><td><b>${fmtIDR(i.total==null?i.amount:i.total)}</b></td>
+      <td>${bTag(statusColor(i.status),i.status||"—")} ${(canMark&&i.status!=='paid')?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();payInvoice('${i.invoice_id}')">결제표시</button>`:''}</td></tr>`).join("")
     :`<tr><td colspan="4" class="muted" style="text-align:center;padding:20px">청구서 없음</td></tr>`;
   const canCreate=["consultant","ops","admin"].includes(ROLE);
   const detail=sel?`
       <div class="field"><label>청구번호 · No</label><div class="v">${esc(sel.invoice_no||short(sel.invoice_id))}</div></div>
-      <div class="field"><label>서비스 · Service</label><div class="v">${esc(sel.service_type||"—")}</div></div>
+      <div class="field"><label>서비스 · Service</label><div class="v">${bSpan(sel.service_type)}</div></div>
       <table style="margin:6px 0"><tbody>
         <tr><td>금액 · DPP</td><td style="text-align:right">${fmtIDR(sel.amount)}</td></tr>
         <tr><td>부가세 · PPN</td><td style="text-align:right">${fmtIDR(sel.ppn)}</td></tr>
         <tr style="background:var(--accent-soft)"><td><b>합계 · Total</b></td><td style="text-align:right"><b>${fmtIDR(sel.total==null?sel.amount:sel.total)}</b></td></tr>
       </tbody></table>
-      <div class="field"><label>상태 · Status</label><div>${tag(statusColor(sel.status),sel.status||"—")}</div></div>
+      <div class="field"><label>상태 · Status</label><div>${bTag(statusColor(sel.status),sel.status||"—")}</div></div>
       ${(canMark&&sel.status!=='paid')?`<button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">결제 표시 · Mark paid</button>`:''}`
     :'<div class="muted small">청구서를 선택하세요.</div>';
   const st2=inv.reduce((a,i)=>{const t=(i.total==null?i.amount:i.total)||0;a.total+=t;if(i.status==='paid')a.paid+=t;else a.unpaid+=t;return a;},{total:0,paid:0,unpaid:0});
@@ -1242,7 +1266,7 @@ SCREEN.fatwa=async()=>{
     :fst==="rejected"?["bad","⛔ 반려됨"]:fst==="conditional"?["warn","조건부 승인"]:["mute","심의 전"];
   return `
   <div class="grid side">
-    <div class="card"><h3>파트와 위원회 심의 <span class="en">· Committee</span><span class="r">${esc(fst)}</span></h3>
+    <div class="card"><h3>파트와 위원회 심의 <span class="en">· Committee</span><span class="r">${bSpan(fst)}</span></h3>
       <div class="body">
         <div class="banner ${stageBanner[0]==='mute'?'info':stageBanner[0]}" style="margin-bottom:12px">${stageBanner[1]}${fd.decision_no?" · "+esc(fd.decision_no):""}${fd.final_approved_at?" · 최종 "+esc(String(fd.final_approved_at).slice(0,16)):""}</div>
         <div class="field"><label>심의 요지 · Note</label><div class="v small">${esc(fd.committee_note||"—")}</div></div>
@@ -1428,7 +1452,7 @@ async function renderCaseDetail(id, tab){
     <div class="detail-top">
       <button class="btn" onclick="history.back()">← 목록으로 · Back</button>
       <div class="dt-title"><h1>${esc(c.company_name||"—")} <span class="muted" style="font-size:14px;font-weight:500">${short(c.case_id)}</span></h1>
-        <div class="dt-sub">${tag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')} ${tag(statusColor(c.status),c.status||'—')} ${c.scope_frozen?tag('gold','scope 동결'):''}</div></div>
+        <div class="dt-sub">${bTag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')} ${bTag(statusColor(c.status),c.status||'—')} ${c.scope_frozen?tag('gold','scope 동결'):''}</div></div>
     </div>
     <div class="tabbar">${tabs.map(([t,ko,en])=>`<button class="tabbtn ${t===tab?'on':''}" onclick="openCaseTab('${t}')">${ko} <span class="muted">· ${en}</span></button>`).join("")}</div>`;
   let panel="";
@@ -1467,7 +1491,7 @@ async function renderCaseDetail(id, tab){
       </div></div>`;
   } else if(tab==="materials"){
     const mats=await API(`/cases/${id}/materials`).catch(()=>[]);
-    const rows=mats.length?mats.map(m=>`<tr><td><b>${esc(m.name)}</b></td><td>${tag(statusColor(m.status||m.result),m.status||m.result||"—")}</td><td class="small">${m.evidence_count?"✓ "+m.evidence_count:'<span class="muted">없음</span>'}</td></tr>`).join(""):`<tr><td colspan="3" class="muted" style="text-align:center;padding:18px">원재료 없음</td></tr>`;
+    const rows=mats.length?mats.map(m=>`<tr><td><b>${esc(m.name)}</b></td><td>${bTag(statusColor(m.status||m.result),m.status||m.result||"—")}</td><td class="small">${m.evidence_count?"✓ "+m.evidence_count:'<span class="muted">없음</span>'}</td></tr>`).join(""):`<tr><td colspan="3" class="muted" style="text-align:center;padding:18px">원재료 없음</td></tr>`;
     panel=`<div class="card"><h3>원재료 스크리닝 <span class="en">· Materials</span></h3>
       <div class="body tight"><table><thead><tr><th>원재료</th><th>상태</th><th>증빙</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="CURCASE='${id}';go('materials')">원재료 화면 열기 →</button></div></div>`;
@@ -1479,7 +1503,7 @@ async function renderCaseDetail(id, tab){
         <div class="fmeta"><b>${esc(d.filename||"문서")}</b><span class="muted small">${esc(d.doc_type||"")} · ${esc(d.review_status||"미검수")}</span></div></div>`).join(""):'<div class="muted small">문서 없음</div>'}</div></div></div>`;
   } else if(tab==="audit"){
     const find=await API(`/cases/${id}/findings`).catch(()=>[]);
-    const rows=find.length?find.map(f=>`<tr><td><b>${esc(f.finding)}</b><div class="muted small">${esc(f.area||"")}</div></td><td>${tag(statusColor(f.severity),f.severity||"—")}</td><td>${tag(statusColor(f.status),f.status||"—")}</td></tr>`).join(""):`<tr><td colspan="3" class="muted" style="text-align:center;padding:18px">지적사항 없음</td></tr>`;
+    const rows=find.length?find.map(f=>`<tr><td><b>${esc(f.finding)}</b><div class="muted small">${esc(f.area||"")}</div></td><td>${bTag(statusColor(f.severity),f.severity||"—")}</td><td>${bTag(statusColor(f.status),f.status||"—")}</td></tr>`).join(""):`<tr><td colspan="3" class="muted" style="text-align:center;padding:18px">지적사항 없음</td></tr>`;
     panel=`<div class="card"><h3>지적사항 <span class="en">· Findings</span></h3>
       <div class="body tight"><table><thead><tr><th>내용</th><th>심각도</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="CURCASE='${id}';go('audit')">심사 화면 열기 →</button></div></div>`;
