@@ -602,9 +602,12 @@ SCREEN.dashboard=async()=>{
   // 알림·공지 (실데이터 — 상태 기반)
   const alerts=[];
   cases.forEach(c=>{const s=c.status||"";const nm=c.company_name||short(c.case_id);
+    const dd=dueDays(c.due_date);
+    if(dd!=null&&dd<=7)alerts.push([dd<0?"bad":"warn",dd<0?"⛔":"⏰",`${nm} — 처리 기한 ${dd<0?Math.abs(dd)+"일 초과":dd===0?"오늘":"D-"+dd}`,c.case_id]);
     if(/corrective/i.test(s))alerts.push(["bad","⛔",`${nm} — 시정조치 필요`,c.case_id]);
     else if(/reject/i.test(s))alerts.push(["bad","⛔",`${nm} — 반려 처리됨`,c.case_id]);
     else if(/requested|scheduled|in_review/i.test(s))alerts.push(["info","ℹ",`${nm} — ${s}`,c.case_id]);});
+  alerts.sort((a,b)=>({bad:0,warn:1,info:2}[a[0]]-{bad:0,warn:1,info:2}[b[0]]));
   const notif=alerts.slice(0,6);
   // 다중 케이스 준비도 비교 (S18-2)
   const rdCases=cases.slice(0,6);
@@ -661,13 +664,14 @@ SCREEN.caseList=async()=>{
       <td style="font-family:ui-monospace,monospace;font-size:12px">${short(c.case_id)} <span class="go-arrow">→</span></td>
       <td><b>${esc(c.company_name||"—")}</b></td>
       <td>${tag(c.pathway==="self_declare"?"info":"mute",c.pathway||"—")}</td>
-      <td>${tag(statusColor(c.status),c.status||"—")}</td></tr>`).join("")
-    : `<tr><td colspan="4" class="muted" style="text-align:center;padding:24px">조건에 맞는 케이스 없음 · No cases</td></tr>`;
+      <td>${tag(statusColor(c.status),c.status||"—")}</td>
+      <td>${c.due_date?dueBadge(c.due_date):'<span class="muted">—</span>'}</td></tr>`).join("")
+    : `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">조건에 맞는 케이스 없음 · No cases</td></tr>`;
   const canNew=["client","consultant","admin"].includes(ROLE);
   return `${filterChips()}
   <div class="card"><h3>케이스 테이블 <span class="en">· Case table</span><span class="r">row 클릭 → 상세</span></h3>
     <div class="body tight"><table>
-      <thead><tr><th>번호 · ID</th><th>기업 · Company</th><th>경로</th><th>상태 · Status</th></tr></thead>
+      <thead><tr><th>번호 · ID</th><th>기업 · Company</th><th>경로</th><th>상태 · Status</th><th>기한 · Due</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     ${pager("caseList",pg)}
     <div class="body btnrow" style="border-top:1px solid var(--line)">
@@ -747,6 +751,7 @@ SCREEN.application=async()=>{
         <div class="field"><label>책임자 · Responsible</label><input class="v" id="apResp" value="${esc(c.responsible_person||"")}"></div>
         <div class="field"><label>할랄감독자 · Supervisor</label><input class="v" id="apSup" value="${esc(c.halal_supervisor||"")}"></div>
         <div class="field"><label>공장 주소 · Factory address <span class="muted">(지역맵 집계)</span></label><input class="v" id="apFactory" value="${esc(c.factory_address||"")}" placeholder="예: Jl. Industri, Bekasi, Jawa Barat"></div>
+        <div class="field"><label>처리 기한 · Due date <span class="muted">(기한 경보)</span></label><input class="v" id="apDue" type="date" value="${esc(c.due_date||"")}"> ${c.due_date?dueBadge(c.due_date):''}</div>
         <button class="btn pri" onclick="saveProfile('${id}')">프로필 저장 · Save</button>
       </div></div>
     <div class="card"><h3>③ 경로 판정 <span class="en">· Pathway</span></h3>
@@ -790,7 +795,7 @@ async function assignPendamping(id){const pendamping_id=v("pdId");if(!pendamping
 async function verifyPendamping(id,decision){try{await API(`/cases/${id}/pendamping/verify`,{method:"POST",body:JSON.stringify({decision})});toast("검증 · "+decision);applyView();}catch(e){toast("검증 실패 · "+(e&&e.code?e.code:""));}}
 async function sihalalLink(id){const external_username=v("shUser");if(!external_username){toast("사용자명 입력");return}try{await API(`/cases/${id}/sihalal/identity/link`,{method:"POST",body:JSON.stringify({external_username})});toast("SIHALAL 연동");applyView();}catch(e){toast("연동 실패 · "+(e&&e.code?e.code:""));}}
 async function saveProfile(id){
-  const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),factory_address:v("apFactory")};
+  const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),factory_address:v("apFactory"),due_date:v("apDue")};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];toast("저장됨");await loadCases(true);}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
 }
@@ -871,6 +876,8 @@ function intakeZip(id){
 }
 function fileB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]);r.onerror=rej;r.readAsDataURL(file);});}
 function downloadText(fname,text){const blob=new Blob(["﻿"+String(text||"")],{type:"text/plain;charset=utf-8"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=fname;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
+function dueDays(d){if(!d)return null;const now=new Date();now.setHours(0,0,0,0);const t=new Date(d);if(isNaN(t))return null;return Math.round((t-now)/86400000);}
+function dueBadge(d){const n=dueDays(d);if(n==null)return"";const c=n<0?"bad":n<=3?"warn":n<=7?"info":"mute";const lbl=n<0?`${Math.abs(n)}일 초과`:n===0?"오늘":`D-${n}`;return tag(c,"⏰ "+lbl);}
 function attachEvidence(cid,mid){
   const inp=document.createElement("input");inp.type="file";inp.accept="image/*,.pdf";
   inp.onchange=async()=>{const file=inp.files[0];if(!file)return;
@@ -1209,7 +1216,8 @@ async function fatwaDoc(id){try{const r=await API(`/cases/${id}/fatwa/document`,
 
 /* 13) Certificate */
 SCREEN.certificate=async()=>{
-  const id=CURCASE;const c=await API(`/cases/${id}/certificate`).catch(()=>({issued:false}));
+  const id=CURCASE;
+  const [c,ciHist]=await Promise.all([API(`/cases/${id}/certificate`).catch(()=>({issued:false})),API(`/cases/${id}/certificate/change-impact-history`).catch(()=>[])]);
   const co=curCaseObj();
   const canIssue=["sharia","ops","admin"].includes(ROLE);
   const certCard=c.issued?`<div class="cert">
@@ -1239,13 +1247,22 @@ SCREEN.certificate=async()=>{
           ${c.issued&&["client","consultant","admin"].includes(ROLE)?`<button class="btn" onclick="renewCert('${id}')">갱신 · Renew</button>`:''}
           ${c.issued&&["consultant","admin"].includes(ROLE)?`<button class="btn" onclick="unlockCert('${id}')">잠금해제 · Unlock</button>`:''}
           ${!canIssue?'<span class="chip">🔒 발급 — 샤리아·최고운영자</span>':''}</div></div></div>
-  </div>`;
+  </div>
+  <div class="card" style="margin-top:16px"><h3>변경영향 분석 이력 <span class="en">· Change-impact history</span><span class="r">${(ciHist||[]).length}건</span></h3>
+    <div class="body tight"><table><thead><tr><th>일시</th><th>변경 유형</th><th>위험도</th><th>점수</th><th>영향 제품</th><th>조치</th></tr></thead>
+      <tbody>${(ciHist||[]).length?(ciHist||[]).map(x=>`<tr>
+        <td class="muted small">${esc((x.created_at||"").slice(0,16))}</td>
+        <td><b>${esc(x.change_type||"—")}</b></td>
+        <td>${tag(x.risk_level==='high'?'bad':x.risk_level==='medium'?'warn':'ok',x.risk_level||"—")}</td>
+        <td>${x.impact_score!=null?Math.round(x.impact_score*100)+"%":"—"}</td>
+        <td class="muted small">${esc((x.affected_products||[]).join(", ")||"—")}</td>
+        <td class="muted small">${esc((x.required_actions||[]).slice(0,2).join(" · ")||"—")}</td></tr>`).join(""):'<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">변경영향 분석 이력 없음 — "변경영향 분석" 실행 시 기록됩니다</td></tr>'}</tbody></table></div></div>`;
 };
 async function issueCert(id){try{await API(`/cases/${id}/certificate/issue`,{method:"POST",body:"{}"});toast("인증서 발급");await loadCases(true);applyView();}catch(e){toast("발급 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
 async function changeImpact(id){
   const ct=prompt("변경 유형 · change_type\n(supplier_changed | material_added | process_changed | material_source_changed)","material_source_changed");
   if(!ct)return;
-  try{const r=await API(`/cases/${id}/certificate/change-impact`,{method:"POST",body:JSON.stringify({change_type:ct})});toast("변경영향 · "+(r.impact||r.result||r.recommendation||"분석 완료"));}catch(e){toast("분석 실패 · "+(e&&e.code?e.code:""));}}
+  try{const r=await API(`/cases/${id}/certificate/change-impact`,{method:"POST",body:JSON.stringify({change_type:ct})});toast("변경영향 · "+(r.risk_level||"분석 완료")+(r.impact_score!=null?" ("+Math.round(r.impact_score*100)+"%)":""));applyView();}catch(e){toast("분석 실패 · "+(e&&e.code?e.code:""));}}
 async function renewCert(id){if(!confirm("인증서를 갱신할까요?"))return;try{await API(`/cases/${id}/renew`,{method:"POST",body:"{}"});toast("갱신 요청");await loadCases(true);applyView();}catch(e){toast("갱신 실패 · "+(e&&e.code?e.code:""));}}
 async function unlockCert(id){if(!confirm("scope 잠금을 해제할까요?"))return;try{await API(`/cases/${id}/certificate/unlock`,{method:"POST",body:"{}"});toast("잠금해제");await loadCases(true);applyView();}catch(e){toast("해제 실패 · "+(e&&e.code?e.code:""));}}
 
