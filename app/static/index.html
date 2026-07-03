@@ -803,6 +803,8 @@ const SCREEN={};
 /* 1) Dashboard — 단일 집계 호출(/dashboard/summary) + cases(알림용) */
 SCREEN.dashboard=async()=>{
   const [sum,cases]=await Promise.all([API("/dashboard/summary"),loadCases(true)]);
+  let analytics=null;
+  if(["ops","admin"].includes(ROLE)){try{analytics=await API("/analytics/summary");}catch(_){}}
   const kpi=sum.kpi||{total:0,issued:0,action:0,in_progress:0};
   const kpis=[["즉시 처리 · Action",kpi.action,"warn",{filter:"action"}],
     ["진행 중 · In progress",kpi.in_progress,"info",{filter:"progress"}],
@@ -879,7 +881,19 @@ SCREEN.dashboard=async()=>{
       <div class="list">${evHtml}</div></div>
   </div>
   ${rdRows?`<div class="card" style="margin-top:16px"><h3>케이스 준비도 비교 <span class="en">· Readiness</span><span class="r">상위 ${(sum.readiness||[]).length}건 · 클릭→상세</span></h3>
-    <div class="body tight"><table><thead><tr><th>기업 · Company</th><th>준비도</th><th>밴드</th><th>경로</th></tr></thead><tbody>${rdRows}</tbody></table></div></div>`:''}`;
+    <div class="body tight"><table><thead><tr><th>기업 · Company</th><th>준비도</th><th>밴드</th><th>경로</th></tr></thead><tbody>${rdRows}</tbody></table></div></div>`:''}
+  ${analytics?`<div class="card" style="margin-top:16px"><h3>운영 분석 <span class="en">· Analytics</span><span class="r">operator · 매출·추이</span></h3>
+    <div class="body">
+      <div class="grid three" style="gap:10px;margin-bottom:14px">
+        <div class="kpi"><span class="n" style="font-size:20px;color:var(--ok)">${fmtIDR(analytics.revenue_paid)}</span><span class="l">매출(결제완료)</span></div>
+        <div class="kpi"><span class="n" style="font-size:20px;color:var(--warn)">${fmtIDR(analytics.revenue_outstanding)}</span><span class="l">미수(미결제)</span></div>
+        <div class="kpi"><span class="n" style="font-size:20px">${analytics.certificates_active}</span><span class="l">유효 인증서</span></div>
+      </div>
+      <div class="small" style="font-weight:600;margin-bottom:6px">월별 케이스 접수 · Cases by month</div>
+      <div class="stagebars">${(()=>{const bm=analytics.cases_by_month||{};const ks=Object.keys(bm).sort();const mx=Math.max(1,...ks.map(k=>bm[k]));return ks.length?ks.map(k=>`<div class="sb"><span>${esc(k)}</span><div class="bar"><i style="width:${Math.round(bm[k]/mx*100)}%"></i></div><b>${bm[k]}</b></div>`).join(""):'<div class="muted small">데이터 없음</div>';})()}</div>
+      <div class="small" style="font-weight:600;margin:12px 0 6px">경로 분포 · Pathway</div>
+      <div class="btnrow">${Object.entries(analytics.cases_by_pathway||{}).map(([k,v])=>`<span class="chip">${esc(k)}: ${v}</span>`).join("")||'<span class="muted small">없음</span>'}</div>
+    </div></div>`:''}`;
 };
 
 /* 2) My Cases */
@@ -1177,7 +1191,9 @@ function labelOcr(cid){
 SCREEN.integration=async()=>{
   const id=CURCASE;
   const [sjph,prods,mats,matrix]=await Promise.all([API(`/cases/${id}/sjph`).catch(()=>({elements:[]})),API(`/cases/${id}/products`).catch(()=>[]),API(`/cases/${id}/materials`).catch(()=>[]),API(`/cases/${id}/matrix`).catch(()=>({links:[]}))]);
+  const sihalal=await API(`/cases/${id}/integration/events`).catch(()=>[]);
   const canMatrix=["client","admin"].includes(ROLE);
+  const canIntg=["ops","admin"].includes(ROLE);   // SIHALAL 이벤트 기록: operator
   const mxLinks=(matrix.links||[]).map(lk=>{const pn=(matrix.products||prods).find(p=>p.product_id===lk.product_id);const mn=(matrix.materials||mats).find(m=>m.material_id===lk.material_id);return `<div class="li" style="padding:6px 0"><div class="ic t-ok">↔</div><div class="tx"><b>${esc(pn?pn.name:lk.product_id)}</b> ↔ ${esc(mn?mn.name:lk.material_id)}</div></div>`;}).join("");
   const els=sjph.elements||[];
   const elHtml=els.length?els.map(e=>{
@@ -1205,8 +1221,25 @@ SCREEN.integration=async()=>{
         <button class="btn pri" onclick="matrixLink('${id}')">링크</button>
       </div>`:''}
     </div></div>
-  ${await genDocsCard(id,"sjph_manual","SJPH 매뉴얼 버전","genSjph('"+id+"')",false)}`;
+  ${await genDocsCard(id,"sjph_manual","SJPH 매뉴얼 버전","genSjph('"+id+"')",false)}
+  <div class="card" style="margin-top:16px"><h3>SIHALAL 연동 이벤트 <span class="en">· Integration events</span><span class="r">${sihalal.length}건</span></h3>
+    <div class="body">
+      ${sihalal.length?`<div class="list" style="margin:0 -1px">${sihalal.map(e=>`<div class="li" style="padding:5px 0"><div class="ic t-info">🔗</div><div class="tx" style="flex:1"><b>${esc(e.event_type)}</b><div class="muted small">${esc(e.external_id||"")} · ${esc(String(e.created_at||"").slice(0,16))}</div></div><div class="when">${bTag(e.status==='processed'?'ok':'info',e.status)}</div></div>`).join("")}</div>`:'<div class="muted small">연동 이벤트 없음</div>'}
+      ${canIntg?`<button class="btn" style="margin-top:10px" onclick="recordIntegrationEvent('${id}')">＋ 연동 이벤트 기록</button>`:''}
+    </div></div>`;
 };
+async function recordIntegrationEvent(id){
+  const r=await dialog("SIHALAL 연동 이벤트 · Event",[
+    {key:"event_type",label:"이벤트 유형 · Type",type:"select",options:[
+      {value:"external_application_created",label:"신청 생성"},{value:"document_package_submitted",label:"서류 제출"},
+      {value:"external_status_synced",label:"상태 동기화"},{value:"rejection_received",label:"반려 수신"},
+      {value:"additional_document_requested",label:"추가서류 요청"},{value:"certificate_number_imported",label:"인증번호 임포트"},
+      {value:"certificate_status_changed",label:"인증상태 변경"}]},
+    {key:"external_id",label:"외부 ID · External ID"},{key:"idempotency_key",label:"idempotency key",required:true,placeholder:"unique-key"}]);
+  if(!r)return;
+  try{await API(`/integration/sihalal/event`,{method:"POST",body:JSON.stringify({event_type:r.event_type,external_id:r.external_id||null,idempotency_key:r.idempotency_key,case_id:id})});toast("연동 이벤트 기록");applyView();}
+  catch(e){toast("실패 · "+(e&&e.code?e.code:""));}
+}
 async function matrixLink(id){const product_id=v("mxProd"),material_id=v("mxMat");if(!product_id||!material_id){toast("제품·원재료 선택");return}try{await API(`/cases/${id}/matrix/link`,{method:"POST",body:JSON.stringify({product_id,material_id,linked:true})});toast("매트릭스 링크");applyView();}catch(e){toast("링크 실패 · "+(e&&e.code?e.code:""));}}
 function uploadProductPhoto(cid,pid){const inp=document.createElement("input");inp.type="file";inp.accept="image/*";inp.onchange=async()=>{const file=inp.files[0];if(!file)return;const b64=await fileB64(file);try{await API(`/cases/${cid}/products/${pid}/photo`,{method:"POST",body:JSON.stringify({file_b64:b64,filename:file.name})});toast("사진 업로드");applyView();}catch(e){toast("업로드 실패 · "+(e&&e.code?e.code:""));}};inp.click();}
 async function viewProductPhotos(cid,pid){try{const ph=await API(`/cases/${cid}/products/${pid}/photos`);if(!ph.length){toast("사진 없음");return}viewDoc(ph[0].document_id);}catch(e){toast("조회 실패");}}
@@ -1281,12 +1314,18 @@ async function reclassifyDoc(docId){const en=await ENUMS();const r=await dialog(
 /* 8) Audit */
 SCREEN.audit=async()=>{
   const id=CURCASE;
-  const [find,onsite,lph,pool]=await Promise.all([
+  const [find,onsite,lph,pool,plans,cars]=await Promise.all([
     API(`/cases/${id}/findings`).catch(()=>[]),
     API(`/cases/${id}/onsite-checklist`).catch(()=>({items:[],completion:0})),
     API(`/cases/${id}/lph-assignment`).catch(()=>[]),
-    API(`/cases/${id}/auditor-pool`).catch(()=>[])]);
+    API(`/cases/${id}/auditor-pool`).catch(()=>[]),
+    API(`/cases/${id}/audit-plans`).catch(()=>[]),
+    API(`/cases/${id}/corrective-actions`).catch(()=>[])]);
   const canEdit=["auditor","sharia","ops","admin"].includes(ROLE);
+  const canPlan=["auditor","ops","consultant","admin"].includes(ROLE);   // audit-plan
+  const canCar=["client","consultant","sharia","admin"].includes(ROLE);  // CAR 제출(applicant·consultant·penyelia)
+  const canReview=["auditor","ops","admin"].includes(ROLE);              // CAR 검토
+  const carsByF={}; (cars||[]).forEach(x=>{(carsByF[x.finding_id]=carsByF[x.finding_id]||[]).push(x);});
   const canTeam=["sharia","ops","admin"].includes(ROLE);  // LPH 배정: fatwa_liaison·operator
   const canPool=["ops","admin"].includes(ROLE);  // auditor-pool: operator(최종 결제자)
   const cur=curCaseObj();const onsiteActive=cur&&cur.status==="onsite_audit_in_progress";
@@ -1297,8 +1336,10 @@ SCREEN.audit=async()=>{
       <td><b>${esc(f.finding)}</b><div class="muted small">${esc(f.area||"")}</div></td>
       <td>${bTag(statusColor(f.severity),f.severity||"—")}</td>
       <td>${bTag(statusColor(f.status),f.status||"—")}</td>
-      <td style="text-align:right;white-space:nowrap">${canEdit?`
-        ${f.status==='closed'?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="setFinding('${f.finding_id}','open')">재개</button>`:`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="setFinding('${f.finding_id}','closed')">종결</button>`}
+      <td style="text-align:right;white-space:nowrap">
+        ${(carsByF[f.finding_id]||[]).length?`<span class="chip" style="font-size:10px">CAR ${(carsByF[f.finding_id]||[]).length}</span>`:''}
+        ${(canCar&&f.status!=='closed')?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="submitCar('${f.finding_id}')">시정조치</button>`:''}
+        ${canEdit?`${f.status==='closed'?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="setFinding('${f.finding_id}','open')">재개</button>`:`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="setFinding('${f.finding_id}','closed')">종결</button>`}
         <button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="delFinding('${f.finding_id}')">삭제</button>`:''}</td></tr>`).join("")
     :`<tr><td colspan="5" class="muted" style="text-align:center;padding:18px">지적사항 없음</td></tr>`;
   const lphHtml=lph.length?lph.map(x=>`<div class="li"><div class="ic t-info">🏭</div><div class="tx"><b>${esc(x.lph_name)}</b><div>${esc(x.auditor_ref||"")} · ${esc(x.source||"")}</div></div></div>`).join(""):'<div class="li"><div class="tx muted small">LPH 배정 없음</div></div>';
@@ -1316,6 +1357,11 @@ SCREEN.audit=async()=>{
   <div class="grid side" style="margin-bottom:16px">
     <div class="card"><h3>LPH 배정·현장심사 <span class="en">· On-site</span><span class="r">완료도 ${onsite.completion||0}%</span></h3>
       <div class="list" style="margin:0 -1px">${lphHtml}</div>
+      <div class="body" style="border-top:1px solid var(--line)">
+        <div class="small" style="font-weight:600;margin-bottom:6px">현장심사 일정 · Schedule (${plans.length})</div>
+        ${plans.length?plans.map(p=>`<div class="li" style="padding:4px 0"><div class="tx" style="flex:1"><b>📅 ${esc(p.scheduled_date)}</b><div class="muted small">${esc(p.lph_name||"")} ${esc(p.scope||"")} ${bTag(p.status==='completed'?'ok':p.status==='cancelled'?'mute':'info',p.status)}</div></div>${canReview&&p.status==='scheduled'?`<div class="when"><button class="btn" style="padding:2px 7px;font-size:11px" onclick="patchPlan('${p.id}','completed')">완료</button></div>`:''}</div>`).join(""):'<div class="muted small">등록된 일정 없음</div>'}
+        ${canPlan?`<button class="btn" style="margin-top:6px" onclick="schedulePlan('${id}')">📅 일정 등록 · Schedule</button>`:''}
+      </div>
       <div class="body" style="border-top:1px solid var(--line)">
         <div class="small" style="font-weight:600;margin-bottom:6px">심사원 풀 · Auditor pool (${pool.length})</div>
         ${poolHtml}
@@ -1342,8 +1388,21 @@ SCREEN.audit=async()=>{
     <div class="body btnrow" style="border-top:1px solid var(--line)">
       ${canEdit?`<button class="btn pri" onclick="addFinding('${id}')">＋ 지적 추가</button>`:'<span class="chip">🔒 편집 불가</span>'}
       ${["auditor","ops","admin"].includes(ROLE)&&onsiteActive?`<button class="btn ok" style="margin-left:auto" onclick="closeOnsite('${id}')">🏭 현장심사 완료 · Close audit</button>`:''}</div></div>
+  ${cars.length?`<div class="card" style="margin-top:16px"><h3>시정조치 CAR <span class="en">· Corrective actions</span><span class="r">${cars.length}건</span></h3>
+    <div class="body tight"><table><thead><tr><th>지적</th><th>조치 내용</th><th>상태</th><th>기한</th><th></th></tr></thead><tbody>
+    ${cars.map(x=>`<tr>
+      <td class="muted small" style="font-family:ui-monospace,monospace">${esc((x.finding_id||"").slice(0,6))}</td>
+      <td><b>${esc(x.description||"")}</b>${x.reviewer_note?`<div class="muted small">검토: ${esc(x.reviewer_note)}</div>`:''}</td>
+      <td>${bTag(x.status==='accepted'||x.status==='closed'?'ok':x.status==='rejected'?'bad':'info',x.status)}</td>
+      <td class="muted small">${esc(x.due_date||"—")}</td>
+      <td style="text-align:right;white-space:nowrap">${(canReview&&x.status==='submitted')?`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="reviewCar('${x.id}','accepted')">수용</button><button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="reviewCar('${x.id}','rejected')">반려</button>`:''}</td></tr>`).join("")}
+    </tbody></table></div></div>`:''}
   ${await genDocsCard(id,"audit_report","현장심사 보고서 · Audit Report","genAuditReport('"+id+"')",["auditor","ops","admin"].includes(ROLE))}`;
 };
+async function schedulePlan(id){const r=await dialog("현장심사 일정 · Schedule",[{key:"scheduled_date",label:"일자 · Date",type:"date",required:true},{key:"lph_name",label:"LPH 기관 · LPH"},{key:"scope",label:"범위 · Scope",placeholder:"onsite audit"}]);if(!r)return;try{await API(`/cases/${id}/audit-plan`,{method:"POST",body:JSON.stringify({scheduled_date:r.scheduled_date,lph_name:r.lph_name||null,scope:r.scope||null})});toast("일정 등록");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
+async function patchPlan(pid,status){try{await API(`/audit-plans/${pid}`,{method:"PATCH",body:JSON.stringify({status})});toast("일정 · "+status);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
+async function submitCar(fid){const r=await dialog("시정조치 제출 · CAR",[{key:"description",label:"조치 내용 · Action",type:"textarea",required:true},{key:"due_date",label:"완료 기한 · Due",type:"date"}]);if(!r)return;try{await API(`/findings/${fid}/car`,{method:"POST",body:JSON.stringify({description:r.description,due_date:r.due_date||null})});toast("시정조치 제출");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
+async function reviewCar(cid,status){try{await API(`/car/${cid}/review`,{method:"PATCH",body:JSON.stringify({status})});toast("CAR "+(status==='accepted'?'수용':'반려'));applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function closeOnsite(id){
   if(!confirm("현장심사를 완료(audit_closed) 처리할까요?"))return;
   try{await API(`/cases/${id}/transition`,{method:"POST",body:JSON.stringify({to_state:"audit_closed",action:"onsite.complete"})});toast("현장심사 완료");await loadCases(true);applyView();}
@@ -1450,6 +1509,7 @@ async function postDiscussion(id){const el=document.getElementById("discInput");
 /* 11) Invoice */
 SCREEN.invoice=async()=>{
   const id=CURCASE;const inv=await API(`/cases/${id}/invoices`).catch(()=>[]);
+  const pays=await API(`/cases/${id}/payments`).catch(()=>[]);
   const canMark=["client","consultant"].includes(ROLE);  // pay: applicant·consultant (백엔드 RBAC)
   const ipg=pageSlice("invoice",inv,10);
   const sel=inv.find(i=>i.invoice_id===INV_SEL)||inv[0]||null;
@@ -1468,7 +1528,7 @@ SCREEN.invoice=async()=>{
         <tr style="background:var(--accent-soft)"><td><b>합계 · Total</b></td><td style="text-align:right"><b>${fmtIDR(sel.total==null?sel.amount:sel.total)}</b></td></tr>
       </tbody></table>
       <div class="field"><label>상태 · Status</label><div>${bTag(statusColor(sel.status),sel.status||"—")}</div></div>
-      ${(canMark&&sel.status!=='paid')?`<button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">결제 표시 · Mark paid</button>`:''}`
+      ${(canMark&&sel.status!=='paid')?`<div class="btnrow"><button class="btn pri" onclick="recordPayment('${sel.invoice_id}')">💳 결제 기록 · Record payment</button><button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">간이 결제표시</button></div>`:''}`
     :'<div class="muted small">청구서를 선택하세요.</div>';
   const st2=inv.reduce((a,i)=>{const t=(i.total==null?i.amount:i.total)||0;a.total+=t;if(i.status==='paid')a.paid+=t;else a.unpaid+=t;return a;},{total:0,paid:0,unpaid:0});
   return `
@@ -1485,10 +1545,22 @@ SCREEN.invoice=async()=>{
         ${canCreate?`<button class="btn pri" onclick="createInvoice('${id}')">청구 생성 · Create</button>`:'<span class="chip">🔒 청구 생성 권한 없음</span>'}</div></div>
     <div class="card"><h3>인보이스 상세 <span class="en">· Detail</span></h3>
       <div class="body">${detail}</div></div>
-  </div>`;
+  </div>
+  ${pays.length?`<div class="card" style="margin-top:16px"><h3>결제 내역 <span class="en">· Payments</span><span class="r">${pays.length}건</span></h3>
+    <div class="body tight"><table><thead><tr><th>결제방식</th><th>금액 · IDR</th><th>참조</th><th>상태</th><th>일시</th></tr></thead><tbody>
+    ${pays.map(p=>`<tr><td>${bSpan(p.method)}</td><td><b>${fmtIDR(p.amount)}</b></td><td class="muted small">${esc(p.reference||"—")}</td><td>${bTag(p.status==='confirmed'?'ok':'mute',p.status)}</td><td class="muted small">${esc(String(p.paid_at||"").slice(0,16))}</td></tr>`).join("")}
+    </tbody></table></div></div>`:''}`;
 };
 function selectInvoice(iid){INV_SEL=iid;applyView();}
 async function payInvoice(iid){try{await API(`/invoices/${iid}/pay`,{method:"PATCH",body:"{}"});toast("결제 표시");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
+async function recordPayment(iid){
+  const r=await dialog("결제 기록 · Record payment",[
+    {key:"method",label:"결제 방식 · Method",type:"select",options:[{value:"bank_transfer",label:"계좌이체 · Bank transfer"},{value:"va",label:"가상계좌 · Virtual account"},{value:"card",label:"카드 · Card"},{value:"manual",label:"수기 · Manual"}]},
+    {key:"reference",label:"참조번호 · Reference",placeholder:"TRX-..."}]);
+  if(!r)return;
+  try{await API(`/invoices/${iid}/payment`,{method:"POST",body:JSON.stringify({method:r.method,reference:r.reference||null})});toast("결제 기록 완료");applyView();}
+  catch(e){toast("결제 실패 · "+(e&&e.code?e.code:""));}
+}
 async function createInvoice(id){
   const en=await ENUMS();
   const opts=(en.invoice_service_type||[{value:"pre_audit",label:"사전심사"},{value:"onsite",label:"현장심사"}]).map(o=>({value:o.value!=null?o.value:o,label:o.label!=null?o.label:o}));
@@ -1502,6 +1574,8 @@ async function createInvoice(id){
 SCREEN.fatwa=async()=>{
   const id=CURCASE;const fd=await API(`/cases/${id}/fatwa`).catch(()=>({decision:"pending"}));
   const members=fd.committee_members||[];
+  let voteTally=null;
+  if(CAN("fatwa.propose")||["ops","sharia","admin"].includes(ROLE)){try{voteTally=await API(`/cases/${id}/fatwa/votes`);}catch(_){}}
   const memHtml=(Array.isArray(members)?members:[]).map(m=>{
     const nm=typeof m==="string"?m:(m.name||"");const av=(nm||"?").slice(0,2).toUpperCase();
     return `<div class="mem"><div class="av">${esc(av)}</div><div style="flex:1"><b>${esc(nm)}</b><div class="muted small">${esc(typeof m==="object"?(m.role||"위원"):"위원")}</div></div>${tag("ok","등록")}</div>`;}).join("")||'<div class="muted small">위원 정보 없음</div>';
@@ -1537,8 +1611,20 @@ SCREEN.fatwa=async()=>{
         <div class="small" style="font-weight:600;margin-bottom:8px">심의 진행 체크리스트 · Review</div>
         ${[["위원 구성",members.length>0],["심의 요지 작성",!!fd.committee_note],["결정",!!(fd.decision&&fd.decision!=='pending')],["결정문 생성",!!fd.decision_no]].map(([t,ok])=>`<div class="check"><div class="cbox ${ok?'on':''}">${ok?'✓':''}</div><b style="flex:1">${t}</b><span class="muted small">${ok?'완료':'대기'}</span></div>`).join("")}
       </div></div>
-  </div>`;
+  </div>
+  ${voteTally?`<div class="card" style="margin-top:16px"><h3>위원회 투표 <span class="en">· Committee vote</span><span class="r">${voteTally.result==='passed'?'✅ 가결':'심의중'} · 찬성 ${voteTally.approve}/${voteTally.members}</span></h3>
+    <div class="body">
+      <div class="banner ${voteTally.quorum_met?(voteTally.result==='passed'?'ok':'info'):'warn'}" style="margin-bottom:10px">정족수 ${voteTally.votes_cast}/${voteTally.quorum_need} · 찬성 ${voteTally.approve} · 반대 ${voteTally.reject} · 기권 ${voteTally.abstain} → <b>${voteTally.result==='passed'?'가결':'심의중'}</b></div>
+      ${CAN("fatwa.propose")?(Array.isArray(members)?members:[]).map(m=>{const nm=typeof m==="string"?m:(m.name||"");const cur=((voteTally.ballots||[]).find(b=>b.member===nm)||{}).vote;
+        return `<div class="row" style="justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)"><b>${esc(nm)}</b><span class="btnrow">
+          <button class="btn ok" style="padding:3px 9px" data-m="${esc(nm)}" data-v="approve" onclick="fatwaVoteBtn(this,'${id}')">${cur==='approve'?'✓ ':''}찬성</button>
+          <button class="btn bad" style="padding:3px 9px" data-m="${esc(nm)}" data-v="reject" onclick="fatwaVoteBtn(this,'${id}')">${cur==='reject'?'✓ ':''}반대</button>
+          <button class="btn" style="padding:3px 9px" data-m="${esc(nm)}" data-v="abstain" onclick="fatwaVoteBtn(this,'${id}')">${cur==='abstain'?'✓ ':''}기권</button></span></div>`;}).join("")||'<span class="muted small">위원이 없습니다.</span>'
+        :'<span class="muted small">투표 상세·행사는 샤리아 위원 전용입니다.</span>'}
+    </div></div>`:''}`;
 };
+async function fatwaVoteBtn(el,id){await fatwaVote(id,el.getAttribute('data-m'),el.getAttribute('data-v'));}
+async function fatwaVote(id,member,vote){try{await API(`/cases/${id}/fatwa/vote`,{method:"POST",body:JSON.stringify({member,vote})});toast("투표 · "+member+" → "+vote);applyView();}catch(e){toast("투표 실패 · "+(e&&e.code?e.code:""));}}
 async function fatwaDecide(id,decision){try{await API(`/cases/${id}/fatwa`,{method:"PATCH",body:JSON.stringify({decision})});toast(decision==='approved'?"가승인 완료":"결정 · "+decision);await loadCases(true);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function fatwaFinalApprove(id){if(!confirm("최종 승인하시겠습니까? (scope 동결·인증서 발급 가능)"))return;try{await API(`/cases/${id}/fatwa/final-approve`,{method:"POST",body:"{}"});toast("최종 승인 완료");await loadCases(true);applyView();}catch(e){toast("최종승인 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
 async function fatwaDoc(id){try{const r=await API(`/cases/${id}/fatwa/document`,{method:"POST",body:"{}"});downloadText("fatwa_"+short(id)+".txt",r.document||"");toast("결정문 생성·다운로드");}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
@@ -1564,7 +1650,8 @@ SCREEN.certificate=async()=>{
   <div class="grid side">
     <div class="card"><h3>할랄 인증서 <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
       <div class="body">${certCard}
-        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="printCert('${id}')">🖨 인증서 다운로드·인쇄 · PDF</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}</div>`:''}</div></div>
+        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="printCert('${id}')">🖨 인증서 다운로드·인쇄 · PDF</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
+        ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span></div>`:''}</div></div>
     <div class="card"><h3>발급·사후관리 <span class="en">· Post-cert</span></h3>
       <div class="body">
         ${c.issued&&c.days_to_expiry!=null?(()=>{const d=c.days_to_expiry;const th=d<=30?["bad","D-30"]:d<=60?["warn","D-60"]:d<=90?["info","D-90"]:null;
@@ -1592,6 +1679,7 @@ SCREEN.certificate=async()=>{
         <td class="muted small">${esc((x.required_actions||[]).slice(0,2).join(" · ")||"—")}</td></tr>`).join(""):'<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">변경영향 분석 이력 없음 — "변경영향 분석" 실행 시 기록됩니다</td></tr>'}</tbody></table></div></div>`;
 };
 async function issueCert(id){try{await API(`/cases/${id}/certificate/issue`,{method:"POST",body:"{}"});toast("인증서 발급");await loadCases(true);applyView();}catch(e){toast("발급 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
+async function signCert(id){if(!confirm("발급된 인증서에 전자서명할까요?"))return;try{await API(`/cases/${id}/certificate/sign`,{method:"POST",body:"{}"});toast("전자서명 완료");applyView();}catch(e){toast("서명 실패 · "+(e&&e.code?e.code:""));}}
 async function changeImpact(id){
   const r=await dialog("변경영향 분석 · Change impact",[{key:"change_type",label:"변경 유형",type:"select",options:[{value:"material_source_changed",label:"원료 원산지 변경"},{value:"supplier_changed",label:"공급사 변경"},{value:"material_added",label:"원료 추가"},{value:"process_changed",label:"공정 변경"}]}]);
   if(!r)return;
@@ -1710,6 +1798,7 @@ SCREEN.system=async()=>{
   const [users,orgs,onto,lphrefs,kma,admCases]=await Promise.all([
     API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({})),API("/admin/lph-references").catch(()=>[]),
     API("/admin/kma1360-exempt").catch(()=>({terms:[]})),API("/admin/cases").catch(()=>[])]);
+  let ovs=[];try{ovs=(await Promise.all((orgs||[]).map(o=>API(`/admin/orgs/${o.org_id}/overview`).catch(()=>null)))).filter(Boolean);}catch(_){}
   const upg=pageSlice("users",users,12);
   const uRows=upg.items.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
       <td><select class="v" style="font-size:12px;padding:3px 6px;width:auto" onchange="patchUserRole('${u.user_id}',this.value)">${roleOpts(u.role)}</select></td>
@@ -1760,7 +1849,11 @@ SCREEN.system=async()=>{
         {key:"pathway",label:"경로",en:"Pathway"},
         {key:"fatwa_status",label:"파트와",en:"Fatwa",sortable:false},
         {key:"org_id",label:"조직",en:"Org"}
-      ]})}</div></div>`;
+      ]})}</div></div>
+  ${ovs.length?`<div class="card" style="margin-top:16px"><h3>조직별 개요 <span class="en">· Multi-tenant overview</span><span class="r">${ovs.length}개 조직</span></h3>
+    <div class="body tight"><table><thead><tr><th>조직 · Org</th><th>케이스</th><th>사용자</th><th>인증서</th><th>매출 · Revenue</th></tr></thead><tbody>
+    ${ovs.map(o=>`<tr><td><b>${esc(o.org_id)}</b></td><td>${o.cases}</td><td>${o.users}</td><td>${o.certificates}</td><td>${fmtIDR(o.revenue_paid)}</td></tr>`).join("")}
+    </tbody></table></div></div>`:''}`;
 };
 function roleOpts(sel){const rs=[["applicant","신청기업"],["consultant","컨설턴트"],["auditor","오디터"],["fatwa_liaison","샤리아"],["operator","최고운영자"],["penyelia_halal","할랄감독자"],["pendamping_pph","동반자"],["admin","ITO 관리자"]];return rs.map(([vv,k])=>`<option value="${vv}"${vv===sel?" selected":""}>${k}</option>`).join("");}
 async function createUser(){const username=v("nuUser"),password=v("nuPass")||"pw",role=v("nuRole");if(!username){toast("아이디 입력");return}try{await API("/admin/users",{method:"POST",body:JSON.stringify({username,password,role})});toast("사용자 생성 · "+username);applyView();}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
