@@ -1043,6 +1043,26 @@ function intakeZip(id){
 }
 function fileB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]);r.onerror=rej;r.readAsDataURL(file);});}
 function downloadText(fname,text){const blob=new Blob(["﻿"+String(text||"")],{type:"text/plain;charset=utf-8"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=fname;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
+/* 생성 문서 버전 (Rizky #3·#4·#11) */
+const GENDOC_KO={sjph_manual:"SJPH 매뉴얼",audit_report:"현장심사 보고서"};
+async function genDocsCard(id,docType,title,genFn,canApprove){
+  let rows=[];try{rows=await API(`/cases/${id}/gen-docs?doc_type=${docType}`);}catch(_){}
+  return `<div class="card" style="margin-top:16px"><h3>${esc(title)} <span class="en">· versions</span><span class="r">${rows.length}개 버전</span></h3>
+    <div class="body tight"><table><thead><tr><th>버전</th><th>상태</th><th>생성</th><th></th></tr></thead>
+      <tbody>${rows.length?rows.map(g=>`<tr><td><b>v${g.version}</b></td><td>${bTag(g.status==='approved'?'ok':'mute',g.status)}</td>
+        <td class="muted small">${esc((g.created_at||"").slice(0,16))}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="printGenDoc('${g.gen_doc_id}')">🖨 PDF</button>
+          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="dlGenDoc('${g.gen_doc_id}')">⬇ txt</button>
+          ${canApprove&&g.status!=='approved'?`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="approveGenDoc('${g.gen_doc_id}')">승인</button>`:''}</td></tr>`).join(""):`<tr><td colspan="4" class="muted" style="text-align:center;padding:14px">생성된 문서 없음</td></tr>`}</tbody></table></div>
+    <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn pri" onclick="${genFn}">＋ 새 버전 생성 · Generate</button></div></div>`;
+}
+async function printGenDoc(gid){try{const g=await API(`/gen-docs/${gid}`);const w=window.open("","_blank");if(!w){toast("팝업 차단");return;}
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(GENDOC_KO[g.doc_type]||g.doc_type)} v${g.version}</title></head><body style="font:13px/1.75 -apple-system,'Malgun Gothic',sans-serif;white-space:pre-wrap;padding:44px;max-width:820px;margin:auto;color:#0f172a"><div style="border-bottom:2px solid #0f172a;padding-bottom:10px;margin-bottom:20px"><b style="font-size:18px">GL-HAC · ${esc(GENDOC_KO[g.doc_type]||g.doc_type)}</b> <span style="color:#64748b">v${g.version} · ${esc(g.status)}</span></div>${esc(g.content)}</body></html>`);
+  w.document.close();setTimeout(()=>w.print(),300);}catch(e){toast("열기 실패");}}
+async function dlGenDoc(gid){try{const g=await API(`/gen-docs/${gid}`);downloadText((g.doc_type)+"_v"+g.version+".txt",g.content);}catch(e){toast("다운로드 실패");}}
+async function approveGenDoc(gid){try{await API(`/gen-docs/${gid}/approve`,{method:"POST",body:"{}"});toast("승인 완료");applyView();}catch(e){toast("승인 실패 · "+(e&&e.code?e.code:""));}}
+async function genAuditReport(id){try{const r=await API(`/cases/${id}/audit-report`,{method:"POST",body:"{}"});toast("현장심사 보고서 v"+r.version+" 생성(draft)");applyView();}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
 function dueDays(d){if(!d)return null;const now=new Date();now.setHours(0,0,0,0);const t=new Date(d);if(isNaN(t))return null;return Math.round((t-now)/86400000);}
 function dueBadge(d){const n=dueDays(d);if(n==null)return"";const c=n<0?"bad":n<=3?"warn":n<=7?"info":"mute";const lbl=n<0?`${Math.abs(n)}일 초과`:n===0?"오늘":`D-${n}`;return tag(c,"⏰ "+lbl);}
 async function attachEvidence(cid,mid){
@@ -1096,12 +1116,13 @@ SCREEN.integration=async()=>{
         <select class="v" id="mxMat" style="width:auto">${mats.length?mats.map(m=>`<option value="${m.material_id}">${esc(m.name)}</option>`).join(""):'<option value="">원재료 없음</option>'}</select>
         <button class="btn pri" onclick="matrixLink('${id}')">링크</button>
       </div>`:''}
-    </div></div>`;
+    </div></div>
+  ${await genDocsCard(id,"sjph_manual","SJPH 매뉴얼 버전","genSjph('"+id+"')",false)}`;
 };
 async function matrixLink(id){const product_id=v("mxProd"),material_id=v("mxMat");if(!product_id||!material_id){toast("제품·원재료 선택");return}try{await API(`/cases/${id}/matrix/link`,{method:"POST",body:JSON.stringify({product_id,material_id,linked:true})});toast("매트릭스 링크");applyView();}catch(e){toast("링크 실패 · "+(e&&e.code?e.code:""));}}
 function uploadProductPhoto(cid,pid){const inp=document.createElement("input");inp.type="file";inp.accept="image/*";inp.onchange=async()=>{const file=inp.files[0];if(!file)return;const b64=await fileB64(file);try{await API(`/cases/${cid}/products/${pid}/photo`,{method:"POST",body:JSON.stringify({file_b64:b64,filename:file.name})});toast("사진 업로드");applyView();}catch(e){toast("업로드 실패 · "+(e&&e.code?e.code:""));}};inp.click();}
 async function viewProductPhotos(cid,pid){try{const ph=await API(`/cases/${cid}/products/${pid}/photos`);if(!ph.length){toast("사진 없음");return}viewDoc(ph[0].document_id);}catch(e){toast("조회 실패");}}
-async function genSjph(id){try{const r=await API(`/cases/${id}/sjph/manual`,{method:"POST",body:"{}"});downloadText("sjph_manual_"+short(id)+".txt",r.manual||"");toast("SJPH 문서 생성·다운로드");}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
+async function genSjph(id){try{const r=await API(`/cases/${id}/sjph/manual`,{method:"POST",body:"{}"});toast("SJPH 매뉴얼 v"+r.version+" 생성");applyView();}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
 
 /* 7) Documents */
 SCREEN.documents=async()=>{
@@ -1224,7 +1245,8 @@ SCREEN.audit=async()=>{
     ${pager("findings",fpg)}
     <div class="body btnrow" style="border-top:1px solid var(--line)">
       ${canEdit?`<button class="btn pri" onclick="addFinding('${id}')">＋ 지적 추가</button>`:'<span class="chip">🔒 편집 불가</span>'}
-      ${["auditor","ops","admin"].includes(ROLE)&&onsiteActive?`<button class="btn ok" style="margin-left:auto" onclick="closeOnsite('${id}')">🏭 현장심사 완료 · Close audit</button>`:''}</div></div>`;
+      ${["auditor","ops","admin"].includes(ROLE)&&onsiteActive?`<button class="btn ok" style="margin-left:auto" onclick="closeOnsite('${id}')">🏭 현장심사 완료 · Close audit</button>`:''}</div></div>
+  ${await genDocsCard(id,"audit_report","현장심사 보고서 · Audit Report","genAuditReport('"+id+"')",["auditor","ops","admin"].includes(ROLE))}`;
 };
 async function closeOnsite(id){
   if(!confirm("현장심사를 완료(audit_closed) 처리할까요?"))return;
