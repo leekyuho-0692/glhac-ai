@@ -325,7 +325,7 @@ const CASE_SCOPED = new Set(["workflow","application","materials","integration",
 
 let ROLE="client", CUR="dashboard", FILTERS={}, DETAIL=null;
 let CURCASE=null, CASES_CACHE=[];
-let INV_SEL=null, DOC_SEL=null;
+let INV_SEL=null, DOC_SEL=null, SIHALAL_EID={};
 let LANG=0; const LANGS=["🌐 KO · EN","🌐 한국어","🌐 Bahasa (EN)"];
 
 /* ---- auth / api ---- */
@@ -391,6 +391,8 @@ async function loadCases(force){
   return CASES_CACHE;
 }
 function curCaseObj(){return CASES_CACHE.find(c=>c.case_id===CURCASE)||null;}
+let _ENUMS=null;
+async function ENUMS(){if(_ENUMS)return _ENUMS;_ENUMS=await API("/meta/enums").catch(()=>({}));return _ENUMS;}
 
 /* ---- pagination ---- */
 let PAGES={};
@@ -609,6 +611,14 @@ SCREEN.dashboard=async()=>{
     else if(/requested|scheduled|in_review/i.test(s))alerts.push(["info","ℹ",`${nm} — ${s}`,c.case_id]);});
   alerts.sort((a,b)=>({bad:0,warn:1,info:2}[a[0]]-{bad:0,warn:1,info:2}[b[0]]));
   const notif=alerts.slice(0,6);
+  // 역할별 작업 큐 (audit/fatwa worklist)
+  let workq=[],workLabel="";
+  if(ROLE==="auditor"){workq=await API("/audit/queue").catch(()=>[]);workLabel="심사 대기 · Audit";}
+  else if(ROLE==="sharia"){workq=await API("/fatwa/queue").catch(()=>[]);workLabel="파트와 심의대기 · Fatwa";}
+  else if(ROLE==="ops"||ROLE==="admin"){const[qa,qf]=await Promise.all([API("/audit/queue").catch(()=>[]),API("/fatwa/queue").catch(()=>[])]);workq=[...qa,...qf];workLabel="작업 큐(심사·파트와) · Worklist";}
+  const workCard=workLabel?`<div class="card" style="margin-bottom:16px"><h3>🗂 ${workLabel}<span class="r">${workq.length}건 · 클릭→상세</span></h3>
+    <div class="body tight"><table><thead><tr><th>ID</th><th>기업</th><th>단계</th><th>경로</th></tr></thead>
+      <tbody>${workq.length?workq.map(q=>`<tr class="clickable" onclick="openCase('${q.case_id}')"><td style="font-family:ui-monospace,monospace;font-size:11px">${short(q.case_id)}</td><td><b>${esc(q.company||q.company_name||"—")}</b></td><td>${tag("info",q.stage||q.status||"—")}</td><td>${tag(q.pathway==='self_declare'?'info':'mute',q.pathway||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">대기 항목 없음</td></tr>'}</tbody></table></div></div>`:'';
   // 다중 케이스 준비도 비교 (S18-2)
   const rdCases=cases.slice(0,6);
   const rds=await Promise.all(rdCases.map(c=>API(`/cases/${c.case_id}/readiness`).catch(()=>null)));
@@ -625,6 +635,7 @@ SCREEN.dashboard=async()=>{
       <div class="body kpi"><span class="n" style="color:var(--${t==='mute'?'ink':t})">${n}</span>
       <span class="l">${l}${f?' <span class="go-arrow">→</span>':''}</span></div></div>`).join("")}
   </div>
+  ${workCard}
   <div class="grid side" style="margin-bottom:16px">
     <div class="card"><h3>🗺 지역별 등록현황 <span class="en">· By region</span><span class="r">주소 기반 · ${Object.keys(rc).length}개 지역</span></h3>
       <div class="body">
@@ -740,7 +751,8 @@ async function advance(id,target){
 SCREEN.application=async()=>{
   const id=CURCASE;const c=await API(`/cases/${id}`);
   const org=(()=>{try{return localStorage.getItem("glhac_org")||""}catch(_){return""}})();
-  let penyelia=[];try{penyelia=await API(`/orgs/${org}/penyelia`);}catch(_){}
+  let penyeliaResp={items:[]};try{penyeliaResp=await API(`/orgs/${org}/penyelia`);}catch(_){}
+  const pens=penyeliaResp.items||[];
   const canApp=["client","consultant","admin"].includes(ROLE);
   return `
   <div class="grid three">
@@ -773,9 +785,9 @@ SCREEN.application=async()=>{
       </div></div>
   </div>
   <div class="grid three" style="margin-top:16px">
-    <div class="card"><h3>할랄감독자 · Penyelia <span class="en">· Supervisor</span></h3>
+    <div class="card"><h3>할랄감독자 · Penyelia <span class="en">· Supervisor</span><span class="r">활성 ${penyeliaResp.active_count!=null?penyeliaResp.active_count:pens.filter(p=>p.status==='active').length}</span></h3>
       <div class="body">
-        ${penyelia.length?penyelia.map(p=>`<div class="li"><div class="ic t-info">👤</div><div class="tx"><b>${esc(p.name)}</b><div>${esc(p.training_cert||"교육증명 없음")}</div></div><div class="when">${tag(statusColor(p.status),p.status||"—")}</div></div>`).join(""):'<div class="muted small">등록된 감독자 없음</div>'}
+        ${pens.length?pens.map(p=>`<div class="li"><div class="ic t-info">👤</div><div class="tx"><b>${esc(p.name)}</b><div>${esc(p.training_cert||"교육증명 없음")}</div></div><div class="when">${tag(p.status==='active'?'ok':'mute',p.status||"—")}${canApp?` <button class="btn" style="padding:2px 7px;font-size:11px" onclick="togglePenyelia('${p.penyelia_id||p.id}','${p.status==='active'?'inactive':'active'}')">${p.status==='active'?'비활성화':'활성화'}</button>`:''}</div></div>`).join(""):'<div class="muted small">등록된 감독자 없음</div>'}
         ${canApp?`<div class="btnrow" style="margin-top:10px"><input class="v" id="pyName" placeholder="이름" style="flex:1"><button class="btn pri" onclick="addPenyelia()">등록</button></div>`:''}
       </div></div>
     <div class="card"><h3>동반자 · Pendamping <span class="en">· SEHATI</span></h3>
@@ -785,15 +797,18 @@ SCREEN.application=async()=>{
       </div></div>
     <div class="card"><h3>SIHALAL 동일성 <span class="en">· Identity</span></h3>
       <div class="body">
-        <div class="field"><label>연동 · Link</label><div class="btnrow"><input class="v" id="shUser" placeholder="external_username" style="flex:1"><button class="btn" onclick="sihalalLink('${id}')">연동</button></div></div>
-        <div class="small muted">NIB·NPWP 동일성 검증 후 케이스에 SIHALAL 신청을 연결합니다.</div>
+        <div class="field"><label>① 연동 · Link</label><div class="btnrow"><input class="v" id="shUser" placeholder="external_username" style="flex:1"><button class="btn" onclick="sihalalLink('${id}')">연동</button></div></div>
+        ${SIHALAL_EID[id]?`<div class="banner info" style="margin-bottom:8px">연동됨 · eid ${esc(String(SIHALAL_EID[id]).slice(0,8))}…</div>
+        <div class="field"><label>② 동일성 검증 · Verify</label><div class="btnrow"><input class="v" id="shExp" placeholder="expected_identifier (email/NIB)" style="flex:1"><button class="btn ok" onclick="sihalalVerify('${id}')">검증</button></div></div>`:'<div class="small muted">연동 후 동일성 검증(2단계)이 활성화됩니다.</div>'}
       </div></div>
   </div>`;
 };
+async function togglePenyelia(pid,status){const org=(()=>{try{return localStorage.getItem("glhac_org")||""}catch(_){return""}})();try{await API(`/orgs/${org}/penyelia/${pid}`,{method:"PATCH",body:JSON.stringify({status})});toast("감독자 "+status);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
+async function sihalalVerify(id){const expected_identifier=v("shExp");if(!expected_identifier){toast("식별자 입력");return}const eid=SIHALAL_EID[id];try{const r=await API(`/sihalal/identity/${eid}/verify`,{method:"POST",body:JSON.stringify({expected_identifier})});toast("SIHALAL 검증 · "+(r.verification_status||r.status||"완료"));applyView();}catch(e){toast("검증 실패 · "+(e&&e.code?e.code:""));}}
 async function addPenyelia(){const org=(()=>{try{return localStorage.getItem("glhac_org")||""}catch(_){return""}})();const name=v("pyName");if(!name){toast("이름 입력");return}try{await API(`/orgs/${org}/penyelia`,{method:"POST",body:JSON.stringify({name})});toast("감독자 등록");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function assignPendamping(id){const pendamping_id=v("pdId");if(!pendamping_id){toast("ID 입력");return}try{await API(`/cases/${id}/pendamping/assign`,{method:"POST",body:JSON.stringify({pendamping_id})});toast("동반자 배정");applyView();}catch(e){toast("배정 실패 · "+(e&&e.code?e.code:""));}}
 async function verifyPendamping(id,decision){try{await API(`/cases/${id}/pendamping/verify`,{method:"POST",body:JSON.stringify({decision})});toast("검증 · "+decision);applyView();}catch(e){toast("검증 실패 · "+(e&&e.code?e.code:""));}}
-async function sihalalLink(id){const external_username=v("shUser");if(!external_username){toast("사용자명 입력");return}try{await API(`/cases/${id}/sihalal/identity/link`,{method:"POST",body:JSON.stringify({external_username})});toast("SIHALAL 연동");applyView();}catch(e){toast("연동 실패 · "+(e&&e.code?e.code:""));}}
+async function sihalalLink(id){const external_username=v("shUser");if(!external_username){toast("사용자명 입력");return}try{const r=await API(`/cases/${id}/sihalal/identity/link`,{method:"POST",body:JSON.stringify({external_username})});if(r.external_identity_id)SIHALAL_EID[id]=r.external_identity_id;toast("SIHALAL 연동");applyView();}catch(e){toast("연동 실패 · "+(e&&e.code?e.code:""));}}
 async function saveProfile(id){
   const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),factory_address:v("apFactory"),due_date:v("apDue")};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];toast("저장됨");await loadCases(true);}
@@ -810,6 +825,7 @@ function v(id){const el=document.getElementById(id);return el?el.value:"";}
 SCREEN.materials=async()=>{
   const id=CURCASE;const mats=await API(`/cases/${id}/materials`);
   const canMatWrite=["client","admin"].includes(ROLE);  // applicant·penyelia·admin (auditor 읽기전용)
+  const enums=canMatWrite?await ENUMS():{};
   const mpg=pageSlice("materials",mats,12);
   const rows=mpg.items.length?mpg.items.map(m=>{
     const cl=statusColor(m.status||m.result);
@@ -834,7 +850,12 @@ SCREEN.materials=async()=>{
         <button class="btn" onclick="exportMaterialsXlsx('${id}')">⬇ Excel</button>
         ${canMatWrite?`<button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 인테이크</button>
         <button class="btn" onclick="labelOcr('${id}')">📷 라벨 OCR</button>`:''}
-        <button class="btn" onclick="screenText('${id}')">🔤 텍스트 스크리닝</button></div></div>
+        <button class="btn" onclick="screenText('${id}')">🔤 텍스트 스크리닝</button></div>
+      ${canMatWrite?`<div class="body" style="border-top:1px solid var(--line)">
+        <div class="btnrow"><input class="v" id="newMatName" list="ingList" placeholder="원재료명 (자동완성)" style="flex:1" oninput="suggestIngredient()">
+          <datalist id="ingList"></datalist>
+          <select class="v" id="newMatType" style="width:auto">${(enums.material_type||[]).map(o=>`<option value="${o.value}">${esc(o.label)}</option>`).join("")||'<option value="">유형</option>'}</select>
+          <button class="btn pri" onclick="addMaterial('${id}')">＋ 추가</button></div></div>`:''}</div>
     <div class="card"><h3>AI 스크리닝 <span class="en">· ontology</span></h3>
       <div class="body">
         ${bad.length?`<div class="banner bad" style="margin-bottom:12px">⛔ 하람/고위험 의심 ${bad.length}건 — 증빙 필수</div>
@@ -887,6 +908,8 @@ function attachEvidence(cid,mid){
   inp.click();
 }
 async function rescreen(mid){try{const r=await API(`/materials/${mid}/screen`,{method:"POST",body:"{}"});toast("재스크리닝 · "+(r.status||r.result||"완료"));applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
+async function suggestIngredient(){const el=document.getElementById("newMatName");const q=(el&&el.value||"").trim();if(q.length<2)return;try{const s=await API(`/meta/ingredient-suggest?q=${encodeURIComponent(q)}`);const dl=document.getElementById("ingList");if(dl)dl.innerHTML=(s||[]).map(x=>`<option value="${esc(x.canonical_name)}">${esc(x.e_number||"")} · ${esc(x.category||"")}</option>`).join("");}catch(_){}}
+async function addMaterial(id){const name=v("newMatName");if(!name){toast("원재료명 입력");return}try{await API(`/cases/${id}/materials`,{method:"POST",body:JSON.stringify({name,mat_type:v("newMatType")})});toast("원재료 추가");applyView();}catch(e){toast("추가 실패 · "+(e&&e.code?e.code:""));}}
 async function delMaterial(mid){if(!confirm("이 원재료를 삭제할까요?"))return;try{await API(`/materials/${mid}`,{method:"DELETE"});toast("원재료 삭제");applyView();}catch(e){toast("삭제 실패 · "+(e&&e.code?e.code:""));}}
 function labelOcr(cid){
   const inp=document.createElement("input");inp.type="file";inp.accept="image/*";
@@ -898,8 +921,9 @@ function labelOcr(cid){
 /* 6) Integration */
 SCREEN.integration=async()=>{
   const id=CURCASE;
-  const [sjph,prods,mats]=await Promise.all([API(`/cases/${id}/sjph`).catch(()=>({elements:[]})),API(`/cases/${id}/products`).catch(()=>[]),API(`/cases/${id}/materials`).catch(()=>[])]);
+  const [sjph,prods,mats,matrix]=await Promise.all([API(`/cases/${id}/sjph`).catch(()=>({elements:[]})),API(`/cases/${id}/products`).catch(()=>[]),API(`/cases/${id}/materials`).catch(()=>[]),API(`/cases/${id}/matrix`).catch(()=>({links:[]}))]);
   const canMatrix=["client","admin"].includes(ROLE);
+  const mxLinks=(matrix.links||[]).map(lk=>{const pn=(matrix.products||prods).find(p=>p.product_id===lk.product_id);const mn=(matrix.materials||mats).find(m=>m.material_id===lk.material_id);return `<div class="li" style="padding:6px 0"><div class="ic t-ok">↔</div><div class="tx"><b>${esc(pn?pn.name:lk.product_id)}</b> ↔ ${esc(mn?mn.name:lk.material_id)}</div></div>`;}).join("");
   const els=sjph.elements||[];
   const elHtml=els.length?els.map(e=>{
     const cl=e.status==="ok"?"ok":e.status==="gap"?"warn":"info";const vv=e.status==="ok"?100:e.status==="gap"?40:70;
@@ -907,7 +931,7 @@ SCREEN.integration=async()=>{
       <span>${esc(e.label||e.element)}</span>${tag(cl,e.status||"—")}</div>
       <div class="bar"><i style="width:${vv}%;background:var(--${cl})"></i></div></div>`;}).join("")
     :'<div class="muted small">SJPH 요소 없음</div>';
-  const pRows=(prods||[]).map(p=>`<div class="li"><div class="ic t-info">↔</div><div class="tx"><b>${esc(p.name)}</b><div>${esc(p.category||"")}</div></div><div class="when">${p.photo_count||0}📷</div></div>`).join("")||'<div class="li"><div class="tx muted small">제품 없음</div></div>';
+  const pRows=(prods||[]).map(p=>`<div class="li"><div class="ic t-info">📦</div><div class="tx"><b>${esc(p.name)}</b><div>${esc(p.category||"")}</div></div><div class="when">${p.photo_count||0}📷 ${(p.photo_count||0)>0?`<button class="btn" style="padding:2px 7px;font-size:11px" onclick="viewProductPhotos('${id}','${p.product_id}')">보기</button>`:''}${canMatrix?`<button class="btn" style="padding:2px 7px;font-size:11px" onclick="uploadProductPhoto('${id}','${p.product_id}')">＋사진</button>`:''}</div></div>`).join("")||'<div class="li"><div class="tx muted small">제품 없음</div></div>';
   return `
   <div class="grid side">
     <div class="card"><h3>SJPH 5요소 <span class="en">· 5 criteria</span><span class="r">완성도 ${sjph.completion==null?0:sjph.completion}%</span></h3>
@@ -916,18 +940,20 @@ SCREEN.integration=async()=>{
     <div class="card"><h3>제품 · HPAS 매핑 <span class="en">· Products</span></h3>
       <div class="list" style="margin:0 -1px">${pRows}</div></div>
   </div>
-  ${canMatrix?`<div class="card" style="margin-top:16px"><h3>HPAS 매트릭스 링크 <span class="en">· Product × Material</span></h3>
+  <div class="card" style="margin-top:16px"><h3>HPAS 매트릭스 <span class="en">· Product × Material</span><span class="r">${(matrix.links||[]).length}개 링크</span></h3>
     <div class="body">
-      <div class="btnrow">
+      ${mxLinks||'<div class="muted small" style="margin-bottom:10px">아직 링크된 매트릭스가 없습니다.</div>'}
+      ${canMatrix?`<div class="divide"></div><div class="btnrow">
         <select class="v" id="mxProd" style="width:auto">${prods.length?prods.map(p=>`<option value="${p.product_id}">${esc(p.name)}</option>`).join(""):'<option value="">제품 없음</option>'}</select>
         <span class="muted">↔</span>
         <select class="v" id="mxMat" style="width:auto">${mats.length?mats.map(m=>`<option value="${m.material_id}">${esc(m.name)}</option>`).join(""):'<option value="">원재료 없음</option>'}</select>
         <button class="btn pri" onclick="matrixLink('${id}')">링크</button>
-      </div>
-      <div class="small muted" style="margin-top:8px">제품과 원재료를 연결해 HPAS 매트릭스를 구성합니다.</div>
-    </div></div>`:''}`;
+      </div>`:''}
+    </div></div>`;
 };
 async function matrixLink(id){const product_id=v("mxProd"),material_id=v("mxMat");if(!product_id||!material_id){toast("제품·원재료 선택");return}try{await API(`/cases/${id}/matrix/link`,{method:"POST",body:JSON.stringify({product_id,material_id,linked:true})});toast("매트릭스 링크");applyView();}catch(e){toast("링크 실패 · "+(e&&e.code?e.code:""));}}
+function uploadProductPhoto(cid,pid){const inp=document.createElement("input");inp.type="file";inp.accept="image/*";inp.onchange=async()=>{const file=inp.files[0];if(!file)return;const b64=await fileB64(file);try{await API(`/cases/${cid}/products/${pid}/photo`,{method:"POST",body:JSON.stringify({file_b64:b64,filename:file.name})});toast("사진 업로드");applyView();}catch(e){toast("업로드 실패 · "+(e&&e.code?e.code:""));}};inp.click();}
+async function viewProductPhotos(cid,pid){try{const ph=await API(`/cases/${cid}/products/${pid}/photos`);if(!ph.length){toast("사진 없음");return}viewDoc(ph[0].document_id);}catch(e){toast("조회 실패");}}
 async function genSjph(id){try{const r=await API(`/cases/${id}/sjph/manual`,{method:"POST",body:"{}"});downloadText("sjph_manual_"+short(id)+".txt",r.manual||"");toast("SJPH 문서 생성·다운로드");}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
 
 /* 7) Documents */
@@ -976,6 +1002,7 @@ SCREEN.documents=async()=>{
 };
 function selectDoc(did){DOC_SEL=did;applyView();}
 async function exportCaseJson(id){try{const r=await fetch(`/cases/${id}/export.json`,{headers:{Authorization:"Bearer "+token()}});if(!r.ok)throw 0;const d=await r.json();downloadText("case_"+short(id)+".json",JSON.stringify(d,null,2));toast("JSON 내보내기 완료");}catch(_){toast("내보내기 실패");}}
+async function exportReport(id){try{const r=await API(`/cases/${id}/report`,{method:"POST",body:"{}"});downloadText("report_"+short(id)+".txt",r.report||"");toast("종합 보고서 생성·다운로드");}catch(e){toast("보고서 실패 · "+(e&&e.code?e.code:""));}}
 async function viewDoc(docId){
   try{const r=await fetch(`/documents/${docId}/file`,{headers:{Authorization:"Bearer "+token()}});
     if(!r.ok){toast("파일 없음");return;}const b=await r.blob();const u=URL.createObjectURL(b);window.open(u,"_blank");setTimeout(()=>URL.revokeObjectURL(u),60000);}
@@ -987,11 +1014,15 @@ async function reclassifyDoc(docId){const dt=prompt("새 문서 유형 · doc_ty
 /* 8) Audit */
 SCREEN.audit=async()=>{
   const id=CURCASE;
-  const [find,onsite,lph]=await Promise.all([
+  const [find,onsite,lph,pool]=await Promise.all([
     API(`/cases/${id}/findings`).catch(()=>[]),
     API(`/cases/${id}/onsite-checklist`).catch(()=>({items:[],completion:0})),
-    API(`/cases/${id}/lph-assignment`).catch(()=>[])]);
+    API(`/cases/${id}/lph-assignment`).catch(()=>[]),
+    API(`/cases/${id}/auditor-pool`).catch(()=>[])]);
   const canEdit=["auditor","sharia","ops","admin"].includes(ROLE);
+  const canTeam=["sharia","ops","admin"].includes(ROLE);  // LPH 배정: fatwa_liaison·operator
+  const canPool=ROLE==="admin";  // auditor-pool: 백엔드 consultant 전용 → 심사화면에선 admin만
+  const poolHtml=pool.length?pool.map(a=>`<div class="li" style="padding:5px 0"><div class="ic t-info">🧑‍⚖️</div><div class="tx"><b>${esc(a.name)}</b><div>${esc(a.role_in_team||"")} ${esc(a.cert_no||"")}</div></div>${canPool?`<div class="when"><button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delAuditorPool('${id}','${a.auditor_pool_id||a.pool_id||a.id}')">✕</button></div>`:''}</div>`).join(""):'<div class="muted small">등록된 심사원 없음</div>';
   const fpg=pageSlice("findings",find,10);
   const fRows=fpg.items.length?fpg.items.map(f=>`<tr>
       <td style="font-family:ui-monospace,monospace;font-size:11px">${esc((f.finding_id||"").slice(0,6))}</td>
@@ -1017,8 +1048,13 @@ SCREEN.audit=async()=>{
   <div class="grid side" style="margin-bottom:16px">
     <div class="card"><h3>LPH 배정·현장심사 <span class="en">· On-site</span><span class="r">완료도 ${onsite.completion||0}%</span></h3>
       <div class="list" style="margin:0 -1px">${lphHtml}</div>
+      <div class="body" style="border-top:1px solid var(--line)">
+        <div class="small" style="font-weight:600;margin-bottom:6px">심사원 풀 · Auditor pool (${pool.length})</div>
+        ${poolHtml}
+        ${canPool?`<div class="btnrow" style="margin-top:8px"><input class="v" id="apoolName" placeholder="심사원명" style="flex:1"><button class="btn" onclick="addAuditorPool('${id}')">＋ 심사원</button></div>`:''}
+      </div>
       <div class="body btnrow" style="border-top:1px solid var(--line)">
-        ${["sharia","ops","admin"].includes(ROLE)?`<button class="btn pri" onclick="addLph('${id}')">LPH 배정 · Assign</button>`:'<span class="chip">🔒 LPH 배정 — 샤리아·최고운영자</span>'}</div></div>
+        ${canTeam?`<button class="btn pri" onclick="addLph('${id}')">LPH 배정 · Assign</button>`:'<span class="chip">🔒 LPH 배정 — 샤리아·최고운영자</span>'}</div></div>
     <div class="card"><h3>현장 체크리스트 <span class="en">· Onsite</span><span class="r">${onsite.comply||0}/${onsite.total||0} 충족${canEdit?' · 클릭 순환':''}</span></h3>
       <div class="body">
         <div class="scorebox" style="margin-bottom:8px"><span class="big" style="color:var(--accent)">${onsite.completion||0}</span><span class="muted">% · 부적합 ${onsite.nonconformity||0}</span></div>
@@ -1055,6 +1091,8 @@ async function addLph(id){
   try{await API(`/cases/${id}/lph-assignment`,{method:"POST",body:JSON.stringify({lph_name})});toast("LPH 배정");applyView();}
   catch(e){toast("배정 실패 · "+(e&&e.code?e.code:""));}
 }
+async function addAuditorPool(id){const name=v("apoolName");if(!name){toast("심사원명 입력");return}try{await API(`/cases/${id}/auditor-pool`,{method:"POST",body:JSON.stringify({name})});toast("심사원 추가");applyView();}catch(e){toast("추가 실패 · "+(e&&e.code?e.code:""));}}
+async function delAuditorPool(id,poolId){if(!confirm("심사원을 제거할까요?"))return;try{await API(`/cases/${id}/auditor-pool/${poolId}`,{method:"DELETE"});toast("제거됨");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 
 /* 9) Mock Audit */
 SCREEN.mockAudit=async()=>{
@@ -1309,8 +1347,9 @@ async function askQ(id){
 
 /* 15) System */
 SCREEN.system=async()=>{
-  const [users,orgs,onto,lphrefs]=await Promise.all([
-    API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({})),API("/admin/lph-references").catch(()=>[])]);
+  const [users,orgs,onto,lphrefs,kma,admCases]=await Promise.all([
+    API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({})),API("/admin/lph-references").catch(()=>[]),
+    API("/admin/kma1360-exempt").catch(()=>({terms:[]})),API("/admin/cases").catch(()=>[])]);
   const upg=pageSlice("users",users,12);
   const uRows=upg.items.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
       <td><select class="v" style="font-size:12px;padding:3px 6px;width:auto" onchange="patchUserRole('${u.user_id}',this.value)">${roleOpts(u.role)}</select></td>
@@ -1344,7 +1383,15 @@ SCREEN.system=async()=>{
   </div>
   <div class="card" style="margin-top:16px"><h3>LPH 레퍼런스 <span class="en">· LPH references</span><span class="r">${(lphrefs||[]).length}개</span></h3>
     <div class="body tight"><table><thead><tr><th>기관명</th><th>인증번호</th><th>상태</th><th>지역</th></tr></thead>
-      <tbody>${(lphrefs||[]).length?(lphrefs||[]).map(l=>`<tr><td><b>${esc(l.name||"—")}</b></td><td class="muted small">${esc(l.accreditation_no||"—")}</td><td>${tag(l.status==='active'?'ok':'mute',l.status||"—")}</td><td class="muted">${esc(l.region||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">등록된 LPH 없음</td></tr>'}</tbody></table></div></div>`;
+      <tbody>${(lphrefs||[]).length?(lphrefs||[]).map(l=>`<tr><td><b>${esc(l.name||"—")}</b></td><td class="muted small">${esc(l.accreditation_no||"—")}</td><td>${tag(l.status==='active'?'ok':'mute',l.status||"—")}</td><td class="muted">${esc(l.region||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">등록된 LPH 없음</td></tr>'}</tbody></table></div></div>
+  <div class="card" style="margin-top:16px"><h3>KMA 1360 면제 · 전체 케이스 <span class="en">· KMA exempt / All cases</span></h3>
+    <div class="body">
+      <div class="grid two" style="gap:10px;margin-bottom:12px">
+        <div class="kpi"><span class="n" style="font-size:20px">${(admCases||[]).length}</span><span class="l">전체 케이스(admin)</span></div>
+        <div class="kpi"><span class="n" style="font-size:20px">${(kma.terms||[]).length}</span><span class="l">KMA1360 면제 용어</span></div>
+      </div>
+      <div class="btnrow">${(kma.terms||[]).slice(0,40).map(t=>`<span class="chip">${esc(typeof t==='string'?t:(t.term||t.name||t.keyword||""))}</span>`).join("")||'<span class="muted small">면제 용어 없음</span>'}</div>
+    </div></div>`;
 };
 function roleOpts(sel){const rs=[["applicant","신청기업"],["consultant","컨설턴트"],["auditor","오디터"],["fatwa_liaison","샤리아"],["operator","최고운영자"],["penyelia_halal","할랄감독자"],["pendamping_pph","동반자"],["admin","ITO 관리자"]];return rs.map(([vv,k])=>`<option value="${vv}"${vv===sel?" selected":""}>${k}</option>`).join("");}
 async function createUser(){const username=v("nuUser"),password=v("nuPass")||"pw",role=v("nuRole");if(!username){toast("아이디 입력");return}try{await API("/admin/users",{method:"POST",body:JSON.stringify({username,password,role})});toast("사용자 생성 · "+username);applyView();}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
@@ -1389,7 +1436,8 @@ async function renderCaseDetail(id, tab){
             <button class="btn" onclick="openCaseTab('materials')">🧪 원재료 →</button>
             <button class="btn" onclick="openCaseTab('documents')">📁 문서 →</button>
             <button class="btn" onclick="openCaseTab('audit')">🏭 심사 →</button>
-            <button class="btn" onclick="exportCaseJson('${id}')">⬇ JSON 내보내기</button></div>
+            <button class="btn" onclick="exportCaseJson('${id}')">⬇ JSON</button>
+            <button class="btn" onclick="exportReport('${id}')">📄 종합 보고서</button></div>
         </div></div>
     </div>
     <div class="card" style="margin-top:16px"><h3>협의 · Discussion <span class="en">· thread</span><span class="r">${disc.length}건</span></h3>
