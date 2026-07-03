@@ -84,6 +84,14 @@ def test_alembic_scaffolding():
     spec.loader.exec_module(m)
     assert m.revision == "0001_baseline" and m.down_revision is None
     assert callable(m.upgrade) and callable(m.downgrade)
+    # 0002 FK 마이그레이션이 기준선에 체인되는지(§6.1·§6.2)
+    p2 = os.path.join(root, "alembic", "versions", "0002_fk_constraints.py")
+    spec2 = importlib.util.spec_from_file_location("fk_rev", p2)
+    m2 = importlib.util.module_from_spec(spec2)
+    spec2.loader.exec_module(m2)
+    assert m2.revision == "0002_fk_constraints" and m2.down_revision == "0001_baseline"
+    fks = list(m2._fks())
+    assert any(t == "material" and c == "case_id" for t, c, rt, rc in fks), "case_id FK 누락"
     from app.db import Base
     import app.models  # noqa: F401 — 메타데이터 등록
     assert "case_application" in Base.metadata.tables and "ai_extraction" in Base.metadata.tables
