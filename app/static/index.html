@@ -1814,7 +1814,6 @@ async function renderSystem(){const el=document.getElementById('system');if(!el)
   var uRows=users.map(function(u){return '<tr><td><b>'+esc(u.username)+'</b></td><td><select onchange="glhacAdminSetRole(\''+u.user_id+'\',this.value)">'+_roleOpts(u.role)+'</select></td><td>'+esc(u.org_id)+'</td><td>'+(u.username==='admin'?'<span class="mini-muted">보호됨</span>':'<button class="btn small red" onclick="glhacAdminDelUser(\''+u.user_id+'\',\''+esc(u.username)+'\')">삭제</button>')+'</td></tr>'}).join('');
   var oRows=orgs.map(function(o){return '<tr><td><b>'+esc(o.org_id)+'</b></td><td>'+esc(o.name||'-')+'</td><td>'+o.users+'</td><td>'+o.cases+'</td></tr>'}).join('');
   var cRows=cases.slice(0,40).map(function(c){return '<tr><td>'+esc(c.company_name||'-')+'</td><td>'+esc(c.org_id)+'</td><td><span class="pill blue">'+c.status+'</span></td><td>'+c.pathway+'</td><td>'+c.fatwa_status+'</td></tr>'}).join('');
-  var aRows=audit.slice(0,30).map(function(e){return '<tr><td>'+(e.at||'').slice(0,19)+'</td><td>'+esc(e.action)+'</td><td>'+(e.from||'∅')+'→'+e.to+'</td><td>'+e.actor+'</td><td class="mini-muted">#'+e.hash+'</td></tr>'}).join('');
   var rules=(ont.rule_versions||[]).map(function(r){return r.code+'('+r.status+')'}).join(', ')||'-';
   el.innerHTML=
    '<div class="card"><h3>⚙️ 시스템 설정 (관리자 전용)</h3><p class="hint">사용자·조직·전체 케이스·규칙/온톨로지·전역 감사 관리</p></div>'
@@ -1831,7 +1830,17 @@ async function renderSystem(){const el=document.getElementById('system');if(!el)
   +'<div class="card" style="margin-top:14px"><div class="ai-head"><b>📁 전체 케이스 (전 조직)</b><span class="pill gray">'+cases.length+'</span></div><table><thead><tr><th>회사</th><th>org</th><th>상태</th><th>경로</th><th>fatwa</th></tr></thead><tbody>'+cRows+'</tbody></table></div>'
   +'<div class="card" style="margin-top:14px"><div class="ai-head"><b>📚 규칙·온톨로지</b></div><div class="actions" style="margin-bottom:8px"><span class="pill blue">성분 '+ont.ontology_count+'건</span><span class="pill gray">룰: '+esc(rules)+'</span><button class="btn small blue" onclick="glhacAdminReseed()">온톨로지 재시드</button><button class="btn small blue" onclick="glhacAdminKma1360()">KMA1360 면제 목록</button></div><div class="expl" id="sysOntOut" style="display:none"></div><div id="sysKmaOut" style="display:none;margin-top:8px;max-height:160px;overflow-y:auto;font-size:12px;background:#f8f4fc;padding:8px;border-radius:6px"></div></div>'
   +'<div class="card" style="margin-top:14px;border-left:4px solid #e74c3c"><div class="ai-head"><b>🔄 데모 데이터 초기화 (Seed Reset)</b><span class="pill red">위험</span></div><p class="hint">기본 사용자/조직/데모 케이스를 초기화합니다. 입력창에 <b>RESET</b>을 입력해야 실행됩니다.</p><div class="form-row" style="margin-top:8px"><input id="sysReset" placeholder="RESET 입력"/><button class="btn red" onclick="glhacAdminSeedReset()">초기화 실행</button></div><div id="sysResetOut" class="expl" style="display:none;margin-top:8px"></div></div>'
-  +'<div class="card" style="margin-top:14px"><div class="ai-head"><b>🔒 전역 감사 로그</b><span class="pill gray">최근 '+Math.min(audit.length,30)+'</span></div><table><thead><tr><th>시각</th><th>action</th><th>전이</th><th>actor</th><th>hash</th></tr></thead><tbody>'+aRows+'</tbody></table></div>';
+  +'<div class="card" style="margin-top:14px"><div class="ai-head"><b>🔒 전역 감사 로그 · Audit Log</b><span class="pill gray">'+audit.length+'건</span></div><div id="auditTable"></div></div>';
+  // v3: C0 DataList 적용 — 전역 감사 로그(정렬·검색·페이지·CSV)
+  if(typeof dlRender==='function') dlRender('auditTable',{pageSize:20,empty:'감사 이벤트 없음 · No events',
+    columns:[
+      {key:'at',label:'시각 · Time',sort:true,fmt:function(v){return esc((v||'').slice(0,19))}},
+      {key:'action',label:'action',fmt:function(v){return esc(v||'')}},
+      {key:'_tr',label:'전이 · Transition',sort:false,fmt:function(_v,r){return esc((r.from||'∅')+' → '+(r.to||''))}},
+      {key:'actor',label:'actor',fmt:function(v){return esc(v||'')}},
+      {key:'hash',label:'hash',fmt:function(v){return '<span class="mini-muted">#'+esc(v||'')+'</span>'}}
+    ],
+    rows:audit});
 }
 async function glhacAdminCreateUser(){var u=(document.getElementById('auU').value||'').trim();var p=document.getElementById('auP').value;if(!u||!p){toast('username/password 입력');return}try{await glhacApi('/admin/users',{method:'POST',body:JSON.stringify({username:u,password:p,role:document.getElementById('auR').value,org_id:(document.getElementById('auO').value||'org_demo').trim()})});toast('사용자 생성');renderSystem();}catch(e){toast('실패(중복?)')}}
 async function glhacAdminSetRole(id,role){try{await glhacApi('/admin/users/'+id,{method:'PATCH',body:JSON.stringify({role:role})});toast('역할 변경: '+role);}catch(e){toast('실패')}}
