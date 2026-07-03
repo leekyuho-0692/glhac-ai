@@ -97,6 +97,52 @@ def test_alembic_scaffolding():
     assert "case_application" in Base.metadata.tables and "ai_extraction" in Base.metadata.tables
 
 
+def test_certificate_signature_and_verify():
+    """§6.4 전자서명: 서명 생성·공개검증 signature_valid·권한(operator)."""
+    from app import models
+    from app.db import SessionLocal
+    with TestClient(app) as c:
+        atok = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "SignCo"},
+                     headers=_h(atok)).json()["case_id"]
+        db = SessionLocal()
+        try:
+            db.add(models.HalalCertificate(case_id=cid, certificate_no="HC-SIGN", scope=["P"],
+                   issue_date="2026-01-01", expiry_date="2030-01-01", status="active",
+                   qr_token="sigtoken_1"))
+            db.commit()
+        finally:
+            db.close()
+        s = c.post(f"/cases/{cid}/certificate/sign", headers=_h(_tok(c, "operator1", "pw")))
+        assert s.status_code == 200 and s.json()["signature_id"], s.text
+        v = c.get("/verify/sigtoken_1").json()
+        assert v["signed"] is True and v["signature_valid"] is True, v
+        # consultant는 서명 불가(certificate.issue 매트릭스)
+        assert c.post(f"/cases/{cid}/certificate/sign",
+                      headers=_h(_tok(c, "consultant1", "pw"))).status_code == 403
+
+
+def test_integration_event_idempotency():
+    """§10.1 SIHALAL 연동: idempotency_key 중복수신 방지·이벤트타입 검증·권한."""
+    with TestClient(app) as c:
+        otok = _tok(c, "operator1", "pw")
+        atok = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "IntCo"},
+                     headers=_h(atok)).json()["case_id"]
+        body = {"event_type": "external_status_synced", "idempotency_key": "idem-1",
+                "case_id": cid, "payload": {"x": 1}}
+        r1 = c.post("/integration/sihalal/event", json=body, headers=_h(otok)).json()
+        r2 = c.post("/integration/sihalal/event", json=body, headers=_h(otok)).json()
+        assert r1["idempotent"] is False and r2["idempotent"] is True and r2["id"] == r1["id"], (r1, r2)
+        assert c.post("/integration/sihalal/event", json={"event_type": "bad", "idempotency_key": "k2"},
+                      headers=_h(otok)).status_code == 400
+        evs = c.get(f"/cases/{cid}/integration/events", headers=_h(otok)).json()
+        assert len(evs) == 1 and evs[0]["event_type"] == "external_status_synced", evs
+        assert c.post("/integration/sihalal/event",
+                      json={"event_type": "external_status_synced", "idempotency_key": "k3"},
+                      headers=_h(_tok(c, "consultant1", "pw"))).status_code == 403
+
+
 def test_audit_plan_lifecycle():
     """§P2 LPH scheduling: 현장심사 일정 생성·조회·상태변경."""
     with TestClient(app) as c:
@@ -565,7 +611,8 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_audit_plan_lifecycle, test_fatwa_voting_quorum, test_car_lifecycle_closes_finding,
+    tests = [test_certificate_signature_and_verify, test_integration_event_idempotency,
+             test_audit_plan_lifecycle, test_fatwa_voting_quorum, test_car_lifecycle_closes_finding,
              test_alembic_scaffolding, test_datalist_meta_search_sort,
              test_qr_public_verify, test_ai_extractions_endpoints,
              test_rbac_action_matrix_contract,

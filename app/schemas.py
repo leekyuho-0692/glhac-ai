@@ -316,3 +316,11 @@ class CarSubmitReq(BaseModel):
 class CarReviewReq(BaseModel):
     status: str                               # accepted|rejected|closed
     note: Optional[str] = None
+
+
+class IntegrationEventReq(BaseModel):
+    event_type: str
+    idempotency_key: str
+    external_id: Optional[str] = None
+    case_id: Optional[str] = None
+    payload: Optional[dict] = None

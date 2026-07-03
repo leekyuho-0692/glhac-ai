@@ -396,10 +396,17 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
             valid = False
     except Exception:  # noqa: BLE001
         pass
+    sig = (db.query(models.Signature).filter_by(subject_type="certificate", subject_id=cert.id)
+           .order_by(models.Signature.signed_at.desc()).first())
+    sig_valid = False
+    if sig:
+        _, expected = _sign_payload(_cert_canonical(cert))
+        sig_valid = (expected == sig.signature_value)
     return {"valid": valid, "certificate_no": cert.certificate_no,
             "company_name": (c.company_name if c else None),
             "status": cert.status, "issue_date": cert.issue_date,
-            "expiry_date": cert.expiry_date, "scope": cert.scope}
+            "expiry_date": cert.expiry_date, "scope": cert.scope,
+            "signed": bool(sig), "signature_valid": sig_valid}
 
 
 @app.get("/rbac/actions")
@@ -2032,13 +2039,91 @@ def get_certificate(case_id: str, user=Depends(auth.get_current_user), db: Sessi
         days = (date.fromisoformat(cert.expiry_date) - date.today()).days
     except Exception:  # noqa: BLE001
         pass
+    sig = (db.query(models.Signature).filter_by(subject_type="certificate", subject_id=cert.id)
+           .order_by(models.Signature.signed_at.desc()).first())
     return {"issued": True, "certificate_no": cert.certificate_no, "scope": cert.scope,
             "issue_date": cert.issue_date, "expiry_date": cert.expiry_date, "status": cert.status,
             "days_to_expiry": days,
             "frozen_product_ids": cert.frozen_product_ids,
             "frozen_material_ids": cert.frozen_material_ids,
             "qr_token": cert.qr_token,
-            "verify_url": ("/verify/" + cert.qr_token) if cert.qr_token else None}
+            "verify_url": ("/verify/" + cert.qr_token) if cert.qr_token else None,
+            "signed": bool(sig),
+            "signature": ({"signer": sig.signer, "provider": sig.provider,
+                           "signed_at": str(sig.signed_at)} if sig else None)}
+
+
+# ---------- 전자서명 (§6.4 e-signature, 내부 HMAC MVP) ----------
+def _cert_canonical(cert):
+    return "|".join([cert.certificate_no or "", cert.issue_date or "", cert.expiry_date or "",
+                     ",".join(cert.scope or [])])
+
+
+def _sign_payload(payload: str):
+    import hmac as _h
+    import hashlib as _hl
+    ph = _hl.sha256(payload.encode()).hexdigest()
+    sig = _h.new(auth.SECRET, payload.encode(), _hl.sha256).hexdigest()
+    return ph, sig
+
+
+@app.post("/cases/{case_id}/certificate/sign")
+def sign_certificate(case_id: str, user=Depends(rbac.require_action("certificate.issue")),
+                     db: Session = Depends(get_db)):
+    """발급된 인증서에 발급자 전자서명(내부 HMAC) — 무결성+발급자 증빙(§6.4)."""
+    c = _get_case(db, case_id, user)
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
+    if not cert:
+        raise HTTPException(409, {"code": "NO_ACTIVE_CERT"})
+    ph, sig = _sign_payload(_cert_canonical(cert))
+    row = models.Signature(case_id=case_id, subject_type="certificate", subject_id=cert.id,
+                           signer=user["uid"], payload_hash=ph, signature_value=sig)
+    db.add(row)
+    sm.record_event(db, c, c.status, c.status, "certificate.sign", user["role"], user["uid"],
+                    {"signature_id": row.id})
+    db.commit()
+    return {"signature_id": row.id, "signer": user["uid"], "provider": row.provider,
+            "payload_hash": ph, "signed_at": str(row.signed_at)}
+
+
+# ---------- SIHALAL 외부 연동 이벤트 (§10.1) ----------
+_INTEGRATION_EVENTS = {"external_application_created", "document_package_submitted",
+                       "external_status_synced", "rejection_received",
+                       "additional_document_requested", "certificate_number_imported",
+                       "certificate_status_changed"}
+
+
+@app.post("/integration/sihalal/event")
+def integration_event(body: schemas.IntegrationEventReq,
+                      user=Depends(auth.require_roles("operator")),
+                      db: Session = Depends(get_db)):
+    """외부 연동 이벤트 기록 — idempotency_key로 중복수신 방지(§10.1)."""
+    if body.event_type not in _INTEGRATION_EVENTS:
+        raise HTTPException(400, {"code": "BAD_EVENT_TYPE", "allowed": sorted(_INTEGRATION_EVENTS)})
+    dup = db.query(models.IntegrationEvent).filter_by(idempotency_key=body.idempotency_key).first()
+    if dup:
+        return {"id": dup.id, "idempotent": True, "status": dup.status}
+    import json as _json
+    import hashlib as _hl
+    req_hash = _hl.sha256(_json.dumps(body.payload or {}, sort_keys=True).encode()).hexdigest()
+    ev = models.IntegrationEvent(provider="sihalal", event_type=body.event_type,
+                                 external_id=body.external_id, idempotency_key=body.idempotency_key,
+                                 case_id=body.case_id, payload=body.payload, request_hash=req_hash,
+                                 status="received")
+    db.add(ev)
+    db.commit()
+    return {"id": ev.id, "idempotent": False, "status": ev.status, "request_hash": req_hash}
+
+
+@app.get("/cases/{case_id}/integration/events")
+def list_integration_events(case_id: str, user=Depends(auth.get_current_user),
+                            db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    rows = (db.query(models.IntegrationEvent).filter_by(case_id=case_id)
+            .order_by(models.IntegrationEvent.created_at.desc()).all())
+    return [{"id": e.id, "provider": e.provider, "event_type": e.event_type,
+             "external_id": e.external_id, "status": e.status,
+             "created_at": str(e.created_at)} for e in rows]
 
 
 @app.post("/cases/{case_id}/certificate/change-impact")

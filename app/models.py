@@ -433,3 +433,35 @@ class CorrectiveAction(Base):
     submitted_by = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class IntegrationEvent(Base):
+    """외부 연동 이벤트 로그(§10.1) — idempotency_key로 중복수신 방지."""
+    __tablename__ = "integration_event"
+    id = Column(String, primary_key=True, default=uid)
+    provider = Column(String, default="sihalal")
+    event_type = Column(String)
+    external_id = Column(String)
+    idempotency_key = Column(String, index=True)
+    case_id = Column(String, index=True)
+    request_hash = Column(String)
+    response_hash = Column(String)
+    payload = Column(JSON)
+    status = Column(String, default="received")   # received|processed|failed
+    retry_count = Column(Integer, default=0)
+    last_error = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Signature(Base):
+    """전자서명(§6.4) — 인증서/문서 무결성+발급자 서명(내부 HMAC MVP)."""
+    __tablename__ = "signature"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, index=True)
+    subject_type = Column(String)     # certificate|document
+    subject_id = Column(String)
+    signer = Column(String)
+    provider = Column(String, default="internal-hmac")
+    payload_hash = Column(String)     # sha256 canonical content
+    signature_value = Column(String)  # HMAC(SECRET, payload)
+    signed_at = Column(DateTime, default=datetime.utcnow)
