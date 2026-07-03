@@ -236,6 +236,17 @@ class RegisterReq(BaseModel):
     username: str
     password: str
     company_name: Optional[str] = None
+    # 회원가입 AI OCR 자동추출 프로필(Rizky #1) — 초기 케이스에 프리필
+    nib: Optional[str] = None
+    responsible_person: Optional[str] = None
+    address: Optional[str] = None
+    factory_address: Optional[str] = None
+    business_type: Optional[str] = None
+
+
+class OCRExtractReq(BaseModel):
+    image_b64: str
+    doc_type: Optional[str] = "business_registration"  # business_registration|factory_registration
 
 
 class AdminUserReq(BaseModel):

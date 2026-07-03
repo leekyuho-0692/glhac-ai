@@ -149,6 +149,60 @@ def login(body: schemas.LoginReq, db: Session = Depends(get_db)):
     return {"token": auth.make_token(u), "role": u.role, "org_id": u.org_id, "username": u.username}
 
 
+def _parse_biz_doc(text):
+    """사업자/공장 등록증 OCR 텍스트 → 프로필 필드 추출 (Rizky #1)."""
+    import re
+    t = text or ""
+    out = {}
+    m = re.search(r"\d{3}-\d{2}-\d{5}", t)                       # 사업자등록번호
+    if m:
+        out["nib"] = m.group(0)
+    for label, key in [("상호", "company_name"), ("법인명", "company_name"),
+                       ("공장명", "factory_name"), ("대표자", "responsible_person"),
+                       ("성명", "responsible_person")]:
+        mm = re.search(label + r"[)\s:：·]*([^\n]{1,40})", t)
+        if mm and not out.get(key):
+            out[key] = mm.group(1).strip(" :：·|")
+    mm = re.search(r"(사업장\s*소재지|소재지|사업장|주소)[)\s:：·]*([^\n]{2,80})", t)
+    if mm:
+        out["address"] = mm.group(2).strip(" :：·|")
+    mm = re.search(r"(공장\s*소재지|공장\s*주소)[)\s:：·]*([^\n]{2,80})", t)
+    if mm:
+        out["factory_address"] = mm.group(2).strip(" :：·|")
+    mm = re.search(r"(업태|업종|종목)[)\s:：·]*([^\n]{1,40})", t)
+    if mm:
+        out["business_type"] = mm.group(2).strip(" :：·|")
+    return out
+
+
+@app.post("/auth/ocr-extract")
+def auth_ocr_extract(body: schemas.OCRExtractReq):
+    """회원가입 전 등록증 OCR 자동추출(공개) — 이미지 b64만 수용(경로 없음)."""
+    import base64
+    import tempfile
+    import os as _os
+    try:
+        raw = base64.b64decode(body.image_b64)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, {"code": "BAD_IMAGE"})
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(raw)
+            path = f.name
+        res = ai_local.ocr_image(path, "korean")
+    finally:
+        if path:
+            try:
+                _os.unlink(path)
+            except Exception:  # noqa: BLE001
+                pass
+    if not res.get("ok"):
+        return {"ocr_available": False, "fields": {}, "error": res.get("error")}
+    text = "\n".join(l.get("text", "") for l in res.get("lines", []))
+    return {"ocr_available": True, "fields": _parse_biz_doc(text), "raw": text[:1500]}
+
+
 @app.post("/auth/register")
 def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     if db.query(models.User).filter_by(username=body.username).first():
@@ -157,6 +211,15 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     u = models.User(username=body.username, password_hash=auth.hash_pw(body.password),
                     role="applicant", org_id=org)
     db.add(u)
+    # OCR 추출 프로필이 있으면 초기 케이스에 프리필(Rizky #1)
+    if body.company_name or body.nib:
+        c = models.CaseApplication(org_id=org, company_name=body.company_name or "My Company",
+                                   nib=body.nib, responsible_person=body.responsible_person,
+                                   address=body.address, factory_address=body.factory_address,
+                                   is_msme=True)
+        db.add(c)
+        db.flush()
+        sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id)
     db.commit()
     return {"token": auth.make_token(u), "role": u.role, "org_id": u.org_id, "username": u.username}
 
