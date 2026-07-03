@@ -1,0 +1,31 @@
+# GL-HAC AI v3 — 기본은 SQLite 단일 컨테이너.
+# Postgres로 전환하려면: `docker compose --profile pg up` 후 .env의 GLHAC_DB_URL을 db로 지정.
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # .env를 덮어쓰지 않도록 기본값만. 실제 시크릿은 .env로.
+      GLHAC_UPLOAD_DIR: /data/uploads
+    volumes:
+      - glhac_data:/data          # SQLite DB + 업로드 영속
+    restart: unless-stopped
+
+  # 선택: Postgres (프로파일 pg). GLHAC_DB_URL=postgresql+psycopg2://glhac:glhac@db:5432/glhac
+  db:
+    image: postgres:16-alpine
+    profiles: ["pg"]
+    environment:
+      POSTGRES_USER: glhac
+      POSTGRES_PASSWORD: glhac
+      POSTGRES_DB: glhac
+    volumes:
+      - glhac_pg:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  glhac_data:
+  glhac_pg:

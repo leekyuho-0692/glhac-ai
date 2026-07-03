@@ -59,18 +59,19 @@ def _send_kakao(to, text):
     if not key:
         log.info("[KakaoTalk 알림톡 stub · no GLHAC_KAKAO_API_KEY] to=%s :: %s", to, text)
         return {"channel": "kakao", "ok": False, "reason": "no_credentials"}
-    # TODO: 발송대행사(Solapi/NHN 등) 알림톡 템플릿 발송
-    return {"channel": "kakao", "ok": True}
+    # 실 발송 미구현 — 크리덴셜이 있어도 아직 대행사 연동 전. 성공으로 위장하지 않는다(블랙홀 방지).
+    log.warning("[KakaoTalk 알림톡 미구현 — 발송 안 됨] to=%s :: %s", to, text)
+    return {"channel": "kakao", "ok": False, "reason": "not_implemented"}
 
 
 PROVIDERS = {"sms": _send_sms, "kakao": _send_kakao, "whatsapp": _send_whatsapp}
 
 
-def dispatch(notification, contact=None):
-    """알림의 channels를 순회하며 발송. inapp은 DB 저장으로 이미 처리됨(항상 성공)."""
+def dispatch(notification, contact=None, channels=None):
+    """channels(없으면 notification.channels)를 순회하며 발송. inapp은 DB 저장으로 항상 성공."""
     results = []
     text = (notification.title or "") + (": " + notification.body if notification.body else "")
-    for ch in (notification.channels or ["inapp"]):
+    for ch in (channels if channels is not None else (notification.channels or ["inapp"])):
         if ch == "inapp":
             results.append({"channel": "inapp", "ok": True})
             continue

@@ -1,6 +1,6 @@
 """요청 스키마 (Pydantic v2)."""
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CaseCreate(BaseModel):
@@ -65,7 +65,7 @@ class LphAssignReq(BaseModel):
 
 class InvoiceReq(BaseModel):
     service_type: str            # pre_audit|onsite
-    amount: float
+    amount: float = Field(ge=0)  # 음수 청구 방지
 
 
 class FatwaReq(BaseModel):
