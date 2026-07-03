@@ -331,14 +331,17 @@ let LANG=0; const LANGS=["🌐 KO · EN","🌐 한국어","🌐 Bahasa"];
 /* ---- auth / api ---- */
 const TK="glhac_token";
 function token(){try{return localStorage.getItem(TK)||""}catch(_){return""}}
+let FETCH_ERRORS=0;
 async function API(path, opt){
   opt=opt||{};
   opt.headers=Object.assign({"Content-Type":"application/json"},opt.headers||{},
     token()?{Authorization:"Bearer "+token()}:{});
-  const r=await fetch(path,opt);
+  let r;
+  try{r=await fetch(path,opt);}
+  catch(net){FETCH_ERRORS++;console.warn("[API] network",path,net);throw {code:"NETWORK"};}
   if(r.status===401){logout();throw {code:"UNAUTH"};}
   const j=await r.json().catch(()=>({}));
-  if(!r.ok) throw ((j&&j.detail)?j.detail:j);
+  if(!r.ok){FETCH_ERRORS++;console.warn("[API]",r.status,path,j);throw ((j&&j.detail)?j.detail:j);}
   return j;
 }
 async function doLogin(e){
@@ -546,14 +549,17 @@ function pageHead(id){
     <span class="scope-pill">👁 ${scopeLabel()}</span></div>
     <div class="roles">노출 역할 · Roles &nbsp;<b>${roleNames}</b></div>`;
 }
+function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="margin-bottom:14px">⚠ 일부 데이터를 불러오지 못했습니다 (${FETCH_ERRORS}건 실패) — 표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.</div>`:"";}
 async function applyView(){
   const pages=document.getElementById("pages");
+  FETCH_ERRORS=0;
   await refreshCaseSel();
   if(DETAIL){
     document.querySelectorAll("#nav a").forEach(a=>a.classList.remove("active"));
     document.getElementById("crumb").innerHTML=`<a onclick="navigate({screen:'caseList'})" style="cursor:pointer;color:var(--accent)">케이스</a> · <b>${esc(DETAIL.id)}</b>`;
     pages.innerHTML=`<div class="content show" id="pgHost"><div class="card"><div class="body muted">불러오는 중…</div></div></div>`;
-    try{document.getElementById("pgHost").innerHTML=await renderCaseDetail(DETAIL.id,DETAIL.tab);}
+    try{document.getElementById("pgHost").innerHTML=await renderCaseDetail(DETAIL.id,DETAIL.tab);
+      document.getElementById("pgHost").insertAdjacentHTML("afterbegin",warnBanner());}
     catch(err){document.getElementById("pgHost").innerHTML=errCard(err);}
     window.scrollTo(0,0);return;
   }
@@ -567,7 +573,7 @@ async function applyView(){
       host.innerHTML=pageHead(CUR)+`<div class="card"><div class="body muted">표시할 케이스가 없습니다. <a onclick="go('caseList')" style="color:var(--accent);cursor:pointer">케이스 목록</a>에서 선택하거나 새 신청을 생성하세요.</div></div>`;
     }else{
       const inner=await (SCREEN[CUR]?SCREEN[CUR]():Promise.resolve('<div class="card"><div class="body muted">준비 중</div></div>'));
-      host.innerHTML=pageHead(CUR)+inner;
+      host.innerHTML=pageHead(CUR)+warnBanner()+inner;
     }
   }catch(err){host.innerHTML=pageHead(CUR)+errCard(err);}
   if(AFTER_RENDER){const f=AFTER_RENDER;AFTER_RENDER=null;try{f();}catch(_){}}
@@ -623,9 +629,12 @@ const SCREEN={};
 SCREEN.dashboard=async()=>{
   const cases=await loadCases(true);
   const total=cases.length;
-  const issued=cases.filter(c=>/issued|approved|certificate/i.test(c.status)).length;
-  const action=cases.filter(c=>/corrective|requested|reject|blocked/i.test(c.status)).length;
-  const progress=cases.filter(c=>!/issued|approved|certificate/i.test(c.status)).length;
+  // 상호배타 버킷(중복집계 방지): issued > action > in_progress
+  const isIssued=c=>/issued|certificate/i.test(c.status);
+  const isAction=c=>/corrective|requested|reject|blocked/i.test(c.status);
+  const issued=cases.filter(isIssued).length;
+  const action=cases.filter(c=>!isIssued(c)&&isAction(c)).length;
+  const progress=cases.filter(c=>!isIssued(c)&&!isAction(c)).length;
   const kpis=[["즉시 처리 · Action",action,"warn",{filter:"action"}],
     ["진행 중 · In progress",progress,"info",{filter:"progress"}],
     ["발급 · Issued",issued,"ok",{filter:"issued"}],
@@ -647,10 +656,10 @@ SCREEN.dashboard=async()=>{
     }catch(_){}
   }
   const evHtml=events.length?events.map(e=>{
-    const cid=e.case_id||e.case||"";
+    const cid=e.case_id||"";
     return `<div class="li ${cid?'clickable':''}" ${cid?`onclick="openCase('${esc(cid)}')"`:''}>
       <div class="ic t-${statusColor(e.to||e.action)}">•</div>
-      <div class="tx"><b>${esc((e.action||"event"))} ${cid?'· '+short(cid):''}</b><div>${esc(e.actor||e.actor_type||"")} ${e.to?'→ '+esc(e.to):''}</div></div>
+      <div class="tx"><b>${esc((e.action||"event"))} ${cid?'· '+short(cid):''}</b><div>${esc(e.actor||"")} ${e.to?'→ '+esc(e.to):''}</div></div>
       <div class="when">${esc((e.hash||"").slice(0,10))}</div></div>`;}).join("")
     : '<div class="li"><div class="tx muted small">최근 이벤트 없음</div></div>';
   // 지역별 등록현황 (주소 파싱)
@@ -680,7 +689,7 @@ SCREEN.dashboard=async()=>{
   else if(ROLE==="ops"||ROLE==="admin"){const[qa,qf]=await Promise.all([API("/audit/queue").catch(()=>[]),API("/fatwa/queue").catch(()=>[])]);workq=[...qa,...qf];workLabel="작업 큐(심사·파트와) · Worklist";}
   const workCard=workLabel?`<div class="card" style="margin-bottom:16px"><h3>🗂 ${workLabel}<span class="r">${workq.length}건 · 클릭→상세</span></h3>
     <div class="body tight"><table><thead><tr><th>ID</th><th>기업</th><th>단계</th><th>경로</th></tr></thead>
-      <tbody>${workq.length?workq.map(q=>`<tr class="clickable" onclick="openCase('${q.case_id}')"><td style="font-family:ui-monospace,monospace;font-size:11px">${short(q.case_id)}</td><td><b>${esc(q.company||q.company_name||"—")}</b></td><td>${tag("info",q.stage||q.status||"—")}</td><td>${bTag(q.pathway==='self_declare'?'info':'mute',q.pathway||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">대기 항목 없음</td></tr>'}</tbody></table></div></div>`:'';
+      <tbody>${workq.length?workq.map(q=>`<tr class="clickable" onclick="openCase('${q.case_id}')"><td style="font-family:ui-monospace,monospace;font-size:11px">${short(q.case_id)}</td><td><b>${esc(q.company||"—")}</b></td><td>${tag("info",q.stage||"—")}</td><td>${bTag(q.pathway==='self_declare'?'info':'mute',q.pathway||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">대기 항목 없음</td></tr>'}</tbody></table></div></div>`:'';
   // 다중 케이스 준비도 비교 (S18-2)
   const rdCases=cases.slice(0,6);
   const rds=await Promise.all(rdCases.map(c=>API(`/cases/${c.case_id}/readiness`).catch(()=>null)));
@@ -726,9 +735,10 @@ SCREEN.dashboard=async()=>{
 SCREEN.caseList=async()=>{
   let cases=await loadCases(true);
   const f=FILTERS.filter;
-  if(f==="issued")cases=cases.filter(c=>/issued|approved|certificate/i.test(c.status));
-  else if(f==="action")cases=cases.filter(c=>/corrective|requested|reject|blocked/i.test(c.status));
-  else if(f==="progress")cases=cases.filter(c=>!/issued|approved|certificate/i.test(c.status));
+  const _iss=c=>/issued|certificate/i.test(c.status), _act=c=>/corrective|requested|reject|blocked/i.test(c.status);
+  if(f==="issued")cases=cases.filter(_iss);
+  else if(f==="action")cases=cases.filter(c=>!_iss(c)&&_act(c));
+  else if(f==="progress")cases=cases.filter(c=>!_iss(c)&&!_act(c));
   if(FILTERS.status)cases=cases.filter(c=>c.status===FILTERS.status);
   if(FILTERS.q){const q=FILTERS.q.toLowerCase();cases=cases.filter(c=>(c.company_name||"").toLowerCase().includes(q)||c.case_id.toLowerCase().includes(q));}
   if(FILTERS.region){await ensureRegions(cases);cases=cases.filter(c=>REGION_CACHE[c.case_id]===FILTERS.region);}
@@ -849,7 +859,7 @@ SCREEN.application=async()=>{
   <div class="grid three" style="margin-top:16px">
     <div class="card"><h3>할랄감독자 · Penyelia <span class="en">· Supervisor</span><span class="r">활성 ${penyeliaResp.active_count!=null?penyeliaResp.active_count:pens.filter(p=>p.status==='active').length}</span></h3>
       <div class="body">
-        ${pens.length?pens.map(p=>`<div class="li"><div class="ic t-info">👤</div><div class="tx"><b>${esc(p.name)}</b><div>${esc(p.training_cert||"교육증명 없음")}</div></div><div class="when">${tag(p.status==='active'?'ok':'mute',p.status||"—")}${canApp?` <button class="btn" style="padding:2px 7px;font-size:11px" onclick="togglePenyelia('${p.penyelia_id||p.id}','${p.status==='active'?'inactive':'active'}')">${p.status==='active'?'비활성화':'활성화'}</button>`:''}</div></div>`).join(""):'<div class="muted small">등록된 감독자 없음</div>'}
+        ${pens.length?pens.map(p=>`<div class="li"><div class="ic t-info">👤</div><div class="tx"><b>${esc(p.name)}</b><div>${esc(p.training_cert||"교육증명 없음")}</div></div><div class="when">${tag(p.status==='active'?'ok':'mute',p.status||"—")}${canApp?` <button class="btn" style="padding:2px 7px;font-size:11px" onclick="togglePenyelia('${p.penyelia_id}','${p.status==='active'?'inactive':'active'}')">${p.status==='active'?'비활성화':'활성화'}</button>`:''}</div></div>`).join(""):'<div class="muted small">등록된 감독자 없음</div>'}
         ${canApp?`<div class="btnrow" style="margin-top:10px"><input class="v" id="pyName" placeholder="이름" style="flex:1"><button class="btn pri" onclick="addPenyelia()">등록</button></div>`:''}
       </div></div>
     <div class="card"><h3>동반자 · Pendamping <span class="en">· SEHATI</span></h3>
@@ -1088,7 +1098,7 @@ SCREEN.audit=async()=>{
   const canTeam=["sharia","ops","admin"].includes(ROLE);  // LPH 배정: fatwa_liaison·operator
   const canPool=["ops","admin"].includes(ROLE);  // auditor-pool: operator(최종 결제자)
   const cur=curCaseObj();const onsiteActive=cur&&cur.status==="onsite_audit_in_progress";
-  const poolHtml=pool.length?pool.map(a=>`<div class="li" style="padding:5px 0"><div class="ic t-info">🧑‍⚖️</div><div class="tx"><b>${esc(a.name)}</b><div>${esc(a.role_in_team||"")} ${esc(a.cert_no||"")}</div></div>${canPool?`<div class="when"><button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delAuditorPool('${id}','${a.auditor_pool_id||a.pool_id||a.id}')">✕</button></div>`:''}</div>`).join(""):'<div class="muted small">등록된 심사원 없음</div>';
+  const poolHtml=pool.length?pool.map(a=>`<div class="li" style="padding:5px 0"><div class="ic t-info">🧑‍⚖️</div><div class="tx"><b>${esc(a.name)}</b><div>${esc(a.role_in_team||"")} ${esc(a.cert_no||"")}</div></div>${canPool?`<div class="when"><button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delAuditorPool('${id}','${a.id}')">✕</button></div>`:''}</div>`).join(""):'<div class="muted small">등록된 심사원 없음</div>';
   const fpg=pageSlice("findings",find,10);
   const fRows=fpg.items.length?fpg.items.map(f=>`<tr>
       <td style="font-family:ui-monospace,monospace;font-size:11px">${esc((f.finding_id||"").slice(0,6))}</td>

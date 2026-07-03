@@ -207,7 +207,8 @@ def can_transition(db, case, to_state):
 def apply_side_effects(case, to_state):
     if to_state == "self_declare_eligible":
         case.pathway = "self_declare"
-    if to_state in ("supplementation_required", "consultant_review") and case.pathway == "undetermined":
+    # P1: reguler 전용 상태로의 전이는 pathway를 reguler로 확정(self_declare→reguler 전환 포함)
+    if to_state in ("supplementation_required", "consultant_review") and case.pathway in ("undetermined", "self_declare"):
         case.pathway = "reguler"
     if to_state == "committee_verification":            # 자기선언 ketetapan (operator 전용 전이)
         case.fatwa_status = "approved"

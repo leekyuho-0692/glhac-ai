@@ -84,6 +84,27 @@ def test_operator_provisionable():
         assert r.status_code == 200, r.text
 
 
+def test_sod_and_severity_enum():
+    """P1: 가승인 SoD(operator 차단·샤리아 허용) + finding severity enum 검증."""
+    with TestClient(app) as c:
+        adm = _tok(c, "admin", "admin")
+        fat = _tok(c, "fatwa1", "pw")
+        op = _tok(c, "operator1", "pw")
+        aud = _tok(c, "auditor1", "pw")
+        cid = c.post("/cases", json={"company_name": "SoD", "org_id": "org_demo"},
+                     headers=_h(adm)).json()["case_id"]
+        # SoD: operator는 가승인(patch_fatwa) 불가, 샤리아만
+        assert c.patch(f"/cases/{cid}/fatwa", json={"decision": "approved"},
+                       headers=_h(op)).status_code == 403
+        assert c.patch(f"/cases/{cid}/fatwa", json={"decision": "approved"},
+                       headers=_h(fat)).status_code == 200
+        # severity enum: 'Major'(오타) 거부, 'major' 허용
+        assert c.post(f"/cases/{cid}/findings", json={"finding": "x", "severity": "Major"},
+                      headers=_h(aud)).status_code == 422
+        assert c.post(f"/cases/{cid}/findings", json={"finding": "x", "severity": "major"},
+                      headers=_h(aud)).status_code == 200
+
+
 def test_two_stage_fatwa_approval():
     """2단계 승인: 샤리아 가승인(provisional) → 최고운영자 최종승인(approved)."""
     with TestClient(app) as c:
@@ -214,7 +235,8 @@ def test_search_context_fallback_returns_list():
 if __name__ == "__main__":
     tests = [test_operator_role_seeded, test_mockaudit_rbac,
              test_permission_transfer_cert_issue, test_transition_bypass_blocked,
-             test_operator_provisionable, test_two_stage_fatwa_approval,
+             test_operator_provisionable, test_sod_and_severity_enum,
+             test_two_stage_fatwa_approval,
              test_mockaudit_decision_validation,
              test_mockaudit_decision_recorded_and_retrieved,
              test_mockaudit_reject_transitions_to_corrective,
