@@ -33,13 +33,21 @@
     /* S7: 케이스 전환 바 */
     .case-switcher-bar{display:flex;align-items:center;gap:6px;padding:8px 14px;background:rgba(101,38,114,.06);border:1px solid rgba(101,38,114,.16);border-radius:14px;margin-bottom:14px;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:thin}.case-tab{border:1px solid #e2e8f0;border-radius:10px;padding:5px 10px;background:white;cursor:pointer;font-size:12px;font-weight:700;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;transition:.12s}.case-tab.active{background:#652672;color:white;border-color:#652672}.case-tab:hover:not(.active){background:#f3eef6;border-color:#652672}
   </style>
+  <style id="darkThemeCSS">
+    html[data-theme="dark"]{--card:#1e293b;--text:#e5e7eb;--soft:#0b1220;--line:#334155;--muted:#94a3b8;--panel:#0b1220}
+    html[data-theme="dark"] body{background:#0b1220}
+    html[data-theme="dark"] .btn{background:#334155;color:#e5e7eb}
+    html[data-theme="dark"] input,html[data-theme="dark"] select,html[data-theme="dark"] textarea{background:#0f172a;color:#e5e7eb;border-color:#334155}
+    html[data-theme="dark"] table th,html[data-theme="dark"] .dl-table th{background:#111827;color:#cbd5e1}
+    html[data-theme="dark"] table td{border-color:#334155}
+  </style>
 </head>
 <body>
 <div id="authScreen" class="auth-screen"></div>
 <div class="app auth-hidden" id="appShell">
   <aside>
     <div class="brand"><div class="logo">AI</div><div><h1>GL-HAC AI</h1><p id="brandSub">AI supported Halal Certification System</p></div></div>
-    <div class="langbox"><label id="languageLabel" for="languageSelect">Language</label><select id="languageSelect" class="flag-select" onchange="setLang(this.value)" aria-label="Language"><option value="id">🇮🇩</option><option value="ko">🇰🇷</option><option value="en">🇬🇧</option></select></div>
+    <div class="langbox"><label id="languageLabel" for="languageSelect">Language</label><select id="languageSelect" class="flag-select" onchange="setLang(this.value)" aria-label="Language"><option value="id">🇮🇩</option><option value="ko">🇰🇷</option><option value="en">🇬🇧</option></select><button id="themeToggle" class="btn" onclick="toggleTheme()" title="다크/화이트 · Dark/Light" aria-label="Theme" style="margin-left:6px;padding:6px 10px">🌙</button></div>
     <button class="btn mobile-menu" id="mobileMenuBtn" onclick="document.querySelector('.navwrap').classList.toggle('show')">Menu</button>
     <div class="navwrap show"><nav id="nav"></nav></div>
     <div class="sidebar-note" id="sidebarNote"></div>
@@ -428,6 +436,10 @@ const hpasEvaluationItems = {
   internalAudit:{labelKey:'hpasInternalAudit',sjphKey:'monitoring'}
 };
 let lang = localStorage.getItem('halalcert_ai_lang') || 'en';
+/* v3: 다크/화이트 모드 토글 — CSS 변수 오버라이드, localStorage 저장, 전 메뉴 적용 */
+function applyTheme(th){var d=(th==='dark')?'dark':'light';document.documentElement.setAttribute('data-theme',d);try{localStorage.setItem('glhac_theme',d)}catch(_){}var b=document.getElementById('themeToggle');if(b)b.textContent=(d==='dark')?'☀️':'🌙';}
+function toggleTheme(){var cur=(document.documentElement.getAttribute('data-theme')==='dark')?'dark':'light';applyTheme(cur==='dark'?'light':'dark');}
+applyTheme((function(){try{return localStorage.getItem('glhac_theme')||'light'}catch(_){return 'light'}})());
 let currentSection = 'dashboard';
 let discussionOpen = localStorage.getItem('halalcert_ai_discussion_open') !== 'false';
 const sections = ['workflow','dashboard','caseList','application','materials','sjphIntegration','documents','audit','mockAudit','sjphEvaluation','invoice','fatwa','certificate','assistant','system'];
