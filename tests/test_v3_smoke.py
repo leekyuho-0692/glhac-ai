@@ -97,6 +97,75 @@ def test_alembic_scaffolding():
     assert "case_application" in Base.metadata.tables and "ai_extraction" in Base.metadata.tables
 
 
+def test_audit_plan_lifecycle():
+    """§P2 LPH scheduling: 현장심사 일정 생성·조회·상태변경."""
+    with TestClient(app) as c:
+        atok = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "APlan"},
+                     headers=_h(atok)).json()["case_id"]
+        r = c.post(f"/cases/{cid}/audit-plan",
+                   json={"lph_name": "LPH A", "scheduled_date": "2026-08-01", "scope": "onsite",
+                         "auditors": ["Budi"]}, headers=_h(atok))
+        assert r.status_code == 200, r.text
+        pid = r.json()["id"]
+        plans = c.get(f"/cases/{cid}/audit-plans", headers=_h(atok)).json()
+        assert len(plans) == 1 and plans[0]["scheduled_date"] == "2026-08-01", plans
+        assert c.patch(f"/audit-plans/{pid}", json={"status": "completed"},
+                       headers=_h(atok)).json()["status"] == "completed"
+
+
+def test_fatwa_voting_quorum():
+    """§6.2 Fatwa 위원회 투표: quorum·집계·상세 열람 권한."""
+    from app import models
+    from app.db import SessionLocal
+    with TestClient(app) as c:
+        atok = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "FVote"},
+                     headers=_h(atok)).json()["case_id"]
+        db = SessionLocal()
+        try:
+            db.add(models.FatwaDecision(case_id=cid, decision="pending",
+                                        committee_members=["A", "B", "C"]))
+            db.commit()
+        finally:
+            db.close()
+        ftok = _tok(c, "fatwa1", "pw")
+        t = None
+        for m in ["A", "B"]:
+            t = c.post(f"/cases/{cid}/fatwa/vote", json={"member": m, "vote": "approve"},
+                       headers=_h(ftok)).json()
+        assert t["members"] == 3 and t["quorum_met"] is True and t["result"] == "passed", t
+        # 상세 열람: sharia 허용, consultant 403
+        assert c.get(f"/cases/{cid}/fatwa/votes", headers=_h(ftok)).status_code == 200
+        assert c.get(f"/cases/{cid}/fatwa/votes",
+                     headers=_h(_tok(c, "consultant1", "pw"))).status_code == 403
+        # applicant 투표 불가(fatwa.propose 매트릭스)
+        assert c.post(f"/cases/{cid}/fatwa/vote", json={"member": "X", "vote": "approve"},
+                      headers=_h(_tok(c, "applicant1", "pw"))).status_code == 403
+
+
+def test_car_lifecycle_closes_finding():
+    """§P2 CAR advanced: 시정조치 제출→검토(accepted)→finding 종결."""
+    with TestClient(app) as c:
+        atok = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "CarCo"},
+                     headers=_h(atok)).json()["case_id"]
+        fid = c.post(f"/cases/{cid}/findings", json={"finding": "라벨 불일치", "severity": "minor"},
+                     headers=_h(atok)).json()["finding_id"]
+        ctok = _tok(c, "consultant1", "pw")
+        car = c.post(f"/findings/{fid}/car", json={"description": "라벨 교체", "due_date": "2026-09-01"},
+                     headers=_h(ctok))
+        assert car.status_code == 200, car.text
+        car_id = car.json()["id"]
+        assert len(c.get(f"/cases/{cid}/corrective-actions", headers=_h(ctok)).json()) == 1
+        rev = c.patch(f"/car/{car_id}/review", json={"status": "accepted", "note": "확인"},
+                      headers=_h(atok))
+        assert rev.json()["status"] == "accepted", rev.text
+        # finding 종결됐는지
+        fs = c.get(f"/cases/{cid}/findings", headers=_h(atok)).json()
+        assert any(f["finding_id"] == fid and f["status"] == "closed" for f in fs), fs
+
+
 def test_datalist_meta_search_sort():
     """DataList 표준(§8.2): meta(total)·서버검색(q)·정렬(sort/dir) + 하위호환(array)."""
     with TestClient(app) as c:
@@ -496,7 +565,8 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_alembic_scaffolding, test_datalist_meta_search_sort,
+    tests = [test_audit_plan_lifecycle, test_fatwa_voting_quorum, test_car_lifecycle_closes_finding,
+             test_alembic_scaffolding, test_datalist_meta_search_sort,
              test_qr_public_verify, test_ai_extractions_endpoints,
              test_rbac_action_matrix_contract,
              test_unlock_requires_operator, test_fatwa_document_restricted,

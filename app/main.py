@@ -1740,6 +1740,152 @@ def add_lph(case_id: str, body: schemas.LphAssignReq,
     return {"lph_assignment_id": x.lph_assignment_id}
 
 
+# ---------- LPH 현장심사 일정 (§P2 LPH scheduling) ----------
+@app.post("/cases/{case_id}/audit-plan")
+def create_audit_plan(case_id: str, body: schemas.AuditPlanReq,
+                      user=Depends(auth.require_roles("auditor", "operator", "consultant")),
+                      db: Session = Depends(get_db)):
+    c = _get_case(db, case_id, user)
+    p = models.AuditPlan(case_id=case_id, lph_name=body.lph_name, scheduled_date=body.scheduled_date,
+                         scope=body.scope, auditors=body.auditors or [], created_by=user["uid"])
+    db.add(p)
+    sm.record_event(db, c, c.status, c.status, "audit.plan.create", user["role"], user["uid"],
+                    {"scheduled_date": body.scheduled_date})
+    _notify(db, c, "audit_scheduled", "현장심사 일정",
+            "%s — 현장심사가 %s 로 예정되었습니다." % (c.company_name or "", body.scheduled_date),
+            channels=["inapp", "sms"], role="applicant")
+    db.commit()
+    return {"id": p.id, "scheduled_date": p.scheduled_date, "status": p.status}
+
+
+@app.get("/cases/{case_id}/audit-plans")
+def list_audit_plans(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    rows = (db.query(models.AuditPlan).filter_by(case_id=case_id)
+            .order_by(models.AuditPlan.scheduled_date).all())
+    return [{"id": p.id, "lph_name": p.lph_name, "scheduled_date": p.scheduled_date, "scope": p.scope,
+             "auditors": p.auditors or [], "status": p.status, "note": p.note} for p in rows]
+
+
+@app.patch("/audit-plans/{plan_id}")
+def patch_audit_plan(plan_id: str, body: schemas.AuditPlanPatchReq,
+                     user=Depends(auth.require_roles("auditor", "operator")),
+                     db: Session = Depends(get_db)):
+    p = db.get(models.AuditPlan, plan_id)
+    if not p:
+        raise HTTPException(404, {"code": "PLAN_NOT_FOUND"})
+    _get_case(db, p.case_id, user)
+    if body.status is not None:
+        if body.status not in ("scheduled", "completed", "cancelled"):
+            raise HTTPException(400, {"code": "BAD_STATUS"})
+        p.status = body.status
+    if body.scheduled_date:
+        p.scheduled_date = body.scheduled_date
+    if body.note is not None:
+        p.note = body.note
+    db.commit()
+    return {"id": p.id, "status": p.status, "scheduled_date": p.scheduled_date}
+
+
+# ---------- CAR 시정조치 라이프사이클 (§P2 CAR advanced) ----------
+@app.post("/findings/{finding_id}/car")
+def submit_car(finding_id: str, body: schemas.CarSubmitReq,
+               user=Depends(auth.require_roles("applicant", "consultant", "penyelia_halal")),
+               db: Session = Depends(get_db)):
+    f = db.get(models.AuditFinding, finding_id)
+    if not f:
+        raise HTTPException(404, {"code": "FINDING_NOT_FOUND"})
+    c = _get_case(db, f.case_id, user)
+    car = models.CorrectiveAction(case_id=f.case_id, finding_id=finding_id, description=body.description,
+                                  evidence=body.evidence, due_date=body.due_date,
+                                  submitted_by=user["uid"], status="submitted")
+    db.add(car)
+    sm.record_event(db, c, c.status, c.status, "car.submit", user["role"], user["uid"],
+                    {"finding_id": finding_id})
+    db.commit()
+    return {"id": car.id, "finding_id": finding_id, "status": car.status}
+
+
+@app.get("/cases/{case_id}/corrective-actions")
+def list_corrective_actions(case_id: str, user=Depends(auth.get_current_user),
+                            db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    rows = (db.query(models.CorrectiveAction).filter_by(case_id=case_id)
+            .order_by(models.CorrectiveAction.created_at.desc()).all())
+    return [{"id": x.id, "finding_id": x.finding_id, "description": x.description, "evidence": x.evidence,
+             "status": x.status, "reviewer": x.reviewer, "reviewer_note": x.reviewer_note,
+             "due_date": x.due_date} for x in rows]
+
+
+@app.patch("/car/{car_id}/review")
+def review_car(car_id: str, body: schemas.CarReviewReq,
+               user=Depends(auth.require_roles("auditor", "operator")),
+               db: Session = Depends(get_db)):
+    car = db.get(models.CorrectiveAction, car_id)
+    if not car:
+        raise HTTPException(404, {"code": "CAR_NOT_FOUND"})
+    c = _get_case(db, car.case_id, user)
+    if body.status not in ("accepted", "rejected", "closed"):
+        raise HTTPException(400, {"code": "BAD_STATUS"})
+    car.status = body.status
+    car.reviewer = user["uid"]
+    car.reviewer_note = body.note
+    if body.status in ("accepted", "closed"):   # 시정조치 수용 → finding 종결
+        f = db.get(models.AuditFinding, car.finding_id)
+        if f:
+            f.status = "closed"
+    sm.record_event(db, c, c.status, c.status, "car.review", user["role"], user["uid"],
+                    {"car_id": car_id, "status": body.status})
+    db.commit()
+    return {"id": car.id, "status": car.status}
+
+
+# ---------- Fatwa 위원회 투표 (§6.2 fatwa_votes) ----------
+def _fatwa_tally(db, case_id, detail=False):
+    votes = db.query(models.FatwaVote).filter_by(case_id=case_id).all()
+    fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
+    members = (fd.committee_members if fd and fd.committee_members else []) or []
+    total = len(members) if members else len(votes)
+    approve = sum(1 for v in votes if v.vote == "approve")
+    reject = sum(1 for v in votes if v.vote == "reject")
+    abstain = sum(1 for v in votes if v.vote == "abstain")
+    need = (total // 2) + 1 if total else 1
+    quorum = total > 0 and len(votes) >= need
+    passed = (quorum and approve >= need) if total else (approve > reject and approve > 0)
+    out = {"votes_cast": len(votes), "members": total, "approve": approve, "reject": reject,
+           "abstain": abstain, "quorum_met": bool(quorum), "quorum_need": need,
+           "result": "passed" if passed else "pending"}
+    if detail:
+        out["ballots"] = [{"member": v.member, "vote": v.vote, "note": v.note} for v in votes]
+    return out
+
+
+@app.post("/cases/{case_id}/fatwa/vote")
+def fatwa_vote(case_id: str, body: schemas.FatwaVoteReq,
+               user=Depends(rbac.require_action("fatwa.propose")),
+               db: Session = Depends(get_db)):
+    c = _get_case(db, case_id, user)
+    if body.vote not in ("approve", "reject", "abstain"):
+        raise HTTPException(400, {"code": "BAD_VOTE"})
+    v = db.query(models.FatwaVote).filter_by(case_id=case_id, member=body.member).first()
+    if v:
+        v.vote, v.note = body.vote, body.note
+    else:
+        db.add(models.FatwaVote(case_id=case_id, member=body.member, vote=body.vote, note=body.note))
+    sm.record_event(db, c, c.status, c.status, "fatwa.vote", user["role"], user["uid"],
+                    {"member": body.member, "vote": body.vote})
+    db.commit()
+    return _fatwa_tally(db, case_id)
+
+
+@app.get("/cases/{case_id}/fatwa/votes")
+def get_fatwa_votes(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    if not _fatwa_privileged(user):   # 위원회 투표 상세는 sharia/operator/admin만
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
+    return _fatwa_tally(db, case_id, detail=True)
+
+
 @app.post("/cases/{case_id}/certificate/issue")
 def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
                       user=Depends(rbac.require_action("certificate.issue")),

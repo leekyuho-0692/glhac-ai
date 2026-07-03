@@ -390,3 +390,46 @@ class AiExtraction(Base):
     reviewer_id = Column(String)
     reviewer_note = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AuditPlan(Base):
+    """LPH 현장심사 일정(§P2 LPH scheduling)."""
+    __tablename__ = "audit_plan"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    lph_name = Column(String)
+    scheduled_date = Column(String)   # ISO date
+    scope = Column(Text)
+    auditors = Column(JSON)           # 심사원 이름 목록
+    status = Column(String, default="scheduled")  # scheduled|completed|cancelled
+    note = Column(String)
+    created_by = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FatwaVote(Base):
+    """파트와 위원 투표(§6.2 fatwa_votes) — 위원별 1표, quorum 산정."""
+    __tablename__ = "fatwa_vote"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    member = Column(String, nullable=False)
+    vote = Column(String)             # approve|reject|abstain
+    note = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CorrectiveAction(Base):
+    """시정조치 CAR(§P2 CAR advanced) — finding별 제출→검토→종결 라이프사이클."""
+    __tablename__ = "corrective_action"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    finding_id = Column(String, nullable=False, index=True)
+    description = Column(Text)
+    evidence = Column(Text)
+    status = Column(String, default="submitted")  # submitted|accepted|rejected|closed
+    reviewer = Column(String)
+    reviewer_note = Column(String)
+    due_date = Column(String)
+    submitted_by = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

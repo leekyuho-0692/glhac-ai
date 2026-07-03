@@ -286,3 +286,33 @@ class IssueReq(BaseModel):
 class AiReviewReq(BaseModel):
     reviewer_status: str            # accepted | overridden
     note: Optional[str] = None
+
+
+class AuditPlanReq(BaseModel):
+    lph_name: Optional[str] = None
+    scheduled_date: str                       # ISO date
+    scope: Optional[str] = None
+    auditors: Optional[list] = None
+
+
+class AuditPlanPatchReq(BaseModel):
+    status: Optional[str] = None              # scheduled|completed|cancelled
+    scheduled_date: Optional[str] = None
+    note: Optional[str] = None
+
+
+class FatwaVoteReq(BaseModel):
+    member: str
+    vote: str                                 # approve|reject|abstain
+    note: Optional[str] = None
+
+
+class CarSubmitReq(BaseModel):
+    description: str
+    evidence: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+class CarReviewReq(BaseModel):
+    status: str                               # accepted|rejected|closed
+    note: Optional[str] = None
