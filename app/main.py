@@ -303,6 +303,13 @@ MOCK_AUDIT_STAGES = {
     "document_pre_audit_approved", "onsite_audit_scheduled",
     "onsite_audit_in_progress", "hpas_evaluation_ready", "final_package_preparation",
 }
+# 현재 상태 → (pass 시 다음 긍정 단계, reject 시 시정 단계). 유효 전이일 때만 적용.
+_MOCK_NEXT = {
+    "document_pre_audit_requested": ("document_pre_audit_in_review", None),
+    "document_pre_audit_in_review": ("document_pre_audit_approved", None),
+    "onsite_audit_in_progress": ("audit_closed", "corrective_action_required"),
+    "corrective_action_submitted": ("audit_closed", "corrective_action_required"),
+}
 
 
 @app.get("/mock-audit/queue")
@@ -347,8 +354,22 @@ def mock_audit_decide(case_id: str, body: schemas.MockAuditDecisionReq,
         raise HTTPException(422, {"code": "REASON_REQUIRED"})
     sm.record_event(db, c, c.status, c.status, "mock_audit.decision", user["role"], user["uid"],
                     {"result": result, "reason": body.reason or ""})
+    # ② 상태전이 연동: pass→다음 긍정 단계, reject→시정조치 (유효 전이·가드 통과 시에만)
+    transitioned_to = None
+    mapping = _MOCK_NEXT.get(c.status)
+    if mapping:
+        target = mapping[0] if result == "pass" else mapping[1]
+        if target:
+            ok, _blk = sm.can_transition(db, c, target)
+            if ok:
+                frm = c.status
+                sm.apply_side_effects(c, target)
+                c.status = target
+                sm.record_event(db, c, frm, target, "mock_audit." + result, user["role"], user["uid"],
+                                {"reason": body.reason or ""})
+                transitioned_to = target
     db.commit()
-    return {"ok": True, "result": result}
+    return {"ok": True, "result": result, "transitioned_to": transitioned_to}
 
 
 # ── v3: 역할별 작업 큐(worklist) — 조직 스코프, read-only ──────────────
