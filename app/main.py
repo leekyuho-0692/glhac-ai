@@ -940,8 +940,11 @@ def add_finding(case_id: str, body: schemas.FindingReq,
                 user=Depends(auth.require_roles("auditor", "consultant")),
                 db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    sev = body.severity or "minor"
+    if sev not in ("major", "minor", "observation"):  # P1: enum 검증(NC 게이트 무력화 방지)
+        raise HTTPException(422, {"code": "BAD_SEVERITY", "allowed": ["major", "minor", "observation"]})
     f = models.AuditFinding(case_id=case_id, area=body.area, finding=body.finding,
-                            severity=body.severity or "minor", corrective_action=body.corrective_action,
+                            severity=sev, corrective_action=body.corrective_action,
                             due_date=body.due_date, auditor=user["username"])
     db.add(f)
     sm.record_event(db, c, c.status, c.status, "audit.finding.add", user["role"], user["uid"],
@@ -1168,9 +1171,14 @@ def renew_case(case_id: str, user=Depends(auth.require_roles("applicant", "consu
         db.add(models.Product(product_id=uuid.uuid4().hex, case_id=new_id, name=p.name, category=p.category))
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
     for m in mats:
-        db.add(models.Material(material_id=uuid.uuid4().hex, case_id=new_id,
-                               name=m.name, e_number=m.e_number, mat_type=m.mat_type,
-                               source=m.source, supplier=m.supplier, cert_no=m.cert_no))
+        nm = models.Material(material_id=uuid.uuid4().hex, case_id=new_id,
+                             name=m.name, e_number=m.e_number, mat_type=m.mat_type,
+                             source=m.source, supplier=m.supplier, cert_no=m.cert_no)
+        db.add(nm)
+        try:
+            screening.apply_screen(nm)  # P1: 갱신 케이스 원료 재스크리닝(clean 오인 방지)
+        except Exception:  # noqa: BLE001
+            pass
     db.commit()
     sm.record_event(db, new_c, None, "onboarding", "case.renew", user["role"], user["uid"],
                     {"parent_case_id": case_id})
@@ -1292,7 +1300,7 @@ def fatwa_final_approve(case_id: str, user=Depends(auth.require_roles("operator"
 
 @app.patch("/cases/{case_id}/fatwa")
 def patch_fatwa(case_id: str, body: schemas.FatwaReq,
-                user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+                user=Depends(auth.require_roles("fatwa_liaison")),  # P1 SoD: 가승인=샤리아 전용(최종승인은 operator)
                 db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
