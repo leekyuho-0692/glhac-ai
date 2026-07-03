@@ -71,6 +71,27 @@ def test_public_config_reports_dev():
         assert c.get("/public-config").json()["dev_mode"] is True
 
 
+def test_rbac_action_matrix_contract():
+    """단일 매트릭스 계약 — ACTION_ENDPOINTS를 순회, 매트릭스대로 403/허용 자동검증(§12.1)."""
+    from app import rbac
+    roles = {"consultant1": "consultant", "applicant1": "applicant", "penyelia1": "penyelia_halal",
+             "pendamping1": "pendamping_pph", "auditor1": "auditor", "fatwa1": "fatwa_liaison",
+             "operator1": "operator", "admin": "admin"}
+    with TestClient(app) as c:
+        toks = {u: _tok(c, u, "admin" if u == "admin" else "pw") for u in roles}
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "CtrT"},
+                     headers=_h(toks["consultant1"])).json()["case_id"]
+        for action, (method, path, body) in rbac.ACTION_ENDPOINTS.items():
+            url = path.replace("{cid}", cid)
+            for u, role in roles.items():
+                allowed = rbac.can({"role": role}, action)
+                r = c.request(method, url, json=body, headers=_h(toks[u]))
+                if allowed:
+                    assert r.status_code != 403, (action, role, "허용 기대인데 403", r.text)
+                else:
+                    assert r.status_code == 403, (action, role, "차단 기대인데 %d" % r.status_code, r.text)
+
+
 def test_unlock_requires_operator():
     """문서 P0: 인증서 unlock에서 consultant 제거(operator 전용)."""
     with TestClient(app) as c:
@@ -402,7 +423,8 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_unlock_requires_operator, test_fatwa_document_restricted,
+    tests = [test_rbac_action_matrix_contract,
+             test_unlock_requires_operator, test_fatwa_document_restricted,
              test_get_fatwa_masks_committee, test_renew_operator_only,
              test_upload_validation_rejects_bad_type,
              test_password_pbkdf2_and_legacy_upgrade,

@@ -17,7 +17,7 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db, SessionLocal
-from . import models, schemas, state_machine as sm, screening, ai_local, auth
+from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from .ontology_seed import seed
 
 app = FastAPI(title="GL-HAC AI Dual-Pathway API", version="0.2.0")
@@ -363,6 +363,19 @@ def public_config():
     return {"dev_mode": auth.dev_mode()}
 
 
+@app.get("/rbac/actions")
+def rbac_actions(user=Depends(auth.get_current_user)):
+    """UI 버튼 노출용 — 현재 사용자가 수행 가능한 action_id 맵(단일 매트릭스 파생)."""
+    return {"role": user["role"], "actions": rbac.allowed_actions(user)}
+
+
+@app.get("/rbac/matrix")
+def rbac_matrix(user=Depends(auth.require_roles())):
+    """전체 action_id -> 허용 역할 매트릭스(admin 전용, 투명성/감사)."""
+    return {"matrix": {a: sorted(r) for a, r in rbac.ACTION_ROLES.items()},
+            "endpoints": {a: {"method": m, "path": p} for a, (m, p, _b) in rbac.ACTION_ENDPOINTS.items()}}
+
+
 @app.get("/ai/health")
 def ai_health():
     return ai_local.health()
@@ -478,7 +491,7 @@ def admin_list_users(user=Depends(auth.require_roles()), db: Session = Depends(g
 
 
 @app.post("/admin/users")
-def admin_create_user(body: schemas.AdminUserReq, user=Depends(auth.require_roles()),
+def admin_create_user(body: schemas.AdminUserReq, user=Depends(rbac.require_action("admin.user.manage")),
                       db: Session = Depends(get_db)):
     if body.role not in _ALL_ROLES:
         raise HTTPException(422, {"code": "BAD_ROLE", "allowed": _ALL_ROLES})
@@ -1651,7 +1664,7 @@ def get_lph(case_id: str, user=Depends(auth.get_current_user), db: Session = Dep
 
 @app.post("/cases/{case_id}/lph-assignment")
 def add_lph(case_id: str, body: schemas.LphAssignReq,
-            user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
+            user=Depends(rbac.require_action("lph.assign")), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     x = models.LphAssignment(case_id=case_id, lph_name=body.lph_name, auditor_ref=body.auditor_ref,
                              source=body.source or "manual")
@@ -1667,7 +1680,7 @@ def add_lph(case_id: str, body: schemas.LphAssignReq,
 
 @app.post("/cases/{case_id}/certificate/issue")
 def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
-                      user=Depends(auth.require_roles("operator")),
+                      user=Depends(rbac.require_action("certificate.issue")),
                       db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     if c.fatwa_status != "approved":
@@ -1724,7 +1737,7 @@ def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
 
 @app.post("/cases/{case_id}/renew/request")
 def renew_request(case_id: str, body: schemas.RenewRequestReq = schemas.RenewRequestReq(),
-                  user=Depends(auth.require_roles("applicant", "consultant")),
+                  user=Depends(rbac.require_action("certificate.renew_request")),
                   db: Session = Depends(get_db)):
     """문서 P0: 갱신 신청(신청↔승인 분리) — 신청자/컨설턴트가 갱신 의사를 등록. 실제 파생은 operator 승인."""
     src = _get_case(db, case_id, user)
@@ -1738,7 +1751,7 @@ def renew_request(case_id: str, body: schemas.RenewRequestReq = schemas.RenewReq
 
 
 @app.post("/cases/{case_id}/renew")
-def renew_case(case_id: str, user=Depends(auth.require_roles("operator")),
+def renew_case(case_id: str, user=Depends(rbac.require_action("certificate.renew")),
                db: Session = Depends(get_db)):
     """S8-2: C5 갱신 케이스 파생(승인·실행) — 문서 P0: operator 전용(신청과 권한 분리)."""
     src = _get_case(db, case_id, user)
@@ -1775,7 +1788,7 @@ def renew_case(case_id: str, user=Depends(auth.require_roles("operator")),
 
 @app.post("/cases/{case_id}/certificate/unlock")
 def unlock_certificate(case_id: str, body: schemas.UnlockReq,
-                       user=Depends(auth.require_roles("operator")),
+                       user=Depends(rbac.require_action("certificate.unlock")),
                        db: Session = Depends(get_db)):
     """S3-3: 재인증(renewal) 언락 — scope_frozen 해제. 문서 P0: operator 전용 + 사유 필수(consultant 제거)."""
     c = _get_case(db, case_id, user)
@@ -1878,7 +1891,7 @@ def get_fatwa(case_id: str, user=Depends(auth.get_current_user), db: Session = D
 
 
 @app.post("/cases/{case_id}/fatwa/final-approve")
-def fatwa_final_approve(case_id: str, user=Depends(auth.require_roles("operator")),
+def fatwa_final_approve(case_id: str, user=Depends(rbac.require_action("fatwa.approve_final")),
                         db: Session = Depends(get_db)):
     """2단계 승인 — 최고운영자(최종 결제자) 최종승인. 샤리아 가승인(provisional) 선행 필요."""
     c = _get_case(db, case_id, user)
@@ -1905,7 +1918,7 @@ def fatwa_final_approve(case_id: str, user=Depends(auth.require_roles("operator"
 
 @app.patch("/cases/{case_id}/fatwa")
 def patch_fatwa(case_id: str, body: schemas.FatwaReq,
-                user=Depends(auth.require_roles("fatwa_liaison")),  # P1 SoD: 가승인=샤리아 전용(최종승인은 operator)
+                user=Depends(rbac.require_action("fatwa.propose")),  # SoD: 가승인=샤리아 전용(최종승인은 operator)
                 db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
@@ -1941,7 +1954,7 @@ def patch_fatwa(case_id: str, body: schemas.FatwaReq,
 
 
 @app.post("/cases/{case_id}/fatwa/document")
-def fatwa_document(case_id: str, user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+def fatwa_document(case_id: str, user=Depends(rbac.require_action("fatwa.document.read")),
                    db: Session = Depends(get_db)):
     # 문서 P0(§3.1): 파트와 결정문(위원회 심의 산출물)은 sharia/operator/admin 전용
     c = _get_case(db, case_id, user)

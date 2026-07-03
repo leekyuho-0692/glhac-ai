@@ -380,6 +380,8 @@ const CASE_SCOPED = new Set(["workflow","application","materials","integration",
   "documents","audit","evaluation","invoice","fatwa","certificate","assistant"]);
 
 let ROLE="client", CUR="dashboard", FILTERS={}, DETAIL=null;
+let RBAC_ACTIONS={};                          // /rbac/actions 파생 — API와 동일 action_id
+function CAN(a){return !!RBAC_ACTIONS[a];}     // UI 버튼 노출은 단일 매트릭스에서 판단
 let CURCASE=null, CASES_CACHE=[];
 let INV_SEL=null, DOC_SEL=null, SIHALAL_EID={};
 let CASE_SORT="recent";
@@ -1538,7 +1540,7 @@ SCREEN.certificate=async()=>{
   const id=CURCASE;
   const [c,ciHist]=await Promise.all([API(`/cases/${id}/certificate`).catch(()=>({issued:false})),API(`/cases/${id}/certificate/change-impact-history`).catch(()=>[])]);
   const co=curCaseObj();
-  const canIssue=["ops","admin"].includes(ROLE);  // 인증서 발급 = 최고운영자(최종 결제자)
+  const canIssue=CAN("certificate.issue");  // 단일 매트릭스 파생(API와 동일 action_id)
   const certCard=c.issued?`<div class="cert">
       <div class="seal">☪</div>
       <div class="small" style="letter-spacing:2px;color:var(--gold)">SERTIFIKAT HALAL</div>
@@ -1566,8 +1568,8 @@ SCREEN.certificate=async()=>{
         <div class="btnrow">
           ${canIssue&&!c.issued?`<button class="btn gold" onclick="issueCert('${id}')">인증서 발급 · Issue</button>`:''}
           ${c.issued?`<button class="btn" onclick="changeImpact('${id}')">변경영향 분석</button>`:''}
-          ${c.issued&&["client","consultant","ops","admin"].includes(ROLE)?`<button class="btn" onclick="renewCert('${id}')">${["ops","admin"].includes(ROLE)?"갱신 승인 · Approve renewal":"갱신 신청 · Request renewal"}</button>`:''}
-          ${c.issued&&["ops","admin"].includes(ROLE)?`<button class="btn" onclick="unlockCert('${id}')">잠금해제 · Unlock</button>`:''}
+          ${c.issued&&(CAN("certificate.renew")||CAN("certificate.renew_request"))?`<button class="btn" onclick="renewCert('${id}')">${CAN("certificate.renew")?"갱신 승인 · Approve renewal":"갱신 신청 · Request renewal"}</button>`:''}
+          ${c.issued&&CAN("certificate.unlock")?`<button class="btn" onclick="unlockCert('${id}')">잠금해제 · Unlock</button>`:''}
           ${!canIssue?'<span class="chip">🔒 발급 — 최고운영자(최종 결제자)</span>':''}</div></div></div>
   </div>
   <div class="card" style="margin-top:16px"><h3>변경영향 분석 이력 <span class="en">· Change-impact history</span><span class="r">${(ciHist||[]).length}건</span></h3>
@@ -1604,7 +1606,7 @@ async function printCert(id){
   }catch(e){toast("인쇄 실패");}
 }
 async function renewCert(id){
-  const approve=["ops","admin"].includes(ROLE);
+  const approve=CAN("certificate.renew");
   if(!confirm(approve?"갱신 케이스를 생성(승인)할까요?":"갱신을 신청할까요? (운영자 승인 후 생성)"))return;
   try{await API(`/cases/${id}/renew${approve?"":"/request"}`,{method:"POST",body:"{}"});
     toast(approve?"갱신 생성":"갱신 신청");await loadCases(true);applyView();}
@@ -1797,6 +1799,7 @@ async function boot(){
   let me;try{me=await API("/auth/me");}catch(_){logout();return;}
   const br=me.role||localStorage.getItem("glhac_role")||"applicant";
   ROLE=BR2ROLE[br]||"client";
+  try{const rb=await API("/rbac/actions");RBAC_ACTIONS=rb.actions||{};}catch(_){RBAC_ACTIONS={};}  // 단일 매트릭스 파생
   document.getElementById("userPill").innerHTML=`👤 <b>${esc(me.username||localStorage.getItem("glhac_user")||"")}</b> · ${esc(ROLE_DEF[ROLE].ko)}`;
   document.getElementById("loginView").style.display="none";
   document.getElementById("appView").style.display="flex";
