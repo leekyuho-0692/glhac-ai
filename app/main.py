@@ -56,8 +56,39 @@ def _get_case(db, case_id, user=None) -> models.CaseApplication:
     return c
 
 
+# ---- 지역(province) 서버 계산 (P1: 프런트 N+1·휴리스틱 제거) ----
+_PROVINCES = [
+    ("Aceh", []), ("Sumatera Utara", ["medan"]), ("Riau", ["pekanbaru"]),
+    ("Sumatera Barat", ["padang"]), ("Sumatera Selatan", ["palembang"]),
+    ("Lampung", ["bandar lampung"]), ("Banten", ["serang", "tangerang"]),
+    ("DKI Jakarta", ["jakarta"]), ("Jawa Barat", ["bandung", "bekasi", "bogor", "depok"]),
+    ("Jawa Tengah", ["semarang", "solo", "surakarta"]), ("DI Yogyakarta", ["yogyakarta", "jogja"]),
+    ("Jawa Timur", ["surabaya", "malang"]), ("Bali", ["denpasar"]),
+    ("Nusa Tenggara Barat", ["mataram", "lombok"]), ("Nusa Tenggara Timur", ["kupang"]),
+    ("Kalimantan Barat", ["pontianak"]), ("Kalimantan Tengah", ["palangkaraya"]),
+    ("Kalimantan Selatan", ["banjarmasin"]), ("Kalimantan Timur", ["samarinda", "balikpapan"]),
+    ("Sulawesi Selatan", ["makassar"]), ("Sulawesi Tengah", ["palu"]),
+    ("Sulawesi Utara", ["manado"]), ("Maluku", ["ambon"]),
+    ("Papua Barat", ["manokwari"]), ("Papua", ["jayapura"]),
+]
+
+
+def _province_of(addr):
+    if not addr:
+        return None
+    a = str(addr).lower()
+    for name, aliases in _PROVINCES:
+        if name.lower() in a:
+            return name
+        for al in aliases:
+            if al in a:
+                return name
+    return None
+
+
 def _case_dict(c):
     return {"case_id": c.case_id, "org_id": c.org_id, "company_name": c.company_name,
+            "province": _province_of(c.factory_address or c.address),
             "status": c.status, "pathway": c.pathway, "risk_category": c.risk_category,
             "is_msme": c.is_msme, "sehati_eligible": c.sehati_eligible,
             "fatwa_status": c.fatwa_status, "scope_frozen": c.scope_frozen,
@@ -303,7 +334,8 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     if user["role"] != "admin":
         q = q.filter_by(org_id=user["org_id"])
     return [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
-             "pathway": c.pathway, "due_date": c.due_date}
+             "pathway": c.pathway, "due_date": c.due_date,
+             "province": _province_of(c.factory_address or c.address)}
             for c in q.order_by(models.CaseApplication.created_at.desc()).all()]
 
 
@@ -1454,11 +1486,9 @@ def _wf_phases(pathway):
     return _WF_COMMON + mid + _WF_POST
 
 
-@app.get("/cases/{case_id}/readiness")
-def get_readiness(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    """준비도 가중 점수 (v1 readiness 백엔드화) — 문서35·SJPH30·원재료20·심사15%."""
+def _calc_readiness(db, case_id):
+    """준비도 계산(auth 없이 재사용) — 문서35·SJPH30·원재료20·심사15%."""
     from .intake import REQUIRED_DOCS
-    _get_case(db, case_id, user)
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     have_types = {d.doc_type for d in docs if d.review_status != "rejected"}
     doc_score = (sum(1 for r in REQUIRED_DOCS if r in have_types) / len(REQUIRED_DOCS)) if REQUIRED_DOCS else 1.0
@@ -1476,6 +1506,58 @@ def get_readiness(case_id: str, user=Depends(auth.get_current_user), db: Session
             "breakdown": {"documents": round(doc_score * 100), "sjph": round(sjph_score * 100),
                           "materials": round(mat_score * 100), "audit": round(audit_score * 100)},
             "counts": {"critical_high": high, "needs_evidence": med, "open_findings": open_f}}
+
+
+@app.get("/cases/{case_id}/readiness")
+def get_readiness(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """준비도 가중 점수 (v1 readiness 백엔드화)."""
+    _get_case(db, case_id, user)
+    return _calc_readiness(db, case_id)
+
+
+@app.get("/dashboard/summary")
+def dashboard_summary(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """대시보드 단일 집계 (P1: 프런트 N+1 제거) — KPI·상태분포·지역·작업큐·준비도·이벤트."""
+    q = db.query(models.CaseApplication)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    cases = q.order_by(models.CaseApplication.created_at.desc()).all()
+
+    def _issued(s):
+        return bool(s) and ("issued" in s or "certificate" in s)
+
+    def _action(s):
+        return bool(s) and any(k in s for k in ("corrective", "requested", "reject", "blocked"))
+    issued = sum(1 for c in cases if _issued(c.status))
+    action = sum(1 for c in cases if not _issued(c.status) and _action(c.status))
+    by_status = {}
+    reg = {}
+    for c in cases:
+        by_status[c.status] = by_status.get(c.status, 0) + 1
+        p = _province_of(c.factory_address or c.address)
+        if p:
+            reg[p] = reg.get(p, 0) + 1
+    regions = [{"province": k, "count": v} for k, v in sorted(reg.items(), key=lambda x: -x[1])]
+    role = user["role"]
+    worklist = []
+    if role in ("auditor", "operator", "admin"):
+        worklist += _stage_queue(db, user, AUDIT_STAGES)
+    if role in ("fatwa_liaison", "operator", "admin"):
+        worklist += _stage_queue(db, user, FATWA_STAGES)
+    readiness = []
+    for c in cases[:6]:
+        rd = _calc_readiness(db, c.case_id)
+        readiness.append({"case_id": c.case_id, "company": c.company_name,
+                          "pathway": c.pathway, "readiness": rd["readiness"], "band": rd["band"]})
+    events = [{"case_id": e.case_id, "from": e.from_status, "to": e.to_status, "action": e.action,
+               "actor": e.actor_type, "hash": (e.row_hash or "")[:10]}
+              for e in (db.query(models.WorkflowEvent)
+                        .order_by(models.WorkflowEvent.created_at.desc()).limit(6).all())]
+    return {"kpi": {"total": len(cases), "issued": issued, "action": action,
+                    "in_progress": len(cases) - issued - action},
+            "by_status": by_status, "regions": regions,
+            "unassigned": len(cases) - sum(reg.values()),
+            "worklist": worklist, "readiness": readiness, "events": events}
 
 
 @app.get("/cases/{case_id}/workflow")

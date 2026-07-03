@@ -625,79 +625,55 @@ function openCaseTab(tab){if(DETAIL)navigate({detail:DETAIL.id,tab});}
 /* ======================= SCREEN RENDERERS (live) ======================= */
 const SCREEN={};
 
-/* 1) Dashboard */
+/* 1) Dashboard — 단일 집계 호출(/dashboard/summary) + cases(알림용) */
 SCREEN.dashboard=async()=>{
-  const cases=await loadCases(true);
-  const total=cases.length;
-  // 상호배타 버킷(중복집계 방지): issued > action > in_progress
-  const isIssued=c=>/issued|certificate/i.test(c.status);
-  const isAction=c=>/corrective|requested|reject|blocked/i.test(c.status);
-  const issued=cases.filter(isIssued).length;
-  const action=cases.filter(c=>!isIssued(c)&&isAction(c)).length;
-  const progress=cases.filter(c=>!isIssued(c)&&!isAction(c)).length;
-  const kpis=[["즉시 처리 · Action",action,"warn",{filter:"action"}],
-    ["진행 중 · In progress",progress,"info",{filter:"progress"}],
-    ["발급 · Issued",issued,"ok",{filter:"issued"}],
-    ["전체 케이스 · Total",total,"mute",null]];
-  const buckets={};
-  cases.forEach(c=>{const k=c.status||"unknown";buckets[k]=(buckets[k]||0)+1;});
-  const maxb=Math.max(1,...Object.values(buckets));
-  const stageBars=Object.entries(buckets).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>
-    `<div class="sb clickable" onclick="filterList('status','${esc(k)}')" title="${esc(k)} 필터">
-      <span>${esc(k)}</span><div class="bar"><i style="width:${Math.round(v/maxb*100)}%;background:var(--${statusColor(k)==='mute'?'ink3':statusColor(k)})"></i></div><b>${v}</b></div>`).join("")
+  const [sum,cases]=await Promise.all([API("/dashboard/summary"),loadCases(true)]);
+  const kpi=sum.kpi||{total:0,issued:0,action:0,in_progress:0};
+  const kpis=[["즉시 처리 · Action",kpi.action,"warn",{filter:"action"}],
+    ["진행 중 · In progress",kpi.in_progress,"info",{filter:"progress"}],
+    ["발급 · Issued",kpi.issued,"ok",{filter:"issued"}],
+    ["전체 케이스 · Total",kpi.total,"mute",null]];
+  const bs=Object.entries(sum.by_status||{});const maxb=Math.max(1,...bs.map(x=>x[1]),1);
+  const stageBars=bs.sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,v])=>
+    `<div class="sb clickable" onclick="filterList('status','${esc(k)}')" title="${esc(k)}">
+      <span>${esc(koText(k)||k)}</span><div class="bar"><i style="width:${Math.round(v/maxb*100)}%;background:var(--${statusColor(k)==='mute'?'ink3':statusColor(k)})"></i></div><b>${v}</b></div>`).join("")
     || '<div class="muted small">케이스 없음</div>';
-  let events=[];
-  if(ROLE==="admin"){try{const a=await API("/admin/audit");events=(a.events||a||[]).slice(0,6);}catch(_){}}
-  else{
-    try{const recent=cases.slice(0,5);
-      const tls=await Promise.all(recent.map(c=>API(`/cases/${c.case_id}/timeline`).catch(()=>null)));
-      tls.forEach((tl,i)=>{if(tl&&tl.events)tl.events.slice(-3).forEach(e=>events.push(Object.assign({},e,{case_id:recent[i].case_id})));});
-      events=events.slice(-6).reverse();
-    }catch(_){}
-  }
-  const evHtml=events.length?events.map(e=>{
-    const cid=e.case_id||"";
+  const events=sum.events||[];
+  const evHtml=events.length?events.map(e=>{const cid=e.case_id||"";
     return `<div class="li ${cid?'clickable':''}" ${cid?`onclick="openCase('${esc(cid)}')"`:''}>
       <div class="ic t-${statusColor(e.to||e.action)}">•</div>
-      <div class="tx"><b>${esc((e.action||"event"))} ${cid?'· '+short(cid):''}</b><div>${esc(e.actor||"")} ${e.to?'→ '+esc(e.to):''}</div></div>
+      <div class="tx"><b>${esc(e.action||"event")} ${cid?'· '+short(cid):''}</b><div>${esc(e.actor||"")} ${e.to?'→ '+bSpan(e.to):''}</div></div>
       <div class="when">${esc((e.hash||"").slice(0,10))}</div></div>`;}).join("")
     : '<div class="li"><div class="tx muted small">최근 이벤트 없음</div></div>';
-  // 지역별 등록현황 (주소 파싱)
-  await ensureRegions(cases);
-  const rc={};let unassigned=0;
-  cases.forEach(c=>{const p=REGION_CACHE[c.case_id];if(!p||p==="미지정")unassigned++;else rc[p]=(rc[p]||0)+1;});
-  const maxc=Math.max(1,...Object.values(rc));
-  const bubbles=PROVINCES.filter(([n])=>rc[n]).map(([n,x,y])=>{
-    const val=rc[n];const col=val>=maxc*0.66?'#16A34A':val>=maxc*0.33?'#2563EB':'#D97706';const r=11+Math.sqrt(val)*5;
-    return `<div class="mapbubble" title="${esc(n)}: ${val}건 · 클릭하여 조회" onclick="filterList('region','${esc(n)}')"
-      style="position:absolute;left:${x}%;top:${y}%;transform:translate(-50%,-50%);width:${r*2}px;height:${r*2}px;border-radius:50%;background:${col}33;border:2px solid ${col};display:grid;place-items:center;cursor:pointer;font-size:12px;font-weight:700;color:${col}">${val}</div>`;}).join("");
-  const mapped=Object.values(rc).reduce((a,b)=>a+b,0);
-  // 알림·공지 (실데이터 — 상태 기반)
+  // 지역별 등록현황 — 서버 province 집계
+  const PCO={};PROVINCES.forEach(([n,x,y])=>{PCO[n]=[x,y];});
+  const regions=sum.regions||[];const maxc=Math.max(1,...regions.map(r=>r.count),1);
+  const bubbles=regions.filter(r=>PCO[r.province]).map(r=>{const[x,y]=PCO[r.province];const v=r.count;
+    const col=v>=maxc*0.66?'#16A34A':v>=maxc*0.33?'#2563EB':'#D97706';const rr=11+Math.sqrt(v)*5;
+    return `<div class="mapbubble" title="${esc(r.province)}: ${v}건 · 클릭하여 조회" onclick="filterList('region','${esc(r.province)}')"
+      style="position:absolute;left:${x}%;top:${y}%;transform:translate(-50%,-50%);width:${rr*2}px;height:${rr*2}px;border-radius:50%;background:${col}33;border:2px solid ${col};display:grid;place-items:center;cursor:pointer;font-size:12px;font-weight:700;color:${col}">${v}</div>`;}).join("");
+  const mapped=regions.reduce((a,b)=>a+b.count,0);const unassigned=sum.unassigned||0;
+  // 알림·공지 (cases의 due_date/status 기반)
   const alerts=[];
   cases.forEach(c=>{const s=c.status||"";const nm=c.company_name||short(c.case_id);
     const dd=dueDays(c.due_date);
     if(dd!=null&&dd<=7)alerts.push([dd<0?"bad":"warn",dd<0?"⛔":"⏰",`${nm} — 처리 기한 ${dd<0?Math.abs(dd)+"일 초과":dd===0?"오늘":"D-"+dd}`,c.case_id]);
     if(/corrective/i.test(s))alerts.push(["bad","⛔",`${nm} — 시정조치 필요`,c.case_id]);
     else if(/reject/i.test(s))alerts.push(["bad","⛔",`${nm} — 반려 처리됨`,c.case_id]);
-    else if(/requested|scheduled|in_review/i.test(s))alerts.push(["info","ℹ",`${nm} — ${s}`,c.case_id]);});
+    else if(/requested|scheduled|in_review/i.test(s))alerts.push(["info","ℹ",`${nm} — ${esc(koText(s)||s)}`,c.case_id]);});
   alerts.sort((a,b)=>({bad:0,warn:1,info:2}[a[0]]-{bad:0,warn:1,info:2}[b[0]]));
   const notif=alerts.slice(0,6);
-  // 역할별 작업 큐 (audit/fatwa worklist)
-  let workq=[],workLabel="";
-  if(ROLE==="auditor"){workq=await API("/audit/queue").catch(()=>[]);workLabel="심사 대기 · Audit";}
-  else if(ROLE==="sharia"){workq=await API("/fatwa/queue").catch(()=>[]);workLabel="파트와 심의대기 · Fatwa";}
-  else if(ROLE==="ops"||ROLE==="admin"){const[qa,qf]=await Promise.all([API("/audit/queue").catch(()=>[]),API("/fatwa/queue").catch(()=>[])]);workq=[...qa,...qf];workLabel="작업 큐(심사·파트와) · Worklist";}
+  // 역할별 작업 큐 — 서버 집계(worklist)
+  const workq=sum.worklist||[];
+  const workLabel=ROLE==="auditor"?"심사 대기 · Audit":ROLE==="sharia"?"파트와 심의대기 · Fatwa":(ROLE==="ops"||ROLE==="admin")?"작업 큐(심사·파트와) · Worklist":"";
   const workCard=workLabel?`<div class="card" style="margin-bottom:16px"><h3>🗂 ${workLabel}<span class="r">${workq.length}건 · 클릭→상세</span></h3>
     <div class="body tight"><table><thead><tr><th>ID</th><th>기업</th><th>단계</th><th>경로</th></tr></thead>
-      <tbody>${workq.length?workq.map(q=>`<tr class="clickable" onclick="openCase('${q.case_id}')"><td style="font-family:ui-monospace,monospace;font-size:11px">${short(q.case_id)}</td><td><b>${esc(q.company||"—")}</b></td><td>${tag("info",q.stage||"—")}</td><td>${bTag(q.pathway==='self_declare'?'info':'mute',q.pathway||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">대기 항목 없음</td></tr>'}</tbody></table></div></div>`:'';
-  // 다중 케이스 준비도 비교 (S18-2)
-  const rdCases=cases.slice(0,6);
-  const rds=await Promise.all(rdCases.map(c=>API(`/cases/${c.case_id}/readiness`).catch(()=>null)));
-  const rdRows=rdCases.map((c,i)=>{const rd=rds[i];if(!rd)return"";const sc=rd.readiness||0;
-    return `<tr class="clickable" onclick="openCase('${c.case_id}')"><td><b>${esc(c.company_name||short(c.case_id))}</b></td>
-      <td><span class="tag t-${sc>=80?'ok':sc>=50?'warn':'bad'}">${sc}%</span></td>
+      <tbody>${workq.length?workq.map(q=>`<tr class="clickable" onclick="openCase('${q.case_id}')"><td style="font-family:ui-monospace,monospace;font-size:11px">${short(q.case_id)}</td><td><b>${esc(q.company||"—")}</b></td><td>${bTag("info",q.stage)}</td><td>${bTag(q.pathway==='self_declare'?'info':'mute',q.pathway||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">대기 항목 없음</td></tr>'}</tbody></table></div></div>`:'';
+  // 다중 케이스 준비도 비교 — 서버 집계(readiness)
+  const rdRows=(sum.readiness||[]).map(rd=>`<tr class="clickable" onclick="openCase('${rd.case_id}')"><td><b>${esc(rd.company||short(rd.case_id))}</b></td>
+      <td><span class="tag t-${rd.readiness>=80?'ok':rd.readiness>=50?'warn':'bad'}">${rd.readiness}%</span></td>
       <td>${bTag(rd.band==='ready'?'ok':rd.band==='warn'?'warn':'bad',rd.band||'—')}</td>
-      <td>${bTag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')}</td></tr>`;}).filter(Boolean).join("");
+      <td>${bTag(rd.pathway==='self_declare'?'info':'mute',rd.pathway||'—')}</td></tr>`).join("");
   const roleTip={client:"신청·원재료·문서 준비 상태를 확인하세요.",consultant:"담당 케이스 진행과 청구를 관리하세요.",auditor:"현장 실사·모의심사 대상을 확인하세요.",sharia:"파트와 심의·인증서 발급 대기를 확인하세요.",ops:"전 과정 총괄·최종 승인 대기를 확인하세요.",admin:"시스템 전체 현황입니다."}[ROLE]||"";
   return `
   <div class="banner info" style="margin-bottom:16px">👤 <b>${esc(ROLE_DEF[ROLE].ko)}</b> — ${esc(roleTip)}</div>
@@ -708,7 +684,7 @@ SCREEN.dashboard=async()=>{
   </div>
   ${workCard}
   <div class="grid side" style="margin-bottom:16px">
-    <div class="card"><h3>🗺 지역별 등록현황 <span class="en">· By region</span><span class="r">주소 기반 · ${Object.keys(rc).length}개 지역</span></h3>
+    <div class="card"><h3>🗺 지역별 등록현황 <span class="en">· By region</span><span class="r">서버 집계 · ${regions.length}개 지역</span></h3>
       <div class="body">
         <div class="mapwrap">${bubbles||'<div style="display:grid;place-items:center;height:100%;color:var(--ink3);text-align:center;padding:20px">주소가 입력된 케이스가 없습니다.<br>신청 화면에서 <b>공장 주소</b>를 입력하면 지역별로 집계됩니다.</div>'}
           <div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--ink3)">🇮🇩 Indonesia · ${mapped}건 매핑 · 미지정 ${unassigned}건</div></div>
@@ -727,7 +703,7 @@ SCREEN.dashboard=async()=>{
     <div class="card"><h3>최근 감사 이벤트 <span class="en">· Audit events</span><span class="r">🔗 해시체인</span></h3>
       <div class="list">${evHtml}</div></div>
   </div>
-  ${rdRows?`<div class="card" style="margin-top:16px"><h3>케이스 준비도 비교 <span class="en">· Readiness</span><span class="r">상위 ${rdCases.length}건 · 클릭→상세</span></h3>
+  ${rdRows?`<div class="card" style="margin-top:16px"><h3>케이스 준비도 비교 <span class="en">· Readiness</span><span class="r">상위 ${(sum.readiness||[]).length}건 · 클릭→상세</span></h3>
     <div class="body tight"><table><thead><tr><th>기업 · Company</th><th>준비도</th><th>밴드</th><th>경로</th></tr></thead><tbody>${rdRows}</tbody></table></div></div>`:''}`;
 };
 
@@ -741,7 +717,7 @@ SCREEN.caseList=async()=>{
   else if(f==="progress")cases=cases.filter(c=>!_iss(c)&&!_act(c));
   if(FILTERS.status)cases=cases.filter(c=>c.status===FILTERS.status);
   if(FILTERS.q){const q=FILTERS.q.toLowerCase();cases=cases.filter(c=>(c.company_name||"").toLowerCase().includes(q)||c.case_id.toLowerCase().includes(q));}
-  if(FILTERS.region){await ensureRegions(cases);cases=cases.filter(c=>REGION_CACHE[c.case_id]===FILTERS.region);}
+  if(FILTERS.region){cases=cases.filter(c=>c.province===FILTERS.region);}
   const pg=pageSlice("caseList",cases,10);
   const rows=pg.items.length?pg.items.map(c=>`<tr class="clickable" onclick="openCase('${c.case_id}')">
       <td style="font-family:ui-monospace,monospace;font-size:12px">${short(c.case_id)} <span class="go-arrow">→</span></td>
