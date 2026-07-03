@@ -11,6 +11,9 @@ from . import auth
 ACTION_ROLES = {
     "certificate.issue": {"operator"},
     "certificate.unlock": {"operator"},
+    "certificate.suspend": {"operator"},               # 정지
+    "certificate.revoke": {"operator"},                # 철회
+    "certificate.reactivate": {"operator"},            # 정지 해제
     "certificate.renew": {"operator"},                 # 승인·실행
     "certificate.renew_request": {"applicant", "consultant"},  # 신청
     "fatwa.propose": {"fatwa_liaison"},                # 가승인(SoD)
@@ -24,6 +27,9 @@ ACTION_ROLES = {
 ACTION_ENDPOINTS = {
     "certificate.issue": ("POST", "/cases/{cid}/certificate/issue", None),
     "certificate.unlock": ("POST", "/cases/{cid}/certificate/unlock", {"reason": "계약테스트사유"}),
+    "certificate.suspend": ("POST", "/cases/{cid}/certificate/suspend", {"reason": "계약테스트사유"}),
+    "certificate.revoke": ("POST", "/cases/{cid}/certificate/revoke", {"reason": "계약테스트사유"}),
+    "certificate.reactivate": ("POST", "/cases/{cid}/certificate/reactivate", {"reason": "계약테스트사유"}),
     "certificate.renew": ("POST", "/cases/{cid}/renew", None),
     "certificate.renew_request": ("POST", "/cases/{cid}/renew/request", None),
     "fatwa.propose": ("PATCH", "/cases/{cid}/fatwa", {"decision": "approved"}),

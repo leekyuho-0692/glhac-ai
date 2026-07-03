@@ -275,6 +275,10 @@ class UnlockReq(BaseModel):
     reason: str = Field(min_length=5)   # 언락 사유 필수(감사 추적)
 
 
+class CertStatusReq(BaseModel):
+    reason: str = Field(min_length=5)   # 정지/철회/재개 사유 필수(감사·통지)
+
+
 class RenewRequestReq(BaseModel):
     reason: Optional[str] = None
 

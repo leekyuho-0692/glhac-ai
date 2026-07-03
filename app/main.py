@@ -2053,6 +2053,67 @@ def get_certificate(case_id: str, user=Depends(auth.get_current_user), db: Sessi
                            "signed_at": str(sig.signed_at)} if sig else None)}
 
 
+# ---------- 인증서 lifecycle: 정지/철회/재개 (§5.1·§5.2) ----------
+def _cert_status_change(db, case_id, user, action, new_status, from_status, reason,
+                        event, title, body):
+    """정지/철회/재개 공통 — from_status 인증서만 대상, 사유·통지·감사."""
+    c = _get_case(db, case_id, user)
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    if not cert:
+        raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
+    if cert.status != from_status:
+        raise HTTPException(409, {"code": "BAD_CERT_STATE", "have": cert.status, "need": from_status})
+    cert.status = new_status
+    sm.record_event(db, c, c.status, c.status, action, user["role"], user["uid"],
+                    {"certificate_no": cert.certificate_no, "reason": reason,
+                     "from": from_status, "to": new_status})
+    _notify(db, c, event, title, "%s — %s" % (c.company_name or "", body),
+            channels=["inapp", "sms"], role="applicant")
+    db.commit()
+    return {"certificate_no": cert.certificate_no, "status": cert.status, "reason": reason}
+
+
+@app.post("/cases/{case_id}/certificate/suspend")
+def suspend_certificate(case_id: str, body: schemas.CertStatusReq,
+                        user=Depends(rbac.require_action("certificate.suspend")),
+                        db: Session = Depends(get_db)):
+    """활성 인증서 정지(active → suspended). 사유 필수·신청자 통지."""
+    return _cert_status_change(db, case_id, user, "certificate.suspend", "suspended", "active",
+                               body.reason.strip(), "certificate_suspended", "인증서 정지",
+                               "할랄 인증서가 정지되었습니다.")
+
+
+@app.post("/cases/{case_id}/certificate/reactivate")
+def reactivate_certificate(case_id: str, body: schemas.CertStatusReq,
+                           user=Depends(rbac.require_action("certificate.reactivate")),
+                           db: Session = Depends(get_db)):
+    """정지 인증서 재개(suspended → active). 재심/보완 승인 후."""
+    return _cert_status_change(db, case_id, user, "certificate.reactivate", "active", "suspended",
+                               body.reason.strip(), "certificate_reactivated", "인증서 재개",
+                               "할랄 인증서 정지가 해제되었습니다.")
+
+
+@app.post("/cases/{case_id}/certificate/revoke")
+def revoke_certificate(case_id: str, body: schemas.CertStatusReq,
+                       user=Depends(rbac.require_action("certificate.revoke")),
+                       db: Session = Depends(get_db)):
+    """인증서 철회(active/suspended → withdrawn). 되돌릴 수 없음·통지."""
+    c = _get_case(db, case_id, user)
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    if not cert:
+        raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
+    if cert.status not in ("active", "suspended"):
+        raise HTTPException(409, {"code": "BAD_CERT_STATE", "have": cert.status})
+    cert.status = "withdrawn"
+    sm.record_event(db, c, c.status, c.status, "certificate.revoke", user["role"], user["uid"],
+                    {"certificate_no": cert.certificate_no, "reason": body.reason.strip()})
+    _notify(db, c, "certificate_revoked", "인증서 철회",
+            "%s — 할랄 인증서가 철회되었습니다." % (c.company_name or ""),
+            channels=["inapp", "sms"], role="applicant")
+    db.commit()
+    return {"certificate_no": cert.certificate_no, "status": "withdrawn", "reason": body.reason.strip()}
+
+
 # ---------- 전자서명 (§6.4 e-signature, 내부 HMAC MVP) ----------
 def _cert_canonical(cert):
     return "|".join([cert.certificate_no or "", cert.issue_date or "", cert.expiry_date or "",

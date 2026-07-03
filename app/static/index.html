@@ -1651,7 +1651,13 @@ SCREEN.certificate=async()=>{
     <div class="card"><h3>할랄 인증서 <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
       <div class="body">${certCard}
         ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="printCert('${id}')">🖨 인증서 다운로드·인쇄 · PDF</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
-        ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span></div>`:''}</div></div>
+        ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span></div>`:''}
+        ${c.issued&&c.status&&c.status!=='active'?`<div class="banner ${c.status==='withdrawn'?'bad':'warn'}" style="margin-top:10px">${c.status==='withdrawn'?'⛔ 철회됨 · Withdrawn':'⏸ 정지됨 · Suspended'}</div>`:''}
+        ${c.issued&&CAN("certificate.suspend")?`<div class="btnrow" style="margin-top:10px">
+          ${c.status==='active'?`<button class="btn warn" onclick="certLifecycle('${id}','suspend')">⏸ 정지 · Suspend</button>`:''}
+          ${c.status==='suspended'?`<button class="btn ok" onclick="certLifecycle('${id}','reactivate')">▶ 재개 · Reactivate</button>`:''}
+          ${(c.status==='active'||c.status==='suspended')?`<button class="btn bad" onclick="certLifecycle('${id}','revoke')">⛔ 철회 · Revoke</button>`:''}
+        </div>`:''}</div></div>
     <div class="card"><h3>발급·사후관리 <span class="en">· Post-cert</span></h3>
       <div class="body">
         ${c.issued&&c.days_to_expiry!=null?(()=>{const d=c.days_to_expiry;const th=d<=30?["bad","D-30"]:d<=60?["warn","D-60"]:d<=90?["info","D-90"]:null;
@@ -1680,6 +1686,14 @@ SCREEN.certificate=async()=>{
 };
 async function issueCert(id){try{await API(`/cases/${id}/certificate/issue`,{method:"POST",body:"{}"});toast("인증서 발급");await loadCases(true);applyView();}catch(e){toast("발급 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
 async function signCert(id){if(!confirm("발급된 인증서에 전자서명할까요?"))return;try{await API(`/cases/${id}/certificate/sign`,{method:"POST",body:"{}"});toast("전자서명 완료");applyView();}catch(e){toast("서명 실패 · "+(e&&e.code?e.code:""));}}
+async function certLifecycle(id,action){
+  const label={suspend:"정지",reactivate:"재개",revoke:"철회"}[action];
+  const r=await dialog(`인증서 ${label} · ${action}`,[{key:"reason",label:"사유 · Reason (필수, 5자 이상)",type:"textarea",required:true}]);
+  if(!r)return;
+  if(action==='revoke'&&!confirm("철회는 되돌릴 수 없습니다. 계속할까요?"))return;
+  try{await API(`/cases/${id}/certificate/${action}`,{method:"POST",body:JSON.stringify({reason:r.reason})});toast("인증서 "+label);applyView();}
+  catch(e){toast(label+" 실패 · "+(e&&e.code?e.code:""));}
+}
 async function changeImpact(id){
   const r=await dialog("변경영향 분석 · Change impact",[{key:"change_type",label:"변경 유형",type:"select",options:[{value:"material_source_changed",label:"원료 원산지 변경"},{value:"supplier_changed",label:"공급사 변경"},{value:"material_added",label:"원료 추가"},{value:"process_changed",label:"공정 변경"}]}]);
   if(!r)return;

@@ -130,6 +130,43 @@ def test_org_overview():
                      headers=_h(_tok(c, "operator1", "pw"))).status_code == 403
 
 
+def test_certificate_lifecycle():
+    """§5.1 인증서 정지/재개/철회 — 권한·상태전이·공개검증 반영."""
+    from app import models
+    from app.db import SessionLocal
+    with TestClient(app) as c:
+        atok = _tok(c, "admin", "admin")
+        otok = _tok(c, "operator1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "LcCo"},
+                     headers=_h(atok)).json()["case_id"]
+        db = SessionLocal()
+        try:
+            db.add(models.HalalCertificate(case_id=cid, certificate_no="HC-LC", scope=["P"],
+                   issue_date="2026-01-01", expiry_date="2030-01-01", status="active",
+                   qr_token="lctoken"))
+            db.commit()
+        finally:
+            db.close()
+        # consultant는 정지 불가(certificate.suspend 매트릭스)
+        assert c.post(f"/cases/{cid}/certificate/suspend", json={"reason": "위반 확인함"},
+                      headers=_h(_tok(c, "consultant1", "pw"))).status_code == 403
+        # operator 정지 → 공개검증 valid=false
+        assert c.post(f"/cases/{cid}/certificate/suspend", json={"reason": "위반 확인됨"},
+                      headers=_h(otok)).json()["status"] == "suspended"
+        assert c.get("/verify/lctoken").json()["valid"] is False
+        # 재개 → active → valid=true
+        assert c.post(f"/cases/{cid}/certificate/reactivate", json={"reason": "보완 완료됨"},
+                      headers=_h(otok)).json()["status"] == "active"
+        assert c.get("/verify/lctoken").json()["valid"] is True
+        # 철회 → withdrawn → valid=false
+        assert c.post(f"/cases/{cid}/certificate/revoke", json={"reason": "중대 위반으로 철회"},
+                      headers=_h(otok)).json()["status"] == "withdrawn"
+        assert c.get("/verify/lctoken").json()["valid"] is False
+        # 철회 후 정지 불가(BAD_CERT_STATE)
+        assert c.post(f"/cases/{cid}/certificate/suspend", json={"reason": "불가한 시도임"},
+                      headers=_h(otok)).status_code == 409
+
+
 def test_certificate_signature_and_verify():
     """§6.4 전자서명: 서명 생성·공개검증 signature_valid·권한(operator)."""
     from app import models
@@ -644,7 +681,8 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_payment_and_analytics, test_org_overview,
+    tests = [test_certificate_lifecycle,
+             test_payment_and_analytics, test_org_overview,
              test_certificate_signature_and_verify, test_integration_event_idempotency,
              test_audit_plan_lifecycle, test_fatwa_voting_quorum, test_car_lifecycle_closes_finding,
              test_alembic_scaffolding, test_datalist_meta_search_sort,
