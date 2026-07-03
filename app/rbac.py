@@ -20,6 +20,19 @@ ACTION_ROLES = {
     "fatwa.approve_final": {"operator"},               # 최종승인(SoD)
     "fatwa.document.read": {"fatwa_liaison", "operator"},
     "lph.assign": {"fatwa_liaison", "operator"},
+    # 워크플로 액션 배치 이관
+    "audit.mock_decide": {"auditor", "fatwa_liaison", "operator"},
+    "material.add": {"applicant", "consultant", "penyelia_halal"},
+    "material.delete": {"applicant", "consultant", "penyelia_halal"},
+    "material.evidence": {"applicant", "consultant", "penyelia_halal"},
+    "document.review": {"consultant"},
+    "sjph.edit": {"applicant", "consultant", "penyelia_halal"},
+    "finding.add": {"auditor", "consultant"},
+    "finding.update": {"auditor", "consultant"},
+    "onsite.checklist": {"auditor", "consultant"},
+    "auditor_pool.add": {"operator"},
+    "penyelia.update": {"applicant", "consultant", "penyelia_halal"},
+    "pendamping.verify": {"pendamping_pph"},
     "admin.user.manage": set(),                        # admin 전용
 }
 
@@ -36,6 +49,16 @@ ACTION_ENDPOINTS = {
     "fatwa.approve_final": ("POST", "/cases/{cid}/fatwa/final-approve", None),
     "fatwa.document.read": ("POST", "/cases/{cid}/fatwa/document", None),
     "lph.assign": ("POST", "/cases/{cid}/lph-assignment", {"lph_name": "x"}),
+    "audit.mock_decide": ("POST", "/cases/{cid}/mock-audit/decision", {"result": "pass"}),
+    "material.add": ("POST", "/cases/{cid}/materials", {"name": "x"}),
+    "material.delete": ("DELETE", "/materials/ctdummy", None),
+    "document.review": ("PATCH", "/documents/ctdummy/review", {"review_status": "approved"}),
+    "sjph.edit": ("PATCH", "/cases/{cid}/sjph", {"element": "commitment", "status": "ok"}),
+    "finding.add": ("POST", "/cases/{cid}/findings", {"finding": "x", "severity": "minor"}),
+    "finding.update": ("PATCH", "/findings/ctdummy", {"status": "closed"}),
+    "onsite.checklist": ("POST", "/cases/{cid}/onsite-checklist", {"item_key": "x", "result": "comply"}),
+    "auditor_pool.add": ("POST", "/cases/{cid}/auditor-pool", {"name": "x"}),
+    "pendamping.verify": ("POST", "/cases/{cid}/pendamping/verify", {"decision": "verified"}),
     "admin.user.manage": ("POST", "/admin/users", {"username": "ct", "password": "pw", "role": "applicant"}),
 }
 

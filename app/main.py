@@ -878,7 +878,7 @@ def mock_audit_get(case_id: str, user=Depends(auth.get_current_user), db: Sessio
 
 @app.post("/cases/{case_id}/mock-audit/decision")
 def mock_audit_decide(case_id: str, body: schemas.MockAuditDecisionReq,
-                      user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator")),
+                      user=Depends(rbac.require_action("audit.mock_decide")),
                       db: Session = Depends(get_db)):
     """모의심사 판정(통과/거부). 감사 이벤트로 기록. 거부 시 사유 필수. 클라이언트 미노출."""
     c = _get_case(db, case_id, user)
@@ -981,7 +981,7 @@ def add_product(case_id: str, body: schemas.ProductCreate,
 
 @app.post("/cases/{case_id}/materials")
 def add_material(case_id: str, body: schemas.MaterialCreate,
-                 user=Depends(auth.require_roles("applicant", "consultant", "penyelia_halal")),
+                 user=Depends(rbac.require_action("material.add")),
                  db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     sk = True if body.source_known is None else bool(body.source_known)
@@ -1000,7 +1000,7 @@ def add_material(case_id: str, body: schemas.MaterialCreate,
 
 @app.delete("/materials/{material_id}")
 def delete_material(material_id: str,
-                    user=Depends(auth.require_roles("applicant", "consultant", "penyelia_halal")),
+                    user=Depends(rbac.require_action("material.delete")),
                     db: Session = Depends(get_db)):
     m = db.get(models.Material, material_id)
     if m:
@@ -1031,7 +1031,7 @@ def list_products(case_id: str, user=Depends(auth.get_current_user), db: Session
 
 @app.post("/cases/{case_id}/materials/{material_id}/evidence")
 def add_material_evidence(case_id: str, material_id: str, body: schemas.MaterialEvidenceReq,
-                          user=Depends(auth.require_roles("applicant", "consultant", "penyelia_halal")),
+                          user=Depends(rbac.require_action("material.evidence")),
                           db: Session = Depends(get_db)):
     """원재료 증빙 업로드 → evidence_provided=true → 자동 재스크리닝 (순환점 C1)."""
     from .intake import _ctype
@@ -1392,7 +1392,7 @@ def get_document_file(document_id: str, user=Depends(auth.get_current_user),
 
 @app.patch("/documents/{document_id}/review")
 def review_document(document_id: str, body: schemas.DocReviewReq,
-                    user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
+                    user=Depends(rbac.require_action("document.review")), db: Session = Depends(get_db)):
     d = db.get(models.DocumentAsset, document_id)
     if not d:
         raise HTTPException(404, {"code": "DOC_NOT_FOUND"})
@@ -1434,7 +1434,7 @@ def get_sjph(case_id: str, user=Depends(auth.get_current_user), db: Session = De
 
 @app.patch("/cases/{case_id}/sjph")
 def patch_sjph(case_id: str, body: schemas.SjphElementReq,
-               user=Depends(auth.require_roles("penyelia_halal", "consultant", "applicant")),
+               user=Depends(rbac.require_action("sjph.edit")),
                db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     have = _ensure_hpas(db, case_id)
@@ -1560,7 +1560,7 @@ def list_findings(case_id: str, user=Depends(auth.get_current_user), db: Session
 
 @app.post("/cases/{case_id}/findings")
 def add_finding(case_id: str, body: schemas.FindingReq,
-                user=Depends(auth.require_roles("auditor", "consultant")),
+                user=Depends(rbac.require_action("finding.add")),
                 db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     sev = body.severity or "minor"
@@ -1578,7 +1578,7 @@ def add_finding(case_id: str, body: schemas.FindingReq,
 
 @app.patch("/findings/{finding_id}")
 def update_finding(finding_id: str, body: schemas.FindingStatusReq,
-                   user=Depends(auth.require_roles("auditor", "consultant")),
+                   user=Depends(rbac.require_action("finding.update")),
                    db: Session = Depends(get_db)):
     f = db.get(models.AuditFinding, finding_id)
     if not f:
@@ -1639,7 +1639,7 @@ def get_onsite_checklist(case_id: str, user=Depends(auth.get_current_user),
 
 @app.post("/cases/{case_id}/onsite-checklist")
 def update_onsite_checklist(case_id: str, body: schemas.OnsiteChecklistReq,
-                            user=Depends(auth.require_roles("auditor", "consultant")),
+                            user=Depends(rbac.require_action("onsite.checklist")),
                             db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     if body.item_key not in {k for k, _ in ONSITE_ITEMS}:
@@ -1679,7 +1679,7 @@ def get_auditor_pool(case_id: str, user=Depends(auth.get_current_user),
 
 @app.post("/cases/{case_id}/auditor-pool")
 def add_auditor_pool(case_id: str, body: schemas.AuditorPoolReq,
-                     user=Depends(auth.require_roles("operator")),
+                     user=Depends(rbac.require_action("auditor_pool.add")),
                      db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     cur = db.query(models.AuditorPool).filter_by(case_id=case_id).count()
@@ -3035,7 +3035,7 @@ def list_penyelia(org_id: str, user=Depends(auth.get_current_user), db: Session 
 
 @app.patch("/orgs/{org_id}/penyelia/{penyelia_id}")
 def update_penyelia(org_id: str, penyelia_id: str, body: schemas.PenyeliaUpdate,
-                    user=Depends(auth.require_roles("applicant", "penyelia_halal", "consultant")),
+                    user=Depends(rbac.require_action("penyelia.update")),
                     db: Session = Depends(get_db)):
     if user["role"] != "admin" and org_id != user["org_id"]:
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
@@ -3063,7 +3063,7 @@ def assign_pendamping(case_id: str, body: schemas.PendampingAssign,
 
 @app.post("/cases/{case_id}/pendamping/verify")
 def verify_pendamping(case_id: str, body: schemas.PendampingVerify,
-                      user=Depends(auth.require_roles("pendamping_pph")), db: Session = Depends(get_db)):
+                      user=Depends(rbac.require_action("pendamping.verify")), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     pa = (db.query(models.PendampingAssignment).filter_by(case_id=case_id)
           .order_by(models.PendampingAssignment.assignment_id.desc()).first())
