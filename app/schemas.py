@@ -281,3 +281,8 @@ class RenewRequestReq(BaseModel):
 
 class IssueReq(BaseModel):
     reason: Optional[str] = None   # operator 발급 사유(감사 추적)
+
+
+class AiReviewReq(BaseModel):
+    reviewer_status: str            # accepted | overridden
+    note: Optional[str] = None

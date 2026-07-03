@@ -1549,13 +1549,14 @@ SCREEN.certificate=async()=>{
       <div class="divide"></div>
       <div class="small">본 제품은 SJPH 및 샤리아 기준에 따라 <b>할랄(HALAL)</b> 인증되었음을 증명합니다.</div>
       <div class="no">No. ${esc(c.certificate_no||"—")} · Issued ${esc(c.issue_date||"—")} · Valid until ${esc(c.expiry_date||"—")}</div>
+      ${c.qr_token?`<div class="small" style="margin-top:8px;word-break:break-all">🔗 공개검증 · Verify: <a href="/ui/verify.html?token=${encodeURIComponent(c.qr_token)}" target="_blank" style="color:var(--gold)">/ui/verify.html?token=${esc((c.qr_token||"").slice(0,10))}…</a></div>`:''}
     </div>`
     :`<div class="banner info">아직 발급되지 않았습니다 · not issued</div>`;
   return `
   <div class="grid side">
     <div class="card"><h3>할랄 인증서 <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
       <div class="body">${certCard}
-        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="printCert('${id}')">🖨 인증서 다운로드·인쇄 · PDF</button></div>`:''}</div></div>
+        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="printCert('${id}')">🖨 인증서 다운로드·인쇄 · PDF</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}</div>`:''}</div></div>
     <div class="card"><h3>발급·사후관리 <span class="en">· Post-cert</span></h3>
       <div class="body">
         ${c.issued&&c.days_to_expiry!=null?(()=>{const d=c.days_to_expiry;const th=d<=30?["bad","D-30"]:d<=60?["warn","D-60"]:d<=90?["info","D-90"]:null;

@@ -92,6 +92,39 @@ def test_rbac_action_matrix_contract():
                     assert r.status_code == 403, (action, role, "차단 기대인데 %d" % r.status_code, r.text)
 
 
+def test_qr_public_verify():
+    """§11.5/§14: 공개 인증서 검증 — 무인증, 민감정보 미노출."""
+    from app import models
+    from app.db import SessionLocal
+    with TestClient(app):
+        db = SessionLocal()
+        try:
+            cs = models.CaseApplication(company_name="QR Co", org_id="org_demo", status="certificate_issued")
+            db.add(cs)
+            db.flush()
+            db.add(models.HalalCertificate(case_id=cs.case_id, certificate_no="HC-QRTEST",
+                   scope=["ProdA"], issue_date="2026-01-01", expiry_date="2030-01-01",
+                   status="active", qr_token="qrtoken_test_123"))
+            db.commit()
+        finally:
+            db.close()
+        with TestClient(app) as c:
+            j = c.get("/verify/qrtoken_test_123").json()   # 공개, 무인증
+            assert j["valid"] is True and j["company_name"] == "QR Co" and j["certificate_no"] == "HC-QRTEST", j
+            assert c.get("/verify/nope").status_code == 404
+
+
+def test_ai_extractions_endpoints():
+    """§7.2/§7.4: AI 근거저장 조회·리뷰 엔드포인트."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "AiT"},
+                     headers=_h(tok)).json()["case_id"]
+        assert c.get(f"/cases/{cid}/ai-extractions", headers=_h(tok)).json() == []
+        assert c.patch("/ai-extractions/nope/review", json={"reviewer_status": "accepted"},
+                       headers=_h(tok)).status_code == 404
+
+
 def test_unlock_requires_operator():
     """문서 P0: 인증서 unlock에서 consultant 제거(operator 전용)."""
     with TestClient(app) as c:
@@ -423,7 +456,8 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_rbac_action_matrix_contract,
+    tests = [test_qr_public_verify, test_ai_extractions_endpoints,
+             test_rbac_action_matrix_contract,
              test_unlock_requires_operator, test_fatwa_document_restricted,
              test_get_fatwa_masks_committee, test_renew_operator_only,
              test_upload_validation_rejects_bad_type,

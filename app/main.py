@@ -325,6 +325,18 @@ def notify_drain(user=Depends(auth.require_roles()), db: Session = Depends(get_d
     return drain_notifications(db)
 
 
+def _save_ai_extraction(db, case_id, source, extracted, confidence=None, evidence=None,
+                        model_name="local-ocr", model_version="v3"):
+    """AI/OCR 결과 근거저장 (§7.2) — 원문 근거·신뢰도·모델버전·리뷰상태 함께 보존."""
+    row = models.AiExtraction(case_id=case_id, source=source, model_provider="local",
+                              model_name=model_name, model_version=model_version,
+                              extracted_json=extracted, confidence=confidence,
+                              evidence=(evidence or "")[:4000], reviewer_status="unreviewed")
+    db.add(row)
+    db.flush()
+    return row
+
+
 def _register_from_judgment(db, c, res):
     created = []
     for ing in res["ingredients"]:
@@ -334,12 +346,20 @@ def _register_from_judgment(db, c, res):
         db.add(m)
         db.flush()
         created.append({"material_id": m.material_id, "name": m.name, "result": m.screen_result})
+    # §7.2 AI 근거저장 — 라벨 판정 원문/신뢰도 보존(Human-in-the-loop 추적)
+    ext = _save_ai_extraction(db, c.case_id, "label_judgment",
+                              {"ingredients": res.get("ingredients"),
+                               "critical_count": res.get("critical_count"),
+                               "pathway_implication": res.get("pathway_implication")},
+                              confidence=res.get("confidence"),
+                              evidence=res.get("raw_text") or res.get("explanation", ""),
+                              model_name="ocr_pipeline")
     sm.record_event(db, c, c.status, c.status, "materials.from_label", "ai", None,
-                    {"count": len(created), "source": "label_ocr"})
+                    {"count": len(created), "source": "label_ocr", "ai_extraction_id": ext.id})
     db.commit()
     return {"created": created, "count": len(created),
             "critical_count": res["critical_count"], "pathway_implication": res["pathway_implication"],
-            "explanation": res.get("explanation", "")}
+            "explanation": res.get("explanation", ""), "ai_extraction_id": ext.id}
 
 
 # ---------- health / auth ----------
@@ -361,6 +381,25 @@ def health(db: Session = Depends(get_db)):
 def public_config():
     """로그인 화면용 공개 설정 — dev 모드에서만 데모 계정 노출."""
     return {"dev_mode": auth.dev_mode()}
+
+
+@app.get("/verify/{qr_token}")
+def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
+    """공개 인증서 검증(§11.5·§14 P1) — 인증 불필요, 민감정보 미노출."""
+    cert = db.query(models.HalalCertificate).filter_by(qr_token=qr_token).first()
+    if not cert:
+        raise HTTPException(404, {"code": "CERT_NOT_FOUND", "valid": False})
+    c = db.get(models.CaseApplication, cert.case_id)
+    valid = cert.status == "active"
+    try:
+        if valid and date.fromisoformat(cert.expiry_date) < date.today():
+            valid = False
+    except Exception:  # noqa: BLE001
+        pass
+    return {"valid": valid, "certificate_no": cert.certificate_no,
+            "company_name": (c.company_name if c else None),
+            "status": cert.status, "issue_date": cert.issue_date,
+            "expiry_date": cert.expiry_date, "scope": cert.scope}
 
 
 @app.get("/rbac/actions")
@@ -1692,6 +1731,12 @@ def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
         raise HTTPException(409, {"code": "PAYMENT_PENDING"})
     if sm.open_major_nc(db, case_id) > 0:
         raise HTTPException(409, {"code": "UNRESOLVED_MAJOR_NC"})
+    # 문서 P0(§4.2): 필수문서 all-approved — 반려/재작업 상태 문서가 남아있으면 발급 불가
+    bad_docs = (db.query(models.DocumentAsset)
+                .filter(models.DocumentAsset.case_id == case_id,
+                        models.DocumentAsset.review_status.in_(("rejected", "rework"))).count())
+    if bad_docs > 0:
+        raise HTTPException(409, {"code": "DOCUMENTS_NOT_APPROVED", "unresolved": bad_docs})
     ex = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
     if ex:
         return {"certificate_no": ex.certificate_no, "issue_date": ex.issue_date,
@@ -1707,6 +1752,8 @@ def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
     db.add(cert)
     db.flush()
     cert.certificate_no = "HC-" + cert.id[:8].upper()
+    import secrets as _secrets
+    cert.qr_token = _secrets.token_urlsafe(24)   # §6.4 공개 검증 토큰
     # 상태 전이 — certificate_issued는 보호상태(raw transition 금지). 이 전용 엔드포인트가 소유.
     frm = c.status
     if "certificate_issued" in sm.TRANSITIONS.get(c.status, set()):
@@ -1732,7 +1779,8 @@ def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
         raise
     return {"certificate_no": cert.certificate_no, "issue_date": str(today),
             "expiry_date": str(expiry), "scope": prods,
-            "frozen_product_ids": prod_ids, "frozen_material_ids": mat_ids}
+            "frozen_product_ids": prod_ids, "frozen_material_ids": mat_ids,
+            "qr_token": cert.qr_token, "verify_url": "/verify/" + cert.qr_token}
 
 
 @app.post("/cases/{case_id}/renew/request")
@@ -1819,7 +1867,9 @@ def get_certificate(case_id: str, user=Depends(auth.get_current_user), db: Sessi
             "issue_date": cert.issue_date, "expiry_date": cert.expiry_date, "status": cert.status,
             "days_to_expiry": days,
             "frozen_product_ids": cert.frozen_product_ids,
-            "frozen_material_ids": cert.frozen_material_ids}
+            "frozen_material_ids": cert.frozen_material_ids,
+            "qr_token": cert.qr_token,
+            "verify_url": ("/verify/" + cert.qr_token) if cert.qr_token else None}
 
 
 @app.post("/cases/{case_id}/certificate/change-impact")
@@ -2423,6 +2473,37 @@ def ai_ocr(body: schemas.OCRReq, user=Depends(auth.get_current_user)):
 def ai_label_judgment(body: schemas.LabelJudgmentReq, user=Depends(auth.get_current_user)):
     from .ocr_pipeline import judge_label
     return judge_label(_sandboxed_path(body.image_path), body.locale or "ko-KR")
+
+
+@app.get("/cases/{case_id}/ai-extractions")
+def list_ai_extractions(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """§7.4: AI 결과 근거 조회 — 화면에서 원문 근거·신뢰도·리뷰이력 확인."""
+    _get_case(db, case_id, user)
+    rows = (db.query(models.AiExtraction).filter_by(case_id=case_id)
+            .order_by(models.AiExtraction.created_at.desc()).limit(100).all())
+    return [{"id": r.id, "source": r.source, "model_name": r.model_name,
+             "model_version": r.model_version, "confidence": r.confidence,
+             "extracted": r.extracted_json, "evidence": r.evidence,
+             "reviewer_status": r.reviewer_status, "reviewer_id": r.reviewer_id,
+             "reviewer_note": r.reviewer_note, "created_at": str(r.created_at)} for r in rows]
+
+
+@app.patch("/ai-extractions/{ext_id}/review")
+def review_ai_extraction(ext_id: str, body: schemas.AiReviewReq,
+                         user=Depends(auth.require_roles("consultant", "penyelia_halal", "auditor", "fatwa_liaison")),
+                         db: Session = Depends(get_db)):
+    """§7.2: reviewer override 이력 — AI 결과를 실무자가 수용/재정의."""
+    r = db.get(models.AiExtraction, ext_id)
+    if not r:
+        raise HTTPException(404, {"code": "EXTRACTION_NOT_FOUND"})
+    _get_case(db, r.case_id, user)
+    if body.reviewer_status not in ("accepted", "overridden"):
+        raise HTTPException(400, {"code": "BAD_STATUS", "allowed": ["accepted", "overridden"]})
+    r.reviewer_status = body.reviewer_status
+    r.reviewer_id = user["uid"]
+    r.reviewer_note = body.note
+    db.commit()
+    return {"id": r.id, "reviewer_status": r.reviewer_status}
 
 
 @app.post("/cases/{case_id}/materials/from-label")

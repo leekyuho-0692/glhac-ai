@@ -230,6 +230,7 @@ class HalalCertificate(Base):
     status = Column(String, default="active")  # active|suspended|withdrawn
     frozen_product_ids = Column(JSON)    # 발급 시 동결 제품 ID 목록 — S3-3
     frozen_material_ids = Column(JSON)   # 발급 시 동결 원재료 ID 목록 — S3-3
+    qr_token = Column(String, index=True)   # 공개 검증 토큰(§6.4) — /verify/{token}
 
 
 class FatwaDecision(Base):
@@ -371,3 +372,21 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False)   # applicant|penyelia_halal|consultant|pendamping_pph|auditor|fatwa_liaison|admin
     org_id = Column(String, nullable=False)
+
+
+class AiExtraction(Base):
+    """AI/OCR 결과 근거저장 (보강안 §7.2) — Human-in-the-loop 추적성."""
+    __tablename__ = "ai_extraction"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, index=True)
+    source = Column(String)          # ocr|label_judgment|biz_doc
+    model_provider = Column(String)  # local|paddleocr 등
+    model_name = Column(String)
+    model_version = Column(String)
+    extracted_json = Column(JSON)    # 추출 필드/판정
+    confidence = Column(Float)
+    evidence = Column(Text)          # 원문 근거 텍스트(요약)
+    reviewer_status = Column(String, default="unreviewed")  # unreviewed|accepted|overridden
+    reviewer_id = Column(String)
+    reviewer_note = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)

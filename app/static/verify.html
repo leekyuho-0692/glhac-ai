@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Verifikasi Sertifikat Halal · 할랄 인증서 검증 · GL-HAC AI</title>
+<style>
+  :root{--ok:#16a34a;--bad:#dc2626;--ink:#0f172a;--ink2:#475569;--line:#e2e8f0}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Pretendard",-apple-system,Segoe UI,Roboto,sans-serif;background:#f1f5f9;color:var(--ink);
+    display:flex;min-height:100vh;align-items:center;justify-content:center;padding:20px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;max-width:460px;width:100%;
+    box-shadow:0 4px 24px rgba(0,0,0,.06);overflow:hidden}
+  .head{padding:22px 24px;border-bottom:1px solid var(--line)}
+  .head b{font-size:18px}.head small{display:block;color:var(--ink2);margin-top:2px}
+  .body{padding:24px}
+  .badge{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:17px;padding:10px 16px;border-radius:999px;margin-bottom:16px}
+  .badge.ok{background:#dcfce7;color:var(--ok)}.badge.bad{background:#fee2e2;color:var(--bad)}
+  .row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .row:last-child{border:none}.row .k{color:var(--ink2)}.row .v{font-weight:600;text-align:right}
+  .muted{color:var(--ink2);font-size:13px;margin-top:14px;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head"><b>GL-HAC AI</b><small>Verifikasi Sertifikat Halal · 할랄 인증서 공개 검증</small></div>
+  <div class="body" id="out"><div class="muted">Memuat… · 확인 중…</div></div>
+</div>
+<script>
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function row(k,v){return `<div class="row"><span class="k">${k}</span><span class="v">${esc(v||"-")}</span></div>`;}
+(async function(){
+  const out=document.getElementById("out");
+  const token=new URLSearchParams(location.search).get("token")||location.pathname.split("/").pop();
+  if(!token||token==="verify.html"){out.innerHTML='<div class="badge bad">⚠ Token tidak ada</div>';return;}
+  try{
+    const r=await fetch("/verify/"+encodeURIComponent(token));
+    if(!r.ok){out.innerHTML='<div class="badge bad">✕ Tidak ditemukan · 조회 실패</div><div class="muted">인증서를 찾을 수 없습니다.</div>';return;}
+    const d=await r.json();
+    const ok=d.valid;
+    out.innerHTML=
+      `<div class="badge ${ok?"ok":"bad"}">${ok?"✓ VALID · 유효":"✕ TIDAK VALID · 무효"}</div>`+
+      row("No. Sertifikat · 인증번호",d.certificate_no)+
+      row("Perusahaan · 기업",d.company_name)+
+      row("Status",d.status)+
+      row("Terbit · 발급",d.issue_date)+
+      row("Berlaku s/d · 만료",d.expiry_date)+
+      row("Cakupan · 범위",(d.scope||[]).join(", "))+
+      `<div class="muted">Halaman verifikasi publik. Data sensitif tidak ditampilkan. · 공개 검증 페이지 — 민감정보는 표시되지 않습니다.</div>`;
+  }catch(e){out.innerHTML='<div class="badge bad">✕ Error</div>';}
+})();
+</script>
+</body>
+</html>
