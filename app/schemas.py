@@ -269,3 +269,15 @@ class AdminOrgReq(BaseModel):
 
 class SeedResetReq(BaseModel):
     confirm: str   # "RESET" 필요
+
+
+class UnlockReq(BaseModel):
+    reason: str = Field(min_length=5)   # 언락 사유 필수(감사 추적)
+
+
+class RenewRequestReq(BaseModel):
+    reason: Optional[str] = None
+
+
+class IssueReq(BaseModel):
+    reason: Optional[str] = None   # operator 발급 사유(감사 추적)

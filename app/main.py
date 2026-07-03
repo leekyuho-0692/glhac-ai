@@ -52,6 +52,48 @@ def _sandboxed_path(raw_path: str) -> str:
     return p
 
 
+# 문서 P0(§9.3): 업로드 검증 — 크기·확장자 allowlist·매직바이트 sniff
+_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+_UPLOAD_EXT_ALLOW = {"pdf", "png", "jpg", "jpeg", "webp", "gif",
+                     "xlsx", "xls", "docx", "doc", "csv", "txt", "hwp"}
+
+
+def _validate_upload(file_b64, filename, max_bytes=_UPLOAD_MAX_BYTES):
+    """base64 업로드 검증 후 정제된 b64 문자열 반환. 위반 시 400/413/415."""
+    b64 = (file_b64 or "").split(",")[-1]
+    try:
+        raw = base64.b64decode(b64)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, {"code": "BAD_UPLOAD"})
+    if not raw:
+        raise HTTPException(400, {"code": "EMPTY_UPLOAD"})
+    if len(raw) > max_bytes:
+        raise HTTPException(413, {"code": "UPLOAD_TOO_LARGE", "max_bytes": max_bytes})
+    ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
+    if ext and ext not in _UPLOAD_EXT_ALLOW:
+        raise HTTPException(415, {"code": "UNSUPPORTED_TYPE", "ext": ext})
+    head = raw[:8]
+    if head.startswith(b"%PDF"):
+        kind = "pdf"
+    elif head.startswith(b"\x89PNG"):
+        kind = "png"
+    elif head.startswith(b"\xff\xd8\xff"):
+        kind = "jpg"
+    elif head.startswith(b"GIF8"):
+        kind = "gif"
+    elif head[:4] == b"RIFF":
+        kind = "webp"
+    elif head.startswith(b"PK\x03\x04"):
+        kind = "zip"   # xlsx/docx
+    else:
+        kind = None
+    # 이미지/PDF는 확장자와 실제 내용 일치 강제(위장 차단)
+    expect = {"pdf": "pdf", "png": "png", "jpg": "jpg", "jpeg": "jpg", "gif": "gif", "webp": "webp"}
+    if ext in expect and kind is not None and kind != expect[ext]:
+        raise HTTPException(415, {"code": "CONTENT_MISMATCH", "ext": ext, "sniffed": kind})
+    return b64
+
+
 def _migrate():
     """경량 마이그레이션 — 모델 정의와 기존 테이블을 대조해 누락 컬럼 idempotent 추가.
     create_all은 기존 테이블을 ALTER하지 않으므로, baseline 이후 추가된 전 컬럼을 자동 보강(P0-5)."""
@@ -911,7 +953,7 @@ def add_material_evidence(case_id: str, material_id: str, body: schemas.Material
     m = db.get(models.Material, material_id)
     if not m or m.case_id != case_id:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
-    b64 = body.file_b64.split(",")[-1]
+    b64 = _validate_upload(body.file_b64, body.filename)
     db.add(models.DocumentAsset(case_id=case_id, filename=body.filename, doc_type=body.evidence_type,
                                 material_id=material_id, review_status="pending",
                                 content_b64=b64 if len(b64) < 4_000_000 else None,
@@ -998,7 +1040,7 @@ def add_product_photo(case_id: str, product_id: str, body: schemas.ProductPhotoR
     p = db.get(models.Product, product_id)
     if not p or p.case_id != case_id:
         raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
-    b64 = body.file_b64.split(",")[-1]
+    b64 = _validate_upload(body.file_b64, body.filename)
     db.add(models.DocumentAsset(case_id=case_id, filename=body.filename, doc_type="product_photo",
                                 product_id=product_id, review_status="pending",
                                 content_b64=b64 if len(b64) < 4_000_000 else None,
@@ -1219,7 +1261,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                 db.add(models.Product(case_id=case_id, name=pn))
         applied["products_added"] = len(names)
     from .intake import _ctype
-    _b64 = body.file_b64.split(",")[-1]
+    _b64 = _validate_upload(body.file_b64, body.filename)
     db.add(models.DocumentAsset(case_id=case_id, filename=body.filename, doc_type=body.doc_type,
                                 confidence=float(r.get("confidence") or 0), fields=f,
                                 text_excerpt=r.get("excerpt"),
@@ -1251,7 +1293,11 @@ def get_document_file(document_id: str, user=Depends(auth.get_current_user),
     d = db.get(models.DocumentAsset, document_id)
     if not d or not d.content_b64:
         raise HTTPException(404, {"code": "FILE_NOT_AVAILABLE"})
-    _get_case(db, d.case_id, user)   # 조직격리 검증
+    c = _get_case(db, d.case_id, user)   # 조직격리 검증
+    # 문서 P0: 다운로드 감사로그 — 누가·언제·어떤 문서를 내려받았는지 추적
+    sm.record_event(db, c, c.status, c.status, "document.download", user["role"], user["uid"],
+                    {"document_id": document_id, "filename": d.filename})
+    db.commit()
     raw = _b64lib.b64decode(d.content_b64)
     return Response(content=raw, media_type=d.content_type or "application/octet-stream",
                     headers={"Content-Disposition": "inline; filename*=UTF-8''" +
@@ -1620,13 +1666,19 @@ def add_lph(case_id: str, body: schemas.LphAssignReq,
 
 
 @app.post("/cases/{case_id}/certificate/issue")
-def issue_certificate(case_id: str, user=Depends(auth.require_roles("operator")),
+def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
+                      user=Depends(auth.require_roles("operator")),
                       db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     if c.fatwa_status != "approved":
         raise HTTPException(409, {"code": "FATWA_NOT_APPROVED"})
     if not c.scope_frozen:
         raise HTTPException(409, {"code": "SCOPE_NOT_FROZEN"})
+    # 문서 P0(§4.2): 발급 full guard — 결제 완료·미해결 Major 부적합 없음
+    if db.query(models.Invoice).filter_by(case_id=case_id, status="unpaid").count() > 0:
+        raise HTTPException(409, {"code": "PAYMENT_PENDING"})
+    if sm.open_major_nc(db, case_id) > 0:
+        raise HTTPException(409, {"code": "UNRESOLVED_MAJOR_NC"})
     ex = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
     if ex:
         return {"certificate_no": ex.certificate_no, "issue_date": ex.issue_date,
@@ -1647,7 +1699,7 @@ def issue_certificate(case_id: str, user=Depends(auth.require_roles("operator"))
     if "certificate_issued" in sm.TRANSITIONS.get(c.status, set()):
         c.status = "certificate_issued"
     sm.record_event(db, c, frm, c.status, "certificate.issue", "system", user["uid"],
-                    {"certificate_no": cert.certificate_no})
+                    {"certificate_no": cert.certificate_no, "reason": (body.reason or "").strip() or None})
     # S3-3: freeze snapshot — 발급 시 제품/원재료 ID 동결
     prod_ids = [p.product_id for p in db.query(models.Product).filter_by(case_id=case_id)]
     mat_ids = [m.material_id for m in db.query(models.Material).filter_by(case_id=case_id)]
@@ -1670,10 +1722,25 @@ def issue_certificate(case_id: str, user=Depends(auth.require_roles("operator"))
             "frozen_product_ids": prod_ids, "frozen_material_ids": mat_ids}
 
 
+@app.post("/cases/{case_id}/renew/request")
+def renew_request(case_id: str, body: schemas.RenewRequestReq = schemas.RenewRequestReq(),
+                  user=Depends(auth.require_roles("applicant", "consultant")),
+                  db: Session = Depends(get_db)):
+    """문서 P0: 갱신 신청(신청↔승인 분리) — 신청자/컨설턴트가 갱신 의사를 등록. 실제 파생은 operator 승인."""
+    src = _get_case(db, case_id, user)
+    if src.status != "certificate_issued":
+        raise HTTPException(400, {"code": "NOT_ISSUED", "detail": "인증서 발급 케이스만 갱신 신청 가능합니다."})
+    sm.record_event(db, src, src.status, src.status, "case.renew_requested", user["role"], user["uid"],
+                    {"reason": (body.reason or "").strip() or None})
+    db.commit()
+    return {"case_id": case_id, "renewal_requested": True,
+            "message": "갱신 신청이 접수되었습니다. 운영자 승인 후 갱신 케이스가 생성됩니다."}
+
+
 @app.post("/cases/{case_id}/renew")
-def renew_case(case_id: str, user=Depends(auth.require_roles("applicant", "consultant")),
+def renew_case(case_id: str, user=Depends(auth.require_roles("operator")),
                db: Session = Depends(get_db)):
-    """S8-2: C5 갱신 케이스 파생 — certificate_issued 케이스에서 갱신 케이스 복제."""
+    """S8-2: C5 갱신 케이스 파생(승인·실행) — 문서 P0: operator 전용(신청과 권한 분리)."""
     src = _get_case(db, case_id, user)
     if src.status != "certificate_issued":
         raise HTTPException(400, {"code": "NOT_ISSUED", "detail": "인증서 발급 케이스만 갱신 가능합니다."})
@@ -1707,16 +1774,21 @@ def renew_case(case_id: str, user=Depends(auth.require_roles("applicant", "consu
 
 
 @app.post("/cases/{case_id}/certificate/unlock")
-def unlock_certificate(case_id: str, user=Depends(auth.require_roles("consultant")),
+def unlock_certificate(case_id: str, body: schemas.UnlockReq,
+                       user=Depends(auth.require_roles("operator")),
                        db: Session = Depends(get_db)):
-    """S3-3: 재인증(renewal) 언락 — scope_frozen 해제."""
+    """S3-3: 재인증(renewal) 언락 — scope_frozen 해제. 문서 P0: operator 전용 + 사유 필수(consultant 제거)."""
     c = _get_case(db, case_id, user)
     if not c.scope_frozen:
         raise HTTPException(409, {"code": "NOT_FROZEN"})
+    reason = (body.reason or "").strip()
+    if len(reason) < 5:
+        raise HTTPException(400, {"code": "REASON_REQUIRED"})
     c.scope_frozen = False
-    sm.record_event(db, c, c.status, c.status, "certificate.unlock", user["role"], user["uid"], {})
+    sm.record_event(db, c, c.status, c.status, "certificate.unlock", user["role"], user["uid"],
+                    {"reason": reason})
     db.commit()
-    return {"scope_frozen": False, "message": "재인증 모드 언락 완료"}
+    return {"scope_frozen": False, "reason": reason, "message": "재인증 모드 언락 완료"}
 
 
 @app.get("/cases/{case_id}/certificate")
@@ -1778,21 +1850,31 @@ def change_impact_history(case_id: str, user=Depends(auth.get_current_user),
              "created_at": str(r.created_at)} for r in rows]
 
 
+def _fatwa_privileged(user):
+    """Fatwa 위원회 내부정보 열람 권한 — 문서 P0(§3.1): sharia/operator/admin만."""
+    return user["role"] in ("fatwa_liaison", "operator", "admin")
+
+
 @app.get("/cases/{case_id}/fatwa")
 def get_fatwa(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     prods = db.query(models.Product).filter_by(case_id=case_id).all()
-    return {"decision": fd.decision if fd else "pending", "decision_no": fd.decision_no if fd else None,
-            "committee_note": fd.committee_note if fd else None,
-            "committee_head": fd.committee_head if fd else None,
-            "committee_secretary": fd.committee_secretary if fd else None,
-            "committee_members": fd.committee_members if fd else [],
-            "product_scope": fd.product_scope if fd else [],
-            "products": [{"product_id": p.product_id, "name": p.name} for p in prods],
-            "fatwa_status": c.fatwa_status, "scope_frozen": c.scope_frozen,
-            "final_approved_at": str(fd.final_approved_at) if fd and fd.final_approved_at else None,
-            "final_approver": fd.final_approver if fd else None}
+    # 결과(decision/status)는 케이스 참여자 모두 조회 가능. 위원회 내부정보는 권한자만.
+    out = {"decision": fd.decision if fd else "pending", "decision_no": fd.decision_no if fd else None,
+           "product_scope": fd.product_scope if fd else [],
+           "products": [{"product_id": p.product_id, "name": p.name} for p in prods],
+           "fatwa_status": c.fatwa_status, "scope_frozen": c.scope_frozen,
+           "final_approved_at": str(fd.final_approved_at) if fd and fd.final_approved_at else None}
+    if _fatwa_privileged(user):
+        out.update({"committee_note": fd.committee_note if fd else None,
+                    "committee_head": fd.committee_head if fd else None,
+                    "committee_secretary": fd.committee_secretary if fd else None,
+                    "committee_members": fd.committee_members if fd else [],
+                    "final_approver": fd.final_approver if fd else None})
+    else:
+        out["committee_restricted"] = True   # 내부정보는 sharia/operator만 열람
+    return out
 
 
 @app.post("/cases/{case_id}/fatwa/final-approve")
@@ -1859,7 +1941,9 @@ def patch_fatwa(case_id: str, body: schemas.FatwaReq,
 
 
 @app.post("/cases/{case_id}/fatwa/document")
-def fatwa_document(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+def fatwa_document(case_id: str, user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+                   db: Session = Depends(get_db)):
+    # 문서 P0(§3.1): 파트와 결정문(위원회 심의 산출물)은 sharia/operator/admin 전용
     c = _get_case(db, case_id, user)
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     prods = db.query(models.Product).filter_by(case_id=case_id).all()
@@ -2243,7 +2327,7 @@ def add_sjph_evidence(case_id: str, body: schemas.SjphEvidenceReq,
     _get_case(db, case_id, user)
     if body.item_key not in {k for k, _ in SJPH_EVIDENCE_ITEMS}:
         raise HTTPException(422, {"code": "BAD_ITEM_KEY"})
-    b64 = body.file_b64.split(",")[-1]
+    b64 = _validate_upload(body.file_b64, body.filename)
     doc = models.DocumentAsset(case_id=case_id, filename=body.filename, doc_type="sjph_evidence",
                                review_status="pending", content_b64=b64 if len(b64) < 4_000_000 else None,
                                content_type=_ctype(body.filename))

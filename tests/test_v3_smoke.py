@@ -71,6 +71,62 @@ def test_public_config_reports_dev():
         assert c.get("/public-config").json()["dev_mode"] is True
 
 
+def test_unlock_requires_operator():
+    """문서 P0: 인증서 unlock에서 consultant 제거(operator 전용)."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "UnlockT"},
+                     headers=_h(tok)).json()["case_id"]
+        r = c.post(f"/cases/{cid}/certificate/unlock", json={"reason": "재인증 사유"}, headers=_h(tok))
+        assert r.status_code == 403, r.text
+
+
+def test_fatwa_document_restricted():
+    """문서 P0: 파트와 결정문 조회는 sharia/operator/admin 전용."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "FwDoc"},
+                     headers=_h(tok)).json()["case_id"]
+        assert c.post(f"/cases/{cid}/fatwa/document", headers=_h(tok)).status_code == 403
+        ftok = _tok(c, "fatwa1", "pw")
+        assert c.post(f"/cases/{cid}/fatwa/document", headers=_h(ftok)).status_code == 200
+
+
+def test_get_fatwa_masks_committee():
+    """문서 P0: 위원회 내부정보는 권한자만 — 비권한 역할엔 마스킹."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "FwMask"},
+                     headers=_h(tok)).json()["case_id"]
+        j = c.get(f"/cases/{cid}/fatwa", headers=_h(tok)).json()
+        assert j.get("committee_restricted") is True and "committee_members" not in j, j
+
+
+def test_renew_operator_only():
+    """문서 P0: /renew(승인·실행)은 operator 전용, applicant는 신청만."""
+    with TestClient(app) as c:
+        tok = _tok(c, "applicant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "RenewT"},
+                     headers=_h(tok)).json()["case_id"]
+        assert c.post(f"/cases/{cid}/renew", headers=_h(tok)).status_code == 403
+
+
+def test_upload_validation_rejects_bad_type():
+    """문서 P0(§9.3): 허용외 확장자 업로드 거부(415)."""
+    import base64 as _b
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "UpT"},
+                     headers=_h(tok)).json()["case_id"]
+        mid = c.post(f"/cases/{cid}/materials", json={"name": "sugar"},
+                     headers=_h(tok)).json()["material_id"]
+        b64 = _b.b64encode(b"MZ\x90bad").decode()
+        r = c.post(f"/cases/{cid}/materials/{mid}/evidence",
+                   json={"evidence_type": "msds", "file_b64": b64, "filename": "malware.exe"},
+                   headers=_h(tok))
+        assert r.status_code == 415, r.text
+
+
 def test_invoice_negative_rejected():
     """음수 청구액은 422(Phase B 검증)."""
     with TestClient(app) as c:
@@ -346,7 +402,10 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_password_pbkdf2_and_legacy_upgrade,
+    tests = [test_unlock_requires_operator, test_fatwa_document_restricted,
+             test_get_fatwa_masks_committee, test_renew_operator_only,
+             test_upload_validation_rejects_bad_type,
+             test_password_pbkdf2_and_legacy_upgrade,
              test_login_rate_limited,
              test_label_judgment_path_traversal_blocked,
              test_public_config_reports_dev,
