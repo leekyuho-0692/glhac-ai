@@ -1524,6 +1524,21 @@ async function glhacSelectCase(cid){glhacSetCase(cid);toast('케이스 선택됨
 /* 네비게이션 시 동적 목록 섹션(caseList)을 항상 최신으로 다시 렌더 */
 (function(){if(typeof go!=='function')return;var _g=go;go=function(id,btn,silent){_g(id,btn,silent);if(!silent){try{if(currentSection==='caseList'&&typeof renderCaseList==='function')renderCaseList();}catch(e){}}};})();
 async function glhacNewCaseFromList(){try{const c=await glhacApi('/cases',{method:'POST',body:JSON.stringify({company_name:'My Company',is_msme:true,org_id:glhacOrg()})});glhacSetCase(c.case_id);toast('새 케이스 생성');if(typeof go==='function')go('application');if(typeof renderAll==='function')renderAll();}catch(e){toast('실패')}}
+/* v3: 역할별 작업 큐(worklist) — 화면 상단에 대기 케이스 DataList. 행→케이스 전환 */
+async function glhacWorklist(el, apiPath, title){
+  if(!el) return;
+  var qid = 'wl_'+apiPath.replace(/[^a-z]/gi,'');
+  el.insertAdjacentHTML('afterbegin','<div class="card" style="border-left:5px solid #652672;margin-bottom:14px"><div class="ai-head"><b>'+esc(title)+'</b></div><div id="'+qid+'">불러오는 중… · Loading…</div></div>');
+  var rows=[]; try{ rows=await glhacApi(apiPath); }catch(e){ rows=[]; }
+  if(typeof dlRender==='function') dlRender(qid,{idKey:'case_id',pageSize:10,empty:'대기 케이스 없음 · No pending cases',
+    columns:[
+      {key:'company',label:'기업 · Company',fmt:function(v,r){return '<b>'+esc(v||(r.case_id||'').slice(0,8))+'</b>'}},
+      {key:'stage',label:'단계 · Stage',sort:true,fmt:function(v){return '<span class="pill blue">'+esc(v)+'</span>'}},
+      {key:'pathway',label:'경로 · Pathway',fmt:function(v){return '<span class="pill '+({self_declare:'green',reguler:'purple'}[v]||'gray')+'">'+esc(v)+'</span>'}},
+      {key:'_act',label:'',sort:false,fmt:function(_v,r){return '<button class="btn small primary" onclick="glhacSwitchCase(\''+r.case_id+'\')">열기 · Open</button>'}}
+    ],
+    rows:rows});
+}
 function glhacSwitchCase(cid){glhacSetCase(cid);var fns={application:renderApplication,materials:renderMaterials,documents:renderDocuments,audit:renderAudit,sjphIntegration:renderSJPHIntegration,sjphEvaluation:renderSJPHEvaluation,invoice:renderInvoice,fatwa:renderFatwa,certificate:renderCertificate,workflow:renderWorkflow};var fn=fns[currentSection];if(typeof fn==='function')fn();}
 async function renderCaseSwitcher(id){var el=document.getElementById('caseSwitcherBar');if(!el)return;if(!glhacToken()||CASE_SECTIONS.indexOf(id)<0){el.style.display='none';return;}var cases=[];try{cases=await glhacApi('/cases');}catch(e){el.style.display='none';return;}if(cases.length<=1){el.style.display='none';return;}var cur=GLHAC_CASE;el.style.display='flex';el.className='case-switcher-bar';el.innerHTML='<span style="font-size:11px;font-weight:700;color:#652672;white-space:nowrap;margin-right:4px">케이스:</span>'+cases.map(function(c){return '<button class="case-tab'+(c.case_id===cur?' active':'')+'" onclick="glhacSwitchCase(\''+c.case_id+'\')"><b>'+esc(c.company_name||c.case_id.slice(0,8))+'</b><span class="pill '+(c.pathway==='self_declare'?'green':c.pathway==='reguler'?'purple':'gray')+'" style="font-size:10px;padding:2px 6px">'+c.status+'</span></button>';}).join('');}
 
@@ -1556,6 +1571,7 @@ function glhacDueDays(d){if(!d)return null;var now=new Date();now.setHours(0,0,0
 async function renderAudit(){const el=document.getElementById('audit');if(!el)return;
   if(typeof renderAuditV1==='function'){try{renderAuditV1()}catch(e){}}
   if(!glhacToken())return;
+  glhacWorklist(el, '/audit/queue', '🏭 심사 큐 · Audit Queue');
   await glhacLoadEnums();
   let cid,fnd=[],lph=[],pool=[],cl={items:[],comply:0,nonconformity:0},lphrefs=[];
   try{cid=await glhacEnsureCase();
@@ -1629,6 +1645,7 @@ async function glhacPayInvoice(id){try{await glhacApi('/invoices/'+id+'/pay',{me
 async function renderFatwa(){const el=document.getElementById('fatwa');if(!el)return;
   if(typeof renderFatwaV1==='function'){try{renderFatwaV1()}catch(e){}}
   if(!glhacToken())return;
+  glhacWorklist(el, '/fatwa/queue', '⚖️ 심의 대기 큐 · Fatwa Queue');
   let cid,fw={decision:'pending',scope_frozen:false,products:[]};try{cid=await glhacEnsureCase();fw=await glhacApi('/cases/'+cid+'/fatwa')}catch(e){return}
   const canC=glhacRole()==='consultant'||glhacRole()==='admin'||glhacRole()==='fatwa_liaison';
   const dc={approved:'green',rejected:'red',conditional:'amber',pending:'gray'}[fw.decision]||'gray';
