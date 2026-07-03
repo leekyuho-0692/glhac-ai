@@ -606,7 +606,17 @@ SCREEN.dashboard=async()=>{
     else if(/reject/i.test(s))alerts.push(["bad","⛔",`${nm} — 반려 처리됨`,c.case_id]);
     else if(/requested|scheduled|in_review/i.test(s))alerts.push(["info","ℹ",`${nm} — ${s}`,c.case_id]);});
   const notif=alerts.slice(0,6);
+  // 다중 케이스 준비도 비교 (S18-2)
+  const rdCases=cases.slice(0,6);
+  const rds=await Promise.all(rdCases.map(c=>API(`/cases/${c.case_id}/readiness`).catch(()=>null)));
+  const rdRows=rdCases.map((c,i)=>{const rd=rds[i];if(!rd)return"";const sc=rd.readiness||0;
+    return `<tr class="clickable" onclick="openCase('${c.case_id}')"><td><b>${esc(c.company_name||short(c.case_id))}</b></td>
+      <td><span class="tag t-${sc>=80?'ok':sc>=50?'warn':'bad'}">${sc}%</span></td>
+      <td>${tag(rd.band==='ready'?'ok':rd.band==='warn'?'warn':'bad',rd.band||'—')}</td>
+      <td>${tag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')}</td></tr>`;}).filter(Boolean).join("");
+  const roleTip={client:"신청·원재료·문서 준비 상태를 확인하세요.",consultant:"담당 케이스 진행과 청구를 관리하세요.",auditor:"현장 실사·모의심사 대상을 확인하세요.",sharia:"파트와 심의·인증서 발급 대기를 확인하세요.",ops:"전 과정 총괄·최종 승인 대기를 확인하세요.",admin:"시스템 전체 현황입니다."}[ROLE]||"";
   return `
+  <div class="banner info" style="margin-bottom:16px">👤 <b>${esc(ROLE_DEF[ROLE].ko)}</b> — ${esc(roleTip)}</div>
   <div class="grid four" style="margin-bottom:16px">
     ${kpis.map(([l,n,t,f])=>`<div class="card ${f?'clickable':''}" ${f?`onclick="filterList('${Object.keys(f)[0]}','${Object.values(f)[0]}')"`:''}>
       <div class="body kpi"><span class="n" style="color:var(--${t==='mute'?'ink':t})">${n}</span>
@@ -631,7 +641,9 @@ SCREEN.dashboard=async()=>{
       </div></div>
     <div class="card"><h3>최근 감사 이벤트 <span class="en">· Audit events</span><span class="r">🔗 해시체인</span></h3>
       <div class="list">${evHtml}</div></div>
-  </div>`;
+  </div>
+  ${rdRows?`<div class="card" style="margin-top:16px"><h3>케이스 준비도 비교 <span class="en">· Readiness</span><span class="r">상위 ${rdCases.length}건 · 클릭→상세</span></h3>
+    <div class="body tight"><table><thead><tr><th>기업 · Company</th><th>준비도</th><th>밴드</th><th>경로</th></tr></thead><tbody>${rdRows}</tbody></table></div></div>`:''}`;
 };
 
 /* 2) My Cases */
@@ -679,7 +691,8 @@ function exportCasesCsv(){
 
 /* 3) Workspace */
 SCREEN.workflow=async()=>{
-  const id=CURCASE;const w=await API(`/cases/${id}/workflow`);
+  const id=CURCASE;
+  const [w,verify,tl]=await Promise.all([API(`/cases/${id}/workflow`),API(`/cases/${id}/audit-verify`).catch(()=>null),API(`/cases/${id}/timeline`).catch(()=>({events:[]}))]);
   const phases=w.phases||[];
   const flow=phases.length?phases.map((p,i)=>{
     const cl=p.done?"done":p.current?"now":"";
@@ -701,6 +714,15 @@ SCREEN.workflow=async()=>{
         ${blockers.length?blockers.map(b=>`<div class="banner bad" style="margin-bottom:8px">⛔ ${esc(b.code||b.message||b)}</div>`).join(""):'<div class="banner ok" style="margin-bottom:10px">✓ 차단 없음 · no blockers</div>'}
         <div class="field"><label>다음 가능 상태 · Next states</label>
           <div class="btnrow">${nexts.length?nexts.map(s=>`<button class="btn pri" onclick="advance('${id}','${esc(s)}')">${esc(s)} →</button>`).join(""):'<span class="chip">없음</span>'}</div></div>
+      </div></div>
+  </div>
+  <div class="grid side" style="margin-top:16px">
+    <div class="card"><h3>전체 타임라인 <span class="en">· Timeline</span><span class="r">${(tl.events||[]).length}건</span></h3>
+      <div class="list" style="max-height:340px;overflow:auto">${(tl.events||[]).length?(tl.events||[]).slice().reverse().map(e=>`<div class="li"><div class="ic t-${statusColor(e.to||e.action)}">•</div><div class="tx"><b>${esc(e.action||"event")}</b><div>${esc(e.from||"")} → ${esc(e.to||"")} · ${esc(e.actor||"")}</div></div><div class="when">${esc((e.hash||"").slice(0,10))}</div></div>`).join(""):'<div class="li"><div class="tx muted small">이벤트 없음</div></div>'}</div></div>
+    <div class="card"><h3>감사체인 무결성 <span class="en">· Hash-chain</span><span class="r">S16</span></h3>
+      <div class="body">
+        ${verify?`<div class="banner ${verify.integrity_ok?'ok':'bad'}" style="margin-bottom:12px">${verify.integrity_ok?'✓ 무결성 검증 통과':'⛔ 체인 손상 감지'} · 이벤트 ${verify.count||0}건${verify.broken_at?` · 손상지점 ${esc(String(verify.broken_at))}`:''}</div>
+          <div class="small muted">append-only 해시체인으로 감사 이벤트의 위·변조를 탐지합니다.</div>`:'<div class="muted small">검증 정보를 불러올 수 없습니다.</div>'}
       </div></div>
   </div>`;
 };
@@ -813,6 +835,11 @@ SCREEN.materials=async()=>{
         ${bad.length?`<div class="banner bad" style="margin-bottom:12px">⛔ 하람/고위험 의심 ${bad.length}건 — 증빙 필수</div>
           ${bad.map(m=>`<div class="field"><label>${esc(m.name)}</label><div class="v small">매칭: <b style="color:var(--bad)">${esc(m.result||m.status)}</b>${m.note?"<br>"+esc(m.note):""}</div></div>`).join("")}`
           :'<div class="banner ok">✓ 하람·고위험 의심 없음</div>'}
+        ${(()=>{const ne=mats.filter(m=>(m.evidence_count||0)===0&&/needs|mushbooh|warn|의심/i.test((m.status||"")+(m.result||"")+(m.severity||"")));return ne.length?`<div class="divide"></div><div class="small" style="font-weight:600;margin-bottom:6px">📎 증빙 미제출 ${ne.length}건</div>${ne.map(m=>`<div class="li" style="padding:6px 0"><div class="tx"><b>${esc(m.name)}</b><div>${esc(m.status||m.result||"")}</div></div><div class="when">${canMatWrite?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="attachEvidence('${id}','${m.material_id}')">증빙</button>`:'미제출'}</div></div>`).join("")}`:"";})()}
+        <div class="divide"></div>
+        <div class="field"><label>AI 원재료 해설 · Explain</label>
+          <div class="btnrow"><input class="box" id="explInput" placeholder="원재료명 (예: gelatin)" style="flex:1"><button class="btn" onclick="explainMaterial()">🤖 해설</button></div></div>
+        <div id="explOut" class="small muted"></div>
       </div></div>
   </div>`;
 };
@@ -820,6 +847,13 @@ async function exportMaterialsXlsx(id){
   try{const r=await fetch(`/cases/${id}/materials/export.xlsx`,{headers:{Authorization:"Bearer "+token()}});
     if(!r.ok)throw 0;const b=await r.blob();const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="materials_"+short(id)+".xlsx";a.click();toast("Excel 다운로드");}
   catch(_){toast("내보내기 실패");}
+}
+async function explainMaterial(){
+  const nm=(document.getElementById("explInput").value||"").trim();if(!nm){toast("원재료명 입력");return}
+  const o=document.getElementById("explOut");o.textContent="gemma3 생성 중… (수초)";
+  try{const r=await API("/ai/explain",{method:"POST",body:JSON.stringify({name:nm,llm:true})});
+    o.innerHTML='<div class="divide"></div><b>🤖 '+esc(r.verdict||r.status||nm)+(r.severity?' · '+esc(r.severity):'')+'</b><div style="white-space:pre-wrap;margin-top:4px;color:var(--ink2)">'+esc(r.explanation||"(설명 없음)")+'</div>'+((r.sources&&r.sources.length)?'<div class="muted" style="margin-top:6px">근거: '+esc(r.sources.slice(0,3).join(", "))+'</div>':'');
+  }catch(e){o.textContent="해설 실패 · "+(e&&e.code?e.code:"");}
 }
 async function screenText(id){
   const txt=prompt("스크리닝할 원재료 텍스트 · ingredient text","");
@@ -836,6 +870,7 @@ function intakeZip(id){
   inp.click();
 }
 function fileB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]);r.onerror=rej;r.readAsDataURL(file);});}
+function downloadText(fname,text){const blob=new Blob(["﻿"+String(text||"")],{type:"text/plain;charset=utf-8"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=fname;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 function attachEvidence(cid,mid){
   const inp=document.createElement("input");inp.type="file";inp.accept="image/*,.pdf";
   inp.onchange=async()=>{const file=inp.files[0];if(!file)return;
@@ -886,7 +921,7 @@ SCREEN.integration=async()=>{
     </div></div>`:''}`;
 };
 async function matrixLink(id){const product_id=v("mxProd"),material_id=v("mxMat");if(!product_id||!material_id){toast("제품·원재료 선택");return}try{await API(`/cases/${id}/matrix/link`,{method:"POST",body:JSON.stringify({product_id,material_id,linked:true})});toast("매트릭스 링크");applyView();}catch(e){toast("링크 실패 · "+(e&&e.code?e.code:""));}}
-async function genSjph(id){try{await API(`/cases/${id}/sjph/manual`,{method:"POST",body:"{}"});toast("SJPH 문서 생성");applyView();}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
+async function genSjph(id){try{const r=await API(`/cases/${id}/sjph/manual`,{method:"POST",body:"{}"});downloadText("sjph_manual_"+short(id)+".txt",r.manual||"");toast("SJPH 문서 생성·다운로드");}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
 
 /* 7) Documents */
 SCREEN.documents=async()=>{
@@ -918,7 +953,10 @@ SCREEN.documents=async()=>{
       ${sel.fields&&Object.keys(sel.fields).length?`<div style="margin-bottom:10px">${Object.entries(sel.fields).slice(0,8).map(([k,vv])=>`<div class="kv"><span>${esc(k)}</span><b>${esc(vv)}</b></div>`).join("")}</div>`:""}
       <div style="border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:16px;min-height:180px;max-height:340px;overflow:auto;font-size:13px;white-space:pre-wrap;color:var(--ink2)">${esc(sel.excerpt||"추출된 텍스트가 없습니다. 원본을 열어 확인하세요.")}</div>`
     :'<div class="muted small">좌측에서 문서를 선택하면 추출 텍스트·필드가 표시됩니다.</div>';
+  const rvw={};docs.forEach(d=>{const s=d.review_status||"pending";rvw[s]=(rvw[s]||0)+1;});
+  const rvwSummary=docs.length?`<div class="chipbar" style="margin-bottom:14px"><span class="muted small">검수 요약 · Review</span>${Object.entries(rvw).map(([k,vv])=>`<span class="tag t-${statusColor(k)}">${esc(k)} ${vv}</span>`).join("")}</div>`:"";
   return `
+  ${rvwSummary}
   <div class="grid side">
     <div class="card"><h3>필수서류 체크리스트 <span class="en">· Checklist</span><span class="r">${chk.complete?'완료':'미완'}</span></h3>
       <div class="body">${chkHtml}
@@ -930,6 +968,7 @@ SCREEN.documents=async()=>{
     <div class="body">${viewer}</div></div>`;
 };
 function selectDoc(did){DOC_SEL=did;applyView();}
+async function exportCaseJson(id){try{const r=await fetch(`/cases/${id}/export.json`,{headers:{Authorization:"Bearer "+token()}});if(!r.ok)throw 0;const d=await r.json();downloadText("case_"+short(id)+".json",JSON.stringify(d,null,2));toast("JSON 내보내기 완료");}catch(_){toast("내보내기 실패");}}
 async function viewDoc(docId){
   try{const r=await fetch(`/documents/${docId}/file`,{headers:{Authorization:"Bearer "+token()}});
     if(!r.ok){toast("파일 없음");return;}const b=await r.blob();const u=URL.createObjectURL(b);window.open(u,"_blank");setTimeout(()=>URL.revokeObjectURL(u),60000);}
@@ -1067,7 +1106,8 @@ SCREEN.evaluation=async()=>{
   return `
   <div class="grid side">
     <div class="card"><h3>HPAS 자동 평가 <span class="en">· HPAS auto</span><span class="r">${okc}/${els.length} 양호</span></h3>
-      <div class="body tight"><table><thead><tr><th>평가 항목 · Item</th><th>결과</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+      <div class="body tight"><table><thead><tr><th>평가 항목 · Item</th><th>결과</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="applyView()">🔄 HPAS 재판정 · Re-evaluate</button></div></div>
     <div class="card"><h3>파트와 상정 준비 <span class="en">· To Fatwa</span></h3>
       <div class="body">
         <div class="scorebox" style="margin-bottom:14px"><span class="big" style="color:var(--ok)">${okc}</span><span class="muted">/ ${els.length} 요소 충족</span></div>
@@ -1108,7 +1148,13 @@ SCREEN.invoice=async()=>{
       <div class="field"><label>상태 · Status</label><div>${tag(statusColor(sel.status),sel.status||"—")}</div></div>
       ${(canMark&&sel.status!=='paid')?`<button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">결제 표시 · Mark paid</button>`:''}`
     :'<div class="muted small">청구서를 선택하세요.</div>';
+  const st2=inv.reduce((a,i)=>{const t=(i.total==null?i.amount:i.total)||0;a.total+=t;if(i.status==='paid')a.paid+=t;else a.unpaid+=t;return a;},{total:0,paid:0,unpaid:0});
   return `
+  <div class="grid three" style="margin-bottom:16px">
+    <div class="card"><div class="body kpi"><span class="n" style="font-size:24px">${fmtIDR(st2.total)}</span><span class="l">총 청구액 · Total</span></div></div>
+    <div class="card"><div class="body kpi"><span class="n" style="font-size:24px;color:var(--ok)">${fmtIDR(st2.paid)}</span><span class="l">결제 완료 · Paid</span></div></div>
+    <div class="card"><div class="body kpi"><span class="n" style="font-size:24px;color:var(--warn)">${fmtIDR(st2.unpaid)}</span><span class="l">미결제 · Unpaid</span></div></div>
+  </div>
   <div class="grid side">
     <div class="card"><h3>청구서 목록 <span class="en">· Invoices</span><span class="r">${inv.length}건 · row 클릭 → 상세</span></h3>
       <div class="body tight"><table><thead><tr><th>청구번호</th><th>서비스</th><th>금액 · IDR</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -1151,11 +1197,15 @@ SCREEN.fatwa=async()=>{
           <button class="btn pri" style="margin-top:10px" onclick="fatwaDoc('${id}')">결정문 생성 → scope 동결</button>`:""}
       </div></div>
     <div class="card"><h3>위원 구성 <span class="en">· Members</span></h3>
-      <div class="body"><div class="committee">${memHtml}</div></div></div>
+      <div class="body"><div class="committee">${memHtml}</div>
+        <div class="divide"></div>
+        <div class="small" style="font-weight:600;margin-bottom:8px">심의 진행 체크리스트 · Review</div>
+        ${[["위원 구성",members.length>0],["심의 요지 작성",!!fd.committee_note],["결정",!!(fd.decision&&fd.decision!=='pending')],["결정문 생성",!!fd.decision_no]].map(([t,ok])=>`<div class="check"><div class="cbox ${ok?'on':''}">${ok?'✓':''}</div><b style="flex:1">${t}</b><span class="muted small">${ok?'완료':'대기'}</span></div>`).join("")}
+      </div></div>
   </div>`;
 };
 async function fatwaDecide(id,decision){try{await API(`/cases/${id}/fatwa`,{method:"PATCH",body:JSON.stringify({decision})});toast("결정 · "+decision);await loadCases(true);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
-async function fatwaDoc(id){try{await API(`/cases/${id}/fatwa/document`,{method:"POST",body:"{}"});toast("결정문 생성");applyView();}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
+async function fatwaDoc(id){try{const r=await API(`/cases/${id}/fatwa/document`,{method:"POST",body:"{}"});downloadText("fatwa_"+short(id)+".txt",r.document||"");toast("결정문 생성·다운로드");}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
 
 /* 13) Certificate */
 SCREEN.certificate=async()=>{
@@ -1178,6 +1228,7 @@ SCREEN.certificate=async()=>{
       <div class="body">${certCard}</div></div>
     <div class="card"><h3>발급·사후관리 <span class="en">· Post-cert</span></h3>
       <div class="body">
+        ${c.issued&&c.days_to_expiry!=null&&c.days_to_expiry<90?`<div class="banner ${c.days_to_expiry<30?'bad':'warn'}" style="margin-bottom:12px">⏰ 인증서 만료 <b>D-${c.days_to_expiry}</b> — 갱신이 필요합니다 (만료 ${esc(c.expiry_date||"")})</div>`:''}
         <div class="list" style="margin:0 -16px 12px">
           ${[["사후 모니터링","연 1회 정기","info"],["갱신 · Renewal","만료 90일 전","mute"],["변경영향","원료 변경 시 재평가","warn"]]
             .map(([t,s,cl])=>`<div class="li"><div class="ic t-${cl}">🔁</div><div class="tx"><b>${t}</b></div><div class="when">${tag(cl,s)}</div></div>`).join("")}
@@ -1241,8 +1292,8 @@ async function askQ(id){
 
 /* 15) System */
 SCREEN.system=async()=>{
-  const [users,orgs,onto]=await Promise.all([
-    API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({}))]);
+  const [users,orgs,onto,lphrefs]=await Promise.all([
+    API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({})),API("/admin/lph-references").catch(()=>[])]);
   const upg=pageSlice("users",users,12);
   const uRows=upg.items.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
       <td><select class="v" style="font-size:12px;padding:3px 6px;width:auto" onchange="patchUserRole('${u.user_id}',this.value)">${roleOpts(u.role)}</select></td>
@@ -1273,7 +1324,10 @@ SCREEN.system=async()=>{
         </div>
         <div class="btnrow"><button class="btn" onclick="reseedOntology()">온톨로지 재시드</button>
           <button class="btn bad" onclick="seedReset()">seed 초기화</button></div></div></div>
-  </div>`;
+  </div>
+  <div class="card" style="margin-top:16px"><h3>LPH 레퍼런스 <span class="en">· LPH references</span><span class="r">${(lphrefs||[]).length}개</span></h3>
+    <div class="body tight"><table><thead><tr><th>기관명</th><th>인증번호</th><th>상태</th><th>지역</th></tr></thead>
+      <tbody>${(lphrefs||[]).length?(lphrefs||[]).map(l=>`<tr><td><b>${esc(l.name||"—")}</b></td><td class="muted small">${esc(l.accreditation_no||"—")}</td><td>${tag(l.status==='active'?'ok':'mute',l.status||"—")}</td><td class="muted">${esc(l.region||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">등록된 LPH 없음</td></tr>'}</tbody></table></div></div>`;
 };
 function roleOpts(sel){const rs=[["applicant","신청기업"],["consultant","컨설턴트"],["auditor","오디터"],["fatwa_liaison","샤리아"],["operator","최고운영자"],["penyelia_halal","할랄감독자"],["pendamping_pph","동반자"],["admin","ITO 관리자"]];return rs.map(([vv,k])=>`<option value="${vv}"${vv===sel?" selected":""}>${k}</option>`).join("");}
 async function createUser(){const username=v("nuUser"),password=v("nuPass")||"pw",role=v("nuRole");if(!username){toast("아이디 입력");return}try{await API("/admin/users",{method:"POST",body:JSON.stringify({username,password,role})});toast("사용자 생성 · "+username);applyView();}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
@@ -1317,7 +1371,8 @@ async function renderCaseDetail(id, tab){
           <div class="btnrow" style="margin-top:12px">
             <button class="btn" onclick="openCaseTab('materials')">🧪 원재료 →</button>
             <button class="btn" onclick="openCaseTab('documents')">📁 문서 →</button>
-            <button class="btn" onclick="openCaseTab('audit')">🏭 심사 →</button></div>
+            <button class="btn" onclick="openCaseTab('audit')">🏭 심사 →</button>
+            <button class="btn" onclick="exportCaseJson('${id}')">⬇ JSON 내보내기</button></div>
         </div></div>
     </div>
     <div class="card" style="margin-top:16px"><h3>협의 · Discussion <span class="en">· thread</span><span class="r">${disc.length}건</span></h3>
