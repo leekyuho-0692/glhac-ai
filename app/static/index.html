@@ -26,6 +26,11 @@
   .app{display:flex;min-height:100vh}
   aside{width:264px;flex:0 0 264px;background:var(--shell);color:#CBD5E1;
     display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
+  .hamburger{display:none;background:transparent;border:1px solid var(--line2);color:var(--ink2);
+    font-size:18px;line-height:1;border-radius:9px;width:40px;height:40px;cursor:pointer;flex:0 0 auto}
+  .navscrim{display:none}
+  /* 키보드 포커스 가시화(마우스 클릭엔 미노출) — 접근성 */
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
   .brand{padding:18px 20px 10px}
   .brand b{color:#fff;font-size:17px;letter-spacing:-.3px}
   .brand small{display:block;color:#64748B;font-size:11px;margin-top:2px}
@@ -114,6 +119,22 @@
   .three{grid-template-columns:1fr 1fr 1fr}
   .four{grid-template-columns:repeat(4,1fr)}
   @media(max-width:1080px){.two,.side,.side-r,.three,.four{grid-template-columns:1fr}}
+  /* ── 모바일 반응형(≤820px): 오프캔버스 드로어 + 햄버거 ── */
+  @media(max-width:820px){
+    .hamburger{display:inline-flex;align-items:center;justify-content:center}
+    aside{position:fixed;left:0;top:0;z-index:40;transform:translateX(-100%);
+      transition:transform .22s ease;box-shadow:0 0 40px rgba(0,0,0,.5)}
+    .app.navopen aside{transform:translateX(0)}
+    .navscrim{display:block;position:fixed;inset:0;background:rgba(0,0,0,.45);
+      z-index:35;opacity:0;pointer-events:none;transition:opacity .2s}
+    .app.navopen .navscrim{opacity:1;pointer-events:auto}
+    .topbar{height:auto;min-height:58px;padding:8px 14px;flex-wrap:wrap;gap:8px}
+    .topbar .pill{font-size:12.5px;padding:6px 10px}
+    .content{padding:16px 14px}
+    .page-h{flex-wrap:wrap;gap:6px}
+    .page-h h1{font-size:22px}
+    .card .body{overflow-x:auto;-webkit-overflow-scrolling:touch}  /* 넓은 표는 카드 내 가로 스크롤 */
+  }
   .field{margin-bottom:12px}
   .field label{display:block;font-size:11.5px;color:var(--ink3);margin-bottom:4px}
   .field .v{border:1px solid var(--line2);border-radius:8px;padding:8px 11px;background:var(--card);font-size:13px}
@@ -272,29 +293,31 @@
 
 <!-- ===================== APP ===================== -->
 <div class="app" id="appView" style="display:none">
-  <aside>
+  <div class="navscrim" id="navScrim" onclick="toggleNav(false)"></div>
+  <aside id="sidebar">
     <div class="brand"><b>GL-HAC AI</b><small>할랄·샤리아 인증 · Halal Certification</small></div>
     <nav id="nav"></nav>
     <div class="navfoot" id="navfoot"></div>
   </aside>
   <main>
     <div class="topbar">
+      <button class="hamburger" id="hamburger" onclick="toggleNav()" aria-label="메뉴 열기 · Open menu" aria-controls="sidebar" aria-expanded="false">☰</button>
       <div class="crumb" id="crumb"><b>대시보드</b> · Dashboard</div>
       <div class="spacer"></div>
       <span class="pill" id="casePill" style="display:none">📁 <select id="caseSel" onchange="onCaseChange(this.value)"></select></span>
-      <span style="position:relative"><span class="pill" id="notifBell" onclick="toggleNotif()">🔔 <b id="notifCount" style="display:none;color:var(--bad)">0</b></span>
+      <span style="position:relative"><span class="pill" id="notifBell" role="button" tabindex="0" aria-label="알림 · Notifications" onclick="toggleNotif()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleNotif()}">🔔 <b id="notifCount" style="display:none;color:var(--bad)">0</b></span>
         <div id="notifPanel" class="notif-panel"></div></span>
       <span class="pill" id="userPill">👤 —</span>
-      <span class="pill" onclick="cycleLang()" id="langPill">🌐 KO · EN · ID</span>
-      <span class="pill" onclick="toggleTheme()" id="themePill">🌙 다크</span>
-      <span class="pill" onclick="logout()">⏻ 로그아웃</span>
+      <span class="pill" role="button" tabindex="0" aria-label="언어 전환 · Change language" onclick="cycleLang()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();cycleLang()}" id="langPill">🌐 KO · EN · ID</span>
+      <span class="pill" role="button" tabindex="0" aria-label="테마 전환 · Toggle theme" onclick="toggleTheme()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleTheme()}" id="themePill">🌙 다크</span>
+      <span class="pill" role="button" tabindex="0" aria-label="로그아웃 · Logout" onclick="logout()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();logout()}">⏻ 로그아웃</span>
     </div>
     <div id="pages"></div>
   </main>
 </div>
 <div id="toast"></div>
 <div id="modalOverlay" onclick="if(event.target===this)modalResolve(null)">
-  <div class="modalbox">
+  <div class="modalbox" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h3 id="modalTitle"></h3>
     <div id="modalFields"></div>
     <div class="btnrow" style="justify-content:flex-end;margin-top:16px">
@@ -477,7 +500,7 @@ const NAV_ID={dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",ap
 function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
-function toast(m){const t=document.getElementById("toast");t.textContent=m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2600);}
+function toast(m){const t=document.getElementById("toast");t.textContent=(LANG===2&&typeof UI_STRINGS!=="undefined"&&UI_STRINGS[String(m).trim()])||m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2600);}
 /* 재사용 모달 폼 — prompt() 대체. fields:[{key,label,type:text|number|textarea|select,options,value,placeholder,required}] */
 let _modalCb=null,_modalFields=null;
 function dialog(title, fields){
@@ -486,9 +509,9 @@ function dialog(title, fields){
     document.getElementById("modalTitle").textContent=title;
     document.getElementById("modalFields").innerHTML=fields.map(f=>{
       const id="mf_"+f.key;
-      if(f.type==="select")return `<div class="field"><label>${esc(f.label)}</label><select class="v" id="${id}">${(f.options||[]).map(o=>{const v=o.value!=null?o.value:o,l=o.label!=null?o.label:o;return `<option value="${esc(v)}"${f.value===v?" selected":""}>${esc(l)}</option>`;}).join("")}</select></div>`;
-      if(f.type==="textarea")return `<div class="field"><label>${esc(f.label)}</label><textarea class="v" id="${id}" rows="3" placeholder="${esc(f.placeholder||"")}">${esc(f.value||"")}</textarea></div>`;
-      return `<div class="field"><label>${esc(f.label)}</label><input class="v" id="${id}" type="${f.type||"text"}" value="${esc(f.value==null?"":f.value)}" placeholder="${esc(f.placeholder||"")}" onkeydown="if(event.key==='Enter')modalSubmit()"></div>`;
+      if(f.type==="select")return `<div class="field"><label for="${id}">${esc(f.label)}</label><select class="v" id="${id}">${(f.options||[]).map(o=>{const v=o.value!=null?o.value:o,l=o.label!=null?o.label:o;return `<option value="${esc(v)}"${f.value===v?" selected":""}>${esc(l)}</option>`;}).join("")}</select></div>`;
+      if(f.type==="textarea")return `<div class="field"><label for="${id}">${esc(f.label)}</label><textarea class="v" id="${id}" rows="3" placeholder="${esc(f.placeholder||"")}">${esc(f.value||"")}</textarea></div>`;
+      return `<div class="field"><label for="${id}">${esc(f.label)}</label><input class="v" id="${id}" type="${f.type||"text"}" value="${esc(f.value==null?"":f.value)}" placeholder="${esc(f.placeholder||"")}" onkeydown="if(event.key==='Enter')modalSubmit()"></div>`;
     }).join("");
     document.getElementById("modalOverlay").style.display="grid";
     const first=document.querySelector("#modalFields .v");if(first)first.focus();
@@ -585,11 +608,17 @@ function buildNav(){
   const nav=document.getElementById("nav");
   const allowed=NAV.filter(([id])=>MENU_ACCESS[id].includes(ROLE));
   nav.innerHTML=allowed.map(([id,ic,ko,en])=>
-    `<a data-id="${id}" onclick="go('${id}')"><span>${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`).join("");
+    `<a data-id="${id}" role="link" tabindex="0" onclick="go('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}"><span aria-hidden="true">${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`).join("");
   document.getElementById("navfoot").innerHTML=
     `노출 메뉴 ${allowed.length} / 15<br><span style="color:#64748B">scope · ${scopeLabel()}</span>`;
 }
-function go(id){navigate({screen:id});}
+function toggleNav(on){
+  const app=document.getElementById("appView");if(!app)return;
+  const open=(on===undefined)?!app.classList.contains("navopen"):!!on;
+  app.classList.toggle("navopen",open);
+  const h=document.getElementById("hamburger");if(h)h.setAttribute("aria-expanded",String(open));
+}
+function go(id){navigate({screen:id});toggleNav(false);}
 function navigate(state, replace){
   if(state.screen){
     if(!MENU_ACCESS[state.screen] || !MENU_ACCESS[state.screen].includes(ROLE))
@@ -623,6 +652,43 @@ function pageHead(id){
     <div class="roles">노출 역할 · Roles &nbsp;<b>${roleNames}</b></div>`;
 }
 function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="margin-bottom:14px">⚠ 일부 데이터를 불러오지 못했습니다 (${FETCH_ERRORS}건 실패) — 표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.</div>`:"";}
+/* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
+   키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
+const UI_STRINGS={
+  // 크롬·공통
+  "🌙 다크":"🌙 Gelap","☀️ 라이트":"☀️ Terang","⏻ 로그아웃":"⏻ Keluar","케이스":"Kasus",
+  "불러오는 중…":"Memuat…","불러오는 중… · loading":"Memuat…","준비 중":"Sedang disiapkan",
+  "완료":"Selesai","실패":"Gagal","성공":"Berhasil","저장":"Simpan","등록":"Daftar","제출":"Kirim",
+  "추가":"Tambah","삭제":"Hapus","수정":"Ubah","취소":"Batal","확인":"OK","닫기":"Tutup",
+  "업로드":"Unggah","다운로드":"Unduh","보기":"Lihat","검색":"Cari","새로고침":"Muat ulang",
+  "승인":"Setujui","거부":"Tolak","반려":"Kembalikan","권한 확인":"Cek izin","권한 없음":"Tidak ada izin",
+  "팝업 차단":"Popup diblokir","파일 없음":"Tidak ada berkas","열기 실패":"Gagal membuka",
+  "저장됨":"Tersimpan","처리 중…":"Memproses…","없음":"Tidak ada","미지정":"Belum ditetapkan",
+  // 역할
+  "클라이언트":"Klien","컨설턴트":"Konsultan","오디터":"Auditor","샤리아":"Syariah",
+  "최고 업무운영자":"Operator Utama","최고운영자":"Operator Utama","ITO 관리자":"Admin ITO",
+  // 단계·상태
+  "사전심사":"Pra-audit","현장심사":"Audit Lapangan","모의 심사":"Audit Simulasi","심사":"Audit",
+  "심사중":"Sedang diaudit","사후 모니터링":"Pemantauan Pasca","종결":"Ditutup","비활성":"Nonaktif",
+  "활성":"Aktif","양호":"Baik","보완":"Perbaikan","미검수":"Belum ditinjau","미발급":"Belum terbit",
+  "인증서 발급":"Terbitkan Sertifikat","LPH 배정":"Penugasan LPH","문서":"Dokumen","신청":"Aplikasi",
+  // 네비/페이지 헤더(한글 라벨)
+  "대시보드":"Dasbor","내 케이스":"Kasus Saya","워크스페이스":"Ruang Kerja","원재료 AI":"Bahan AI",
+  "SJPH/HPAS 통합":"Integrasi SJPH/HPAS","SJPH/HPAS 평가":"Evaluasi SJPH/HPAS","청구":"Penagihan",
+  "파트와":"Fatwa","인증서":"Sertifikat","AI 어시스턴트":"Asisten AI","시스템 설정":"Pengaturan Sistem",
+  "온보딩":"Onboarding","신청서 작성":"Isi Formulir"
+};
+function localizeUI(root){
+  if(LANG!==2)return;
+  root=root||document.getElementById("appView");if(!root)return;
+  const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,null);
+  const hits=[];let node;
+  while(node=w.nextNode()){const key=(node.nodeValue||"").trim();if(key&&UI_STRINGS[key])hits.push(node);}
+  hits.forEach(n=>{const key=n.nodeValue.trim();n.nodeValue=n.nodeValue.replace(key,UI_STRINGS[key]);});
+  root.querySelectorAll("[placeholder],[aria-label],[title]").forEach(el=>{
+    ["placeholder","aria-label","title"].forEach(a=>{const v=el.getAttribute(a);if(v&&UI_STRINGS[v.trim()])el.setAttribute(a,UI_STRINGS[v.trim()]);});
+  });
+}
 async function applyView(){
   const pages=document.getElementById("pages");
   FETCH_ERRORS=0;
@@ -634,7 +700,7 @@ async function applyView(){
     try{document.getElementById("pgHost").innerHTML=await renderCaseDetail(DETAIL.id,DETAIL.tab);
       document.getElementById("pgHost").insertAdjacentHTML("afterbegin",warnBanner());}
     catch(err){document.getElementById("pgHost").innerHTML=errCard(err);}
-    window.scrollTo(0,0);return;
+    localizeUI();window.scrollTo(0,0);return;
   }
   document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("active",a.dataset.id===CUR));
   const n=NAV.find(x=>x[0]===CUR);
@@ -650,7 +716,7 @@ async function applyView(){
     }
   }catch(err){host.innerHTML=pageHead(CUR)+errCard(err);}
   if(AFTER_RENDER){const f=AFTER_RENDER;AFTER_RENDER=null;try{f();}catch(_){}}
-  window.scrollTo(0,0);
+  localizeUI();window.scrollTo(0,0);
 }
 let AFTER_RENDER=null;
 async function loadDocPreview(docId){
