@@ -430,6 +430,33 @@ def test_dashboard_events_org_isolation():
         assert all(e["case_id"] != cid for e in ev), ("타조직 이벤트 누수", ev)
 
 
+def test_notify_email_webhook_channels():
+    """§10.2 채널 확장: email은 수신동의 게이트, webhook(시스템)은 동의 무관."""
+    from app import models
+    from app.db import SessionLocal
+    from app.main import drain_notifications
+    with TestClient(app):
+        db = SessionLocal()
+        try:
+            c = models.CaseApplication(company_name="NotifCh", org_id="org_demo", phone="0812",
+                                       email="a@b.com", notify_consent=False, status="draft")
+            db.add(c)
+            db.flush()
+            n = models.Notification(org_id="org_demo", case_id=c.case_id,
+                                    channels=["inapp", "email", "webhook"], title="t", status="unsent")
+            db.add(n)
+            db.commit()
+            nid = n.notification_id
+            drain_notifications(db)
+            db.expire_all()
+            row = db.get(models.Notification, nid)
+            assert row.status == "sent", row.status
+            assert "email" in (row.last_error or ""), row.last_error       # 미동의 → skip
+            assert "webhook" not in (row.last_error or ""), row.last_error  # 시스템 → skip 안 됨
+        finally:
+            db.close()
+
+
 def test_notify_consent_gate():
     """수신동의 없으면 외부채널(sms) 미발송·inapp만 발송(Phase C 컴플라이언스)."""
     from app import models
@@ -697,6 +724,7 @@ if __name__ == "__main__":
              test_public_config_reports_dev,
              test_invoice_negative_rejected,
              test_dashboard_events_org_isolation,
+             test_notify_email_webhook_channels,
              test_notify_consent_gate,
              test_phase_b_indexes_created,
              test_operator_role_seeded, test_mockaudit_rbac,

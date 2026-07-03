@@ -260,6 +260,7 @@ def _notify(db, case, event_type, title, body="", channels=None, role=None):
 
 
 _NOTIFY_NONRETRY = ("no_credentials", "no_contact", "not_implemented")
+_USER_CHANNELS = {"sms", "whatsapp", "email", "kakao"}   # 수신동의 필요(사용자 대상)
 
 
 def drain_notifications(db, batch=50, max_attempts=3):
@@ -285,17 +286,20 @@ def drain_notifications(db, batch=50, max_attempts=3):
     stats = {"processed": 0, "sent": 0, "retried": 0, "failed": 0, "consent_skipped": 0}
     for n in claimed:
         stats["processed"] += 1
-        contact, consent = None, False
+        contacts, consent = {}, False
         if n.case_id:
             c = db.get(models.CaseApplication, n.case_id)
-            contact = c.phone if c else None
-            consent = bool(c.notify_consent) if c else False
-        # 수신동의 게이트 — 외부채널(sms/whatsapp/kakao)은 동의 시에만. inapp은 항상 발송.
+            if c:
+                contacts = {"phone": c.phone, "email": c.email,
+                            "webhook": os.environ.get("GLHAC_WEBHOOK_URL")}
+                consent = bool(c.notify_consent)
+        # 수신동의 게이트 — 사용자 대상 채널(sms/whatsapp/email/kakao)은 동의 시에만.
+        # inapp·webhook(시스템 연동)은 항상 발송.
         requested = n.channels or ["inapp"]
-        eff = [ch for ch in requested if ch == "inapp" or consent]
-        dropped = [ch for ch in requested if ch != "inapp" and not consent]
+        eff = [ch for ch in requested if ch not in _USER_CHANNELS or consent]
+        dropped = [ch for ch in requested if ch in _USER_CHANNELS and not consent]
         try:
-            results = _nt.dispatch(n, contact=contact, channels=eff)
+            results = _nt.dispatch(n, contacts=contacts, channels=eff)
         except Exception as e:  # noqa: BLE001
             results = [{"channel": "?", "ok": False, "reason": str(e)}]
         retryable = any((not r.get("ok")) and r.get("reason") not in _NOTIFY_NONRETRY
