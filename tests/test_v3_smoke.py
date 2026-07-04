@@ -802,8 +802,31 @@ def test_search_context_fallback_returns_list():
     assert isinstance(res, list)
 
 
+def test_read_audit_log():
+    """§2.4 조회 감사 — 케이스 열람이 case.read 감사행 남기고, admin만 열람 가능."""
+    with TestClient(app) as c:
+        ctok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "AuditCo"},
+                     headers=_h(ctok)).json()["case_id"]
+        # 케이스 조회 → case.read 감사행 발생
+        assert c.get(f"/cases/{cid}", headers=_h(ctok)).status_code == 200
+        # 비-admin은 감사로그 열람 불가
+        assert c.get("/admin/audit-logs", headers=_h(ctok)).status_code == 403
+        # admin이 필터로 열람
+        atok = _tok(c, "admin", "admin")
+        r = c.get(f"/admin/audit-logs?action=case.read&case_id={cid}", headers=_h(atok))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["total"] >= 1 and body["items"], body
+        row = body["items"][0]
+        assert row["action"] == "case.read" and row["case_id"] == cid
+        assert row["resource_type"] == "case" and row["actor_role"] == "consultant"
+        assert "limit" in body and "offset" in body
+
+
 if __name__ == "__main__":
-    tests = [test_token_refresh_and_revoke, test_upload_validation_no_bypass,
+    tests = [test_read_audit_log,
+             test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,
              test_payment_and_analytics, test_org_overview,

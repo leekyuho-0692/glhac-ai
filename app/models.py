@@ -480,3 +480,19 @@ class Payment(Base):
     status = Column(String, default="confirmed")  # pending|confirmed
     paid_by = Column(String)
     paid_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AuditLog(Base):
+    """접근/조회 감사로그(§2.4) — 워크플로 전이(workflow_event)와 별개.
+    누가·언제·무엇을 조회/다운로드/변경했는지. 읽기까지 감사 대상."""
+    __tablename__ = "audit_log"
+    id = Column(String, primary_key=True, default=uid)
+    actor_id = Column(String, index=True)
+    actor_role = Column(String)
+    org_id = Column(String, index=True)
+    action = Column(String, index=True)   # case.read|document.download|fatwa.document.read|certificate.read|ai.extraction.read|role.change
+    resource_type = Column(String)
+    resource_id = Column(String, index=True)
+    case_id = Column(String, index=True)
+    meta = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)

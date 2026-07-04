@@ -239,6 +239,18 @@ def _get_case(db, case_id, user=None) -> models.CaseApplication:
     return c
 
 
+def _audit(db, user, action, resource_type=None, resource_id=None, case_id=None, meta=None, commit=True):
+    """접근/조회 감사로그 기록(§2.4). commit=False면 상위 트랜잭션에 합류."""
+    row = models.AuditLog(actor_id=user.get("uid"), actor_role=user.get("role"),
+                          org_id=user.get("org_id"), action=action,
+                          resource_type=resource_type, resource_id=resource_id,
+                          case_id=case_id, meta=meta)
+    db.add(row)
+    if commit:
+        db.commit()
+    return row
+
+
 # ---- 지역(province) 서버 계산 (P1: 프런트 N+1·휴리스틱 제거) ----
 _PROVINCES = [
     ("Aceh", []), ("Sumatera Utara", ["medan"]), ("Riau", ["pekanbaru"]),
@@ -646,6 +658,8 @@ def admin_patch_user(user_id: str, body: schemas.AdminUserPatchReq,
         u.role = body.role
     if body.password:
         u.password_hash = auth.hash_pw(body.password)
+    _audit(db, user, "admin.user.patch", "user", user_id, None,
+           {"role": body.role, "password_changed": bool(body.password)}, commit=False)
     db.commit()
     return {"user_id": u.user_id, "username": u.username, "role": u.role}
 
@@ -660,6 +674,41 @@ def admin_delete_user(user_id: str, user=Depends(auth.require_roles()),
         db.delete(u)
         db.commit()
     return {"deleted": user_id}
+
+
+@app.get("/admin/audit-logs")
+def admin_list_audit_logs(actor_id: str = None, action: str = None,
+                          resource_type: str = None, resource_id: str = None,
+                          case_id: str = None, org_id: str = None,
+                          limit: int = 100, offset: int = 0,
+                          user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    """조회/접근 감사로그 열람(§2.4) — admin 전용, 필터·페이징 지원."""
+    q = db.query(models.AuditLog)
+    if actor_id:
+        q = q.filter(models.AuditLog.actor_id == actor_id)
+    if action:
+        q = q.filter(models.AuditLog.action == action)
+    if resource_type:
+        q = q.filter(models.AuditLog.resource_type == resource_type)
+    if resource_id:
+        q = q.filter(models.AuditLog.resource_id == resource_id)
+    if case_id:
+        q = q.filter(models.AuditLog.case_id == case_id)
+    if org_id:
+        q = q.filter(models.AuditLog.org_id == org_id)
+    total = q.count()
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
+    rows = (q.order_by(models.AuditLog.created_at.desc())
+              .offset(offset).limit(limit).all())
+    items = [{
+        "id": r.id, "actor_id": r.actor_id, "actor_role": r.actor_role,
+        "org_id": r.org_id, "action": r.action,
+        "resource_type": r.resource_type, "resource_id": r.resource_id,
+        "case_id": r.case_id, "meta": r.meta,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    } for r in rows]
+    return {"total": total, "limit": limit, "offset": offset, "items": items}
 
 
 @app.get("/admin/orgs")
@@ -1008,7 +1057,9 @@ def fatwa_queue(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
 
 @app.get("/cases/{case_id}")
 def get_case(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    return _case_dict(_get_case(db, case_id, user))
+    c = _get_case(db, case_id, user)
+    _audit(db, user, "case.read", "case", case_id, case_id)
+    return _case_dict(c)
 
 
 @app.get("/cases/{case_id}/timeline")
@@ -1449,9 +1500,11 @@ def get_document_file(document_id: str, user=Depends(auth.get_current_user),
     if not d or not d.content_b64:
         raise HTTPException(404, {"code": "FILE_NOT_AVAILABLE"})
     c = _get_case(db, d.case_id, user)   # 조직격리 검증
-    # 문서 P0: 다운로드 감사로그 — 누가·언제·어떤 문서를 내려받았는지 추적
+    # 다운로드 감사 — 워크플로 타임라인 + 통합 감사로그 양쪽
     sm.record_event(db, c, c.status, c.status, "document.download", user["role"], user["uid"],
                     {"document_id": document_id, "filename": d.filename})
+    _audit(db, user, "document.download", "document", document_id, d.case_id,
+           {"filename": d.filename}, commit=False)
     db.commit()
     raw = _b64lib.b64decode(d.content_b64)
     return Response(content=raw, media_type=d.content_type or "application/octet-stream",
@@ -2027,6 +2080,7 @@ def get_fatwa_votes(case_id: str, user=Depends(auth.get_current_user), db: Sessi
     _get_case(db, case_id, user)
     if not _fatwa_privileged(user):   # 위원회 투표 상세는 sharia/operator/admin만
         raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
+    _audit(db, user, "fatwa.votes.read", "fatwa", case_id, case_id)
     return _fatwa_tally(db, case_id, detail=True)
 
 
@@ -2169,6 +2223,7 @@ def unlock_certificate(case_id: str, body: schemas.UnlockReq,
 @app.get("/cases/{case_id}/certificate")
 def get_certificate(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
+    _audit(db, user, "certificate.read", "certificate", case_id, case_id)
     cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
     if not cert:
         return {"issued": False}
@@ -2498,6 +2553,7 @@ def fatwa_document(case_id: str, user=Depends(rbac.require_action("fatwa.documen
                    db: Session = Depends(get_db)):
     # 문서 P0(§3.1): 파트와 결정문(위원회 심의 산출물)은 sharia/operator/admin 전용
     c = _get_case(db, case_id, user)
+    _audit(db, user, "fatwa.document.read", "fatwa", case_id, case_id)
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     prods = db.query(models.Product).filter_by(case_id=case_id).all()
     lines = ["[파트와 결정문 — %s]" % (c.company_name or c.case_id[:8]),
@@ -3055,6 +3111,7 @@ def ai_label_judgment(body: schemas.LabelJudgmentReq, user=Depends(auth.get_curr
 def list_ai_extractions(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """§7.4: AI 결과 근거 조회 — 화면에서 원문 근거·신뢰도·리뷰이력 확인."""
     _get_case(db, case_id, user)
+    _audit(db, user, "ai.extraction.read", "ai_extraction", case_id, case_id)
     rows = (db.query(models.AiExtraction).filter_by(case_id=case_id)
             .order_by(models.AiExtraction.created_at.desc()).limit(100).all())
     return [{"id": r.id, "source": r.source, "model_name": r.model_name,
