@@ -142,6 +142,24 @@ def test_observability_metrics():
         assert "glhac_auth_failures_total" in m.text
 
 
+def test_ai_eval_thresholds():
+    """§7.3/§12.3 AI 평가셋 — 스크리닝 골든셋 지표가 목표 임계 충족."""
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ai_eval", os.path.join(root, "scripts", "ai_eval.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    with TestClient(app):   # startup이 온톨로지 시드/로드
+        from app import screening
+        ing = m.run_ingredient_eval(screening, verbose=False)
+        lab = m.run_label_eval(screening, verbose=False)
+    assert ing["recall"] >= 0.98, ("danger recall", ing["recall"], ing["misses"])
+    assert ing["precision"] >= 0.90, ("safe precision", ing["precision"], ing["false_pos"])
+    assert ing["cleared_bad"] == 0, ing["misses"]
+    assert lab["recall"] >= 0.90, ("label recall", lab["recall"], lab["misses"])
+
+
 def test_pdf_generation():
     """§7 서버 PDF — gen-docs·인증서 PDF(한글 포함) 실제 %PDF 반환."""
     from app import models
@@ -748,7 +766,8 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,
+    tests = [test_ai_eval_thresholds,
+             test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,
              test_payment_and_analytics, test_org_overview,
              test_certificate_signature_and_verify, test_integration_event_idempotency,
              test_audit_plan_lifecycle, test_fatwa_voting_quorum, test_car_lifecycle_closes_finding,

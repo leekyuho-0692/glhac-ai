@@ -1,0 +1,15 @@
+{
+  "_doc": "라벨 텍스트 스캔 평가(§7.3 라벨 OCR 후단의 결정적 매처 scan_text). must_detect: 반드시 탐지할 ingredient_uid",
+  "cases": [
+    {"text": "Ingredients: sugar, gelatin, citric acid (E330), natural flavour", "must_detect": ["ing.gelatin", "ing.citric_acid", "ing.flavor"]},
+    {"text": "Komposisi: air, garam, gula, lemak babi, perisa sintetik", "must_detect": ["ing.lard"]},
+    {"text": "Contains emulsifier E471, stabilizer E441 and colour E120", "must_detect": ["ing.mono_diglycerides", "ing.gelatin", "ing.carmine"]},
+    {"text": "성분: 정제수, 설탕, 젤라틴, 구연산, 향료", "must_detect": ["ing.gelatin", "ing.flavor"]},
+    {"text": "pork gelatin capsule shell, glycerin, purified water", "must_detect": ["ing.pork_gelatin", "ing.glycerin"]},
+    {"text": "cheese culture, rennet, salt, enzyme", "must_detect": ["ing.rennet", "ing.enzyme", "ing.salt"]},
+    {"text": "shortening (vegetable), mono and diglycerides, L-cysteine", "must_detect": ["ing.shortening", "ing.mono_diglycerides", "ing.l_cysteine"]},
+    {"text": "wine vinegar, olive oil, oregano", "must_detect": ["ing.ethanol_beverage"]},
+    {"text": "collagen peptide 500mg, magnesium stearate, gelatin capsule", "must_detect": ["ing.collagen", "ing.mg_stearate|ing.e572", "ing.gelatin_capsule"]},
+    {"text": "whey protein concentrate, soy lecithin (E322), vanilla extract", "must_detect": ["ing.whey", "ing.lecithin", "ing.vanilla_extract"]}
+  ]
+}
