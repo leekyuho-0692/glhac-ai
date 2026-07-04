@@ -448,6 +448,26 @@ def test_renew_operator_only():
         assert c.post(f"/cases/{cid}/renew", headers=_h(tok)).status_code == 403
 
 
+def test_upload_validation_no_bypass():
+    """Fable 갭: parse-file·from-label-b64·공개 OCR의 업로드 검증 우회 차단(§9.3)."""
+    import base64 as _b
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "UpBypass"},
+                     headers=_h(tok)).json()["case_id"]
+        bad = _b.b64encode(b"MZ\x90 malware payload").decode()
+        # parse-file: 허용외 확장자 → 415 (이전엔 검증 우회)
+        assert c.post(f"/cases/{cid}/parse-file",
+                      json={"doc_type": "nib_business_license", "file_b64": bad, "filename": "x.exe"},
+                      headers=_h(tok)).status_code == 415
+        # from-label-b64: 허용외 확장자 → 415
+        assert c.post(f"/cases/{cid}/materials/from-label-b64",
+                      json={"image_b64": bad, "filename": "x.exe"},
+                      headers=_h(tok)).status_code == 415
+        # 공개 OCR: 빈/불량 업로드 → 400 (크기상한 강제 경로)
+        assert c.post("/auth/ocr-extract", json={"image_b64": ""}).status_code == 400
+
+
 def test_upload_validation_rejects_bad_type():
     """문서 P0(§9.3): 허용외 확장자 업로드 거부(415)."""
     import base64 as _b
@@ -766,7 +786,8 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_ai_eval_thresholds,
+    tests = [test_upload_validation_no_bypass,
+             test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,
              test_payment_and_analytics, test_org_overview,
              test_certificate_signature_and_verify, test_integration_event_idempotency,

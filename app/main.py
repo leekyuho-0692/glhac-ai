@@ -527,10 +527,8 @@ def auth_ocr_extract(body: schemas.OCRExtractReq):
     import base64
     import tempfile
     import os as _os
-    try:
-        raw = base64.b64decode(body.image_b64)
-    except Exception:  # noqa: BLE001
-        raise HTTPException(400, {"code": "BAD_IMAGE"})
+    # 공개 엔드포인트 — 크기 상한 강제(DoS 방지). 포맷은 OCR가 처리하므로 미제약.
+    raw = base64.b64decode(_validate_upload(body.image_b64, None))
     path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
@@ -1362,7 +1360,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                   db: Session = Depends(get_db)):
     """개별 파일 업로드 → 칸(doc_type)에 맞게 파싱 → 해당 필드 자동채움."""
     c = _get_case(db, case_id, user)
-    raw = base64.b64decode(body.file_b64.split(",")[-1])
+    raw = base64.b64decode(_validate_upload(body.file_b64, body.filename))   # 크기·타입 검증(§9.3)
     from .intake import parse_typed
     r = parse_typed(body.doc_type, body.filename, raw)
     f = r.get("fields") or {}
@@ -3079,7 +3077,7 @@ def materials_from_label_b64(case_id: str, body: schemas.LabelB64Req,
                              db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     import tempfile
-    raw = base64.b64decode(body.image_b64.split(",")[-1])
+    raw = base64.b64decode(_validate_upload(body.image_b64, body.filename or "label.png"))  # 검증(§9.3)
     path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
