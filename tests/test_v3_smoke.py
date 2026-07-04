@@ -130,6 +130,18 @@ def test_org_overview():
                      headers=_h(_tok(c, "operator1", "pw"))).status_code == 403
 
 
+def test_observability_metrics():
+    """§11.3 관측성 — 요청 ID 헤더·Prometheus /metrics·auth 실패 카운터."""
+    with TestClient(app) as c:
+        r = c.get("/health")
+        assert any(k.lower() == "x-request-id" for k in r.headers), dict(r.headers)
+        c.post("/auth/login", json={"username": "nope_metrics", "password": "x"})  # 401 → auth_failures
+        m = c.get("/metrics")
+        assert m.status_code == 200 and "glhac_http_requests_total" in m.text, m.status_code
+        assert "glhac_http_request_duration_seconds_count" in m.text
+        assert "glhac_auth_failures_total" in m.text
+
+
 def test_pdf_generation():
     """§7 서버 PDF — gen-docs·인증서 PDF(한글 포함) 실제 %PDF 반환."""
     from app import models
@@ -736,7 +748,7 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_pdf_generation, test_certificate_lifecycle,
+    tests = [test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,
              test_payment_and_analytics, test_org_overview,
              test_certificate_signature_and_verify, test_integration_event_idempotency,
              test_audit_plan_lifecycle, test_fatwa_voting_quorum, test_car_lifecycle_closes_finding,

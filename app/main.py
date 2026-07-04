@@ -1,6 +1,7 @@
 """GL-HAC AI API — M1(dual-pathway) + M3(OCR/판정) + M2(인증·UI). 설계 24.14 / B.4."""
 import io
 import os
+import time
 import base64
 import logging
 from datetime import datetime, date
@@ -18,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from .db import Base, engine, get_db, SessionLocal
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
+from . import observability as obs
 from .ontology_seed import seed
 
 app = FastAPI(title="GL-HAC AI Dual-Pathway API", version="0.2.0")
@@ -35,11 +37,42 @@ if _cors_origins:
     )
 
 
+@app.middleware("http")
+async def _observability_mw(request: Request, call_next):
+    """관측성(§11.3) — 요청 ID·구조화 접근로그·메트릭(라우트 템플릿 기준)."""
+    import uuid
+    rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:16]
+    request.state.request_id = rid
+    # 역할 best-effort 추출(로깅용, 인증 강제 아님)
+    role = None
+    authz = request.headers.get("Authorization") or ""
+    if authz.startswith("Bearer "):
+        p = auth.verify_token(authz[7:])
+        role = p.get("role") if p else None
+    t0 = time.perf_counter()
+    status = 500
+    try:
+        resp = await call_next(request)
+        status = resp.status_code
+        resp.headers["X-Request-ID"] = rid
+    finally:
+        dur = time.perf_counter() - t0
+        rt = request.scope.get("route")
+        route = getattr(rt, "path", None) or "unmatched"
+        try:
+            obs.observe_request(route, request.method, status, dur)
+            obs.access_log(rid, request.method, route, status, dur * 1000, role)
+        except Exception:  # noqa: BLE001
+            pass
+    return resp
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exc(request: Request, exc: Exception):
     """미처리 예외 — 스택 유출 없이 일반화된 500 반환, 서버에는 상세 로깅."""
-    log.exception("unhandled error on %s %s", request.method, request.url.path)
-    return JSONResponse(status_code=500, content={"code": "INTERNAL_ERROR"})
+    rid = getattr(request.state, "request_id", "-")
+    log.exception("unhandled error [rid=%s] on %s %s", rid, request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"code": "INTERNAL_ERROR", "request_id": rid})
 
 
 def _sandboxed_path(raw_path: str) -> str:
@@ -315,6 +348,7 @@ def drain_notifications(db, batch=50, max_attempts=3):
             n.status = "failed"
             n.last_error = "max_attempts"
             stats["failed"] += 1
+            obs.inc("glhac_notification_failed_total")
         else:
             n.status = "unsent"   # 재시도 위해 큐로 복귀
             n.last_error = "; ".join(r.get("reason", "") for r in results if not r.get("ok"))
@@ -379,6 +413,20 @@ def health(db: Session = Depends(get_db)):
     status = "ok" if dbok else "degraded"
     return JSONResponse(status_code=200 if dbok else 503,
                         content={"status": status, "service": "glhac-ai", "version": "0.2.0", "db": dbok})
+
+
+@app.get("/metrics")
+def metrics():
+    """Prometheus 메트릭 노출(§11.3) — 집계값만(PII 없음). 스크레이프용."""
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(obs.render_prometheus(),
+                             media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
+@app.get("/metrics/summary")
+def metrics_summary(user=Depends(auth.require_roles("operator"))):
+    """메트릭 JSON 요약(operator/admin)."""
+    return obs.snapshot()
 
 
 @app.get("/public-config")
@@ -2021,6 +2069,7 @@ def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
             return {"certificate_no": ex.certificate_no, "issue_date": ex.issue_date,
                     "expiry_date": ex.expiry_date, "scope": ex.scope, "existing": True}
         raise
+    obs.inc("glhac_certificate_issued_total")
     return {"certificate_no": cert.certificate_no, "issue_date": str(today),
             "expiry_date": str(expiry), "scope": prods,
             "frozen_product_ids": prod_ids, "frozen_material_ids": mat_ids,
@@ -2277,6 +2326,7 @@ def integration_event(body: schemas.IntegrationEventReq,
                                  status="received")
     db.add(ev)
     db.commit()
+    obs.inc("glhac_integration_event_total", {"type": body.event_type})
     return {"id": ev.id, "idempotent": False, "status": ev.status, "request_hash": req_hash}
 
 
@@ -3097,6 +3147,7 @@ def transition(case_id: str, body: schemas.TransitionReq,
     frm = c.status
     sm.apply_side_effects(c, body.to_state)
     c.status = body.to_state
+    obs.inc("glhac_state_transition_total", {"to": body.to_state})
     sm.record_event(db, c, frm, body.to_state, body.action or "transition", user["role"], user["uid"])
     _NOTIFY_ON = {"audit_closed": ("audit_closed", "심사 완료", "현장심사가 종결되었습니다."),
                   "document_pre_audit_requested": ("document_requested", "문서 요청", "사전심사 문서 제출이 요청되었습니다."),
