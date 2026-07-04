@@ -47,6 +47,23 @@ def test_password_pbkdf2_and_legacy_upgrade():
             db.close()
 
 
+def test_token_refresh_and_revoke():
+    """§9.1 토큰 — access+refresh 발급·refresh 갱신·logout 취소(token_version)."""
+    with TestClient(app) as c:
+        j = c.post("/auth/login", json={"username": "consultant1", "password": "pw"}).json()
+        acc, rt = j.get("token"), j.get("refresh_token")
+        assert acc and rt, j
+        assert c.get("/cases", headers=_h(acc)).status_code == 200          # access 유효
+        assert c.get("/cases", headers=_h(rt)).status_code == 401           # refresh는 접근용 불가
+        n = c.post("/auth/refresh", json={"refresh_token": rt}).json()
+        assert n.get("token") and c.get("/cases", headers=_h(n["token"])).status_code == 200
+        # 로그아웃 → token_version 증가 → 기존 access·refresh 전부 무효
+        assert c.post("/auth/logout", headers=_h(acc)).json()["revoked"] is True
+        assert c.get("/cases", headers=_h(acc)).status_code == 401          # 취소됨
+        assert c.get("/cases", headers=_h(n["token"])).status_code == 401   # 갱신본도 무효
+        assert c.post("/auth/refresh", json={"refresh_token": rt}).status_code == 401  # refresh도 무효
+
+
 def test_login_rate_limited():
     """동일 계정 실패 10회 초과 시 429."""
     from app import auth
@@ -786,7 +803,7 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_upload_validation_no_bypass,
+    tests = [test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,
              test_payment_and_analytics, test_org_overview,

@@ -396,17 +396,28 @@ let CASE_SORT="recent";
 let LANG=0; const LANGS=["🌐 KO · EN","🌐 한국어","🌐 Bahasa"];
 
 /* ---- auth / api ---- */
-const TK="glhac_token";
+const TK="glhac_token", RTK="glhac_refresh";
 function token(){try{return localStorage.getItem(TK)||""}catch(_){return""}}
 let FETCH_ERRORS=0;
-async function API(path, opt){
+async function tryRefresh(){
+  let rt=""; try{rt=localStorage.getItem(RTK)||""}catch(_){}
+  if(!rt)return false;
+  try{const r=await fetch("/auth/refresh",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({refresh_token:rt})});
+    if(!r.ok)return false; const j=await r.json(); if(j&&j.token){localStorage.setItem(TK,j.token);return true;} return false;}
+  catch(_){return false;}
+}
+async function API(path, opt, _retried){
   opt=opt||{};
   opt.headers=Object.assign({"Content-Type":"application/json"},opt.headers||{},
     token()?{Authorization:"Bearer "+token()}:{});
   let r;
   try{r=await fetch(path,opt);}
   catch(net){FETCH_ERRORS++;console.warn("[API] network",path,net);throw {code:"NETWORK"};}
-  if(r.status===401){logout();throw {code:"UNAUTH"};}
+  if(r.status===401){
+    // access 만료/취소 → refresh 1회 시도 후 재요청, 실패 시 로그아웃
+    if(!_retried && await tryRefresh()){return API(path,opt,true);}
+    logout(true);throw {code:"UNAUTH"};
+  }
   const j=await r.json().catch(()=>({}));
   if(!r.ok){FETCH_ERRORS++;console.warn("[API]",r.status,path,j);throw ((j&&j.detail)?j.detail:j);}
   return j;
@@ -419,14 +430,17 @@ async function doLogin(e){
   try{
     const j=await API("/auth/login",{method:"POST",body:JSON.stringify({username:u,password:p})});
     localStorage.setItem(TK,j.token);
+    if(j.refresh_token)localStorage.setItem(RTK,j.refresh_token);
     localStorage.setItem("glhac_role",j.role);
     localStorage.setItem("glhac_org",j.org_id||"");
     localStorage.setItem("glhac_user",j.username||u);
     boot();
   }catch(err){toast("로그인 실패 · "+(err&&err.code?err.code:"확인 필요"));}
 }
-function logout(){
-  ["glhac_token","glhac_role","glhac_org","glhac_user","glhac_case"].forEach(k=>{try{localStorage.removeItem(k)}catch(_){}} );
+function logout(skipServer){
+  // 서버측 취소(token_version 증가 → 모든 토큰 무효). 유효 토큰이 있을 때만, 실패해도 진행.
+  if(!skipServer&&token()){try{fetch("/auth/logout",{method:"POST",headers:{Authorization:"Bearer "+token(),"Content-Type":"application/json"},keepalive:true});}catch(_){}}
+  ["glhac_token","glhac_refresh","glhac_role","glhac_org","glhac_user","glhac_case"].forEach(k=>{try{localStorage.removeItem(k)}catch(_){}} );
   // 보안: JS 전역(CHAT·SIHALAL_EID·선택상태 등) 잔존 → 같은 탭 다음 사용자에게 누수.
   // 전체 리로드로 모든 인메모리 상태를 초기화.
   try{location.reload();}catch(_){document.getElementById("appView").style.display="none";document.getElementById("loginView").style.display="grid";}

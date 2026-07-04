@@ -372,6 +372,7 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False)   # applicant|penyelia_halal|consultant|pendamping_pph|auditor|fatwa_liaison|admin
     org_id = Column(String, nullable=False)
+    token_version = Column(Integer, default=0)   # 토큰 취소 — 증가 시 기존 토큰 전부 무효(§9.1)
 
 
 class AiExtraction(Base):

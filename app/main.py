@@ -492,7 +492,30 @@ def login(body: schemas.LoginReq, db: Session = Depends(get_db)):
     if auth.needs_rehash(u.password_hash):   # 레거시 sha256 → pbkdf2 자동 승격
         u.password_hash = auth.hash_pw(body.password)
         db.commit()
-    return {"token": auth.make_token(u), "role": u.role, "org_id": u.org_id, "username": u.username}
+    return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username}
+
+
+@app.post("/auth/refresh")
+def refresh_token(body: schemas.RefreshReq, db: Session = Depends(get_db)):
+    """refresh 토큰으로 새 access 토큰 발급(§9.1). token_version 취소 반영."""
+    payload = auth.verify_token(body.refresh_token)
+    if not payload or payload.get("typ") != "refresh":
+        raise HTTPException(401, {"code": "BAD_REFRESH"})
+    u = db.get(models.User, payload.get("uid"))
+    if not u or payload.get("tv", 0) != (u.token_version or 0):
+        raise HTTPException(401, {"code": "TOKEN_REVOKED"})
+    return {"token": auth.make_token(u, "access"), "role": u.role,
+            "org_id": u.org_id, "username": u.username}
+
+
+@app.post("/auth/logout")
+def logout(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """로그아웃 — token_version 증가로 이 사용자의 모든 토큰(access+refresh) 즉시 무효화."""
+    u = db.get(models.User, user["uid"])
+    if u:
+        u.token_version = (u.token_version or 0) + 1
+        db.commit()
+    return {"ok": True, "revoked": True}
 
 
 def _parse_biz_doc(text):
@@ -565,7 +588,7 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         db.flush()
         sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id)
     db.commit()
-    return {"token": auth.make_token(u), "role": u.role, "org_id": u.org_id, "username": u.username}
+    return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username}
 
 
 @app.get("/auth/me")

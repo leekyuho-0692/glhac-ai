@@ -233,6 +233,10 @@ class LoginReq(BaseModel):
     password: str
 
 
+class RefreshReq(BaseModel):
+    refresh_token: str
+
+
 class RegisterReq(BaseModel):
     username: str
     password: str
