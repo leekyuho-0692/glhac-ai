@@ -130,6 +130,34 @@ def test_org_overview():
                      headers=_h(_tok(c, "operator1", "pw"))).status_code == 403
 
 
+def test_pdf_generation():
+    """§7 서버 PDF — gen-docs·인증서 PDF(한글 포함) 실제 %PDF 반환."""
+    from app import models
+    from app.db import SessionLocal
+    with TestClient(app) as c:
+        atok = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "PdfCo"},
+                     headers=_h(atok)).json()["case_id"]
+        db = SessionLocal()
+        try:
+            g = models.GeneratedDocument(case_id=cid, org_id="org_demo", doc_type="sjph_manual",
+                                         version=1, status="draft",
+                                         content="SJPH 매뉴얼\n요소: 경영·원재료·공정\n할랄 인증 준비 양호.")
+            db.add(g)
+            db.add(models.HalalCertificate(case_id=cid, certificate_no="HC-PDF", scope=["ProdA"],
+                   issue_date="2026-01-01", expiry_date="2030-01-01", status="active",
+                   qr_token="pdftoken"))
+            db.commit()
+            gid = g.gen_doc_id
+        finally:
+            db.close()
+        r1 = c.get(f"/gen-docs/{gid}/pdf", headers=_h(atok))
+        assert r1.status_code == 200 and r1.headers["content-type"] == "application/pdf", r1.status_code
+        assert r1.content[:4] == b"%PDF" and len(r1.content) > 800, len(r1.content)
+        r2 = c.get(f"/cases/{cid}/certificate/pdf", headers=_h(atok))
+        assert r2.status_code == 200 and r2.content[:4] == b"%PDF" and len(r2.content) > 800, r2.status_code
+
+
 def test_certificate_lifecycle():
     """§5.1 인증서 정지/재개/철회 — 권한·상태전이·공개검증 반영."""
     from app import models
@@ -708,7 +736,7 @@ def test_search_context_fallback_returns_list():
 
 
 if __name__ == "__main__":
-    tests = [test_certificate_lifecycle,
+    tests = [test_pdf_generation, test_certificate_lifecycle,
              test_payment_and_analytics, test_org_overview,
              test_certificate_signature_and_verify, test_integration_event_idempotency,
              test_audit_plan_lifecycle, test_fatwa_voting_quorum, test_car_lifecycle_closes_finding,

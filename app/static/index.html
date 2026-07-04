@@ -1454,7 +1454,8 @@ async function genDocsCard(id,docType,title,genFn,canApprove){
       <tbody>${rows.length?rows.map(g=>`<tr><td><b>v${g.version}</b></td><td>${bTag(g.status==='approved'?'ok':'mute',g.status)}</td>
         <td class="muted small">${esc((g.created_at||"").slice(0,16))}</td>
         <td style="text-align:right;white-space:nowrap">
-          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="printGenDoc('${g.gen_doc_id}')">🖨 PDF</button>
+          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="serverPdf('/gen-docs/${g.gen_doc_id}/pdf','${docType}_v${g.version}.pdf')">📄 PDF</button>
+          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="printGenDoc('${g.gen_doc_id}')">🖨 인쇄</button>
           <button class="btn" style="padding:3px 8px;font-size:11px" onclick="dlGenDoc('${g.gen_doc_id}')">⬇ txt</button>
           ${canApprove&&g.status!=='approved'?`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="approveGenDoc('${g.gen_doc_id}')">승인</button>`:''}</td></tr>`).join(""):`<tr><td colspan="4" class="muted" style="text-align:center;padding:14px">생성된 문서 없음</td></tr>`}</tbody></table></div>
     <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn pri" onclick="${genFn}">＋ 새 버전 생성 · Generate</button></div></div>`;
@@ -1607,6 +1608,13 @@ async function viewDoc(docId){
     const u=URL.createObjectURL(dl);const a=document.createElement("a");a.href=u;a.download=fname;a.click();
     setTimeout(()=>URL.revokeObjectURL(u),60000);}
   catch(_){toast("열기 실패");}
+}
+async function serverPdf(url,name){
+  try{const r=await fetch(url,{headers:{Authorization:"Bearer "+token()}});
+    if(!r.ok){toast("PDF 생성 실패");return;}
+    const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement("a");
+    a.href=u;a.download=name||"document.pdf";a.click();setTimeout(()=>URL.revokeObjectURL(u),60000);}
+  catch(e){toast("PDF 실패");}
 }
 async function reviewDoc(docId,st){if(!st)return;try{await API(`/documents/${docId}/review`,{method:"PATCH",body:JSON.stringify({review_status:st})});toast("검수 · "+st);applyView();}catch(e){toast("검수 실패 · "+(e&&e.code?e.code:""));}}
 async function reclassifyDoc(docId){const en=await ENUMS();const r=await dialog("문서 재분류 · Reclassify",[{key:"doc_type",label:"문서 유형 · doc_type",type:"select",options:(en.doc_type||[]).map(o=>({value:o.value,label:o.label}))}]);if(!r)return;try{await API(`/documents/${docId}/reclassify`,{method:"PATCH",body:JSON.stringify({doc_type:r.doc_type})});toast("재분류 · "+r.doc_type);applyView();}catch(e){toast("재분류 실패 · "+(e&&e.code?e.code:""));}}
@@ -1950,7 +1958,7 @@ SCREEN.certificate=async()=>{
   <div class="grid side">
     <div class="card"><h3>할랄 인증서 <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
       <div class="body">${certCard}
-        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="printCert('${id}')">🖨 인증서 다운로드·인쇄 · PDF</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
+        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(c.certificate_no||"")}.pdf')">📄 인증서 PDF 다운로드</button><button class="btn" onclick="printCert('${id}')">🖨 인쇄</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
         ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span></div>`:''}
         ${c.issued&&c.status&&c.status!=='active'?`<div class="banner ${c.status==='withdrawn'?'bad':'warn'}" style="margin-top:10px">${c.status==='withdrawn'?'⛔ 철회됨 · Withdrawn':'⏸ 정지됨 · Suspended'}</div>`:''}
         ${c.issued&&CAN("certificate.suspend")?`<div class="btnrow" style="margin-top:10px">

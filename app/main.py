@@ -1537,6 +1537,70 @@ def get_gendoc(gen_doc_id: str, user=Depends(auth.get_current_user), db: Session
             "status": g.status, "content": g.content, "created_at": str(g.created_at)}
 
 
+def _render_pdf(title, body, subtitle=None, footer=None):
+    """텍스트 문서를 PDF로 렌더(§7). PyMuPDF 내장 'korea' 폰트 → 한글/라틴 모두 지원(외부 TTF 불필요)."""
+    import fitz
+    W, H = fitz.paper_size("a4")
+    margin, fs, lh = 56, 10.5, 15.5
+    font, maxw = "korea", (W - 2 * margin)
+    doc = fitz.open()
+
+    def wrap(text):
+        out = []
+        for para in (text or "").split("\n"):
+            if not para.strip():
+                out.append("")
+                continue
+            line = ""
+            for word in para.split(" "):
+                cand = (line + " " + word) if line else word
+                if fitz.get_text_length(cand, fontname=font, fontsize=fs) > maxw and line:
+                    out.append(line)
+                    line = word
+                else:
+                    line = cand
+            out.append(line)
+        return out
+
+    pg = doc.new_page(width=W, height=H)
+    y = margin
+    pg.insert_text((margin, y), title, fontname=font, fontsize=18)
+    y += 28
+    if subtitle:
+        pg.insert_text((margin, y), subtitle, fontname=font, fontsize=10, color=(0.35, 0.35, 0.35))
+        y += 20
+    pg.draw_line((margin, y), (W - margin, y), color=(0.75, 0.75, 0.75))
+    y += 18
+    for line in wrap(body):
+        if y > H - margin - 20:
+            pg = doc.new_page(width=W, height=H)
+            y = margin
+        pg.insert_text((margin, y), line, fontname=font, fontsize=fs)
+        y += lh
+    if footer:
+        pg.insert_text((margin, H - margin + 4), footer, fontname=font, fontsize=8, color=(0.5, 0.5, 0.5))
+    return doc.tobytes()
+
+
+@app.get("/gen-docs/{gen_doc_id}/pdf")
+def get_gendoc_pdf(gen_doc_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """생성 문서(SJPH Manual·Audit Report)를 PDF로 다운로드(§7)."""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    g = db.get(models.GeneratedDocument, gen_doc_id)
+    if not g:
+        raise HTTPException(404, {"code": "GENDOC_NOT_FOUND"})
+    c = _get_case(db, g.case_id, user)
+    labels = {"sjph_manual": "SJPH Manual", "audit_report": "현장심사 보고서 · Audit Report"}
+    title = labels.get(g.doc_type, g.doc_type)
+    subtitle = "%s · v%s · %s" % (c.company_name or "", g.version, g.status)
+    pdf = _render_pdf(title, g.content or "", subtitle=subtitle,
+                      footer="GL-HAC AI · %s" % str(g.created_at)[:19])
+    fn = "%s_v%s.pdf" % (g.doc_type, g.version)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
+
+
 @app.post("/gen-docs/{gen_doc_id}/approve")
 def approve_gendoc(gen_doc_id: str, user=Depends(auth.require_roles("auditor", "operator")),
                    db: Session = Depends(get_db)):
@@ -2055,6 +2119,42 @@ def get_certificate(case_id: str, user=Depends(auth.get_current_user), db: Sessi
             "signed": bool(sig),
             "signature": ({"signer": sig.signer, "provider": sig.provider,
                            "signed_at": str(sig.signed_at)} if sig else None)}
+
+
+@app.get("/cases/{case_id}/certificate/pdf")
+def certificate_pdf(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """할랄 인증서 PDF(§7·§6.4) — 인증정보·범위·공개검증·서명상태 포함."""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    c = _get_case(db, case_id, user)
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    if not cert:
+        raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
+    sig = (db.query(models.Signature).filter_by(subject_type="certificate", subject_id=cert.id)
+           .order_by(models.Signature.signed_at.desc()).first())
+    lines = [
+        "SERTIFIKAT HALAL · 할랄 인증서",
+        "",
+        "기업 · Perusahaan : %s" % (c.company_name or "-"),
+        "인증번호 · No     : %s" % (cert.certificate_no or "-"),
+        "상태 · Status     : %s" % cert.status,
+        "발급 · Issued     : %s" % (cert.issue_date or "-"),
+        "만료 · Valid until : %s" % (cert.expiry_date or "-"),
+        "범위 · Scope      : %s" % (", ".join(cert.scope or []) or "-"),
+        "",
+        "본 제품은 SJPH 및 샤리아 기준에 따라 할랄(HALAL) 인증되었음을 증명합니다.",
+        "Produk ini disertifikasi HALAL sesuai SJPH dan kriteria Syariah.",
+        "",
+        "공개 검증 · Verify : /verify/%s" % (cert.qr_token or "-"),
+        "전자서명 · Signed  : %s%s" % ("예 · Yes" if sig else "아니오 · No",
+                                       (" (" + (sig.provider or "") + ")") if sig else ""),
+    ]
+    pdf = _render_pdf("GL-HAC AI · Halal Certificate", "\n".join(lines),
+                      subtitle=cert.certificate_no or "",
+                      footer="공개 검증 페이지에서 진위를 확인하세요 · Verify authenticity at /verify")
+    fn = "certificate_%s.pdf" % (cert.certificate_no or case_id[:8])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
 
 
 # ---------- 인증서 lifecycle: 정지/철회/재개 (§5.1·§5.2) ----------
