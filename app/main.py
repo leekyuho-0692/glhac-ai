@@ -911,6 +911,39 @@ def read_all_notifications(user=Depends(auth.get_current_user), db: Session = De
     return {"ok": True}
 
 
+@app.post("/admin/notifications/drain")
+def admin_drain_notifications(user=Depends(auth.require_roles("operator")),
+                              db: Session = Depends(get_db)):
+    """미발송 알림 큐를 즉시 발송(drain) — 관리자 수동 트리거(워커 미기동 시에도 실발송).
+    크리덴셜(GLHAC_TWILIO_*/GLHAC_SMTP_*) 설정 시 실제 전송, 미설정 시 stub 로그 후 sent 처리."""
+    stats = drain_notifications(db)
+    _audit(db, user, "notification.drain", "notification", None, None, stats)
+    return stats
+
+
+@app.get("/admin/notifications")
+def admin_list_notifications(status: str = None, limit: int = 100,
+                             user=Depends(auth.require_roles("operator")),
+                             db: Session = Depends(get_db)):
+    """알림 발송 현황 — 상태별 집계 + 목록(관리자). 실발송 가시성."""
+    q = db.query(models.Notification)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    all_rows = q.all()
+    counts = {"unsent": 0, "sent": 0, "failed": 0, "sending": 0}
+    for n in all_rows:
+        counts[n.status] = counts.get(n.status, 0) + 1
+    fq = q
+    if status:
+        fq = fq.filter(models.Notification.status == status)
+    rows = fq.order_by(models.Notification.created_at.desc()).limit(min(int(limit), 500)).all()
+    items = [{"id": n.notification_id, "event_type": n.event_type, "title": n.title,
+              "channels": n.channels, "status": n.status, "attempts": n.attempts,
+              "last_error": n.last_error, "role": n.role, "case_id": n.case_id,
+              "created_at": str(n.created_at)} for n in rows]
+    return {"counts": counts, "total": len(items), "items": items}
+
+
 @app.post("/admin/scan-expiry")
 def scan_expiry(user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
     """만료 임박 인증서 스캔 → 90/60/30일 알림 생성 (Rizky #7). 운영 시 cron 주기 실행."""

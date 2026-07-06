@@ -374,6 +374,7 @@ const NAV = [
   ["invoice","🧾","청구","Invoice","청구·Billing"],
   ["payments","💰","결제 관리","Payments","결제·Admin"],
   ["deposits","🏦","입금 매칭","Deposits","입금·Matching"],
+  ["notifyLog","📣","알림 발송","Notifications","발송·Delivery"],
   ["fatwa","⚖️","파트와","Fatwa","심의·Fatwa"],
   ["certificate","🏅","인증서","Certificate","발급·Issue"],
   ["assistant","🤖","AI 어시스턴트","Assistant","AI 보조·Assist"],
@@ -406,6 +407,7 @@ const MENU_ACCESS = {
   invoice:  ["client","consultant","ops","admin"],
   payments: ["ops","admin"],
   deposits: ["ops","admin"],
+  notifyLog: ["ops","admin"],
   fatwa:    ["sharia","ops","admin"],
   certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
@@ -548,7 +550,7 @@ const ID_LABEL={
 };
 const NAV_ID={dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
   integration:"Integrasi",documents:"Dokumen",audit:"Audit",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
-  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",system:"Sistem"};
+  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",system:"Sistem"};
 function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
@@ -719,6 +721,17 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // 알림 실발송
+  "알림 발송":"Kirim Notifikasi",
+  "알림 발송 · 실행":"Kirim Notifikasi · Eksekusi",
+  "미발송 큐를 즉시 발송합니다. Twilio/SMTP 크리덴셜 설정 시 실제 SMS·이메일 전송, 미설정 시 로그(stub) 후 완료. 백그라운드 워커로 자동발송도 가능합니다.":"Antrean yang belum terkirim akan langsung dikirim. Jika kredensial Twilio/SMTP telah diatur, SMS·email akan terkirim nyata; jika belum, hanya akan dicatat (stub) lalu selesai. Juga dapat dikirim otomatis melalui pekerja latar.",
+  "미발송":"Belum Terkirim",
+  "발송됨":"Terkirim",
+  "발송중":"Sedang Mengirim",
+  "📣 미발송 큐 발송 실행":"📣 Eksekusi Pengiriman Antrean Belum Terkirim",
+  "발송 내역":"Riwayat Pengiriman",
+  "제목":"Judul",
+  "채널":"Saluran",
   // Payment P2 입금매칭
   "입금 매칭":"Pencocokan Setoran",
   "입금 등록 · 자동매칭":"Pendaftaran Setoran · Pencocokan Otomatis",
@@ -2258,6 +2271,22 @@ function payLabel(s){const m={draft:'초안',invoice_created:'청구생성',wait
 function payMsg(s){const m={waiting_payment:'아직 결제가 확인되지 않았습니다. 납부기한 전까지 결제해 주세요.',need_verification:'입금 정보가 신청 정보와 완전히 일치하지 않아 관리자 확인이 필요합니다.',paid:'결제가 확인되었습니다. 다음 단계로 진행됩니다.',rejected:'결제가 거절되었습니다. 관리자에게 문의하세요.',expired:'납부기한이 만료되었습니다. 청구서 재발행이 필요합니다.'};const x=m[s];return x?`<div class="banner ${s==='paid'?'ok':s==='rejected'||s==='expired'?'bad':'info'}" style="margin-top:8px">${x}</div>`:'';}
 async function setInvStatus(iid,status){if(!confirm(`상태를 '${status}'로 변경할까요?`))return;try{await API(`/invoices/${iid}/status`,{method:"PATCH",body:JSON.stringify({status})});toast("상태 변경 · "+status);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 function selectPay(iid){PAY_SEL=iid;applyView();}
+SCREEN.notifyLog=async()=>{
+  const d=await API("/admin/notifications").catch(()=>({counts:{},items:[]}));
+  const cc=d.counts||{}, items=d.items||[];
+  const card=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:22px;color:var(--${c})">${n||0}</span><span class="l">${l}</span></div></div>`;
+  const rows=items.length?items.map(n=>`<tr><td class="muted small">${esc((n.created_at||"").slice(5,16))}</td><td><b>${esc(n.title||n.event_type||"")}</b></td><td>${(n.channels||[]).map(ch=>`<span class="chip">${esc(ch)}</span>`).join(" ")}</td><td>${bTag(notifColor(n.status),T(notifLabel(n.status)))}${n.attempts?` <span class="muted small">×${n.attempts}</span>`:""}</td><td class="muted small">${esc(n.last_error||"")}</td></tr>`).join(""):'<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">알림 없음</td></tr>';
+  return `
+  <div class="card" style="margin-bottom:16px"><h3>알림 발송 · 실행 <span class="en">· Delivery</span></h3>
+    <div class="body"><div class="banner info" style="margin-bottom:10px">미발송 큐를 즉시 발송합니다. Twilio/SMTP 크리덴셜 설정 시 실제 SMS·이메일 전송, 미설정 시 로그(stub) 후 완료. 백그라운드 워커로 자동발송도 가능합니다.</div>
+      <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">${card(cc.unsent,"미발송","warn")}${card(cc.sent,"발송됨","ok")}${card(cc.failed,"실패","bad")}${card(cc.sending,"발송중","info")}</div>
+      <button class="btn pri" onclick="drainNotifications()">📣 미발송 큐 발송 실행</button></div></div>
+  <div class="card"><h3>발송 내역 <span class="en">· Log</span><span class="r">${items.length}건</span></h3>
+    <div class="body tight"><table><thead><tr><th>일시</th><th>제목</th><th>채널</th><th>상태</th><th>오류</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+};
+function notifLabel(s){return {unsent:"미발송",sent:"발송됨",failed:"실패",sending:"발송중"}[s]||s;}
+function notifColor(s){return {sent:"ok",failed:"bad",unsent:"warn",sending:"info"}[s]||"mute";}
+async function drainNotifications(){try{const r=await API("/admin/notifications/drain",{method:"POST",body:"{}"});toast("발송 "+(r.sent||0)+" · 실패 "+(r.failed||0)+" · 동의제외 "+(r.consent_skipped||0));applyView();}catch(e){toast("발송 실패 · "+(e&&e.code?e.code:""));}}
 SCREEN.deposits=async()=>{
   const [dep,cand]=await Promise.all([API("/admin/deposits").catch(()=>({items:[]})),API("/admin/payments/match-candidates").catch(()=>({items:[]}))]);
   const deps=dep.items||[], cands=cand.items||[];

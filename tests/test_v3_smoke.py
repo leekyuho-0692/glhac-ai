@@ -908,8 +908,32 @@ def test_payment_p2_matching():
         assert c.get("/admin/deposits", headers=_h(ctok)).status_code == 403
 
 
+def test_notification_drain():
+    """§10 알림 실발송 — 큐 drain(관리자 수동 트리거) + 발송현황 admin 가시성."""
+    from app import models
+    from app.db import SessionLocal
+    with TestClient(app) as c:
+        otok = _tok(c, "operator1", "pw"); ctok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "NotifCo"},
+                     headers=_h(ctok)).json()["case_id"]
+        db = SessionLocal()
+        try:
+            db.add(models.Notification(org_id="org_demo", case_id=cid, event_type="test",
+                   channels=["inapp", "sms"], title="테스트 알림", body="본문", status="unsent"))
+            db.commit()
+        finally:
+            db.close()
+        before = c.get("/admin/notifications", headers=_h(otok)).json()
+        assert before["counts"].get("unsent", 0) >= 1, before
+        st = c.post("/admin/notifications/drain", headers=_h(otok))
+        assert st.status_code == 200 and st.json()["processed"] >= 1, st.text
+        after = c.get("/admin/notifications?status=sent", headers=_h(otok)).json()
+        assert after["counts"].get("sent", 0) >= 1, after
+        assert c.post("/admin/notifications/drain", headers=_h(ctok)).status_code == 403
+
+
 if __name__ == "__main__":
-    tests = [test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
+    tests = [test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,
