@@ -1444,13 +1444,28 @@ def reclassify_document(document_id: str, body: schemas.DocTypeReq,
     return {"document_id": document_id, "doc_type": d.doc_type}
 
 
+def _apply_profile_extras(c, agg, force=False):
+    """추출된 주소·책임자·공장등록번호를 케이스 프로필에 반영. 기본은 빈값만, force=True면 덮어씀.
+    반환: 채운 필드명 리스트."""
+    filled = []
+    addr = agg.get("address")
+    if addr and (force or not (c.factory_address or c.address)):
+        c.factory_address = addr; filled.append("factory_address")
+    if agg.get("responsible_person") and (force or not c.responsible_person):
+        c.responsible_person = agg["responsible_person"]; filled.append("responsible_person")
+    if agg.get("factory_reg_no") and (force or not c.factory_reg_no):
+        c.factory_reg_no = agg["factory_reg_no"]; filled.append("factory_reg_no")
+    return filled
+
+
 def _apply_agg_to_case(db, c, agg):
-    """추출 필드(회사/NIB/제품/원재료)를 케이스에 반영 — DocumentAsset 생성은 하지 않음(재처리용)."""
-    applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0}
+    """추출 필드(회사/NIB/주소/책임자/제품/원재료)를 케이스에 반영 — DocumentAsset 생성은 하지 않음(재처리용)."""
+    applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": []}
     if agg.get("company_name") and (not c.company_name or c.company_name in _CO_PLACEHOLDER):
         c.company_name = agg["company_name"]; applied["company_set"] = True
     if agg.get("nib") and not c.nib:
         c.nib = agg["nib"]; applied["nib_set"] = True
+    applied["profile"] += _apply_profile_extras(c, agg)
     have_p = {p.name for p in db.query(models.Product).filter_by(case_id=c.case_id)}
     for pn in agg.get("products", []):
         if pn and pn not in have_p:
@@ -1611,13 +1626,14 @@ def _apply_intake_autofill(db, c, res):
                                     text_excerpt=d.get("excerpt"), content_b64=d.get("content_b64"),
                                     content_type=d.get("content_type")))
     agg = res.get("extracted", {})
-    applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0}
+    applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": []}
     if agg.get("company_name") and (not c.company_name or c.company_name in _CO_PLACEHOLDER):
         c.company_name = agg["company_name"]
         applied["company_set"] = True
     if agg.get("nib") and not c.nib:
         c.nib = agg["nib"]
         applied["nib_set"] = True
+    applied["profile"] += _apply_profile_extras(c, agg)
     have_p = {p.name for p in db.query(models.Product).filter_by(case_id=c.case_id)}
     for pn in agg.get("products", []):
         if pn and pn not in have_p:
@@ -1726,6 +1742,47 @@ def company_check(case_id: str, user=Depends(auth.get_current_user), db: Session
     return {"case_company": c.company_name, "applicant_docs": found,
             "mismatch": mismatch, "best_similarity": best,
             "suggested_company": found[0]["doc_company"] if (mismatch and found) else None}
+
+
+@app.post("/cases/{case_id}/profile/autofill")
+def autofill_profile(case_id: str, force: bool = False,
+                     user=Depends(auth.require_roles("applicant", "consultant")),
+                     db: Session = Depends(get_db)):
+    """신청기업 서류(사업자·공장등록증) 재추출 → 회사명·NIB·주소·책임자·공장등록번호 프로필 자동채움.
+    force=True면 기존값 덮어씀(잘못 시드된 값 교정용). 공급사 서류는 제외."""
+    from .intake import parse_file, classify, aggregate_fields
+    c = _get_case(db, case_id, user)
+    docs = (db.query(models.DocumentAsset).filter_by(case_id=case_id)
+            .filter(models.DocumentAsset.doc_type.in_(
+                ["nib_business_license", "factory_registration"])).all())
+    classified = []
+    for d in docs:
+        fields = d.fields or {}
+        # 구 추출본에 주소가 없으면 원본 재추출·재분류로 보강
+        if d.content_b64 and not fields.get("address"):
+            try:
+                text = parse_file(d.filename, base64.b64decode(d.content_b64.split(",")[-1]))
+                r = classify(d.filename, text)
+                if r.get("fields"):
+                    fields = r["fields"]; d.fields = fields
+                    d.doc_type = r.get("doc_type", d.doc_type)
+                    d.text_excerpt = (text or "")[:300]
+            except Exception:  # noqa: BLE001
+                pass
+        classified.append({"fields": fields, "doc_type": d.doc_type})
+    agg = aggregate_fields(classified)
+    applied = []
+    if agg.get("company_name") and (force or not c.company_name or c.company_name in _CO_PLACEHOLDER):
+        c.company_name = agg["company_name"]; applied.append("company_name")
+    if agg.get("nib") and (force or not c.nib):
+        c.nib = agg["nib"]; applied.append("nib")
+    applied += _apply_profile_extras(c, agg, force=force)
+    _audit(db, user, "profile.autofill", "case", case_id, case_id,
+           {"applied": applied, "force": force})
+    db.commit()
+    return {"applied": applied,
+            "extracted": {k: agg.get(k) for k in ("company_name", "nib", "address",
+                                                  "responsible_person", "factory_reg_no")}}
 
 
 # BPJPH SIHALAL 공개조회(비공식·참고용) — 사업자 할랄시스템 등록 확인

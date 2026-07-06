@@ -732,6 +732,14 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n 프로필자동채움
+  "문서에서 프로필 채움":"Isi Profil dari Dokumen",
+  "신청기업 서류(사업자·공장등록증)에서 회사명·NIB·주소·대표자를 추출해 프로필을 채웁니다. 기존 값은 덮어씁니다. 진행할까요?":"Ekstrak nama perusahaan, NIB, alamat, dan perwakilan dari dokumen perusahaan (sertifikat pendaftaran bisnis/pabrik) untuk mengisi profil. Nilai yang ada akan ditimpa. Lanjutkan?",
+  "문서 재추출 중… (수초)":"Mengekstrak ulang dokumen... (beberapa detik)",
+  "프로필 채움":"Isi Profil",
+  "개 필드":" bidang",
+  "채울 정보 없음 — 신청기업 서류를 먼저 업로드하세요":"Tidak ada informasi yang dapat diisi — Unggah dokumen perusahaan pemohon terlebih dahulu",
+  "자동채움 실패":"Isi Otomatis Gagal",
   // §i18n SIHALAL
   "SIHALAL 등록조회":"Pencarian Registrasi SIHALAL",
   "회사명을 입력하세요":"Masukkan nama perusahaan",
@@ -1811,6 +1819,7 @@ SCREEN.application=async()=>{
         ${c.draft_state==='returned'&&c.return_reason?`<div class="banner bad" style="margin-bottom:8px">${T('↩ 반려됨 · 사유:')} ${esc(c.return_reason)}</div>`:''}
         <div style="margin-bottom:8px">${draftBadge(c.draft_state)}</div>
         <div class="btnrow" style="flex-wrap:wrap;gap:6px">
+          <button class="btn" onclick="autofillProfile('${id}')">📄 ${T('문서에서 프로필 채움')}</button>
           <button class="btn" onclick="saveDraft('${id}')">💾 임시저장 · Draft</button>
           <button class="btn pri" onclick="saveProfile('${id}')">프로필 저장 · Save</button>
           <button class="btn" onclick="submitApp('${id}')">✅ 작성완료 제출 · Submit</button>
@@ -1861,6 +1870,16 @@ async function addPenyelia(){const org=(()=>{try{return localStorage.getItem("gl
 async function assignPendamping(id){const pendamping_id=v("pdId");if(!pendamping_id){toast("ID 입력");return}try{await API(`/cases/${id}/pendamping/assign`,{method:"POST",body:JSON.stringify({pendamping_id})});toast("동반자 배정");applyView();}catch(e){toast("배정 실패 · "+(e&&e.code?e.code:""));}}
 async function verifyPendamping(id,decision){try{await API(`/cases/${id}/pendamping/verify`,{method:"POST",body:JSON.stringify({decision})});toast("검증 · "+decision);applyView();}catch(e){toast("검증 실패 · "+(e&&e.code?e.code:""));}}
 async function sihalalLink(id){const external_username=v("shUser");if(!external_username){toast("사용자명 입력");return}try{const r=await API(`/cases/${id}/sihalal/identity/link`,{method:"POST",body:JSON.stringify({external_username})});if(r.external_identity_id)SIHALAL_EID[id]=r.external_identity_id;toast("SIHALAL 연동");applyView();}catch(e){toast("연동 실패 · "+(e&&e.code?e.code:""));}}
+async function autofillProfile(id){
+  if(!confirm(T('신청기업 서류(사업자·공장등록증)에서 회사명·NIB·주소·대표자를 추출해 프로필을 채웁니다. 기존 값은 덮어씁니다. 진행할까요?')))return;
+  toast(T('문서 재추출 중… (수초)'));
+  try{
+    const r=await API(`/cases/${id}/profile/autofill?force=true`,{method:"POST",body:"{}"});
+    const a=(r.applied||[]);
+    if(a.length){delete REGION_CACHE[id];toast(T('프로필 채움')+' · '+a.length+T('개 필드'));await loadCases(true);applyView();}
+    else{toast(T('채울 정보 없음 — 신청기업 서류를 먼저 업로드하세요'));}
+  }catch(e){toast(T('자동채움 실패')+' · '+(e&&e.code?e.code:''));}
+}
 async function saveProfile(id){
   const cel=document.getElementById("apConsent");
   const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),factory_address:v("apFactory"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined};

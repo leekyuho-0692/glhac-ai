@@ -1228,6 +1228,23 @@ def test_sihalal_lookup_guard():
         assert c.get("/sihalal/lookup?nama=a", headers=_h(tok)).status_code == 422
 
 
+def test_profile_autofill_fields():
+    """§프로필 자동채움 — aggregate_fields가 신청기업 서류서 주소·책임자 집계(공급사 제외)."""
+    from app import intake
+    docs = [
+        {"doc_type": "nib_business_license",
+         "fields": {"company_name": "Buzzup Co., Ltd.", "address": "Seoul Gasan 205-27",
+                    "responsible_person": "Chun", "factory_reg_no": "REG-1"}},
+        {"doc_type": "halal_certificate",
+         "fields": {"company_name": "Supplier X", "address": "Other Addr"}},  # 공급사 → 제외
+    ]
+    agg = intake.aggregate_fields(docs)
+    assert agg["company_name"] == "Buzzup Co., Ltd." and agg["address"] == "Seoul Gasan 205-27", agg
+    assert agg["responsible_person"] == "Chun", agg
+    # 공급사 주소는 안 들어감
+    assert agg["address"] != "Other Addr", agg
+
+
 if __name__ == "__main__":
     tests = [test_pg_webhook, test_exif_gps_and_geo_fallback, test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,

@@ -141,8 +141,11 @@ def parse_file(name, data):
 _CLASSIFY_SYS = (
     "당신은 할랄 인증 서류 분류기입니다. 파일명과 본문 발췌를 보고 doc_type을 분류하고 핵심 필드를 추출하세요. "
     "doc_type은 반드시 다음 중 하나: " + ", ".join(DOC_TYPES) + ". "
+    "address는 사업장/공장 소재지 주소 전체, responsible_person은 대표자/책임자 이름, "
+    "factory_reg_no는 공장/영업 등록번호. 없으면 null. "
     '반드시 JSON으로만: {"doc_type":"...","confidence":0.0,'
-    '"fields":{"company_name":null,"nib":null,"product_names":[],"cert_no":null,'
+    '"fields":{"company_name":null,"nib":null,"address":null,"responsible_person":null,'
+    '"factory_reg_no":null,"product_names":[],"cert_no":null,'
     '"issuer":null,"expiry_date":null,"material_names":[]}}'
 )
 
@@ -195,15 +198,28 @@ def parse_typed(doc_type, filename, data):
             "text_len": len(text), "excerpt": text[:300]}
 
 
+_APPLICANT_DOCS = ("nib_business_license", "factory_registration")
+
+
 def aggregate_fields(docs):
-    """분류 문서들의 추출 필드를 신청서용으로 집계."""
-    agg = {"company_name": None, "nib": None, "products": [], "materials": [], "certificates": []}
+    """분류 문서들의 추출 필드를 신청서용으로 집계.
+    회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외)."""
+    agg = {"company_name": None, "nib": None, "address": None, "responsible_person": None,
+           "factory_reg_no": None, "products": [], "materials": [], "certificates": []}
     for d in docs:
         f = d.get("fields") or {}
-        if not agg["company_name"] and f.get("company_name"):
-            agg["company_name"] = f["company_name"]
-        if not agg["nib"] and f.get("nib"):
-            agg["nib"] = f["nib"]
+        applicant = d.get("doc_type") in _APPLICANT_DOCS or d.get("doc_type") is None
+        if applicant:
+            if not agg["company_name"] and f.get("company_name"):
+                agg["company_name"] = f["company_name"]
+            if not agg["nib"] and f.get("nib"):
+                agg["nib"] = f["nib"]
+            if not agg["address"] and (f.get("address") or f.get("factory_address")):
+                agg["address"] = f.get("address") or f.get("factory_address")
+            if not agg["responsible_person"] and f.get("responsible_person"):
+                agg["responsible_person"] = f["responsible_person"]
+            if not agg["factory_reg_no"] and f.get("factory_reg_no"):
+                agg["factory_reg_no"] = f["factory_reg_no"]
         for p in (f.get("product_names") or []):
             if p and p not in agg["products"]:
                 agg["products"].append(p)
