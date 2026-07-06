@@ -1199,6 +1199,48 @@ def delete_material(material_id: str,
     return {"deleted": material_id}
 
 
+def _norm_material(name):
+    """원재료명 정규화 — 공백·괄호주석·구두점·국가/원산지 접미 제거해 중복 판정 키."""
+    import re
+    s = (name or "").lower()
+    s = re.sub(r"\([^)]*\)", "", s)           # (중국), (대상) 등 괄호 제거
+    s = re.sub(r"[\s\-_·,#]|중국산|국내산|수입", "", s)
+    return s.strip()
+
+
+@app.post("/cases/{case_id}/materials/dedup")
+def dedup_materials(case_id: str, user=Depends(auth.require_roles("applicant", "consultant")),
+                    db: Session = Depends(get_db)):
+    """중복 원재료 정리 — 정규화 동일명(괄호·공백·원산지 차이) 그룹당 1개만 유지.
+    증빙 보유 > CLEARED > 짧은 이름 우선 유지, 나머지 삭제. OCR 오탈자는 보수적으로 미병합."""
+    _get_case(db, case_id, user)
+    mats = db.query(models.Material).filter_by(case_id=case_id).all()
+    ev = dict(db.query(models.DocumentAsset.material_id, func.count(models.DocumentAsset.document_id))
+              .filter(models.DocumentAsset.case_id == case_id,
+                      models.DocumentAsset.material_id.isnot(None))
+              .group_by(models.DocumentAsset.material_id).all())
+    groups = {}
+    for m in mats:
+        key = _norm_material(m.name)
+        if key:
+            groups.setdefault(key, []).append(m)
+    removed = 0
+    for key, grp in groups.items():
+        if len(grp) < 2:
+            continue
+        # 유지 우선순위: 증빙 많음 → CLEARED → 이름 짧음
+        grp.sort(key=lambda m: (-(ev.get(m.material_id, 0)),
+                                0 if m.screen_result in ("CLEARED", "PASS") else 1,
+                                len(m.name or "")))
+        keep = grp[0]
+        for m in grp[1:]:
+            if not ev.get(m.material_id):   # 증빙 붙은 건 안전하게 보존
+                db.delete(m); removed += 1
+    _audit(db, user, "material.dedup", "case", case_id, case_id, {"removed": removed})
+    db.commit()
+    return {"removed": removed, "remaining": len(mats) - removed}
+
+
 @app.post("/ai/screen-text")
 def ai_screen_text(body: schemas.TextScreenReq, user=Depends(auth.get_current_user)):
     """v1 AI 성분 스캐너(텍스트) 상속 + ontology 매칭."""
@@ -1470,15 +1512,16 @@ def _apply_agg_to_case(db, c, agg):
     for pn in agg.get("products", []):
         if pn and pn not in have_p:
             db.add(models.Product(case_id=c.case_id, name=pn)); applied["products"] += 1; have_p.add(pn)
-    have_m = {m.name for m in db.query(models.Material).filter_by(case_id=c.case_id)}
+    have_m = {_norm_material(m.name) for m in db.query(models.Material).filter_by(case_id=c.case_id)}
     for mn in agg.get("materials", []):
-        if mn and mn not in have_m:
+        nk = _norm_material(mn)
+        if mn and nk and nk not in have_m:
             sc = screening.screen_merged(mn, None, None, None, False, True, "")
             db.add(models.Material(case_id=c.case_id, name=mn, screen_result=sc["result"],
                                    screen_status=sc["status"], screen_severity=sc["severity"],
                                    matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk"),
                                    cert=sc.get("v1_cert")))
-            applied["materials"] += 1; have_m.add(mn)
+            applied["materials"] += 1; have_m.add(nk)
     return applied
 
 
@@ -1640,16 +1683,17 @@ def _apply_intake_autofill(db, c, res):
             db.add(models.Product(case_id=c.case_id, name=pn))
             applied["products"] += 1
             have_p.add(pn)
-    have_m = {m.name for m in db.query(models.Material).filter_by(case_id=c.case_id)}
+    have_m = {_norm_material(m.name) for m in db.query(models.Material).filter_by(case_id=c.case_id)}
     for mn in agg.get("materials", []):
-        if mn and mn not in have_m:
+        nk = _norm_material(mn)
+        if mn and nk and nk not in have_m:
             sc = screening.screen_merged(mn, None, None, None, False, True, "")
             db.add(models.Material(case_id=c.case_id, name=mn, screen_result=sc["result"],
                                    screen_status=sc["status"], screen_severity=sc["severity"],
                                    matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk"),
                                    cert=sc.get("v1_cert")))
             applied["materials"] += 1
-            have_m.add(mn)
+            have_m.add(nk)
     # 사전심사 업로드 → 신청서 임시저장 진입(작성 이어하기 대상)
     if c.status in ("onboarding", "application_draft"):
         c.status = "application_draft"

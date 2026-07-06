@@ -732,6 +732,15 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n 원재료상세·dedup
+  "중복 정리":"Hapus Duplikat",
+  "정규화 동일명(괄호·공백·원산지 차이) 중복 원재료를 그룹당 1개만 남기고 정리합니다. 증빙 붙은 항목은 보존됩니다. 진행할까요?":"Normalisasi nama identik (perbedaan tanda kurung, spasi, negara asal) - Hanya menyisakan 1 bahan duplikat per grup. Item dengan bukti akan dipertahankan. Lanjutkan?",
+  "중복 정리 완료":"Penghapusan Duplikat Selesai",
+  "건 삭제":"item dihapus",
+  "건 남음":"item tersisa",
+  "정리 실패":"Penghapusan Gagal",
+  "근거":"Dasar/Alasan",
+  "상세 설명 없음":"Tidak Ada Penjelasan Detail",
   // §i18n SIHALAL 3종 복구
   "이미 SIHALAL 등록된 업체":"Perusahaan terdaftar SIHALAL",
   "규모":"Skala",
@@ -1970,16 +1979,17 @@ SCREEN.materials=async()=>{
   const enums=canMatWrite?await ENUMS():{};
   const mpg=pageSlice("materials",mats,12);
   const rows=mpg.items.length?mpg.items.map(m=>{
-    const cl=statusColor(m.status||m.result);
-    return `<tr><td><b>${esc(m.name)}</b>${m.e_number?` <span class="chip">${esc(m.e_number)}</span>`:""}</td>
+    const cl=statusColor(m.status||m.result); const op=MAT_OPEN.has(m.material_id);
+    return `<tr class="clickable" onclick="matToggle('${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})"><td><b>${esc(m.name)}</b>${m.e_number?` <span class="chip">${esc(m.e_number)}</span>`:""} <span class="muted small">${op?'▲':'▼'}</span></td>
       <td>${tag(cl,m.status||m.result||"—")}</td>
       <td>${m.severity?tag(cl,m.severity):'<span class="muted">-</span>'}</td>
       <td class="small">${m.evidence_count?`✓ ${m.evidence_count}`:'<span class="muted">없음</span>'}</td>
-      <td style="text-align:right;white-space:nowrap">${canMatWrite?`
+      <td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()">${canMatWrite?`
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="attachEvidence('${id}','${m.material_id}')">증빙</button>
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="rescreen('${m.material_id}')">재스크</button>
-        <button class="btn bad" style="padding:3px 7px;font-size:11px" onclick="delMaterial('${m.material_id}')">✕</button>`:''}</td></tr>`;}).join("")
+        <button class="btn bad" style="padding:3px 7px;font-size:11px" onclick="delMaterial('${m.material_id}')">✕</button>`:''}</td></tr>${op?`<tr><td colspan="5" style="background:var(--bg);padding:0 12px 12px"><div id="matDet_${m.material_id}" class="small muted">${T('불러오는 중…')}</div></td></tr>`:''}`;}).join("")
     : `<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">원재료 없음 · 라벨 OCR·ZIP 인테이크로 추가</td></tr>`;
+  if(MAT_OPEN.size){AFTER_RENDER=()=>{MAT_OPEN.forEach((name,mid)=>matLoadDetail(mid,name));};}
   const bad=mats.filter(m=>statusColor(m.status||m.result)==="bad");
   return `
   <div class="grid side">
@@ -1991,7 +2001,8 @@ SCREEN.materials=async()=>{
       <div class="body btnrow" style="border-top:1px solid var(--line)">
         <button class="btn" onclick="exportMaterialsXlsx('${id}')">⬇ Excel</button>
         <button class="btn pri" onclick="materialReport('${id}')">📄 성분 분석 보고서 · Report</button>
-        ${canMatWrite?`<button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 인테이크</button>
+        ${canMatWrite?`<button class="btn" onclick="dedupMaterials('${id}')">🧹 ${T('중복 정리')}</button>
+        <button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 인테이크</button>
         <button class="btn" onclick="labelOcr('${id}')">📷 라벨 OCR</button>`:''}
         <button class="btn" onclick="screenText('${id}')">🔤 텍스트 스크리닝</button></div>
       ${canMatWrite?`<div class="body" style="border-top:1px solid var(--line)">
@@ -2024,6 +2035,26 @@ async function explainMaterial(){
     o.innerHTML='<div class="divide"></div><b>🤖 '+esc(r.verdict||r.status||nm)+(r.severity?' · '+esc(r.severity):'')+'</b><div style="white-space:pre-wrap;margin-top:4px;color:var(--ink2)">'+esc(r.explanation||"(설명 없음)")+'</div>'+((r.sources&&r.sources.length)?'<div class="muted" style="margin-top:6px">근거: '+esc(r.sources.slice(0,3).join(", "))+'</div>':'');
   }catch(e){o.textContent="해설 실패 · "+(e&&e.code?e.code:"");}
 }
+const MAT_OPEN=new Map();
+function matToggle(mid,name){if(MAT_OPEN.has(mid))MAT_OPEN.delete(mid);else MAT_OPEN.set(mid,name);applyView();}
+async function dedupMaterials(id){
+  if(!confirm(T('정규화 동일명(괄호·공백·원산지 차이) 중복 원재료를 그룹당 1개만 남기고 정리합니다. 증빙 붙은 항목은 보존됩니다. 진행할까요?')))return;
+  try{const r=await API(`/cases/${id}/materials/dedup`,{method:"POST",body:"{}"});
+    toast(T('중복 정리 완료')+' · '+(r.removed||0)+T('건 삭제')+' · '+(r.remaining||0)+T('건 남음'));applyView();}
+  catch(e){toast(T('정리 실패')+' · '+(e&&e.code?e.code:''));}
+}
+async function matLoadDetail(mid,name){
+  const box=document.getElementById("matDet_"+mid);if(!box)return;
+  try{
+    const r=await API("/ai/explain",{method:"POST",body:JSON.stringify({name})});
+    const vc=r.verdict==="BLOCK"?"bad":(r.verdict==="NEEDS_EVIDENCE"?"warn":"ok");
+    const vk={BLOCK:"차단(하람)",NEEDS_EVIDENCE:"증빙 필요",CLEARED:"할랄 허용",PASS:"할랄 허용"}[r.verdict]||r.verdict;
+    box.classList.remove("muted");
+    box.innerHTML=`<div style="padding-top:6px">${bTag(vc,T(vk))}${r.category?` <span class="chip">${esc(r.category)}</span>`:''}${r.najis?` <span class="tag t-bad">najis</span>`:''}${r.severity?` <span class="muted small">· ${esc(r.severity)}</span>`:''}
+      <div style="white-space:pre-wrap;color:var(--ink2);margin-top:6px">${esc(r.explanation||T('상세 설명 없음'))}</div>
+      ${(r.sources&&r.sources.length)?`<div class="muted small" style="margin-top:4px">${T('근거')}: ${esc(r.sources.slice(0,4).join(", "))}</div>`:''}</div>`;
+  }catch(e){box.textContent=T('상세 불러오기 실패');}
+}
 function closeReport(){document.getElementById("reportOverlay").style.display="none";}
 async function materialReport(id){
   try{
@@ -2035,8 +2066,6 @@ async function materialReport(id){
     const rows=(r.materials||[]).map(m=>`<div class="li" style="padding:8px 0;border-bottom:1px solid var(--line)">
       <div class="tx"><b>${esc(m.name)}${m.e_number?' ('+esc(m.e_number)+')':''}</b> ${bTag(vColor(m.verdict),T(m.verdict_ko||m.verdict||'—'))}${m.najis?' '+bTag("bad","najis"):''}${m.severity?' <span class="muted small">· '+esc(m.severity)+'</span>':''}</div>
       <div class="small" style="white-space:pre-wrap;color:var(--ink2);margin-top:2px">${esc(m.explanation||"")}</div>
-      ${(m.required_evidence&&m.required_evidence.length)?'<div class="small" style="margin-top:2px"><b>'+T('필요 증빙')+':</b> '+esc(m.required_evidence.join(", "))+'</div>':''}
-      ${(m.alternatives&&m.alternatives.length)?'<div class="small" style="margin-top:2px"><b>'+T('할랄 대체재')+':</b> '+esc(m.alternatives.join(", "))+'</div>':''}
     </div>`).join("")||`<div class="muted" style="padding:12px">${T('원재료 없음')}</div>`;
     document.getElementById("reportBody").innerHTML=cards+rows+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
     document.getElementById("reportPdfBtn").onclick=()=>serverPdf(`/cases/${id}/material-report.pdf`,"material_report.pdf");

@@ -1245,6 +1245,20 @@ def test_profile_autofill_fields():
     assert agg["address"] != "Other Addr", agg
 
 
+def test_material_dedup():
+    """§원재료 중복정리 — 정규화 동일명(괄호·원산지) 그룹당 1개 유지, OCR 오탈자는 미병합."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "DedupCo"},
+                     headers=_h(tok)).json()["case_id"]
+        for nm in ["Aspartame", "Aspartame (China)", "Citric Acid", "Citric Acid(수입)", "Gelatin"]:
+            c.post(f"/cases/{cid}/materials", json={"name": nm}, headers=_h(tok))
+        r = c.post(f"/cases/{cid}/materials/dedup", headers=_h(tok)).json()
+        assert r["removed"] == 2, r  # Aspartame·Citric 괄호변형 2개 제거
+        names = [m["name"] for m in c.get(f"/cases/{cid}/materials", headers=_h(tok)).json()]
+        assert "Gelatin" in names and len([n for n in names if "spartame" in n.lower()]) == 1, names
+
+
 if __name__ == "__main__":
     tests = [test_pg_webhook, test_exif_gps_and_geo_fallback, test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
