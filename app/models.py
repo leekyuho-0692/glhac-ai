@@ -555,3 +555,38 @@ class Refund(Base):
     decide_note = Column(Text)            # 승인/거절 메모
     decided_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Feedback(Base):
+    """솔루션 개선 피드백(전역, 케이스 비종속) — 제출=전원, 열람=admin/ops 전체·그외 본인."""
+    __tablename__ = "feedback"
+    feedback_id = Column(String, primary_key=True, default=uid)
+    author = Column(String, nullable=False)         # username
+    author_role = Column(String, nullable=False)
+    org_id = Column(String)
+    category = Column(String, default="improvement")  # improvement|bug|question|other
+    title = Column(String, nullable=False)
+    body = Column(Text)
+    status = Column(String, default="open")          # open|reviewing|resolved|wontfix
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FeedbackImage(Base):
+    __tablename__ = "feedback_image"
+    image_id = Column(String, primary_key=True, default=uid)
+    feedback_id = Column(String, nullable=False, index=True)
+    filename = Column(String)
+    content_b64 = Column(Text)          # <4MB만 저장
+    content_type = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FeedbackComment(Base):
+    __tablename__ = "feedback_comment"
+    comment_id = Column(String, primary_key=True, default=uid)
+    feedback_id = Column(String, nullable=False, index=True)
+    author = Column(String, nullable=False)
+    author_role = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

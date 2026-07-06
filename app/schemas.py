@@ -383,3 +383,22 @@ class RefundReq(BaseModel):
 class RefundDecideReq(BaseModel):
     decision: str                     # approved|rejected
     note: Optional[str] = None
+
+
+class FeedbackReq(BaseModel):
+    title: str
+    body: Optional[str] = ""
+    category: Optional[str] = "improvement"   # improvement|bug|question|other
+
+
+class FeedbackImageReq(BaseModel):
+    file_b64: str
+    filename: Optional[str] = "feedback.png"
+
+
+class FeedbackStatusReq(BaseModel):
+    status: str   # open|reviewing|resolved|wontfix
+
+
+class FeedbackCommentReq(BaseModel):
+    body: str

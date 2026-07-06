@@ -387,6 +387,7 @@ const NAV = [
   ["fatwa","⚖️","파트와","Fatwa","심의·Fatwa"],
   ["certificate","🏅","인증서","Certificate","발급·Issue"],
   ["assistant","🤖","AI 어시스턴트","Assistant","AI 보조·Assist"],
+  ["feedback","💬","개선 피드백","Feedback","건의·Feedback"],
   ["system","⚙️","시스템 설정","System","admin"],
 ];
 const ROLE_DEF = {
@@ -420,6 +421,7 @@ const MENU_ACCESS = {
   fatwa:    ["sharia","ops","admin"],
   certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
+  feedback: ["client","consultant","auditor","sharia","ops","admin"],
   system:   ["admin"],
 };
 const CASE_SCOPED = new Set(["workflow","application","preassess","materials","integration",
@@ -557,7 +559,7 @@ const ID_LABEL={
   ketua:"Ketua",anggota:"Anggota",halal:"Halal",haram:"Haram",mushbooh:"Meragukan",
   pre_audit:"Pra-audit",onsite:"Lapangan",certification:"Sertifikasi",supervision:"Pengawasan",
 };
-const NAV_ID={dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
+const NAV_ID={"feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
   integration:"Integrasi",documents:"Dokumen",audit:"Audit",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
   invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",system:"Sistem"};
 function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
@@ -730,6 +732,49 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n SIHALAL
+  "SIHALAL 등록조회":"Pencarian Registrasi SIHALAL",
+  "회사명을 입력하세요":"Masukkan nama perusahaan",
+  "SIHALAL 조회 중…":"Sedang mencari SIHALAL…",
+  "SIHALAL 공개조회 불가(일시적)":"Pencarian publik SIHALAL tidak tersedia (sementara)",
+  "SIHALAL 등록 확인":"Registrasi SIHALAL terkonfirmasi",
+  "※ BPJPH 공개조회(비공식·참고용). 공식 확인은 halal.go.id":"※ Pencarian publik BPJPH (tidak resmi·referensi). Verifikasi resmi di halal.go.id",
+  "SIHALAL 등록 미확인 — 정확한 회사명으로 재조회":"Registrasi SIHALAL belum terkonfirmasi — cari ulang dengan nama perusahaan yang tepat",
+  // §i18n 피드백
+  "개선 피드백":"Umpan Balik Perbaikan",
+  "플랫폼 개선 제안·오류를 남겨주세요. 관리자가 검토 후 답변·상태를 갱신합니다.":"Silakan tinggalkan saran perbaikan platform·error. Admin akan meninjau dan memperbarui jawaban·status.",
+  "카테고리":"Kategori",
+  "제목 · Title":"Judul · Title",
+  "내용":"Konten",
+  "상세 내용·재현 절차 등":"Detail konten·prosedur reproduksi dll.",
+  "이미지 첨부":"Lampirkan gambar",
+  "첨부 없음":"Tidak ada lampiran",
+  "피드백 보내기":"Kirim umpan balik",
+  "개선 제안":"Saran perbaikan",
+  "오류·버그":"Error·Bug",
+  "문의":"Pertanyaan",
+  "기타":"Lainnya",
+  "접수":"Diterima",
+  "검토중":"Dalam peninjauan",
+  "반영완료":"Selesai diterapkan",
+  "접기":"Tutup",
+  "상세":"Detail",
+  "피드백 없음":"Tidak ada umpan balik",
+  "전체 피드백":"Semua umpan balik",
+  "내 피드백":"Umpan balik saya",
+  "개 첨부":"lampiran",
+  "제목을 입력하세요":"Masukkan judul",
+  "피드백 접수됨":"Umpan balik diterima",
+  "제출 실패":"Gagal mengirim",
+  "답변 없음":"Tidak ada jawaban",
+  "관리자 답변…":"Jawaban admin…",
+  "답변":"Jawaban",
+  "답변 스레드":"Utas jawaban",
+  "상세 불러오기 실패":"Gagal memuat detail",
+  "상태 변경":"Ubah status",
+  "답변을 입력하세요":"Masukkan jawaban",
+  "답변 등록":"Daftarkan jawaban",
+  "이미지 조회 실패":"Gagal melihat gambar",
   // §i18n 기업명검증
   "기업명 불일치":"Nama perusahaan tidak cocok",
   "사업자등록증":"Surat izin usaha",
@@ -1752,7 +1797,9 @@ SCREEN.application=async()=>{
   <div class="grid three">
     <div class="card"><h3>① 프로필·기업 <span class="en">· Profile</span></h3>
       <div class="body">
-        <div class="field"><label>기업명 · Company</label><input class="v" id="apCompany" value="${esc(c.company_name||"")}"></div>
+        <div class="field"><label>기업명 · Company</label><input class="v" id="apCompany" value="${esc(c.company_name||"")}">
+          <div class="btnrow" style="margin-top:4px"><button class="btn" style="padding:3px 8px;font-size:11px" onclick="sihalalLookup(v('apCompany'))">🔎 ${T('SIHALAL 등록조회')}</button></div>
+          <div id="sihalalOut" class="small" style="margin-top:4px"></div></div>
         ${(coChk&&coChk.mismatch&&coChk.suggested_company)?`<div class="banner bad" style="margin:-4px 0 10px"><b>⚠ ${T('기업명 불일치')}</b><br>${T('사업자등록증')}: <b>${esc(coChk.suggested_company)}</b> · ${T('유사도')} ${Math.round((coChk.best_similarity||0)*100)}%<br><button class="btn" style="margin-top:6px;padding:3px 8px;font-size:11px" onclick="applyDocCompany('${id}',${JSON.stringify(coChk.suggested_company).replace(/"/g,'&quot;')},${JSON.stringify(c.company_name||'').replace(/"/g,'&quot;')})">📄 ${T('문서 기업명으로 변경')}</button></div>`:''}
         <div class="field"><label>NIB · 사업자</label><input class="v" id="apNib" value="${esc(c.nib||"")}"></div>
         <div class="field"><label>책임자 · Responsible</label><input class="v" id="apResp" value="${esc(c.responsible_person||"")}"></div>
@@ -1819,6 +1866,19 @@ async function saveProfile(id){
   const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),factory_address:v("apFactory"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];toast("저장됨");await loadCases(true);applyView();}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
+}
+async function sihalalLookup(nama){
+  nama=(nama||"").trim();const box=document.getElementById("sihalalOut");if(!box)return;
+  if(nama.length<2){box.innerHTML='<span class="muted">'+T('회사명을 입력하세요')+'</span>';return;}
+  box.innerHTML='<span class="muted">'+T('SIHALAL 조회 중…')+'</span>';
+  try{
+    const r=await API(`/sihalal/lookup?nama=${encodeURIComponent(nama)}`);
+    if(!r.available){box.innerHTML='<span class="warn">'+T('SIHALAL 공개조회 불가(일시적)')+'</span>';return;}
+    if(r.registered){
+      const list=(r.matches||[]).slice(0,5).map(m=>`<div>· ${esc(m.name)} <span class="muted small">(${esc(m.scale||'')})</span></div>`).join("");
+      box.innerHTML=`<div class="ok">✅ ${T('SIHALAL 등록 확인')} · ${T('총')} ${r.total}${T('건')}</div>${list}<div class="muted small">${T('※ BPJPH 공개조회(비공식·참고용). 공식 확인은 halal.go.id')}</div>`;
+    }else{box.innerHTML='<span class="warn">⚠ '+T('SIHALAL 등록 미확인 — 정확한 회사명으로 재조회')+'</span>';}
+  }catch(e){box.innerHTML='<span class="bad">'+T('조회 실패')+' · '+(e&&e.code?e.code:'')+'</span>';}
 }
 async function applyDocCompany(id,docName,caseName){
   if(!confirm((LANG===2?"Nama pada formulir '":"신청서 기업명 '")+(caseName||"")+(LANG===2?"' berbeda dari surat izin usaha '":"'이 사업자등록증 '")+(docName||"")+(LANG===2?"'. Ubah ke nama dokumen?":"'과 다릅니다.\n\n문서 기업명으로 변경할까요?")))return;
@@ -2464,6 +2524,72 @@ async function pgSimulate(ref,status){
     toast("PG 콜백 · "+(j.mapped_status||status)+(j.applied?" → 반영됨":j.idempotent?" (중복)":" (미매칭)"));applyView();
   }catch(e){toast("시뮬레이션 실패");}
 }
+function fbIsAdmin(){return ROLE==='admin'||ROLE==='ops';}
+const FB_OPEN=new Set(); let FB_FILES=[];
+const FB_CAT=[["improvement","개선 제안"],["bug","오류·버그"],["question","문의"],["other","기타"]];
+const FB_STATUS={open:{ko:"접수",c:"warn"},reviewing:{ko:"검토중",c:"info"},resolved:{ko:"반영완료",c:"ok"},wontfix:{ko:"보류",c:"mute"}};
+function fbCatLabel(k){const f=FB_CAT.find(x=>x[0]===k);return f?f[1]:k;}
+SCREEN.feedback=async()=>{
+  const d=await API("/feedback").catch(()=>({items:[],is_admin:false}));
+  const items=d.items||[]; const admin=fbIsAdmin();
+  const catOpts=FB_CAT.map(x=>`<option value="${x[0]}">${T(x[1])}</option>`).join("");
+  const form=`<div class="card" style="margin-bottom:16px"><h3>💬 개선 피드백 <span class="en">· Feedback</span></h3>
+    <div class="body">
+      <div class="banner info" style="margin-bottom:10px">${T('플랫폼 개선 제안·오류를 남겨주세요. 관리자가 검토 후 답변·상태를 갱신합니다.')}</div>
+      <div class="grid" style="grid-template-columns:180px 1fr;gap:10px">
+        <div class="field"><label>${T('카테고리')}</label><select class="v" id="fbCat">${catOpts}</select></div>
+        <div class="field"><label>${T('제목')}</label><input class="v" id="fbTitle" placeholder="${T('제목 · Title')}"></div>
+      </div>
+      <div class="field"><label>${T('내용')}</label><textarea class="v" id="fbBody" rows="3" placeholder="${T('상세 내용·재현 절차 등')}"></textarea></div>
+      <div class="btnrow" style="flex-wrap:wrap;gap:8px;align-items:center">
+        <button class="btn" onclick="fbPickImg()">🖼 ${T('이미지 첨부')}</button>
+        <span class="muted small" id="fbImgInfo">${T('첨부 없음')}</span>
+        <button class="btn pri" style="margin-left:auto" onclick="fbSubmit()">${T('피드백 보내기')}</button>
+      </div>
+    </div></div>`;
+  const rows=items.length?items.map(f=>{
+    const st=FB_STATUS[f.status]||{ko:f.status,c:"mute"}; const open=FB_OPEN.has(f.feedback_id);
+    return `<div class="card" style="margin-bottom:10px"><div class="body">
+      <div class="btnrow" style="justify-content:space-between;align-items:flex-start">
+        <div><b>${esc(f.title)}</b> ${bTag(st.c,T(st.ko))} <span class="chip">${T(fbCatLabel(f.category))}</span>
+          <div class="muted small">${esc(f.author)} · ${esc((f.created_at||'').slice(0,16))} · 🖼 ${f.image_count} · 💬 ${f.comment_count}</div></div>
+        <button class="btn" style="padding:3px 8px;font-size:11px" onclick="fbToggle('${f.feedback_id}')">${open?T('접기'):T('상세')}</button>
+      </div>
+      ${f.body?`<div class="small" style="white-space:pre-wrap;color:var(--ink2);margin-top:6px">${esc(f.body)}</div>`:''}
+      ${open?`<div id="fbDetail_${f.feedback_id}" class="small muted" style="margin-top:8px">${T('불러오는 중…')}</div>`:''}
+    </div></div>`;}).join(""):`<div class="muted small" style="padding:12px">${T('피드백 없음')}</div>`;
+  if(items.length){AFTER_RENDER=()=>{FB_OPEN.forEach(id=>fbLoadDetail(id));};}
+  return `${form}
+  <div class="card"><h3>${admin?T('전체 피드백'):T('내 피드백')} <span class="en">· ${admin?'All':'Mine'}</span><span class="r">${items.length}${T('건')}</span></h3>
+    <div class="body">${rows}</div></div>`;
+};
+function fbPickImg(){const inp=document.createElement("input");inp.type="file";inp.accept="image/*";inp.multiple=true;
+  inp.onchange=async()=>{FB_FILES=Array.from(inp.files||[]);const el=document.getElementById("fbImgInfo");if(el)el.textContent=FB_FILES.length?(FB_FILES.length+T('개 첨부')):T('첨부 없음');};inp.click();}
+async function fbSubmit(){
+  const title=v("fbTitle");if(!title.trim()){toast(T('제목을 입력하세요'));return;}
+  try{
+    const r=await API("/feedback",{method:"POST",body:JSON.stringify({title,body:v("fbBody"),category:v("fbCat")})});
+    for(const f of FB_FILES){const b64=await fileB64(f);await API(`/feedback/${r.feedback_id}/images`,{method:"POST",body:JSON.stringify({file_b64:b64,filename:f.name})}).catch(()=>{});}
+    FB_FILES=[];toast(T('피드백 접수됨'));applyView();
+  }catch(e){toast(T('제출 실패')+" · "+(e&&e.code?e.code:""));}
+}
+function fbToggle(id){if(FB_OPEN.has(id))FB_OPEN.delete(id);else FB_OPEN.add(id);applyView();}
+async function fbLoadDetail(id){
+  const box=document.getElementById("fbDetail_"+id);if(!box)return;
+  try{
+    const d=await API(`/feedback/${id}`);const admin=fbIsAdmin();
+    const imgs=(d.images||[]).map(im=>`<button class="chip" style="border:none;cursor:pointer" onclick="fbViewImg('${id}','${im.image_id}')">🖼 ${esc(im.filename||'image')}</button>`).join(" ");
+    const cmts=(d.comments||[]).map(c=>`<div class="li" style="padding:6px 0;border-top:1px solid var(--line)"><b>${esc(c.author)}</b> <span class="muted small">${esc((c.created_at||'').slice(0,16))}</span><div style="white-space:pre-wrap">${esc(c.body)}</div></div>`).join("")||`<div class="muted small">${T('답변 없음')}</div>`;
+    const stBtns=admin?`<div class="btnrow" style="flex-wrap:wrap;gap:6px;margin-top:8px">${Object.entries(FB_STATUS).map(([k,vv])=>`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="fbSetStatus('${id}','${k}')">${T(vv.ko)}</button>`).join("")}</div>
+      <div class="btnrow" style="margin-top:8px;gap:6px"><input class="box" id="fbCm_${id}" placeholder="${T('관리자 답변…')}" style="flex:1"><button class="btn pri" onclick="fbComment('${id}')">${T('답변')}</button></div>`:'';
+    box.classList.remove("muted");
+    box.innerHTML=`${imgs?`<div style="margin:6px 0">${imgs}</div>`:''}<div class="divide" style="margin:6px 0"></div><div class="small" style="font-weight:600;margin-bottom:4px">💬 ${T('답변 스레드')}</div>${cmts}${stBtns}`;
+  }catch(e){box.textContent=T('상세 불러오기 실패');}
+}
+async function fbViewImg(id,imgId){try{const r=await fetch(`/feedback/${id}/image/${imgId}`,{headers:{Authorization:"Bearer "+token()}});if(!r.ok){toast(T('이미지 조회 실패'));return;}const b=await r.blob();const u=URL.createObjectURL(b);window.open(u,"_blank");setTimeout(()=>URL.revokeObjectURL(u),60000);}catch(e){toast(T('이미지 조회 실패'));}}
+async function fbSetStatus(id,status){try{await API(`/feedback/${id}`,{method:"PATCH",body:JSON.stringify({status})});toast(T('상태 변경')+" · "+T((FB_STATUS[status]||{}).ko||status));applyView();}catch(e){toast(T('실패')+" · "+(e&&e.code?e.code:""));}}
+async function fbComment(id){const el=document.getElementById("fbCm_"+id);const body=el?el.value:"";if(!body.trim()){toast(T('답변을 입력하세요'));return;}
+  try{await API(`/feedback/${id}/comments`,{method:"POST",body:JSON.stringify({body})});toast(T('답변 등록'));applyView();}catch(e){toast(T('실패')+" · "+(e&&e.code?e.code:""));}}
 SCREEN.notifyLog=async()=>{
   const d=await API("/admin/notifications").catch(()=>({counts:{},items:[]}));
   const cc=d.counts||{}, items=d.items||[];

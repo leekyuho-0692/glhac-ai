@@ -1187,6 +1187,47 @@ def test_ontology_expansion():
         assert r.get("matched_uid") == "ing.heparin" and r.get("najis") is True, r
 
 
+def test_feedback_board():
+    """§피드백 게시판 — 제출(전원)·권한필터·이미지·상태(admin)·코멘트(admin)·타인글 403."""
+    with TestClient(app) as c:
+        ap = _tok(c, "applicant1", "pw")
+        ad = c.post("/auth/login", json={"username": "admin", "password": "admin"}).json()["token"]
+        # 제출(applicant) + title 필수
+        assert c.post("/feedback", json={"title": ""}, headers=_h(ap)).status_code == 422
+        fid = c.post("/feedback", json={"title": "검색 느림", "body": "느려요", "category": "bug"},
+                     headers=_h(ap)).json()["feedback_id"]
+        # 이미지 첨부(본인)
+        im = c.post(f"/feedback/{fid}/images",
+                    json={"file_b64": "data:image/png;base64,iVBORw0KGgo=", "filename": "s.png"},
+                    headers=_h(ap)).json()
+        assert im.get("image_id"), im
+        # 권한필터: applicant=본인글, admin=전체+is_admin
+        assert c.get("/feedback", headers=_h(ap)).json()["is_admin"] is False
+        assert c.get("/feedback", headers={"Authorization": "Bearer " + ad}).json()["is_admin"] is True
+        # 상태: applicant 403, admin OK
+        assert c.patch(f"/feedback/{fid}", json={"status": "reviewing"}, headers=_h(ap)).status_code == 403
+        assert c.patch(f"/feedback/{fid}", json={"status": "reviewing"},
+                       headers={"Authorization": "Bearer " + ad}).json()["status"] == "reviewing"
+        # 코멘트: admin OK, applicant 403
+        assert c.post(f"/feedback/{fid}/comments", json={"body": "확인중"},
+                      headers={"Authorization": "Bearer " + ad}).status_code == 200
+        assert c.post(f"/feedback/{fid}/comments", json={"body": "x"}, headers=_h(ap)).status_code == 403
+        # 상세: 이미지+코멘트, 본인 접근 OK
+        det = c.get(f"/feedback/{fid}", headers=_h(ap)).json()
+        assert det["status"] == "reviewing" and len(det["comments"]) == 1 and len(det["images"]) == 1, det
+        # 타인글(admin 생성) 상세 → applicant 403
+        fid2 = c.post("/feedback", json={"title": "admin글"},
+                      headers={"Authorization": "Bearer " + ad}).json()["feedback_id"]
+        assert c.get(f"/feedback/{fid2}", headers=_h(ap)).status_code == 403
+
+
+def test_sihalal_lookup_guard():
+    """§SIHALAL 조회 — 짧은 쿼리 422(외부호출은 CI 미의존 위해 단언 안 함)."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        assert c.get("/sihalal/lookup?nama=a", headers=_h(tok)).status_code == 422
+
+
 if __name__ == "__main__":
     tests = [test_pg_webhook, test_exif_gps_and_geo_fallback, test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,

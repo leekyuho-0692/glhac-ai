@@ -1728,6 +1728,34 @@ def company_check(case_id: str, user=Depends(auth.get_current_user), db: Session
             "suggested_company": found[0]["doc_company"] if (mismatch and found) else None}
 
 
+# BPJPH SIHALAL 공개조회(비공식·참고용) — 사업자 할랄시스템 등록 확인
+_SIHALAL_URL = "https://cmsbl.halal.go.id/api/search/data_penyelia"
+
+
+@app.get("/sihalal/lookup")
+def verify_sihalal(nama: str, user=Depends(auth.get_current_user)):
+    """SIHALAL 등록 조회(읽기전용·참고용) — 회사명으로 BPJPH 할랄시스템 등록 여부 확인.
+    ⚠ 비공식 공개 엔드포인트라 불안정·차단 가능. 개인정보(감독자명·종교)는 반환하지 않음."""
+    q = (nama or "").strip()
+    if len(q) < 2:
+        raise HTTPException(422, {"code": "QUERY_TOO_SHORT"})
+    import httpx as _hx
+    try:
+        r = _hx.get(_SIHALAL_URL, params={"page": 1, "size": 10, "nama": q},
+                    headers={"User-Agent": "Mozilla/5.0"}, timeout=8.0)
+        d = (r.json() or {}).get("data") or {}
+        rows = d.get("datas") or []
+        # 개인정보 제외 — 사업자명·규모만
+        matches = [{"name": x.get("nama_pelaku_usaha"), "scale": x.get("skala_usaha")}
+                   for x in rows if x.get("nama_pelaku_usaha")]
+        return {"available": True, "query": q, "total": d.get("total_items", len(matches)),
+                "registered": bool(matches), "matches": matches[:10],
+                "source": "BPJPH SIHALAL (공개조회·참고용)"}
+    except Exception as e:  # noqa: BLE001
+        return {"available": False, "query": q, "error": str(e)[:120],
+                "note": "SIHALAL 공개조회 불가(일시적·차단). 공식 확인은 halal.go.id"}
+
+
 # ── 신청서 작성 상태(임시저장/작성완료/반려) — 신청단계 오버레이 ──────────
 @app.post("/cases/{case_id}/save-draft")
 def save_draft(case_id: str, user=Depends(auth.require_roles("applicant", "consultant")),
@@ -4441,6 +4469,138 @@ def export_case_json(case_id: str, user=Depends(auth.get_current_user),
         "invoices": [{"invoice_no": i.invoice_no, "service_type": i.service_type,
                       "total": i.total, "status": i.status} for i in invs],
     }
+
+
+# ---------- 솔루션 개선 피드백 게시판(전역) ----------
+FEEDBACK_ADMIN_ROLES = ("admin", "operator")   # ITO 관리자(추후 확장 가능)
+
+
+def _fb_is_admin(user):
+    return user["role"] in FEEDBACK_ADMIN_ROLES
+
+
+def _fb_guard(db, fid, user):
+    fb = db.get(models.Feedback, fid)
+    if not fb:
+        raise HTTPException(404, {"code": "FEEDBACK_NOT_FOUND"})
+    if not _fb_is_admin(user) and fb.author != user["username"]:
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
+    return fb
+
+
+@app.post("/feedback")
+def create_feedback(body: schemas.FeedbackReq, user=Depends(auth.get_current_user),
+                    db: Session = Depends(get_db)):
+    """피드백 제출 — 로그인 전원."""
+    if not (body.title or "").strip():
+        raise HTTPException(422, {"code": "TITLE_REQUIRED"})
+    fb = models.Feedback(author=user["username"], author_role=user["role"],
+                         org_id=user.get("org_id"), category=body.category or "improvement",
+                         title=body.title.strip(), body=body.body or "", status="open")
+    db.add(fb); db.commit()
+    return {"feedback_id": fb.feedback_id, "status": fb.status}
+
+
+@app.post("/feedback/{feedback_id}/images")
+def add_feedback_image(feedback_id: str, body: schemas.FeedbackImageReq,
+                       user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """이미지 첨부 — 본인 또는 admin. base64 <4MB."""
+    from .intake import _ctype
+    _fb_guard(db, feedback_id, user)
+    b64 = (body.file_b64 or "").split(",")[-1]
+    img = models.FeedbackImage(feedback_id=feedback_id, filename=body.filename or "feedback.png",
+                               content_b64=b64 if len(b64) < 4_000_000 else None,
+                               content_type=_ctype(body.filename or "feedback.png"))
+    db.add(img); db.commit()
+    return {"image_id": img.image_id, "stored": bool(img.content_b64)}
+
+
+@app.get("/feedback")
+def list_feedback(status: str = None, user=Depends(auth.get_current_user),
+                  db: Session = Depends(get_db)):
+    """목록 — admin/ops=전체, 그외=본인글."""
+    q = db.query(models.Feedback)
+    if not _fb_is_admin(user):
+        q = q.filter(models.Feedback.author == user["username"])
+    if status:
+        q = q.filter(models.Feedback.status == status)
+    rows = q.order_by(models.Feedback.created_at.desc()).limit(300).all()
+    imgc, cmtc = {}, {}
+    for iid, cnt in (db.query(models.FeedbackImage.feedback_id, func.count(models.FeedbackImage.image_id))
+                     .group_by(models.FeedbackImage.feedback_id).all()):
+        imgc[iid] = cnt
+    for iid, cnt in (db.query(models.FeedbackComment.feedback_id, func.count(models.FeedbackComment.comment_id))
+                     .group_by(models.FeedbackComment.feedback_id).all()):
+        cmtc[iid] = cnt
+    return {"total": len(rows), "is_admin": _fb_is_admin(user),
+            "items": [{"feedback_id": f.feedback_id, "title": f.title, "category": f.category,
+                       "status": f.status, "author": f.author, "author_role": f.author_role,
+                       "body": f.body, "created_at": str(f.created_at), "updated_at": str(f.updated_at),
+                       "image_count": imgc.get(f.feedback_id, 0),
+                       "comment_count": cmtc.get(f.feedback_id, 0)} for f in rows]}
+
+
+@app.get("/feedback/{feedback_id}")
+def get_feedback(feedback_id: str, user=Depends(auth.get_current_user),
+                 db: Session = Depends(get_db)):
+    """상세 — admin 또는 본인. 이미지 메타 + 코멘트 스레드."""
+    fb = _fb_guard(db, feedback_id, user)
+    imgs = db.query(models.FeedbackImage).filter_by(feedback_id=feedback_id).all()
+    cmts = (db.query(models.FeedbackComment).filter_by(feedback_id=feedback_id)
+            .order_by(models.FeedbackComment.created_at).all())
+    return {"feedback_id": fb.feedback_id, "title": fb.title, "category": fb.category,
+            "status": fb.status, "author": fb.author, "author_role": fb.author_role,
+            "body": fb.body, "created_at": str(fb.created_at), "updated_at": str(fb.updated_at),
+            "images": [{"image_id": i.image_id, "filename": i.filename,
+                        "content_type": i.content_type, "has_file": bool(i.content_b64)} for i in imgs],
+            "comments": [{"comment_id": c.comment_id, "author": c.author, "author_role": c.author_role,
+                          "body": c.body, "created_at": str(c.created_at)} for c in cmts]}
+
+
+@app.get("/feedback/{feedback_id}/image/{image_id}")
+def get_feedback_image(feedback_id: str, image_id: str, user=Depends(auth.get_current_user),
+                       db: Session = Depends(get_db)):
+    """이미지 바이너리 — admin 또는 본인."""
+    from fastapi.responses import Response
+    _fb_guard(db, feedback_id, user)
+    img = db.get(models.FeedbackImage, image_id)
+    if not img or img.feedback_id != feedback_id or not img.content_b64:
+        raise HTTPException(404, {"code": "IMAGE_NOT_FOUND"})
+    return Response(content=base64.b64decode(img.content_b64),
+                    media_type=img.content_type or "image/png")
+
+
+@app.patch("/feedback/{feedback_id}")
+def set_feedback_status(feedback_id: str, body: schemas.FeedbackStatusReq,
+                        user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """상태 변경 — admin/ops만."""
+    if not _fb_is_admin(user):
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
+    if body.status not in ("open", "reviewing", "resolved", "wontfix"):
+        raise HTTPException(422, {"code": "BAD_STATUS"})
+    fb = db.get(models.Feedback, feedback_id)
+    if not fb:
+        raise HTTPException(404, {"code": "FEEDBACK_NOT_FOUND"})
+    fb.status = body.status; fb.updated_at = datetime.utcnow()
+    db.commit()
+    return {"feedback_id": feedback_id, "status": fb.status}
+
+
+@app.post("/feedback/{feedback_id}/comments")
+def add_feedback_comment(feedback_id: str, body: schemas.FeedbackCommentReq,
+                         user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """관리자 답변 — admin/ops만."""
+    if not _fb_is_admin(user):
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
+    if not (body.body or "").strip():
+        raise HTTPException(422, {"code": "BODY_REQUIRED"})
+    fb = db.get(models.Feedback, feedback_id)
+    if not fb:
+        raise HTTPException(404, {"code": "FEEDBACK_NOT_FOUND"})
+    cm = models.FeedbackComment(feedback_id=feedback_id, author=user["username"],
+                                author_role=user["role"], body=body.body.strip())
+    db.add(cm); fb.updated_at = datetime.utcnow(); db.commit()
+    return {"comment_id": cm.comment_id}
 
 
 # ---------- 정적 UI (M2) ----------
