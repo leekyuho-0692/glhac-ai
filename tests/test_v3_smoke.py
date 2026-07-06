@@ -1169,6 +1169,24 @@ def test_company_check_mismatch():
         assert r2["mismatch"] is False, r2
 
 
+def test_ontology_expansion():
+    """§온톨로지 대량확장 — 신규 성분 등재·분류(증분 시드, startup 자동 load)."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        # startup이 ontology_data.json(310+) 시드+load_ontology 수행
+        cases = {"Heparin": "BLOCK", "Chondroitin sulfate": "NEEDS_EVIDENCE",
+                 "Carnauba wax": ("CLEARED", "PASS"), "Amaranth": ("CLEARED", "PASS"),
+                 "Lipase": "NEEDS_EVIDENCE"}
+        for nm, expect in cases.items():
+            r = c.post("/ai/explain", json={"name": nm}, headers=_h(tok)).json()
+            v = r.get("verdict")
+            ok = (v in expect) if isinstance(expect, tuple) else (v == expect)
+            assert ok, (nm, v, expect)
+        # 신규 등재분 matched (uid 존재)
+        r = c.post("/ai/explain", json={"name": "Heparin"}, headers=_h(tok)).json()
+        assert r.get("matched_uid") == "ing.heparin" and r.get("najis") is True, r
+
+
 if __name__ == "__main__":
     tests = [test_pg_webhook, test_exif_gps_and_geo_fallback, test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
