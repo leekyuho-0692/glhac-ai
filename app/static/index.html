@@ -730,6 +730,9 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n 재처리
+  "🔄 재처리":"🔄 Proses ulang",
+  "재처리 중… (OCR 수초)":"Memproses ulang… (OCR beberapa detik)",
   // §i18n 성분분석보고서
   "📄 성분 분석 보고서 · Report":"📄 Laporan Analisis Bahan · Report",
   "성분 AI 분석 보고서 · Report":"Laporan Analisis AI Bahan · Report",
@@ -2073,7 +2076,8 @@ SCREEN.documents=async()=>{
         ${canReview?`<div class="btnrow" style="margin-top:7px">
           <select class="v" style="font-size:11px;padding:3px 6px;width:auto" onclick="event.stopPropagation()" onchange="event.stopPropagation();reviewDoc('${d.document_id}',this.value)">
             <option value="">검수…</option><option value="approved">승인</option><option value="rejected">반려</option><option value="rework">재작업</option><option value="pending">보류</option></select>
-          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();reclassifyDoc('${d.document_id}')">재분류</button></div>`:''}
+          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();reclassifyDoc('${d.document_id}')">재분류</button>
+          ${d.has_file?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();reprocessDoc('${d.document_id}')" title="원본 재추출·재분류(OCR)">🔄 재처리</button>`:''}</div>`:''}
       </div></div>`).join("")}</div>`
     :'<div class="muted small">업로드된 문서 없음</div>';
   const viewer=sel?`
@@ -2126,6 +2130,7 @@ async function serverPdf(url,name){
 }
 async function reviewDoc(docId,st){if(!st)return;try{await API(`/documents/${docId}/review`,{method:"PATCH",body:JSON.stringify({review_status:st})});toast("검수 · "+st);applyView();}catch(e){toast("검수 실패 · "+(e&&e.code?e.code:""));}}
 async function reclassifyDoc(docId){const en=await ENUMS();const r=await dialog("문서 재분류 · Reclassify",[{key:"doc_type",label:"문서 유형 · doc_type",type:"select",options:(en.doc_type||[]).map(o=>({value:o.value,label:o.label}))}]);if(!r)return;try{await API(`/documents/${docId}/reclassify`,{method:"PATCH",body:JSON.stringify({doc_type:r.doc_type})});toast("재분류 · "+r.doc_type);applyView();}catch(e){toast("재분류 실패 · "+(e&&e.code?e.code:""));}}
+async function reprocessDoc(docId){toast("재처리 중… (OCR 수초)");try{const r=await API(`/documents/${docId}/reprocess`,{method:"POST",body:"{}"});toast("재처리 · "+(T(r.doc_type||"")||r.doc_type)+" "+Math.round((r.confidence||0)*100)+"% · "+(r.text_len||0)+"자");applyView();}catch(e){toast("재처리 실패 · "+(e&&e.code?e.code:(e&&e.detail?e.detail:"")));}}
 
 /* 8) Audit */
 SCREEN.audit=async()=>{

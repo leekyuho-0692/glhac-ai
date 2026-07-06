@@ -991,8 +991,33 @@ def test_material_report():
         assert pdf.status_code == 200 and pdf.content[:5] == b"%PDF-", pdf.status_code
 
 
+def test_document_reprocess():
+    """§B 문서 재처리 — 저장 원본 재추출(텍스트). content 없으면 422.
+    (분류 doc_type은 LLM 의존이라 CI서 단언 안 함 — 추출 텍스트 길이만 검증)."""
+    import base64 as _b64
+    from app import models as _m
+    from app.db import SessionLocal as _S
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "OcrCo"},
+                     headers=_h(tok)).json()["case_id"]
+        db = _S()
+        body = ("DAFTAR BAHAN BAKU\nNo Nama Bahan Pemasok\n1 Gula PT A\n2 Gelatin PT B\n").encode()
+        d = _m.DocumentAsset(case_id=cid, filename="bahan.txt", doc_type="other", confidence=0,
+                             content_b64=_b64.b64encode(body).decode(), content_type="text/plain")
+        db.add(d); db.commit(); did = d.document_id
+        d2 = _m.DocumentAsset(case_id=cid, filename="nofile.txt", doc_type="other", confidence=0)
+        db.add(d2); db.commit(); did2 = d2.document_id
+        db.close()
+        r = c.post(f"/documents/{did}/reprocess", headers=_h(tok))
+        assert r.status_code == 200, r.text
+        assert r.json()["text_len"] > 0, r.json()
+        # 원본 미보관 → 422
+        assert c.post(f"/documents/{did2}/reprocess", headers=_h(tok)).status_code == 422
+
+
 if __name__ == "__main__":
-    tests = [test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
+    tests = [test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,

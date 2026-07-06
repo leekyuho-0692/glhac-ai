@@ -1398,6 +1398,58 @@ def reclassify_document(document_id: str, body: schemas.DocTypeReq,
     return {"document_id": document_id, "doc_type": d.doc_type}
 
 
+def _apply_agg_to_case(db, c, agg):
+    """추출 필드(회사/NIB/제품/원재료)를 케이스에 반영 — DocumentAsset 생성은 하지 않음(재처리용)."""
+    applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0}
+    if agg.get("company_name") and (not c.company_name or c.company_name in _CO_PLACEHOLDER):
+        c.company_name = agg["company_name"]; applied["company_set"] = True
+    if agg.get("nib") and not c.nib:
+        c.nib = agg["nib"]; applied["nib_set"] = True
+    have_p = {p.name for p in db.query(models.Product).filter_by(case_id=c.case_id)}
+    for pn in agg.get("products", []):
+        if pn and pn not in have_p:
+            db.add(models.Product(case_id=c.case_id, name=pn)); applied["products"] += 1; have_p.add(pn)
+    have_m = {m.name for m in db.query(models.Material).filter_by(case_id=c.case_id)}
+    for mn in agg.get("materials", []):
+        if mn and mn not in have_m:
+            sc = screening.screen_merged(mn, None, None, None, False, True, "")
+            db.add(models.Material(case_id=c.case_id, name=mn, screen_result=sc["result"],
+                                   screen_status=sc["status"], screen_severity=sc["severity"],
+                                   matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk"),
+                                   cert=sc.get("v1_cert")))
+            applied["materials"] += 1; have_m.add(mn)
+    return applied
+
+
+@app.post("/documents/{document_id}/reprocess")
+def reprocess_document(document_id: str,
+                       user=Depends(auth.require_roles("consultant", "operator")),
+                       db: Session = Depends(get_db)):
+    """저장된 원본을 재추출·재분류 — OCR/의존성 개선 후 구업로드 문서 치유(설계 B)."""
+    from .intake import parse_file, classify, aggregate_fields
+    d = db.get(models.DocumentAsset, document_id)
+    if not d:
+        raise HTTPException(404, {"code": "DOC_NOT_FOUND"})
+    c = _get_case(db, d.case_id, user)
+    if not d.content_b64:
+        raise HTTPException(422, {"code": "NO_CONTENT", "detail": "원본 미보관 문서는 재처리 불가"})
+    data = base64.b64decode(d.content_b64.split(",")[-1])
+    text = parse_file(d.filename, data)
+    r = classify(d.filename, text)
+    prev = d.doc_type
+    d.doc_type = r.get("doc_type", "other")
+    d.confidence = float(r.get("confidence") or 0)
+    d.fields = r.get("fields") or {}
+    d.text_excerpt = (text or "")[:300]
+    applied = _apply_agg_to_case(db, c, aggregate_fields([{"fields": d.fields}]))
+    sm.record_event(db, c, c.status, c.status, "documents.reprocess", user["role"], user["uid"],
+                    {"document_id": document_id, "from": prev, "to": d.doc_type,
+                     "text_len": len(text or ""), "applied": applied})
+    db.commit()
+    return {"document_id": document_id, "doc_type": d.doc_type, "confidence": d.confidence,
+            "text_len": len(text or ""), "applied": applied}
+
+
 @app.get("/cases/{case_id}/matrix")
 def get_matrix(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
