@@ -1706,6 +1706,28 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
     return _case_dict(c)
 
 
+@app.get("/cases/{case_id}/company-check")
+def company_check(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """신청서 기업명 vs 신청기업 서류(사업자등록증·공장등록증) 추출 기업명 대조 —
+    다르면 mismatch 경고(잘못된 회사 서류 업로드 방지). 공급사 서류는 제외."""
+    c = _get_case(db, case_id, user)
+    docs = (db.query(models.DocumentAsset).filter_by(case_id=case_id)
+            .filter(models.DocumentAsset.doc_type.in_(
+                ["nib_business_license", "factory_registration"])).all())
+    found = []
+    for d in docs:
+        dc = (d.fields or {}).get("company_name")
+        if dc:
+            found.append({"filename": d.filename, "doc_type": d.doc_type, "doc_company": dc,
+                          "similarity": _name_sim(c.company_name or "", dc)})
+    found.sort(key=lambda x: (x["doc_type"] != "nib_business_license", -x["similarity"]))
+    best = max((f["similarity"] for f in found), default=None)
+    mismatch = bool(found) and best is not None and best < 0.5
+    return {"case_company": c.company_name, "applicant_docs": found,
+            "mismatch": mismatch, "best_similarity": best,
+            "suggested_company": found[0]["doc_company"] if (mismatch and found) else None}
+
+
 # ── 신청서 작성 상태(임시저장/작성완료/반려) — 신청단계 오버레이 ──────────
 @app.post("/cases/{case_id}/save-draft")
 def save_draft(case_id: str, user=Depends(auth.require_roles("applicant", "consultant")),
@@ -3111,8 +3133,15 @@ def set_invoice_status(invoice_id: str, body: schemas.InvoiceStatusReq,
     frm = inv.status
     inv.status = body.status
     if body.status == "paid":   # 확정 시 대기중 결제 confirmed 처리
-        for p in db.query(models.Payment).filter_by(invoice_id=invoice_id, status="pending"):
+        pend = db.query(models.Payment).filter_by(invoice_id=invoice_id, status="pending").all()
+        for p in pend:
             p.status = "confirmed"
+        # 확인된 결제(+)가 하나도 없으면 정산 현금흐름용 Payment 생성(단일소스)
+        has_pos = db.query(models.Payment).filter_by(invoice_id=invoice_id, status="confirmed").filter(
+            models.Payment.amount > 0).first()
+        if not pend and not has_pos:
+            db.add(models.Payment(invoice_id=invoice_id, case_id=inv.case_id, amount=(inv.total or 0),
+                                  currency="IDR", method="manual", status="confirmed", paid_by=user["uid"]))
     _audit(db, user, "payment.status", "invoice", invoice_id, inv.case_id,
            {"before": frm, "after": body.status, "reason": body.reason}, commit=False)
     db.commit()
@@ -3239,6 +3268,175 @@ def admin_payments_dashboard(user=Depends(auth.require_roles("operator")),
     return {"by_status": by, "settlement": round(settle, 2), "waiting": waiting,
             "need_verification": needv, "refunded": by.get("refunded", 0),
             "total_invoices": len(invs)}
+
+
+# ── Payment P5: 환불(2단계 승인)·정산·리포트 ──────────────────────────────
+@app.post("/invoices/{invoice_id}/refund/request")
+def request_refund(invoice_id: str, body: schemas.RefundReq,
+                   user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """환불 요청(1단계) — 결제완료 인보이스만. 승인은 다른 관리자가(maker-checker)."""
+    inv = db.get(models.Invoice, invoice_id)
+    if not inv:
+        raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    if inv.status not in ("paid",):
+        raise HTTPException(409, {"code": "NOT_REFUNDABLE", "detail": "결제완료(paid) 인보이스만 환불 가능"})
+    dup = db.query(models.Refund).filter_by(invoice_id=invoice_id, status="requested").first()
+    if dup:
+        raise HTTPException(409, {"code": "REFUND_PENDING", "refund_id": dup.id})
+    amt = body.amount if body.amount is not None else (inv.total or 0)
+    r = models.Refund(invoice_id=invoice_id, case_id=inv.case_id, amount=amt,
+                      reason=body.reason, status="requested", requested_by=user["uid"])
+    db.add(r); db.flush()
+    _audit(db, user, "payment.refund.request", "invoice", invoice_id, inv.case_id,
+           {"refund_id": r.id, "amount": amt}, commit=False)
+    db.commit()
+    return {"refund_id": r.id, "status": r.status, "amount": amt}
+
+
+@app.post("/refunds/{refund_id}/decide")
+def decide_refund(refund_id: str, body: schemas.RefundDecideReq,
+                  user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """환불 승인/거절(2단계) — 요청자≠승인자(maker-checker). 승인 시 인보이스 refunded."""
+    if body.decision not in ("approved", "rejected"):
+        raise HTTPException(422, {"code": "BAD_DECISION"})
+    r = db.get(models.Refund, refund_id)
+    if not r:
+        raise HTTPException(404, {"code": "REFUND_NOT_FOUND"})
+    if r.status != "requested":
+        raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": r.status})
+    if r.requested_by == user["uid"] and user["role"] != "admin":
+        raise HTTPException(403, {"code": "SELF_APPROVAL_FORBIDDEN",
+                                  "detail": "요청자는 승인할 수 없습니다(maker-checker)"})
+    r.status = body.decision; r.decided_by = user["uid"]; r.decide_note = body.note
+    r.decided_at = datetime.utcnow()
+    inv = db.get(models.Invoice, r.invoice_id)
+    if body.decision == "approved" and inv:
+        inv.status = "refunded"
+        db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, amount=-(r.amount or 0),
+                              method="refund", reference=refund_id, status="confirmed",
+                              paid_by=user["uid"]))
+    _audit(db, user, "payment.refund." + body.decision, "invoice", r.invoice_id, r.case_id,
+           {"refund_id": refund_id, "amount": r.amount, "requester": r.requested_by}, commit=False)
+    db.commit()
+    return {"refund_id": refund_id, "status": r.status,
+            "invoice_status": inv.status if inv else None}
+
+
+@app.get("/admin/refunds")
+def list_refunds(status: str = None, user=Depends(auth.require_roles("operator")),
+                 db: Session = Depends(get_db)):
+    q = db.query(models.Refund)
+    if status:
+        q = q.filter(models.Refund.status == status)
+    rows = q.order_by(models.Refund.created_at.desc()).limit(300).all()
+    invs = {i.invoice_id: i for i in db.query(models.Invoice).all()}
+    cases = {c.case_id: c for c in db.query(models.CaseApplication).all()}
+    items = []
+    for r in rows:
+        inv = invs.get(r.invoice_id); c = cases.get(r.case_id)
+        items.append({"id": r.id, "invoice_id": r.invoice_id, "invoice_no": inv.invoice_no if inv else None,
+                      "company": c.company_name if c else None, "amount": r.amount,
+                      "amount_idr": _idr(r.amount or 0), "reason": r.reason, "status": r.status,
+                      "requested_by": r.requested_by, "decided_by": r.decided_by,
+                      "decide_note": r.decide_note, "created_at": str(r.created_at)})
+    return {"total": len(items), "items": items}
+
+
+def _settlement(db, org_id=None):
+    """정산 집계 — 실제 현금흐름(Payment +결제/-환불) netting (org 선택)."""
+    cases = {c.case_id: c for c in db.query(models.CaseApplication).all()}
+    invs = db.query(models.Invoice).all()
+    if org_id:
+        invs = [i for i in invs if cases.get(i.case_id) and cases[i.case_id].org_id == org_id]
+    inv_ids = {i.invoice_id for i in invs}
+    invoiced = sum(i.total or 0 for i in invs)
+    waiting = sum(i.total or 0 for i in invs if i.status in ("waiting_payment", "unpaid",
+                                                             "need_verification", "payment_processing"))
+    pays = [p for p in db.query(models.Payment).all()
+            if p.invoice_id in inv_ids and p.status == "confirmed"]
+    gross_paid = sum(p.amount for p in pays if (p.amount or 0) > 0)
+    refunded = sum(-(p.amount or 0) for p in pays if (p.amount or 0) < 0)
+    net = sum(p.amount or 0 for p in pays)   # +결제 -환불 = 실 순정산
+    return {"invoiced": round(invoiced, 2), "paid": round(gross_paid, 2),
+            "refunded": round(refunded, 2), "net_settled": round(net, 2),
+            "outstanding": round(waiting, 2), "invoice_count": len(invs)}
+
+
+@app.get("/admin/settlement")
+def admin_settlement(org_id: str = None, user=Depends(auth.require_roles("operator")),
+                     db: Session = Depends(get_db)):
+    """정산 현황 — 청구·결제·환불 netting + IDR 포맷."""
+    s = _settlement(db, org_id)
+    pend_ref = db.query(models.Refund).filter_by(status="requested").count()
+    s.update({"invoiced_idr": _idr(s["invoiced"]), "paid_idr": _idr(s["paid"]),
+              "refunded_idr": _idr(s["refunded"]), "net_settled_idr": _idr(s["net_settled"]),
+              "outstanding_idr": _idr(s["outstanding"]), "pending_refunds": pend_ref})
+    return s
+
+
+@app.get("/admin/payments/report")
+def payments_report(group: str = "month", user=Depends(auth.require_roles("operator")),
+                    db: Session = Depends(get_db)):
+    """월별/기관별 결제 리포트 — 청구·결제·환불·순정산 집계."""
+    cases = {c.case_id: c for c in db.query(models.CaseApplication).all()}
+    inv_group = {}   # invoice_id → 그룹키
+    rows = {}
+    for i in db.query(models.Invoice).all():
+        c = cases.get(i.case_id)
+        key = (c.org_id if c else "unknown") if group == "org" else (
+            i.created_at.strftime("%Y-%m") if i.created_at else "unknown")
+        inv_group[i.invoice_id] = key
+        b = rows.setdefault(key, {"key": key, "invoiced": 0.0, "paid": 0.0, "refunded": 0.0, "count": 0})
+        b["count"] += 1; b["invoiced"] += i.total or 0
+    # 실 현금흐름(Payment) 기준 결제·환불 그룹 집계
+    for p in db.query(models.Payment).all():
+        if p.status != "confirmed":
+            continue
+        key = inv_group.get(p.invoice_id)
+        if key is None or key not in rows:
+            continue
+        amt = p.amount or 0
+        if amt >= 0:
+            rows[key]["paid"] += amt
+        else:
+            rows[key]["refunded"] += -amt
+    out = []
+    for b in sorted(rows.values(), key=lambda x: x["key"], reverse=(group != "org")):
+        b["net"] = round(b["paid"] - b["refunded"], 2)
+        for k in ("invoiced", "paid", "refunded"):
+            b[k] = round(b[k], 2)
+        b["net_idr"] = _idr(b["net"]); b["paid_idr"] = _idr(b["paid"])
+        out.append(b)
+    return {"group": group, "rows": out, "totals": _settlement(db)}
+
+
+@app.get("/admin/payments/report.pdf")
+def payments_report_pdf(group: str = "month", user=Depends(auth.require_roles("operator")),
+                        db: Session = Depends(get_db)):
+    """결제 리포트 PDF."""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    rep = payments_report(group=group, user=user, db=db)
+    t = rep["totals"]
+    L = ["[정산 총계]",
+         "청구 %s · 결제 %s · 환불 %s" % (_idr(t["invoiced"]), _idr(t["paid"]), _idr(t["refunded"])),
+         "순정산 %s · 미수 %s · 청구건수 %d" % (_idr(t["net_settled"]), _idr(t["outstanding"]),
+                                            t["invoice_count"]), "",
+         "[%s별 집계]" % ("기관" if group == "org" else "월")]
+    for b in rep["rows"]:
+        L.append("• %s — 청구 %d건 %s · 결제 %s · 환불 %s · 순 %s"
+                 % (b["key"], b["count"], _idr(b["invoiced"]), _idr(b["paid"]),
+                    _idr(b["refunded"]), _idr(b["net"])))
+    L.append("")
+    L.append("※ 준비용 정산 리포트 · GL-HAC AI")
+    pdf = _render_pdf("결제·정산 리포트 · Payment Report",
+                      "\n".join(L), subtitle="집계: %s별" % ("기관" if group == "org" else "월"),
+                      footer="GL-HAC AI")
+    _audit(db, user, "payment.report.pdf", "report", group, None)
+    db.commit()
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''"
+                             + quote("payment_report_%s.pdf" % group)})
 
 
 # ── Payment P2: 입금 자동매칭 ──────────────────────────────

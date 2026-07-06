@@ -539,3 +539,19 @@ class PaymentMatchCandidate(Base):
     reviewer_id = Column(String)
     reviewed_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Refund(Base):
+    """환불 요청·2단계 승인 (Payment P5) — maker(요청)≠checker(승인)."""
+    __tablename__ = "refund"
+    id = Column(String, primary_key=True, default=uid)
+    invoice_id = Column(String, index=True)
+    case_id = Column(String, index=True)
+    amount = Column(Float)
+    reason = Column(Text)                 # 환불 사유
+    status = Column(String, default="requested")   # requested|approved|rejected
+    requested_by = Column(String)
+    decided_by = Column(String)
+    decide_note = Column(Text)            # 승인/거절 메모
+    decided_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)

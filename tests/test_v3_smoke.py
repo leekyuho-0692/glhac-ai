@@ -1107,6 +1107,68 @@ def test_pg_webhook():
             _os.environ.pop("GLHAC_PG_WEBHOOK_SECRET", None)
 
 
+def test_payment_p5_refund_settlement():
+    """§Payment P5 — 환불 2단계승인(maker-checker)·정산 netting·리포트 PDF."""
+    with TestClient(app) as c:
+        ct = _tok(c, "consultant1", "pw"); op = _tok(c, "operator1", "pw")
+        ad = c.post("/auth/login", json={"username": "admin", "password": "admin"}).json()["token"]
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "RefCo"},
+                     headers=_h(ct)).json()["case_id"]
+        i1 = c.post(f"/cases/{cid}/invoices", json={"service_type": "pre_audit", "amount": 5000000},
+                    headers=_h(ct)).json()
+        i2 = c.post(f"/cases/{cid}/invoices", json={"service_type": "onsite", "amount": 3000000},
+                    headers=_h(ct)).json()
+        for i in (i1, i2):
+            c.patch(f"/invoices/{i['invoice_id']}/status", json={"status": "paid"}, headers=_h(op))
+        # 미결제 인보이스 환불요청 → 409
+        i3 = c.post(f"/cases/{cid}/invoices", json={"service_type": "pre_audit", "amount": 1000000},
+                    headers=_h(ct)).json()
+        assert c.post(f"/invoices/{i3['invoice_id']}/refund/request", json={"reason": "x"},
+                      headers=_h(op)).status_code == 409
+        # 환불요청(operator1) → 자기승인 403 → admin 승인 → refunded
+        rid = c.post(f"/invoices/{i2['invoice_id']}/refund/request", json={"reason": "취소"},
+                     headers=_h(op)).json()["refund_id"]
+        assert c.post(f"/refunds/{rid}/decide", json={"decision": "approved"},
+                      headers=_h(op)).status_code == 403
+        dec = c.post(f"/refunds/{rid}/decide", json={"decision": "approved", "note": "ok"},
+                     headers={"Authorization": "Bearer " + ad}).json()
+        assert dec["status"] == "approved" and dec["invoice_status"] == "refunded", dec
+        # 정산 netting: 회계 항등식 net=paid-refunded (전역집계라 정확값 대신 항등식·하한 검증)
+        s = c.get("/admin/settlement", headers=_h(op)).json()
+        assert abs(s["net_settled"] - (s["paid"] - s["refunded"])) < 1, s
+        assert s["refunded"] >= 3330000 and s["paid"] > s["net_settled"], s
+        # 리포트 + PDF
+        rep = c.get("/admin/payments/report?group=month", headers=_h(op)).json()
+        assert rep["rows"] and "net_idr" in rep["rows"][0], rep
+        pdf = c.get("/admin/payments/report.pdf?group=org", headers=_h(op))
+        assert pdf.status_code == 200 and pdf.content[:5] == b"%PDF-", pdf.status_code
+
+
+def test_company_check_mismatch():
+    """§기업명 검증 — 신청서 기업명 vs 사업자등록증 추출 대조(공급사 문서 제외)."""
+    from app import models as _m
+    from app.db import SessionLocal as _S
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "CV Contoh Pangan"},
+                     headers=_h(tok)).json()["case_id"]
+        db = _S()
+        db.add(_m.DocumentAsset(case_id=cid, filename="reg.pdf", doc_type="nib_business_license",
+                                confidence=0.95, fields={"company_name": "Buzzup Co., Ltd."}))
+        db.add(_m.DocumentAsset(case_id=cid, filename="sup.pdf", doc_type="halal_certificate",
+                                confidence=0.9, fields={"company_name": "Other Supplier"}))
+        db.commit(); db.close()
+        r = c.get(f"/cases/{cid}/company-check", headers=_h(tok)).json()
+        assert r["mismatch"] is True and r["suggested_company"] == "Buzzup Co., Ltd.", r
+        # 공급사 문서는 대조에서 제외(applicant_docs에 nib만)
+        assert all(d["doc_type"] in ("nib_business_license", "factory_registration")
+                   for d in r["applicant_docs"]), r
+        # 문서 기업명으로 반영 → 일치 → mismatch 해소
+        c.patch(f"/cases/{cid}/profile", json={"company_name": "Buzzup Co., Ltd."}, headers=_h(tok))
+        r2 = c.get(f"/cases/{cid}/company-check", headers=_h(tok)).json()
+        assert r2["mismatch"] is False, r2
+
+
 if __name__ == "__main__":
     tests = [test_pg_webhook, test_exif_gps_and_geo_fallback, test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,

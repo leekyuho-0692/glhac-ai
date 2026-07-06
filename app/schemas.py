@@ -373,3 +373,13 @@ class GeoReq(BaseModel):
     lat: float             # 위도
     lng: float             # 경도
     source: Optional[str] = "browser"   # browser|manual
+
+
+class RefundReq(BaseModel):
+    amount: Optional[float] = None    # 미지정 시 인보이스 전액
+    reason: str                       # 환불 사유
+
+
+class RefundDecideReq(BaseModel):
+    decision: str                     # approved|rejected
+    note: Optional[str] = None

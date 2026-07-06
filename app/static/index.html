@@ -730,6 +730,20 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n 기업명검증
+  "기업명 불일치":"Nama perusahaan tidak cocok",
+  "사업자등록증":"Surat izin usaha",
+  "유사도":"Tingkat kemiripan",
+  "문서 기업명으로 변경":"Ubah ke nama perusahaan di dokumen",
+  // §i18n P5 정산환불
+  "결제 합계":"Total Pembayaran",
+  "환불 합계":"Total Pengembalian Dana",
+  "순 정산":"Penyelesaian Bersih",
+  "미수금":"Piutang",
+  "환불 대기":"Menunggu Pengembalian Dana",
+  "월별 리포트":"Laporan Bulanan",
+  "기관별 리포트":"Laporan per Institusi",
+  "환불 승인 대기":"Menunggu Persetujuan Pengembalian Dana",
   // §i18n PG webhook
   "🔔 PG 콜백 시뮬레이션 · Webhook":"🔔 Simulasi Callback PG · Webhook",
   "💳 결제완료(settlement)":"💳 Pembayaran Selesai(settlement)",
@@ -1712,6 +1726,7 @@ SCREEN.preassess=async()=>{
 SCREEN.application=async()=>{
   const id=CURCASE;const c=await API(`/cases/${id}`);
   const chk=await API(`/cases/${id}/doc-checklist`).catch(()=>({checklist:[]}));
+  const coChk=await API(`/cases/${id}/company-check`).catch(()=>null);
   const org=(()=>{try{return localStorage.getItem("glhac_org")||""}catch(_){return""}})();
   let penyeliaResp={items:[]};try{penyeliaResp=await API(`/orgs/${org}/penyelia`);}catch(_){}
   const pens=penyeliaResp.items||[];
@@ -1738,6 +1753,7 @@ SCREEN.application=async()=>{
     <div class="card"><h3>① 프로필·기업 <span class="en">· Profile</span></h3>
       <div class="body">
         <div class="field"><label>기업명 · Company</label><input class="v" id="apCompany" value="${esc(c.company_name||"")}"></div>
+        ${(coChk&&coChk.mismatch&&coChk.suggested_company)?`<div class="banner bad" style="margin:-4px 0 10px"><b>⚠ ${T('기업명 불일치')}</b><br>${T('사업자등록증')}: <b>${esc(coChk.suggested_company)}</b> · ${T('유사도')} ${Math.round((coChk.best_similarity||0)*100)}%<br><button class="btn" style="margin-top:6px;padding:3px 8px;font-size:11px" onclick="applyDocCompany('${id}',${JSON.stringify(coChk.suggested_company).replace(/"/g,'&quot;')},${JSON.stringify(c.company_name||'').replace(/"/g,'&quot;')})">📄 ${T('문서 기업명으로 변경')}</button></div>`:''}
         <div class="field"><label>NIB · 사업자</label><input class="v" id="apNib" value="${esc(c.nib||"")}"></div>
         <div class="field"><label>책임자 · Responsible</label><input class="v" id="apResp" value="${esc(c.responsible_person||"")}"></div>
         <div class="field"><label>할랄감독자 · Supervisor</label><input class="v" id="apSup" value="${esc(c.halal_supervisor||"")}"></div>
@@ -1803,6 +1819,11 @@ async function saveProfile(id){
   const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),factory_address:v("apFactory"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];toast("저장됨");await loadCases(true);applyView();}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
+}
+async function applyDocCompany(id,docName,caseName){
+  if(!confirm((LANG===2?"Nama pada formulir '":"신청서 기업명 '")+(caseName||"")+(LANG===2?"' berbeda dari surat izin usaha '":"'이 사업자등록증 '")+(docName||"")+(LANG===2?"'. Ubah ke nama dokumen?":"'과 다릅니다.\n\n문서 기업명으로 변경할까요?")))return;
+  try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify({company_name:docName})});toast("기업명 변경 · "+docName);await loadCases(true);applyView();}
+  catch(e){toast("변경 실패 · "+(e&&e.code?e.code:""));}
 }
 const DRAFT_DEF={saved:{ko:"임시저장",c:"mute"},in_progress:{ko:"작성중",c:"info"},completed:{ko:"작성완료",c:"ok"},returned:{ko:"반려",c:"bad"}};
 function draftBadge(ds){const d=DRAFT_DEF[ds];return d?bTag(d.c,d.ko):'';}
@@ -2488,8 +2509,8 @@ async function registerDeposit(){
 }
 async function decideMatch(id,decision){if(decision==="rejected"&&!confirm("이 후보를 거절할까요?"))return;try{await API(`/admin/match/${id}/decide`,{method:"POST",body:JSON.stringify({decision})});toast(decision==="approved"?"매칭 승인·결제확정":"매칭 거절");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 SCREEN.payments=async()=>{
-  const [dash,list]=await Promise.all([API('/admin/payments/dashboard').catch(()=>({by_status:{},waiting:0,need_verification:0,settlement:0,total_invoices:0})),API('/admin/payments').catch(()=>({items:[]}))]);
-  const items=list.items||[];
+  const [dash,list,settle,refs]=await Promise.all([API('/admin/payments/dashboard').catch(()=>({by_status:{},waiting:0,need_verification:0,settlement:0,total_invoices:0})),API('/admin/payments').catch(()=>({items:[]})),API('/admin/settlement').catch(()=>null),API('/admin/refunds?status=requested').catch(()=>({items:[]}))]);
+  const items=list.items||[]; const refItems=(refs&&refs.items)||[];
   const psel=items.find(i=>i.invoice_id===PAY_SEL)||null;
   const card=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:22px;color:var(--${c})">${n}</span><span class="l">${l}</span></div></div>`;
   const rows=items.length?items.map(i=>`<tr class="clickable" onclick="selectPay('${i.invoice_id}')"><td style="font-family:ui-monospace,monospace;font-size:12px">${esc(i.invoice_no||'')}</td><td><b>${esc(i.company||'—')}</b></td><td>${fmtIDR(i.total)}</td><td>${bTag(payColor(i.status),payLabel(i.status))}</td></tr>`).join(''):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">청구 없음</td></tr>';
@@ -2503,7 +2524,7 @@ SCREEN.payments=async()=>{
     <div class="btnrow" style="margin-top:12px;flex-wrap:wrap;gap:6px">
       <button class="btn ok" onclick="setInvStatus('${psel.invoice_id}','paid')">✔ 결제확정</button>
       <button class="btn bad" onclick="setInvStatus('${psel.invoice_id}','rejected')">✖ 거절</button>
-      <button class="btn" onclick="setInvStatus('${psel.invoice_id}','refunded')">↩ 환불</button>
+      ${psel.status==='paid'?`<button class="btn" onclick="requestRefund('${psel.invoice_id}')">↩ 환불 요청</button>`:''}
       <button class="btn" onclick="setInvStatus('${psel.invoice_id}','expired')">⌛ 기한만료</button></div>
     <div class="divide" style="margin:10px 0"></div>
     <div class="small muted" style="margin-bottom:4px">🔔 PG 콜백 시뮬레이션 · Webhook</div>
@@ -2511,15 +2532,34 @@ SCREEN.payments=async()=>{
       <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','settlement')">💳 결제완료(settlement)</button>
       <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','pending')">⏳ 처리중(pending)</button>
       <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','expire')">⌛ 만료(expire)</button></div>`:'<div class="muted small">청구서를 선택하세요.</div>';
+  const refReview=refItems.length?`<div class="card" style="margin-bottom:16px"><h3>환불 승인 대기 <span class="en">· Refund approvals</span><span class="r">${refItems.length}건</span></h3>
+    <div class="body tight"><table><thead><tr><th>회사·청구</th><th>환불액</th><th>사유</th><th>요청자</th><th></th></tr></thead><tbody>${refItems.map(r=>`<tr><td><b>${esc(r.company||'—')}</b><div class="muted small">${esc(r.invoice_no||'')}</div></td><td>${esc(r.amount_idr||'')}</td><td class="muted small">${esc(r.reason||'')}</td><td class="muted small">${esc((r.requested_by||'').slice(0,8))}</td><td style="white-space:nowrap"><button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="decideRefund('${r.id}','approved')">승인</button> <button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="decideRefund('${r.id}','rejected')">거절</button></td></tr>`).join('')}</tbody></table>
+    <div class="muted small" style="margin-top:6px">⚠ 요청자 본인은 승인 불가(maker-checker)</div></div></div>`:'';
   return `
   <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
-    ${card(dash.total_invoices||0,'전체 청구','ink')}${card(dash.waiting||0,'결제 대기','warn')}${card(dash.need_verification||0,'검증 필요','warn')}${card(fmtIDR(dash.settlement||0),'정산액','ok')}</div>
+    ${card(dash.total_invoices||0,T('전체 청구'),'ink')}${card(settle?settle.paid_idr:fmtIDR(dash.settlement||0),T('결제 합계'),'ok')}${card(settle?settle.refunded_idr:'—',T('환불 합계'),'warn')}${card(settle?settle.net_settled_idr:'—',T('순 정산'),'ink')}</div>
+  <div class="card" style="margin-bottom:16px"><div class="body btnrow" style="flex-wrap:wrap;gap:8px;align-items:center">
+    <span class="muted small">${T('미수금')} <b>${settle?settle.outstanding_idr:'—'}</b> · ${T('환불 대기')} <b>${settle?settle.pending_refunds:0}</b></span>
+    <button class="btn" onclick="serverPdf('/admin/payments/report.pdf?group=month','payment_report_month.pdf')">📄 ${T('월별 리포트')} PDF</button>
+    <button class="btn" onclick="serverPdf('/admin/payments/report.pdf?group=org','payment_report_org.pdf')">📄 ${T('기관별 리포트')} PDF</button></div></div>
+  ${refReview}
   <div class="grid side">
     <div class="card"><h3>청구·결제 목록 <span class="en">· Payments</span><span class="r">${items.length}건</span></h3>
       <div class="body tight"><table><thead><tr><th>청구번호</th><th>회사</th><th>금액</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div></div>
     <div class="card"><h3>결제 상세·관리 <span class="en">· Manage</span></h3><div class="body">${detail}</div></div>
   </div>`;
 };
+async function requestRefund(iid){
+  const r=await dialog("환불 요청 · Refund",[{key:"reason",label:"환불 사유 · Reason",type:"textarea",required:true},{key:"amount",label:"환불액(IDR, 미입력=전액) · Amount",type:"number"}]);
+  if(!r)return;
+  try{await API(`/invoices/${iid}/refund/request`,{method:"POST",body:JSON.stringify({reason:r.reason,amount:r.amount?Number(r.amount):null})});toast("환불 요청 · 다른 관리자 승인 대기");applyView();}
+  catch(e){toast("환불요청 실패 · "+(e&&e.code?e.code:(e&&e.detail?e.detail:"")));}
+}
+async function decideRefund(rid,decision){
+  if(!confirm(decision==="approved"?"환불을 승인할까요? (인보이스 환불 처리)":"환불 요청을 거절할까요?"))return;
+  try{await API(`/refunds/${rid}/decide`,{method:"POST",body:JSON.stringify({decision})});toast(decision==="approved"?"환불 승인·처리":"환불 거절");applyView();}
+  catch(e){toast("실패 · "+(e&&e.code?e.code:(e&&e.detail?e.detail:"")));}
+}
 async function createInvoice(id){
   const en=await ENUMS();
   const opts=(en.invoice_service_type||[{value:"pre_audit",label:"사전심사"},{value:"onsite",label:"현장심사"}]).map(o=>({value:o.value!=null?o.value:o,label:o.label!=null?o.label:o}));
