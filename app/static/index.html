@@ -730,6 +730,13 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n 문서번역
+  "🌐 번역 보기 · Translate":"🌐 Lihat terjemahan · Translate",
+  "🌐 번역 중… (gemma3, 수초)":"🌐 Menerjemahkan… (gemma3, beberapa detik)",
+  "번역 · Bahasa":"Terjemahan · Bahasa",
+  "(캐시)":"(Cache)",
+  "🤖 기계번역 · 원본 대조 필요":"🤖 Terjemahan mesin · Perlu dibandingkan dengan aslinya",
+  "번역 실패":"Terjemahan gagal",
   // §i18n 재처리
   "🔄 재처리":"🔄 Proses ulang",
   "재처리 중… (OCR 수초)":"Memproses ulang… (OCR beberapa detik)",
@@ -2087,8 +2094,11 @@ SCREEN.documents=async()=>{
         ${sel.has_file?`<button class="btn" onclick="viewDoc('${sel.document_id}')">↗ 원본 열기</button>`:''}</div>
       ${sel.fields&&Object.keys(sel.fields).length?`<div style="margin-bottom:10px">${Object.entries(sel.fields).slice(0,8).map(([k,vv])=>`<div class="kv"><span>${esc(k)}</span><b>${esc(vv)}</b></div>`).join("")}</div>`:""}
       ${sel.has_file?`<div class="small" style="font-weight:600;margin-bottom:6px">📄 원본 미리보기 · Preview</div><div id="docPreview" style="margin-bottom:12px"></div>`:''}
-      <div class="small" style="font-weight:600;margin-bottom:6px">🔤 추출 텍스트 · Extracted</div>
-      <div style="border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:16px;min-height:120px;max-height:300px;overflow:auto;font-size:13px;white-space:pre-wrap;color:var(--ink2)">${esc(sel.excerpt||"추출된 텍스트가 없습니다. 원본을 미리보기하세요.")}</div>`
+      <div class="btnrow" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span class="small" style="font-weight:600">🔤 추출 텍스트 · Extracted</span>
+        ${LANG===2?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="translateDoc('${sel.document_id}')">🌐 번역 보기 · Translate</button>`:''}</div>
+      <div style="border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:16px;min-height:120px;max-height:300px;overflow:auto;font-size:13px;white-space:pre-wrap;color:var(--ink2)">${esc(sel.excerpt||"추출된 텍스트가 없습니다. 원본을 미리보기하세요.")}</div>
+      <div id="docTrans"></div>`
     :'<div class="muted small">좌측에서 문서를 선택하면 원본 미리보기·추출 텍스트·필드가 표시됩니다.</div>';
   if(sel&&sel.has_file)AFTER_RENDER=()=>loadDocPreview(sel.document_id);
   const rvw={};docs.forEach(d=>{const s=d.review_status||"pending";rvw[s]=(rvw[s]||0)+1;});
@@ -2106,6 +2116,17 @@ SCREEN.documents=async()=>{
     <div class="body">${viewer}</div></div>`;
 };
 function selectDoc(did){DOC_SEL=did;applyView();}
+async function translateDoc(docId){
+  const box=document.getElementById("docTrans");if(!box)return;
+  box.innerHTML=`<div class="small" style="margin-top:8px;color:var(--accent)">${T('🌐 번역 중… (gemma3, 수초)')}</div>`;
+  try{
+    const r=await API(`/documents/${docId}/translate?lang=id`,{method:"POST",body:"{}"});
+    box.innerHTML=`<div class="divide" style="margin:10px 0"></div>
+      <div class="small" style="font-weight:600;margin-bottom:6px">🌐 ${T('번역 · Bahasa')} <span class="muted">${r.cached?T('(캐시)'):''}</span></div>
+      <div style="border:1px solid var(--accent);border-radius:10px;background:var(--bg);padding:16px;max-height:300px;overflow:auto;font-size:13px;white-space:pre-wrap;color:var(--ink)">${esc(r.translated||"")}</div>
+      <div class="muted small" style="margin-top:4px">${T('🤖 기계번역 · 원본 대조 필요')}</div>`;
+  }catch(e){box.innerHTML=`<div class="small" style="margin-top:8px;color:var(--bad)">${T('번역 실패')} · ${esc(e&&e.code?e.code:(e&&e.detail?e.detail:""))}</div>`;}
+}
 async function exportCaseJson(id){try{const r=await fetch(`/cases/${id}/export.json`,{headers:{Authorization:"Bearer "+token()}});if(!r.ok)throw 0;const d=await r.json();downloadText("case_"+short(id)+".json",JSON.stringify(d,null,2));toast("JSON 내보내기 완료");}catch(_){toast("내보내기 실패");}}
 async function exportReport(id){try{const r=await API(`/cases/${id}/report`,{method:"POST",body:"{}"});downloadText("report_"+short(id)+".txt",r.report||"");toast("종합 보고서 생성·다운로드");}catch(e){toast("보고서 실패 · "+(e&&e.code?e.code:""));}}
 async function viewDoc(docId){

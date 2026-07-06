@@ -299,6 +299,7 @@ class DocumentAsset(Base):
     fields = Column(JSON)
     text_excerpt = Column(Text)
     review_status = Column(String, default="pending")  # pending|approved|rejected|rework
+    translations = Column(JSON)   # {lang: 번역문} 온디맨드 캐시(예: {"id": "..."}) — 조회시점 번역
     content_b64 = Column(Text)    # 원본 파일 base64 (조회/다운로드용, <3MB만)
     content_type = Column(String)  # MIME
     material_id = Column(String)   # 원재료별 증빙 연결(nullable) — 설계 G1/C1

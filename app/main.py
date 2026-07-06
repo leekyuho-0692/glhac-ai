@@ -1441,6 +1441,7 @@ def reprocess_document(document_id: str,
     d.confidence = float(r.get("confidence") or 0)
     d.fields = r.get("fields") or {}
     d.text_excerpt = (text or "")[:300]
+    d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
     applied = _apply_agg_to_case(db, c, aggregate_fields([{"fields": d.fields}]))
     sm.record_event(db, c, c.status, c.status, "documents.reprocess", user["role"], user["uid"],
                     {"document_id": document_id, "from": prev, "to": d.doc_type,
@@ -1448,6 +1449,58 @@ def reprocess_document(document_id: str,
     db.commit()
     return {"document_id": document_id, "doc_type": d.doc_type, "confidence": d.confidence,
             "text_len": len(text or ""), "applied": applied}
+
+
+_LANG_NAME = {"id": "인도네시아어(Bahasa Indonesia)", "en": "영어(English)"}
+
+
+def _translate_text(text, lang):
+    """gemma3로 한→대상언어 문서 번역. 길면 청크 분할. 실패 시 ''."""
+    name = _LANG_NAME.get(lang, lang)
+    sysmsg = ("당신은 전문 문서 번역가입니다. 주어진 텍스트를 %s로 정확하게 번역하세요. "
+              "고유명사·등록번호·수치·날짜는 원문 그대로 유지하고, 줄바꿈 구조를 보존하세요. "
+              "번역문만 출력하고 부연 설명은 하지 마세요." % name)
+    out = []
+    for i in range(0, len(text), 1500):
+        ch = text[i:i + 1500]
+        if ch.strip():
+            out.append(ai_local.llm_text(sysmsg, ch) or "")
+    return "\n".join(out).strip()
+
+
+@app.post("/documents/{document_id}/translate")
+def translate_document(document_id: str, lang: str = "id",
+                       user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """문서 추출 텍스트를 조회 시점에 번역(온디맨드) + 캐시 — 설계 문서번역."""
+    from .intake import parse_file
+    from sqlalchemy.orm.attributes import flag_modified
+    d = db.get(models.DocumentAsset, document_id)
+    if not d:
+        raise HTTPException(404, {"code": "DOC_NOT_FOUND"})
+    c = _get_case(db, d.case_id, user)
+    if lang not in _LANG_NAME:
+        raise HTTPException(422, {"code": "LANG_UNSUPPORTED", "allowed": list(_LANG_NAME)})
+    cache = dict(d.translations or {})
+    if cache.get(lang):
+        _audit(db, user, "document.translate.cached", "document", document_id, d.case_id)
+        return {"document_id": document_id, "lang": lang, "translated": cache[lang], "cached": True}
+    # 전문 재추출(저장 원본) → 없으면 요약본
+    if d.content_b64:
+        text = parse_file(d.filename, base64.b64decode(d.content_b64.split(",")[-1]))
+    else:
+        text = d.text_excerpt or ""
+    if not (text or "").strip():
+        raise HTTPException(422, {"code": "NO_TEXT", "detail": "번역할 추출 텍스트가 없습니다"})
+    translated = _translate_text(text, lang)
+    if not translated:
+        raise HTTPException(502, {"code": "TRANSLATE_FAILED", "detail": "번역 엔진(gemma3) 응답 없음"})
+    cache[lang] = translated
+    d.translations = cache
+    flag_modified(d, "translations")
+    _audit(db, user, "document.translate", "document", document_id, d.case_id,
+           {"lang": lang, "chars": len(text)})
+    db.commit()
+    return {"document_id": document_id, "lang": lang, "translated": translated, "cached": False}
 
 
 @app.get("/cases/{case_id}/matrix")

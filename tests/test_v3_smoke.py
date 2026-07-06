@@ -1016,8 +1016,34 @@ def test_document_reprocess():
         assert c.post(f"/documents/{did2}/reprocess", headers=_h(tok)).status_code == 422
 
 
+def test_document_translate():
+    """§문서번역 — 캐시 히트(LLM 미의존)·미지원 언어·빈텍스트 422.
+    (실제 gemma3 번역은 CI 미의존 위해 사전 캐시로 검증)."""
+    from app import models as _m
+    from app.db import SessionLocal as _S
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "TransCo"},
+                     headers=_h(tok)).json()["case_id"]
+        db = _S()
+        # 사전 캐시 심음 → LLM 호출 없이 캐시 반환
+        d = _m.DocumentAsset(case_id=cid, filename="c.txt", doc_type="other", confidence=0,
+                             text_excerpt="원문", translations={"id": "Teks terjemahan"})
+        db.add(d); db.commit(); did = d.document_id
+        # 텍스트 없음(캐시도 없음) → 422
+        d2 = _m.DocumentAsset(case_id=cid, filename="empty.txt", doc_type="other", confidence=0)
+        db.add(d2); db.commit(); did2 = d2.document_id
+        db.close()
+        r = c.post(f"/documents/{did}/translate?lang=id", headers=_h(tok)).json()
+        assert r["cached"] is True and r["translated"] == "Teks terjemahan", r
+        # 미지원 언어 → 422
+        assert c.post(f"/documents/{did}/translate?lang=zz", headers=_h(tok)).status_code == 422
+        # 텍스트 전무 → 422
+        assert c.post(f"/documents/{did2}/translate?lang=id", headers=_h(tok)).status_code == 422
+
+
 if __name__ == "__main__":
-    tests = [test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
+    tests = [test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,
