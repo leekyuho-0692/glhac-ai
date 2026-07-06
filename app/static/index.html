@@ -676,7 +676,7 @@ function buildNav(){
   nav.innerHTML=allowed.map(([id,ic,ko,en])=>
     `<a data-id="${id}" role="link" tabindex="0" onclick="go('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}"><span aria-hidden="true">${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`).join("");
   document.getElementById("navfoot").innerHTML=
-    `노출 메뉴 ${allowed.length} / 15<br><span style="color:#64748B">scope · ${scopeLabel()}</span>`;
+    `${T('노출 메뉴')} ${allowed.length} / 15<br><span style="color:#64748B">scope · ${T(scopeLabel())}</span>`;
 }
 function toggleNav(on){
   const app=document.getElementById("appView");if(!app)return;
@@ -711,16 +711,26 @@ window.addEventListener("popstate",e=>{
 });
 function pageHead(id){
   const n=NAV.find(x=>x[0]===id);
-  const roleNames=MENU_ACCESS[id].map(r=>ROLE_DEF[r].ko).join(" · ");
+  const roleNames=MENU_ACCESS[id].map(r=>T(ROLE_DEF[r].ko)).join(" · ");
   return `<div class="page-h"><span style="font-size:22px">${n[1]}</span>
     <h1>${n[2]}</h1><span class="en">· ${n[3]}</span>
-    <span class="scope-pill">👁 ${scopeLabel()}</span></div>
+    <span class="scope-pill">👁 ${T(scopeLabel())}</span></div>
     <div class="roles">노출 역할 · Roles &nbsp;<b>${roleNames}</b></div>`;
 }
 function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="margin-bottom:14px">⚠ 일부 데이터를 불러오지 못했습니다 (${FETCH_ERRORS}건 실패) — 표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.</div>`:"";}
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "노출 메뉴":"Menu ditampilkan",
+  // §i18n 케이스목록
+  "케이스 테이블":"Tabel Kasus",
+  "번호 · ID":"Nomor · ID",
+  "기업 · Company":"Perusahaan · Company",
+  "기한 · Due":"Batas Waktu · Due",
+  "정렬: 최근순":"Urut: Terbaru",
+  "정렬: 기한 우선":"Urut: Prioritas tenggat",
+  "＋ 새 신청 · New":"＋ Pengajuan baru · New",
+  "노출":"Ditampilkan",
   // §i18n 동적배너
   "하람/고위험 의심":"Dugaan haram/berisiko tinggi",
   "건 — 증빙 필수":" kasus — bukti wajib",
@@ -1551,7 +1561,7 @@ SCREEN.caseList=async()=>{
     <div class="body btnrow" style="border-top:1px solid var(--line)">
       ${canNew?'<button class="btn pri" onclick="newCase()">＋ 새 신청 · New</button>':''}
       <button class="btn" onclick="exportCasesCsv()">⬇ CSV</button>
-      <span class="chip" style="margin-left:auto">노출 ${cases.length}건 · scope: ${scopeLabel()}</span>
+      <span class="chip" style="margin-left:auto">${T('노출')} ${cases.length}${T('건')} · scope: ${T(scopeLabel())}</span>
     </div></div>`;
 };
 async function newCase(){
