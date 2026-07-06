@@ -3119,6 +3119,85 @@ def set_invoice_status(invoice_id: str, body: schemas.InvoiceStatusReq,
     return {"invoice_id": invoice_id, "status": inv.status}
 
 
+# ── Payment P3: PG Webhook (Midtrans/Xendit류) — signature 검증·idempotency·상태자동반영 ──
+_PG_PROVIDERS = {"midtrans", "xendit", "manual"}
+_PG_STATUS_MAP = {
+    "settlement": "paid", "capture": "paid", "paid": "paid", "success": "paid", "succeeded": "paid",
+    "pending": "payment_processing", "authorize": "payment_processing", "processing": "payment_processing",
+    "deny": "rejected", "cancel": "rejected", "failure": "rejected", "failed": "rejected",
+    "expire": "expired", "expired": "expired",
+    "refund": "refunded", "refunded": "refunded", "partial_refund": "refunded",
+}
+
+
+def _pg_secret(provider):
+    return (os.environ.get("GLHAC_PG_SECRET_" + provider.upper())
+            or os.environ.get("GLHAC_PG_WEBHOOK_SECRET"))
+
+
+def _verify_pg_sig(provider, raw, headers):
+    """서명 검증 — 시크릿 미설정 시 None(dev 미검증), 설정 시 HMAC-SHA256 일치 여부.
+    실 PG(Midtrans sha512 등)는 계약 후 provider별 포맷 확장 지점."""
+    import hmac as _hmac
+    import hashlib as _hl
+    secret = _pg_secret(provider)
+    if not secret:
+        return None
+    sig = (headers.get("x-signature") or headers.get("x-callback-token") or "").strip()
+    expected = _hmac.new(secret.encode(), raw or b"", _hl.sha256).hexdigest()
+    return _hmac.compare_digest(sig, expected)
+
+
+@app.post("/pg/webhook/{provider}")
+async def pg_webhook(provider: str, request: Request, db: Session = Depends(get_db)):
+    """PG 결제 콜백 수신 → 서명검증 → idempotency → 인보이스 상태 자동반영(§Payment P3).
+    실 PG는 계약·크리덴셜 필요. 시크릿(GLHAC_PG_WEBHOOK_SECRET) 설정 시 서명 필수."""
+    import json as _json
+    if provider not in _PG_PROVIDERS:
+        raise HTTPException(404, {"code": "UNKNOWN_PROVIDER", "allowed": sorted(_PG_PROVIDERS)})
+    raw = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    verified = _verify_pg_sig(provider, raw, headers)
+    if verified is False:
+        raise HTTPException(401, {"code": "BAD_SIGNATURE"})
+    try:
+        payload = _json.loads(raw or b"{}")
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, {"code": "BAD_PAYLOAD"})
+    order_id = (payload.get("order_id") or payload.get("payment_ref")
+                or payload.get("reference") or "")
+    status_raw = str(payload.get("transaction_status") or payload.get("status") or "").lower()
+    event_id = (payload.get("event_id") or payload.get("id")
+                or ("%s:%s" % (order_id, status_raw) if order_id else uuid.uuid4().hex))
+    idem = "pg:%s:%s" % (provider, event_id)
+    dup = db.query(models.IntegrationEvent).filter_by(idempotency_key=idem).first()
+    if dup:
+        return {"idempotent": True, "status": dup.status, "event_id": dup.id}
+    new_status = _PG_STATUS_MAP.get(status_raw)
+    inv = db.query(models.Invoice).filter_by(payment_ref=order_id).first() if order_id else None
+    applied = None
+    if inv and new_status:
+        frm = inv.status
+        inv.status = new_status
+        if new_status == "paid":
+            amt = payload.get("gross_amount") or payload.get("amount") or inv.total
+            db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, method=provider,
+                                  amount=float(amt or 0), currency="IDR", status="confirmed",
+                                  reference=str(order_id)))
+            for p in db.query(models.Payment).filter_by(invoice_id=inv.invoice_id, status="pending"):
+                p.status = "confirmed"
+        applied = {"invoice_id": inv.invoice_id, "from": frm, "to": new_status}
+    ev = models.IntegrationEvent(
+        provider=provider, event_type="pg.webhook." + (status_raw or "unknown"),
+        external_id=str(order_id or ""), idempotency_key=idem,
+        case_id=inv.case_id if inv else None, payload=payload,
+        status="processed" if applied else "received")
+    db.add(ev)
+    db.commit()
+    return {"received": True, "verified": bool(verified), "provider": provider,
+            "mapped_status": new_status, "applied": applied, "event_id": ev.id}
+
+
 @app.get("/admin/payments")
 def admin_payments(status: str = None, user=Depends(auth.require_roles("operator")),
                    db: Session = Depends(get_db)):

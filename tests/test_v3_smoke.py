@@ -1070,8 +1070,45 @@ def test_exif_gps_and_geo_fallback():
         assert g["geo_source"] == "browser" and abs(g["lat"] + 6.2) < 0.001, g
 
 
+def test_pg_webhook():
+    """§Payment P3 PG Webhook — 상태자동반영·idempotency·미지원provider·서명검증."""
+    import os as _os, json as _json, hmac as _hmac, hashlib as _hl
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "PgCo"},
+                     headers=_h(tok)).json()["case_id"]
+        inv = c.post(f"/cases/{cid}/invoices", json={"service_type": "pre_audit", "amount": 5000000},
+                     headers=_h(tok)).json()
+        ref = inv["payment_ref"]
+        body = {"order_id": ref, "transaction_status": "settlement", "gross_amount": 5550000, "id": "e1"}
+        # 시크릿 미설정(dev) → settlement가 invoice paid로 자동반영
+        _os.environ.pop("GLHAC_PG_WEBHOOK_SECRET", None)
+        r = c.post("/pg/webhook/midtrans", json=body).json()
+        assert r["mapped_status"] == "paid" and r["applied"]["to"] == "paid", r
+        invs = {i["invoice_id"]: i for i in c.get(f"/cases/{cid}/invoices", headers=_h(tok)).json()}
+        assert invs[inv["invoice_id"]]["status"] == "paid"
+        # idempotency: 동일 이벤트 재수신 → 재적용 없음
+        assert c.post("/pg/webhook/midtrans", json=body).json().get("idempotent") is True
+        # 미지원 provider → 404
+        assert c.post("/pg/webhook/paypal", json=body).status_code == 404
+        # 서명검증: 시크릿 설정 시 무서명 401, 정서명 200
+        _os.environ["GLHAC_PG_WEBHOOK_SECRET"] = "topsecret"
+        try:
+            inv2 = c.post(f"/cases/{cid}/invoices", json={"service_type": "onsite", "amount": 1000000},
+                          headers=_h(tok)).json()
+            raw = _json.dumps({"order_id": inv2["payment_ref"], "status": "settlement", "id": "e2"}).encode()
+            assert c.post("/pg/webhook/xendit", content=raw,
+                          headers={"content-type": "application/json"}).status_code == 401
+            good = _hmac.new(b"topsecret", raw, _hl.sha256).hexdigest()
+            rs = c.post("/pg/webhook/xendit", content=raw,
+                        headers={"content-type": "application/json", "x-signature": good})
+            assert rs.status_code == 200 and rs.json()["verified"] is True, rs.text
+        finally:
+            _os.environ.pop("GLHAC_PG_WEBHOOK_SECRET", None)
+
+
 if __name__ == "__main__":
-    tests = [test_exif_gps_and_geo_fallback, test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
+    tests = [test_pg_webhook, test_exif_gps_and_geo_fallback, test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,

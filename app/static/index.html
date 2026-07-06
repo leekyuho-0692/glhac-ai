@@ -730,6 +730,11 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n PG webhook
+  "🔔 PG 콜백 시뮬레이션 · Webhook":"🔔 Simulasi Callback PG · Webhook",
+  "💳 결제완료(settlement)":"💳 Pembayaran Selesai(settlement)",
+  "⏳ 처리중(pending)":"⏳ Sedang Diproses(pending)",
+  "⌛ 만료(expire)":"⌛ Kedaluwarsa(expire)",
   // §i18n 문서번역
   "🌐 번역 보기 · Translate":"🌐 Lihat terjemahan · Translate",
   "🌐 번역 중… (gemma3, 수초)":"🌐 Menerjemahkan… (gemma3, beberapa detik)",
@@ -2428,6 +2433,16 @@ function payLabel(s){const m={draft:'초안',invoice_created:'청구생성',wait
 function payMsg(s){const m={waiting_payment:'아직 결제가 확인되지 않았습니다. 납부기한 전까지 결제해 주세요.',need_verification:'입금 정보가 신청 정보와 완전히 일치하지 않아 관리자 확인이 필요합니다.',paid:'결제가 확인되었습니다. 다음 단계로 진행됩니다.',rejected:'결제가 거절되었습니다. 관리자에게 문의하세요.',expired:'납부기한이 만료되었습니다. 청구서 재발행이 필요합니다.'};const x=m[s];return x?`<div class="banner ${s==='paid'?'ok':s==='rejected'||s==='expired'?'bad':'info'}" style="margin-top:8px">${x}</div>`:'';}
 async function setInvStatus(iid,status){if(!confirm(`상태를 '${status}'로 변경할까요?`))return;try{await API(`/invoices/${iid}/status`,{method:"PATCH",body:JSON.stringify({status})});toast("상태 변경 · "+status);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 function selectPay(iid){PAY_SEL=iid;applyView();}
+async function pgSimulate(ref,status){
+  if(!ref){toast("결제참조 없음");return;}
+  if(!confirm(`PG 콜백 시뮬레이션: '${status}' 을(를) 전송할까요? (데모용 /pg/webhook/manual)`))return;
+  try{
+    const body={order_id:ref,transaction_status:status,id:"sim-"+Date.now()};
+    const r=await fetch("/pg/webhook/manual",{method:"POST",headers:{"Content-Type":"application/json",...(token()?{Authorization:"Bearer "+token()}:{})},body:JSON.stringify(body)});
+    const j=await r.json();
+    toast("PG 콜백 · "+(j.mapped_status||status)+(j.applied?" → 반영됨":j.idempotent?" (중복)":" (미매칭)"));applyView();
+  }catch(e){toast("시뮬레이션 실패");}
+}
 SCREEN.notifyLog=async()=>{
   const d=await API("/admin/notifications").catch(()=>({counts:{},items:[]}));
   const cc=d.counts||{}, items=d.items||[];
@@ -2489,7 +2504,13 @@ SCREEN.payments=async()=>{
       <button class="btn ok" onclick="setInvStatus('${psel.invoice_id}','paid')">✔ 결제확정</button>
       <button class="btn bad" onclick="setInvStatus('${psel.invoice_id}','rejected')">✖ 거절</button>
       <button class="btn" onclick="setInvStatus('${psel.invoice_id}','refunded')">↩ 환불</button>
-      <button class="btn" onclick="setInvStatus('${psel.invoice_id}','expired')">⌛ 기한만료</button></div>`:'<div class="muted small">청구서를 선택하세요.</div>';
+      <button class="btn" onclick="setInvStatus('${psel.invoice_id}','expired')">⌛ 기한만료</button></div>
+    <div class="divide" style="margin:10px 0"></div>
+    <div class="small muted" style="margin-bottom:4px">🔔 PG 콜백 시뮬레이션 · Webhook</div>
+    <div class="btnrow" style="flex-wrap:wrap;gap:6px">
+      <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','settlement')">💳 결제완료(settlement)</button>
+      <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','pending')">⏳ 처리중(pending)</button>
+      <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','expire')">⌛ 만료(expire)</button></div>`:'<div class="muted small">청구서를 선택하세요.</div>';
   return `
   <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
     ${card(dash.total_invoices||0,'전체 청구','ink')}${card(dash.waiting||0,'결제 대기','warn')}${card(dash.need_verification||0,'검증 필요','warn')}${card(fmtIDR(dash.settlement||0),'정산액','ok')}</div>
