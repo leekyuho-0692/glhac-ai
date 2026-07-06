@@ -824,8 +824,31 @@ def test_read_audit_log():
         assert "limit" in body and "offset" in body
 
 
+def test_cases_pagination():
+    """§8.1 케이스 목록 페이징 — total 봉투·limit 캡·offset 윈도우 이동."""
+    with TestClient(app) as c:
+        ctok = _tok(c, "consultant1", "pw")
+        for i in range(3):
+            c.post("/cases", json={"org_id": "org_demo", "company_name": f"PageCo{i}"},
+                   headers=_h(ctok))
+        r = c.get("/cases?limit=2&offset=0", headers=_h(ctok))
+        assert r.status_code == 200, r.text
+        p0 = r.json()
+        assert set(["total", "limit", "offset", "count", "items"]) <= set(p0), p0
+        assert p0["limit"] == 2 and len(p0["items"]) == 2 and p0["count"] == 2
+        assert p0["total"] >= 3
+        # 다음 페이지 — 윈도우가 이동해 첫 항목이 달라짐(total>2 보장됨)
+        p1 = c.get("/cases?limit=2&offset=2", headers=_h(ctok)).json()
+        assert p1["total"] == p0["total"] and p1["offset"] == 2
+        ids0 = {x["case_id"] for x in p0["items"]}
+        ids1 = {x["case_id"] for x in p1["items"]}
+        assert ids0.isdisjoint(ids1), "페이지 간 항목 중복"
+        # limit 상한(≤500) — 초과 요청은 422
+        assert c.get("/cases?limit=999", headers=_h(ctok)).status_code == 422
+
+
 if __name__ == "__main__":
-    tests = [test_read_audit_log,
+    tests = [test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,

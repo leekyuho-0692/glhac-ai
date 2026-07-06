@@ -853,16 +853,21 @@ def gen_report(case_id: str, user=Depends(auth.get_current_user), db: Session = 
 # ---------- cases ----------
 @app.get("/cases")
 def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db),
-               limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0)):
+               limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
+    """케이스 목록(§8.1 페이징). total 포함 봉투 — 클라이언트가 페이지 순회로 전량 적재.
+    기존 default 500·no-total은 500건 초과 조직에서 조용히 누락됐음."""
     q = db.query(models.CaseApplication)
     if user["role"] != "admin":
         q = q.filter_by(org_id=user["org_id"])
+    total = q.count()
     rows = (q.order_by(models.CaseApplication.created_at.desc())
             .offset(offset).limit(limit).all())
-    return [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
-             "pathway": c.pathway, "due_date": c.due_date,
-             "province": _province_of(c.factory_address or c.address)}
-            for c in rows]
+    items = [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
+              "pathway": c.pathway, "due_date": c.due_date,
+              "province": _province_of(c.factory_address or c.address)}
+             for c in rows]
+    return {"total": total, "limit": limit, "offset": offset,
+            "count": len(items), "items": items}
 
 
 # ===================== 알림 (Rizky #5) =====================

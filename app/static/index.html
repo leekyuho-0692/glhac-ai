@@ -558,7 +558,18 @@ function statusColor(s){s=String(s||"");
   return"mute";}
 async function loadCases(force){
   if(CASES_CACHE.length && !force) return CASES_CACHE;
-  CASES_CACHE=await API("/cases").catch(()=>[]);
+  // 서버 페이징(§8.1): total까지 청크로 순회 적재 → 500건 초과도 누락 없이 전량 확보.
+  const per=200; let off=0, all=[], total=Infinity, guard=0;
+  while(off<total && guard++<60){
+    const r=await API("/cases?limit="+per+"&offset="+off).catch(()=>null);
+    if(!r) break;
+    const items=Array.isArray(r)?r:(r.items||[]);        // 구형 배열 응답 폴백
+    total=Array.isArray(r)?items.length:(typeof r.total==="number"?r.total:items.length);
+    all=all.concat(items);
+    if(items.length<per) break;                          // 마지막 페이지
+    off+=per;
+  }
+  CASES_CACHE=all;
   return CASES_CACHE;
 }
 function curCaseObj(){return CASES_CACHE.find(c=>c.case_id===CURCASE)||null;}
