@@ -721,6 +721,43 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n 동적배너
+  "하람/고위험 의심":"Dugaan haram/berisiko tinggi",
+  "건 — 증빙 필수":" kasus — bukti wajib",
+  "증빙 미제출":"Bukti belum diajukan",
+  "건":" kasus",
+  // §i18n materials/profile 보강
+  "· Intake (단계별) · AI 자동추출":"· Intake (bertahap) · Ekstraksi otomatis AI",
+  "ZIP으로 올리면 자동 분류 → 프로필·제품·원재료·문서에 채워집니다. 아래 단계별 필요서류를 확인하세요.":"Jika diunggah sebagai ZIP, akan diklasifikasikan secara otomatis → diisi ke profil·produk·bahan baku·dokumen. Periksa dokumen yang diperlukan per tahap di bawah.",
+  "① 프로필·기업":"① Profil·Perusahaan",
+  "NIB · 사업자":"NIB · Pelaku usaha",
+  "책임자 · Responsible":"Penanggung jawab · Responsible",
+  "할랄감독자 · Supervisor":"Pengawas halal · Supervisor",
+  "공장 주소 · Factory address":"Alamat pabrik · Factory address",
+  "(지역맵 집계)":"(Agregasi peta wilayah)",
+  "처리 기한 · Due date":"Batas waktu pemrosesan · Due date",
+  "(기한 경보)":"(Peringatan tenggat)",
+  "연락처 · Phone":"Kontak · Phone",
+  "(WhatsApp/SMS 알림)":"(Notifikasi WhatsApp/SMS)",
+  "알림 수신 동의 · Notification opt-in (SMS·WhatsApp)":"Persetujuan penerimaan notifikasi · Notification opt-in (SMS·WhatsApp)",
+  "프로필 저장 · Save":"Simpan profil · Save",
+  "③ 경로 판정":"③ Penentuan jalur",
+  "자기선언 · SD":"Deklarasi mandiri · SD",
+  "저위험·MSME":"Risiko rendah·UMKM",
+  "원재료 · Material":"Bahan baku · Material",
+  "재스크":"Skrining ulang",
+  "원재료 없음 · 라벨 OCR·ZIP 인테이크로 추가":"Tidak ada bahan baku · Tambahkan melalui OCR label·Intake ZIP",
+  "🗂 ZIP 인테이크":"🗂 Intake ZIP",
+  "📷 라벨 OCR":"📷 OCR label",
+  "🔤 텍스트 스크리닝":"🔤 Skrining teks",
+  "＋ 추가":"＋ Tambah",
+  "AI 스크리닝":"Skrining AI",
+  "✓ 하람·고위험 의심 없음":"✓ Tidak ada dugaan haram·berisiko tinggi",
+  "매칭:":"Pencocokan:",
+  "AI 원재료 해설 · Explain":"Penjelasan bahan baku AI · Explain",
+  "🤖 해설":"🤖 Penjelasan",
+  "읽기전용":"Baca-saja",
+  "노출 역할 · Roles":"Peran yang ditampilkan · Roles",
   // 영수증 PDF
   "🧾 영수증 PDF · Receipt":"🧾 Kwitansi PDF · Receipt",
   "📄 세금계산서 · Faktur Pajak":"📄 Faktur Pajak · Tax Invoice",
@@ -1762,10 +1799,10 @@ SCREEN.materials=async()=>{
           <button class="btn pri" onclick="addMaterial('${id}')">＋ 추가</button></div></div>`:''}</div>
     <div class="card"><h3>AI 스크리닝 <span class="en">· ontology</span></h3>
       <div class="body">
-        ${bad.length?`<div class="banner bad" style="margin-bottom:12px">⛔ 하람/고위험 의심 ${bad.length}건 — 증빙 필수</div>
+        ${bad.length?`<div class="banner bad" style="margin-bottom:12px">⛔ ${T('하람/고위험 의심')} ${bad.length}${T('건 — 증빙 필수')}</div>
           ${bad.map(m=>`<div class="field"><label>${esc(m.name)}</label><div class="v small">매칭: <b style="color:var(--bad)">${bSpan(m.result||m.status)}</b>${m.note?"<br>"+esc(m.note):""}</div></div>`).join("")}`
           :'<div class="banner ok">✓ 하람·고위험 의심 없음</div>'}
-        ${(()=>{const ne=mats.filter(m=>(m.evidence_count||0)===0&&/needs|mushbooh|warn|의심/i.test((m.status||"")+(m.result||"")+(m.severity||"")));return ne.length?`<div class="divide"></div><div class="small" style="font-weight:600;margin-bottom:6px">📎 증빙 미제출 ${ne.length}건</div>${ne.map(m=>`<div class="li" style="padding:6px 0"><div class="tx"><b>${esc(m.name)}</b><div>${esc(m.status||m.result||"")}</div></div><div class="when">${canMatWrite?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="attachEvidence('${id}','${m.material_id}')">증빙</button>`:'미제출'}</div></div>`).join("")}`:"";})()}
+        ${(()=>{const ne=mats.filter(m=>(m.evidence_count||0)===0&&/needs|mushbooh|warn|의심/i.test((m.status||"")+(m.result||"")+(m.severity||"")));return ne.length?`<div class="divide"></div><div class="small" style="font-weight:600;margin-bottom:6px">📎 ${T('증빙 미제출')} ${ne.length}${T('건')}</div>${ne.map(m=>`<div class="li" style="padding:6px 0"><div class="tx"><b>${esc(m.name)}</b><div>${esc(m.status||m.result||"")}</div></div><div class="when">${canMatWrite?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="attachEvidence('${id}','${m.material_id}')">증빙</button>`:'미제출'}</div></div>`).join("")}`:"";})()}
         <div class="divide"></div>
         <div class="field"><label>AI 원재료 해설 · Explain</label>
           <div class="btnrow"><input class="box" id="explInput" placeholder="원재료명 (예: gelatin)" style="flex:1"><button class="btn" onclick="explainMaterial()">🤖 해설</button></div></div>
