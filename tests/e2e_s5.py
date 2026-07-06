@@ -1,8 +1,9 @@
 """S5 검증 — 원재료 일괄 스크리닝 · Pendamping 배정·검증."""
+import os
 import sys
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 

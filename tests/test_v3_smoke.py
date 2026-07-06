@@ -126,9 +126,15 @@ def test_payment_and_analytics():
         pay = c.post(f"/invoices/{iid}/payment", json={"method": "bank_transfer", "reference": "TRX1"},
                      headers=_h(ctok))
         assert pay.status_code == 200 and pay.json()["amount"] == total, pay.text
+        # 계좌이체 = 관리자 검증 대기(need_verification) — 설계 DEFER
+        assert pay.json()["invoice_status"] == "need_verification", pay.json()
         pays = c.get(f"/cases/{cid}/payments", headers=_h(ctok)).json()
         assert len(pays) == 1 and pays[0]["method"] == "bank_transfer", pays
-        an = c.get("/analytics/summary", headers=_h(_tok(c, "operator1", "pw"))).json()
+        # 관리자(operator) 결제 확정 → paid
+        otok = _tok(c, "operator1", "pw")
+        st = c.patch(f"/invoices/{iid}/status", json={"status": "paid"}, headers=_h(otok))
+        assert st.status_code == 200 and st.json()["status"] == "paid", st.text
+        an = c.get("/analytics/summary", headers=_h(otok)).json()
         assert an["revenue_paid"] >= total and "cases_by_status" in an, an
         assert c.post(f"/invoices/{iid}/payment", json={"method": "bitcoin"},
                       headers=_h(ctok)).status_code == 400
@@ -824,6 +830,31 @@ def test_read_audit_log():
         assert "limit" in body and "offset" in body
 
 
+def test_payment_gate_p1():
+    """§Payment Gate P1 — va 자동결제·admin 대시보드·상태변경·SJPH 결제게이트."""
+    with TestClient(app) as c:
+        ctok = _tok(c, "consultant1", "pw"); otok = _tok(c, "operator1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "GateCo"},
+                     headers=_h(ctok)).json()["case_id"]
+        inv = c.post(f"/cases/{cid}/invoices", json={"service_type": "pre_audit", "amount": 200},
+                     headers=_h(ctok)).json()
+        assert inv["status"] == "waiting_payment" and inv["payment_ref"], inv
+        # SJPH 게이트: 미결제 → 409
+        g = c.post(f"/cases/{cid}/sjph/manual", headers=_h(ctok))
+        assert g.status_code == 409 and g.json()["detail"]["code"] == "PAYMENT_REQUIRED", g.text
+        # va 전액 = 자동 paid
+        r = c.post(f"/invoices/{inv['invoice_id']}/payment",
+                   json={"method": "va", "amount": inv["total"]}, headers=_h(ctok)).json()
+        assert r["invoice_status"] == "paid", r
+        # 결제 후 SJPH 생성 가능
+        assert c.post(f"/cases/{cid}/sjph/manual", headers=_h(ctok)).status_code == 200
+        # admin 대시보드/목록 — operator 접근, client 차단
+        assert c.get("/admin/payments/dashboard", headers=_h(otok)).status_code == 200
+        assert c.get("/admin/payments", headers=_h(ctok)).status_code == 403
+        dash = c.get("/admin/payments/dashboard", headers=_h(otok)).json()
+        assert dash["settlement"] >= inv["total"], dash
+
+
 def test_cases_pagination():
     """§8.1 케이스 목록 페이징 — total 봉투·limit 캡·offset 윈도우 이동."""
     with TestClient(app) as c:
@@ -848,7 +879,7 @@ def test_cases_pagination():
 
 
 if __name__ == "__main__":
-    tests = [test_cases_pagination, test_read_audit_log,
+    tests = [test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,

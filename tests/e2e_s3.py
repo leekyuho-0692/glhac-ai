@@ -1,8 +1,9 @@
 """S3 검증 — 현장체크리스트·파트와위원회·인증동결/언락·Excel·심사원풀·LPH레퍼런스."""
+import os
 import sys
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 
@@ -15,6 +16,8 @@ HC = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
       json={"username": "consultant1", "password": "pw"}).json()["token"]}
 HA = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
       json={"username": "admin", "password": "admin"}).json()["token"]}
+HO = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
+      json={"username": "operator1", "password": "pw"}).json()["token"]}
 
 cid = httpx.post(f"{B}/cases", headers=HC,
                  json={"company_name": "S3Test", "org_id": "org_demo"}).json()["case_id"]
@@ -63,20 +66,25 @@ ok("product_scope 제품 포함", pid in (fw.get("product_scope") or []), fw.get
 
 # ── S3-3: 인증서 발급 → 동결 → 언락 ───────────────────────
 print(f"\n=== S3-3 인증서 동결/언락 (case={cid[:8]}) ===")
-rc = httpx.post(f"{B}/cases/{cid}/certificate/issue", headers=HA).json()
+# 2단계 파트와: 가승인(provisional)은 위 PATCH에서 완료 → 최종승인(operator)으로 approved + scope_frozen
+rfa = httpx.post(f"{B}/cases/{cid}/fatwa/final-approve", headers=HO).json()
+ok("파트와 최종승인", rfa.get("fatwa_status") == "approved", rfa)
+# 발급은 operator 전용
+rc = httpx.post(f"{B}/cases/{cid}/certificate/issue", headers=HO).json()
 ok("인증서 발급", "certificate_no" in rc or rc.get("ok") is True, rc)
 
 cert = httpx.get(f"{B}/cases/{cid}/certificate", headers=HC).json()
 ok("frozen_product_ids 존재", "frozen_product_ids" in cert, cert)
 ok("frozen_material_ids 존재", "frozen_material_ids" in cert, cert)
 
-# unlock (consultant)
-ru = httpx.post(f"{B}/cases/{cid}/certificate/unlock", headers=HC).json()
+# unlock (operator, 사유 필수)
+ru = httpx.post(f"{B}/cases/{cid}/certificate/unlock", headers=HO,
+                json={"reason": "재인증 언락 테스트"}).json()
 ok("언락 성공", ru.get("ok") is True or "scope_frozen" in ru, ru)
 
-# 이미 잠금 해제된 상태에서 재발급 후 다시 unlock → 409 (이미 해제)
-# 단, 재unlock 시도 → 409
-ru2 = httpx.post(f"{B}/cases/{cid}/certificate/unlock", headers=HC)
+# 이미 잠금 해제된 상태에서 재unlock 시도 → 409 (이미 해제)
+ru2 = httpx.post(f"{B}/cases/{cid}/certificate/unlock", headers=HO,
+                 json={"reason": "재인증 언락 테스트"})
 ok("중복 언락 → 409", ru2.status_code == 409, ru2.status_code)
 
 # ── S3-4: Excel 내보내기 ─────────────────────────────────
@@ -88,28 +96,28 @@ ok("파일 크기 > 0", len(resp_xl.content) > 0, len(resp_xl.content))
 
 # ── S3-5: 심사원 풀 (max 3) ──────────────────────────────
 print(f"\n=== S3-5 심사원 풀 (case={cid[:8]}) ===")
-a1 = httpx.post(f"{B}/cases/{cid}/auditor-pool", headers=HC,
+a1 = httpx.post(f"{B}/cases/{cid}/auditor-pool", headers=HO,
                 json={"name": "Ahmad A", "role_in_team": "ketua", "cert_no": "LSH-001"}).json()
 ok("심사원 1 추가", "id" in a1, a1)
 
-a2 = httpx.post(f"{B}/cases/{cid}/auditor-pool", headers=HC,
+a2 = httpx.post(f"{B}/cases/{cid}/auditor-pool", headers=HO,
                 json={"name": "Budi B", "role_in_team": "anggota"}).json()
 ok("심사원 2 추가", "id" in a2, a2)
 
-a3 = httpx.post(f"{B}/cases/{cid}/auditor-pool", headers=HC,
+a3 = httpx.post(f"{B}/cases/{cid}/auditor-pool", headers=HO,
                 json={"name": "Cici C", "role_in_team": "anggota"}).json()
 ok("심사원 3 추가", "id" in a3, a3)
 
 pool = httpx.get(f"{B}/cases/{cid}/auditor-pool", headers=HC).json()
 ok("풀 3명", len(pool) == 3, len(pool))
 
-a4 = httpx.post(f"{B}/cases/{cid}/auditor-pool", headers=HC,
+a4 = httpx.post(f"{B}/cases/{cid}/auditor-pool", headers=HO,
                 json={"name": "Deni D", "role_in_team": "anggota"})
 ok("4번째 추가 → 400/409", a4.status_code in (400, 409), a4.status_code)
 
 # 삭제
 pool_id = pool[0]["id"]
-rd = httpx.delete(f"{B}/cases/{cid}/auditor-pool/{pool_id}", headers=HC).json()
+rd = httpx.delete(f"{B}/cases/{cid}/auditor-pool/{pool_id}", headers=HO).json()
 ok("심사원 삭제", "deleted" in rd, rd)
 
 pool2 = httpx.get(f"{B}/cases/{cid}/auditor-pool", headers=HC).json()

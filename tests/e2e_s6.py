@@ -1,8 +1,9 @@
 """S6 검증 — Penyelia 상태변경 · Admin Seed-Reset · KMA1360 면제목록."""
+import os
 import sys
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 

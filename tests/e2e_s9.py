@@ -1,10 +1,11 @@
 """S9 검증 — 기한 경보(due_date) · Admin 통계 현황."""
+import os
 import sys
 import sqlite3
 from datetime import date, timedelta
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 

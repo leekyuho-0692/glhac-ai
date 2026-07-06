@@ -3,10 +3,11 @@
 v3 변경: LPH배정·인증서발급·파트와결정 = fatwa_liaison·operator (consultant 아님) · operator(최고운영자) 신설 · mockAudit.
 실행: 서버 기동(:8800) 후 <venv>/bin/python tests/e2e_rbac.py
 """
+import os
 import sys
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 ROLES = {"consultant1": "pw", "applicant1": "pw", "penyelia1": "pw", "pendamping1": "pw",
          "auditor1": "pw", "fatwa1": "pw", "operator1": "pw", "admin": "admin"}
 RN = {"consultant1": "consultant", "applicant1": "applicant", "penyelia1": "penyelia_halal",

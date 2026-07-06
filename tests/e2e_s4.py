@@ -1,8 +1,9 @@
 """S4 검증 — E-number자동완성·서비스요청카드·JSON내보내기·Discussion타겟팅."""
+import os
 import sys
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 
@@ -53,7 +54,7 @@ ok("인보이스 생성", "invoice_no" in inv, inv)
 
 invs2 = httpx.get(f"{B}/cases/{cid}/invoices", headers=HC).json()
 ok("생성 후 목록 1건 이상", len(invs2) >= 1, len(invs2))
-ok("status=unpaid", invs2[0].get("status") == "unpaid", invs2[0].get("status"))
+ok("status=waiting_payment", invs2[0].get("status") == "waiting_payment", invs2[0].get("status"))
 ok("total=PPN 포함", invs2[0].get("total", 0) > 500000, invs2[0].get("total"))
 
 # ── S4-3: 케이스 JSON 내보내기 ───────────────────────────

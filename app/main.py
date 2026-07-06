@@ -4,7 +4,7 @@ import os
 import time
 import base64
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -1053,6 +1053,35 @@ def audit_queue(user=Depends(auth.require_roles("auditor", "operator")),
     return _stage_queue(db, user, AUDIT_STAGES)
 
 
+@app.get("/fatwa/dashboard")
+def fatwa_dashboard(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+                    db: Session = Depends(get_db)):
+    """파트와 위원회 대시보드 — 심의 대기/가승인/최종승인/반려 집계 + 케이스 목록."""
+    q = db.query(models.CaseApplication)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    cases = q.all()
+    fds = {f.case_id: f for f in db.query(models.FatwaDecision).all()}
+    counts = {"review": 0, "provisional": 0, "approved": 0, "rejected": 0, "conditional": 0}
+    items = []
+    for c in cases:
+        fs = c.fatwa_status or "none"
+        in_scope = c.status in ("fatwa_review", "fatwa_approved") or fs in (
+            "provisional", "approved", "rejected", "conditional")
+        if not in_scope:
+            continue
+        if c.status == "fatwa_review":
+            counts["review"] += 1
+        if fs in counts:
+            counts[fs] += 1
+        fd = fds.get(c.case_id)
+        items.append({"case_id": c.case_id, "company": c.company_name, "status": c.status,
+                      "fatwa_status": fs, "decision_no": fd.decision_no if fd else None,
+                      "committee_head": fd.committee_head if fd else None,
+                      "final_approved_at": str(fd.final_approved_at) if (fd and fd.final_approved_at) else None})
+    return {"counts": counts, "total": len(items), "items": items}
+
+
 @app.get("/fatwa/queue")
 def fatwa_queue(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
                 db: Session = Depends(get_db)):
@@ -1098,7 +1127,8 @@ def add_product(case_id: str, body: schemas.ProductCreate,
                 user=Depends(auth.require_roles("applicant", "consultant")),
                 db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
-    p = models.Product(case_id=case_id, name=body.name, category=body.category)
+    p = models.Product(case_id=case_id, name=body.name, category=body.category,
+                       registration_type=body.registration_type, status="draft")
     db.add(p)
     db.commit()
     return {"product_id": p.product_id}
@@ -1150,8 +1180,56 @@ def list_products(case_id: str, user=Depends(auth.get_current_user), db: Session
                       models.DocumentAsset.doc_type == "product_photo",
                       models.DocumentAsset.product_id.isnot(None))
               .group_by(models.DocumentAsset.product_id).all())
+    links = db.query(models.ProductMaterial).filter_by(case_id=case_id).all()
+    mstat = {m.material_id: m.screen_status for m in db.query(models.Material).filter_by(case_id=case_id)}
+    mc, risk = {}, {}
+    for lk in links:
+        mc[lk.product_id] = mc.get(lk.product_id, 0) + 1
+        if mstat.get(lk.material_id) in ("haram", "mushbooh"):
+            risk[lk.product_id] = risk.get(lk.product_id, 0) + 1
     return [{"product_id": p.product_id, "name": p.name, "category": p.category,
+             "registration_type": p.registration_type, "status": p.status or "draft",
+             "material_count": mc.get(p.product_id, 0), "risk_count": risk.get(p.product_id, 0),
              "photo_count": ph.get(p.product_id, 0)} for p in rows]
+
+
+@app.get("/cases/{case_id}/products/{product_id}")
+def get_product(case_id: str, product_id: str, user=Depends(auth.get_current_user),
+                db: Session = Depends(get_db)):
+    """제품 상세 + 소속 원재료(Material Matrix) — Rizky Product Detail."""
+    _get_case(db, case_id, user)
+    p = db.get(models.Product, product_id)
+    if not p or p.case_id != case_id:
+        raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
+    lmids = [lk.material_id for lk in db.query(models.ProductMaterial).filter_by(case_id=case_id, product_id=product_id)]
+    mats = (db.query(models.Material).filter(models.Material.material_id.in_(lmids)).all() if lmids else [])
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
+    return {"product_id": p.product_id, "name": p.name, "category": p.category,
+            "registration_type": p.registration_type, "status": p.status or "draft",
+            "certificate_no": cert.certificate_no if cert else None,
+            "expiry_date": cert.expiry_date if cert else None,
+            "materials": [{"material_id": m.material_id, "name": m.name,
+                           "screen_status": m.screen_status, "screen_severity": m.screen_severity,
+                           "cert": m.cert, "supplier": m.supplier,
+                           "evidence_provided": bool(m.evidence_provided)} for m in mats]}
+
+
+@app.patch("/cases/{case_id}/products/{product_id}")
+def update_product(case_id: str, product_id: str, body: schemas.ProductUpdate,
+                   user=Depends(auth.require_roles("applicant", "consultant")),
+                   db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    p = db.get(models.Product, product_id)
+    if not p or p.case_id != case_id:
+        raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
+    if body.category is not None:
+        p.category = body.category
+    if body.registration_type is not None:
+        p.registration_type = body.registration_type
+    if body.status is not None:
+        p.status = body.status
+    db.commit()
+    return {"product_id": p.product_id, "status": p.status, "registration_type": p.registration_type}
 
 
 @app.post("/cases/{case_id}/materials/{material_id}/evidence")
@@ -1488,8 +1566,10 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
 @app.get("/cases/{case_id}/documents")
 def list_documents(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
+    from .intake import DOC_KO
     rows = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     return [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
+             "doc_type_ko": DOC_KO.get(d.doc_type, d.doc_type),
              "confidence": d.confidence, "fields": d.fields, "excerpt": d.text_excerpt,
              "review_status": d.review_status, "has_file": bool(d.content_b64)} for d in rows]
 
@@ -1577,8 +1657,12 @@ def patch_sjph(case_id: str, body: schemas.SjphElementReq,
 
 @app.post("/cases/{case_id}/sjph/manual")
 def sjph_manual(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    """SJPH/HPAS 매뉴얼 결정적 생성 (v1 상속)."""
+    """SJPH/HPAS 매뉴얼 결정적 생성 (v1 상속). 결제 게이트: 청구 존재 시 결제완료 필요(§2.2 비용방지)."""
     c = _get_case(db, case_id, user)
+    _invs = db.query(models.Invoice).filter_by(case_id=case_id).all()
+    if _invs and not any(i.status == "paid" for i in _invs):
+        raise HTTPException(409, {"code": "PAYMENT_REQUIRED",
+                                  "detail": "AI SJPH 매뉴얼 생성 전 결제 완료가 필요합니다."})
     have = _ensure_hpas(db, case_id)
     pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").first()
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
@@ -2576,7 +2660,10 @@ def list_invoices(case_id: str, user=Depends(auth.get_current_user), db: Session
     _get_case(db, case_id, user)
     rows = db.query(models.Invoice).filter_by(case_id=case_id).all()
     return [{"invoice_id": i.invoice_id, "invoice_no": i.invoice_no, "service_type": i.service_type,
-             "amount": i.amount, "ppn": i.ppn, "total": i.total, "status": i.status} for i in rows]
+             "amount": i.amount, "ppn": i.ppn, "total": i.total,
+             "status": ("waiting_payment" if i.status == "unpaid" else i.status),
+             "payment_ref": i.payment_ref, "due_date": str(i.due_date) if i.due_date else None}
+            for i in rows]
 
 
 @app.post("/cases/{case_id}/invoices")
@@ -2586,14 +2673,20 @@ def add_invoice(case_id: str, body: schemas.InvoiceReq,
     ppn = round(body.amount * 0.11, 2)
     total = round(body.amount + ppn, 2)
     inv = models.Invoice(case_id=case_id, service_type=body.service_type, amount=body.amount,
-                         ppn=ppn, total=total)
+                         ppn=ppn, total=total, status="waiting_payment",
+                         due_date=datetime.utcnow() + timedelta(days=14))
     db.add(inv)
     db.flush()
     inv.invoice_no = "INV-" + inv.invoice_id[:8].upper()
+    inv.payment_ref = "PAY-" + inv.invoice_id[:8].upper()
+    _audit(db, user, "payment.invoice.create", "invoice", inv.invoice_id, case_id,
+           {"total": total, "service_type": body.service_type}, commit=False)
     sm.record_event(db, c, c.status, c.status, "invoice.create", user["role"], user["uid"],
                     {"service_type": body.service_type, "total": total})
     db.commit()
-    return {"invoice_id": inv.invoice_id, "invoice_no": inv.invoice_no, "ppn": ppn, "total": total}
+    return {"invoice_id": inv.invoice_id, "invoice_no": inv.invoice_no, "ppn": ppn, "total": total,
+            "status": inv.status, "payment_ref": inv.payment_ref,
+            "due_date": str(inv.due_date)}
 
 
 @app.patch("/invoices/{invoice_id}/pay")
@@ -2622,16 +2715,22 @@ def record_payment(invoice_id: str, body: schemas.PaymentReq,
     c = _get_case(db, inv.case_id, user)
     if body.method not in ("bank_transfer", "va", "card", "manual"):
         raise HTTPException(400, {"code": "BAD_METHOD"})
-    p = models.Payment(invoice_id=invoice_id, case_id=inv.case_id, amount=inv.total,
-                       method=body.method, reference=body.reference, status="confirmed",
-                       paid_by=user["uid"])
+    paid_amt = body.amount if body.amount is not None else inv.total
+    auto = body.method in ("va", "card") and abs((paid_amt or 0) - (inv.total or 0)) < 0.01
+    p = models.Payment(invoice_id=invoice_id, case_id=inv.case_id, amount=paid_amt,
+                       method=body.method, reference=body.reference,
+                       status=("confirmed" if auto else "pending"), paid_by=user["uid"])
     db.add(p)
-    inv.status = "paid"
+    frm = inv.status
+    inv.status = "paid" if auto else "need_verification"   # 은행이체/수기·금액불일치 → 관리자 검증
+    _audit(db, user, "payment.record", "invoice", invoice_id, inv.case_id,
+           {"method": body.method, "amount": paid_amt, "auto": auto,
+            "before": frm, "after": inv.status}, commit=False)
     sm.record_event(db, c, c.status, c.status, "invoice.payment", user["role"], user["uid"],
-                    {"invoice_id": invoice_id, "method": body.method, "amount": inv.total})
+                    {"invoice_id": invoice_id, "method": body.method, "amount": paid_amt})
     db.commit()
     return {"payment_id": p.id, "invoice_id": invoice_id, "amount": p.amount,
-            "method": p.method, "status": p.status}
+            "method": p.method, "status": p.status, "invoice_status": inv.status}
 
 
 @app.get("/cases/{case_id}/payments")
@@ -2641,6 +2740,73 @@ def list_payments(case_id: str, user=Depends(auth.get_current_user), db: Session
             .order_by(models.Payment.paid_at.desc()).all())
     return [{"id": p.id, "invoice_id": p.invoice_id, "amount": p.amount, "method": p.method,
              "reference": p.reference, "status": p.status, "paid_at": str(p.paid_at)} for p in rows]
+
+
+_INVOICE_STATES = {"draft", "invoice_created", "waiting_payment", "payment_processing",
+                   "need_verification", "paid", "rejected", "refunded", "expired"}
+
+
+@app.patch("/invoices/{invoice_id}/status")
+def set_invoice_status(invoice_id: str, body: schemas.InvoiceStatusReq,
+                       user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """결제 상태 확정/변경 — 관리자(operator/admin) 전용, maker-checker + 감사로그(§9)."""
+    if body.status not in _INVOICE_STATES:
+        raise HTTPException(422, {"code": "BAD_STATUS", "allowed": sorted(_INVOICE_STATES)})
+    inv = db.get(models.Invoice, invoice_id)
+    if not inv:
+        raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    frm = inv.status
+    inv.status = body.status
+    if body.status == "paid":   # 확정 시 대기중 결제 confirmed 처리
+        for p in db.query(models.Payment).filter_by(invoice_id=invoice_id, status="pending"):
+            p.status = "confirmed"
+    _audit(db, user, "payment.status", "invoice", invoice_id, inv.case_id,
+           {"before": frm, "after": body.status, "reason": body.reason}, commit=False)
+    db.commit()
+    return {"invoice_id": invoice_id, "status": inv.status}
+
+
+@app.get("/admin/payments")
+def admin_payments(status: str = None, user=Depends(auth.require_roles("operator")),
+                   db: Session = Depends(get_db)):
+    """전 조직 청구/결제 목록 — 관리자 결제 대시보드용."""
+    q = db.query(models.Invoice)
+    if status:
+        q = q.filter(models.Invoice.status == status)
+    rows = q.order_by(models.Invoice.created_at.desc()).limit(500).all()
+    cases = {c.case_id: c for c in db.query(models.CaseApplication)}
+    pay = {}
+    for p in db.query(models.Payment):
+        pay.setdefault(p.invoice_id, []).append(p)
+    items = []
+    for i in rows:
+        c = cases.get(i.case_id)
+        st = "waiting_payment" if i.status == "unpaid" else i.status
+        items.append({"invoice_id": i.invoice_id, "invoice_no": i.invoice_no,
+                      "case_id": i.case_id, "company": c.company_name if c else None,
+                      "total": i.total, "status": st, "payment_ref": i.payment_ref,
+                      "due_date": str(i.due_date) if i.due_date else None,
+                      "payments": len(pay.get(i.invoice_id, []))})
+    return {"total": len(items), "items": items}
+
+
+@app.get("/admin/payments/dashboard")
+def admin_payments_dashboard(user=Depends(auth.require_roles("operator")),
+                             db: Session = Depends(get_db)):
+    invs = db.query(models.Invoice).all()
+    by, settle, waiting, needv = {}, 0.0, 0, 0
+    for i in invs:
+        st = "waiting_payment" if i.status == "unpaid" else i.status
+        by[st] = by.get(st, 0) + 1
+        if st == "paid":
+            settle += (i.total or 0)
+        elif st == "waiting_payment":
+            waiting += 1
+        elif st == "need_verification":
+            needv += 1
+    return {"by_status": by, "settlement": round(settle, 2), "waiting": waiting,
+            "need_verification": needv, "refunded": by.get("refunded", 0),
+            "total_invoices": len(invs)}
 
 
 # ---------- 대시보드 분석 (§11.3 analytics) ----------
@@ -3432,6 +3598,14 @@ class NoCacheStaticFiles(StaticFiles):
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
         return resp
+
+
+
+@app.get("/", include_in_schema=False)
+def _root_redirect():
+    """맨 URL 접속 시 UI로 이동 (루트 라우트 부재로 인한 404 방지)."""
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/ui/")
 
 
 _static = os.path.join(os.path.dirname(__file__), "static")

@@ -1,10 +1,11 @@
 """S11 검증 — Workflow 강화(S11-1) · 내보내기(S11-2) · Admin LPH/Ontology KPI(S11-3)."""
+import os
 import sys
 import sqlite3
 import httpx
 
 DB_PATH = "glhac.db"
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 

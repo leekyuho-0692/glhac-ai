@@ -13,6 +13,13 @@ class CaseCreate(BaseModel):
 class ProductCreate(BaseModel):
     name: str
     category: Optional[str] = None
+    registration_type: Optional[str] = None
+
+
+class ProductUpdate(BaseModel):
+    category: Optional[str] = None
+    registration_type: Optional[str] = None
+    status: Optional[str] = None
 
 
 class MaterialCreate(BaseModel):
@@ -334,6 +341,13 @@ class IntegrationEventReq(BaseModel):
     payload: Optional[dict] = None
 
 
+class InvoiceStatusReq(BaseModel):
+    status: str
+    reason: Optional[str] = None
+
+
 class PaymentReq(BaseModel):
     method: str                               # bank_transfer|va|card|manual
+    amount: Optional[float] = None
+    depositor_name: Optional[str] = None
     reference: Optional[str] = None

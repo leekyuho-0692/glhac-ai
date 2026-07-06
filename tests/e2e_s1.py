@@ -1,9 +1,10 @@
 """S1 검증 — /meta/enums 계약 · org 목록 · readiness · 증빙 자동재스크리닝(C1)."""
 import base64
+import os
 import sys
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 

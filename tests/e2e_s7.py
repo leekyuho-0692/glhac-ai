@@ -1,8 +1,9 @@
 """S7 검증 — 2뎁스 네비 + 케이스 스위처 (백엔드 데이터 확인)."""
+import os
 import sys
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 
@@ -28,7 +29,7 @@ ok("케이스 A 생성", "case_id" in c1, c1)
 ok("케이스 B 생성", "case_id" in c2, c2)
 
 # /cases 목록 조회 — 케이스 스위처 바 데이터 소스
-cases = httpx.get(f"{B}/cases", headers=HC).json()
+cases = httpx.get(f"{B}/cases", headers=HC).json()["items"]
 ok("/cases 목록 배열", isinstance(cases, list), type(cases).__name__)
 ok("케이스 ≥2건 반환", len(cases) >= 2, len(cases))
 
@@ -71,7 +72,7 @@ ok("B 케이스에 MatA_Only 없음", "MatA_Only" not in names_b, names_b)
 # ── S7-3: 관리자 케이스 목록 (전체 조회) ─────────────────────
 print("\n=== S7-3 관리자 전체 케이스 목록 ===")
 
-all_cases = httpx.get(f"{B}/cases", headers=HA).json()
+all_cases = httpx.get(f"{B}/cases", headers=HA).json()["items"]
 ok("관리자 /cases 응답 배열", isinstance(all_cases, list), type(all_cases).__name__)
 # 관리자는 org 구분 없이 전체 케이스 볼 수 있어야 함 (org_demo 포함)
 ids = [c["case_id"] for c in all_cases]

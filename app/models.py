@@ -88,6 +88,8 @@ class Product(Base):
     case_id = Column(String, nullable=False)
     name = Column(String, nullable=False)
     category = Column(String)
+    registration_type = Column(String)   # new|renewal|material_change (Rizky: Product Detail)
+    status = Column(String, default="draft")   # draft|under_review|certified|expired
 
 
 class ProductMaterial(Base):
@@ -260,7 +262,9 @@ class Invoice(Base):
     amount = Column(Float)
     ppn = Column(Float)
     total = Column(Float)
-    status = Column(String, default="unpaid")  # unpaid|paid
+    status = Column(String, default="waiting_payment")  # 9종(draft~refunded/expired), legacy unpaid=waiting
+    due_date = Column(DateTime)
+    payment_ref = Column(String, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -475,6 +479,7 @@ class Payment(Base):
     invoice_id = Column(String, index=True)
     case_id = Column(String, index=True)
     amount = Column(Float)
+    currency = Column(String, default="IDR")
     method = Column(String)           # bank_transfer|va|card|manual
     reference = Column(String)
     status = Column(String, default="confirmed")  # pending|confirmed

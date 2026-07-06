@@ -1,9 +1,10 @@
 """S2 검증 — 제품사진·문서재분류·SJPH 10증빙·HPAS 자동요약."""
 import base64
+import os
 import sys
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 

@@ -1,10 +1,11 @@
 """S12 검증 — 역할별 대시보드(S12-1) · Readiness 상세(S12-2) · Copilot 히스토리(S12-3)."""
+import os
 import sys
 import sqlite3
 import httpx
 
 DB_PATH = "glhac.db"
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 
@@ -68,7 +69,7 @@ if r_penyelia.status_code == 200:
 
 # Auditor 뷰: GET /cases/{cid}/findings — 역할별 미결 지적 집계
 httpx.post(f"{B}/cases/{CID}/findings", headers=HC,
-           json={"finding": "S12 critical test", "severity": "critical", "area": "production"})
+           json={"finding": "S12 observation test", "severity": "observation", "area": "production"})
 httpx.post(f"{B}/cases/{CID}/findings", headers=HC,
            json={"finding": "S12 major test", "severity": "major", "area": "hygiene"})
 httpx.post(f"{B}/cases/{CID}/findings", headers=HC,
@@ -77,10 +78,10 @@ fnds = httpx.get(f"{B}/cases/{CID}/findings", headers=HC).json()
 ok("findings 배열 (auditor 뷰용)", isinstance(fnds, list), type(fnds).__name__)
 open_fnds = [f for f in fnds if f.get("status") == "open"]
 ok("open findings ≥3건", len(open_fnds) >= 3, len(open_fnds))
-crit_cnt = len([f for f in open_fnds if f.get("severity") == "critical"])
+crit_cnt = len([f for f in open_fnds if f.get("severity") == "observation"])
 major_cnt = len([f for f in open_fnds if f.get("severity") == "major"])
 minor_cnt = len([f for f in open_fnds if f.get("severity") == "minor"])
-ok("critical ≥1건 집계", crit_cnt >= 1, crit_cnt)
+ok("observation ≥1건 집계", crit_cnt >= 1, crit_cnt)
 ok("major ≥1건 집계", major_cnt >= 1, major_cnt)
 ok("minor ≥1건 집계", minor_cnt >= 1, minor_cnt)
 

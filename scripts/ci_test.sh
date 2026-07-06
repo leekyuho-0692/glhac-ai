@@ -32,7 +32,7 @@ done
 echo "== 서버기반 e2e (fresh 서버·DB) =="
 for t in tests/e2e_rbac.py $(ls tests/e2e_s*.py | sort -V); do
   rm -f glhac.db 2>/dev/null
-  "$PY" -m uvicorn app.main:app --port "$PORT" --log-level error >/tmp/glhac_uv.log 2>&1 &
+  GLHAC_DEV=1 "$PY" -m uvicorn app.main:app --port "$PORT" --log-level error >/tmp/glhac_uv.log 2>&1 &
   PID=$!
   up=0
   for _ in $(seq 1 60); do

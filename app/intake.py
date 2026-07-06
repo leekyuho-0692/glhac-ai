@@ -43,51 +43,96 @@ REQUIRED_DOCS = ["nib_business_license", "factory_registration", "product_list",
 _IMG = ("png", "jpg", "jpeg", "bmp", "tiff", "tif", "webp")
 
 
+def _zip_name(zi):
+    """한국어 Windows ZIP은 파일명이 CP949인데 UTF-8 플래그(0x800)가 없으면
+    zipfile이 CP437로 디코드해 깨진다(┴╓..). CP437로 되돌려 CP949로 재디코드."""
+    name = zi.filename
+    if not (zi.flag_bits & 0x800):
+        for enc in ("cp949", "euc-kr", "utf-8"):
+            try:
+                return name.encode("cp437").decode(enc)
+            except Exception:
+                continue
+    return name
+
+
 def extract_zip(data):
     out = []
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        for name in z.namelist():
-            if name.endswith("/"):
+        for zi in z.infolist():
+            if zi.is_dir():
                 continue
+            name = _zip_name(zi)
             base = os.path.basename(name)
             if not base or base.startswith("."):
                 continue
             try:
-                out.append((name, z.read(name)))
+                out.append((name, z.read(zi)))
             except Exception:  # noqa: BLE001
                 pass
     return out
 
 
+def _decode_text(data):
+    """OS/로케일 독립 텍스트 디코드 — UTF-8→CP949→EUC-KR 순 시도(한국 Windows 파일 대응)."""
+    for enc in ("utf-8", "cp949", "euc-kr", "latin-1"):
+        try:
+            return data.decode(enc)
+        except Exception:
+            continue
+    return data.decode("utf-8", "ignore")
+
+
+def _ocr_bytes(data, ext):
+    """OS 독립 임시파일에 써서 OCR — 고정 /tmp 경로·동시성 경합 제거(tempfile 사용)."""
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix="." + ext)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        return " ".join(line["text"] for line in ai_local.ocr_image(path).get("lines", []))
+    except Exception:  # noqa: BLE001
+        return ""
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def parse_file(name, data):
-    """확장자별 텍스트 추출. 이미지·스캔PDF=PaddleOCR, PDF=텍스트, docx=python-docx."""
+    """확장자별 텍스트 추출 — OS 독립. 이미지/스캔PDF=OCR, PDF=fitz, docx/xlsx/txt."""
     ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
     try:
         if ext in _IMG:
-            p = "/tmp/glhac_intake.%s" % ext
-            with open(p, "wb") as f:
-                f.write(data)
-            r = ai_local.ocr_image(p)
-            return " ".join(line["text"] for line in r.get("lines", []))
+            return _ocr_bytes(data, ext)
         if ext == "pdf":
             import fitz
             doc = fitz.open(stream=data, filetype="pdf")
             txt = ""
-            for pg in list(doc)[:5]:
+            for pg in list(doc)[:8]:
                 t = pg.get_text()
-                if len(t.strip()) < 20:  # 스캔본 → 렌더 후 OCR
-                    pix = pg.get_pixmap(dpi=140)
-                    p = "/tmp/glhac_pdf.png"
-                    pix.save(p)
-                    t = " ".join(line["text"] for line in ai_local.ocr_image(p).get("lines", []))
+                if len(t.strip()) < 20:  # 스캔본 → PNG 렌더 후 OCR (파일경로 없이 bytes)
+                    t = _ocr_bytes(pg.get_pixmap(dpi=140).tobytes("png"), "png")
                 txt += t + "\n"
             return txt
-        if ext == "txt":
-            return data.decode("utf-8", "ignore")
+        if ext in ("txt", "csv"):
+            return _decode_text(data)
         if ext == "docx":
             import docx
             d = docx.Document(io.BytesIO(data))
-            return "\n".join(p.text for p in d.paragraphs)
+            return "\n".join(pp.text for pp in d.paragraphs)
+        if ext == "xlsx":
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            out = []
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(values_only=True):
+                    cells = [str(c) for c in row if c is not None]
+                    if cells:
+                        out.append(" ".join(cells))
+            wb.close()
+            return "\n".join(out)[:20000]
     except Exception:  # noqa: BLE001
         return ""
     return ""
@@ -171,7 +216,7 @@ def aggregate_fields(docs):
     return agg
 
 
-def intake_zip_iter(data, limit=30):
+def intake_zip_iter(data, limit=200):
     """ZIP → 파일별 파싱+분류를 진행하며 진행상황을 yield (스트리밍용).
 
     yield ("progress", {...})  파일 처리할 때마다

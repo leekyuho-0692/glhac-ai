@@ -1,10 +1,11 @@
 """S10 검증 — 증빙 현황(S10-1) · 사후관리 전환(S10-2) · 검색필터 데이터(S10-3)."""
+import os
 import sys
 import sqlite3
 import httpx
 
 DB_PATH = "glhac.db"
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 

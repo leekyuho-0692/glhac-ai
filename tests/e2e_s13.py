@@ -1,11 +1,12 @@
 """S13 검증 — Documents 검수 요약(S13-1) · Fatwa 결정문 생성(S13-2) · Certificate 만료경보(S13-3)."""
+import os
 import sys
 import sqlite3
 import httpx
 from datetime import date, timedelta
 
 DB_PATH = "glhac.db"
-B = "http://127.0.0.1:8800"
+B = "http://127.0.0.1:%s" % os.environ.get("GLHAC_PORT", "8800")
 P, F = [], []
 
 
@@ -117,8 +118,8 @@ ok("fatwa decision=approved", fw.get("decision") == "approved", fw.get("decision
 ok("committee_head 저장됨", fw.get("committee_head") == "Ust. Ahmad S13", fw.get("committee_head"))
 ok("committee_members 저장됨", isinstance(fw.get("committee_members"), list), fw.get("committee_members"))
 
-# POST /fatwa/document — 결정문 생성
-r_doc = httpx.post(f"{B}/cases/{CID}/fatwa/document", headers=HC)
+# POST /fatwa/document — 결정문 생성 (fatwa_liaison/operator 전용 → admin)
+r_doc = httpx.post(f"{B}/cases/{CID}/fatwa/document", headers=HA)
 ok("결정문 생성 → 200", r_doc.status_code == 200, r_doc.status_code)
 if r_doc.status_code == 200:
     doc_body = r_doc.json()
@@ -143,8 +144,8 @@ if r_cond.status_code == 200:
 # ── S13-3: Certificate 만료임박 경보 데이터 ────────────────────
 print("\n=== S13-3 Certificate 만료임박 경보 ===")
 
-# 인증서 발급: fatwa approve → scope freeze → issue
-# 먼저 fatwa를 approved로 되돌림
+# 인증서 발급: 2단계 파트와(가승인→최종승인) → scope freeze → 발급 가드 통과 → issue
+# 먼저 fatwa를 approved로 되돌림(샤리아 가승인 = provisional)
 httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HA,
             json={"decision": "approved"})
 
@@ -154,11 +155,20 @@ prod = httpx.post(f"{B}/cases/{CID}/products", headers=HC,
 ok("S13 제품 추가", "product_id" in prod, prod)
 PID = prod.get("product_id", "")
 
-# fatwa scope 설정 후 인증서 발급 시도
+# fatwa scope 설정
 if PID:
     httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HA,
                 json={"decision": "approved", "product_scope": [PID]})
 
+# S13-1에서 만든 반려/재작업 문서를 approved로 정리(발급 문서 가드 통과)
+for _did in doc_ids:
+    httpx.patch(f"{B}/documents/{_did}/review", headers=HC,
+                json={"review_status": "approved"})
+
+# 최종승인(operator) → fatwa_status=approved + scope_frozen=true
+httpx.post(f"{B}/cases/{CID}/fatwa/final-approve", headers=HA)
+
+# 발급은 operator 전용
 r_issue = httpx.post(f"{B}/cases/{CID}/certificate/issue", headers=HA)
 ok("인증서 발급 시도 → 200 or 400", r_issue.status_code in (200, 400), r_issue.status_code)
 
