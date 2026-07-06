@@ -974,8 +974,25 @@ def test_application_draft_workflow():
         assert any(it["case_id"] == cid and it.get("draft_state") == "returned" for it in items)
 
 
+def test_material_report():
+    """§C 성분 AI 분석 보고서 — 전수 판정 집계 + PDF."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "MatRepCo"},
+                     headers=_h(tok)).json()["case_id"]
+        for nm in ["Gelatin", "Gula", "Ethanol"]:
+            c.post(f"/cases/{cid}/materials", json={"name": nm}, headers=_h(tok))
+        rep = c.get(f"/cases/{cid}/material-report", headers=_h(tok)).json()
+        assert rep["summary"]["total"] == 3, rep["summary"]
+        # Ethanol(하람) → blocked ≥1, critical에 포함
+        assert rep["summary"]["blocked"] >= 1, rep["summary"]
+        assert any(m["name"] == "Ethanol" and m["verdict"] == "BLOCK" for m in rep["materials"]), rep
+        pdf = c.get(f"/cases/{cid}/material-report.pdf", headers=_h(tok))
+        assert pdf.status_code == 200 and pdf.content[:5] == b"%PDF-", pdf.status_code
+
+
 if __name__ == "__main__":
-    tests = [test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
+    tests = [test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,

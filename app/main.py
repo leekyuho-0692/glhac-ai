@@ -3408,6 +3408,91 @@ def explain_ingredient(body: schemas.ExplainReq, user=Depends(auth.get_current_u
     return exp
 
 
+_VERDICT_KO = {"CLEARED": "할랄 허용", "NEEDS_EVIDENCE": "증빙 필요", "BLOCK": "차단(하람)"}
+
+
+def _material_report(db, c):
+    """케이스 원재료 전수를 온톨로지로 분석해 종합 보고서 데이터로 집계 (설계 C·v2 이관)."""
+    mats = db.query(models.Material).filter_by(case_id=c.case_id).order_by(models.Material.name).all()
+    rows, summary = [], {"total": 0, "cleared": 0, "needs_evidence": 0, "blocked": 0,
+                         "najis": 0, "critical": []}
+    for m in mats:
+        exp = screening.explain(m.name, e_number=m.e_number, source=m.source,
+                                cert_no=m.cert_no, note=m.note or "")
+        v = exp.get("verdict")
+        summary["total"] += 1
+        if v == "BLOCK":
+            summary["blocked"] += 1
+            summary["critical"].append(m.name)
+        elif v == "NEEDS_EVIDENCE":
+            summary["needs_evidence"] += 1
+            summary["critical"].append(m.name)
+        else:
+            summary["cleared"] += 1
+        if exp.get("najis"):
+            summary["najis"] += 1
+        rows.append({"material_id": m.material_id, "name": m.name, "e_number": m.e_number,
+                     "verdict": v, "verdict_ko": _VERDICT_KO.get(v, v), "severity": exp.get("severity"),
+                     "category": exp.get("category"), "najis": exp.get("najis"),
+                     "required_evidence": exp.get("required_evidence") or [],
+                     "alternatives": exp.get("alternatives") or [],
+                     "evidence_count": m.evidence_count if hasattr(m, "evidence_count") else None,
+                     "explanation": exp.get("explanation") or ""})
+    return {"case_id": c.case_id, "company_name": c.company_name,
+            "summary": summary, "materials": rows}
+
+
+@app.get("/cases/{case_id}/material-report")
+def material_report(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """성분 AI 분석 보고서 — 원재료 전수 온톨로지 판정·근거·대체재·증빙 집계."""
+    c = _get_case(db, case_id, user)
+    rep = _material_report(db, c)
+    _audit(db, user, "material_report.view", "case", case_id)
+    db.commit()
+    return rep
+
+
+@app.get("/cases/{case_id}/material-report.pdf")
+def material_report_pdf(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """성분 AI 분석 보고서 PDF."""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    c = _get_case(db, case_id, user)
+    rep = _material_report(db, c)
+    s = rep["summary"]
+    L = ["[요약]",
+         "총 원재료: %d건" % s["total"],
+         "할랄 허용: %d · 증빙 필요: %d · 차단(하람): %d · najis 위험: %d"
+         % (s["cleared"], s["needs_evidence"], s["blocked"], s["najis"]),
+         "주의 성분: %s" % (", ".join(s["critical"]) or "없음"), "",
+         "[성분별 분석]"]
+    for r in rep["materials"]:
+        head = "• %s%s — %s" % (r["name"], (" (%s)" % r["e_number"]) if r["e_number"] else "",
+                                r["verdict_ko"])
+        if r["severity"]:
+            head += " · 심각도 %s" % r["severity"]
+        if r["najis"]:
+            head += " · najis"
+        L.append(head)
+        if r["explanation"]:
+            L.append("  " + r["explanation"].replace("\n", "\n  "))
+        if r["required_evidence"]:
+            L.append("  필요 증빙: " + ", ".join(r["required_evidence"]))
+        if r["alternatives"]:
+            L.append("  할랄 대체재: " + ", ".join(r["alternatives"]))
+        L.append("")
+    L.append("※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.")
+    pdf = _render_pdf("성분 AI 분석 보고서 · Material Analysis",
+                      "\n".join(L),
+                      subtitle="%s · 총 %d건" % (c.company_name or "", s["total"]),
+                      footer="GL-HAC AI")
+    fn = "material_report_%s.pdf" % (c.company_name or case_id)
+    _audit(db, user, "material_report.pdf", "case", case_id)
+    db.commit()
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
+
+
 def _domain_facts(db, question):
     """도메인 시스템(IngredientOntology)에서 질문 관련 할랄 근거를 직접 회수.
     별도 학습 없이 이미 큐레이션된 성분 온톨로지(할랄/하람/의심 + 심각도 + 대체)를 끌어온다."""

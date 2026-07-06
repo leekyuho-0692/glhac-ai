@@ -355,6 +355,15 @@
     </div>
   </div>
 </div>
+<div id="reportOverlay" style="position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:85;display:none;place-items:center;padding:20px" onclick="if(event.target===this)closeReport()">
+  <div class="modalbox" style="max-width:760px;width:100%;max-height:88vh;overflow:auto" role="dialog" aria-modal="true">
+    <div class="btnrow" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+      <h3 id="reportTitle" style="margin:0">성분 AI 분석 보고서 · Report</h3>
+      <div class="btnrow" style="gap:6px"><button class="btn pri" id="reportPdfBtn">⬇ PDF</button><button class="btn" onclick="closeReport()">✕ 닫기 · Close</button></div>
+    </div>
+    <div id="reportBody"></div>
+  </div>
+</div>
 
 <script>
 /* ============ GL-HAC AI v3 · interaction shell + live backend ============ */
@@ -721,6 +730,18 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n 성분분석보고서
+  "📄 성분 분석 보고서 · Report":"📄 Laporan Analisis Bahan · Report",
+  "성분 AI 분석 보고서 · Report":"Laporan Analisis AI Bahan · Report",
+  "✕ 닫기 · Close":"✕ Tutup · Close",
+  "총":"Total",
+  "할랄 허용":"Halal Diizinkan",
+  "증빙 필요":"Perlu Bukti",
+  "차단(하람)":"Diblokir (Haram)",
+  "필요 증빙":"Dokumen Diperlukan",
+  "할랄 대체재":"Alternatif Halal",
+  "원재료 없음":"Tidak Ada Bahan Baku",
+  "※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.":"※ Analisis Persiapan Berbasis Ontologi. Keputusan Resmi Ditetapkan oleh Fatwa BPJPH/MUI.",
   // §i18n 상태워크플로우
   "💾 임시저장 · Draft":"💾 Simpan Sementara · Draft",
   "✅ 작성완료 제출 · Submit":"✅ Selesai Kirim · Submit",
@@ -1821,6 +1842,7 @@ SCREEN.materials=async()=>{
       ${pager("materials",mpg)}
       <div class="body btnrow" style="border-top:1px solid var(--line)">
         <button class="btn" onclick="exportMaterialsXlsx('${id}')">⬇ Excel</button>
+        <button class="btn pri" onclick="materialReport('${id}')">📄 성분 분석 보고서 · Report</button>
         ${canMatWrite?`<button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 인테이크</button>
         <button class="btn" onclick="labelOcr('${id}')">📷 라벨 OCR</button>`:''}
         <button class="btn" onclick="screenText('${id}')">🔤 텍스트 스크리닝</button></div>
@@ -1853,6 +1875,26 @@ async function explainMaterial(){
   try{const r=await API("/ai/explain",{method:"POST",body:JSON.stringify({name:nm,llm:true})});
     o.innerHTML='<div class="divide"></div><b>🤖 '+esc(r.verdict||r.status||nm)+(r.severity?' · '+esc(r.severity):'')+'</b><div style="white-space:pre-wrap;margin-top:4px;color:var(--ink2)">'+esc(r.explanation||"(설명 없음)")+'</div>'+((r.sources&&r.sources.length)?'<div class="muted" style="margin-top:6px">근거: '+esc(r.sources.slice(0,3).join(", "))+'</div>':'');
   }catch(e){o.textContent="해설 실패 · "+(e&&e.code?e.code:"");}
+}
+function closeReport(){document.getElementById("reportOverlay").style.display="none";}
+async function materialReport(id){
+  try{
+    const r=await API(`/cases/${id}/material-report`);
+    const s=r.summary||{};
+    const vColor=v=>v==="BLOCK"?"bad":(v==="NEEDS_EVIDENCE"?"warn":"ok");
+    const cards=`<div class="btnrow" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
+      ${bTag("mute",T('총')+" "+(s.total||0))} ${bTag("ok",T('할랄 허용')+" "+(s.cleared||0))} ${bTag("warn",T('증빙 필요')+" "+(s.needs_evidence||0))} ${bTag("bad",T('차단')+" "+(s.blocked||0))} ${bTag((s.najis||0)?"bad":"mute","najis "+(s.najis||0))}</div>`;
+    const rows=(r.materials||[]).map(m=>`<div class="li" style="padding:8px 0;border-bottom:1px solid var(--line)">
+      <div class="tx"><b>${esc(m.name)}${m.e_number?' ('+esc(m.e_number)+')':''}</b> ${bTag(vColor(m.verdict),T(m.verdict_ko||m.verdict||'—'))}${m.najis?' '+bTag("bad","najis"):''}${m.severity?' <span class="muted small">· '+esc(m.severity)+'</span>':''}</div>
+      <div class="small" style="white-space:pre-wrap;color:var(--ink2);margin-top:2px">${esc(m.explanation||"")}</div>
+      ${(m.required_evidence&&m.required_evidence.length)?'<div class="small" style="margin-top:2px"><b>'+T('필요 증빙')+':</b> '+esc(m.required_evidence.join(", "))+'</div>':''}
+      ${(m.alternatives&&m.alternatives.length)?'<div class="small" style="margin-top:2px"><b>'+T('할랄 대체재')+':</b> '+esc(m.alternatives.join(", "))+'</div>':''}
+    </div>`).join("")||`<div class="muted" style="padding:12px">${T('원재료 없음')}</div>`;
+    document.getElementById("reportBody").innerHTML=cards+rows+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
+    document.getElementById("reportPdfBtn").onclick=()=>serverPdf(`/cases/${id}/material-report.pdf`,"material_report.pdf");
+    document.getElementById("reportOverlay").style.display="grid";
+    localizeUI(document.getElementById("reportBody"));
+  }catch(e){toast("보고서 실패 · "+(e&&e.code?e.code:""));}
 }
 async function screenText(id){
   const f=await dialog("원재료 텍스트 스크리닝",[{key:"text",label:"원재료 텍스트 · ingredients",type:"textarea",required:true}]);
