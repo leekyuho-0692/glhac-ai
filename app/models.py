@@ -26,6 +26,8 @@ class CaseApplication(Base):
     due_date = Column(String)  # 처리 목표 기한(ISO date) — 기한 경보용
     notify_consent = Column(Boolean, default=False)  # 알림 수신 동의(WhatsApp opt-in 등)
     status = Column(String, nullable=False, default="onboarding")
+    draft_state = Column(String)  # 신청단계 오버레이: saved(임시저장)|in_progress(작성중)|completed(작성완료)|returned(반려)
+    return_reason = Column(Text)  # 반려 사유(consultant→applicant)
     pathway = Column(String, nullable=False, default="undetermined")  # 24.9
     risk_category = Column(String)
     is_msme = Column(Boolean)

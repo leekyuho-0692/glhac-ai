@@ -363,3 +363,7 @@ class DepositReq(BaseModel):
 
 class MatchDecisionReq(BaseModel):
     decision: str          # approved|held|rejected
+
+
+class ReturnReq(BaseModel):
+    reason: str            # 신청서 반려 사유

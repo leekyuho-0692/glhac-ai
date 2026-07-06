@@ -721,6 +721,16 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n 상태워크플로우
+  "💾 임시저장 · Draft":"💾 Simpan Sementara · Draft",
+  "✅ 작성완료 제출 · Submit":"✅ Selesai Kirim · Submit",
+  "↩ 반려 · Return":"↩ Ditolak · Return",
+  "임시저장":"Simpan Sementara",
+  "작성중":"Sedang Menulis",
+  "작성완료":"Selesai",
+  "신청서 반려 · Return":"Formulir Ditolak · Return",
+  "반려 사유 · Reason":"Alasan Penolakan · Reason",
+  "↩ 반려됨 · 사유:":"↩ Ditolak · Alasan:",
   "노출 메뉴":"Menu ditampilkan",
   // §i18n 케이스목록
   "케이스 테이블":"Tabel Kasus",
@@ -1541,7 +1551,7 @@ SCREEN.caseList=async()=>{
       <td style="font-family:ui-monospace,monospace;font-size:12px">${short(c.case_id)} <span class="go-arrow">→</span></td>
       <td><b>${esc(c.company_name||"—")}</b></td>
       <td>${bTag(c.pathway==="self_declare"?"info":"mute",c.pathway||"—")}</td>
-      <td>${bTag(statusColor(c.status),c.status||"—")}</td>
+      <td>${bTag(statusColor(c.status),c.status||"—")} ${draftBadge(c.draft_state)}</td>
       <td>${c.due_date?dueBadge(c.due_date):'<span class="muted">—</span>'}</td></tr>`).join("")
     : `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">조건에 맞는 케이스 없음 · No cases</td></tr>`;
   const canNew=["client","consultant","admin"].includes(ROLE);
@@ -1699,7 +1709,14 @@ SCREEN.application=async()=>{
         <div class="field"><label>처리 기한 · Due date <span class="muted">(기한 경보)</span></label><input class="v" id="apDue" type="date" value="${esc(c.due_date||"")}"> ${c.due_date?dueBadge(c.due_date):''}</div>
         <div class="field"><label>연락처 · Phone <span class="muted">(WhatsApp/SMS 알림)</span></label><input class="v" id="apPhone" value="${esc(c.phone||"")}" placeholder="0812... 또는 +62812..."></div>
         <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="apConsent" ${c.notify_consent?"checked":""} style="width:auto"> 알림 수신 동의 · Notification opt-in (SMS·WhatsApp)</label></div>
-        <button class="btn pri" onclick="saveProfile('${id}')">프로필 저장 · Save</button>
+        ${c.draft_state==='returned'&&c.return_reason?`<div class="banner bad" style="margin-bottom:8px">${T('↩ 반려됨 · 사유:')} ${esc(c.return_reason)}</div>`:''}
+        <div style="margin-bottom:8px">${draftBadge(c.draft_state)}</div>
+        <div class="btnrow" style="flex-wrap:wrap;gap:6px">
+          <button class="btn" onclick="saveDraft('${id}')">💾 임시저장 · Draft</button>
+          <button class="btn pri" onclick="saveProfile('${id}')">프로필 저장 · Save</button>
+          <button class="btn" onclick="submitApp('${id}')">✅ 작성완료 제출 · Submit</button>
+          ${["consultant","ops","admin"].includes(ROLE)?`<button class="btn" style="color:var(--bad)" onclick="returnApp('${id}')">↩ 반려 · Return</button>`:''}
+        </div>
       </div></div>
     <div class="card"><h3>③ 경로 판정 <span class="en">· Pathway</span></h3>
       <div class="body">
@@ -1713,7 +1730,7 @@ SCREEN.application=async()=>{
       </div></div>
     <div class="card"><h3>⑤ 진행 <span class="en">· Progress</span></h3>
       <div class="body">
-        <div class="kv"><span>상태 · Status</span><b>${esc(c.status||"—")}</b></div>
+        <div class="kv"><span>상태 · Status</span><b>${esc(c.status||"—")} ${draftBadge(c.draft_state)}</b></div>
         <div class="kv"><span>MSME</span><b>${c.is_msme?"예":"아니오"}</b></div>
         <div class="kv"><span>SEHATI 적격</span><b>${c.sehati_eligible?"적격":"—"}</b></div>
         <div class="kv"><span>파트와 · Fatwa</span><b>${esc(c.fatwa_status||"—")}</b></div>
@@ -1748,9 +1765,14 @@ async function sihalalLink(id){const external_username=v("shUser");if(!external_
 async function saveProfile(id){
   const cel=document.getElementById("apConsent");
   const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),factory_address:v("apFactory"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined};
-  try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];toast("저장됨");await loadCases(true);}
+  try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];toast("저장됨");await loadCases(true);applyView();}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
 }
+const DRAFT_DEF={saved:{ko:"임시저장",c:"mute"},in_progress:{ko:"작성중",c:"info"},completed:{ko:"작성완료",c:"ok"},returned:{ko:"반려",c:"bad"}};
+function draftBadge(ds){const d=DRAFT_DEF[ds];return d?bTag(d.c,d.ko):'';}
+async function saveDraft(id){await saveProfile(id);try{await API(`/cases/${id}/save-draft`,{method:"POST",body:"{}"});toast("임시저장됨");await loadCases(true);applyView();}catch(e){toast("임시저장 실패 · "+(e&&e.code?e.code:""));}}
+async function submitApp(id){if(!confirm("작성완료로 제출할까요? 컨설턴트 검토로 넘어갑니다."))return;await saveProfile(id);try{await API(`/cases/${id}/submit-application`,{method:"POST",body:"{}"});toast("작성완료 제출");await loadCases(true);applyView();}catch(e){toast("제출 실패 · "+(e&&e.code?e.code:""));}}
+async function returnApp(id){const r=await dialog("신청서 반려 · Return",[{key:"reason",label:"반려 사유 · Reason",type:"textarea",required:true}]);if(!r)return;try{await API(`/cases/${id}/return-application`,{method:"POST",body:JSON.stringify({reason:r.reason})});toast("반려 처리");await loadCases(true);applyView();}catch(e){toast("반려 실패 · "+(e&&e.code?e.code:""));}}
 async function assessPathway(id){try{const r=await API(`/cases/${id}/pathway/assess`,{method:"POST",body:"{}"});ASSESS_CACHE[id]=r;toast("사전심사 · 추천 "+(r.suggested_pathway||"—")+" · 위험 "+(r.risk_category||"—"));applyView();}catch(e){toast("사전심사 실패 · "+(e&&e.code?e.code:""));}}
 function assessRender(id){
   const r=ASSESS_CACHE[id];

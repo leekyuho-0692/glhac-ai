@@ -950,8 +950,32 @@ def test_invoice_receipt_pdf():
         assert c.get("/invoices/nonexistent/receipt", headers=_h(ctok)).status_code == 404
 
 
+def test_application_draft_workflow():
+    """§A 신청서 상태 오버레이 — 임시저장/작성완료/반려 전이 + 사유 필수."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "DraftCo"},
+                     headers=_h(tok)).json()["case_id"]
+        # 임시저장 → saved + application_draft
+        r = c.post(f"/cases/{cid}/save-draft", headers=_h(tok)).json()
+        assert r["draft_state"] == "saved" and r["status"] == "application_draft", r
+        # 작성완료 제출 → completed + consultant_review
+        r = c.post(f"/cases/{cid}/submit-application", headers=_h(tok)).json()
+        assert r["draft_state"] == "completed" and r["status"] == "consultant_review", r
+        # 반려(사유 필수) → returned + application_draft + 사유 보존
+        assert c.post(f"/cases/{cid}/return-application", json={"reason": ""},
+                      headers=_h(tok)).status_code == 422
+        r = c.post(f"/cases/{cid}/return-application", json={"reason": "서류 미비"},
+                   headers=_h(tok)).json()
+        assert r["draft_state"] == "returned" and r["status"] == "application_draft", r
+        assert r["return_reason"] == "서류 미비", r
+        # 목록 봉투에 draft_state 노출
+        items = c.get("/cases", headers=_h(tok)).json()["items"]
+        assert any(it["case_id"] == cid and it.get("draft_state") == "returned" for it in items)
+
+
 if __name__ == "__main__":
-    tests = [test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
+    tests = [test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,

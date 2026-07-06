@@ -291,7 +291,8 @@ def _case_dict(c):
             "halal_supervisor": c.halal_supervisor, "email": c.email, "phone": c.phone,
             "address": c.address, "factory_reg_no": c.factory_reg_no,
             "factory_address": c.factory_address, "due_date": c.due_date,
-            "notify_consent": bool(c.notify_consent)}
+            "notify_consent": bool(c.notify_consent),
+            "draft_state": c.draft_state, "return_reason": c.return_reason}
 
 
 def _notify(db, case, event_type, title, body="", channels=None, role=None):
@@ -863,7 +864,7 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     rows = (q.order_by(models.CaseApplication.created_at.desc())
             .offset(offset).limit(limit).all())
     items = [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
-              "pathway": c.pathway, "due_date": c.due_date,
+              "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
               "province": _province_of(c.factory_address or c.address)}
              for c in rows]
     return {"total": total, "limit": limit, "offset": offset,
@@ -1465,6 +1466,11 @@ def _apply_intake_autofill(db, c, res):
                                    cert=sc.get("v1_cert")))
             applied["materials"] += 1
             have_m.add(mn)
+    # 사전심사 업로드 → 신청서 임시저장 진입(작성 이어하기 대상)
+    if c.status in ("onboarding", "application_draft"):
+        c.status = "application_draft"
+        if not c.draft_state or c.draft_state in ("returned",):
+            c.draft_state = "saved"
     res["applied"] = applied
     return applied
 
@@ -1526,6 +1532,59 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
         c.notify_consent = bool(body.notify_consent)
     if body.phone is not None:
         c.phone = _normalize_phone(body.phone)   # 국가코드 정규화
+    if not c.draft_state or c.draft_state == "returned":
+        c.draft_state = "in_progress"  # 편집 시작 → 작성중(반려분 재편집 포함)
+    db.commit()
+    return _case_dict(c)
+
+
+# ── 신청서 작성 상태(임시저장/작성완료/반려) — 신청단계 오버레이 ──────────
+@app.post("/cases/{case_id}/save-draft")
+def save_draft(case_id: str, user=Depends(auth.require_roles("applicant", "consultant")),
+               db: Session = Depends(get_db)):
+    """임시저장 — 신청서를 제출 전 보관(작성 이어하기). status는 그대로."""
+    c = _get_case(db, case_id, user)
+    if c.status in ("onboarding", "application_draft"):
+        c.status = "application_draft"
+    c.draft_state = "saved"
+    sm.record_event(db, c, c.status, c.status, "application.save_draft", user["role"], user["uid"])
+    db.commit()
+    return _case_dict(c)
+
+
+@app.post("/cases/{case_id}/submit-application")
+def submit_application(case_id: str, user=Depends(auth.require_roles("applicant", "consultant")),
+                       db: Session = Depends(get_db)):
+    """작성완료 제출 — 컨설턴트 검토로 넘김."""
+    c = _get_case(db, case_id, user)
+    prev = c.status
+    c.draft_state = "completed"
+    c.return_reason = None
+    if c.status in ("onboarding", "application_draft"):
+        c.status = "consultant_review"
+    sm.record_event(db, c, prev, c.status, "application.submit", user["role"], user["uid"])
+    _notify(db, c, "application.submitted", "신청서 작성완료 제출",
+            "%s 신청서가 제출되었습니다." % (c.company_name or c.case_id), role="consultant")
+    db.commit()
+    return _case_dict(c)
+
+
+@app.post("/cases/{case_id}/return-application")
+def return_application(case_id: str, body: schemas.ReturnReq,
+                       user=Depends(auth.require_roles("consultant", "operator")),
+                       db: Session = Depends(get_db)):
+    """반려 — 컨설턴트가 신청서를 사유와 함께 작성자에게 되돌림."""
+    if not (body.reason or "").strip():
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    c = _get_case(db, case_id, user)
+    prev = c.status
+    c.draft_state = "returned"
+    c.return_reason = body.reason.strip()
+    c.status = "application_draft"
+    sm.record_event(db, c, prev, c.status, "application.return", user["role"], user["uid"],
+                    {"reason": c.return_reason})
+    _notify(db, c, "application.returned", "신청서 반려",
+            "반려 사유: %s" % c.return_reason, role="applicant")
     db.commit()
     return _case_dict(c)
 
