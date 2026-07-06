@@ -878,8 +878,38 @@ def test_cases_pagination():
         assert c.get("/cases?limit=999", headers=_h(ctok)).status_code == 422
 
 
+def test_payment_p2_matching():
+    """§P2 입금 자동매칭 — ref+금액 일치 COMMIT 자동확정 · 모호 DEFER→관리자 승인."""
+    with TestClient(app) as c:
+        ctok = _tok(c, "consultant1", "pw"); otok = _tok(c, "operator1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "MatchCo"},
+                     headers=_h(ctok)).json()["case_id"]
+        inv = c.post(f"/cases/{cid}/invoices", json={"service_type": "pre_audit", "amount": 500},
+                     headers=_h(ctok)).json()
+        # COMMIT: 결제참조 + 금액 일치 → 자동 확정
+        r = c.post("/admin/deposits", json={"bank_name": "BCA", "account_no": "1234567890",
+                   "depositor_name": "MatchCo", "amount": inv["total"],
+                   "ref_memo": f"transfer {inv['payment_ref']}"}, headers=_h(otok))
+        assert r.status_code == 200 and r.json()["verdict"] == "COMMIT" and r.json().get("matched_invoice"), r.text
+        invs = c.get(f"/cases/{cid}/invoices", headers=_h(ctok)).json()
+        assert any(i["status"] == "paid" for i in invs), invs
+        # DEFER: 금액만 일치(ref 없음) → 후보 생성
+        inv2 = c.post(f"/cases/{cid}/invoices", json={"service_type": "onsite", "amount": 700},
+                      headers=_h(ctok)).json()
+        r2 = c.post("/admin/deposits", json={"depositor_name": "Someone", "amount": inv2["total"],
+                    "ref_memo": "no reference"}, headers=_h(otok)).json()
+        assert r2["verdict"] in ("DEFER", "REJECT"), r2
+        cands = c.get("/admin/payments/match-candidates", headers=_h(otok)).json()
+        if cands["items"]:
+            d = c.post(f"/admin/match/{cands['items'][0]['id']}/decide",
+                       json={"decision": "approved"}, headers=_h(otok))
+            assert d.status_code == 200 and d.json()["decision"] == "approved", d.text
+        # client 차단
+        assert c.get("/admin/deposits", headers=_h(ctok)).status_code == 403
+
+
 if __name__ == "__main__":
-    tests = [test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
+    tests = [test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,

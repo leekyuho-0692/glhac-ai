@@ -351,3 +351,15 @@ class PaymentReq(BaseModel):
     amount: Optional[float] = None
     depositor_name: Optional[str] = None
     reference: Optional[str] = None
+
+
+class DepositReq(BaseModel):
+    bank_name: Optional[str] = None
+    account_no: Optional[str] = None
+    depositor_name: Optional[str] = None
+    amount: float = Field(ge=0)
+    ref_memo: Optional[str] = None
+
+
+class MatchDecisionReq(BaseModel):
+    decision: str          # approved|held|rejected

@@ -501,3 +501,35 @@ class AuditLog(Base):
     case_id = Column(String, index=True)
     meta = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Deposit(Base):
+    """은행 입금내역 (Payment P2 §8.4) — 인보이스 자동매칭 대상."""
+    __tablename__ = "deposit"
+    id = Column(String, primary_key=True, default=uid)
+    bank_name = Column(String)
+    account_no_masked = Column(String)
+    depositor_name = Column(String)
+    amount = Column(Float)
+    currency = Column(String, default="IDR")
+    ref_memo = Column(String)                 # 이체 메모(invoice_no/payment_ref 포함 가능)
+    deposit_at = Column(DateTime, default=datetime.utcnow)
+    matched_invoice_id = Column(String, index=True)
+    match_status = Column(String, default="unmatched")   # unmatched|candidate|matched|rejected
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PaymentMatchCandidate(Base):
+    """입금↔인보이스 매칭 후보 (Payment P2 §8.5) — 규칙 스코어 + 관리자 승인."""
+    __tablename__ = "payment_match_candidate"
+    id = Column(String, primary_key=True, default=uid)
+    deposit_id = Column(String, index=True)
+    invoice_id = Column(String, index=True)
+    case_id = Column(String)
+    score = Column(Float)
+    reason = Column(JSON)
+    risk_flags = Column(JSON)
+    decision_status = Column(String, default="pending")  # pending|approved|held|rejected
+    reviewer_id = Column(String)
+    reviewed_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)

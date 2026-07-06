@@ -373,6 +373,7 @@ const NAV = [
   ["evaluation","✅","SJPH/HPAS 평가","Evaluation","평가·Eval"],
   ["invoice","🧾","청구","Invoice","청구·Billing"],
   ["payments","💰","결제 관리","Payments","결제·Admin"],
+  ["deposits","🏦","입금 매칭","Deposits","입금·Matching"],
   ["fatwa","⚖️","파트와","Fatwa","심의·Fatwa"],
   ["certificate","🏅","인증서","Certificate","발급·Issue"],
   ["assistant","🤖","AI 어시스턴트","Assistant","AI 보조·Assist"],
@@ -404,6 +405,7 @@ const MENU_ACCESS = {
   evaluation:["client","auditor","sharia","ops","admin"],
   invoice:  ["client","consultant","ops","admin"],
   payments: ["ops","admin"],
+  deposits: ["ops","admin"],
   fatwa:    ["sharia","ops","admin"],
   certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
@@ -546,7 +548,7 @@ const ID_LABEL={
 };
 const NAV_ID={dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
   integration:"Integrasi",documents:"Dokumen",audit:"Audit",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
-  invoice:"Tagihan",payments:"Pembayaran",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",system:"Sistem"};
+  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",system:"Sistem"};
 function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
@@ -717,6 +719,30 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // Payment P2 입금매칭
+  "입금 매칭":"Pencocokan Setoran",
+  "입금 등록 · 자동매칭":"Pendaftaran Setoran · Pencocokan Otomatis",
+  "매칭 후보 · 검토":"Kandidat Pencocokan · Tinjauan",
+  "입금 내역":"Riwayat Setoran",
+  "＋ 입금내역 등록":"＋ Daftarkan Riwayat Setoran",
+  "입금내역을 등록하면 결제참조·금액·입금자명으로 자동 매칭합니다. 확실하면 자동확정, 모호하면 후보로 관리자 검토.":"Mendaftarkan riwayat setoran akan otomatis mencocokkan dengan referensi pembayaran, jumlah, dan nama penyetor. Jika pasti, otomatis dikonfirmasi; jika ambigu, menjadi kandidat untuk ditinjau admin.",
+  "입금 내역 없음":"Tidak Ada Riwayat Setoran",
+  "검토 대기 후보 없음":"Tidak Ada Kandidat yang Menunggu Tinjauan",
+  "입금자·메모":"Penyetor · Catatan",
+  "후보 인보이스":"Kandidat Invoice",
+  "입금/청구":"Setoran/Tagihan",
+  "점수·사유":"Skor · Alasan",
+  "일시":"Tanggal/Waktu",
+  "입금자":"Penyetor",
+  "메모":"Catatan",
+  "매칭":"Pencocokan",
+  "매칭됨":"Tercocokkan",
+  "후보":"Kandidat",
+  "미매칭":"Tidak Tercocokkan",
+  "입금내역 등록 · Deposit":"Pendaftaran Riwayat Setoran · Deposit",
+  "이체 메모 · Ref/Memo":"Catatan Transfer · Ref/Memo",
+  "은행 · Bank":"Bank · Bank",
+  "계좌번호 · Account":"Nomor Rekening · Account",
   // v3 인테이크·사전심사 연동(2026-07)
   // Product Detail·가심사 확장
   "📋 케이스 패널 · Panel":"📋 Kasus Panel · Panel",
@@ -2232,6 +2258,34 @@ function payLabel(s){const m={draft:'초안',invoice_created:'청구생성',wait
 function payMsg(s){const m={waiting_payment:'아직 결제가 확인되지 않았습니다. 납부기한 전까지 결제해 주세요.',need_verification:'입금 정보가 신청 정보와 완전히 일치하지 않아 관리자 확인이 필요합니다.',paid:'결제가 확인되었습니다. 다음 단계로 진행됩니다.',rejected:'결제가 거절되었습니다. 관리자에게 문의하세요.',expired:'납부기한이 만료되었습니다. 청구서 재발행이 필요합니다.'};const x=m[s];return x?`<div class="banner ${s==='paid'?'ok':s==='rejected'||s==='expired'?'bad':'info'}" style="margin-top:8px">${x}</div>`:'';}
 async function setInvStatus(iid,status){if(!confirm(`상태를 '${status}'로 변경할까요?`))return;try{await API(`/invoices/${iid}/status`,{method:"PATCH",body:JSON.stringify({status})});toast("상태 변경 · "+status);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 function selectPay(iid){PAY_SEL=iid;applyView();}
+SCREEN.deposits=async()=>{
+  const [dep,cand]=await Promise.all([API("/admin/deposits").catch(()=>({items:[]})),API("/admin/payments/match-candidates").catch(()=>({items:[]}))]);
+  const deps=dep.items||[], cands=cand.items||[];
+  const drows=deps.length?deps.map(d=>`<tr><td class="muted small">${esc((d.deposit_at||"").slice(5,16))}</td><td><b>${esc(d.depositor_name||"—")}</b><div class="muted small">${esc(d.bank_name||"")} ${esc(d.account||"")}</div></td><td>${fmtIDR(d.amount)}</td><td class="muted small">${esc(d.ref_memo||"—")}</td><td>${bTag(d.match_status==="matched"?"ok":d.match_status==="candidate"?"warn":"mute",T(depStatusLabel(d.match_status)))}</td></tr>`).join(""):'<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">입금 내역 없음</td></tr>';
+  const crows=cands.length?cands.map(x=>`<tr><td><b>${esc(x.depositor||"—")}</b><div class="muted small">${esc(x.ref_memo||"")}</div></td><td>${esc(x.company||"—")} · ${esc(x.invoice_no||"")}</td><td>${fmtIDR(x.deposit_amount)} / ${fmtIDR(x.invoice_total)}</td><td><b>${x.score}</b> <span class="muted small">${(x.reason||[]).map(esc).join(", ")}</span>${(x.risk_flags||[]).length?` <span class="bad small">⚠${(x.risk_flags||[]).map(esc).join(",")}</span>`:""}</td><td style="white-space:nowrap"><button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="decideMatch('${x.id}','approved')">승인</button> <button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="decideMatch('${x.id}','rejected')">거절</button></td></tr>`).join(""):'<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">검토 대기 후보 없음</td></tr>';
+  return `
+  <div class="card" style="margin-bottom:16px"><h3>입금 등록 · 자동매칭 <span class="en">· Register deposit</span></h3>
+    <div class="body"><div class="banner info" style="margin-bottom:10px">입금내역을 등록하면 결제참조·금액·입금자명으로 자동 매칭합니다. 확실하면 자동확정, 모호하면 후보로 관리자 검토.</div>
+      <button class="btn pri" onclick="registerDeposit()">＋ 입금내역 등록</button></div></div>
+  <div class="card" style="margin-bottom:16px"><h3>매칭 후보 · 검토 <span class="en">· Match candidates</span><span class="r">${cands.length}건</span></h3>
+    <div class="body tight"><table><thead><tr><th>입금자·메모</th><th>후보 인보이스</th><th>입금/청구</th><th>점수·사유</th><th></th></tr></thead><tbody>${crows}</tbody></table></div></div>
+  <div class="card"><h3>입금 내역 <span class="en">· Deposits</span><span class="r">${deps.length}건</span></h3>
+    <div class="body tight"><table><thead><tr><th>일시</th><th>입금자</th><th>금액</th><th>메모</th><th>매칭</th></tr></thead><tbody>${drows}</tbody></table></div></div>`;
+};
+function depStatusLabel(s){return {matched:"매칭됨",candidate:"후보",unmatched:"미매칭",rejected:"거절"}[s]||s;}
+async function registerDeposit(){
+  const r=await dialog("입금내역 등록 · Deposit",[
+    {key:"depositor_name",label:"입금자명 · Depositor",required:true},
+    {key:"amount",label:"입금액(IDR) · Amount",type:"number",required:true},
+    {key:"ref_memo",label:"이체 메모 · Ref/Memo",placeholder:"PAY-... 또는 INV-... 포함 시 자동매칭↑"},
+    {key:"bank_name",label:"은행 · Bank",placeholder:"BCA/Mandiri..."},
+    {key:"account_no",label:"계좌번호 · Account",placeholder:"(마스킹 저장)"}]);
+  if(!r)return;
+  try{const res=await API("/admin/deposits",{method:"POST",body:JSON.stringify({depositor_name:r.depositor_name,amount:Number(r.amount)||0,ref_memo:r.ref_memo||null,bank_name:r.bank_name||null,account_no:r.account_no||null})});
+    toast(res.verdict==="COMMIT"?"✅ 자동 매칭·확정":res.verdict==="DEFER"?"후보 "+res.candidates+"건 · 검토 필요":"매칭 후보 없음");applyView();}
+  catch(e){toast("등록 실패 · "+(e&&e.code?e.code:""));}
+}
+async function decideMatch(id,decision){if(decision==="rejected"&&!confirm("이 후보를 거절할까요?"))return;try{await API(`/admin/match/${id}/decide`,{method:"POST",body:JSON.stringify({decision})});toast(decision==="approved"?"매칭 승인·결제확정":"매칭 거절");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 SCREEN.payments=async()=>{
   const [dash,list]=await Promise.all([API('/admin/payments/dashboard').catch(()=>({by_status:{},waiting:0,need_verification:0,settlement:0,total_invoices:0})),API('/admin/payments').catch(()=>({items:[]}))]);
   const items=list.items||[];

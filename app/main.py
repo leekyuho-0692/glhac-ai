@@ -2809,6 +2809,145 @@ def admin_payments_dashboard(user=Depends(auth.require_roles("operator")),
             "total_invoices": len(invs)}
 
 
+# ── Payment P2: 입금 자동매칭 ──────────────────────────────
+def _name_sim(a, b):
+    a = set((a or "").lower().split()); b = set((b or "").lower().split())
+    return (len(a & b) / len(a | b)) if (a and b) else 0.0
+
+
+def _match_deposit(db, dep):
+    """입금 → 미결제/검증대기 인보이스 후보 스코어링."""
+    invs = db.query(models.Invoice).filter(models.Invoice.status.in_(
+        ["waiting_payment", "unpaid", "need_verification", "payment_processing"])).all()
+    cases = {c.case_id: c for c in db.query(models.CaseApplication).all()}
+    memo = (dep.ref_memo or "").lower()
+    out = []
+    for inv in invs:
+        score = 0.0; reason = []; risk = []
+        ref_hit = bool(inv.payment_ref and inv.payment_ref.lower() in memo) or \
+                  bool(inv.invoice_no and inv.invoice_no.lower() in memo)
+        if ref_hit:
+            score += 1.0; reason.append("결제참조 일치")
+        amt = dep.amount or 0; tot = inv.total or 0
+        amount_ok = abs(amt - tot) < 0.01
+        if amount_ok:
+            score += 1.0; reason.append("금액 일치")
+        elif amt < tot:
+            risk.append("부분입금")
+        else:
+            risk.append("초과입금")
+        c = cases.get(inv.case_id)
+        if _name_sim(dep.depositor_name, c.company_name if c else "") >= 0.5:
+            score += 0.3; reason.append("입금자명 유사")
+        if score <= 0:
+            continue
+        out.append({"invoice": inv, "score": round(score, 2), "reason": reason,
+                    "risk": risk, "ref_hit": ref_hit, "amount_ok": amount_ok})
+    out.sort(key=lambda x: -x["score"])
+    return out
+
+
+def _judge_match(cands):
+    if not cands:
+        return "REJECT"
+    top = cands[0]
+    dup = sum(1 for c in cands if abs(c["score"] - top["score"]) < 0.01) >= 2
+    if top["ref_hit"] and top["amount_ok"] and not dup and not top["risk"]:
+        return "COMMIT"
+    return "DEFER"
+
+
+@app.post("/admin/deposits")
+def add_deposit(body: schemas.DepositReq, user=Depends(auth.require_roles("operator")),
+                db: Session = Depends(get_db)):
+    """입금내역 등록 → 자동매칭(COMMIT=자동확정 / DEFER=후보생성 / REJECT=미매칭)."""
+    acct = body.account_no or ""
+    masked = ("****" + acct[-4:]) if len(acct) >= 4 else "****"
+    dep = models.Deposit(bank_name=body.bank_name, account_no_masked=masked,
+                         depositor_name=body.depositor_name, amount=body.amount,
+                         ref_memo=body.ref_memo)
+    db.add(dep); db.flush()
+    _audit(db, user, "payment.deposit.create", "deposit", dep.id, None,
+           {"amount": body.amount, "bank": body.bank_name}, commit=False)
+    cands = _match_deposit(db, dep)
+    verdict = _judge_match(cands)
+    res = {"deposit_id": dep.id, "verdict": verdict, "candidates": len(cands)}
+    if verdict == "COMMIT":
+        inv = cands[0]["invoice"]
+        inv.status = "paid"
+        dep.matched_invoice_id = inv.invoice_id; dep.match_status = "matched"
+        db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, amount=dep.amount,
+                              method="bank_transfer", reference=dep.ref_memo,
+                              status="confirmed", paid_by=user["uid"]))
+        _audit(db, user, "payment.match.auto", "invoice", inv.invoice_id, inv.case_id,
+               {"deposit_id": dep.id, "score": cands[0]["score"], "auto": True}, commit=False)
+        res["matched_invoice"] = inv.invoice_no
+    else:
+        dep.match_status = "candidate" if cands else "unmatched"
+        for c in cands[:5]:
+            db.add(models.PaymentMatchCandidate(deposit_id=dep.id, invoice_id=c["invoice"].invoice_id,
+                   case_id=c["invoice"].case_id, score=c["score"], reason=c["reason"], risk_flags=c["risk"]))
+    db.commit()
+    return res
+
+
+@app.get("/admin/deposits")
+def list_deposits(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    rows = db.query(models.Deposit).order_by(models.Deposit.created_at.desc()).limit(200).all()
+    return {"total": len(rows), "items": [{"id": d.id, "bank_name": d.bank_name,
+            "account": d.account_no_masked, "depositor_name": d.depositor_name, "amount": d.amount,
+            "ref_memo": d.ref_memo, "match_status": d.match_status,
+            "matched_invoice_id": d.matched_invoice_id, "deposit_at": str(d.deposit_at)} for d in rows]}
+
+
+@app.get("/admin/payments/match-candidates")
+def list_match_candidates(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    rows = (db.query(models.PaymentMatchCandidate).filter_by(decision_status="pending")
+            .order_by(models.PaymentMatchCandidate.score.desc()).all())
+    deps = {d.id: d for d in db.query(models.Deposit).all()}
+    invs = {i.invoice_id: i for i in db.query(models.Invoice).all()}
+    cases = {c.case_id: c for c in db.query(models.CaseApplication).all()}
+    items = []
+    for r in rows:
+        d = deps.get(r.deposit_id); inv = invs.get(r.invoice_id); c = cases.get(r.case_id)
+        items.append({"id": r.id, "score": r.score, "reason": r.reason, "risk_flags": r.risk_flags,
+                      "deposit_id": r.deposit_id, "depositor": d.depositor_name if d else None,
+                      "deposit_amount": d.amount if d else None, "ref_memo": d.ref_memo if d else None,
+                      "invoice_id": r.invoice_id, "invoice_no": inv.invoice_no if inv else None,
+                      "invoice_total": inv.total if inv else None, "company": c.company_name if c else None})
+    return {"total": len(items), "items": items}
+
+
+@app.post("/admin/match/{candidate_id}/decide")
+def decide_match(candidate_id: str, body: schemas.MatchDecisionReq,
+                 user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """매칭 후보 승인/보류/거절 — 승인 시 인보이스 paid + 입금 matched (maker-checker + 감사)."""
+    if body.decision not in ("approved", "held", "rejected"):
+        raise HTTPException(422, {"code": "BAD_DECISION"})
+    cand = db.get(models.PaymentMatchCandidate, candidate_id)
+    if not cand:
+        raise HTTPException(404, {"code": "CANDIDATE_NOT_FOUND"})
+    cand.decision_status = body.decision; cand.reviewer_id = user["uid"]; cand.reviewed_at = datetime.utcnow()
+    frm = None
+    if body.decision == "approved":
+        inv = db.get(models.Invoice, cand.invoice_id); dep = db.get(models.Deposit, cand.deposit_id)
+        if inv:
+            frm = inv.status; inv.status = "paid"
+            db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id,
+                   amount=(dep.amount if dep else inv.total), method="bank_transfer",
+                   reference=(dep.ref_memo if dep else None), status="confirmed", paid_by=user["uid"]))
+        if dep:
+            dep.matched_invoice_id = cand.invoice_id; dep.match_status = "matched"
+        for other in db.query(models.PaymentMatchCandidate).filter_by(
+                deposit_id=cand.deposit_id, decision_status="pending"):
+            if other.id != cand.id:
+                other.decision_status = "held"
+    _audit(db, user, "payment.match.decide", "invoice", cand.invoice_id, cand.case_id,
+           {"decision": body.decision, "candidate": candidate_id, "before": frm}, commit=False)
+    db.commit()
+    return {"candidate_id": candidate_id, "decision": body.decision}
+
+
 # ---------- 대시보드 분석 (§11.3 analytics) ----------
 @app.get("/analytics/summary")
 def analytics_summary(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
