@@ -721,6 +721,9 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // 영수증 PDF
+  "🧾 영수증 PDF · Receipt":"🧾 Kwitansi PDF · Receipt",
+  "📄 세금계산서 · Faktur Pajak":"📄 Faktur Pajak · Tax Invoice",
   // 알림 실발송
   "알림 발송":"Kirim Notifikasi",
   "알림 발송 · 실행":"Kirim Notifikasi · Eksekusi",
@@ -2230,7 +2233,8 @@ SCREEN.invoice=async()=>{
         <tr style="background:var(--accent-soft)"><td><b>합계 · Total</b></td><td style="text-align:right"><b>${fmtIDR(sel.total==null?sel.amount:sel.total)}</b></td></tr>
       </tbody></table>
       <div class="field"><label>상태 · Status</label><div>${bTag(payColor(sel.status),payLabel(sel.status))}</div>${payMsg(sel.status)}</div>
-      ${(canMark&&sel.status!=='paid')?`<div class="btnrow"><button class="btn pri" onclick="recordPayment('${sel.invoice_id}')">💳 결제 기록 · Record payment</button><button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">간이 결제표시</button></div>`:''}`
+      ${(canMark&&sel.status!=='paid')?`<div class="btnrow"><button class="btn pri" onclick="recordPayment('${sel.invoice_id}')">💳 결제 기록 · Record payment</button><button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">간이 결제표시</button></div>`:''}
+      <div class="btnrow" style="margin-top:8px"><button class="btn" onclick="serverPdf('/invoices/${sel.invoice_id}/receipt','receipt_'+(sel.invoice_no||'')+'.pdf')">🧾 영수증 PDF · Receipt</button><button class="btn" onclick="serverPdf('/invoices/${sel.invoice_id}/tax-invoice','faktur_'+(sel.invoice_no||'')+'.pdf')">📄 세금계산서 · Faktur Pajak</button></div>`
     :'<div class="muted small">청구서를 선택하세요.</div>';
   const st2=inv.reduce((a,i)=>{const t=(i.total==null?i.amount:i.total)||0;a.total+=t;if(i.status==='paid')a.paid+=t;else a.unpaid+=t;return a;},{total:0,paid:0,unpaid:0});
   return `

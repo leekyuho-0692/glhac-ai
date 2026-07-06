@@ -2404,6 +2404,98 @@ def certificate_pdf(case_id: str, user=Depends(auth.get_current_user), db: Sessi
                     headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
 
 
+def _idr(n):
+    try:
+        return "Rp " + format(float(n or 0), ",.0f")
+    except Exception:
+        return "Rp 0"
+
+
+def _invoice_ctx(db, invoice_id, user):
+    inv = db.get(models.Invoice, invoice_id)
+    if not inv:
+        raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    c = _get_case(db, inv.case_id, user)
+    pay = (db.query(models.Payment).filter_by(invoice_id=invoice_id, status="confirmed")
+           .order_by(models.Payment.paid_at.desc()).first())
+    return inv, c, pay
+
+
+@app.get("/invoices/{invoice_id}/receipt")
+def invoice_receipt_pdf(invoice_id: str, user=Depends(auth.get_current_user),
+                        db: Session = Depends(get_db)):
+    """결제 영수증 PDF — 청구·결제 내역. _render_pdf 재사용."""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    inv, c, pay = _invoice_ctx(db, invoice_id, user)
+    status = "waiting_payment" if inv.status == "unpaid" else inv.status
+    lines = [
+        "발행일 · Date        : %s" % date.today().isoformat(),
+        "청구번호 · Invoice No : %s" % (inv.invoice_no or "-"),
+        "결제참조 · Pay Ref    : %s" % (inv.payment_ref or "-"),
+        "",
+        "── 기업 · Company ──",
+        "기업명 · Company : %s" % (c.company_name or "-"),
+        "NIB              : %s" % (c.nib or "-"),
+        "주소 · Address    : %s" % (c.address or c.factory_address or "-"),
+        "",
+        "── 청구 내역 · Details ──",
+        "서비스 · Service : %s" % (inv.service_type or "-"),
+        "금액 · DPP        : %s" % _idr(inv.amount),
+        "부가세 · PPN 11%%  : %s" % _idr(inv.ppn),
+        "────────────────────",
+        "합계 · Total      : %s" % _idr(inv.total),
+        "",
+        "── 결제 · Payment ──",
+        "상태 · Status     : %s" % status,
+        "결제방식 · Method  : %s" % (pay.method if pay else "-"),
+        "결제일 · Paid at   : %s" % (str(pay.paid_at)[:16] if pay else "-"),
+        "참조 · Reference   : %s" % (pay.reference if (pay and pay.reference) else "-"),
+    ]
+    pdf = _render_pdf("GL-HAC AI · 결제 영수증 · Payment Receipt", "\n".join(lines),
+                      subtitle=inv.invoice_no or "",
+                      footer="본 영수증은 전자적으로 발행되었습니다 · Issued electronically")
+    fn = "receipt_%s.pdf" % (inv.invoice_no or invoice_id[:8])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
+
+
+@app.get("/invoices/{invoice_id}/tax-invoice")
+def invoice_tax_pdf(invoice_id: str, user=Depends(auth.get_current_user),
+                    db: Session = Depends(get_db)):
+    """세금계산서(Faktur Pajak) PDF — 과세표준·PPN 11%. _render_pdf 재사용."""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    inv, c, pay = _invoice_ctx(db, invoice_id, user)
+    lines = [
+        "FAKTUR PAJAK · 세금계산서",
+        "",
+        "Nomor · 번호        : %s" % (inv.invoice_no or "-"),
+        "Tanggal · 발행일     : %s" % date.today().isoformat(),
+        "",
+        "── Penjual · 공급자 ──",
+        "Nama : GL-HAC AI (Lembaga Sertifikasi Halal)",
+        "",
+        "── Pembeli · 구매자 ──",
+        "Nama · 기업 : %s" % (c.company_name or "-"),
+        "NPWP/NIB    : %s" % (c.nib or "-"),
+        "Alamat · 주소: %s" % (c.address or c.factory_address or "-"),
+        "",
+        "── Rincian · 내역 ──",
+        "Jasa · 서비스        : %s" % (inv.service_type or "-"),
+        "DPP · 과세표준       : %s" % _idr(inv.amount),
+        "PPN 11%%             : %s" % _idr(inv.ppn),
+        "────────────────────",
+        "Total · 합계         : %s" % _idr(inv.total),
+    ]
+    pdf = _render_pdf("FAKTUR PAJAK · 세금계산서", "\n".join(lines),
+                      subtitle=inv.invoice_no or "",
+                      footer="PPN 11% sesuai peraturan perpajakan Indonesia")
+    fn = "faktur_%s.pdf" % (inv.invoice_no or invoice_id[:8])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
+
+
 # ---------- 인증서 lifecycle: 정지/철회/재개 (§5.1·§5.2) ----------
 def _cert_status_change(db, case_id, user, action, new_status, from_status, reason,
                         event, title, body):

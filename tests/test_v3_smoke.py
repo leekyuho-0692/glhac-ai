@@ -932,8 +932,26 @@ def test_notification_drain():
         assert c.post("/admin/notifications/drain", headers=_h(ctok)).status_code == 403
 
 
+def test_invoice_receipt_pdf():
+    """§Payment P5 영수증·세금계산서 PDF — %PDF 매직·내용."""
+    with TestClient(app) as c:
+        ctok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "RcptCo"},
+                     headers=_h(ctok)).json()["case_id"]
+        inv = c.post(f"/cases/{cid}/invoices", json={"service_type": "pre_audit", "amount": 5000000},
+                     headers=_h(ctok)).json()
+        c.post(f"/invoices/{inv['invoice_id']}/payment",
+               json={"method": "va", "amount": inv["total"]}, headers=_h(ctok))
+        r = c.get(f"/invoices/{inv['invoice_id']}/receipt", headers=_h(ctok))
+        assert r.status_code == 200 and r.content[:5] == b"%PDF-", r.status_code
+        assert "application/pdf" in r.headers.get("content-type", "")
+        tx = c.get(f"/invoices/{inv['invoice_id']}/tax-invoice", headers=_h(ctok))
+        assert tx.status_code == 200 and tx.content[:5] == b"%PDF-", tx.status_code
+        assert c.get("/invoices/nonexistent/receipt", headers=_h(ctok)).status_code == 404
+
+
 if __name__ == "__main__":
-    tests = [test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
+    tests = [test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,
