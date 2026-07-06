@@ -1452,19 +1452,36 @@ def reprocess_document(document_id: str,
 
 
 _LANG_NAME = {"id": "인도네시아어(Bahasa Indonesia)", "en": "영어(English)"}
+_LANG_EN = {"id": "Indonesian (Bahasa Indonesia)", "en": "English"}
+# 번역 전용 모델 — gemma3:12b는 한글을 되돌려(echo) 번역 실패 → qwen2.5:7b가 KO→ID 안정적
+_TRANSLATE_MODEL = os.environ.get("GLHAC_TRANSLATE_MODEL", "qwen2.5:7b")
+
+
+def _hangul_ratio(s):
+    letters = [ch for ch in s if ch.isalpha()]
+    if not letters:
+        return 0.0
+    return sum(1 for ch in letters if "가" <= ch <= "힣") / len(letters)
 
 
 def _translate_text(text, lang):
-    """gemma3로 한→대상언어 문서 번역. 길면 청크 분할. 실패 시 ''."""
-    name = _LANG_NAME.get(lang, lang)
-    sysmsg = ("당신은 전문 문서 번역가입니다. 주어진 텍스트를 %s로 정확하게 번역하세요. "
-              "고유명사·등록번호·수치·날짜는 원문 그대로 유지하고, 줄바꿈 구조를 보존하세요. "
-              "번역문만 출력하고 부연 설명은 하지 마세요." % name)
+    """한→대상언어 문서 번역 — qwen2.5(영문지시)로 청크 분할 번역. 실패 시 ''.
+    한글 echo(번역실패) 청크는 1회 재시도. gemma3는 KO를 그대로 반환해 부적합."""
+    tgt = _LANG_EN.get(lang, _LANG_NAME.get(lang, lang))
+    sysmsg = ("You are a professional document translator. Translate the given Korean text into "
+              "%s. Keep proper nouns, registration/business numbers, dates, and figures as-is. "
+              "Preserve line breaks. Output ONLY the translation — no Korean characters, "
+              "no explanations, no preamble." % tgt)
     out = []
     for i in range(0, len(text), 1500):
         ch = text[i:i + 1500]
-        if ch.strip():
-            out.append(ai_local.llm_text(sysmsg, ch) or "")
+        if not ch.strip():
+            continue
+        res = ai_local.llm_text(sysmsg, ch, model=_TRANSLATE_MODEL) or ""
+        # 번역 실패(한글 다량 잔존) 시 1회 재시도
+        if _hangul_ratio(res) > 0.15:
+            res = ai_local.llm_text(sysmsg, ch, model=_TRANSLATE_MODEL) or res
+        out.append(res)
     return "\n".join(out).strip()
 
 
