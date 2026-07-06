@@ -732,6 +732,21 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n SIHALAL 3종 복구
+  "이미 SIHALAL 등록된 업체":"Perusahaan terdaftar SIHALAL",
+  "규모":"Skala",
+  "※ 중복등록 주의. 이메일·상세 프로필은 BPJPH 공식 API 필요":"※ Perhatian: hindari pendaftaran duplikat. Email & profil detail membutuhkan API resmi BPJPH",
+  "할랄 인증기관 조회":"Cari Lembaga Sertifikasi Halal",
+  "공급사 할랄인증서 발급기관이 BPJPH 인정기관인지 확인(해외 LHLN·국내 LPH)":"Periksa apakah penerbit sertifikat halal pemasok adalah lembaga yang diakui BPJPH (LHLN luar negeri, LPH dalam negeri)",
+  "해외 인증기관(LHLN)":"Lembaga sertifikasi luar negeri (LHLN)",
+  "국내 인증기관(LPH)":"Lembaga sertifikasi dalam negeri (LPH)",
+  "검색어를 입력하세요":"Masukkan kata kunci pencarian",
+  "BPJPH 조회 중…":"Sedang memeriksa BPJPH…",
+  "BPJPH 공개조회 불가(일시적)":"Pencarian publik BPJPH tidak tersedia (sementara)",
+  "BPJPH 인정 해외기관":"Lembaga luar negeri yang diakui BPJPH",
+  "인가 국내기관":"Lembaga dalam negeri resmi",
+  "결과 없음 — 정확한 명칭으로 재조회":"Tidak ada hasil — cari ulang dengan nama yang tepat",
+  "유효":"Valid",
   // §i18n 프로필자동채움
   "문서에서 프로필 채움":"Isi Profil dari Dokumen",
   "신청기업 서류(사업자·공장등록증)에서 회사명·NIB·주소·대표자를 추출해 프로필을 채웁니다. 기존 값은 덮어씁니다. 진행할까요?":"Ekstrak nama perusahaan, NIB, alamat, dan perwakilan dari dokumen perusahaan (sertifikat pendaftaran bisnis/pabrik) untuk mengisi profil. Nilai yang ada akan ditimpa. Lanjutkan?",
@@ -1826,6 +1841,15 @@ SCREEN.application=async()=>{
           ${["consultant","ops","admin"].includes(ROLE)?`<button class="btn" style="color:var(--bad)" onclick="returnApp('${id}')">↩ 반려 · Return</button>`:''}
         </div>
       </div></div>
+    <div class="card"><h3>🏛 ${T('할랄 인증기관 조회')} <span class="en">· BPJPH LPH/LHLN</span></h3>
+      <div class="body">
+        <div class="muted small" style="margin-bottom:6px">${T('공급사 할랄인증서 발급기관이 BPJPH 인정기관인지 확인(해외 LHLN·국내 LPH)')}</div>
+        <div class="btnrow" style="gap:6px"><input class="box" id="instQ" placeholder="${T('기관명 (예: JAKIM, MUI, Sucofindo)')}" style="flex:1"></div>
+        <div class="btnrow" style="gap:6px;margin-top:6px">
+          <button class="btn" onclick="sihalalLookup(v('instQ'),'lhln')">🌏 ${T('해외 인증기관(LHLN)')}</button>
+          <button class="btn" onclick="sihalalLookup(v('instQ'),'lph')">🇮🇩 ${T('국내 인증기관(LPH)')}</button></div>
+        <div id="instOut" class="small" style="margin-top:8px"></div>
+      </div></div>
     <div class="card"><h3>③ 경로 판정 <span class="en">· Pathway</span></h3>
       <div class="body">
         <div class="radioset" style="margin-bottom:10px">
@@ -1886,17 +1910,26 @@ async function saveProfile(id){
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];toast("저장됨");await loadCases(true);applyView();}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
 }
-async function sihalalLookup(nama){
-  nama=(nama||"").trim();const box=document.getElementById("sihalalOut");if(!box)return;
-  if(nama.length<2){box.innerHTML='<span class="muted">'+T('회사명을 입력하세요')+'</span>';return;}
-  box.innerHTML='<span class="muted">'+T('SIHALAL 조회 중…')+'</span>';
+function _sihalalRow(m,type){
+  if(type==='penyelia')return `<div>· ${esc(m.name)} <span class="muted small">(${esc(m.meta||'')}${m.sihalal_id?' · ID '+esc(String(m.sihalal_id).slice(0,8)):''})</span></div>`;
+  const st=m.status?` <span class="tag t-${/akredit|mra|recogn|aktif/i.test(m.status)?'ok':'warn'}">${esc(m.status)}</span>`:'';
+  const vu=m.valid_until?` · ${T('유효')} ${esc(String(m.valid_until).slice(0,10))}`:'';
+  return `<div style="padding:2px 0">· <b>${esc(m.name)}</b>${st} <span class="muted small">${esc(m.meta||'')}${vu}</span></div>`;
+}
+async function sihalalLookup(nama,type){
+  type=type||'penyelia';const nm=(nama||"").trim();
+  const box=document.getElementById(type==='penyelia'?'sihalalOut':'instOut');if(!box)return;
+  if(nm.length<2){box.innerHTML='<span class="muted">'+T('검색어를 입력하세요')+'</span>';return;}
+  box.innerHTML='<span class="muted">'+T('BPJPH 조회 중…')+'</span>';
   try{
-    const r=await API(`/sihalal/lookup?nama=${encodeURIComponent(nama)}`);
-    if(!r.available){box.innerHTML='<span class="warn">'+T('SIHALAL 공개조회 불가(일시적)')+'</span>';return;}
+    const r=await API(`/sihalal/lookup?type=${type}&q=${encodeURIComponent(nm)}`);
+    if(!r.available){box.innerHTML='<span class="warn">'+T('BPJPH 공개조회 불가(일시적)')+'</span>';return;}
     if(r.registered){
-      const list=(r.matches||[]).slice(0,5).map(m=>`<div>· ${esc(m.name)} <span class="muted small">(${esc(m.scale||'')})</span></div>`).join("");
-      box.innerHTML=`<div class="ok">✅ ${T('SIHALAL 등록 확인')} · ${T('총')} ${r.total}${T('건')}</div>${list}<div class="muted small">${T('※ BPJPH 공개조회(비공식·참고용). 공식 확인은 halal.go.id')}</div>`;
-    }else{box.innerHTML='<span class="warn">⚠ '+T('SIHALAL 등록 미확인 — 정확한 회사명으로 재조회')+'</span>';}
+      const list=(r.matches||[]).slice(0,6).map(m=>_sihalalRow(m,type)).join("");
+      const head=type==='penyelia'?T('SIHALAL 등록 확인'):(type==='lhln'?T('BPJPH 인정 해외기관'):T('인가 국내기관'));
+      const dup=r.duplicate?`<div class="banner warn" style="margin:6px 0"><b>⚠ ${T('이미 SIHALAL 등록된 업체')}</b><br>${esc(r.duplicate.name)} · ${T('규모')} ${esc(r.duplicate.scale||'')}<br>SIHALAL ID: <b>${esc(r.duplicate.sihalal_id||'')}</b> · ${T('유사도')} ${Math.round((r.duplicate.similarity||0)*100)}%<br><span class="muted small">${T('※ 중복등록 주의. 이메일·상세 프로필은 BPJPH 공식 API 필요')}</span></div>`:'';
+      box.innerHTML=`<div class="ok">✅ ${head} · ${T('총')} ${r.total}${T('건')}</div>${dup}${list}<div class="muted small">${T('※ BPJPH 공개조회(비공식·참고용). 공식 확인은 halal.go.id')}</div>`;
+    }else{box.innerHTML='<span class="warn">⚠ '+T('결과 없음 — 정확한 명칭으로 재조회')+'</span>';}
   }catch(e){box.innerHTML='<span class="bad">'+T('조회 실패')+' · '+(e&&e.code?e.code:'')+'</span>';}
 }
 async function applyDocCompany(id,docName,caseName){

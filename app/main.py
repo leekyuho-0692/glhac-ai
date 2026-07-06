@@ -1786,31 +1786,62 @@ def autofill_profile(case_id: str, force: bool = False,
 
 
 # BPJPH SIHALAL 공개조회(비공식·참고용) — 사업자 할랄시스템 등록 확인
-_SIHALAL_URL = "https://cmsbl.halal.go.id/api/search/data_penyelia"
+_SIHALAL_BASE = "https://cmsbl.halal.go.id/api/search"
+# type → (경로, 검색파라미터, 결과 정규화 매핑). 개인정보(감독자명·종교) 제외.
+_SIHALAL_KIND = {
+    "penyelia": ("data_penyelia", "nama",
+                 lambda x: {"name": x.get("nama_pelaku_usaha"), "meta": x.get("skala_usaha"),
+                            "sihalal_id": x.get("id_penyelia")}),
+    "lph": ("data_lph", "nama_lph",
+            lambda x: {"name": x.get("nama_lph"), "status": x.get("status"),
+                       "meta": x.get("wilayah") or x.get("namaprovinsi"),
+                       "valid_until": x.get("tgl_berlaku"), "reg_no": x.get("no_reg"),
+                       "service": x.get("layanan")}),
+    "lhln": ("data_lhln", "nama_lhln",
+             lambda x: {"name": x.get("nama_lhln"), "status": x.get("status"),
+                        "meta": x.get("negara"), "valid_until": x.get("tgl_berlaku"),
+                        "reg_no": x.get("no_reg")}),
+}
 
 
 @app.get("/sihalal/lookup")
-def verify_sihalal(nama: str, user=Depends(auth.get_current_user)):
-    """SIHALAL 등록 조회(읽기전용·참고용) — 회사명으로 BPJPH 할랄시스템 등록 여부 확인.
-    ⚠ 비공식 공개 엔드포인트라 불안정·차단 가능. 개인정보(감독자명·종교)는 반환하지 않음."""
-    q = (nama or "").strip()
-    if len(q) < 2:
+def verify_sihalal(q: str = None, nama: str = None, type: str = "penyelia",
+                   user=Depends(auth.get_current_user)):
+    """BPJPH 공개조회(읽기전용·참고용):
+    - type=penyelia: 사업자 SIHALAL 등록 확인(회사명)
+    - type=lph: 국내 인증기관(LPH) 인가 확인
+    - type=lhln: 해외 할랄 인증기관(LHLN) BPJPH 인정 확인(공급사 해외인증서 검증)
+    ⚠ 비공식 공개 엔드포인트(불안정·차단 가능). 개인정보 미반환. 공식 확인은 halal.go.id."""
+    kind = type if type in _SIHALAL_KIND else "penyelia"
+    query = (q or nama or "").strip()
+    if len(query) < 2:
         raise HTTPException(422, {"code": "QUERY_TOO_SHORT"})
+    path, param, norm = _SIHALAL_KIND[kind]
     import httpx as _hx
     try:
-        r = _hx.get(_SIHALAL_URL, params={"page": 1, "size": 10, "nama": q},
+        r = _hx.get("%s/%s" % (_SIHALAL_BASE, path),
+                    params={"page": 1, "size": 10, param: query},
                     headers={"User-Agent": "Mozilla/5.0"}, timeout=8.0)
         d = (r.json() or {}).get("data") or {}
         rows = d.get("datas") or []
-        # 개인정보 제외 — 사업자명·규모만
-        matches = [{"name": x.get("nama_pelaku_usaha"), "scale": x.get("skala_usaha")}
-                   for x in rows if x.get("nama_pelaku_usaha")]
-        return {"available": True, "query": q, "total": d.get("total_items", len(matches)),
-                "registered": bool(matches), "matches": matches[:10],
-                "source": "BPJPH SIHALAL (공개조회·참고용)"}
+        matches = [norm(x) for x in rows if x.get("name") or norm(x).get("name")]
+        matches = [m for m in matches if m.get("name")]
+        result = {"available": True, "type": kind, "query": query,
+                  "total": d.get("total_items", len(matches)),
+                  "registered": bool(matches), "matches": matches[:10],
+                  "source": "BPJPH SIHALAL (공개조회·참고용)"}
+        # 중복등록 감지 — 사업자명 유사도 높은 기존 SIHALAL 기록(ID 포함) 표시
+        if kind == "penyelia" and matches:
+            scored = sorted(((_name_sim(query, m["name"]), m) for m in matches),
+                            key=lambda t: -t[0])
+            sim, top = scored[0]
+            if sim >= 0.6:
+                result["duplicate"] = {"name": top["name"], "sihalal_id": top.get("sihalal_id"),
+                                       "scale": top.get("meta"), "similarity": round(sim, 2)}
+        return result
     except Exception as e:  # noqa: BLE001
-        return {"available": False, "query": q, "error": str(e)[:120],
-                "note": "SIHALAL 공개조회 불가(일시적·차단). 공식 확인은 halal.go.id"}
+        return {"available": False, "type": kind, "query": query, "error": str(e)[:120],
+                "note": "BPJPH 공개조회 불가(일시적·차단). 공식 확인은 halal.go.id"}
 
 
 # ── 신청서 작성 상태(임시저장/작성완료/반려) — 신청단계 오버레이 ──────────
