@@ -1042,8 +1042,36 @@ def test_document_translate():
         assert c.post(f"/documents/{did2}/translate?lang=id", headers=_h(tok)).status_code == 422
 
 
+# EXIF GPS 테스트용 실제 JPEG(37.5559,126.9726 GPS 태그) — piexif로 사전생성, CI 미의존
+_GPS_JPEG_B64 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4QCERXhpZgAATU0AKgAAAAgAAYglAAQAAAABAAAAGgAAAAAABAABAAIAAAACTgAAAAACAAUAAAADAAAATAADAAIAAAACRQAAAAAEAAUAAAADAAAAZAAAACUAAAABAAAAIQAAAAEAAAhYAAAAZAAAAH4AAAABAAAAOgAAAAEAAAhkAAAAZP/bAEMACAYGBwYFCAcHBwkJCAoMFA0MCwsMGRITDxQdGh8eHRocHCAkLicgIiwjHBwoNyksMDE0NDQfJzk9ODI8LjM0Mv/bAEMBCQkJDAsMGA0NGDIhHCEyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMv/AABEIABAAEAMBIgACEQEDEQH/xAAfAAABBQEBAQEBAQAAAAAAAAAAAQIDBAUGBwgJCgv/xAC1EAACAQMDAgQDBQUEBAAAAX0BAgMABBEFEiExQQYTUWEHInEUMoGRoQgjQrHBFVLR8CQzYnKCCQoWFxgZGiUmJygpKjQ1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4eLj5OXm5+jp6vHy8/T19vf4+fr/xAAfAQADAQEBAQEBAQEBAAAAAAAAAQIDBAUGBwgJCgv/xAC1EQACAQIEBAMEBwUEBAABAncAAQIDEQQFITEGEkFRB2FxEyIygQgUQpGhscEJIzNS8BVictEKFiQ04SXxFxgZGiYnKCkqNTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqCg4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2dri4+Tl5ufo6ery8/T19vf4+fr/2gAMAwEAAhEDEQA/AMOiiigD/9k="
+
+
+def test_exif_gps_and_geo_fallback():
+    """§EXIF/GPS — 사진 EXIF 위경도 자동추출 + 브라우저 geolocation 폴백(PATCH /geo)."""
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "GeoCo"},
+                     headers=_h(tok)).json()["case_id"]
+        pid = c.post(f"/cases/{cid}/products", json={"name": "Prod"},
+                     headers=_h(tok)).json()["product_id"]
+        # GPS 태그 사진 업로드 → EXIF 자동추출
+        r = c.post(f"/cases/{cid}/products/{pid}/photo",
+                   json={"file_b64": _GPS_JPEG_B64, "filename": "onsite.jpg"}, headers=_h(tok)).json()
+        assert r.get("gps") is True, r
+        assert abs(r["lat"] - 37.5559) < 0.01 and abs(r["lng"] - 126.9726) < 0.01, r
+        # documents 목록에 lat/lng/geo_source 노출
+        docs = c.get(f"/cases/{cid}/documents", headers=_h(tok)).json()
+        ph = [d for d in docs if d["filename"] == "onsite.jpg"][0]
+        assert ph["geo_source"] == "exif" and ph["lat"] is not None, ph
+        # 브라우저 폴백: 위치 없는 문서에 PATCH /geo
+        did2 = docs[0]["document_id"]
+        g = c.patch(f"/documents/{did2}/geo",
+                    json={"lat": -6.2, "lng": 106.8, "source": "browser"}, headers=_h(tok)).json()
+        assert g["geo_source"] == "browser" and abs(g["lat"] + 6.2) < 0.001, g
+
+
 if __name__ == "__main__":
-    tests = [test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
+    tests = [test_exif_gps_and_geo_fallback, test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
              test_ai_eval_thresholds,
              test_observability_metrics, test_pdf_generation, test_certificate_lifecycle,

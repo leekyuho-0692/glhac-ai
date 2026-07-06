@@ -367,3 +367,9 @@ class MatchDecisionReq(BaseModel):
 
 class ReturnReq(BaseModel):
     reason: str            # 신청서 반려 사유
+
+
+class GeoReq(BaseModel):
+    lat: float             # 위도
+    lng: float             # 경도
+    source: Optional[str] = "browser"   # browser|manual

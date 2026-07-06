@@ -1266,6 +1266,28 @@ def update_product(case_id: str, product_id: str, body: schemas.ProductUpdate,
     return {"product_id": p.product_id, "status": p.status, "registration_type": p.registration_type}
 
 
+def _exif_gps(b64_or_bytes):
+    """이미지에서 EXIF GPS 위경도 추출 → (lat, lng) 또는 None. 현장실사 사진 위치파싱."""
+    try:
+        import io
+        from PIL import Image, ExifTags
+        data = b64_or_bytes if isinstance(b64_or_bytes, (bytes, bytearray)) else base64.b64decode(
+            str(b64_or_bytes).split(",")[-1])
+        gps = Image.open(io.BytesIO(data)).getexif().get_ifd(ExifTags.IFD.GPSInfo)
+        if not gps:
+            return None
+        def dms(v, ref):
+            d, m, s = (float(x) for x in v)
+            r = d + m / 60 + s / 3600
+            return -r if ref in ("S", "W") else r
+        lat, latr, lng, lngr = gps.get(2), gps.get(1), gps.get(4), gps.get(3)
+        if lat and lng and latr and lngr:
+            return (round(dms(lat, latr), 6), round(dms(lng, lngr), 6))
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 @app.post("/cases/{case_id}/materials/{material_id}/evidence")
 def add_material_evidence(case_id: str, material_id: str, body: schemas.MaterialEvidenceReq,
                           user=Depends(rbac.require_action("material.evidence")),
@@ -1277,10 +1299,13 @@ def add_material_evidence(case_id: str, material_id: str, body: schemas.Material
     if not m or m.case_id != case_id:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
     b64 = _validate_upload(body.file_b64, body.filename)
+    gps = _exif_gps(b64)
     db.add(models.DocumentAsset(case_id=case_id, filename=body.filename, doc_type=body.evidence_type,
                                 material_id=material_id, review_status="pending",
                                 content_b64=b64 if len(b64) < 4_000_000 else None,
-                                content_type=_ctype(body.filename)))
+                                content_type=_ctype(body.filename),
+                                lat=gps[0] if gps else None, lng=gps[1] if gps else None,
+                                geo_source="exif" if gps else None))
     prev = m.screen_result
     m.evidence_provided = True
     sc = screening.screen_merged(m.name, m.e_number, m.source, m.cert_no, True,
@@ -1364,12 +1389,16 @@ def add_product_photo(case_id: str, product_id: str, body: schemas.ProductPhotoR
     if not p or p.case_id != case_id:
         raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
     b64 = _validate_upload(body.file_b64, body.filename)
+    gps = _exif_gps(b64)
     db.add(models.DocumentAsset(case_id=case_id, filename=body.filename, doc_type="product_photo",
                                 product_id=product_id, review_status="pending",
                                 content_b64=b64 if len(b64) < 4_000_000 else None,
-                                content_type=_ctype(body.filename)))
+                                content_type=_ctype(body.filename),
+                                lat=gps[0] if gps else None, lng=gps[1] if gps else None,
+                                geo_source="exif" if gps else None))
     db.commit()
-    return {"product_id": product_id, "ok": True}
+    return {"product_id": product_id, "ok": True, "gps": bool(gps),
+            "lat": gps[0] if gps else None, "lng": gps[1] if gps else None}
 
 
 @app.get("/cases/{case_id}/products/{product_id}/photos")
@@ -1378,8 +1407,25 @@ def list_product_photos(case_id: str, product_id: str,
     _get_case(db, case_id, user)
     rows = db.query(models.DocumentAsset).filter_by(case_id=case_id, product_id=product_id,
                                                     doc_type="product_photo").all()
-    return [{"document_id": d.document_id, "filename": d.filename, "has_file": bool(d.content_b64)}
-            for d in rows]
+    return [{"document_id": d.document_id, "filename": d.filename, "has_file": bool(d.content_b64),
+             "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source} for d in rows]
+
+
+@app.patch("/documents/{document_id}/geo")
+def set_document_geo(document_id: str, body: schemas.GeoReq,
+                     user=Depends(auth.require_roles("applicant", "consultant", "auditor", "operator")),
+                     db: Session = Depends(get_db)):
+    """사진 위치 수동 기록 — EXIF GPS 부재 시 브라우저 geolocation 폴백."""
+    d = db.get(models.DocumentAsset, document_id)
+    if not d:
+        raise HTTPException(404, {"code": "DOC_NOT_FOUND"})
+    c = _get_case(db, d.case_id, user)
+    d.lat, d.lng = float(body.lat), float(body.lng)
+    d.geo_source = body.source if body.source in ("browser", "manual") else "browser"
+    _audit(db, user, "document.geo.set", "document", document_id, d.case_id,
+           {"lat": d.lat, "lng": d.lng, "source": d.geo_source})
+    db.commit()
+    return {"document_id": document_id, "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source}
 
 
 @app.patch("/documents/{document_id}/reclassify")
@@ -1785,7 +1831,8 @@ def list_documents(case_id: str, user=Depends(auth.get_current_user), db: Sessio
     return [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
              "doc_type_ko": DOC_KO.get(d.doc_type, d.doc_type),
              "confidence": d.confidence, "fields": d.fields, "excerpt": d.text_excerpt,
-             "review_status": d.review_status, "has_file": bool(d.content_b64)} for d in rows]
+             "review_status": d.review_status, "has_file": bool(d.content_b64),
+             "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source} for d in rows]
 
 
 @app.get("/documents/{document_id}/file")

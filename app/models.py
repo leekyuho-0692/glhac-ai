@@ -304,6 +304,9 @@ class DocumentAsset(Base):
     content_type = Column(String)  # MIME
     material_id = Column(String)   # 원재료별 증빙 연결(nullable) — 설계 G1/C1
     product_id = Column(String)    # 제품 사진 연결(nullable) — 설계 G2
+    lat = Column(Float)            # 촬영 위치 위도 — 현장실사 사진 EXIF GPS/브라우저
+    lng = Column(Float)            # 촬영 위치 경도
+    geo_source = Column(String)    # exif|browser|manual — 위치 출처
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
