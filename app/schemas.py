@@ -175,6 +175,7 @@ class CaseProfileReq(BaseModel):
     factory_address: Optional[str] = None
     due_date: Optional[str] = None   # 처리 목표 기한(ISO date) — 기한 경보
     notify_consent: Optional[bool] = None  # 알림 수신 동의
+    profile_ext: Optional[dict] = None  # Company/Facility Info 확장 양식 필드(PIC·CP·등록유형·공장정보 등)
 
 
 class PathwayConfirm(BaseModel):

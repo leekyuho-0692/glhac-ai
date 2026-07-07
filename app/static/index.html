@@ -41,6 +41,8 @@
   nav a:hover{background:#1E293B;color:#fff}
   nav a.active{background:var(--nav-active);color:#fff;font-weight:600}
   nav a.active .en{color:#93C5FD}
+  .nav-group{margin-bottom:6px}
+  .nav-group-label{font-size:10.5px;color:#64748B;text-transform:uppercase;letter-spacing:.6px;padding:10px 14px 4px;font-weight:700}
   .navfoot{margin-top:auto;padding:12px 20px;color:#475569;font-size:11px;border-top:1px solid #1E293B}
   main{flex:1;min-width:0;display:flex;flex-direction:column}
   .topbar{height:66px;background:var(--card);border-bottom:1px solid var(--line);
@@ -390,6 +392,13 @@ const NAV = [
   ["feedback","💬","개선 피드백","Feedback","건의·Feedback"],
   ["system","⚙️","시스템 설정","System","admin"],
 ];
+/* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
+const NAV_GROUPS=[
+  {label:"개요 · Overview", ids:["dashboard","caseList","workflow"]},
+  {label:"신청·서류 · Application", ids:["application","preassess","materials","integration","documents"]},
+  {label:"심사·판정 · Audit", ids:["audit","mockAudit","evaluation","fatwa","certificate"]},
+  {label:"청구·지원 · Support", ids:["invoice","assistant","system"]},
+];
 const ROLE_DEF = {
   client:    {ko:"클라이언트", en:"Client",     scope:"own"},
   consultant:{ko:"컨설턴트",   en:"Consultant", scope:"owned"},
@@ -683,11 +692,23 @@ function onCaseChange(id){CURCASE=id;try{localStorage.setItem("glhac_case",id)}c
 function scopeLabel(){const m={own:"본인 조직 · own",owned:"담당 위주 · owned",assigned:"배정건 · assigned",all:"전체 · all"};return m[ROLE_DEF[ROLE].scope];}
 function buildNav(){
   const nav=document.getElementById("nav");
-  const allowed=NAV.filter(([id])=>MENU_ACCESS[id].includes(ROLE));
-  nav.innerHTML=allowed.map(([id,ic,ko,en])=>
-    `<a data-id="${id}" role="link" tabindex="0" onclick="go('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}"><span aria-hidden="true">${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`).join("");
+  const byId=Object.fromEntries(NAV.map(x=>[x[0],x]));
+  const allow=id=>byId[id]&&MENU_ACCESS[id]&&MENU_ACCESS[id].includes(ROLE);
+  const link=([id,ic,ko,en])=>`<a data-id="${id}" role="link" tabindex="0" onclick="go('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}"><span aria-hidden="true">${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`;
+  let html="", shown=0;
+  NAV_GROUPS.forEach(g=>{
+    const items=g.ids.filter(allow);
+    if(!items.length)return;
+    shown+=items.length;
+    html+=`<div class="nav-group"><div class="nav-group-label">${g.label}</div>${items.map(id=>link(byId[id])).join("")}</div>`;
+  });
+  // 그룹에 없는 메뉴(신규 등)는 하단에 그대로 노출 (누락 방지)
+  const grouped=new Set(NAV_GROUPS.flatMap(g=>g.ids));
+  const rest=NAV.filter(([id])=>allow(id)&&!grouped.has(id));
+  if(rest.length){shown+=rest.length;html+=`<div class="nav-group"><div class="nav-group-label">기타 · Other</div>${rest.map(link).join("")}</div>`;}
+  nav.innerHTML=html;
   document.getElementById("navfoot").innerHTML=
-    `${T('노출 메뉴')} ${allowed.length} / 15<br><span style="color:#64748B">scope · ${T(scopeLabel())}</span>`;
+    `${T('노출 메뉴')} ${shown} / 15<br><span style="color:#64748B">scope · ${T(scopeLabel())}</span>`;
 }
 function toggleNav(on){
   const app=document.getElementById("appView");if(!app)return;
@@ -1810,7 +1831,7 @@ SCREEN.preassess=async()=>{
     </div></div></div>`;
 };
 SCREEN.application=async()=>{
-  const id=CURCASE;const c=await API(`/cases/${id}`);
+  const id=CURCASE;const c=await API(`/cases/${id}`);const pe=c.profile_ext||{};
   const chk=await API(`/cases/${id}/doc-checklist`).catch(()=>({checklist:[]}));
   const coChk=await API(`/cases/${id}/company-check`).catch(()=>null);
   const org=(()=>{try{return localStorage.getItem("glhac_org")||""}catch(_){return""}})();
@@ -1836,55 +1857,86 @@ SCREEN.application=async()=>{
         <button class="btn" onclick="go('documents')">📁 문서 화면</button></div>
     </div></div>
   <div class="grid three">
-    <div class="card"><h3>① 프로필·기업 <span class="en">· Profile</span></h3>
+    <div class="card"><h3>① 기업 프로필 · Company Info <span class="en">· 고객 접수 양식(Form.1)</span></h3>
       <div class="body">
-        <div class="field"><label>기업명 · Company</label><input class="v" id="apCompany" value="${esc(c.company_name||"")}">
+        <div class="field"><label>기업명 · Company Name</label><input class="v" id="apCompany" value="${esc(c.company_name||"")}">
           <div class="btnrow" style="margin-top:4px"><button class="btn" style="padding:3px 8px;font-size:11px" onclick="sihalalLookup(v('apCompany'))">🔎 ${T('SIHALAL 등록조회')}</button></div>
           <div id="sihalalOut" class="small" style="margin-top:4px"></div></div>
         ${(coChk&&coChk.mismatch&&coChk.suggested_company)?`<div class="banner bad" style="margin:-4px 0 10px"><b>⚠ ${T('기업명 불일치')}</b><br>${T('사업자등록증')}: <b>${esc(coChk.suggested_company)}</b> · ${T('유사도')} ${Math.round((coChk.best_similarity||0)*100)}%<br><button class="btn" style="margin-top:6px;padding:3px 8px;font-size:11px" onclick="applyDocCompany('${id}',${JSON.stringify(coChk.suggested_company).replace(/"/g,'&quot;')},${JSON.stringify(c.company_name||'').replace(/"/g,'&quot;')})">📄 ${T('문서 기업명으로 변경')}</button></div>`:''}
-        <div class="field"><label>NIB · 사업자</label><input class="v" id="apNib" value="${esc(c.nib||"")}"></div>
-        <div class="field"><label>책임자 · Responsible</label><input class="v" id="apResp" value="${esc(c.responsible_person||"")}"></div>
-        <div class="field"><label>할랄감독자 · Supervisor</label><input class="v" id="apSup" value="${esc(c.halal_supervisor||"")}"></div>
-        <div class="field"><label>공장 주소 · Factory address <span class="muted">(지역맵 집계)</span></label><input class="v" id="apFactory" value="${esc(c.factory_address||"")}" placeholder="예: Jl. Industri, Bekasi, Jawa Barat"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>NIB · 사업자등록번호</label><input class="v" id="apNib" value="${esc(c.nib||"")}"></div>
+          <div class="field"><label>세금 ID · Tax ID</label><input class="v" id="peTaxId" value="${esc(pe.tax_id||"")}"></div></div>
+        <div class="field"><label>대표자 · Representative</label><input class="v" id="apResp" value="${esc(c.responsible_person||"")}"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>사업유형 · Business Type</label><input class="v" id="peBizType" value="${esc(pe.business_type||"")}" placeholder="제조/식당/화장품/케이터링/도축/서비스"></div>
+          <div class="field"><label>등록유형 · Registration Type</label><input class="v" id="peRegType" value="${esc(pe.registration_type||"")}" placeholder="Manufacturing/restaurant/cosmetic..."></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div class="field"><label>신청유형 · Application</label><select class="v" id="peAppType">${["","Regular","UAE","GSO"].map(o=>`<option${(pe.application_type||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div>
+          <div class="field"><label>등록현황 · Status</label><select class="v" id="peRegStatus">${["","New","Renew","Development"].map(o=>`<option${(pe.registration_status||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div>
+          <div class="field"><label>SIHALAL 여부</label><select class="v" id="peSiHalal">${["","Yes","No"].map(o=>`<option${(pe.si_halal||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>제품유형 · Product Type</label><input class="v" id="peProdType" value="${esc(pe.product_type||"")}"></div>
+          <div class="field"><label>마케팅유형 · Marketing</label><input class="v" id="peMktType" value="${esc(pe.marketing_type||"")}" placeholder="retail/non-retail"></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>총 직원수 · Employees</label><input class="v" id="peEmp" value="${esc(pe.total_employee||"")}"></div>
+          <div class="field"><label>생산능력 · Capacity</label><input class="v" id="peCap" value="${esc(pe.production_capacity||"")}"></div></div>
+        <div class="field"><label>주소 · Address</label><input class="v" id="peAddress" value="${esc(c.address||"")}"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div class="field"><label>도시 · City</label><input class="v" id="peCity" value="${esc(pe.city||"")}"></div>
+          <div class="field"><label>국가 · Country</label><input class="v" id="peCountry" value="${esc(pe.country||"")}"></div>
+          <div class="field"><label>우편 · ZIP</label><input class="v" id="peZip" value="${esc(pe.zip||"")}"></div></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>사무실 전화 · Office</label><input class="v" id="peOffice" value="${esc(pe.office_phone||"")}"></div>
+          <div class="field"><label>연락처 · Phone <span class="muted">(알림)</span></label><input class="v" id="apPhone" value="${esc(c.phone||"")}"></div></div>
+        <div class="field"><label>이메일 · Email</label><input class="v" id="peEmail" value="${esc(c.email||"")}"></div>
+        <div class="muted small" style="margin:10px 0 4px;font-weight:600">담당자 · PIC (Person In Charge)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>이름</label><input class="v" id="pePicName" value="${esc(pe.pic_name||"")}"></div>
+          <div class="field"><label>직책</label><input class="v" id="pePicTitle" value="${esc(pe.pic_title||"")}"></div>
+          <div class="field"><label>휴대폰</label><input class="v" id="pePicPhone" value="${esc(pe.pic_phone||"")}"></div>
+          <div class="field"><label>이메일</label><input class="v" id="pePicEmail" value="${esc(pe.pic_email||"")}"></div></div>
+        <div class="muted small" style="margin:10px 0 4px;font-weight:600">업무담당자 · CP (Contact Person)</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>이름</label><input class="v" id="peCpName" value="${esc(pe.cp_name||"")}"></div>
+          <div class="field"><label>직책</label><input class="v" id="peCpTitle" value="${esc(pe.cp_title||"")}"></div>
+          <div class="field"><label>휴대폰</label><input class="v" id="peCpPhone" value="${esc(pe.cp_phone||"")}"></div>
+          <div class="field"><label>이메일</label><input class="v" id="peCpEmail" value="${esc(pe.cp_email||"")}"></div></div>
+        <div class="field"><label>할랄감독자 · Halal Supervisor</label><input class="v" id="apSup" value="${esc(c.halal_supervisor||"")}"></div>
         <div class="field"><label>처리 기한 · Due date <span class="muted">(기한 경보)</span></label><input class="v" id="apDue" type="date" value="${esc(c.due_date||"")}"> ${c.due_date?dueBadge(c.due_date):''}</div>
-        <div class="field"><label>연락처 · Phone <span class="muted">(WhatsApp/SMS 알림)</span></label><input class="v" id="apPhone" value="${esc(c.phone||"")}" placeholder="0812... 또는 +62812..."></div>
         <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="apConsent" ${c.notify_consent?"checked":""} style="width:auto"> 알림 수신 동의 · Notification opt-in (SMS·WhatsApp)</label></div>
         ${c.draft_state==='returned'&&c.return_reason?`<div class="banner bad" style="margin-bottom:8px">${T('↩ 반려됨 · 사유:')} ${esc(c.return_reason)}</div>`:''}
         <div style="margin-bottom:8px">${draftBadge(c.draft_state)}</div>
         <div class="btnrow" style="flex-wrap:wrap;gap:6px">
           <button class="btn" onclick="autofillProfile('${id}')">📄 ${T('문서에서 프로필 채움')}</button>
           <button class="btn" onclick="saveDraft('${id}')">💾 임시저장 · Draft</button>
-          <button class="btn pri" onclick="saveProfile('${id}')">프로필 저장 · Save</button>
+          <button class="btn pri" onclick="saveProfile('${id}')">기업정보 저장 · Save</button>
           <button class="btn" onclick="submitApp('${id}')">✅ 작성완료 제출 · Submit</button>
           ${["consultant","ops","admin"].includes(ROLE)?`<button class="btn" style="color:var(--bad)" onclick="returnApp('${id}')">↩ 반려 · Return</button>`:''}
         </div>
       </div></div>
-    <div class="card"><h3>🏛 ${T('할랄 인증기관 조회')} <span class="en">· BPJPH LPH/LHLN</span></h3>
+    <div class="card"><h3>🏭 공장·시설 · Facility Info <span class="en">· 시설 데이터 양식(Form.2)</span></h3>
       <div class="body">
-        <div class="muted small" style="margin-bottom:6px">${T('공급사 할랄인증서 발급기관이 BPJPH 인정기관인지 확인(해외 LHLN·국내 LPH)')}</div>
-        <div class="btnrow" style="gap:6px"><input class="box" id="instQ" placeholder="${T('기관명 (예: JAKIM, MUI, Sucofindo)')}" style="flex:1"></div>
-        <div class="btnrow" style="gap:6px;margin-top:6px">
-          <button class="btn" onclick="sihalalLookup(v('instQ'),'lhln')">🌏 ${T('해외 인증기관(LHLN)')}</button>
-          <button class="btn" onclick="sihalalLookup(v('instQ'),'lph')">🇮🇩 ${T('국내 인증기관(LPH)')}</button></div>
-        <div id="instOut" class="small" style="margin-top:8px"></div>
-      </div></div>
-    <div class="card"><h3>③ 경로 판정 <span class="en">· Pathway</span></h3>
-      <div class="body">
-        <div class="radioset" style="margin-bottom:10px">
-          <div class="opt ${c.pathway==='self_declare'?'sel':''}" onclick="confirmPathway('${id}','self_declare')"><b>자기선언 · SD</b><span>저위험·MSME</span></div>
-          <div class="opt ${c.pathway==='reguler'?'sel':''}" onclick="confirmPathway('${id}','reguler')"><b>정규 · Reguler</b><span>REG 심사</span></div>
-        </div>
-        <div class="banner info" style="margin-bottom:10px">현재 경로 · <b>${esc(c.pathway||"미확정")}</b> · 위험도 ${esc(c.risk_category||"—")} <span class="muted">· 옵션 클릭 = 확정(컨설턴트)</span></div>
-        <div class="btnrow"><button class="btn" onclick="assessPathway('${id}')">🤖 AI 사전심사 · Assess</button></div>
-        <div id="assessOut" style="margin-top:10px">${assessRender(id)}</div>
-      </div></div>
-    <div class="card"><h3>⑤ 진행 <span class="en">· Progress</span></h3>
-      <div class="body">
-        <div class="kv"><span>상태 · Status</span><b>${esc(c.status||"—")} ${draftBadge(c.draft_state)}</b></div>
-        <div class="kv"><span>MSME</span><b>${c.is_msme?"예":"아니오"}</b></div>
-        <div class="kv"><span>SEHATI 적격</span><b>${c.sehati_eligible?"적격":"—"}</b></div>
-        <div class="kv"><span>파트와 · Fatwa</span><b>${esc(c.fatwa_status||"—")}</b></div>
-        <div class="kv"><span>scope 동결</span><b>${c.scope_frozen?"동결됨":"—"}</b></div>
+        <div class="field"><label>제조업체명 · Manufacturer</label><input class="v" id="peMfrName" value="${esc(pe.manufacturer_name||"")}"></div>
+        <div class="field"><label>공장 주소 · Factory Address <span class="muted">(지역맵 집계)</span></label><input class="v" id="apFactory" value="${esc(c.factory_address||"")}" placeholder="예: Jl. Industri, Bekasi, Jawa Barat"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div class="field"><label>도시 · City</label><input class="v" id="peFacCity" value="${esc(pe.factory_city||"")}"></div>
+          <div class="field"><label>국가 · Country</label><input class="v" id="peFacCountry" value="${esc(pe.factory_country||"")}"></div>
+          <div class="field"><label>우편 · ZIP</label><input class="v" id="peFacZip" value="${esc(pe.factory_zip||"")}"></div></div>
+        <div class="field"><label>공장등록번호 · Factory Reg No</label><input class="v" id="peFacRegNo" value="${esc(c.factory_reg_no||"")}"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>시설 전화 · Office</label><input class="v" id="peFacPhone" value="${esc(pe.facility_phone||"")}"></div>
+          <div class="field"><label>시설 이메일 · Email</label><input class="v" id="peFacEmail" value="${esc(pe.facility_email||"")}"></div></div>
+        <div class="muted small" style="margin:10px 0 4px;font-weight:600">시설 담당자 · PIC</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>이름</label><input class="v" id="peFacPicName" value="${esc(pe.fac_pic_name||"")}"></div>
+          <div class="field"><label>휴대폰</label><input class="v" id="peFacPicPhone" value="${esc(pe.fac_pic_phone||"")}"></div></div>
+        <div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="saveProfile('${id}')">공장정보 저장 · Save</button></div>
+        <details style="margin-top:12px"><summary class="muted small" style="cursor:pointer">🏛 ${T('할랄 인증기관 조회')} (공급사 인증서 발급기관 확인)</summary>
+          <div style="margin-top:6px"><div class="btnrow" style="gap:6px"><input class="box" id="instQ" placeholder="${T('기관명 (예: JAKIM, MUI, Sucofindo)')}" style="flex:1"></div>
+          <div class="btnrow" style="gap:6px;margin-top:6px">
+            <button class="btn" onclick="sihalalLookup(v('instQ'),'lhln')">🌏 ${T('해외 인증기관(LHLN)')}</button>
+            <button class="btn" onclick="sihalalLookup(v('instQ'),'lph')">🇮🇩 ${T('국내 인증기관(LPH)')}</button></div>
+          <div id="instOut" class="small" style="margin-top:8px"></div></div></details>
       </div></div>
   </div>
   <div class="grid three" style="margin-top:16px">
@@ -1924,7 +1976,9 @@ async function autofillProfile(id){
 }
 async function saveProfile(id){
   const cel=document.getElementById("apConsent");
-  const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),factory_address:v("apFactory"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined};
+  const pe={};
+  [["peTaxId","tax_id"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"],["peMfrName","manufacturer_name"],["peFacCity","factory_city"],["peFacCountry","factory_country"],["peFacZip","factory_zip"],["peFacPhone","facility_phone"],["peFacEmail","facility_email"],["peFacPicName","fac_pic_name"],["peFacPicPhone","fac_pic_phone"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
+  const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),address:v("peAddress"),email:v("peEmail"),factory_reg_no:v("peFacRegNo"),factory_address:v("apFactory"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined,profile_ext:pe};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];toast("저장됨");await loadCases(true);applyView();}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
 }

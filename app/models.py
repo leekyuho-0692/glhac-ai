@@ -34,6 +34,7 @@ class CaseApplication(Base):
     sehati_eligible = Column(String)
     fatwa_status = Column(String, default="none")
     scope_frozen = Column(Boolean, default=False)
+    profile_ext = Column(JSON)  # Company/Facility Info 확장 양식 필드(PIC·CP·등록유형·공장정보 등)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

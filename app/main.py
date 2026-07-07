@@ -292,7 +292,8 @@ def _case_dict(c):
             "address": c.address, "factory_reg_no": c.factory_reg_no,
             "factory_address": c.factory_address, "due_date": c.due_date,
             "notify_consent": bool(c.notify_consent),
-            "draft_state": c.draft_state, "return_reason": c.return_reason}
+            "draft_state": c.draft_state, "return_reason": c.return_reason,
+            "profile_ext": c.profile_ext or {}}
 
 
 def _notify(db, case, event_type, title, body="", channels=None, role=None):
@@ -1787,6 +1788,8 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
         c.notify_consent = bool(body.notify_consent)
     if body.phone is not None:
         c.phone = _normalize_phone(body.phone)   # 국가코드 정규화
+    if body.profile_ext is not None:
+        c.profile_ext = {**(c.profile_ext or {}), **body.profile_ext}  # 확장 양식 병합 저장
     if not c.draft_state or c.draft_state == "returned":
         c.draft_state = "in_progress"  # 편집 시작 → 작성중(반려분 재편집 포함)
     db.commit()
