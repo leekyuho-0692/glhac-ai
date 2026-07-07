@@ -402,3 +402,7 @@ class FeedbackStatusReq(BaseModel):
 
 class FeedbackCommentReq(BaseModel):
     body: str
+
+
+class MaterialRenameReq(BaseModel):
+    name: str          # OCR 오독 교정용 원재료명

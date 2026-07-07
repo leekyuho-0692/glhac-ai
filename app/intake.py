@@ -109,9 +109,12 @@ def _ocr_bytes(data, ext):
             pass
 
 
-def parse_file(name, data):
-    """확장자별 텍스트 추출 — OS 독립. 이미지/스캔PDF=OCR, PDF=fitz, docx/xlsx/txt."""
+def parse_file(name, data, dpi=None):
+    """확장자별 텍스트 추출 — OS 독립. 이미지/스캔PDF=OCR, PDF=fitz, docx/xlsx/txt.
+    dpi 지정 시 스캔 렌더 해상도 오버라이드(고해상도 재처리용, 기본 _OCR_DPI)."""
     ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+    _dpi = int(dpi) if dpi else _OCR_DPI
+    _dpi = max(72, min(600, _dpi))   # 안전 범위
     try:
         if ext in _IMG:
             return _ocr_bytes(data, ext)
@@ -122,7 +125,7 @@ def parse_file(name, data):
             for pg in list(doc)[:8]:
                 t = pg.get_text()
                 if len(t.strip()) < 20:  # 스캔본 → PNG 렌더 후 OCR (파일경로 없이 bytes)
-                    t = _ocr_bytes(pg.get_pixmap(dpi=_OCR_DPI).tobytes("png"), "png")
+                    t = _ocr_bytes(pg.get_pixmap(dpi=_dpi).tobytes("png"), "png")
                 txt += t + "\n"
             return txt
         if ext in ("txt", "csv"):

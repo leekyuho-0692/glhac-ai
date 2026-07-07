@@ -1199,6 +1199,32 @@ def delete_material(material_id: str,
     return {"deleted": material_id}
 
 
+@app.patch("/materials/{material_id}/rename")
+def rename_material(material_id: str, body: schemas.MaterialRenameReq,
+                    user=Depends(auth.require_roles("applicant", "consultant")),
+                    db: Session = Depends(get_db)):
+    """원재료명 교정(OCR 오독 수기 수정) → 재스크리닝. 정확한 성분명으로 판정 갱신."""
+    nm = (body.name or "").strip()
+    if not nm:
+        raise HTTPException(422, {"code": "NAME_REQUIRED"})
+    m = db.get(models.Material, material_id)
+    if not m:
+        raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
+    c = _get_case(db, m.case_id, user)
+    prev = m.name
+    m.name = nm
+    sc = screening.screen_merged(nm, m.e_number, m.source, m.cert_no,
+                                 bool(m.evidence_provided),
+                                 m.source_known if m.source_known is not None else True, m.note or "")
+    m.screen_result, m.screen_status, m.screen_severity = sc["result"], sc["status"], sc["severity"]
+    m.matched_uid = sc.get("matched_uid")
+    sm.record_event(db, c, c.status, c.status, "material.rename", user["role"], user["uid"],
+                    {"material_id": material_id, "from": prev, "to": nm, "result": sc["result"]})
+    db.commit()
+    return {"material_id": material_id, "name": nm, "screen_result": sc["result"],
+            "matched_uid": sc.get("matched_uid")}
+
+
 def _norm_material(name):
     """원재료명 정규화 — 공백·괄호주석·구두점·국가/원산지 접미 제거해 중복 판정 키."""
     import re
@@ -1526,10 +1552,11 @@ def _apply_agg_to_case(db, c, agg):
 
 
 @app.post("/documents/{document_id}/reprocess")
-def reprocess_document(document_id: str,
+def reprocess_document(document_id: str, dpi: int = None,
                        user=Depends(auth.require_roles("consultant", "operator")),
                        db: Session = Depends(get_db)):
-    """저장된 원본을 재추출·재분류 — OCR/의존성 개선 후 구업로드 문서 치유(설계 B)."""
+    """저장된 원본을 재추출·재분류 — OCR/의존성 개선 후 구업로드 문서 치유(설계 B).
+    dpi 지정 시 스캔 문서를 고해상도로 재OCR(예: dpi=300, confident-misread 완화 시도)."""
     from .intake import parse_file, classify, aggregate_fields
     d = db.get(models.DocumentAsset, document_id)
     if not d:
@@ -1538,7 +1565,7 @@ def reprocess_document(document_id: str,
     if not d.content_b64:
         raise HTTPException(422, {"code": "NO_CONTENT", "detail": "원본 미보관 문서는 재처리 불가"})
     data = base64.b64decode(d.content_b64.split(",")[-1])
-    text = parse_file(d.filename, data)
+    text = parse_file(d.filename, data, dpi=dpi)
     r = classify(d.filename, text)
     prev = d.doc_type
     d.doc_type = r.get("doc_type", "other")

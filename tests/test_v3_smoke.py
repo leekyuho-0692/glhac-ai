@@ -1278,6 +1278,23 @@ def test_ocr_confidence_filter():
         ai_local.ocr_image = orig
 
 
+def test_material_rename_and_hires_dpi():
+    """§원재료명 교정(OCR 오독) → 재스크 + 고해상도 dpi 파라미터 수용."""
+    from app import intake
+    with TestClient(app) as c:
+        tok = _tok(c, "consultant1", "pw")
+        cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "RnCo"},
+                     headers=_h(tok)).json()["case_id"]
+        mid = c.post(f"/cases/{cid}/materials", json={"name": "리즈베리항코톤"},
+                     headers=_h(tok)).json()["material_id"]
+        # 교정 → Gelatin 매칭·재스크
+        r = c.patch(f"/materials/{mid}/rename", json={"name": "Gelatin"}, headers=_h(tok)).json()
+        assert r["name"] == "Gelatin" and r["matched_uid"] == "ing.gelatin", r
+        assert c.patch(f"/materials/{mid}/rename", json={"name": ""}, headers=_h(tok)).status_code == 422
+        # parse_file dpi 인자 수용(안전범위 클램프)
+        assert intake.parse_file.__code__.co_argcount == 3  # name,data,dpi
+
+
 if __name__ == "__main__":
     tests = [test_pg_webhook, test_exif_gps_and_geo_fallback, test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,
