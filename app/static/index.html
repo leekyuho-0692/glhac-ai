@@ -1729,7 +1729,7 @@ SCREEN.workflow=async()=>{
   const [w,verify,tl]=await Promise.all([API(`/cases/${id}/workflow`),API(`/cases/${id}/audit-verify`).catch(()=>null),API(`/cases/${id}/timeline`).catch(()=>({events:[]}))]);
   const phases=w.phases||[];
   const flow=phases.length?phases.map((p,i)=>{
-    const cl=p.done?"done":p.current?"now":"";
+    const cl=p.status==="done"?"done":p.status==="current"?"now":(p.done?"done":p.current?"now":"");
     return `<div class="step ${cl}" style="min-width:80px">${esc(p.label||p.state||p.key||("#"+(i+1)))}</div>${i<phases.length-1?'<span class="arrow">→</span>':''}`;}).join("")
     : `<div class="muted small">단계 정보 없음</div>`;
   const nexts=(w.next_states||[]);
@@ -1747,7 +1747,7 @@ SCREEN.workflow=async()=>{
       <div class="body">
         ${blockers.length?blockers.map(b=>`<div class="banner bad" style="margin-bottom:8px">⛔ ${esc(b.code||b.message||b)}</div>`).join(""):'<div class="banner ok" style="margin-bottom:10px">✓ 차단 없음 · no blockers</div>'}
         <div class="field"><label>다음 가능 상태 · Next states</label>
-          <div class="btnrow">${nexts.length?nexts.map(s=>`<button class="btn pri" onclick="advance('${id}','${esc(s)}')">${esc(s)} →</button>`).join(""):'<span class="chip">없음</span>'}</div></div>
+          <div class="btnrow">${nexts.length?nexts.map(s=>{const to=(typeof s==='string')?s:(s.to||s.state||'');const lbl=(typeof s==='string')?s:(s.to_label||s.to||to);const okS=(typeof s==='object'&&s)?(s.allowed!==false):true;return `<button class="btn ${okS?'pri':''}"${okS?'':' disabled title="차단됨 · blocked"'} onclick="advance('${id}','${to}')">${esc(lbl)} →</button>`;}).join(""):'<span class="chip">없음</span>'}</div></div>
       </div></div>
   </div>
   <div class="grid side" style="margin-top:16px">
@@ -1755,8 +1755,8 @@ SCREEN.workflow=async()=>{
       <div class="list" style="max-height:340px;overflow:auto">${(tl.events||[]).length?(tl.events||[]).slice().reverse().map(e=>`<div class="li"><div class="ic t-${statusColor(e.to||e.action)}">•</div><div class="tx"><b>${esc(e.action||"event")}</b><div>${esc(e.from||"")} → ${esc(e.to||"")} · ${esc(e.actor||"")}</div></div><div class="when">${esc((e.hash||"").slice(0,10))}</div></div>`).join(""):'<div class="li"><div class="tx muted small">이벤트 없음</div></div>'}</div></div>
     <div class="card"><h3>감사체인 무결성 <span class="en">· Hash-chain</span><span class="r">S16</span></h3>
       <div class="body">
-        ${verify?`<div class="banner ${verify.integrity_ok?'ok':'bad'}" style="margin-bottom:12px">${verify.integrity_ok?'✓ 무결성 검증 통과':'⛔ 체인 손상 감지'} · 이벤트 ${verify.count||0}건${verify.broken_at?` · 손상지점 ${esc(String(verify.broken_at))}`:''}</div>
-          <div class="small muted">append-only 해시체인으로 감사 이벤트의 위·변조를 탐지합니다.</div>`:'<div class="muted small">검증 정보를 불러올 수 없습니다.</div>'}
+        ${(verify&&verify.integrity_ok!==undefined)?`<div class="banner ${verify.integrity_ok?'ok':'bad'}" style="margin-bottom:12px">${verify.integrity_ok?'✓ 무결성 검증 통과':'⛔ 체인 손상 감지'} · 이벤트 ${verify.count||0}건${verify.broken_at?` · 손상지점 ${esc(String(verify.broken_at))}`:''}</div>
+          <div class="small muted">append-only 해시체인으로 감사 이벤트의 위·변조를 탐지합니다.</div>`:'<div class="banner" style="margin-bottom:12px">· 감사체인 검증 정보 없음 · verify unavailable</div><div class="small muted">감사 이벤트 검증 응답을 불러오지 못했습니다.</div>'}
       </div></div>
   </div>`;
 };
@@ -1990,8 +1990,8 @@ SCREEN.materials=async()=>{
   const rows=mpg.items.length?mpg.items.map(m=>{
     const cl=statusColor(m.status||m.result); const op=MAT_OPEN.has(m.material_id);
     return `<tr class="clickable" onclick="matToggle('${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})"><td><b>${esc(m.name)}</b>${m.e_number?` <span class="chip">${esc(m.e_number)}</span>`:""} <span class="muted small">${op?'▲':'▼'}</span></td>
-      <td>${tag(cl,m.status||m.result||"—")}</td>
-      <td>${m.severity?tag(cl,m.severity):'<span class="muted">-</span>'}</td>
+      <td>${bTag(cl,m.status||m.result)}</td>
+      <td>${m.severity?bTag(cl,m.severity):'<span class="muted">-</span>'}</td>
       <td class="small">${m.evidence_count?`✓ ${m.evidence_count}`:'<span class="muted">없음</span>'}</td>
       <td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()">${canMatWrite?`
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="renameMaterial('${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})" title="${T('OCR 오독 교정')}">✎</button>
@@ -2057,8 +2057,8 @@ async function matLoadDetail(mid,name){
   const box=document.getElementById("matDet_"+mid);if(!box)return;
   try{
     const r=await API("/ai/explain",{method:"POST",body:JSON.stringify({name})});
-    const vc=r.verdict==="BLOCK"?"bad":(r.verdict==="NEEDS_EVIDENCE"?"warn":"ok");
-    const vk={BLOCK:"차단(하람)",NEEDS_EVIDENCE:"증빙 필요",CLEARED:"할랄 허용",PASS:"할랄 허용"}[r.verdict]||r.verdict;
+    const vc=r.verdict==="BLOCK"?"bad":(r.verdict==="NEEDS_EVIDENCE"?"warn":(r.verdict?"ok":"mute"));
+    const vk={BLOCK:"차단(하람)",NEEDS_EVIDENCE:"증빙 필요",CLEARED:"할랄 허용",PASS:"할랄 허용",HALAL:"할랄 허용",HARAM:"차단(하람)",MUSHBOOH:"의심"}[r.verdict]||r.verdict||T('미판정');
     box.classList.remove("muted");
     box.innerHTML=`<div style="padding-top:6px">${bTag(vc,T(vk))}${r.category?` <span class="chip">${esc(r.category)}</span>`:''}${r.najis?` <span class="tag t-bad">najis</span>`:''}${r.severity?` <span class="muted small">· ${esc(r.severity)}</span>`:''}
       <div style="white-space:pre-wrap;color:var(--ink2);margin-top:6px">${esc(r.explanation||T('상세 설명 없음'))}</div>
