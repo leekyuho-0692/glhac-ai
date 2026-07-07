@@ -1259,6 +1259,25 @@ def test_material_dedup():
         assert "Gelatin" in names and len([n for n in names if "spartame" in n.lower()]) == 1, names
 
 
+def test_ocr_confidence_filter():
+    """§OCR 품질 — confidence 낮은(오인식) 라인 제거, 전부 저conf면 폴백 유지."""
+    from app import intake, ai_local
+    orig = ai_local.ocr_image
+    try:
+        ai_local.ocr_image = lambda p, lang="korean": {"lines": [
+            {"text": "정상라인A", "confidence": 0.95},
+            {"text": "쓰레기низ", "confidence": 0.2},   # 저confidence → 제거
+            {"text": "정상라인B", "confidence": 0.8}]}
+        out = intake._ocr_bytes(b"x", "png")
+        assert "정상라인A" in out and "정상라인B" in out and "쓰레기" not in out, out
+        # 전부 저conf → 폴백(빈 텍스트 방지)
+        ai_local.ocr_image = lambda p, lang="korean": {"lines": [
+            {"text": "저품질만", "confidence": 0.1}]}
+        assert "저품질만" in intake._ocr_bytes(b"x", "png")
+    finally:
+        ai_local.ocr_image = orig
+
+
 if __name__ == "__main__":
     tests = [test_pg_webhook, test_exif_gps_and_geo_fallback, test_document_translate, test_document_reprocess, test_material_report, test_application_draft_workflow, test_invoice_receipt_pdf, test_notification_drain, test_payment_p2_matching, test_payment_gate_p1, test_cases_pagination, test_read_audit_log,
              test_token_refresh_and_revoke, test_upload_validation_no_bypass,

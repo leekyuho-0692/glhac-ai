@@ -83,14 +83,23 @@ def _decode_text(data):
     return data.decode("utf-8", "ignore")
 
 
+_OCR_MIN_CONF = float(os.environ.get("GLHAC_OCR_MIN_CONF", "0.5"))
+_OCR_DPI = int(os.environ.get("GLHAC_OCR_DPI", "140"))   # 깨끗한 스캔은 140이 충분(측정), 저품질만 env 상향
+
+
 def _ocr_bytes(data, ext):
-    """OS 독립 임시파일에 써서 OCR — 고정 /tmp 경로·동시성 경합 제거(tempfile 사용)."""
+    """OS 독립 임시파일 OCR. confidence 낮은(오인식) 라인 제거로 품질↑.
+    (LLM 한글교정은 qwen2.5 테스트 결과 성분명 환각으로 더 악화 → 미채택, 할랄 안전)."""
     import tempfile
     fd, path = tempfile.mkstemp(suffix="." + ext)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
-        return " ".join(line["text"] for line in ai_local.ocr_image(path).get("lines", []))
+        lines = ai_local.ocr_image(path).get("lines", [])
+        kept = [l["text"] for l in lines if l.get("confidence", 1) >= _OCR_MIN_CONF]
+        if not kept and lines:            # 전부 저confidence면 폴백(빈 텍스트 방지)
+            kept = [l["text"] for l in lines]
+        return " ".join(kept)
     except Exception:  # noqa: BLE001
         return ""
     finally:
@@ -113,7 +122,7 @@ def parse_file(name, data):
             for pg in list(doc)[:8]:
                 t = pg.get_text()
                 if len(t.strip()) < 20:  # 스캔본 → PNG 렌더 후 OCR (파일경로 없이 bytes)
-                    t = _ocr_bytes(pg.get_pixmap(dpi=140).tobytes("png"), "png")
+                    t = _ocr_bytes(pg.get_pixmap(dpi=_OCR_DPI).tobytes("png"), "png")
                 txt += t + "\n"
             return txt
         if ext in ("txt", "csv"):
