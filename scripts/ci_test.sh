@@ -17,7 +17,9 @@ _check() {   # $1=label  $2=output
     echo "  ❌ ${label} $(echo "$out" | grep -oE 'FAIL [0-9]+' | tail -1)"; FAIL=1; return; fi
   local xy; xy=$(echo "$out" | grep -oE "[0-9]+/[0-9]+" | tail -1)
   if [ -n "$xy" ] && [ "${xy%/*}" != "${xy#*/}" ]; then
-    echo "  ❌ ${label} ${xy}"; FAIL=1; return; fi
+    echo "  ❌ ${label} ${xy}"
+    echo "$out" | grep -iE "\[FAIL\]|FAILED|AssertionError|^E " | head -5 | sed 's/^/      /'
+    FAIL=1; return; fi
   echo "  ✅ ${label} $(echo "$out" | grep -oE 'PASS [0-9].*' | tail -1)"
 }
 

@@ -11,3 +11,4 @@ pymupdf>=1.24          # 서버 PDF 생성(§7, 내장 CJK 폰트)
 # psycopg2-binary>=2.9
 openpyxl>=3.1          # xlsx 파싱(인테이크)
 python-docx>=1.1       # docx 파싱(인테이크)
+pillow>=10.0           # 현장실사 사진 EXIF GPS 추출(§EXIF, _exif_gps) — 로컬은 paddlepaddle이 끌어왔으나 명시 필요
