@@ -15,9 +15,14 @@ import hashlib
 import secrets
 from fastapi import Depends, HTTPException, Header
 from . import models
+from .db import get_db
 
 _DEFAULT_SECRET = "dev-secret-change-me"
 SECRET = os.environ.get("GLHAC_SECRET", _DEFAULT_SECRET).encode()
+
+# 토큰 수명 — access는 짧게, refresh는 길게(§9.1). 취소는 token_version 증가로.
+ACCESS_TTL = int(os.environ.get("GLHAC_ACCESS_TTL", "1800"))          # 30분
+REFRESH_TTL = int(os.environ.get("GLHAC_REFRESH_TTL", str(14 * 86400)))  # 14일
 
 
 def dev_mode() -> bool:
@@ -105,12 +110,20 @@ def clear_attempts(key):
     _LOGIN_ATTEMPTS.pop(key, None)
 
 
-def make_token(user, ttl=86400):
+def make_token(user, typ="access", ttl=None):
+    if ttl is None:
+        ttl = ACCESS_TTL if typ == "access" else REFRESH_TTL
     payload = {"uid": user.user_id, "username": user.username, "role": user.role,
-               "org_id": user.org_id, "exp": int(time.time()) + ttl}
+               "org_id": user.org_id, "typ": typ, "tv": user.token_version or 0,
+               "exp": int(time.time()) + ttl}
     raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     sig = hmac.new(SECRET, raw.encode(), hashlib.sha256).hexdigest()[:32]
     return f"{raw}.{sig}"
+
+
+def make_tokens(user):
+    """로그인/발급용 — access + refresh 쌍."""
+    return {"token": make_token(user, "access"), "refresh_token": make_token(user, "refresh")}
 
 
 def verify_token(token):
@@ -126,13 +139,19 @@ def verify_token(token):
         return None
 
 
-def get_current_user(authorization: str = Header(None)):
+def get_current_user(authorization: str = Header(None), db=Depends(get_db)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, {"code": "NO_AUTH"})
     payload = verify_token(authorization[7:])
     if not payload:
         raise HTTPException(401, {"code": "INVALID_TOKEN"})
-    return payload  # {uid, username, role, org_id}
+    if payload.get("typ") == "refresh":   # refresh 토큰은 API 접근용으로 못 씀
+        raise HTTPException(401, {"code": "REFRESH_NOT_ALLOWED"})
+    # 토큰 취소 확인 — token_version 불일치 시 무효(로그아웃/강제철회 반영)
+    u = db.get(models.User, payload.get("uid"))
+    if not u or payload.get("tv", 0) != (u.token_version or 0):
+        raise HTTPException(401, {"code": "TOKEN_REVOKED"})
+    return payload  # {uid, username, role, org_id, typ, tv}
 
 
 def require_roles(*roles):

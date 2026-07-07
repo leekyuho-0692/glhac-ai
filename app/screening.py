@@ -112,7 +112,7 @@ KMA1360_EXEMPT = {
     "titanium dioxide", "iron oxide", "carbon black", "kaolin", "talc", "mica", "zinc oxide",
     "magnesium carbonate", "calcium phosphate",
 }
-_RE_HIGH1 = re.compile(r"pork|pig|babi|porcine|lard|blood|darah|carrion|bangkai|human|placenta|khamr|wine|beer|rum|vodka|liquor|carmine|cochineal")
+_RE_HIGH1 = re.compile(r"pork|pig|babi|porcine|lard|bacon|ham\b|gammon|prosciutto|pepperoni|pancetta|chorizo|blood|darah|carrion|bangkai|human|placenta|khamr|wine|beer|rum|vodka|whisky|whiskey|brandy|liquor|carmine|cochineal")
 _RE_HIGH2 = re.compile(r"animal|hewani|beef|bovine|cow|chicken|poultry|meat|fat|gelatin|collagen|rennet|tallow|bone|skin")
 _RE_MED = re.compile(r"enzyme|microbial|fermentation|flavo[u]?r|glycerin|glycerol|emulsifier|mono|diglyceride|e471|ethanol|alcohol|solvent|oleic|stearic|polysorbate|lecithin|colou?r")
 

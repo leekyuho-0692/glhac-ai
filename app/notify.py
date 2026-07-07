@@ -1,12 +1,17 @@
-"""알림 채널 프로바이더 (Rizky #5).
+"""알림 채널 프로바이더 (Rizky #5 + §10.2 채널 확장).
 
 실제 발송은 환경변수(크리덴셜)가 주입될 때만 활성화된다. 미주입 시 로그 스텁으로 동작하고
 ok=False + reason("no_credentials")을 반환한다(워커는 이 경우 재시도하지 않음).
-inapp(앱 내 알림 = DB 저장)은 항상 동작한다. 실연동은 이 파일만 교체하면 된다.
+inapp(앱 내 알림 = DB 저장)은 항상 동작한다.
 
 지원 연동:
-- SMS / WhatsApp → Twilio REST API (GLHAC_TWILIO_SID / GLHAC_TWILIO_TOKEN / *_FROM)
-- KakaoTalk 알림톡 → 발송대행사 스텁(한국 스태프용, GLHAC_KAKAO_API_KEY)
+- SMS / WhatsApp → Twilio REST API (GLHAC_TWILIO_*)
+- KakaoTalk 알림톡 → 대행사 스텁(GLHAC_KAKAO_API_KEY, 미구현)
+- Email → SMTP (GLHAC_SMTP_HOST/PORT/USER/PASS/FROM)
+- Webhook → HTTP POST + HMAC 서명 (case별/전역 URL, GLHAC_WEBHOOK_SECRET)
+
+프로바이더 시그니처: fn(contacts: dict, text: str, notification) -> {channel, ok, reason?}
+  contacts = {"phone","email","webhook"}
 """
 import os
 import logging
@@ -15,12 +20,11 @@ log = logging.getLogger("glhac.notify")
 
 
 def _twilio_send(to, text, from_key, prefix=""):
-    """Twilio REST API 발송. 크리덴셜/수신번호 없으면 no_credentials/no_contact."""
     sid = os.environ.get("GLHAC_TWILIO_SID")
     token = os.environ.get("GLHAC_TWILIO_TOKEN")
     frm = os.environ.get(from_key)
     if not (sid and token and frm):
-        return None  # no_credentials — 상위에서 처리
+        return None
     if not to:
         return {"ok": False, "reason": "no_contact"}
     import httpx
@@ -36,7 +40,8 @@ def _twilio_send(to, text, from_key, prefix=""):
         return {"ok": False, "reason": "twilio_error:%s" % str(e)[:60]}
 
 
-def _send_sms(to, text):
+def _send_sms(contacts, text, notification=None):
+    to = contacts.get("phone")
     res = _twilio_send(to, text, "GLHAC_TWILIO_SMS_FROM", prefix="")
     if res is None:
         log.info("[SMS stub · no Twilio creds] to=%s :: %s", to, text)
@@ -45,7 +50,8 @@ def _send_sms(to, text):
     return res
 
 
-def _send_whatsapp(to, text):
+def _send_whatsapp(contacts, text, notification=None):
+    to = contacts.get("phone")
     res = _twilio_send(to, text, "GLHAC_TWILIO_WA_FROM", prefix="whatsapp:")
     if res is None:
         log.info("[WhatsApp stub · no Twilio creds] to=%s :: %s", to, text)
@@ -54,21 +60,85 @@ def _send_whatsapp(to, text):
     return res
 
 
-def _send_kakao(to, text):
-    key = os.environ.get("GLHAC_KAKAO_API_KEY")
-    if not key:
-        log.info("[KakaoTalk 알림톡 stub · no GLHAC_KAKAO_API_KEY] to=%s :: %s", to, text)
+def _send_kakao(contacts, text, notification=None):
+    to = contacts.get("phone")
+    if not os.environ.get("GLHAC_KAKAO_API_KEY"):
+        log.info("[KakaoTalk stub · no key] to=%s :: %s", to, text)
         return {"channel": "kakao", "ok": False, "reason": "no_credentials"}
-    # 실 발송 미구현 — 크리덴셜이 있어도 아직 대행사 연동 전. 성공으로 위장하지 않는다(블랙홀 방지).
-    log.warning("[KakaoTalk 알림톡 미구현 — 발송 안 됨] to=%s :: %s", to, text)
+    log.warning("[KakaoTalk 미구현 — 발송 안 됨] to=%s", to)
     return {"channel": "kakao", "ok": False, "reason": "not_implemented"}
 
 
-PROVIDERS = {"sms": _send_sms, "kakao": _send_kakao, "whatsapp": _send_whatsapp}
+def _send_email(contacts, text, notification=None):
+    """SMTP 발송(§10.2). GLHAC_SMTP_HOST 미설정 시 no_credentials."""
+    to = contacts.get("email")
+    host = os.environ.get("GLHAC_SMTP_HOST")
+    port = int(os.environ.get("GLHAC_SMTP_PORT", "587"))
+    user = os.environ.get("GLHAC_SMTP_USER")
+    pw = os.environ.get("GLHAC_SMTP_PASS")
+    frm = os.environ.get("GLHAC_SMTP_FROM") or user
+    if not (host and frm):
+        log.info("[Email stub · no SMTP creds] to=%s :: %s", to, text)
+        return {"channel": "email", "ok": False, "reason": "no_credentials"}
+    if not to:
+        return {"channel": "email", "ok": False, "reason": "no_contact"}
+    import smtplib
+    from email.mime.text import MIMEText
+    try:
+        subj = (notification.title if notification and notification.title else text)[:120]
+        msg = MIMEText(text, _charset="utf-8")
+        msg["Subject"] = "[GL-HAC] " + subj
+        msg["From"] = frm
+        msg["To"] = to
+        s = smtplib.SMTP(host, port, timeout=10)
+        try:
+            s.starttls()
+        except Exception:  # noqa: BLE001
+            pass
+        if user and pw:
+            s.login(user, pw)
+        s.sendmail(frm, [to], msg.as_string())
+        s.quit()
+        return {"channel": "email", "ok": True}
+    except Exception as e:  # noqa: BLE001
+        return {"channel": "email", "ok": False, "reason": "smtp_error:%s" % str(e)[:60]}
 
 
-def dispatch(notification, contact=None, channels=None):
-    """channels(없으면 notification.channels)를 순회하며 발송. inapp은 DB 저장으로 항상 성공."""
+def _send_webhook(contacts, text, notification=None):
+    """Webhook HTTP POST + HMAC 서명(§10.2). URL 없으면 no_contact."""
+    url = contacts.get("webhook")
+    if not url:
+        return {"channel": "webhook", "ok": False, "reason": "no_contact"}
+    import json
+    import hmac
+    import hashlib
+    import httpx
+    payload = json.dumps({
+        "event_type": getattr(notification, "event_type", None),
+        "title": getattr(notification, "title", None),
+        "body": getattr(notification, "body", None),
+        "case_id": getattr(notification, "case_id", None),
+        "role": getattr(notification, "role", None),
+    }, ensure_ascii=False)
+    secret = os.environ.get("GLHAC_WEBHOOK_SECRET", "").encode()
+    sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest() if secret else ""
+    try:
+        r = httpx.post(url, content=payload.encode("utf-8"), timeout=10,
+                       headers={"Content-Type": "application/json", "X-GLHAC-Signature": sig})
+        if 200 <= r.status_code < 300:
+            return {"channel": "webhook", "ok": True}
+        return {"channel": "webhook", "ok": False, "reason": "webhook_%d" % r.status_code}
+    except Exception as e:  # noqa: BLE001
+        return {"channel": "webhook", "ok": False, "reason": "webhook_error:%s" % str(e)[:60]}
+
+
+PROVIDERS = {"sms": _send_sms, "kakao": _send_kakao, "whatsapp": _send_whatsapp,
+             "email": _send_email, "webhook": _send_webhook}
+
+
+def dispatch(notification, contacts=None, channels=None):
+    """channels 순회 발송. contacts={phone,email,webhook}. inapp은 DB 저장으로 항상 성공."""
+    contacts = contacts or {}
     results = []
     text = (notification.title or "") + (": " + notification.body if notification.body else "")
     for ch in (channels if channels is not None else (notification.channels or ["inapp"])):
@@ -77,5 +147,5 @@ def dispatch(notification, contact=None, channels=None):
             continue
         fn = PROVIDERS.get(ch)
         if fn:
-            results.append(fn(contact, text))
+            results.append(fn(contacts, text, notification))
     return results

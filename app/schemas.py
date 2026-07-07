@@ -13,6 +13,13 @@ class CaseCreate(BaseModel):
 class ProductCreate(BaseModel):
     name: str
     category: Optional[str] = None
+    registration_type: Optional[str] = None
+
+
+class ProductUpdate(BaseModel):
+    category: Optional[str] = None
+    registration_type: Optional[str] = None
+    status: Optional[str] = None
 
 
 class MaterialCreate(BaseModel):
@@ -233,6 +240,10 @@ class LoginReq(BaseModel):
     password: str
 
 
+class RefreshReq(BaseModel):
+    refresh_token: str
+
+
 class RegisterReq(BaseModel):
     username: str
     password: str
@@ -269,3 +280,129 @@ class AdminOrgReq(BaseModel):
 
 class SeedResetReq(BaseModel):
     confirm: str   # "RESET" 필요
+
+
+class UnlockReq(BaseModel):
+    reason: str = Field(min_length=5)   # 언락 사유 필수(감사 추적)
+
+
+class CertStatusReq(BaseModel):
+    reason: str = Field(min_length=5)   # 정지/철회/재개 사유 필수(감사·통지)
+
+
+class RenewRequestReq(BaseModel):
+    reason: Optional[str] = None
+
+
+class IssueReq(BaseModel):
+    reason: Optional[str] = None   # operator 발급 사유(감사 추적)
+
+
+class AiReviewReq(BaseModel):
+    reviewer_status: str            # accepted | overridden
+    note: Optional[str] = None
+
+
+class AuditPlanReq(BaseModel):
+    lph_name: Optional[str] = None
+    scheduled_date: str                       # ISO date
+    scope: Optional[str] = None
+    auditors: Optional[list] = None
+
+
+class AuditPlanPatchReq(BaseModel):
+    status: Optional[str] = None              # scheduled|completed|cancelled
+    scheduled_date: Optional[str] = None
+    note: Optional[str] = None
+
+
+class FatwaVoteReq(BaseModel):
+    member: str
+    vote: str                                 # approve|reject|abstain
+    note: Optional[str] = None
+
+
+class CarSubmitReq(BaseModel):
+    description: str
+    evidence: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+class CarReviewReq(BaseModel):
+    status: str                               # accepted|rejected|closed
+    note: Optional[str] = None
+
+
+class IntegrationEventReq(BaseModel):
+    event_type: str
+    idempotency_key: str
+    external_id: Optional[str] = None
+    case_id: Optional[str] = None
+    payload: Optional[dict] = None
+
+
+class InvoiceStatusReq(BaseModel):
+    status: str
+    reason: Optional[str] = None
+
+
+class PaymentReq(BaseModel):
+    method: str                               # bank_transfer|va|card|manual
+    amount: Optional[float] = None
+    depositor_name: Optional[str] = None
+    reference: Optional[str] = None
+
+
+class DepositReq(BaseModel):
+    bank_name: Optional[str] = None
+    account_no: Optional[str] = None
+    depositor_name: Optional[str] = None
+    amount: float = Field(ge=0)
+    ref_memo: Optional[str] = None
+
+
+class MatchDecisionReq(BaseModel):
+    decision: str          # approved|held|rejected
+
+
+class ReturnReq(BaseModel):
+    reason: str            # 신청서 반려 사유
+
+
+class GeoReq(BaseModel):
+    lat: float             # 위도
+    lng: float             # 경도
+    source: Optional[str] = "browser"   # browser|manual
+
+
+class RefundReq(BaseModel):
+    amount: Optional[float] = None    # 미지정 시 인보이스 전액
+    reason: str                       # 환불 사유
+
+
+class RefundDecideReq(BaseModel):
+    decision: str                     # approved|rejected
+    note: Optional[str] = None
+
+
+class FeedbackReq(BaseModel):
+    title: str
+    body: Optional[str] = ""
+    category: Optional[str] = "improvement"   # improvement|bug|question|other
+
+
+class FeedbackImageReq(BaseModel):
+    file_b64: str
+    filename: Optional[str] = "feedback.png"
+
+
+class FeedbackStatusReq(BaseModel):
+    status: str   # open|reviewing|resolved|wontfix
+
+
+class FeedbackCommentReq(BaseModel):
+    body: str
+
+
+class MaterialRenameReq(BaseModel):
+    name: str          # OCR 오독 교정용 원재료명

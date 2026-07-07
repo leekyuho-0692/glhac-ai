@@ -43,51 +43,108 @@ REQUIRED_DOCS = ["nib_business_license", "factory_registration", "product_list",
 _IMG = ("png", "jpg", "jpeg", "bmp", "tiff", "tif", "webp")
 
 
+def _zip_name(zi):
+    """한국어 Windows ZIP은 파일명이 CP949인데 UTF-8 플래그(0x800)가 없으면
+    zipfile이 CP437로 디코드해 깨진다(┴╓..). CP437로 되돌려 CP949로 재디코드."""
+    name = zi.filename
+    if not (zi.flag_bits & 0x800):
+        for enc in ("cp949", "euc-kr", "utf-8"):
+            try:
+                return name.encode("cp437").decode(enc)
+            except Exception:
+                continue
+    return name
+
+
 def extract_zip(data):
     out = []
     with zipfile.ZipFile(io.BytesIO(data)) as z:
-        for name in z.namelist():
-            if name.endswith("/"):
+        for zi in z.infolist():
+            if zi.is_dir():
                 continue
+            name = _zip_name(zi)
             base = os.path.basename(name)
             if not base or base.startswith("."):
                 continue
             try:
-                out.append((name, z.read(name)))
+                out.append((name, z.read(zi)))
             except Exception:  # noqa: BLE001
                 pass
     return out
 
 
-def parse_file(name, data):
-    """확장자별 텍스트 추출. 이미지·스캔PDF=PaddleOCR, PDF=텍스트, docx=python-docx."""
+def _decode_text(data):
+    """OS/로케일 독립 텍스트 디코드 — UTF-8→CP949→EUC-KR 순 시도(한국 Windows 파일 대응)."""
+    for enc in ("utf-8", "cp949", "euc-kr", "latin-1"):
+        try:
+            return data.decode(enc)
+        except Exception:
+            continue
+    return data.decode("utf-8", "ignore")
+
+
+_OCR_MIN_CONF = float(os.environ.get("GLHAC_OCR_MIN_CONF", "0.5"))
+_OCR_DPI = int(os.environ.get("GLHAC_OCR_DPI", "140"))   # 깨끗한 스캔은 140이 충분(측정), 저품질만 env 상향
+
+
+def _ocr_bytes(data, ext):
+    """OS 독립 임시파일 OCR. confidence 낮은(오인식) 라인 제거로 품질↑.
+    (LLM 한글교정은 qwen2.5 테스트 결과 성분명 환각으로 더 악화 → 미채택, 할랄 안전)."""
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix="." + ext)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        lines = ai_local.ocr_image(path).get("lines", [])
+        kept = [l["text"] for l in lines if l.get("confidence", 1) >= _OCR_MIN_CONF]
+        if not kept and lines:            # 전부 저confidence면 폴백(빈 텍스트 방지)
+            kept = [l["text"] for l in lines]
+        return " ".join(kept)
+    except Exception:  # noqa: BLE001
+        return ""
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def parse_file(name, data, dpi=None):
+    """확장자별 텍스트 추출 — OS 독립. 이미지/스캔PDF=OCR, PDF=fitz, docx/xlsx/txt.
+    dpi 지정 시 스캔 렌더 해상도 오버라이드(고해상도 재처리용, 기본 _OCR_DPI)."""
     ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+    _dpi = int(dpi) if dpi else _OCR_DPI
+    _dpi = max(72, min(600, _dpi))   # 안전 범위
     try:
         if ext in _IMG:
-            p = "/tmp/glhac_intake.%s" % ext
-            with open(p, "wb") as f:
-                f.write(data)
-            r = ai_local.ocr_image(p)
-            return " ".join(line["text"] for line in r.get("lines", []))
+            return _ocr_bytes(data, ext)
         if ext == "pdf":
             import fitz
             doc = fitz.open(stream=data, filetype="pdf")
             txt = ""
-            for pg in list(doc)[:5]:
+            for pg in list(doc)[:8]:
                 t = pg.get_text()
-                if len(t.strip()) < 20:  # 스캔본 → 렌더 후 OCR
-                    pix = pg.get_pixmap(dpi=140)
-                    p = "/tmp/glhac_pdf.png"
-                    pix.save(p)
-                    t = " ".join(line["text"] for line in ai_local.ocr_image(p).get("lines", []))
+                if len(t.strip()) < 20:  # 스캔본 → PNG 렌더 후 OCR (파일경로 없이 bytes)
+                    t = _ocr_bytes(pg.get_pixmap(dpi=_dpi).tobytes("png"), "png")
                 txt += t + "\n"
             return txt
-        if ext == "txt":
-            return data.decode("utf-8", "ignore")
+        if ext in ("txt", "csv"):
+            return _decode_text(data)
         if ext == "docx":
             import docx
             d = docx.Document(io.BytesIO(data))
-            return "\n".join(p.text for p in d.paragraphs)
+            return "\n".join(pp.text for pp in d.paragraphs)
+        if ext == "xlsx":
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            out = []
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(values_only=True):
+                    cells = [str(c) for c in row if c is not None]
+                    if cells:
+                        out.append(" ".join(cells))
+            wb.close()
+            return "\n".join(out)[:20000]
     except Exception:  # noqa: BLE001
         return ""
     return ""
@@ -96,8 +153,11 @@ def parse_file(name, data):
 _CLASSIFY_SYS = (
     "당신은 할랄 인증 서류 분류기입니다. 파일명과 본문 발췌를 보고 doc_type을 분류하고 핵심 필드를 추출하세요. "
     "doc_type은 반드시 다음 중 하나: " + ", ".join(DOC_TYPES) + ". "
+    "address는 사업장/공장 소재지 주소 전체, responsible_person은 대표자/책임자 이름, "
+    "factory_reg_no는 공장/영업 등록번호. 없으면 null. "
     '반드시 JSON으로만: {"doc_type":"...","confidence":0.0,'
-    '"fields":{"company_name":null,"nib":null,"product_names":[],"cert_no":null,'
+    '"fields":{"company_name":null,"nib":null,"address":null,"responsible_person":null,'
+    '"factory_reg_no":null,"product_names":[],"cert_no":null,'
     '"issuer":null,"expiry_date":null,"material_names":[]}}'
 )
 
@@ -150,15 +210,28 @@ def parse_typed(doc_type, filename, data):
             "text_len": len(text), "excerpt": text[:300]}
 
 
+_APPLICANT_DOCS = ("nib_business_license", "factory_registration")
+
+
 def aggregate_fields(docs):
-    """분류 문서들의 추출 필드를 신청서용으로 집계."""
-    agg = {"company_name": None, "nib": None, "products": [], "materials": [], "certificates": []}
+    """분류 문서들의 추출 필드를 신청서용으로 집계.
+    회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외)."""
+    agg = {"company_name": None, "nib": None, "address": None, "responsible_person": None,
+           "factory_reg_no": None, "products": [], "materials": [], "certificates": []}
     for d in docs:
         f = d.get("fields") or {}
-        if not agg["company_name"] and f.get("company_name"):
-            agg["company_name"] = f["company_name"]
-        if not agg["nib"] and f.get("nib"):
-            agg["nib"] = f["nib"]
+        applicant = d.get("doc_type") in _APPLICANT_DOCS or d.get("doc_type") is None
+        if applicant:
+            if not agg["company_name"] and f.get("company_name"):
+                agg["company_name"] = f["company_name"]
+            if not agg["nib"] and f.get("nib"):
+                agg["nib"] = f["nib"]
+            if not agg["address"] and (f.get("address") or f.get("factory_address")):
+                agg["address"] = f.get("address") or f.get("factory_address")
+            if not agg["responsible_person"] and f.get("responsible_person"):
+                agg["responsible_person"] = f["responsible_person"]
+            if not agg["factory_reg_no"] and f.get("factory_reg_no"):
+                agg["factory_reg_no"] = f["factory_reg_no"]
         for p in (f.get("product_names") or []):
             if p and p not in agg["products"]:
                 agg["products"].append(p)
@@ -171,7 +244,7 @@ def aggregate_fields(docs):
     return agg
 
 
-def intake_zip_iter(data, limit=30):
+def intake_zip_iter(data, limit=200):
     """ZIP → 파일별 파싱+분류를 진행하며 진행상황을 yield (스트리밍용).
 
     yield ("progress", {...})  파일 처리할 때마다

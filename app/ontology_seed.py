@@ -296,11 +296,37 @@ for _uid, _al in _ID_ALIASES.items():
                 _amap["id"].append(_a)
 
 
+def _load_ontology():
+    """정본 데이터셋 로드 — ontology_data.json(310+종, 코드 버전관리) 우선, 없으면 ONTOLOGY(43 fallback)."""
+    import os
+    import json as _json
+    p = os.path.join(os.path.dirname(__file__), "ontology_data.json")
+    if os.path.exists(p):
+        try:
+            return _json.load(open(p, encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            pass
+    return ONTOLOGY
+
+
+_COLS = {"ingredient_uid", "canonical_name", "category", "e_number", "default_status",
+         "severity", "najis_risk", "carrier_check", "sources", "aliases",
+         "required_evidence", "alternatives", "rule_version"}
+
+
 def seed(db):
+    """규칙버전 + 성분 온톨로지 증분 시딩 — uid 미존재분만 추가(기존 DB 보존, 대량확장 반영)."""
     if not db.get(RuleVersion, RULE_VERSION):
         db.add(RuleVersion(code=RULE_VERSION, jurisdiction="ID",
                            effective_from="2026-01-01", status="active"))
-    if db.query(IngredientOntology).count() == 0:
-        for row in ONTOLOGY:
-            db.add(IngredientOntology(**row))
+    existing = {u for (u,) in db.query(IngredientOntology.ingredient_uid).all()}
+    added = 0
+    for row in _load_ontology():
+        uid = row.get("ingredient_uid")
+        if not uid or uid in existing:
+            continue
+        db.add(IngredientOntology(**{k: v for k, v in row.items() if k in _COLS}))
+        existing.add(uid)
+        added += 1
     db.commit()
+    return added

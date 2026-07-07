@@ -62,11 +62,11 @@ def llm_json(system, user, timeout=90):
         return {"error": str(e)}
 
 
-def llm_text(system, user, timeout=120):
-    """평문(prose) 응답 — 설명·요약용. 실패 시 ''."""
+def llm_text(system, user, timeout=120, model=None):
+    """평문(prose) 응답 — 설명·요약용. model 지정 시 해당 ollama 모델 사용(온디맨드 로드). 실패 시 ''."""
     try:
         r = httpx.post(f"{OLLAMA}/api/chat", timeout=timeout, json={
-            "model": MODEL, "stream": False,
+            "model": model or MODEL, "stream": False,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}]})
         return r.json()["message"]["content"].strip()

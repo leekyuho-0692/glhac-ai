@@ -26,6 +26,8 @@ class CaseApplication(Base):
     due_date = Column(String)  # 처리 목표 기한(ISO date) — 기한 경보용
     notify_consent = Column(Boolean, default=False)  # 알림 수신 동의(WhatsApp opt-in 등)
     status = Column(String, nullable=False, default="onboarding")
+    draft_state = Column(String)  # 신청단계 오버레이: saved(임시저장)|in_progress(작성중)|completed(작성완료)|returned(반려)
+    return_reason = Column(Text)  # 반려 사유(consultant→applicant)
     pathway = Column(String, nullable=False, default="undetermined")  # 24.9
     risk_category = Column(String)
     is_msme = Column(Boolean)
@@ -88,6 +90,8 @@ class Product(Base):
     case_id = Column(String, nullable=False)
     name = Column(String, nullable=False)
     category = Column(String)
+    registration_type = Column(String)   # new|renewal|material_change (Rizky: Product Detail)
+    status = Column(String, default="draft")   # draft|under_review|certified|expired
 
 
 class ProductMaterial(Base):
@@ -230,6 +234,7 @@ class HalalCertificate(Base):
     status = Column(String, default="active")  # active|suspended|withdrawn
     frozen_product_ids = Column(JSON)    # 발급 시 동결 제품 ID 목록 — S3-3
     frozen_material_ids = Column(JSON)   # 발급 시 동결 원재료 ID 목록 — S3-3
+    qr_token = Column(String, index=True)   # 공개 검증 토큰(§6.4) — /verify/{token}
 
 
 class FatwaDecision(Base):
@@ -259,7 +264,9 @@ class Invoice(Base):
     amount = Column(Float)
     ppn = Column(Float)
     total = Column(Float)
-    status = Column(String, default="unpaid")  # unpaid|paid
+    status = Column(String, default="waiting_payment")  # 9종(draft~refunded/expired), legacy unpaid=waiting
+    due_date = Column(DateTime)
+    payment_ref = Column(String, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -292,10 +299,14 @@ class DocumentAsset(Base):
     fields = Column(JSON)
     text_excerpt = Column(Text)
     review_status = Column(String, default="pending")  # pending|approved|rejected|rework
+    translations = Column(JSON)   # {lang: 번역문} 온디맨드 캐시(예: {"id": "..."}) — 조회시점 번역
     content_b64 = Column(Text)    # 원본 파일 base64 (조회/다운로드용, <3MB만)
     content_type = Column(String)  # MIME
     material_id = Column(String)   # 원재료별 증빙 연결(nullable) — 설계 G1/C1
     product_id = Column(String)    # 제품 사진 연결(nullable) — 설계 G2
+    lat = Column(Float)            # 촬영 위치 위도 — 현장실사 사진 EXIF GPS/브라우저
+    lng = Column(Float)            # 촬영 위치 경도
+    geo_source = Column(String)    # exif|browser|manual — 위치 출처
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -371,3 +382,211 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False)   # applicant|penyelia_halal|consultant|pendamping_pph|auditor|fatwa_liaison|admin
     org_id = Column(String, nullable=False)
+    token_version = Column(Integer, default=0)   # 토큰 취소 — 증가 시 기존 토큰 전부 무효(§9.1)
+
+
+class AiExtraction(Base):
+    """AI/OCR 결과 근거저장 (보강안 §7.2) — Human-in-the-loop 추적성."""
+    __tablename__ = "ai_extraction"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, index=True)
+    source = Column(String)          # ocr|label_judgment|biz_doc
+    model_provider = Column(String)  # local|paddleocr 등
+    model_name = Column(String)
+    model_version = Column(String)
+    extracted_json = Column(JSON)    # 추출 필드/판정
+    confidence = Column(Float)
+    evidence = Column(Text)          # 원문 근거 텍스트(요약)
+    reviewer_status = Column(String, default="unreviewed")  # unreviewed|accepted|overridden
+    reviewer_id = Column(String)
+    reviewer_note = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AuditPlan(Base):
+    """LPH 현장심사 일정(§P2 LPH scheduling)."""
+    __tablename__ = "audit_plan"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    lph_name = Column(String)
+    scheduled_date = Column(String)   # ISO date
+    scope = Column(Text)
+    auditors = Column(JSON)           # 심사원 이름 목록
+    status = Column(String, default="scheduled")  # scheduled|completed|cancelled
+    note = Column(String)
+    created_by = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FatwaVote(Base):
+    """파트와 위원 투표(§6.2 fatwa_votes) — 위원별 1표, quorum 산정."""
+    __tablename__ = "fatwa_vote"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    member = Column(String, nullable=False)
+    vote = Column(String)             # approve|reject|abstain
+    note = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CorrectiveAction(Base):
+    """시정조치 CAR(§P2 CAR advanced) — finding별 제출→검토→종결 라이프사이클."""
+    __tablename__ = "corrective_action"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    finding_id = Column(String, nullable=False, index=True)
+    description = Column(Text)
+    evidence = Column(Text)
+    status = Column(String, default="submitted")  # submitted|accepted|rejected|closed
+    reviewer = Column(String)
+    reviewer_note = Column(String)
+    due_date = Column(String)
+    submitted_by = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class IntegrationEvent(Base):
+    """외부 연동 이벤트 로그(§10.1) — idempotency_key로 중복수신 방지."""
+    __tablename__ = "integration_event"
+    id = Column(String, primary_key=True, default=uid)
+    provider = Column(String, default="sihalal")
+    event_type = Column(String)
+    external_id = Column(String)
+    idempotency_key = Column(String, index=True)
+    case_id = Column(String, index=True)
+    request_hash = Column(String)
+    response_hash = Column(String)
+    payload = Column(JSON)
+    status = Column(String, default="received")   # received|processed|failed
+    retry_count = Column(Integer, default=0)
+    last_error = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Signature(Base):
+    """전자서명(§6.4) — 인증서/문서 무결성+발급자 서명(내부 HMAC MVP)."""
+    __tablename__ = "signature"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, index=True)
+    subject_type = Column(String)     # certificate|document
+    subject_id = Column(String)
+    signer = Column(String)
+    provider = Column(String, default="internal-hmac")
+    payload_hash = Column(String)     # sha256 canonical content
+    signature_value = Column(String)  # HMAC(SECRET, payload)
+    signed_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Payment(Base):
+    """결제 기록(§P2 billing/payment) — 인보이스 결제 확인."""
+    __tablename__ = "payment"
+    id = Column(String, primary_key=True, default=uid)
+    invoice_id = Column(String, index=True)
+    case_id = Column(String, index=True)
+    amount = Column(Float)
+    currency = Column(String, default="IDR")
+    method = Column(String)           # bank_transfer|va|card|manual
+    reference = Column(String)
+    status = Column(String, default="confirmed")  # pending|confirmed
+    paid_by = Column(String)
+    paid_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AuditLog(Base):
+    """접근/조회 감사로그(§2.4) — 워크플로 전이(workflow_event)와 별개.
+    누가·언제·무엇을 조회/다운로드/변경했는지. 읽기까지 감사 대상."""
+    __tablename__ = "audit_log"
+    id = Column(String, primary_key=True, default=uid)
+    actor_id = Column(String, index=True)
+    actor_role = Column(String)
+    org_id = Column(String, index=True)
+    action = Column(String, index=True)   # case.read|document.download|fatwa.document.read|certificate.read|ai.extraction.read|role.change
+    resource_type = Column(String)
+    resource_id = Column(String, index=True)
+    case_id = Column(String, index=True)
+    meta = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Deposit(Base):
+    """은행 입금내역 (Payment P2 §8.4) — 인보이스 자동매칭 대상."""
+    __tablename__ = "deposit"
+    id = Column(String, primary_key=True, default=uid)
+    bank_name = Column(String)
+    account_no_masked = Column(String)
+    depositor_name = Column(String)
+    amount = Column(Float)
+    currency = Column(String, default="IDR")
+    ref_memo = Column(String)                 # 이체 메모(invoice_no/payment_ref 포함 가능)
+    deposit_at = Column(DateTime, default=datetime.utcnow)
+    matched_invoice_id = Column(String, index=True)
+    match_status = Column(String, default="unmatched")   # unmatched|candidate|matched|rejected
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PaymentMatchCandidate(Base):
+    """입금↔인보이스 매칭 후보 (Payment P2 §8.5) — 규칙 스코어 + 관리자 승인."""
+    __tablename__ = "payment_match_candidate"
+    id = Column(String, primary_key=True, default=uid)
+    deposit_id = Column(String, index=True)
+    invoice_id = Column(String, index=True)
+    case_id = Column(String)
+    score = Column(Float)
+    reason = Column(JSON)
+    risk_flags = Column(JSON)
+    decision_status = Column(String, default="pending")  # pending|approved|held|rejected
+    reviewer_id = Column(String)
+    reviewed_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Refund(Base):
+    """환불 요청·2단계 승인 (Payment P5) — maker(요청)≠checker(승인)."""
+    __tablename__ = "refund"
+    id = Column(String, primary_key=True, default=uid)
+    invoice_id = Column(String, index=True)
+    case_id = Column(String, index=True)
+    amount = Column(Float)
+    reason = Column(Text)                 # 환불 사유
+    status = Column(String, default="requested")   # requested|approved|rejected
+    requested_by = Column(String)
+    decided_by = Column(String)
+    decide_note = Column(Text)            # 승인/거절 메모
+    decided_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Feedback(Base):
+    """솔루션 개선 피드백(전역, 케이스 비종속) — 제출=전원, 열람=admin/ops 전체·그외 본인."""
+    __tablename__ = "feedback"
+    feedback_id = Column(String, primary_key=True, default=uid)
+    author = Column(String, nullable=False)         # username
+    author_role = Column(String, nullable=False)
+    org_id = Column(String)
+    category = Column(String, default="improvement")  # improvement|bug|question|other
+    title = Column(String, nullable=False)
+    body = Column(Text)
+    status = Column(String, default="open")          # open|reviewing|resolved|wontfix
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FeedbackImage(Base):
+    __tablename__ = "feedback_image"
+    image_id = Column(String, primary_key=True, default=uid)
+    feedback_id = Column(String, nullable=False, index=True)
+    filename = Column(String)
+    content_b64 = Column(Text)          # <4MB만 저장
+    content_type = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FeedbackComment(Base):
+    __tablename__ = "feedback_comment"
+    comment_id = Column(String, primary_key=True, default=uid)
+    feedback_id = Column(String, nullable=False, index=True)
+    author = Column(String, nullable=False)
+    author_role = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

@@ -1,0 +1,7678 @@
+[
+ {
+  "ingredient_uid": "ing.beeswax",
+  "canonical_name": "Beeswax",
+  "category": "glazing",
+  "e_number": "E901",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "insect"
+  ],
+  "aliases": {
+   "ko": [
+    "밀랍"
+   ],
+   "en": [
+    "beeswax"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "카나우바 왁스"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.bone_char",
+  "canonical_name": "Bone char",
+  "category": "processing_aid",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "골탄"
+   ],
+   "en": [
+    "bone char"
+   ]
+  },
+  "required_evidence": [
+   "process_declaration"
+  ],
+  "alternatives": [
+   "활성탄"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.bone_phosphate",
+  "canonical_name": "Bone phosphate",
+  "category": "additive",
+  "e_number": "E542",
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "fosfat tulang"
+   ],
+   "ko": [
+    "골인산"
+   ],
+   "en": [
+    "bone phosphate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "광물 인산염"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.butylene_glycol",
+  "canonical_name": "Butylene glycol",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "부틸렌글라이콜",
+    "부틸렌글리콜"
+   ],
+   "en": [
+    "butylene glycol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.carbon_color",
+  "canonical_name": "Vegetable/animal carbon",
+  "category": "colorant",
+  "e_number": "E153",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "식물성탄소",
+    "카본블랙"
+   ],
+   "en": [
+    "vegetable carbon",
+    "carbon black"
+   ]
+  },
+  "required_evidence": [
+   "process_declaration"
+  ],
+  "alternatives": [
+   "식물성 carbon"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.carmine",
+  "canonical_name": "Carmine/Cochineal",
+  "category": "colorant",
+  "e_number": "E120",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "insect"
+  ],
+  "aliases": {
+   "ko": [
+    "카민",
+    "코치닐"
+   ],
+   "en": [
+    "carmine",
+    "cochineal"
+   ],
+   "id": [
+    "karmin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성 색소"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.carotene",
+  "canonical_name": "Carotene (color)",
+  "category": "colorant",
+  "e_number": "E160a",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": "gelatin",
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "카로틴",
+    "베타카로틴"
+   ],
+   "en": [
+    "carotene",
+    "beta-carotene"
+   ]
+  },
+  "required_evidence": [
+   "carrier_check"
+  ],
+  "alternatives": [
+   "식물성 캐리어 카로틴"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.citric_acid",
+  "canonical_name": "Citric acid",
+  "category": "ferment",
+  "e_number": "E330",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "ferment"
+  ],
+  "aliases": {
+   "ko": [
+    "구연산",
+    "시트르산"
+   ],
+   "en": [
+    "citric acid"
+   ],
+   "id": [
+    "asam sitrat"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.collagen",
+  "canonical_name": "Collagen",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "kolagen"
+   ],
+   "ko": [
+    "콜라겐"
+   ],
+   "en": [
+    "collagen"
+   ]
+  },
+  "required_evidence": [
+   "halal_cert",
+   "source_declaration"
+  ],
+  "alternatives": [
+   "fish collagen"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.datem",
+  "canonical_name": "DATEM",
+  "category": "emulsifier",
+  "e_number": "E472e",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "datem"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e100",
+  "canonical_name": "Curcumin",
+  "category": "additive",
+  "e_number": "E100",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "curcumin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1000",
+  "canonical_name": "Cholic Acid (bovine bile)",
+  "category": "additive",
+  "e_number": "E1000",
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "en": [
+    "cholic acid"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e101",
+  "canonical_name": "Riboflavin",
+  "category": "additive",
+  "e_number": "E101",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "riboflavin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e102",
+  "canonical_name": "Tartrazine",
+  "category": "additive",
+  "e_number": "E102",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "tartrazine"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e104",
+  "canonical_name": "Quinoline Yellow",
+  "category": "additive",
+  "e_number": "E104",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "quinoline yellow"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e110",
+  "canonical_name": "Sunset Yellow",
+  "category": "additive",
+  "e_number": "E110",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sunset yellow"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1105",
+  "canonical_name": "Lysozyme (egg)",
+  "category": "additive",
+  "e_number": "E1105",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "en": [
+    "lysozyme"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1200",
+  "canonical_name": "Polydextrose",
+  "category": "additive",
+  "e_number": "E1200",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "polydextrose"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e122",
+  "canonical_name": "Azorubine",
+  "category": "additive",
+  "e_number": "E122",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "azorubine"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e124",
+  "canonical_name": "Ponceau 4R",
+  "category": "additive",
+  "e_number": "E124",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "ponceau 4r"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e129",
+  "canonical_name": "Allura Red",
+  "category": "additive",
+  "e_number": "E129",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "allura red"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e131",
+  "canonical_name": "Patent Blue V",
+  "category": "additive",
+  "e_number": "E131",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "patent blue v"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e132",
+  "canonical_name": "Indigotine",
+  "category": "additive",
+  "e_number": "E132",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "indigotine"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e133",
+  "canonical_name": "Brilliant Blue",
+  "category": "additive",
+  "e_number": "E133",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "brilliant blue"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e140",
+  "canonical_name": "Chlorophyll",
+  "category": "additive",
+  "e_number": "E140",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "chlorophyll"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1400",
+  "canonical_name": "Dextrin",
+  "category": "additive",
+  "e_number": "E1400",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "dextrin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1404",
+  "canonical_name": "Oxidized Starch",
+  "category": "additive",
+  "e_number": "E1404",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "oxidized starch"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e141",
+  "canonical_name": "Copper Chlorophyllin",
+  "category": "additive",
+  "e_number": "E141",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "copper chlorophyllin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1412",
+  "canonical_name": "Distarch Phosphate",
+  "category": "additive",
+  "e_number": "E1412",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "distarch phosphate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e142",
+  "canonical_name": "Green S",
+  "category": "additive",
+  "e_number": "E142",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "green s"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1420",
+  "canonical_name": "Acetylated Starch",
+  "category": "additive",
+  "e_number": "E1420",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "acetylated starch"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1422",
+  "canonical_name": "Modified Starch",
+  "category": "additive",
+  "e_number": "E1422",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "modified starch"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1442",
+  "canonical_name": "Hydroxypropyl Distarch Phosphate",
+  "category": "additive",
+  "e_number": "E1442",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "hydroxypropyl distarch phosphate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1450",
+  "canonical_name": "Starch Sodium Octenyl Succinate",
+  "category": "additive",
+  "e_number": "E1450",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "starch sodium octenyl succinate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1505",
+  "canonical_name": "Triethyl Citrate",
+  "category": "additive",
+  "e_number": "E1505",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "triethyl citrate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e150a",
+  "canonical_name": "Caramel",
+  "category": "additive",
+  "e_number": "E150a",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "caramel"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e151",
+  "canonical_name": "Brilliant Black BN",
+  "category": "additive",
+  "e_number": "E151",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "brilliant black bn"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e1520",
+  "canonical_name": "Propylene Glycol",
+  "category": "additive",
+  "e_number": "E1520",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "propylene glycol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e155",
+  "canonical_name": "Brown HT",
+  "category": "additive",
+  "e_number": "E155",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "brown ht"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e160a",
+  "canonical_name": "Beta-carotene (synthetic)",
+  "category": "additive",
+  "e_number": "E160a",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "beta-carotene (synthetic)"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e160b",
+  "canonical_name": "Annatto",
+  "category": "additive",
+  "e_number": "E160b",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "annatto"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e160c",
+  "canonical_name": "Paprika Extract",
+  "category": "additive",
+  "e_number": "E160c",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "paprika extract"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e160d",
+  "canonical_name": "Lycopene",
+  "category": "additive",
+  "e_number": "E160d",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "lycopene"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e160e",
+  "canonical_name": "Beta-apo-8-carotenal",
+  "category": "additive",
+  "e_number": "E160e",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "beta-apo-8-carotenal"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e161b",
+  "canonical_name": "Lutein",
+  "category": "additive",
+  "e_number": "E161b",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "lutein"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e161g",
+  "canonical_name": "Canthaxanthin",
+  "category": "additive",
+  "e_number": "E161g",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "canthaxanthin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e162",
+  "canonical_name": "Beetroot Red",
+  "category": "additive",
+  "e_number": "E162",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "beetroot red"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e163",
+  "canonical_name": "Anthocyanins",
+  "category": "additive",
+  "e_number": "E163",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "anthocyanins"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e164",
+  "canonical_name": "Saffron",
+  "category": "additive",
+  "e_number": "E164",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "saffron"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e170",
+  "canonical_name": "Calcium Carbonate",
+  "category": "additive",
+  "e_number": "E170",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium carbonate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e171",
+  "canonical_name": "Titanium Dioxide",
+  "category": "additive",
+  "e_number": "E171",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "titanium dioxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e172",
+  "canonical_name": "Iron Oxides",
+  "category": "additive",
+  "e_number": "E172",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "iron oxides"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e173",
+  "canonical_name": "Aluminium",
+  "category": "additive",
+  "e_number": "E173",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "aluminium"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e174",
+  "canonical_name": "Silver",
+  "category": "additive",
+  "e_number": "E174",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "silver"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e175",
+  "canonical_name": "Gold",
+  "category": "additive",
+  "e_number": "E175",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "gold"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e180",
+  "canonical_name": "Litholrubine BK",
+  "category": "additive",
+  "e_number": "E180",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "litholrubine bk"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e181",
+  "canonical_name": "Tannic Acid",
+  "category": "additive",
+  "e_number": "E181",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "tannic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e200",
+  "canonical_name": "Sorbic Acid",
+  "category": "additive",
+  "e_number": "E200",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sorbic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e201",
+  "canonical_name": "Sodium Sorbate",
+  "category": "additive",
+  "e_number": "E201",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium sorbate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e202",
+  "canonical_name": "Potassium Sorbate",
+  "category": "additive",
+  "e_number": "E202",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium sorbate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e203",
+  "canonical_name": "Calcium Sorbate",
+  "category": "additive",
+  "e_number": "E203",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium sorbate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e210",
+  "canonical_name": "Benzoic Acid",
+  "category": "additive",
+  "e_number": "E210",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "benzoic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e211",
+  "canonical_name": "Sodium Benzoate",
+  "category": "additive",
+  "e_number": "E211",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium benzoate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e212",
+  "canonical_name": "Potassium Benzoate",
+  "category": "additive",
+  "e_number": "E212",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium benzoate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e213",
+  "canonical_name": "Calcium Benzoate",
+  "category": "additive",
+  "e_number": "E213",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium benzoate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e214",
+  "canonical_name": "Ethylparaben",
+  "category": "additive",
+  "e_number": "E214",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "ethylparaben"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e218",
+  "canonical_name": "Methylparaben",
+  "category": "additive",
+  "e_number": "E218",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "methylparaben"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e220",
+  "canonical_name": "Sulphur Dioxide",
+  "category": "additive",
+  "e_number": "E220",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sulphur dioxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e221",
+  "canonical_name": "Sodium Sulphite",
+  "category": "additive",
+  "e_number": "E221",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium sulphite"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e222",
+  "canonical_name": "Sodium Bisulphite",
+  "category": "additive",
+  "e_number": "E222",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium bisulphite"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e223",
+  "canonical_name": "Sodium Metabisulphite",
+  "category": "additive",
+  "e_number": "E223",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium metabisulphite"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e224",
+  "canonical_name": "Potassium Metabisulphite",
+  "category": "additive",
+  "e_number": "E224",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium metabisulphite"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e228",
+  "canonical_name": "Potassium Bisulphite",
+  "category": "additive",
+  "e_number": "E228",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium bisulphite"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e234",
+  "canonical_name": "Nisin",
+  "category": "additive",
+  "e_number": "E234",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "nisin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e235",
+  "canonical_name": "Natamycin",
+  "category": "additive",
+  "e_number": "E235",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "natamycin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e242",
+  "canonical_name": "Dimethyl Dicarbonate",
+  "category": "additive",
+  "e_number": "E242",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "dimethyl dicarbonate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e250",
+  "canonical_name": "Sodium Nitrite",
+  "category": "additive",
+  "e_number": "E250",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium nitrite"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e251",
+  "canonical_name": "Sodium Nitrate",
+  "category": "additive",
+  "e_number": "E251",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium nitrate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e252",
+  "canonical_name": "Potassium Nitrate",
+  "category": "additive",
+  "e_number": "E252",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium nitrate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e260",
+  "canonical_name": "Acetic Acid",
+  "category": "additive",
+  "e_number": "E260",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "acetic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e280",
+  "canonical_name": "Propionic Acid",
+  "category": "additive",
+  "e_number": "E280",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "propionic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e281",
+  "canonical_name": "Sodium Propionate",
+  "category": "additive",
+  "e_number": "E281",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium propionate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e282",
+  "canonical_name": "Calcium Propionate",
+  "category": "additive",
+  "e_number": "E282",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium propionate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e283",
+  "canonical_name": "Potassium Propionate",
+  "category": "additive",
+  "e_number": "E283",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium propionate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e290",
+  "canonical_name": "Carbon Dioxide",
+  "category": "additive",
+  "e_number": "E290",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "carbon dioxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e296",
+  "canonical_name": "Malic Acid",
+  "category": "additive",
+  "e_number": "E296",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "malic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e297",
+  "canonical_name": "Fumaric Acid",
+  "category": "additive",
+  "e_number": "E297",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "fumaric acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e300",
+  "canonical_name": "Ascorbic Acid",
+  "category": "additive",
+  "e_number": "E300",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "ascorbic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e301",
+  "canonical_name": "Sodium Ascorbate",
+  "category": "additive",
+  "e_number": "E301",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium ascorbate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e302",
+  "canonical_name": "Calcium Ascorbate",
+  "category": "additive",
+  "e_number": "E302",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium ascorbate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e304",
+  "canonical_name": "Ascorbyl Palmitate",
+  "category": "additive",
+  "e_number": "E304",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "ascorbyl palmitate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e306",
+  "canonical_name": "Tocopherol (mixed)",
+  "category": "additive",
+  "e_number": "E306",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "tocopherol"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e307",
+  "canonical_name": "Alpha-tocopherol (synthetic)",
+  "category": "additive",
+  "e_number": "E307",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "alpha-tocopherol (synthetic)"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e310",
+  "canonical_name": "Propyl Gallate",
+  "category": "additive",
+  "e_number": "E310",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "propyl gallate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e315",
+  "canonical_name": "Erythorbic Acid",
+  "category": "additive",
+  "e_number": "E315",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "erythorbic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e316",
+  "canonical_name": "Sodium Erythorbate",
+  "category": "additive",
+  "e_number": "E316",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium erythorbate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e319",
+  "canonical_name": "TBHQ",
+  "category": "additive",
+  "e_number": "E319",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "tbhq"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e320",
+  "canonical_name": "BHA",
+  "category": "additive",
+  "e_number": "E320",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "bha"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e321",
+  "canonical_name": "BHT",
+  "category": "additive",
+  "e_number": "E321",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "bht"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e325",
+  "canonical_name": "Sodium Lactate",
+  "category": "additive",
+  "e_number": "E325",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium lactate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e326",
+  "canonical_name": "Potassium Lactate",
+  "category": "additive",
+  "e_number": "E326",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium lactate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e327",
+  "canonical_name": "Calcium Lactate",
+  "category": "additive",
+  "e_number": "E327",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium lactate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e331",
+  "canonical_name": "Sodium Citrate",
+  "category": "additive",
+  "e_number": "E331",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium citrate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e332",
+  "canonical_name": "Potassium Citrate",
+  "category": "additive",
+  "e_number": "E332",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium citrate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e333",
+  "canonical_name": "Calcium Citrate",
+  "category": "additive",
+  "e_number": "E333",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium citrate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e334",
+  "canonical_name": "Tartaric Acid",
+  "category": "additive",
+  "e_number": "E334",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "tartaric acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e335",
+  "canonical_name": "Sodium Tartrate",
+  "category": "additive",
+  "e_number": "E335",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium tartrate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e336",
+  "canonical_name": "Potassium Tartrate",
+  "category": "additive",
+  "e_number": "E336",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium tartrate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e337",
+  "canonical_name": "Potassium Sodium Tartrate",
+  "category": "additive",
+  "e_number": "E337",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium sodium tartrate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e338",
+  "canonical_name": "Phosphoric Acid",
+  "category": "additive",
+  "e_number": "E338",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "phosphoric acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e339",
+  "canonical_name": "Sodium Phosphate",
+  "category": "additive",
+  "e_number": "E339",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium phosphate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e340",
+  "canonical_name": "Potassium Phosphate",
+  "category": "additive",
+  "e_number": "E340",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium phosphate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e341",
+  "canonical_name": "Calcium Phosphate",
+  "category": "additive",
+  "e_number": "E341",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium phosphate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e350",
+  "canonical_name": "Sodium Malate",
+  "category": "additive",
+  "e_number": "E350",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium malate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e351",
+  "canonical_name": "Potassium Malate",
+  "category": "additive",
+  "e_number": "E351",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium malate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e352",
+  "canonical_name": "Calcium Malate",
+  "category": "additive",
+  "e_number": "E352",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium malate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e363",
+  "canonical_name": "Succinic Acid",
+  "category": "additive",
+  "e_number": "E363",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "succinic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e380",
+  "canonical_name": "Triammonium Citrate",
+  "category": "additive",
+  "e_number": "E380",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "triammonium citrate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e385",
+  "canonical_name": "Calcium Disodium EDTA",
+  "category": "additive",
+  "e_number": "E385",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium disodium edta"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e400",
+  "canonical_name": "Alginic Acid",
+  "category": "additive",
+  "e_number": "E400",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "alginic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e401",
+  "canonical_name": "Sodium Alginate",
+  "category": "additive",
+  "e_number": "E401",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium alginate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e402",
+  "canonical_name": "Potassium Alginate",
+  "category": "additive",
+  "e_number": "E402",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium alginate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e403",
+  "canonical_name": "Ammonium Alginate",
+  "category": "additive",
+  "e_number": "E403",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "ammonium alginate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e404",
+  "canonical_name": "Calcium Alginate",
+  "category": "additive",
+  "e_number": "E404",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium alginate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e405",
+  "canonical_name": "Propylene Glycol Alginate",
+  "category": "additive",
+  "e_number": "E405",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "propylene glycol alginate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e406",
+  "canonical_name": "Agar",
+  "category": "additive",
+  "e_number": "E406",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "agar"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e407",
+  "canonical_name": "Carrageenan",
+  "category": "additive",
+  "e_number": "E407",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "carrageenan"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e410",
+  "canonical_name": "Locust Bean Gum",
+  "category": "additive",
+  "e_number": "E410",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "locust bean gum"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e412",
+  "canonical_name": "Guar Gum",
+  "category": "additive",
+  "e_number": "E412",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "guar gum"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e413",
+  "canonical_name": "Tragacanth",
+  "category": "additive",
+  "e_number": "E413",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "tragacanth"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e414",
+  "canonical_name": "Gum Arabic",
+  "category": "additive",
+  "e_number": "E414",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "gum arabic"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e415",
+  "canonical_name": "Xanthan Gum",
+  "category": "additive",
+  "e_number": "E415",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "xanthan gum"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e416",
+  "canonical_name": "Karaya Gum",
+  "category": "additive",
+  "e_number": "E416",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "karaya gum"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e417",
+  "canonical_name": "Tara Gum",
+  "category": "additive",
+  "e_number": "E417",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "tara gum"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e418",
+  "canonical_name": "Gellan Gum",
+  "category": "additive",
+  "e_number": "E418",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "gellan gum"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e420",
+  "canonical_name": "Sorbitol",
+  "category": "additive",
+  "e_number": "E420",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sorbitol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e421",
+  "canonical_name": "Mannitol",
+  "category": "additive",
+  "e_number": "E421",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "mannitol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e425",
+  "canonical_name": "Konjac",
+  "category": "additive",
+  "e_number": "E425",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "konjac"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e430",
+  "canonical_name": "Polyoxyethylene Stearate",
+  "category": "additive",
+  "e_number": "E430",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "polyoxyethylene stearate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e431",
+  "canonical_name": "Polyoxyethylene (40) Stearate",
+  "category": "additive",
+  "e_number": "E431",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "polyoxyethylene"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e432",
+  "canonical_name": "Polysorbate 20",
+  "category": "additive",
+  "e_number": "E432",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "polysorbate 20"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e433",
+  "canonical_name": "Polysorbate 80",
+  "category": "additive",
+  "e_number": "E433",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "polysorbate 80"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e434",
+  "canonical_name": "Polysorbate 40",
+  "category": "additive",
+  "e_number": "E434",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "polysorbate 40"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e435",
+  "canonical_name": "Polysorbate 60",
+  "category": "additive",
+  "e_number": "E435",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "polysorbate 60"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e436",
+  "canonical_name": "Polysorbate 65",
+  "category": "additive",
+  "e_number": "E436",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "polysorbate 65"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e440",
+  "canonical_name": "Pectin",
+  "category": "additive",
+  "e_number": "E440",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "pectin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e442",
+  "canonical_name": "Ammonium Phosphatides",
+  "category": "additive",
+  "e_number": "E442",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "ammonium phosphatides"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e445",
+  "canonical_name": "Glycerol Esters of Wood Rosin",
+  "category": "additive",
+  "e_number": "E445",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "glycerol esters of wood rosin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e450",
+  "canonical_name": "Diphosphates",
+  "category": "additive",
+  "e_number": "E450",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "diphosphates"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e460",
+  "canonical_name": "Cellulose",
+  "category": "additive",
+  "e_number": "E460",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "cellulose"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e461",
+  "canonical_name": "Methylcellulose",
+  "category": "additive",
+  "e_number": "E461",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "methylcellulose"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e463",
+  "canonical_name": "Hydroxypropylcellulose",
+  "category": "additive",
+  "e_number": "E463",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "hydroxypropylcellulose"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e464",
+  "canonical_name": "HPMC",
+  "category": "additive",
+  "e_number": "E464",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "hpmc"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e465",
+  "canonical_name": "Ethylmethylcellulose",
+  "category": "additive",
+  "e_number": "E465",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "ethylmethylcellulose"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e466",
+  "canonical_name": "Carboxymethylcellulose",
+  "category": "additive",
+  "e_number": "E466",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "carboxymethylcellulose"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e472a",
+  "canonical_name": "Acetic Acid Esters of Mono/Diglycerides",
+  "category": "additive",
+  "e_number": "E472a",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "acetic acid esters of mono/diglycerides"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e472b",
+  "canonical_name": "Lactic Acid Esters of Mono/Diglycerides",
+  "category": "additive",
+  "e_number": "E472b",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "lactic acid esters of mono/diglycerides"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e472c",
+  "canonical_name": "Citric Acid Esters of Mono/Diglycerides",
+  "category": "additive",
+  "e_number": "E472c",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "citric acid esters of mono/diglycerides"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e472e",
+  "canonical_name": "Mono/Diacetyltartaric Acid Esters (DATEM)",
+  "category": "additive",
+  "e_number": "E472e",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "mono/diacetyltartaric acid esters"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e473",
+  "canonical_name": "Sucrose Esters of Fatty Acids",
+  "category": "additive",
+  "e_number": "E473",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "sucrose esters of fatty acids"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e474",
+  "canonical_name": "Sucroglycerides",
+  "category": "additive",
+  "e_number": "E474",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "sucroglycerides"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e475",
+  "canonical_name": "Polyglycerol Esters of Fatty Acids",
+  "category": "additive",
+  "e_number": "E475",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "polyglycerol esters of fatty acids"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e476",
+  "canonical_name": "Polyglycerol Polyricinoleate (PGPR)",
+  "category": "additive",
+  "e_number": "E476",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "polyglycerol polyricinoleate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e477",
+  "canonical_name": "Propylene Glycol Esters of Fatty Acids",
+  "category": "additive",
+  "e_number": "E477",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "propylene glycol esters of fatty acids"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e482",
+  "canonical_name": "Calcium Stearoyl-2-Lactylate",
+  "category": "additive",
+  "e_number": "E482",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "calcium stearoyl-2-lactylate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e483",
+  "canonical_name": "Stearyl Tartrate",
+  "category": "additive",
+  "e_number": "E483",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "stearyl tartrate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e492",
+  "canonical_name": "Sorbitan Tristearate",
+  "category": "additive",
+  "e_number": "E492",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "sorbitan tristearate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e500",
+  "canonical_name": "Sodium Carbonate",
+  "category": "additive",
+  "e_number": "E500",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium carbonate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e508",
+  "canonical_name": "Potassium Chloride",
+  "category": "additive",
+  "e_number": "E508",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium chloride"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e509",
+  "canonical_name": "Calcium Chloride",
+  "category": "additive",
+  "e_number": "E509",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium chloride"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e511",
+  "canonical_name": "Magnesium Chloride",
+  "category": "additive",
+  "e_number": "E511",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "magnesium chloride"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e514",
+  "canonical_name": "Sodium Sulphate",
+  "category": "additive",
+  "e_number": "E514",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium sulphate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e516",
+  "canonical_name": "Calcium Sulphate",
+  "category": "additive",
+  "e_number": "E516",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium sulphate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e524",
+  "canonical_name": "Sodium Hydroxide",
+  "category": "additive",
+  "e_number": "E524",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium hydroxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e525",
+  "canonical_name": "Potassium Hydroxide",
+  "category": "additive",
+  "e_number": "E525",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium hydroxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e526",
+  "canonical_name": "Calcium Hydroxide",
+  "category": "additive",
+  "e_number": "E526",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium hydroxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e528",
+  "canonical_name": "Magnesium Hydroxide",
+  "category": "additive",
+  "e_number": "E528",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "magnesium hydroxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e529",
+  "canonical_name": "Calcium Oxide",
+  "category": "additive",
+  "e_number": "E529",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium oxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e530",
+  "canonical_name": "Magnesium Oxide",
+  "category": "additive",
+  "e_number": "E530",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "magnesium oxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e535",
+  "canonical_name": "Sodium Ferrocyanide",
+  "category": "additive",
+  "e_number": "E535",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium ferrocyanide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e536",
+  "canonical_name": "Potassium Ferrocyanide",
+  "category": "additive",
+  "e_number": "E536",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "potassium ferrocyanide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e541",
+  "canonical_name": "Sodium Aluminium Phosphate",
+  "category": "additive",
+  "e_number": "E541",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium aluminium phosphate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e551",
+  "canonical_name": "Silicon Dioxide",
+  "category": "additive",
+  "e_number": "E551",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "silicon dioxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e552",
+  "canonical_name": "Calcium Silicate",
+  "category": "additive",
+  "e_number": "E552",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium silicate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e553",
+  "canonical_name": "Talc/Magnesium Silicate",
+  "category": "additive",
+  "e_number": "E553",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "talc/magnesium silicate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e558",
+  "canonical_name": "Bentonite",
+  "category": "additive",
+  "e_number": "E558",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "bentonite"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e559",
+  "canonical_name": "Kaolin",
+  "category": "additive",
+  "e_number": "E559",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "kaolin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e570b",
+  "canonical_name": "Magnesium Stearate",
+  "category": "additive",
+  "e_number": "E570b",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "magnesium stearate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e572",
+  "canonical_name": "Magnesium Stearate",
+  "category": "additive",
+  "e_number": "E572",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "magnesium stearate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e574",
+  "canonical_name": "Gluconic Acid",
+  "category": "additive",
+  "e_number": "E574",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "gluconic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e575",
+  "canonical_name": "Glucono Delta Lactone",
+  "category": "additive",
+  "e_number": "E575",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "glucono delta lactone"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e576",
+  "canonical_name": "Sodium Gluconate",
+  "category": "additive",
+  "e_number": "E576",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sodium gluconate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e578",
+  "canonical_name": "Calcium Gluconate",
+  "category": "additive",
+  "e_number": "E578",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium gluconate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e620",
+  "canonical_name": "Glutamic Acid",
+  "category": "additive",
+  "e_number": "E620",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "glutamic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e622",
+  "canonical_name": "Monopotassium Glutamate",
+  "category": "additive",
+  "e_number": "E622",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "monopotassium glutamate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e623",
+  "canonical_name": "Calcium Diglutamate",
+  "category": "additive",
+  "e_number": "E623",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "calcium diglutamate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e624",
+  "canonical_name": "Monoammonium Glutamate",
+  "category": "additive",
+  "e_number": "E624",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "monoammonium glutamate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e625",
+  "canonical_name": "Magnesium Diglutamate",
+  "category": "additive",
+  "e_number": "E625",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "magnesium diglutamate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e627",
+  "canonical_name": "Disodium Guanylate",
+  "category": "additive",
+  "e_number": "E627",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "en": [
+    "disodium guanylate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e628",
+  "canonical_name": "Dipotassium Guanylate",
+  "category": "additive",
+  "e_number": "E628",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "en": [
+    "dipotassium guanylate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e630",
+  "canonical_name": "Inosinic Acid",
+  "category": "additive",
+  "e_number": "E630",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "en": [
+    "inosinic acid"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e632",
+  "canonical_name": "Dipotassium Inosinate",
+  "category": "additive",
+  "e_number": "E632",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "en": [
+    "dipotassium inosinate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e633",
+  "canonical_name": "Calcium Inosinate",
+  "category": "additive",
+  "e_number": "E633",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "en": [
+    "calcium inosinate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e634",
+  "canonical_name": "Calcium 5'-Ribonucleotides",
+  "category": "additive",
+  "e_number": "E634",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "en": [
+    "calcium 5'-ribonucleotides"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e921",
+  "canonical_name": "L-Cystine",
+  "category": "additive",
+  "e_number": "E921",
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "synthetic"
+  ],
+  "aliases": {
+   "en": [
+    "l-cystine"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e938",
+  "canonical_name": "Argon",
+  "category": "additive",
+  "e_number": "E938",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "argon"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e939",
+  "canonical_name": "Helium",
+  "category": "additive",
+  "e_number": "E939",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "helium"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e941",
+  "canonical_name": "Nitrogen",
+  "category": "additive",
+  "e_number": "E941",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "nitrogen"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e942",
+  "canonical_name": "Nitrous Oxide",
+  "category": "additive",
+  "e_number": "E942",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "nitrous oxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e948",
+  "canonical_name": "Oxygen",
+  "category": "additive",
+  "e_number": "E948",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "oxygen"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e950",
+  "canonical_name": "Acesulfame K",
+  "category": "additive",
+  "e_number": "E950",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "acesulfame k"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e951",
+  "canonical_name": "Aspartame",
+  "category": "additive",
+  "e_number": "E951",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "aspartame"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e952",
+  "canonical_name": "Cyclamate",
+  "category": "additive",
+  "e_number": "E952",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "cyclamate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e953",
+  "canonical_name": "Isomalt",
+  "category": "additive",
+  "e_number": "E953",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "isomalt"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e954",
+  "canonical_name": "Saccharin",
+  "category": "additive",
+  "e_number": "E954",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "saccharin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e955",
+  "canonical_name": "Sucralose",
+  "category": "additive",
+  "e_number": "E955",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "sucralose"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e957",
+  "canonical_name": "Thaumatin",
+  "category": "additive",
+  "e_number": "E957",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "thaumatin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e960",
+  "canonical_name": "Steviol Glycosides",
+  "category": "additive",
+  "e_number": "E960",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "steviol glycosides"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e961",
+  "canonical_name": "Neotame",
+  "category": "additive",
+  "e_number": "E961",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "neotame"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e965",
+  "canonical_name": "Maltitol",
+  "category": "additive",
+  "e_number": "E965",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "maltitol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e966",
+  "canonical_name": "Lactitol",
+  "category": "additive",
+  "e_number": "E966",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "lactitol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e967",
+  "canonical_name": "Xylitol",
+  "category": "additive",
+  "e_number": "E967",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "xylitol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e968",
+  "canonical_name": "Erythritol",
+  "category": "additive",
+  "e_number": "E968",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "erythritol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e999",
+  "canonical_name": "Quillaia Extract",
+  "category": "additive",
+  "e_number": "E999",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic",
+   "mineral"
+  ],
+  "aliases": {
+   "en": [
+    "quillaia extract"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.enzyme",
+  "canonical_name": "Enzyme (unspecified)",
+  "category": "enzyme",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "id": [
+    "enzim"
+   ],
+   "ko": [
+    "효소"
+   ],
+   "en": [
+    "enzyme"
+   ]
+  },
+  "required_evidence": [
+   "enzyme_source_declaration"
+  ],
+  "alternatives": [
+   "microbial enzyme"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.ethanol_beverage",
+  "canonical_name": "Alcoholic beverage",
+  "category": "alcohol",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "ferment"
+  ],
+  "aliases": {
+   "id": [
+    "khamr",
+    "minuman beralkohol",
+    "alkohol",
+    "arak",
+    "minuman keras"
+   ],
+   "ko": [
+    "주류",
+    "음용알코올"
+   ],
+   "en": [
+    "wine",
+    "beer",
+    "rum",
+    "alcohol beverage",
+    "ethanol beverage"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.flavor",
+  "canonical_name": "Flavor/Fragrance",
+  "category": "flavor",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": "alcohol",
+  "sources": [
+   "unknown"
+  ],
+  "aliases": {
+   "id": [
+    "perisa",
+    "pewangi"
+   ],
+   "ko": [
+    "향료",
+    "착향료"
+   ],
+   "en": [
+    "flavor",
+    "flavour",
+    "fragrance",
+    "aroma"
+   ]
+  },
+  "required_evidence": [
+   "alcohol_carrier_check",
+   "composition_breakdown"
+  ],
+  "alternatives": [
+   "알코올프리 향료",
+   "PG 캐리어 향료"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.gelatin",
+  "canonical_name": "Gelatin",
+  "category": "animal_protein",
+  "e_number": "E441",
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "gelatin"
+   ],
+   "ko": [
+    "젤라틴"
+   ],
+   "en": [
+    "gelatin",
+    "gelatine"
+   ]
+  },
+  "required_evidence": [
+   "halal_cert",
+   "animal_source_declaration"
+  ],
+  "alternatives": [
+   "fish gelatin",
+   "agar",
+   "pectin"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.gelatin_capsule",
+  "canonical_name": "Gelatin capsule",
+  "category": "processing_aid",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "kapsul gelatin"
+   ],
+   "ko": [
+    "젤라틴캡슐"
+   ],
+   "en": [
+    "gelatin capsule"
+   ]
+  },
+  "required_evidence": [
+   "halal_cert"
+  ],
+  "alternatives": [
+   "HPMC 식물성 캡슐"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.glycerin",
+  "canonical_name": "Glycerin/Glycerol",
+  "category": "emulsifier",
+  "e_number": "E422",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant",
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "글리세린",
+    "글리세롤"
+   ],
+   "en": [
+    "glycerin",
+    "glycerol"
+   ],
+   "id": [
+    "gliserin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성/합성 글리세린"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.glycine",
+  "canonical_name": "Glycine",
+  "category": "additive",
+  "e_number": "E640",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "글리신"
+   ],
+   "en": [
+    "glycine"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "합성 glycine"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.inosinate",
+  "canonical_name": "Disodium inosinate",
+  "category": "flavor_enhancer",
+  "e_number": "E631",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "fish",
+   "animal",
+   "yeast"
+  ],
+  "aliases": {
+   "ko": [
+    "이노신산이나트륨"
+   ],
+   "en": [
+    "disodium inosinate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "효모 유래"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.l_cysteine",
+  "canonical_name": "L-Cysteine",
+  "category": "processing_aid",
+  "e_number": "E920",
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "시스테인",
+    "엘시스테인"
+   ],
+   "en": [
+    "l-cysteine",
+    "cysteine"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "합성 cysteine"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.lactic_acid",
+  "canonical_name": "Lactic acid",
+  "category": "ferment",
+  "e_number": "E270",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "ferment"
+  ],
+  "aliases": {
+   "ko": [
+    "젖산",
+    "락트산"
+   ],
+   "en": [
+    "lactic acid"
+   ],
+   "id": [
+    "asam laktat"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.lanolin",
+  "canonical_name": "Lanolin",
+  "category": "processing_aid",
+  "e_number": "E913",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "라놀린"
+   ],
+   "en": [
+    "lanolin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성 왁스"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.lard",
+  "canonical_name": "Lard",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "lemak babi",
+    "minyak babi"
+   ],
+   "ko": [
+    "돼지기름",
+    "라드"
+   ],
+   "en": [
+    "lard"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [
+   "식물성 쇼트닝"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.lecithin",
+  "canonical_name": "Lecithin",
+  "category": "emulsifier",
+  "e_number": "E322",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "soy",
+   "egg",
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "레시틴"
+   ],
+   "en": [
+    "lecithin"
+   ],
+   "id": [
+    "lesitin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "soy lecithin"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.lipase",
+  "canonical_name": "Lipase",
+  "category": "enzyme",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "ko": [
+    "리파아제"
+   ],
+   "en": [
+    "lipase"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "microbial lipase"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.mg_stearate",
+  "canonical_name": "Magnesium stearate",
+  "category": "emulsifier",
+  "e_number": "E470b",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "스테아린산마그네슘"
+   ],
+   "en": [
+    "magnesium stearate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.mono_diglycerides",
+  "canonical_name": "Mono/Diglycerides",
+  "category": "emulsifier",
+  "e_number": "E471",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "글리세라이드"
+   ],
+   "en": [
+    "mono and diglycerides",
+    "monoglyceride"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성 E471"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.msg",
+  "canonical_name": "MSG",
+  "category": "ferment",
+  "e_number": "E621",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "ferment"
+  ],
+  "aliases": {
+   "ko": [
+    "msg",
+    "글루탐산나트륨"
+   ],
+   "en": [
+    "monosodium glutamate",
+    "msg"
+   ],
+   "id": [
+    "vetsin",
+    "penyedap"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.pepsin",
+  "canonical_name": "Pepsin",
+  "category": "enzyme",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "펩신"
+   ],
+   "en": [
+    "pepsin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "microbial"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.pork_gelatin",
+  "canonical_name": "Pork gelatin",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "gelatin babi"
+   ],
+   "ko": [
+    "돼지젤라틴"
+   ],
+   "en": [
+    "pork gelatin"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [
+   "fish gelatin",
+   "agar"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.propylene_glycol",
+  "canonical_name": "Propylene glycol",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "프로필렌글라이콜"
+   ],
+   "en": [
+    "propylene glycol",
+    "pg"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.rennet",
+  "canonical_name": "Rennet",
+  "category": "enzyme",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "id": [
+    "renet"
+   ],
+   "ko": [
+    "레닛"
+   ],
+   "en": [
+    "rennet",
+    "renin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "microbial rennet"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.ribonucleotide",
+  "canonical_name": "Disodium ribonucleotides",
+  "category": "flavor_enhancer",
+  "e_number": "E635",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "fish",
+   "animal",
+   "yeast"
+  ],
+  "aliases": {
+   "en": [
+    "disodium ribonucleotides",
+    "ribonucleotide"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "효모 유래"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.salt",
+  "canonical_name": "Salt",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "ko": [
+    "소금",
+    "정제염"
+   ],
+   "en": [
+    "salt",
+    "sodium chloride"
+   ],
+   "id": [
+    "garam"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.shellac",
+  "canonical_name": "Shellac",
+  "category": "glazing",
+  "e_number": "E904",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "insect"
+  ],
+  "aliases": {
+   "ko": [
+    "셸락"
+   ],
+   "en": [
+    "shellac"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성 코팅"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.shortening",
+  "canonical_name": "Shortening",
+  "category": "processing_aid",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "쇼트닝"
+   ],
+   "en": [
+    "shortening"
+   ],
+   "id": [
+    "mentega putih"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성 쇼트닝"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.sorbitan_ester",
+  "canonical_name": "Sorbitan esters",
+  "category": "emulsifier",
+  "e_number": "E491",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "솔비탄"
+   ],
+   "en": [
+    "sorbitan",
+    "polysorbate",
+    "sorbitan ester",
+    "tween"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성 지방산"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.ssl",
+  "canonical_name": "Sodium stearoyl lactylate",
+  "category": "emulsifier",
+  "e_number": "E481",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "en": [
+    "sodium stearoyl lactylate",
+    "ssl"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.stearic_acid",
+  "canonical_name": "Stearic acid",
+  "category": "emulsifier",
+  "e_number": "E570",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "스테아르산"
+   ],
+   "en": [
+    "stearic acid"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "식물성 스테아르산"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.sugar",
+  "canonical_name": "Sugar",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "설탕",
+    "정제당"
+   ],
+   "en": [
+    "sugar",
+    "sucrose"
+   ],
+   "id": [
+    "gula"
+   ]
+  },
+  "required_evidence": [
+   "bone_char_free_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.tallow",
+  "canonical_name": "Tallow",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "lemak hewani",
+    "lemak sapi"
+   ],
+   "ko": [
+    "우지",
+    "동물성지방"
+   ],
+   "en": [
+    "tallow",
+    "animal fat"
+   ]
+  },
+  "required_evidence": [
+   "halal_slaughter_cert"
+  ],
+  "alternatives": [
+   "식물성유"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.vanilla_extract",
+  "canonical_name": "Vanilla extract",
+  "category": "flavor",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": "alcohol",
+  "sources": [
+   "plant",
+   "ferment"
+  ],
+  "aliases": {
+   "ko": [
+    "바닐라추출물",
+    "바닐라익스트랙"
+   ],
+   "en": [
+    "vanilla extract"
+   ]
+  },
+  "required_evidence": [
+   "alcohol_carrier_check"
+  ],
+  "alternatives": [
+   "알코올프리 바닐라"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.water",
+  "canonical_name": "Water",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [
+    "air"
+   ],
+   "ko": [
+    "정제수",
+    "물"
+   ],
+   "en": [
+    "water",
+    "aqua",
+    "purified water"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.whey",
+  "canonical_name": "Whey",
+  "category": "ferment",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "ferment"
+  ],
+  "aliases": {
+   "ko": [
+    "유청"
+   ],
+   "en": [
+    "whey"
+   ]
+  },
+  "required_evidence": [
+   "rennet_source_declaration"
+  ],
+  "alternatives": [
+   "미생물 rennet whey"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.chymosin",
+  "canonical_name": "Chymosin",
+  "category": "enzyme",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "microbial",
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "키모신"
+   ],
+   "en": [
+    "chymosin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "fermentation-produced chymosin"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.lipase_enz",
+  "canonical_name": "Lipase (enzyme)",
+  "category": "enzyme",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "리파아제"
+   ],
+   "en": [
+    "lipase"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "microbial lipase"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.trypsin",
+  "canonical_name": "Trypsin",
+  "category": "enzyme",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "트립신"
+   ],
+   "en": [
+    "trypsin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.protease",
+  "canonical_name": "Protease",
+  "category": "enzyme",
+  "e_number": "E1101",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial",
+   "plant"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "단백질분해효소"
+   ],
+   "en": [
+    "protease",
+    "peptidase"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "microbial protease"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.glucose_oxidase",
+  "canonical_name": "Glucose oxidase",
+  "category": "enzyme",
+  "e_number": "E1102",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "microbial"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "glucose oxidase"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.invertase",
+  "canonical_name": "Invertase",
+  "category": "enzyme",
+  "e_number": "E1103",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "microbial"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "invertase"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.lipase_e1104",
+  "canonical_name": "Lipases (E1104)",
+  "category": "enzyme",
+  "e_number": "E1104",
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "lipases"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "microbial lipase"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.suet",
+  "canonical_name": "Suet",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "수엣"
+   ],
+   "en": [
+    "suet"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "vegetable shortening"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.animal_fat",
+  "canonical_name": "Animal fat",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "lemak hewani"
+   ],
+   "ko": [
+    "동물성유지",
+    "동물성지방"
+   ],
+   "en": [
+    "animal fat",
+    "animal shortening"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "vegetable oil"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.casein",
+  "canonical_name": "Casein",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "kasein"
+   ],
+   "ko": [
+    "카제인",
+    "카세인"
+   ],
+   "en": [
+    "casein",
+    "sodium caseinate",
+    "caseinate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.keratin",
+  "canonical_name": "Keratin",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "케라틴"
+   ],
+   "en": [
+    "keratin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.chondroitin",
+  "canonical_name": "Chondroitin sulfate",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "콘드로이친"
+   ],
+   "en": [
+    "chondroitin",
+    "chondroitin sulfate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.glucosamine",
+  "canonical_name": "Glucosamine",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "글루코사민"
+   ],
+   "en": [
+    "glucosamine"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "fermentation glucosamine",
+   "corn-derived glucosamine"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.heparin",
+  "canonical_name": "Heparin",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "헤파린"
+   ],
+   "en": [
+    "heparin"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [
+   "non-porcine anticoagulant"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.isinglass",
+  "canonical_name": "Isinglass",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "부레풀",
+    "아이싱글라스"
+   ],
+   "en": [
+    "isinglass",
+    "fish bladder"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "bentonite",
+   "agar"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.shellac_e904b",
+  "canonical_name": "Shellac (glaze)",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": "alcohol",
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "셸락"
+   ],
+   "en": [
+    "shellac",
+    "confectioner's glaze"
+   ]
+  },
+  "required_evidence": [
+   "carrier_check"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.vit_a_palmitate",
+  "canonical_name": "Vitamin A palmitate",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": "gelatin",
+  "sources": [
+   "animal",
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "비타민A",
+    "레티놀"
+   ],
+   "en": [
+    "vitamin a palmitate",
+    "retinyl palmitate",
+    "retinol"
+   ]
+  },
+  "required_evidence": [
+   "carrier_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.vit_d3",
+  "canonical_name": "Cholecalciferol (Vitamin D3)",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "비타민D3",
+    "콜레칼시페롤"
+   ],
+   "en": [
+    "cholecalciferol",
+    "vitamin d3"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "vitamin D2 (plant)",
+   "lichen-derived D3"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.natural_flavor",
+  "canonical_name": "Natural flavoring",
+  "category": "flavor",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": "alcohol",
+  "sources": [
+   "plant",
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "perisa alami"
+   ],
+   "ko": [
+    "천연향료"
+   ],
+   "en": [
+    "natural flavor",
+    "natural flavouring"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "carrier_check"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e123",
+  "canonical_name": "Amaranth",
+  "category": "colorant",
+  "e_number": "E123",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "amaranth"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e127",
+  "canonical_name": "Erythrosine",
+  "category": "colorant",
+  "e_number": "E127",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "erythrosine"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e128",
+  "canonical_name": "Red 2G",
+  "category": "colorant",
+  "e_number": "E128",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "red 2g"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e154",
+  "canonical_name": "Brown FK",
+  "category": "colorant",
+  "e_number": "E154",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "brown fk"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e160f",
+  "canonical_name": "Ethyl ester of beta-apo-8-carotenoic acid",
+  "category": "colorant",
+  "e_number": "E160f",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": "gelatin",
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "carotenoic ester"
+   ]
+  },
+  "required_evidence": [
+   "carrier_check"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e230",
+  "canonical_name": "Biphenyl",
+  "category": "additive",
+  "e_number": "E230",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "biphenyl",
+    "diphenyl"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e231",
+  "canonical_name": "Orthophenylphenol",
+  "category": "additive",
+  "e_number": "E231",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "orthophenylphenol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e236",
+  "canonical_name": "Formic acid",
+  "category": "additive",
+  "e_number": "E236",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "formic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e239",
+  "canonical_name": "Hexamethylene tetramine",
+  "category": "additive",
+  "e_number": "E239",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "hexamine"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e249",
+  "canonical_name": "Potassium nitrite",
+  "category": "additive",
+  "e_number": "E249",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "potassium nitrite"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e284",
+  "canonical_name": "Boric acid",
+  "category": "additive",
+  "e_number": "E284",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "boric acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e285",
+  "canonical_name": "Sodium tetraborate",
+  "category": "additive",
+  "e_number": "E285",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "borax"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e355",
+  "canonical_name": "Adipic acid",
+  "category": "additive",
+  "e_number": "E355",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "adipic acid"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e444",
+  "canonical_name": "Sucrose acetate isobutyrate",
+  "category": "additive",
+  "e_number": "E444",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "saib"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e470a",
+  "canonical_name": "Fatty acid salts (Na/K/Ca)",
+  "category": "emulsifier",
+  "e_number": "E470a",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "sodium salts of fatty acids"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "plant-based fatty acid salts"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e479b",
+  "canonical_name": "Thermally oxidized soya bean oil",
+  "category": "emulsifier",
+  "e_number": "E479b",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "toxidized soybean oil"
+   ]
+  },
+  "required_evidence": [
+   "carrier_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e520",
+  "canonical_name": "Aluminium sulfate",
+  "category": "additive",
+  "e_number": "E520",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "aluminium sulfate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e527",
+  "canonical_name": "Ammonium hydroxide",
+  "category": "additive",
+  "e_number": "E527",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "ammonium hydroxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e540",
+  "canonical_name": "Dicalcium diphosphate",
+  "category": "additive",
+  "e_number": "E540",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "dicalcium diphosphate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e550",
+  "canonical_name": "Sodium silicate",
+  "category": "additive",
+  "e_number": "E550",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "sodium silicate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e555",
+  "canonical_name": "Potassium aluminium silicate",
+  "category": "additive",
+  "e_number": "E555",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "potassium aluminium silicate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e626",
+  "canonical_name": "Guanylic acid",
+  "category": "flavor_enhancer",
+  "e_number": "E626",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "microbial",
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "guanylic acid"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e629",
+  "canonical_name": "Calcium guanylate",
+  "category": "flavor_enhancer",
+  "e_number": "E629",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "microbial",
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "calcium guanylate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e636",
+  "canonical_name": "Maltol",
+  "category": "flavor_enhancer",
+  "e_number": "E636",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "maltol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e637",
+  "canonical_name": "Ethyl maltol",
+  "category": "flavor_enhancer",
+  "e_number": "E637",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "ethyl maltol"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e900",
+  "canonical_name": "Dimethylpolysiloxane",
+  "category": "additive",
+  "e_number": "E900",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "dimethylpolysiloxane",
+    "simethicone"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e902",
+  "canonical_name": "Candelilla wax",
+  "category": "additive",
+  "e_number": "E902",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "candelilla wax"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e903",
+  "canonical_name": "Carnauba wax",
+  "category": "additive",
+  "e_number": "E903",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "carnauba wax"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e905",
+  "canonical_name": "Microcrystalline wax",
+  "category": "additive",
+  "e_number": "E905",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "microcrystalline wax",
+    "mineral oil"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e914",
+  "canonical_name": "Oxidized polyethylene wax",
+  "category": "additive",
+  "e_number": "E914",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "polyethylene wax"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e927b",
+  "canonical_name": "Carbamide",
+  "category": "additive",
+  "e_number": "E927b",
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic",
+   "animal"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "carbamide",
+    "urea"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.e928",
+  "canonical_name": "Benzoyl peroxide",
+  "category": "additive",
+  "e_number": "E928",
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [],
+   "en": [
+    "benzoyl peroxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.emulsifier_generic",
+  "canonical_name": "Emulsifier (unspecified)",
+  "category": "emulsifier",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "pengemulsi"
+   ],
+   "ko": [
+    "유화제"
+   ],
+   "en": [
+    "emulsifier"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "supplier_halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.diglyceride",
+  "canonical_name": "Diglycerides",
+  "category": "emulsifier",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "id": [],
+   "ko": [
+    "디글리세라이드"
+   ],
+   "en": [
+    "diglyceride",
+    "diglycerides"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "plant-based diglycerides"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ }
+]
