@@ -1608,6 +1608,25 @@ async function toggleFacSelect(caseId,org){
   try{await API(`/cases/${caseId}/facilities-select`,{method:"PATCH",body:JSON.stringify({facility_ids:ids})});toast(`🏭 이 신청 대상 공장 ${ids.length}개 선택됨`);}
   catch(e){toast("공장 선택 저장 실패 · "+(e&&e.code?e.code:""));}
 }
+/* 필수 원재료 카테고리 체크리스트 + 누락 경고(MAT-011/012/013) — 세척제·포장재·윤활제 누락 방지 */
+function matCategoryChecklist(mats){
+  const CATS=[
+    {label:"제품 원재료",types:["raw","additive","processing_aid"]},
+    {label:"세척제 · Cleaning",types:["sanitizer"]},
+    {label:"포장재 · Packaging",types:["packaging"]},
+    {label:"윤활제 · Lubricant",types:["lubricant"]},
+  ];
+  const counts={};(mats||[]).forEach(m=>{const t=(m.mat_type||"").toLowerCase();counts[t]=(counts[t]||0)+1;});
+  const rows=CATS.map(c=>{const n=c.types.reduce((s,t)=>s+(counts[t]||0),0);return {label:c.label,n,ok:n>0};});
+  const special=rows.filter(r=>r.label!=="제품 원재료"&&!r.ok);   // 세척제·포장재·윤활제 중 누락
+  const chips=rows.map(r=>`<span style="display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:${r.ok?'#e8f7ee':'#fff3f3'};font-size:12px;font-weight:600;margin:3px 5px 3px 0">
+    <b style="color:${r.ok?'#0b7a35':'#b42318'}">${r.ok?'●':'○'}</b> ${r.label} <span class="muted">${r.n}</span></span>`).join("");
+  const warn=special.length
+    ?`<div class="banner bad" style="margin-top:10px">⚠️ <b>${special.map(r=>r.label.split(' · ')[0]).join('·')}</b> 원재료가 미등록입니다. 제품 원재료뿐 아니라 <b>세척제·포장재·윤활제</b>에 쓰이는 원재료도 반드시 등록하세요 — 누락 시 사전심사·현장심사에서 보완 요청이 발생합니다.</div>`
+    :`<div class="banner ok" style="margin-top:10px">✓ 제품원재료·세척제·포장재·윤활제 카테고리 모두 등록됨</div>`;
+  return `<div class="card"><h3>필수 원재료 카테고리 <span class="en">· Required categories</span></h3>
+    <div class="body"><div>${chips}</div>${warn}</div></div>`;
+}
 function prodAccordion(id,prods,mats,matrix){
   const _lm={};((matrix&&matrix.links)||[]).forEach(lk=>{const pid=Array.isArray(lk)?lk[0]:lk.product_id,mid=Array.isArray(lk)?lk[1]:lk.material_id;(_lm[pid]=_lm[pid]||[]).push(mid);});
   const _mb={};(mats||[]).forEach(m=>_mb[m.material_id]=m);
@@ -2187,6 +2206,7 @@ SCREEN.materials=async()=>{
   if(MAT_OPEN.size){AFTER_RENDER=()=>{MAT_OPEN.forEach((name,mid)=>matLoadDetail(mid,name));};}
   const bad=mats.filter(m=>statusColor(m.status||m.result)==="bad");
   return `
+  ${matCategoryChecklist(mats)}
   <div class="grid side">
     <div class="card"><h3>원재료 목록 <span class="en">· Materials</span><span class="r">${mats.length}건${canMatWrite?'':' · 읽기전용'}</span></h3>
       <div class="body tight"><table>
