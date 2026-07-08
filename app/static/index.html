@@ -1914,8 +1914,17 @@ SCREEN.preassess=async()=>{
   </div>`;
 };
 SCREEN.application=async()=>{
-  const id=CURCASE;
-  if(!id)return '<div class="card"><div class="body muted">케이스를 먼저 선택하세요 · Select a case first.<div class="btnrow" style="margin-top:10px"><button class="btn" onclick="go(\'caseList\')">📋 내 케이스로 이동</button></div></div></div>';
+  // 진입 모드: ①내 케이스에서 선택(CURCASE 있음)=그 신청 정보 / ②신청 직접 진입=새 신청(회사정보 자동 프리필)
+  let id=CURCASE;
+  if(!id){
+    const cs=await loadCases(true).catch(()=>[]);
+    const mine=(cs||[]).filter(x=>["onboarding","application_draft"].includes(x.status));
+    if(mine.length){ id=CURCASE=mine[0].case_id; }   // 진행 중 작성분 이어가기(중복 신청 방지)
+    else{
+      try{const nc=await API("/cases",{method:"POST",body:"{}"}); id=CURCASE=nc.case_id; await loadCases(true);}
+      catch(e){return '<div class="card"><div class="body"><div class="banner bad">⛔ 새 신청 생성 실패 · '+(e&&e.code?esc(e.code):'')+'<div class="btnrow" style="margin-top:10px"><button class="btn" onclick="go(\'caseList\')">📋 내 케이스로 이동</button></div></div></div></div>';}
+    }
+  }
   let c;try{c=await API(`/cases/${id}`);}catch(e){return '<div class="card"><div class="body"><div class="banner bad">⛔ 케이스를 불러오지 못했습니다 · '+(e&&e.code?esc(e.code):'오류')+'<div class="btnrow" style="margin-top:10px"><button class="btn" onclick="go(\'caseList\')">📋 내 케이스로 이동</button></div></div></div></div>';}
   const pe=c.profile_ext||{};
   const [chk,mats,prods,matrix]=await Promise.all([

@@ -999,7 +999,17 @@ def scan_expiry(user=Depends(auth.require_roles()), db: Session = Depends(get_db
 def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("applicant", "consultant")),
                 db: Session = Depends(get_db)):
     org = body.org_id if (user["role"] == "admin" and body.org_id) else user["org_id"]
-    c = models.CaseApplication(org_id=org, company_name=body.company_name, is_msme=bool(body.is_msme))
+    # 조직(org) 회사 프로필 역상속 — 신청 직접 진입 시 회사정보 자동 프리필
+    org_row = db.get(models.Org, org)
+    oext = dict(org_row.profile_ext or {}) if org_row else {}
+    c = models.CaseApplication(
+        org_id=org, is_msme=bool(body.is_msme),
+        company_name=body.company_name or oext.get("company_name") or (org_row.name if org_row else None),
+        profile_ext=(oext or None))
+    for k in ("nib", "responsible_person", "halal_supervisor", "email", "phone",
+              "address", "factory_reg_no", "factory_address"):
+        if oext.get(k) is not None:
+            setattr(c, k, oext[k])
     db.add(c)
     db.flush()
     sm.record_event(db, c, None, "onboarding", "case.create", user["role"], user["uid"])
@@ -1845,6 +1855,25 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
         c.profile_ext = {**(c.profile_ext or {}), **body.profile_ext}  # 확장 양식 병합 저장
     if not c.draft_state or c.draft_state == "returned":
         c.draft_state = "in_progress"  # 편집 시작 → 작성중(반려분 재편집 포함)
+    # 회사 프로필 → org 미러(회사 자산 정본) — 다음 신청이 최신 회사정보를 상속
+    org_row = db.get(models.Org, c.org_id)
+    if not org_row:   # 경량 org(row 없음) 케이스 — 미러 대상 생성
+        org_row = models.Org(org_id=c.org_id, name=c.company_name)
+        db.add(org_row)
+    if org_row:
+        snap = dict(org_row.profile_ext or {})
+        for k in ("company_name", "nib", "responsible_person", "halal_supervisor", "email",
+                  "phone", "address", "factory_reg_no", "factory_address"):
+            v = getattr(c, k)
+            if v is not None:
+                snap[k] = v
+        if body.profile_ext:
+            snap.update(body.profile_ext)
+        org_row.profile_ext = snap
+        if c.company_name and not org_row.name:
+            org_row.name = c.company_name
+        if c.address:
+            org_row.address = c.address
     db.commit()
     return _case_dict(c)
 
