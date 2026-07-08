@@ -235,7 +235,8 @@ _APPLICANT_DOCS = ("nib_business_license", "factory_registration")
 def aggregate_fields(docs):
     """분류 문서들의 추출 필드를 신청서용으로 집계.
     회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외)."""
-    agg = {"company_name": None, "nib": None, "address": None, "responsible_person": None,
+    agg = {"company_name": None, "nib": None, "address": None, "factory_address": None,
+           "responsible_person": None,
            "factory_reg_no": None, "products": [], "materials": [], "certificates": []}
     for d in docs:
         f = d.get("fields") or {}
@@ -245,8 +246,13 @@ def aggregate_fields(docs):
                 agg["company_name"] = f["company_name"]
             if not agg["nib"] and f.get("nib"):
                 agg["nib"] = f["nib"]
-            if not agg["address"] and (f.get("address") or f.get("factory_address")):
-                agg["address"] = f.get("address") or f.get("factory_address")
+            # 회사 주소(NIB)와 공장 주소(공장등록증)를 분리 — 뭉치면 회사주소가 공장주소로 잘못 저장됨
+            if not agg["address"] and f.get("address") and d.get("doc_type") != "factory_registration":
+                agg["address"] = f["address"]
+            if not agg["factory_address"] and f.get("factory_address"):
+                agg["factory_address"] = f["factory_address"]
+            if d.get("doc_type") == "factory_registration" and not agg["factory_address"] and f.get("address"):
+                agg["factory_address"] = f["address"]   # 공장등록증의 주소는 공장 주소
             if not agg["responsible_person"] and f.get("responsible_person"):
                 agg["responsible_person"] = f["responsible_person"]
             if not agg["factory_reg_no"] and f.get("factory_reg_no"):

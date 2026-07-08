@@ -1548,9 +1548,12 @@ def _apply_profile_extras(c, agg, force=False):
     """추출된 주소·책임자·공장등록번호를 케이스 프로필에 반영. 기본은 빈값만, force=True면 덮어씀.
     반환: 채운 필드명 리스트."""
     filled = []
-    addr = agg.get("address")
-    if addr and (force or not (c.factory_address or c.address)):
-        c.factory_address = addr; filled.append("factory_address")
+    addr = agg.get("address")   # NIB(사업자등록증) 주소 → 회사 주소
+    if addr and (force or not c.address):
+        c.address = addr; filled.append("address")
+    faddr = agg.get("factory_address")   # 공장등록증 주소 → 공장 주소
+    if faddr and (force or not c.factory_address):
+        c.factory_address = faddr; filled.append("factory_address")
     if agg.get("responsible_person") and (force or not c.responsible_person):
         c.responsible_person = agg["responsible_person"]; filled.append("responsible_person")
     if agg.get("factory_reg_no") and (force or not c.factory_reg_no):
