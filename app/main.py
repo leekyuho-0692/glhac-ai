@@ -1745,6 +1745,49 @@ def _auto_link_pm(db, case_id, max_pairs=2000):
 _CO_PLACEHOLDER = ("", "My Company", "scan", "ABC", "T", "UI", "Demo Co", "Demo Co FE")
 
 
+def _set_hpas(db, case_id, element, status, note=None):
+    """SJPH/HPAS 5요소 상태 upsert(commitment|materials|process|product|monitoring)."""
+    row = db.query(models.HpasEvaluation).filter_by(case_id=case_id, element=element).first()
+    if not row:
+        row = models.HpasEvaluation(case_id=case_id, element=element)
+        db.add(row)
+    row.status = status
+    if note:
+        row.note = note
+
+
+def _process_doc(db, c, d, applied):
+    """문서 타입별 개별 프로세서 — 분류된 각 파일을 해당 엔티티로 매핑(공정흐름도/할랄인증서/SJPH매뉴얼)."""
+    dt = d.get("doc_type")
+    flds = d.get("fields") or {}
+    if dt == "process_flow":
+        steps = [s for s in (flds.get("process_steps") or []) if s]
+        if steps:
+            _set_hpas(db, c.case_id, "process", "ok",
+                      "공정흐름도 제출: " + " → ".join(steps[:8]))
+            applied["process_flow"] = len(steps)
+    elif dt == "halal_certificate":
+        cn = flds.get("cert_no")
+        if cn and not db.query(models.HalalCertificate).filter_by(
+                case_id=c.case_id, certificate_no=cn).first():
+            db.add(models.HalalCertificate(
+                case_id=c.case_id, certificate_no=cn,
+                issue_date=flds.get("issue_date"), expiry_date=flds.get("expiry_date"),
+                scope=flds.get("scope"), status="active"))
+            applied["halal_cert"] = cn
+    elif dt == "sjph_manual":
+        _m = {"commitment": flds.get("has_commitment"), "materials": flds.get("has_materials"),
+              "process": flds.get("has_process"), "product": flds.get("has_product"),
+              "monitoring": flds.get("has_monitoring")}
+        _cnt = 0
+        for _el, _ok in _m.items():
+            if _ok:
+                _set_hpas(db, c.case_id, _el, "ok", "SJPH 매뉴얼에서 감지")
+                _cnt += 1
+        if _cnt:
+            applied["sjph_manual"] = _cnt
+
+
 def _apply_intake_autofill(db, c, res):
     """분류 결과 → DocumentAsset 저장 + 신청서 자동채움(회사/NIB/제품/원재료). 임시저장(commit은 호출측)."""
     for d in res["classified"]:
@@ -1809,6 +1852,9 @@ def _apply_intake_autofill(db, c, res):
         applied["facility"] = _fac.facility_id
     # 제품·원재료 자동 연결(매트릭스) — 아코디언에 원재료가 붙도록
     applied["links"] = _auto_link_pm(db, c.case_id)
+    # 문서 타입별 개별 프로세서 — 공정흐름도/할랄인증서/SJPH매뉴얼을 각 엔티티로 매핑
+    for _d in res.get("classified", []):
+        _process_doc(db, c, _d, applied)
     # 사전심사 업로드 → 신청서 임시저장 진입(작성 이어하기 대상)
     if c.status in ("onboarding", "application_draft"):
         c.status = "application_draft"

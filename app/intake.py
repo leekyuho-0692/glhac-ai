@@ -207,6 +207,11 @@ _FIELD_SPEC = {
     "consent": ("서명 여부, 서명일", '{"signed":false,"signed_date":null}'),
     "product_list": ("제품명 목록", '{"product_names":[]}'),
     "material_list": ("원재료명 목록", '{"material_names":[]}'),
+    "process_flow": ("공정 단계 순서 목록(원료입고→배합→가열→충전→포장 등)",
+                     '{"process_steps":[]}'),
+    "sjph_manual": ("SJPH 5요소 포함 여부(약속·원재료·공정·제품·모니터링)",
+                    '{"has_commitment":false,"has_materials":false,"has_process":false,'
+                    '"has_product":false,"has_monitoring":false}'),
     "product_label": ("성분 목록", '{"ingredients":[]}'),
 }
 
