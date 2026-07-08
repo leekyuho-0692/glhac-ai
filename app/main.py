@@ -4154,7 +4154,14 @@ def _material_report(db, c):
     mats = db.query(models.Material).filter_by(case_id=c.case_id).order_by(models.Material.name).all()
     rows, summary = [], {"total": 0, "cleared": 0, "needs_evidence": 0, "blocked": 0,
                          "najis": 0, "critical": []}
+    _CATS = {"제품 원재료": ("raw", "additive", "processing_aid"), "세척제": ("sanitizer",),
+             "포장재": ("packaging",), "윤활제": ("lubricant",)}
+    cat_counts = {k: 0 for k in _CATS}
     for m in mats:
+        _mt = (m.mat_type or "").lower()
+        for _k, _ts in _CATS.items():
+            if _mt in _ts:
+                cat_counts[_k] += 1
         exp = screening.explain(m.name, e_number=m.e_number, source=m.source,
                                 cert_no=m.cert_no, note=m.note or "")
         v = exp.get("verdict")
@@ -4176,8 +4183,11 @@ def _material_report(db, c):
                      "alternatives": exp.get("alternatives") or [],
                      "evidence_count": m.evidence_count if hasattr(m, "evidence_count") else None,
                      "explanation": exp.get("explanation") or ""})
+    category_registration = [{"category": k, "count": cat_counts[k],
+                              "registered": cat_counts[k] > 0} for k in _CATS]
     return {"case_id": c.case_id, "company_name": c.company_name,
-            "summary": summary, "materials": rows}
+            "summary": summary, "materials": rows,
+            "category_registration": category_registration}
 
 
 @app.get("/cases/{case_id}/material-report")
@@ -4203,7 +4213,15 @@ def material_report_pdf(case_id: str, user=Depends(auth.get_current_user), db: S
          "할랄 허용: %d · 증빙 필요: %d · 차단(하람): %d · najis 위험: %d"
          % (s["cleared"], s["needs_evidence"], s["blocked"], s["najis"]),
          "주의 성분: %s" % (", ".join(s["critical"]) or "없음"), "",
-         "[성분별 분석]"]
+         "[필수 원재료 카테고리 등록여부]"]
+    for cr in rep.get("category_registration", []):
+        L.append("• %s: %s (%d건)" % (cr["category"], "등록" if cr["registered"] else "미등록",
+                                      cr["count"]))
+    _miss = [cr["category"] for cr in rep.get("category_registration", [])
+             if cr["category"] != "제품 원재료" and not cr["registered"]]
+    if _miss:
+        L.append("[경고] %s 원재료 미등록 — 사전심사·현장심사에서 보완 요청 발생 가능" % "·".join(_miss))
+    L += ["", "[성분별 분석]"]
     for r in rep["materials"]:
         head = "• %s%s — %s" % (r["name"], (" (%s)" % r["e_number"]) if r["e_number"] else "",
                                 r["verdict_ko"])

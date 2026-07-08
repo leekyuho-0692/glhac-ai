@@ -2278,11 +2278,16 @@ async function materialReport(id){
     const vColor=v=>v==="BLOCK"?"bad":(v==="NEEDS_EVIDENCE"?"warn":"ok");
     const cards=`<div class="btnrow" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
       ${bTag("mute",T('총')+" "+(s.total||0))} ${bTag("ok",T('할랄 허용')+" "+(s.cleared||0))} ${bTag("warn",T('증빙 필요')+" "+(s.needs_evidence||0))} ${bTag("bad",T('차단')+" "+(s.blocked||0))} ${bTag((s.najis||0)?"bad":"mute","najis "+(s.najis||0))}</div>`;
+    const catReg=r.category_registration||[];
+    const catHtml=catReg.length?`<div style="margin-bottom:12px;padding:9px 11px;border:1px solid var(--line);border-radius:8px">
+      <b class="small">필수 원재료 카테고리 · Required categories</b>
+      <div style="margin-top:5px">${catReg.map(c=>`<span style="display:inline-block;margin:2px 8px 2px 0;font-size:12px"><b style="color:${c.registered?'#0b7a35':'#b42318'}">${c.registered?'●':'○'}</b> ${esc(c.category)} <span class="muted">${c.count}</span></span>`).join("")}</div>
+      ${catReg.some(c=>c.category!=='제품 원재료'&&!c.registered)?`<div class="small" style="color:#b42318;margin-top:5px">⚠ 세척제·포장재·윤활제 중 미등록 항목 — 심사 단계 보완 요청 가능</div>`:''}</div>`:'';
     const rows=(r.materials||[]).map(m=>`<div class="li" style="padding:8px 0;border-bottom:1px solid var(--line)">
       <div class="tx"><b>${esc(m.name)}${m.e_number?' ('+esc(m.e_number)+')':''}</b> ${bTag(vColor(m.verdict),T(m.verdict_ko||m.verdict||'—'))}${m.najis?' '+bTag("bad","najis"):''}${m.severity?' <span class="muted small">· '+esc(m.severity)+'</span>':''}</div>
       <div class="small" style="white-space:pre-wrap;color:var(--ink2);margin-top:2px">${esc(m.explanation||"")}</div>
     </div>`).join("")||`<div class="muted" style="padding:12px">${T('원재료 없음')}</div>`;
-    document.getElementById("reportBody").innerHTML=cards+rows+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
+    document.getElementById("reportBody").innerHTML=cards+catHtml+rows+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
     document.getElementById("reportPdfBtn").onclick=()=>serverPdf(`/cases/${id}/material-report.pdf`,"material_report.pdf");
     document.getElementById("reportOverlay").style.display="grid";
     localizeUI(document.getElementById("reportBody"));
