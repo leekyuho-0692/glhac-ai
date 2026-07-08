@@ -2092,20 +2092,7 @@ SCREEN.application=async()=>{
           <div class="muted small" style="margin-bottom:4px">☑ 체크한 공장이 <b>이 신청 대상</b>으로 저장됩니다 · Select target facilities for this application</div>
           <div id="facListBox">${facListHtml(facs,org,canApp,c.facility_ids,id)}</div>
         </div>
-        <div class="field"><label>제조업체명 · Manufacturer</label><input class="v" id="peMfrName" value="${esc(pe.manufacturer_name||"")}"></div>
-        <div class="field"><label>공장 주소 · Factory Address <span class="muted">(지역맵 집계)</span></label><input class="v" id="apFactory" value="${esc(c.factory_address||"")}" placeholder="예: Jl. Industri, Bekasi, Jawa Barat"></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-          <div class="field"><label>도시 · City</label><input class="v" id="peFacCity" value="${esc(pe.factory_city||"")}"></div>
-          <div class="field"><label>국가 · Country</label><input class="v" id="peFacCountry" value="${esc(pe.factory_country||"")}"></div>
-          <div class="field"><label>우편 · ZIP</label><input class="v" id="peFacZip" value="${esc(pe.factory_zip||"")}"></div></div>
-        <div class="field"><label>공장등록번호 · Factory Reg No</label><input class="v" id="peFacRegNo" value="${esc(c.factory_reg_no||"")}"></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div class="field"><label>시설 전화 · Office</label><input class="v" id="peFacPhone" value="${esc(pe.facility_phone||"")}"></div>
-          <div class="field"><label>시설 이메일 · Email</label><input class="v" id="peFacEmail" value="${esc(pe.facility_email||"")}"></div></div>
-        <div class="muted small" style="margin:10px 0 4px;font-weight:600">시설 담당자 · PIC</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div class="field"><label>이름</label><input class="v" id="peFacPicName" value="${esc(pe.fac_pic_name||"")}"></div>
-          <div class="field"><label>휴대폰</label><input class="v" id="peFacPicPhone" value="${esc(pe.fac_pic_phone||"")}"></div></div>
+        <div class="banner info" style="margin-bottom:6px">🏭 공장 상세(주소·도시·국가·우편·등록번호·제조업체·연락처)는 위 <b>공장 목록의 [편집]</b>에서 공장별로 관리합니다 — Facility 테이블에 저장됩니다.</div>
         <details style="margin-top:12px"><summary class="muted small" style="cursor:pointer">🏛 ${T('할랄 인증기관 조회')} (공급사 인증서 발급기관 확인)</summary>
           <div style="margin-top:6px"><div class="btnrow" style="gap:6px"><input class="box" id="instQ" placeholder="${T('기관명 (예: JAKIM, MUI, Sucofindo)')}" style="flex:1"></div>
           <div class="btnrow" style="gap:6px;margin-top:6px">
@@ -2152,8 +2139,8 @@ async function autofillProfile(id){
 async function saveProfile(id,silent){
   const cel=document.getElementById("apConsent");
   const pe={};
-  [["peTaxId","tax_id"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"],["peMfrName","manufacturer_name"],["peFacCity","factory_city"],["peFacCountry","factory_country"],["peFacZip","factory_zip"],["peFacPhone","facility_phone"],["peFacEmail","facility_email"],["peFacPicName","fac_pic_name"],["peFacPicPhone","fac_pic_phone"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
-  const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),address:v("peAddress"),email:v("peEmail"),factory_reg_no:v("peFacRegNo"),factory_address:v("apFactory"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined,profile_ext:pe};
+  [["peTaxId","tax_id"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
+  const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),address:v("peAddress"),email:v("peEmail"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined,profile_ext:pe};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];await loadCases(true);applyView();if(!silent)alert("✅ 저장이 완료되었습니다 · Saved");}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
 }
