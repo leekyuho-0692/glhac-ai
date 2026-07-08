@@ -1703,6 +1703,28 @@ def matrix_link(case_id: str, body: schemas.MatrixLinkReq,
     return {"product_id": body.product_id, "material_id": body.material_id, "linked": body.linked}
 
 
+def _auto_link_pm(db, case_id, max_pairs=2000):
+    """제품-원재료 자동 연결. 기존 링크는 보존하고 미연결 (제품,원재료) 쌍만 추가.
+    과적재(제품×원재료>max_pairs) 케이스는 폭발 방지로 스킵."""
+    prods = db.query(models.Product).filter_by(case_id=case_id).all()
+    mats = db.query(models.Material).filter_by(case_id=case_id).all()
+    if not prods or not mats or len(prods) * len(mats) > max_pairs:
+        return 0
+    existing = {(lk.product_id, lk.material_id) for lk in
+                db.query(models.ProductMaterial).filter_by(case_id=case_id).all()}
+    added = 0
+    for p in prods:
+        for m in mats:
+            key = (p.product_id, m.material_id)
+            if key in existing:
+                continue
+            db.add(models.ProductMaterial(case_id=case_id, product_id=p.product_id,
+                                          material_id=m.material_id))
+            existing.add(key)
+            added += 1
+    return added
+
+
 _CO_PLACEHOLDER = ("", "My Company", "scan", "ABC", "T", "UI", "Demo Co", "Demo Co FE")
 
 
@@ -1739,6 +1761,8 @@ def _apply_intake_autofill(db, c, res):
                                    cert=sc.get("v1_cert")))
             applied["materials"] += 1
             have_m.add(nk)
+    # 제품·원재료 자동 연결(매트릭스) — 아코디언에 원재료가 붙도록
+    applied["links"] = _auto_link_pm(db, c.case_id)
     # 사전심사 업로드 → 신청서 임시저장 진입(작성 이어하기 대상)
     if c.status in ("onboarding", "application_draft"):
         c.status = "application_draft"
@@ -1746,6 +1770,18 @@ def _apply_intake_autofill(db, c, res):
             c.draft_state = "saved"
     res["applied"] = applied
     return applied
+
+
+@app.post("/cases/{case_id}/auto-link-materials")
+def auto_link_materials_ep(case_id: str,
+                           user=Depends(auth.require_roles("applicant", "consultant", "penyelia_halal")),
+                           db: Session = Depends(get_db)):
+    """기존 케이스 소급 — 제품-원재료 자동 연결 실행(수동 매핑은 보존)."""
+    c = _get_case(db, case_id, user)
+    added = _auto_link_pm(db, c.case_id)
+    db.commit()
+    total = db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count()
+    return {"added": added, "total_links": total}
 
 
 @app.post("/cases/{case_id}/intake-zip")
