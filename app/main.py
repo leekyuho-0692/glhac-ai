@@ -4910,7 +4910,7 @@ def list_facilities(org_id: str, user=Depends(auth.get_current_user), db: Sessio
     rows = db.query(models.Facility).filter_by(org_id=org_id).order_by(models.Facility.created_at).all()
     return [{"facility_id": f.facility_id, "name": f.name, "address": f.address, "city": f.city,
              "country": f.country, "zip": f.zip, "reg_no": f.reg_no,
-             "created_at": str(f.created_at)} for f in rows]
+             "profile_ext": f.profile_ext or {}, "created_at": str(f.created_at)} for f in rows]
 
 
 @app.post("/orgs/{org_id}/facilities")
@@ -4921,6 +4921,23 @@ def add_facility(org_id: str, body: schemas.FacilityReq,
     f = models.Facility(org_id=org_id, name=body.name.strip(), address=body.address, city=body.city,
                         country=body.country, zip=body.zip, reg_no=body.reg_no)
     db.add(f)
+    db.commit()
+    return {"facility_id": f.facility_id, "name": f.name}
+
+
+@app.patch("/facilities/{facility_id}")
+def update_facility(facility_id: str, body: schemas.FacilityUpdateReq,
+                    user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """공장 상세 편집 — 주소/도시/국가/우편/등록번호/상세를 Facility 테이블에 저장."""
+    f = db.get(models.Facility, facility_id)
+    if not f:
+        raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
+    for k in ("name", "address", "city", "country", "zip", "reg_no"):
+        v = getattr(body, k)
+        if v is not None:
+            setattr(f, k, v)
+    if body.profile_ext is not None:
+        f.profile_ext = {**(f.profile_ext or {}), **body.profile_ext}
     db.commit()
     return {"facility_id": f.facility_id, "name": f.name}
 

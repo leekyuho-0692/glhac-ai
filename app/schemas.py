@@ -296,6 +296,16 @@ class FacilitySelectReq(BaseModel):
     facility_ids: list = []   # 이 신청 대상 공장 ID 목록
 
 
+class FacilityUpdateReq(BaseModel):
+    name: Optional[str] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    zip: Optional[str] = None
+    reg_no: Optional[str] = None
+    profile_ext: Optional[dict] = None   # 제조업체명·전화·이메일·PIC 등 상세
+
+
 class UnlockReq(BaseModel):
     reason: str = Field(min_length=5)   # 언락 사유 필수(감사 추적)
 

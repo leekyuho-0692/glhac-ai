@@ -1581,7 +1581,10 @@ function facListHtml(facs,org,canApp,selected,caseId){
       <div><b>${esc(f.name)}</b>${f.reg_no?` <span class="muted small">· ${esc(f.reg_no)}</span>`:''}
         <div class="muted small">${esc([f.address,f.city,f.country,f.zip].filter(Boolean).join(", ")||"주소 미입력")}</div></div>
     </label>
-    ${canApp?`<button class="btn" style="padding:2px 8px" onclick="facDel('${f.facility_id}','${esc((f.name||"").replace(/'/g,""))}','${esc(org)}','${caseId||""}')">삭제</button>`:''}
+    <div style="display:flex;gap:4px;flex:none">
+      ${canApp?`<button class="btn" style="padding:2px 8px" onclick="facEdit('${f.facility_id}','${esc(org)}','${caseId||""}')">편집</button>`:''}
+      ${canApp?`<button class="btn" style="padding:2px 8px" onclick="facDel('${f.facility_id}','${esc((f.name||"").replace(/'/g,""))}','${esc(org)}','${caseId||""}')">삭제</button>`:''}
+    </div>
   </div>`).join("");
 }
 async function facReload(org,caseId){
@@ -1591,12 +1594,34 @@ async function facReload(org,caseId){
     const box=document.getElementById("facListBox");if(box)box.innerHTML=facListHtml(facs,org,true,sel,caseId);
   }catch(_){}
 }
+const _FAC_FIELDS=(f)=>{const pe=(f&&f.profile_ext)||{};return [
+  {key:"name",label:"공장명 · Facility name",value:f&&f.name,required:true},
+  {key:"reg_no",label:"공장등록번호 · Reg No",value:f&&f.reg_no},
+  {key:"address",label:"주소 · Address",value:f&&f.address},
+  {key:"city",label:"도시 · City",value:f&&f.city},
+  {key:"country",label:"국가 · Country",value:f&&f.country},
+  {key:"zip",label:"우편 · ZIP",value:f&&f.zip},
+  {key:"manufacturer_name",label:"제조업체명 · Manufacturer",value:pe.manufacturer_name},
+  {key:"facility_phone",label:"시설 전화 · Phone",value:pe.facility_phone},
+  {key:"facility_email",label:"시설 이메일 · Email",value:pe.facility_email},
+];};
+function _facBody(out){return {name:out.name,reg_no:out.reg_no,address:out.address,city:out.city,
+  country:out.country,zip:out.zip,
+  profile_ext:{manufacturer_name:out.manufacturer_name,facility_phone:out.facility_phone,facility_email:out.facility_email}};}
 async function facAdd(org,caseId){
   if(!org)return alert("회사(org) 정보가 없습니다.");
-  const name=prompt("공장명 · Facility name");if(!name||!name.trim())return;
-  const reg_no=(prompt("공장등록번호 · Reg No (선택)")||"").trim();
-  const address=(prompt("공장 주소 · Address (선택)")||"").trim();
-  try{await API(`/orgs/${org}/facilities`,{method:"POST",body:JSON.stringify({name:name.trim(),reg_no,address})});await facReload(org,caseId);toast("✅ 공장 등록 완료");}catch(e){toast("공장 등록 실패 · "+(e&&e.code?e.code:""));}
+  const out=await dialog("공장 추가 · New facility",_FAC_FIELDS(null));
+  if(!out)return;
+  try{await API(`/orgs/${org}/facilities`,{method:"POST",body:JSON.stringify(_facBody(out))});await facReload(org,caseId);toast("✅ 공장 등록 완료");}
+  catch(e){toast("공장 등록 실패 · "+(e&&e.code?e.code:""));}
+}
+async function facEdit(fid,org,caseId){
+  const facs=await API(`/orgs/${org}/facilities`).catch(()=>[]);
+  const fac=(facs||[]).find(f=>f.facility_id===fid);if(!fac)return toast("공장을 찾을 수 없습니다");
+  const out=await dialog("공장 상세 편집 · Facility",_FAC_FIELDS(fac));
+  if(!out)return;
+  try{await API(`/facilities/${fid}`,{method:"PATCH",body:JSON.stringify(_facBody(out))});await facReload(org,caseId);toast("✅ 공장 저장 완료");}
+  catch(e){toast("공장 저장 실패 · "+(e&&e.code?e.code:""));}
 }
 async function facDel(fid,name,org,caseId){
   if(!confirm(`공장 '${name}' 을(를) 삭제할까요?`))return;
