@@ -42,7 +42,12 @@
   nav a.active{background:var(--nav-active);color:#fff;font-weight:600}
   nav a.active .en{color:#93C5FD}
   .nav-group{margin-bottom:6px}
-  .nav-group-label{font-size:10.5px;color:#64748B;text-transform:uppercase;letter-spacing:.6px;padding:10px 14px 4px;font-weight:700}
+  .nav-group-label{font-size:10.5px;color:#64748B;text-transform:uppercase;letter-spacing:.6px;padding:10px 14px 6px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none}
+  .nav-group-label:hover{color:#94A3B8}
+  .nav-caret{font-size:9px;transition:transform .18s}
+  .nav-group.open .nav-caret{transform:rotate(90deg)}
+  .nav-group-items{display:none}
+  .nav-group.open .nav-group-items{display:block}
   .navfoot{margin-top:auto;padding:12px 20px;color:#475569;font-size:11px;border-top:1px solid #1E293B}
   main{flex:1;min-width:0;display:flex;flex-direction:column}
   .topbar{height:66px;background:var(--card);border-bottom:1px solid var(--line);
@@ -138,8 +143,8 @@
     .card .body{overflow-x:auto;-webkit-overflow-scrolling:touch}  /* 넓은 표는 카드 내 가로 스크롤 */
   }
   .field{margin-bottom:12px}
-  .field label{display:block;font-size:11.5px;color:var(--ink3);margin-bottom:4px}
-  .field .v{border:1px solid var(--line2);border-radius:8px;padding:8px 11px;background:var(--card);font-size:13px}
+  .field label{display:block;font-size:13px;color:var(--ink3);margin-bottom:5px}
+  .field .v{border:1px solid var(--line2);border-radius:8px;padding:9px 12px;background:var(--card);font-size:14.5px}
   input.v,select.v{width:100%;font-family:inherit}
   .radioset{display:flex;gap:8px}
   .radioset .opt{flex:1;border:1.5px solid var(--line2);border-radius:9px;padding:10px;font-size:12px;cursor:pointer}
@@ -695,21 +700,23 @@ function buildNav(){
   const byId=Object.fromEntries(NAV.map(x=>[x[0],x]));
   const allow=id=>byId[id]&&MENU_ACCESS[id]&&MENU_ACCESS[id].includes(ROLE);
   const link=([id,ic,ko,en])=>`<a data-id="${id}" role="link" tabindex="0" onclick="go('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}"><span aria-hidden="true">${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`;
+  const grp=(label,ids2,list)=>{const op=ids2.includes(CUR);return `<div class="nav-group${op?' open':''}"><div class="nav-group-label" onclick="toggleNavGroup(this)">${label}<span class="nav-caret">▸</span></div><div class="nav-group-items">${list.join("")}</div></div>`;};
   let html="", shown=0;
   NAV_GROUPS.forEach(g=>{
     const items=g.ids.filter(allow);
     if(!items.length)return;
     shown+=items.length;
-    html+=`<div class="nav-group"><div class="nav-group-label">${g.label}</div>${items.map(id=>link(byId[id])).join("")}</div>`;
+    html+=grp(g.label, items, items.map(id=>link(byId[id])));
   });
   // 그룹에 없는 메뉴(신규 등)는 하단에 그대로 노출 (누락 방지)
   const grouped=new Set(NAV_GROUPS.flatMap(g=>g.ids));
   const rest=NAV.filter(([id])=>allow(id)&&!grouped.has(id));
-  if(rest.length){shown+=rest.length;html+=`<div class="nav-group"><div class="nav-group-label">기타 · Other</div>${rest.map(link).join("")}</div>`;}
+  if(rest.length){shown+=rest.length;html+=grp("기타 · Other", rest.map(x=>x[0]), rest.map(link));}
   nav.innerHTML=html;
   document.getElementById("navfoot").innerHTML=
     `${T('노출 메뉴')} ${shown} / 15<br><span style="color:#64748B">scope · ${T(scopeLabel())}</span>`;
 }
+function toggleNavGroup(el){if(el&&el.parentElement)el.parentElement.classList.toggle("open");}
 function toggleNav(on){
   const app=document.getElementById("appView");if(!app)return;
   const open=(on===undefined)?!app.classList.contains("navopen"):!!on;
@@ -1792,43 +1799,61 @@ SCREEN.preassess=async()=>{
   const id=CURCASE;
   if(!id)return '<div class="card"><div class="body muted">케이스를 먼저 선택하세요.</div></div>';
   const c=await API(`/cases/${id}`).catch(()=>({}));
-  const [chk,docs,mats]=await Promise.all([
+  const [chk,mats,prods]=await Promise.all([
     API(`/cases/${id}/doc-checklist`).catch(()=>({checklist:[],missing:[],complete:false})),
-    API(`/cases/${id}/documents`).catch(()=>[]),
-    API(`/cases/${id}/materials`).catch(()=>[])]);
+    API(`/cases/${id}/materials`).catch(()=>[]),
+    API(`/cases/${id}/products`).catch(()=>[])]);
   const canApp=["client","consultant","admin"].includes(ROLE);
   const missN=(chk.missing||[]).length;
   const as=ASSESS_CACHE[id];
   const blkN=as?(as.blockers||[]).length:0;
-  const verdict= !as ? '<div class="banner info">🤖 아직 사전심사 미실행 — 아래 [AI 사전심사 실행]을 눌러 판정을 받으세요.</div>'
-    : (missN===0&&blkN===0) ? '<div class="banner ok">✅ 심사 진행 가능 · Ready to submit</div>'
-    : `<div class="banner warn">⚠ ${T('보완 필요')} · ${T('필요서류')} ${missN}${blkN?` · ${T('차단')} ${blkN}`:''}</div>`;
   const mc={haram:0,mushbooh:0,halal:0,unknown:0};
-  mats.forEach(m=>{const st=String(m.screen_status||'unknown').toLowerCase();mc[st]=(mc[st]||0)+1;});
+  mats.forEach(m=>{const st=String(m.status||m.screen_status||'unknown').toLowerCase();mc[st]=(mc[st]||0)+1;});
+  const screened=mc.haram+mc.mushbooh+mc.halal;
+  const scol=s=>({halal:'ok',haram:'bad',mushbooh:'warn',pass:'ok',needs_evidence:'warn',block:'bad'}[String(s||'').toLowerCase()]||'mute');
+  const stage=!as?1:(as.auditor_reviewed?3:2);
+  const stageBar=[[1,'AI 판독','Analysis'],[2,'오디터 검토','Auditor'],[3,'완료','Done']].map(([n,ko,en])=>`<div class="step ${stage>n?'done':stage===n?'now':''}" style="min-width:88px">${n}. ${ko}<span class="en"> · ${en}</span></div>`).join('<span class="arrow">→</span>');
+  const verdict= !as ? '<div class="banner info">🤖 아직 사전심사 미실행 — [AI 사전심사 실행]을 누르세요.</div>'
+    : (missN===0&&blkN===0) ? '<div class="banner ok">✅ 심사 진행 가능 · Ready</div>'
+    : `<div class="banner warn">⚠ ${T('보완 필요')} · ${T('필요서류')} ${missN}${blkN?` · ${T('차단')} ${blkN}`:''}</div>`;
   return `
-  <div class="card"><h3>사전심사 <span class="en">· Pre-assessment · 가심사</span><span class="r">${esc(c.company_name||'')}</span></h3>
-    <div class="body">
-      <div class="banner info" style="margin-bottom:10px">정식 심사 전 가심사(테스트) — 어떤 서류가 필요한지, 심사에 넣어도 되는지 미리 확인합니다.</div>
-      ${verdict}
-      <div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="assessPathway('${id}')">🤖 AI 사전심사 실행 · Run</button></div>
-      <div id="assessOut" style="margin-top:12px">${assessRender(id)}</div>
-    </div></div>
-  <div class="card" style="margin-top:16px"><h3>필요 서류 <span class="en">· Required documents</span><span class="r">${chk.complete?T('완비'):T('미충족')+' '+missN}</span></h3>
-    <div class="body">
-      ${canApp?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">
-        <button class="btn pri" onclick="intakeZip('${id}')">🗂 ZIP 업로드 · 자동 분류</button>
-        <button class="btn" onclick="labelOcr('${id}')">📷 성분표/라벨 OCR</button></div>
-      <div id="intakeOut" class="small" style="margin-bottom:10px">${INTAKE_OUT[id]||''}</div>`:''}
-      <div class="body tight"><table><thead><tr><th>서류 · Document</th><th>상태</th><th>제출 파일</th></tr></thead>
-        <tbody>${(chk.checklist||[]).map(x=>`<tr><td>${esc(x.doc_type_ko||x.doc_type)}</td><td>${x.satisfied?tag('ok','제출됨'):tag('bad','미제출')}</td><td class="muted small">${(x.files||[]).map(f=>esc(f.filename)).join(', ')||'—'}</td></tr>`).join('')||'<tr><td colspan="3" class="muted" style="text-align:center;padding:12px">체크리스트 없음</td></tr>'}</tbody></table></div>
-    </div></div>
-  <div class="card" style="margin-top:16px"><h3>업로드 내역 <span class="en">· Uploaded data</span><span class="r">${docs.length}</span></h3>
-    <div class="body tight"><table><thead><tr><th>파일</th><th>유형</th><th>신뢰도</th><th>검수</th></tr></thead>
-      <tbody>${docs.length?docs.map(d=>`<tr><td>${esc(d.filename||'—')}</td><td>${esc(T(d.doc_type_ko||d.doc_type||'—'))}</td><td>${d.confidence!=null?Math.round(d.confidence*100)+'%':'—'}</td><td>${bTag(d.review_status==='approved'?'ok':d.review_status==='rejected'?'bad':'mute',d.review_status||'pending')}</td></tr>`).join(''):'<tr><td colspan="4" class="muted" style="text-align:center;padding:12px">업로드된 파일 없음</td></tr>'}</tbody></table></div></div>
-  <div class="card" style="margin-top:16px"><h3>원재료 스크리닝 <span class="en">· Material screening</span><span class="r">${mats.length}</span></h3>
-    <div class="body"><div class="btnrow" style="flex-wrap:wrap;gap:6px">
-      ${tag('bad',T('하람')+' '+mc.haram)} ${tag('warn',T('의심')+' '+mc.mushbooh)} ${tag('ok',T('할랄')+' '+mc.halal)} ${tag('mute',T('미판정')+' '+(mc.unknown||0))}
-    </div></div></div>`;
+  <div class="grid side">
+    <div>
+      <div class="card"><h3>사전심사 대상 <span class="en">· Pre-assessment · 가심사</span><span class="r">${esc(c.company_name||'')}</span></h3>
+        <div class="body">
+          <div class="banner info" style="margin-bottom:10px">신청 정보·품목을 AI가 분석 → <b>오디터가 최종 판단</b>합니다. 정식 심사 전 가심사(무료).</div>
+          <div class="kv"><span>경로 · Pathway</span><b>${esc(c.pathway||'미확정')}</b></div>
+          <div class="kv"><span>제품 · Products</span><b>${prods.length}건</b></div>
+          <div class="kv"><span>원재료 · Materials</span><b>${mats.length}건</b></div>
+          <div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="assessPathway('${id}')">🤖 AI 사전심사 실행 · Run</button></div>
+        </div></div>
+      <div class="card" style="margin-top:16px"><h3>대상 품목 <span class="en">· Items</span><span class="r">${prods.length+mats.length}</span></h3>
+        <div class="body tight" style="max-height:360px;overflow:auto">
+          ${prods.length?'<div class="muted small" style="padding:4px 0 2px;font-weight:600">제품 · Products</div>'+prods.map(p=>`<div class="li"><div class="tx"><b>${esc(p.name||'—')}</b> <span class="muted small">${esc(p.category||'')}</span></div></div>`).join(''):''}
+          <div class="muted small" style="padding:8px 0 2px;font-weight:600">원재료 · Materials (${mats.length})</div>
+          <table><tbody>${mats.slice(0,60).map(m=>`<tr><td>${esc(m.name)}</td><td style="text-align:right;white-space:nowrap">${bTag(scol(m.status||m.result),m.status||m.result)}</td></tr>`).join('')||'<tr><td class="muted">원재료 없음</td></tr>'}</tbody></table>
+          ${mats.length>60?`<div class="muted small" style="padding:6px">외 ${mats.length-60}건…</div>`:''}
+        </div></div>
+    </div>
+    <div>
+      <div class="card"><h3>AI 판독 결과 <span class="en">· Analysis → 오디터</span></h3>
+        <div class="body">
+          <div class="flow" style="margin-bottom:12px">${stageBar}</div>
+          ${verdict}
+          <div id="assessOut" style="margin-top:12px">${assessRender(id)}</div>
+          <div class="muted small" style="margin:14px 0 4px;font-weight:600">원재료 스크리닝 요약 · Screening</div>
+          <div class="btnrow" style="flex-wrap:wrap;gap:6px">
+            ${tag('bad',T('하람')+' '+mc.haram)} ${tag('warn',T('의심')+' '+mc.mushbooh)} ${tag('ok',T('할랄')+' '+mc.halal)} ${tag('mute',T('미판정')+' '+(mc.unknown||0))}
+          </div>
+          ${screened<mats.length?`<div class="banner warn" style="margin-top:10px">⚠ ${mats.length-screened}건 미스크리닝 — 원재료 화면에서 스크리닝하세요.</div>`:(mats.length?'<div class="banner ok" style="margin-top:10px">✅ 전체 스크리닝 완료</div>':'')}
+        </div></div>
+      <div class="card" style="margin-top:16px"><h3>부족 서류 <span class="en">· Missing</span><span class="r">${missN}</span></h3>
+        <div class="body">
+          ${missN?`<div class="banner warn" style="margin-bottom:8px">보완 필요 서류 ${missN}건</div>`+(chk.missing||[]).map(x=>`<div class="li"><div class="ic t-warn">📄</div><div class="tx">${esc((x&&(x.doc_type_ko||x.doc_type))||x)}</div></div>`).join(''):'<div class="banner ok">✅ 필수 서류 완비</div>'}
+          ${canApp?`<div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:6px"><button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 업로드</button><button class="btn" onclick="labelOcr('${id}')">📷 라벨 OCR</button></div><div id="intakeOut" class="small" style="margin-top:8px">${INTAKE_OUT[id]||''}</div>`:''}
+        </div></div>
+    </div>
+  </div>`;
 };
 SCREEN.application=async()=>{
   const id=CURCASE;const c=await API(`/cases/${id}`);const pe=c.profile_ext||{};
@@ -1856,7 +1881,7 @@ SCREEN.application=async()=>{
         <button class="btn" onclick="go('integration')">🔗 제품·통합</button>
         <button class="btn" onclick="go('documents')">📁 문서 화면</button></div>
     </div></div>
-  <div class="grid three">
+  <div class="grid two">
     <div class="card"><h3>① 기업 프로필 · Company Info <span class="en">· 고객 접수 양식(Form.1)</span></h3>
       <div class="body">
         <div class="field"><label>기업명 · Company Name</label><input class="v" id="apCompany" value="${esc(c.company_name||"")}">
