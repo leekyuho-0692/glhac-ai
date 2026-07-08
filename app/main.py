@@ -1010,6 +1010,10 @@ def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("appli
               "address", "factory_reg_no", "factory_address"):
         if oext.get(k) is not None:
             setattr(c, k, oext[k])
+    # 공장도 org 자산 상속(오피스 1:N 공장) — 새 신청에 org 공장 자동 연결(회사프로필 상속과 대칭)
+    facs = db.query(models.Facility).filter_by(org_id=org).all()
+    if facs:
+        c.facility_ids = [f.facility_id for f in facs]
     db.add(c)
     db.flush()
     sm.record_event(db, c, None, "onboarding", "case.create", user["role"], user["uid"])
