@@ -290,7 +290,10 @@
     <div class="sub">할랄·샤리아 인증 플랫폼 · Halal Certification</div>
     <input id="loginUser" placeholder="아이디 · Username" autocomplete="username" autofocus>
     <input id="loginPass" type="password" placeholder="비밀번호 · Password" autocomplete="current-password">
-    <button class="btn pri" style="width:100%;justify-content:center;padding:11px" type="submit">로그인 · Sign in</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn pri" style="flex:1;justify-content:center;padding:11px" type="submit">로그인 · Sign in</button>
+      <button type="button" class="btn" style="justify-content:center;padding:11px 16px;white-space:nowrap" onclick="showRegister(true)">회원가입</button>
+    </div>
     <div class="demo" id="demoPanel" style="display:none">
       <b>데모 계정 · demo — 클릭하여 로그인</b>
       <div class="demogrid">
@@ -302,7 +305,6 @@
         <button type="button" class="btn" onclick="quickLogin('admin','admin')">⚙️ ITO 관리자<span>admin</span></button>
       </div>
     </div>
-    <div style="margin-top:12px;font-size:12px;text-align:center"><a onclick="showRegister(true)" style="color:var(--accent);cursor:pointer">회원가입 · Register →</a></div>
   </form>
   <form class="loginbox" id="registerForm" style="display:none" onsubmit="doRegister(event)">
     <h1>회원가입 · Register</h1>
@@ -1568,6 +1570,27 @@ async function renderRightPanel(){
 }
 function toggleRPanel(){const p=document.getElementById("rpanel");if(!p)return;p.classList.toggle("open");try{localStorage.setItem("glhac_rp",p.classList.contains("open")?"1":"0")}catch(_){}if(p.classList.contains("open"))renderRightPanel();}
 async function postDiscussion(id){const inp=document.getElementById("rpDiscInput");const tx=(inp&&inp.value||"").trim();if(!tx)return;try{await API(`/cases/${id}/discussions`,{method:"POST",body:JSON.stringify({text:tx,kind:"comment"})});if(inp)inp.value="";renderRightPanel();}catch(e){toast("전송 실패");}}
+/* 공장(Facility) 등록 리스트 — 회사1:공장N (Phase 3) */
+function facListHtml(facs,org,canApp){
+  if(!facs||!facs.length)return '<div class="muted small" style="padding:4px 2px">등록된 공장이 없습니다. [+ 공장 추가]로 회사 공장을 등록하세요.</div>';
+  return facs.map(f=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 4px;border-bottom:1px solid var(--line)">
+    <div><b>${esc(f.name)}</b>${f.reg_no?` <span class="muted small">· ${esc(f.reg_no)}</span>`:''}
+      <div class="muted small">${esc([f.address,f.city,f.country,f.zip].filter(Boolean).join(", ")||"주소 미입력")}</div></div>
+    ${canApp?`<button class="btn" style="padding:2px 8px" onclick="facDel('${f.facility_id}','${esc((f.name||"").replace(/'/g,""))}','${esc(org)}')">삭제</button>`:''}
+  </div>`).join("");
+}
+async function facReload(org){try{const facs=await API(`/orgs/${org}/facilities`);const box=document.getElementById("facListBox");if(box)box.innerHTML=facListHtml(facs,org,true);}catch(_){}}
+async function facAdd(org){
+  if(!org)return alert("회사(org) 정보가 없습니다.");
+  const name=prompt("공장명 · Facility name");if(!name||!name.trim())return;
+  const reg_no=(prompt("공장등록번호 · Reg No (선택)")||"").trim();
+  const address=(prompt("공장 주소 · Address (선택)")||"").trim();
+  try{await API(`/orgs/${org}/facilities`,{method:"POST",body:JSON.stringify({name:name.trim(),reg_no,address})});await facReload(org);toast("✅ 공장 등록 완료");}catch(e){toast("공장 등록 실패 · "+(e&&e.code?e.code:""));}
+}
+async function facDel(fid,name,org){
+  if(!confirm(`공장 '${name}' 을(를) 삭제할까요?`))return;
+  try{await API(`/facilities/${fid}`,{method:"DELETE"});await facReload(org);toast("🗑️ 공장 삭제됨");}catch(e){toast("삭제 실패 · "+(e&&e.code?e.code:""));}
+}
 function prodAccordion(id,prods,mats,matrix){
   const _lm={};((matrix&&matrix.links)||[]).forEach(lk=>{const pid=Array.isArray(lk)?lk[0]:lk.product_id,mid=Array.isArray(lk)?lk[1]:lk.material_id;(_lm[pid]=_lm[pid]||[]).push(mid);});
   const _mb={};(mats||[]).forEach(m=>_mb[m.material_id]=m);
@@ -1890,11 +1913,16 @@ SCREEN.preassess=async()=>{
 };
 SCREEN.application=async()=>{
   const id=CURCASE;const c=await API(`/cases/${id}`);const pe=c.profile_ext||{};
-  const chk=await API(`/cases/${id}/doc-checklist`).catch(()=>({checklist:[]}));
+  const [chk,mats,prods,matrix]=await Promise.all([
+    API(`/cases/${id}/doc-checklist`).catch(()=>({checklist:[]})),
+    API(`/cases/${id}/materials`).catch(()=>[]),
+    API(`/cases/${id}/products`).catch(()=>[]),
+    API(`/cases/${id}/matrix`).catch(()=>({links:[]}))]);
   const coChk=await API(`/cases/${id}/company-check`).catch(()=>null);
-  const org=(()=>{try{return localStorage.getItem("glhac_org")||""}catch(_){return""}})();
+  const org=c.org_id||(()=>{try{return localStorage.getItem("glhac_org")||""}catch(_){return""}})();
   let penyeliaResp={items:[]};try{penyeliaResp=await API(`/orgs/${org}/penyelia`);}catch(_){}
   const pens=penyeliaResp.items||[];
+  let facs=[];try{facs=await API(`/orgs/${org}/facilities`);}catch(_){}
   const canApp=["client","consultant","admin"].includes(ROLE);
   return `
   <div class="card" style="margin-bottom:16px"><h3>② 파일 인테이크 <span class="en">· Intake (단계별) · AI 자동추출</span></h3>
@@ -1978,6 +2006,13 @@ SCREEN.application=async()=>{
       </div></div>
     <div class="card"><h3>🏭 공장·시설 · Facility Info <span class="en">· 시설 데이터 양식(Form.2)</span></h3>
       <div class="body">
+        <div style="border:1px solid var(--line2);border-radius:10px;padding:10px;margin-bottom:14px;background:var(--panel2,#fafafa)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <b style="font-size:12.5px">🏢 회사 등록 공장 목록 · Registered Facilities <span class="muted">(회사 자산 · ${facs.length}개)</span></b>
+            ${canApp?`<button class="btn" style="padding:4px 10px" onclick="facAdd('${esc(org)}')">+ 공장 추가</button>`:''}
+          </div>
+          <div id="facListBox">${facListHtml(facs,org,canApp)}</div>
+        </div>
         <div class="field"><label>제조업체명 · Manufacturer</label><input class="v" id="peMfrName" value="${esc(pe.manufacturer_name||"")}"></div>
         <div class="field"><label>공장 주소 · Factory Address <span class="muted">(지역맵 집계)</span></label><input class="v" id="apFactory" value="${esc(c.factory_address||"")}" placeholder="예: Jl. Industri, Bekasi, Jawa Barat"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">

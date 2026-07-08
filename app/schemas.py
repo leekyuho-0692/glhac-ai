@@ -283,6 +283,15 @@ class SeedResetReq(BaseModel):
     confirm: str   # "RESET" 필요
 
 
+class FacilityReq(BaseModel):
+    name: str
+    address: Optional[str] = None
+    city: Optional[str] = None
+    country: Optional[str] = None
+    zip: Optional[str] = None
+    reg_no: Optional[str] = None
+
+
 class UnlockReq(BaseModel):
     reason: str = Field(min_length=5)   # 언락 사유 필수(감사 추적)
 

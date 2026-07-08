@@ -4801,5 +4801,36 @@ def _root_redirect():
     return RedirectResponse(url="/ui/")
 
 
+# ===== 공장·시설 (회사1:공장N) — Phase 3 =====
+@app.get("/orgs/{org_id}/facilities")
+def list_facilities(org_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    rows = db.query(models.Facility).filter_by(org_id=org_id).order_by(models.Facility.created_at).all()
+    return [{"facility_id": f.facility_id, "name": f.name, "address": f.address, "city": f.city,
+             "country": f.country, "zip": f.zip, "reg_no": f.reg_no,
+             "created_at": str(f.created_at)} for f in rows]
+
+
+@app.post("/orgs/{org_id}/facilities")
+def add_facility(org_id: str, body: schemas.FacilityReq,
+                 user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    if not (body.name or "").strip():
+        raise HTTPException(422, {"code": "NAME_REQUIRED"})
+    f = models.Facility(org_id=org_id, name=body.name.strip(), address=body.address, city=body.city,
+                        country=body.country, zip=body.zip, reg_no=body.reg_no)
+    db.add(f)
+    db.commit()
+    return {"facility_id": f.facility_id, "name": f.name}
+
+
+@app.delete("/facilities/{facility_id}")
+def del_facility(facility_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    f = db.get(models.Facility, facility_id)
+    if not f:
+        raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
+    db.delete(f)
+    db.commit()
+    return {"deleted": facility_id}
+
+
 _static = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/ui", NoCacheStaticFiles(directory=_static, html=True), name="ui")
