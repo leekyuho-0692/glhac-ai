@@ -35,6 +35,8 @@ class CaseApplication(Base):
     fatwa_status = Column(String, default="none")
     scope_frozen = Column(Boolean, default=False)
     profile_ext = Column(JSON)  # Company/Facility Info 확장 양식 필드(PIC·CP·등록유형·공장정보 등)
+    facility_ids = Column(JSON)  # 이 신청 대상 공장 선택 — Phase 1
+    product_ids = Column(JSON)   # 이 신청 대상 제품 선택·분류 — Phase 1
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -89,6 +91,7 @@ class Product(Base):
     __tablename__ = "product"
     product_id = Column(String, primary_key=True, default=uid)
     case_id = Column(String, nullable=False)
+    org_id = Column(String, index=True)   # 회사 카탈로그화 준비 — Phase 1
     name = Column(String, nullable=False)
     category = Column(String)
     registration_type = Column(String)   # new|renewal|material_change (Rizky: Product Detail)
@@ -359,6 +362,9 @@ class Org(Base):
     __tablename__ = "org"
     org_id = Column(String, primary_key=True)
     name = Column(String)
+    address = Column(String)      # 회사 주소(회원가입 최소, 상세는 신청 오피스폼) — Phase 1
+    profile_ext = Column(JSON)    # Company Info 상세 — Phase 1
+    created_at = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -383,6 +389,22 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False)   # applicant|penyelia_halal|consultant|pendamping_pph|auditor|fatwa_liaison|admin
     org_id = Column(String, nullable=False)
+    company_role = Column(String, default="client_admin")  # client_admin(기업업무 관리자)|client_staff(업무자) — Phase 1
+
+
+class Facility(Base):
+    """공장·시설 (회사1:공장N) — Phase 1 신규 엔티티."""
+    __tablename__ = "facility"
+    facility_id = Column(String, primary_key=True, default=uid)
+    org_id = Column(String, index=True, nullable=False)   # 소속 회사(org)
+    name = Column(String)               # 제조업체/공장명
+    address = Column(String)
+    city = Column(String)
+    country = Column(String)
+    zip = Column(String)
+    reg_no = Column(String)             # 공장등록번호
+    profile_ext = Column(JSON)          # Facility Info 상세
+    created_at = Column(DateTime, default=datetime.utcnow)
     token_version = Column(Integer, default=0)   # 토큰 취소 — 증가 시 기존 토큰 전부 무효(§9.1)
 
 
