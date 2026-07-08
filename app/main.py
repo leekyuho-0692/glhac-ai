@@ -1778,6 +1778,35 @@ def _apply_intake_autofill(db, c, res):
                                    cert=sc.get("v1_cert")))
             applied["materials"] += 1
             have_m.add(nk)
+    # 공장등록증 파싱 → Facility 자동 생성/갱신(오피스 자산) + 이 신청 대상 연결
+    if agg.get("factory_address") or agg.get("factory_reg_no"):
+        _reg = agg.get("factory_reg_no")
+        _fac = None
+        if _reg:
+            _fac = db.query(models.Facility).filter_by(org_id=c.org_id, reg_no=_reg).first()
+        if not _fac and agg.get("factory_address"):
+            _fac = db.query(models.Facility).filter_by(org_id=c.org_id,
+                                                       address=agg["factory_address"]).first()
+        if not _fac:
+            _fac = models.Facility(org_id=c.org_id,
+                                   name=agg.get("company_name") or c.company_name or "공장")
+            db.add(_fac)
+        if agg.get("factory_address"):
+            _fac.address = agg["factory_address"]
+        if agg.get("factory_city"):
+            _fac.city = agg["factory_city"]
+        if agg.get("factory_country"):
+            _fac.country = agg["factory_country"]
+        if agg.get("factory_zip"):
+            _fac.zip = agg["factory_zip"]
+        if _reg:
+            _fac.reg_no = _reg
+        db.flush()
+        _fids = list(c.facility_ids or [])
+        if _fac.facility_id not in _fids:
+            _fids.append(_fac.facility_id)
+            c.facility_ids = _fids
+        applied["facility"] = _fac.facility_id
     # 제품·원재료 자동 연결(매트릭스) — 아코디언에 원재료가 붙도록
     applied["links"] = _auto_link_pm(db, c.case_id)
     # 사전심사 업로드 → 신청서 임시저장 진입(작성 이어하기 대상)

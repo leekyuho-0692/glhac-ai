@@ -196,10 +196,10 @@ def classify(name, text):
 
 # 개별 업로드 컨텍스트 파싱 — doc_type별 추출 필드 스펙
 _FIELD_SPEC = {
-    "nib_business_license": ("회사명, NIB(사업자등록번호), 주소",
-                             '{"company_name":null,"nib":null,"address":null}'),
-    "factory_registration": ("공장등록번호, 공장 주소",
-                             '{"factory_reg_no":null,"factory_address":null}'),
+    "nib_business_license": ("회사명, NIB(사업자등록번호), 주소, 도시, 국가, 우편번호",
+                             '{"company_name":null,"nib":null,"address":null,"city":null,"country":null,"zip":null}'),
+    "factory_registration": ("공장등록번호, 공장 주소, 도시, 국가, 우편번호",
+                             '{"factory_reg_no":null,"factory_address":null,"factory_city":null,"factory_country":null,"factory_zip":null}'),
     "halal_certificate": ("인증번호, 발급기관, 만료일, 대상(제품/원재료)",
                           '{"cert_no":null,"issuer":null,"expiry_date":null,"scope":null}'),
     "quality_cert": ("인증종류(HACCP/ISO/GMP/FSSC), 인증번호, 만료일",
@@ -236,6 +236,8 @@ def aggregate_fields(docs):
     """분류 문서들의 추출 필드를 신청서용으로 집계.
     회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외)."""
     agg = {"company_name": None, "nib": None, "address": None, "factory_address": None,
+           "city": None, "country": None, "zip": None,
+           "factory_city": None, "factory_country": None, "factory_zip": None,
            "responsible_person": None,
            "factory_reg_no": None, "products": [], "materials": [], "certificates": []}
     for d in docs:
@@ -253,6 +255,12 @@ def aggregate_fields(docs):
                 agg["factory_address"] = f["factory_address"]
             if d.get("doc_type") == "factory_registration" and not agg["factory_address"] and f.get("address"):
                 agg["factory_address"] = f["address"]   # 공장등록증의 주소는 공장 주소
+            for _c in ("city", "country", "zip"):        # 회사 도시/국가/우편(NIB)
+                if not agg[_c] and f.get(_c) and d.get("doc_type") != "factory_registration":
+                    agg[_c] = f[_c]
+            for _fc in ("factory_city", "factory_country", "factory_zip"):   # 공장 도시/국가/우편(공장등록증)
+                if not agg[_fc] and f.get(_fc):
+                    agg[_fc] = f[_fc]
             if not agg["responsible_person"] and f.get("responsible_person"):
                 agg["responsible_person"] = f["responsible_person"]
             if not agg["factory_reg_no"] and f.get("factory_reg_no"):
