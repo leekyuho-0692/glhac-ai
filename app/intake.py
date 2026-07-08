@@ -2,6 +2,7 @@
 import base64
 import io
 import os
+import re
 import zipfile
 from . import ai_local
 
@@ -26,6 +27,7 @@ DOC_TYPES = [
     "material_list",            # 원재료 목록
     "coa_msds",                 # CoA / MSDS / 성분 명세
     "supplier_declaration",     # 공급사 선언서
+    "quality_cert",             # 품질/식품안전 인증(HACCP·ISO·GMP·FSSC) — 할랄 인증 아님
     "sjph_manual",              # SJPH/HPAS 매뉴얼
     "other",
 ]
@@ -34,6 +36,7 @@ DOC_KO = {
     "product_list": "제품 목록", "process_flow": "공정 흐름도",
     "halal_certificate": "할랄 인증서", "material_list": "원재료 목록",
     "coa_msds": "CoA/MSDS 성분명세", "supplier_declaration": "공급사 선언서",
+    "quality_cert": "품질/식품안전 인증(HACCP·FSSC·GMP)",
     "sjph_manual": "SJPH 매뉴얼", "other": "기타/미분류",
 }
 # 신청 필수 서류(라우팅 대상)
@@ -162,12 +165,28 @@ _CLASSIFY_SYS = (
 )
 
 
+def _refine_doctype(name, llm_type):
+    """파일명 명시 키워드로 LLM 오분류 교정.
+    FSSC/HACCP/GMP→품질인증(할랄 아님), 접수양식·소개서→기타, 원산지·수입→공급사선언."""
+    n = (name or "").lower()
+    if re.search(r"fssc|haccp|\biso\b|\bgmp\b|22000|식품안전", n):
+        return "quality_cert"
+    if re.search(r"접수\s*양식|데이터\s*양식|소개서|회사\s*소개|company\s*profile|intake\s*form|제안서|proposal", n):
+        return "other"
+    if re.search(r"원산지|수입\s*서류|country\s*of\s*origin|\bcoo\b|certificate\s*of\s*origin", n):
+        return "supplier_declaration"
+    if llm_type == "halal_certificate" and re.search(r"유기취급|organic|kosher", n):
+        return "quality_cert"  # 유기·코셔 인증은 할랄 아님(FSSC/HACCP는 위에서 이미 처리)
+    return llm_type
+
+
 def classify(name, text):
     if not text.strip():
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
     r = ai_local.llm_json(_CLASSIFY_SYS, "파일명: %s\n본문 발췌:\n%s" % (name, text[:2000]))
     if not isinstance(r, dict) or "doc_type" not in r:
-        return {"doc_type": "other", "confidence": 0.0, "fields": {}}
+        r = {"doc_type": "other", "confidence": 0.0, "fields": {}}
+    r["doc_type"] = _refine_doctype(name, r.get("doc_type"))  # 파일명 규칙 교정
     if r.get("doc_type") not in DOC_TYPES:
         r["doc_type"] = "other"
     r.setdefault("confidence", 0.0)
