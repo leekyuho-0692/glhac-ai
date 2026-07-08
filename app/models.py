@@ -390,6 +390,7 @@ class User(Base):
     role = Column(String, nullable=False)   # applicant|penyelia_halal|consultant|pendamping_pph|auditor|fatwa_liaison|admin
     org_id = Column(String, nullable=False)
     company_role = Column(String, default="client_admin")  # client_admin(기업업무 관리자)|client_staff(업무자) — Phase 1
+    token_version = Column(Integer, default=0)  # 토큰 무효화 버전(auth.make_token 참조)
 
 
 class Facility(Base):

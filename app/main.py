@@ -595,13 +595,22 @@ def check_username(username: str, db: Session = Depends(get_db)):
 def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     if db.query(models.User).filter_by(username=body.username).first():
         raise HTTPException(409, {"code": "DUPLICATE_ACCOUNT"})
-    org = "org_" + models.uid()[:8]
+    company_name = (body.company_name or "").strip()
+    # 회사1:직원N — 소속회사명으로 기존 org(Company) 매핑 (Phase 2)
+    existing = db.query(models.Org).filter(models.Org.name == company_name).first() if company_name else None
+    if existing:
+        org = existing.org_id
+        company_role = "client_staff"    # 기존 회사 추가 직원 = 업무자
+    else:
+        org = "org_" + models.uid()[:8]
+        company_role = "client_admin"    # 새 회사 첫 가입자 = 기업업무 관리자
+        db.add(models.Org(org_id=org, name=company_name or "My Company", address=body.address))
     u = models.User(username=body.username, password_hash=auth.hash_pw(body.password),
-                    role="applicant", org_id=org)
+                    role="applicant", org_id=org, company_role=company_role)
     db.add(u)
-    # OCR 추출 프로필이 있으면 초기 케이스에 프리필(Rizky #1)
-    if body.company_name or body.nib:
-        c = models.CaseApplication(org_id=org, company_name=body.company_name or "My Company",
+    # 새 회사(관리자)만 초기 케이스 프리필(Rizky #1) — 기존 회사 직원은 기존 케이스 활용
+    if not existing and (company_name or body.nib):
+        c = models.CaseApplication(org_id=org, company_name=company_name or "My Company",
                                    nib=body.nib, responsible_person=body.responsible_person,
                                    address=body.address, factory_address=body.factory_address,
                                    is_msme=True)
@@ -609,7 +618,8 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         db.flush()
         sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id)
     db.commit()
-    return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username}
+    return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username,
+            "company_role": company_role}
 
 
 @app.get("/auth/me")
