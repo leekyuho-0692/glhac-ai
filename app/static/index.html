@@ -1568,6 +1568,16 @@ async function renderRightPanel(){
 }
 function toggleRPanel(){const p=document.getElementById("rpanel");if(!p)return;p.classList.toggle("open");try{localStorage.setItem("glhac_rp",p.classList.contains("open")?"1":"0")}catch(_){}if(p.classList.contains("open"))renderRightPanel();}
 async function postDiscussion(id){const inp=document.getElementById("rpDiscInput");const tx=(inp&&inp.value||"").trim();if(!tx)return;try{await API(`/cases/${id}/discussions`,{method:"POST",body:JSON.stringify({text:tx,kind:"comment"})});if(inp)inp.value="";renderRightPanel();}catch(e){toast("전송 실패");}}
+function prodAccordion(id,prods,mats,matrix){
+  const _lm={};((matrix&&matrix.links)||[]).forEach(lk=>{const pid=Array.isArray(lk)?lk[0]:lk.product_id,mid=Array.isArray(lk)?lk[1]:lk.material_id;(_lm[pid]=_lm[pid]||[]).push(mid);});
+  const _mb={};(mats||[]).forEach(m=>_mb[m.material_id]=m);
+  return (prods||[]).map(p=>{
+    const my=(_lm[p.product_id]||[]).map(mid=>_mb[mid]).filter(Boolean);
+    const op=PROD_OPEN.has(p.product_id);
+    const sub=my.length?my.map(m=>`<div class="li" style="padding:3px 8px 3px 22px"><div class="tx" style="flex:1"><b style="font-size:11.5px">${esc(m.name)}</b></div>${bTag(statusColor(m.status||m.result),m.status||m.result)}</div>`).join(""):'<div class="muted small" style="padding:3px 22px">연결 원재료 없음</div>';
+    return `<div class="nav-group${op?' open':''}"><div class="nav-group-label" style="text-transform:none;font-size:12px;color:var(--ink);letter-spacing:0;font-weight:600" onclick="toggleProdGroup(this,'${p.product_id}')"><span>📦 ${esc(p.name)} <span class="muted" style="font-weight:400">${my.length}🧪</span></span><span class="nav-caret">▸</span></div><div class="nav-group-items">${sub}</div></div>`;
+  }).join("")||'<div class="muted small">제품 없음 · ZIP 업로드로 자동 추가</div>';
+}
 function sjphStage(id,ko,en,desc,types,chk){
   const cl=(chk&&chk.checklist)||[];
   const rows=types.map(dt=>{const it=cl.find(x=>x.doc_type===dt);const okv=it&&it.satisfied;
@@ -1576,8 +1586,7 @@ function sjphStage(id,ko,en,desc,types,chk){
   return `<div style="border:1px solid var(--line2);border-radius:10px;padding:12px">
     <div style="font-weight:700;font-size:12.5px">${ko} <span class="en">· ${en}</span></div>
     <div class="muted small" style="margin-bottom:6px">${desc}</div>${rows}
-    ${canUp?`<div class="dropzone" ondragover="dzOver(event)" ondragleave="dzLeave(event)" ondrop="handleDrop(event,'${id}')" onclick="intakeZip('${id}')">📁 ZIP 파일을 드래그하거나 클릭 업로드</div>
-    <div class="btnrow" style="margin-top:6px;gap:6px"><button class="btn" onclick="intakeZip('${id}')">🗂 ZIP</button><button class="btn" onclick="labelOcr('${id}')">📷 OCR</button></div>
+    ${canUp?`<div class="btnrow" style="margin-top:6px;gap:6px"><button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 업로드</button><button class="btn" onclick="labelOcr('${id}')">📷 OCR</button></div>
     <div id="intakeOut_${id}" class="small" style="margin-top:6px">${INTAKE_OUT[id]||''}</div>`:''}</div>`;
 }
 async function toggleNotif(){
@@ -1822,10 +1831,11 @@ SCREEN.preassess=async()=>{
   const id=CURCASE;
   if(!id)return '<div class="card"><div class="body muted">케이스를 먼저 선택하세요.</div></div>';
   const c=await API(`/cases/${id}`).catch(()=>({}));
-  const [chk,mats,prods]=await Promise.all([
+  const [chk,mats,prods,matrix]=await Promise.all([
     API(`/cases/${id}/doc-checklist`).catch(()=>({checklist:[],missing:[],complete:false})),
     API(`/cases/${id}/materials`).catch(()=>[]),
-    API(`/cases/${id}/products`).catch(()=>[])]);
+    API(`/cases/${id}/products`).catch(()=>[]),
+    API(`/cases/${id}/matrix`).catch(()=>({links:[]}))]);
   const canApp=["client","consultant","admin"].includes(ROLE);
   const missN=(chk.missing||[]).length;
   const as=ASSESS_CACHE[id];
@@ -1895,8 +1905,12 @@ SCREEN.application=async()=>{
         <button class="btn" onclick="screenText('${id}')">🔤 성분 텍스트 스크리닝</button></div>`:''}
       <div id="intakeOut" class="small" style="margin-bottom:10px">${INTAKE_OUT[id]||'<span class="muted">아직 인테이크 없음</span>'}</div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
-        ${sjphStage(id,"사전심사 단계","Pre-Audit","사업자·성분·제품공정 서류 · ZIP 업로드",["nib_business_license","factory_registration","product_list","material_list","process_flow"],chk)}
-        ${sjphStage(id,"현장심사 단계","On-Site Audit","SJPH 매뉴얼·할랄 인증서 · ZIP 업로드",["sjph_manual","halal_certificate"],chk)}
+        ${sjphStage(id,"사전심사 단계","Pre-Audit","사업자·성분·제품공정 서류",["nib_business_license","factory_registration","product_list","material_list","process_flow"],chk)}
+        <div style="border:1px solid var(--line2);border-radius:10px;padding:12px">
+          <div style="font-weight:700;font-size:12.5px">📦 제품 · 원재료 <span class="en">· Products & Materials</span></div>
+          <div class="muted small" style="margin-bottom:6px">제품을 클릭하면 연결된 원재료가 펼쳐집니다</div>
+          <div style="max-height:300px;overflow:auto">${prodAccordion(id,prods,mats,matrix)}</div>
+        </div>
       </div>
       <div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:6px">
         <button class="btn" onclick="go('materials')">🧪 원재료 화면</button>
