@@ -584,6 +584,13 @@ def auth_ocr_extract(body: schemas.OCRExtractReq):
     return {"ocr_available": True, "fields": _parse_biz_doc(text), "raw": text[:1500]}
 
 
+@app.get("/auth/check-username")
+def check_username(username: str, db: Session = Depends(get_db)):
+    """회원가입 id 중복검사 (자체 DB). SIHALAL 회사 등록조회는 /sihalal/lookup 별도 사용."""
+    dup = bool(db.query(models.User).filter_by(username=username).first())
+    return {"username": username, "available": not dup, "duplicate": dup, "source": "internal"}
+
+
 @app.post("/auth/register")
 def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     if db.query(models.User).filter_by(username=body.username).first():

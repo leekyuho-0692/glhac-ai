@@ -307,7 +307,7 @@
   <form class="loginbox" id="registerForm" style="display:none" onsubmit="doRegister(event)">
     <h1>회원가입 · Register</h1>
     <div class="sub">신청기업 계정 생성 · Applicant sign-up</div>
-    <input id="regUser" placeholder="아이디 · Username" autocomplete="username">
+    <div style="display:flex;gap:6px;margin-bottom:11px"><input id="regUser" placeholder="아이디 · Username" autocomplete="username" style="flex:1;margin-bottom:0"><button type="button" class="btn" onclick="checkUsername()">중복확인</button></div>
     <input id="regPass" type="password" placeholder="비밀번호 · Password" autocomplete="new-password">
     <div style="border:1px dashed var(--line2);border-radius:9px;padding:10px;margin-bottom:11px">
       <div style="font-size:12px;color:var(--ink3);margin-bottom:6px">📄 사업자·공장 등록증 → AI 자동추출 (Rizky #1)</div>
@@ -515,6 +515,24 @@ function regOcrPick(){
       st.innerHTML='<span style="color:var(--ok)">✓ '+Object.keys(f).length+'개 필드 자동추출됨 — 확인 후 가입</span>';
     }catch(e){st.textContent="추출 실패";}};
   inp.click();
+}
+async function checkUsername(){
+  const u=(v("regUser")||"").trim();if(!u){alert("아이디를 입력하세요");return;}
+  const co=(v("regCompany")||"").trim();
+  // ① 자체 DB 중복
+  let internal=null;try{internal=await API("/auth/check-username?username="+encodeURIComponent(u));}catch(_){}
+  if(internal&&internal.duplicate){alert("⛔ [자체 DB] 이미 가입된 아이디입니다.\n다른 아이디를 사용하세요 · '"+u+"'");return;}
+  // ② SIHALAL 회사 등록조회 (실제 halal.go.id)
+  if(co&&co.length>=2){
+    try{
+      const s=await API("/sihalal/lookup?type=penyelia&q="+encodeURIComponent(co));
+      const ms=(s&&(s.matches||s.results||s.datas))||[];
+      if(ms.length){alert("ℹ️ [SIHALAL] '"+co+"' 관련 등록 "+ms.length+"건이 확인됩니다.\n이미 SIHALAL에 등록된 기업일 수 있으니 소속회사·담당자를 확인하세요.\n\n(자체 DB 아이디는 사용 가능)");}
+      else{alert("✅ 사용 가능\n· [자체 DB] 아이디 중복 없음\n· [SIHALAL] '"+co+"' 신규 (등록 없음)");}
+    }catch(_){alert("✅ [자체 DB] 아이디 사용 가능\n(⚠ SIHALAL 조회 실패 — halal.go.id 접속 불가, 가입은 진행 가능)");}
+  }else{
+    alert("✅ 사용 가능한 아이디입니다 · [자체 DB] 중복 없음\n(소속회사 입력 시 SIHALAL 등록조회도 함께 확인됩니다)");
+  }
 }
 async function doRegister(e){
   if(e)e.preventDefault();
