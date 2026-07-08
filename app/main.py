@@ -293,7 +293,7 @@ def _case_dict(c):
             "factory_address": c.factory_address, "due_date": c.due_date,
             "notify_consent": bool(c.notify_consent),
             "draft_state": c.draft_state, "return_reason": c.return_reason,
-            "profile_ext": c.profile_ext or {}}
+            "profile_ext": c.profile_ext or {}, "facility_ids": c.facility_ids or []}
 
 
 def _notify(db, case, event_type, title, body="", channels=None, role=None):
@@ -1876,6 +1876,19 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
             org_row.address = c.address
     db.commit()
     return _case_dict(c)
+
+
+@app.patch("/cases/{case_id}/facilities-select")
+def select_facilities(case_id: str, body: schemas.FacilitySelectReq,
+                      user=Depends(auth.require_roles("applicant", "consultant")),
+                      db: Session = Depends(get_db)):
+    """이 신청 대상 공장 선택·분류(오피스 공장 중 선택) — facility_ids 저장."""
+    c = _get_case(db, case_id, user)
+    # 소속 오피스(org)의 공장만 허용
+    valid = {f.facility_id for f in db.query(models.Facility).filter_by(org_id=c.org_id).all()}
+    c.facility_ids = [fid for fid in (body.facility_ids or []) if fid in valid]
+    db.commit()
+    return {"facility_ids": c.facility_ids}
 
 
 @app.get("/cases/{case_id}/company-check")

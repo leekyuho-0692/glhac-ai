@@ -292,6 +292,10 @@ class FacilityReq(BaseModel):
     reg_no: Optional[str] = None
 
 
+class FacilitySelectReq(BaseModel):
+    facility_ids: list = []   # 이 신청 대상 공장 ID 목록
+
+
 class UnlockReq(BaseModel):
     reason: str = Field(min_length=5)   # 언락 사유 필수(감사 추적)
 
