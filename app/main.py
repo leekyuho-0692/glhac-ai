@@ -1566,8 +1566,8 @@ def _apply_agg_to_case(db, c, agg):
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": []}
     if agg.get("company_name") and (not c.company_name or c.company_name in _CO_PLACEHOLDER):
         c.company_name = agg["company_name"]; applied["company_set"] = True
-    if agg.get("nib") and not c.nib:
-        c.nib = agg["nib"]; applied["nib_set"] = True
+    if agg.get("nib") and c.nib != agg["nib"]:
+        c.nib = agg["nib"]; applied["nib_set"] = True   # 문서 파싱 NIB가 상속/기존값보다 우선
     applied["profile"] += _apply_profile_extras(c, agg)
     have_p = {p.name for p in db.query(models.Product).filter_by(case_id=c.case_id)}
     for pn in agg.get("products", []):
@@ -1801,8 +1801,8 @@ def _apply_intake_autofill(db, c, res):
     if agg.get("company_name") and (not c.company_name or c.company_name in _CO_PLACEHOLDER):
         c.company_name = agg["company_name"]
         applied["company_set"] = True
-    if agg.get("nib") and not c.nib:
-        c.nib = agg["nib"]
+    if agg.get("nib") and c.nib != agg["nib"]:
+        c.nib = agg["nib"]   # 문서 파싱 NIB가 상속/기존값보다 우선(공식 문서 기준)
         applied["nib_set"] = True
     applied["profile"] += _apply_profile_extras(c, agg)
     have_p = {p.name for p in db.query(models.Product).filter_by(case_id=c.case_id)}
