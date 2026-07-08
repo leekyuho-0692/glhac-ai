@@ -399,7 +399,7 @@ const NAV = [
 ];
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
 const NAV_GROUPS=[
-  {label:"개요 · Overview", ids:["dashboard","caseList","workflow"]},
+  {label:"개요 · Overview", ids:["caseList"]},
   {label:"신청·서류 · Application", ids:["application","preassess","materials","integration","documents"]},
   {label:"심사·판정 · Audit", ids:["audit","mockAudit","evaluation","fatwa","certificate"]},
   {label:"청구·지원 · Support", ids:["invoice","assistant","system"]},
@@ -417,9 +417,8 @@ const BR2ROLE = {applicant:"client", consultant:"consultant", auditor:"auditor",
   fatwa_liaison:"sharia", operator:"ops", admin:"admin",
   penyelia_halal:"client", pendamping_pph:"client"};
 const MENU_ACCESS = {
-  dashboard:["client","consultant","auditor","sharia","ops","admin"],
   caseList: ["client","consultant","auditor","sharia","ops","admin"],
-  workflow: ["client","consultant","ops","admin"],
+  dashboard:[], workflow:[],  // 개요 통합: 케이스 디테일(renderCaseDetail)로 흡수 — 메뉴 비노출
   application:["client","consultant","admin"],
   preassess:["client","consultant","admin"],
   materials:["client","consultant","auditor","admin"],
@@ -441,7 +440,7 @@ const MENU_ACCESS = {
 const CASE_SCOPED = new Set(["workflow","application","preassess","materials","integration",
   "documents","audit","evaluation","invoice","fatwa","certificate","assistant"]);
 
-let ROLE="client", CUR="dashboard", FILTERS={}, DETAIL=null;
+let ROLE="client", CUR="caseList", FILTERS={}, DETAIL=null;
 let RBAC_ACTIONS={};                          // /rbac/actions 파생 — API와 동일 action_id
 function CAN(a){return !!RBAC_ACTIONS[a];}     // UI 버튼 노출은 단일 매트릭스에서 판단
 let CURCASE=null, CASES_CACHE=[];
@@ -743,7 +742,7 @@ function buildHash(){
 }
 window.addEventListener("popstate",e=>{
   const s=e.state;
-  if(!s){CUR="dashboard";FILTERS={};DETAIL=null;applyView();return;}
+  if(!s){CUR="caseList";FILTERS={};DETAIL=null;applyView();return;}
   CUR=s.screen||"dashboard";FILTERS=s.filters||{};
   DETAIL=s.detail?{id:s.detail,tab:s.tab||"overview"}:null;
   applyView();
@@ -1881,6 +1880,14 @@ SCREEN.application=async()=>{
         <button class="btn" onclick="go('integration')">🔗 제품·통합</button>
         <button class="btn" onclick="go('documents')">📁 문서 화면</button></div>
     </div></div>
+  <div class="card" style="margin-bottom:16px"><div class="body btnrow" style="flex-wrap:wrap;gap:8px;align-items:center">
+    <b style="margin-right:auto;font-size:13px">💾 신청 정보 저장 · Save</b>
+    <button class="btn" onclick="autofillProfile('${id}')">📄 ${T('문서에서 프로필 채움')}</button>
+    <button class="btn" onclick="saveDraft('${id}')">임시저장 · Draft</button>
+    <button class="btn pri" onclick="saveProfile('${id}')">저장 · Save (기업+공장)</button>
+    <button class="btn ok" onclick="submitApp('${id}')">✅ 작성완료 제출 · Submit</button>
+    ${["consultant","ops","admin"].includes(ROLE)?`<button class="btn" style="color:var(--bad)" onclick="returnApp('${id}')">↩ 반려 · Return</button>`:''}
+  </div></div>
   <div class="grid two">
     <div class="card"><h3>① 기업 프로필 · Company Info <span class="en">· 고객 접수 양식(Form.1)</span></h3>
       <div class="body">
@@ -1930,14 +1937,7 @@ SCREEN.application=async()=>{
         <div class="field"><label>처리 기한 · Due date <span class="muted">(기한 경보)</span></label><input class="v" id="apDue" type="date" value="${esc(c.due_date||"")}"> ${c.due_date?dueBadge(c.due_date):''}</div>
         <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="apConsent" ${c.notify_consent?"checked":""} style="width:auto"> 알림 수신 동의 · Notification opt-in (SMS·WhatsApp)</label></div>
         ${c.draft_state==='returned'&&c.return_reason?`<div class="banner bad" style="margin-bottom:8px">${T('↩ 반려됨 · 사유:')} ${esc(c.return_reason)}</div>`:''}
-        <div style="margin-bottom:8px">${draftBadge(c.draft_state)}</div>
-        <div class="btnrow" style="flex-wrap:wrap;gap:6px">
-          <button class="btn" onclick="autofillProfile('${id}')">📄 ${T('문서에서 프로필 채움')}</button>
-          <button class="btn" onclick="saveDraft('${id}')">💾 임시저장 · Draft</button>
-          <button class="btn pri" onclick="saveProfile('${id}')">기업정보 저장 · Save</button>
-          <button class="btn" onclick="submitApp('${id}')">✅ 작성완료 제출 · Submit</button>
-          ${["consultant","ops","admin"].includes(ROLE)?`<button class="btn" style="color:var(--bad)" onclick="returnApp('${id}')">↩ 반려 · Return</button>`:''}
-        </div>
+        <div style="margin-bottom:4px">${draftBadge(c.draft_state)}</div>
       </div></div>
     <div class="card"><h3>🏭 공장·시설 · Facility Info <span class="en">· 시설 데이터 양식(Form.2)</span></h3>
       <div class="body">
@@ -1955,7 +1955,6 @@ SCREEN.application=async()=>{
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>이름</label><input class="v" id="peFacPicName" value="${esc(pe.fac_pic_name||"")}"></div>
           <div class="field"><label>휴대폰</label><input class="v" id="peFacPicPhone" value="${esc(pe.fac_pic_phone||"")}"></div></div>
-        <div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="saveProfile('${id}')">공장정보 저장 · Save</button></div>
         <details style="margin-top:12px"><summary class="muted small" style="cursor:pointer">🏛 ${T('할랄 인증기관 조회')} (공급사 인증서 발급기관 확인)</summary>
           <div style="margin-top:6px"><div class="btnrow" style="gap:6px"><input class="box" id="instQ" placeholder="${T('기관명 (예: JAKIM, MUI, Sucofindo)')}" style="flex:1"></div>
           <div class="btnrow" style="gap:6px;margin-top:6px">
@@ -1999,12 +1998,12 @@ async function autofillProfile(id){
     else{toast(T('채울 정보 없음 — 신청기업 서류를 먼저 업로드하세요'));}
   }catch(e){toast(T('자동채움 실패')+' · '+(e&&e.code?e.code:''));}
 }
-async function saveProfile(id){
+async function saveProfile(id,silent){
   const cel=document.getElementById("apConsent");
   const pe={};
   [["peTaxId","tax_id"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"],["peMfrName","manufacturer_name"],["peFacCity","factory_city"],["peFacCountry","factory_country"],["peFacZip","factory_zip"],["peFacPhone","facility_phone"],["peFacEmail","facility_email"],["peFacPicName","fac_pic_name"],["peFacPicPhone","fac_pic_phone"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
   const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),address:v("peAddress"),email:v("peEmail"),factory_reg_no:v("peFacRegNo"),factory_address:v("apFactory"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined,profile_ext:pe};
-  try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];toast("저장됨");await loadCases(true);applyView();}
+  try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];await loadCases(true);applyView();if(!silent)alert("✅ 저장이 완료되었습니다 · Saved");}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
 }
 function _sihalalRow(m,type){
@@ -2036,8 +2035,8 @@ async function applyDocCompany(id,docName,caseName){
 }
 const DRAFT_DEF={saved:{ko:"임시저장",c:"mute"},in_progress:{ko:"작성중",c:"info"},completed:{ko:"작성완료",c:"ok"},returned:{ko:"반려",c:"bad"}};
 function draftBadge(ds){const d=DRAFT_DEF[ds];return d?bTag(d.c,d.ko):'';}
-async function saveDraft(id){await saveProfile(id);try{await API(`/cases/${id}/save-draft`,{method:"POST",body:"{}"});toast("임시저장됨");await loadCases(true);applyView();}catch(e){toast("임시저장 실패 · "+(e&&e.code?e.code:""));}}
-async function submitApp(id){if(!confirm("작성완료로 제출할까요? 컨설턴트 검토로 넘어갑니다."))return;await saveProfile(id);try{await API(`/cases/${id}/submit-application`,{method:"POST",body:"{}"});toast("작성완료 제출");await loadCases(true);applyView();}catch(e){toast("제출 실패 · "+(e&&e.code?e.code:""));}}
+async function saveDraft(id){await saveProfile(id,true);try{await API(`/cases/${id}/save-draft`,{method:"POST",body:"{}"});await loadCases(true);applyView();alert("✅ 임시저장 완료 · Draft saved");}catch(e){toast("임시저장 실패 · "+(e&&e.code?e.code:""));}}
+async function submitApp(id){if(!confirm("작성완료로 제출할까요? 컨설턴트 검토로 넘어갑니다."))return;await saveProfile(id,true);try{await API(`/cases/${id}/submit-application`,{method:"POST",body:"{}"});await loadCases(true);applyView();alert("✅ 작성완료 제출되었습니다 · Submitted");}catch(e){toast("제출 실패 · "+(e&&e.code?e.code:""));}}
 async function returnApp(id){const r=await dialog("신청서 반려 · Return",[{key:"reason",label:"반려 사유 · Reason",type:"textarea",required:true}]);if(!r)return;try{await API(`/cases/${id}/return-application`,{method:"POST",body:JSON.stringify({reason:r.reason})});toast("반려 처리");await loadCases(true);applyView();}catch(e){toast("반려 실패 · "+(e&&e.code?e.code:""));}}
 async function assessPathway(id){try{const r=await API(`/cases/${id}/pathway/assess`,{method:"POST",body:"{}"});ASSESS_CACHE[id]=r;toast("사전심사 · 추천 "+(r.suggested_pathway||"—")+" · 위험 "+(r.risk_category||"—"));applyView();}catch(e){toast("사전심사 실패 · "+(e&&e.code?e.code:""));}}
 function assessRender(id){
@@ -3205,9 +3204,10 @@ async function renderCaseDetail(id, tab){
     let rd={};try{rd=await API(`/cases/${id}/readiness`);}catch(_){}
     let disc=[];try{disc=await API(`/cases/${id}/discussions`);}catch(_){}
     const phases=(w.phases||[]);
-    const flow=phases.map((p,i)=>`<div class="step ${p.done?'done':p.current?'now':''}" style="min-width:64px">${esc(p.label||p.state||p.key||"")}</div>${i<phases.length-1?'<span class="arrow">›</span>':''}`).join("")||'<div class="muted small">—</div>';
-    panel=`<div class="grid side">
-      <div class="card"><h3>진행 상태 <span class="en">· Progress</span></h3>
+    const flow=phases.map((p,i)=>`<div class="step ${p.status==="done"?"done":p.status==="current"?"now":(p.done?"done":p.current?"now":"")}" style="min-width:64px">${esc(p.label||p.state||p.key||"")}</div>${i<phases.length-1?'<span class="arrow">›</span>':''}`).join("")||'<div class="muted small">—</div>';
+    panel=`<div class="card" style="margin-bottom:16px"><h3>인증 진행 단계 <span class="en">· Milestone (5단계)</span><span class="r">${esc(w.state_label||c.status||"—")}</span></h3><div class="body">${progressBar(c.status)}</div></div>
+    <div class="grid side">
+      <div class="card"><h3>케이스 진행 단계 <span class="en">· Workflow</span></h3>
         <div class="body"><div class="flow" style="margin-bottom:14px">${flow}</div>
           <div class="kv"><span>기업 · Company</span><b>${esc(c.company_name||"—")}</b></div>
           <div class="kv"><span>경로 · Pathway</span><b>${esc(c.pathway||"—")}</b></div>
