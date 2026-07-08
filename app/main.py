@@ -1751,6 +1751,7 @@ def _set_hpas(db, case_id, element, status, note=None):
     if not row:
         row = models.HpasEvaluation(case_id=case_id, element=element)
         db.add(row)
+        db.flush()   # 같은 인테이크의 다음 _set_hpas가 이 row를 보도록(중복 add→UNIQUE 충돌 방지)
     row.status = status
     if note:
         row.note = note

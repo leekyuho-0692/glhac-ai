@@ -156,12 +156,19 @@ def parse_file(name, data, dpi=None):
 _CLASSIFY_SYS = (
     "당신은 할랄 인증 서류 분류기입니다. 파일명과 본문 발췌를 보고 doc_type을 분류하고 핵심 필드를 추출하세요. "
     "doc_type은 반드시 다음 중 하나: " + ", ".join(DOC_TYPES) + ". "
-    "address는 사업장/공장 소재지 주소 전체, responsible_person은 대표자/책임자 이름, "
-    "factory_reg_no는 공장/영업 등록번호. 없으면 null. "
+    "address는 회사(사업자) 주소, city/country/zip은 회사 주소의 도시/국가/우편번호. "
+    "factory_address는 공장 주소, factory_city/factory_country/factory_zip은 공장 주소의 도시/국가/우편번호. "
+    "factory_reg_no는 공장/영업 등록번호, responsible_person은 대표자/책임자 이름. "
+    "process_steps는 공정흐름도의 공정 단계 순서 목록(원료입고→배합→가열→포장 등). "
+    "has_commitment/has_materials/has_process/has_product/has_monitoring는 SJPH 매뉴얼에 "
+    "해당 5요소(약속·원재료·공정·제품·모니터링)가 포함되면 true. 없으면 null/false/[]. "
     '반드시 JSON으로만: {"doc_type":"...","confidence":0.0,'
-    '"fields":{"company_name":null,"nib":null,"address":null,"responsible_person":null,'
-    '"factory_reg_no":null,"product_names":[],"cert_no":null,'
-    '"issuer":null,"expiry_date":null,"material_names":[]}}'
+    '"fields":{"company_name":null,"nib":null,"address":null,"city":null,"country":null,"zip":null,'
+    '"factory_address":null,"factory_city":null,"factory_country":null,"factory_zip":null,'
+    '"responsible_person":null,"factory_reg_no":null,"product_names":[],"cert_no":null,'
+    '"issuer":null,"expiry_date":null,"material_names":[],"process_steps":[],'
+    '"has_commitment":false,"has_materials":false,"has_process":false,'
+    '"has_product":false,"has_monitoring":false}}'
 )
 
 
