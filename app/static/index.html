@@ -1914,7 +1914,10 @@ SCREEN.preassess=async()=>{
   </div>`;
 };
 SCREEN.application=async()=>{
-  const id=CURCASE;const c=await API(`/cases/${id}`);const pe=c.profile_ext||{};
+  const id=CURCASE;
+  if(!id)return '<div class="card"><div class="body muted">케이스를 먼저 선택하세요 · Select a case first.<div class="btnrow" style="margin-top:10px"><button class="btn" onclick="go(\'caseList\')">📋 내 케이스로 이동</button></div></div></div>';
+  let c;try{c=await API(`/cases/${id}`);}catch(e){return '<div class="card"><div class="body"><div class="banner bad">⛔ 케이스를 불러오지 못했습니다 · '+(e&&e.code?esc(e.code):'오류')+'<div class="btnrow" style="margin-top:10px"><button class="btn" onclick="go(\'caseList\')">📋 내 케이스로 이동</button></div></div></div></div>';}
+  const pe=c.profile_ext||{};
   const [chk,mats,prods,matrix]=await Promise.all([
     API(`/cases/${id}/doc-checklist`).catch(()=>({checklist:[]})),
     API(`/cases/${id}/materials`).catch(()=>[]),
