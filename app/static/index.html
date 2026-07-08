@@ -143,6 +143,8 @@
     .card .body{overflow-x:auto;-webkit-overflow-scrolling:touch}  /* 넓은 표는 카드 내 가로 스크롤 */
   }
   .field{margin-bottom:12px}
+  .dropzone{border:2px dashed var(--line2);border-radius:8px;padding:14px;text-align:center;cursor:pointer;color:var(--ink3);font-size:12px;margin-top:8px;transition:.15s}
+  .dropzone:hover,.dropzone.drag{border-color:var(--accent);background:var(--panel2,#eef2f9);color:var(--ink)}
   .field label{display:block;font-size:13px;color:var(--ink3);margin-bottom:5px}
   .field .v{border:1px solid var(--line2);border-radius:8px;padding:9px 12px;background:var(--card);font-size:14.5px}
   input.v,select.v{width:100%;font-family:inherit}
@@ -1548,13 +1550,17 @@ async function renderRightPanel(){
 }
 function toggleRPanel(){const p=document.getElementById("rpanel");if(!p)return;p.classList.toggle("open");try{localStorage.setItem("glhac_rp",p.classList.contains("open")?"1":"0")}catch(_){}if(p.classList.contains("open"))renderRightPanel();}
 async function postDiscussion(id){const inp=document.getElementById("rpDiscInput");const tx=(inp&&inp.value||"").trim();if(!tx)return;try{await API(`/cases/${id}/discussions`,{method:"POST",body:JSON.stringify({text:tx,kind:"comment"})});if(inp)inp.value="";renderRightPanel();}catch(e){toast("전송 실패");}}
-function sjphStage(ko,en,desc,types,chk){
+function sjphStage(id,ko,en,desc,types,chk){
   const cl=(chk&&chk.checklist)||[];
   const rows=types.map(dt=>{const it=cl.find(x=>x.doc_type===dt);const okv=it&&it.satisfied;
     return `<div class="check" style="padding:4px 0"><div class="cbox ${okv?"on":""}">${okv?"✓":""}</div><b style="flex:1;font-size:12px">${esc(T(it?(it.doc_type_ko||it.doc_type):dt))}</b>${okv?tag("ok","제출"):tag("bad","미제출")}</div>`;}).join("");
+  const canUp=["client","consultant","admin"].includes(ROLE);
   return `<div style="border:1px solid var(--line2);border-radius:10px;padding:12px">
     <div style="font-weight:700;font-size:12.5px">${ko} <span class="en">· ${en}</span></div>
-    <div class="muted small" style="margin-bottom:6px">${desc}</div>${rows}</div>`;
+    <div class="muted small" style="margin-bottom:6px">${desc}</div>${rows}
+    ${canUp?`<div class="dropzone" ondragover="dzOver(event)" ondragleave="dzLeave(event)" ondrop="handleDrop(event,'${id}')" onclick="intakeZip('${id}')">📁 ZIP 파일을 드래그하거나 클릭 업로드</div>
+    <div class="btnrow" style="margin-top:6px;gap:6px"><button class="btn" onclick="intakeZip('${id}')">🗂 ZIP</button><button class="btn" onclick="labelOcr('${id}')">📷 OCR</button></div>
+    <div id="intakeOut_${id}" class="small" style="margin-top:6px">${INTAKE_OUT[id]||''}</div>`:''}</div>`;
 }
 async function toggleNotif(){
   const p=document.getElementById("notifPanel");
@@ -1866,14 +1872,13 @@ SCREEN.application=async()=>{
   <div class="card" style="margin-bottom:16px"><h3>② 파일 인테이크 <span class="en">· Intake (단계별) · AI 자동추출</span></h3>
     <div class="body">
       <div class="banner info" style="margin-bottom:10px">ZIP으로 올리면 자동 분류 → 프로필·제품·원재료·문서에 채워집니다. 아래 단계별 필요서류를 확인하세요.</div>
+      <div class="banner info" style="margin-bottom:8px">아래 <b>사전심사·현장심사 단계 영역</b>에 ZIP 파일을 드래그하거나 버튼으로 업로드하세요.</div>
       ${canApp?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:6px">
-        <button class="btn pri" onclick="intakeZip('${id}')">🗂 ZIP 업로드 · 자동 분류·작성</button>
-        <button class="btn" onclick="labelOcr('${id}')">📷 성분표/라벨 OCR</button>
         <button class="btn" onclick="screenText('${id}')">🔤 성분 텍스트 스크리닝</button></div>`:''}
       <div id="intakeOut" class="small" style="margin-bottom:10px">${INTAKE_OUT[id]||'<span class="muted">아직 인테이크 없음</span>'}</div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
-        ${sjphStage("사전심사 단계","Pre-Audit","사업자·성분·제품공정 서류",["nib_business_license","factory_registration","product_list","material_list","process_flow"],chk)}
-        ${sjphStage("현장심사 단계","On-Site Audit","SJPH 매뉴얼·할랄 인증서",["sjph_manual","halal_certificate"],chk)}
+        ${sjphStage(id,"사전심사 단계","Pre-Audit","사업자·성분·제품공정 서류 · ZIP 업로드",["nib_business_license","factory_registration","product_list","material_list","process_flow"],chk)}
+        ${sjphStage(id,"현장심사 단계","On-Site Audit","SJPH 매뉴얼·할랄 인증서 · ZIP 업로드",["sjph_manual","halal_certificate"],chk)}
       </div>
       <div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:6px">
         <button class="btn" onclick="go('materials')">🧪 원재료 화면</button>
@@ -2167,6 +2172,20 @@ async function screenText(id){
   try{const r=await API("/ai/screen-text",{method:"POST",body:JSON.stringify({text:f.text,case_id:id})});toast("스크리닝 완료 · "+(r.status||r.result||"OK"));applyView();}
   catch(e){toast("스크리닝 실패");}
 }
+async function handleDrop(ev,id){
+  ev.preventDefault();ev.currentTarget.classList.remove('drag');
+  const f=(ev.dataTransfer&&ev.dataTransfer.files||[])[0];if(!f)return;
+  if(!(f.name||'').toLowerCase().endsWith('.zip')){toast('ZIP 파일을 드래그하세요 · 개별 서류는 ZIP으로 묶어주세요');return;}
+  toast('업로드 중…');const b64=await fileB64(f);
+  const out=document.getElementById('intakeOut_'+id);if(out)out.innerHTML='<span class="muted">인테이크 진행 중…</span>';
+  try{const r=await fetch(`/cases/${id}/intake-zip-stream`,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},token()?{Authorization:'Bearer '+token()}:{}),body:JSON.stringify({zip_b64:b64})});
+    if(r.status===401){logout();return;}
+    if(!r.ok){toast('인테이크 실패');if(out)out.innerHTML='<span class="bad">인테이크 실패</span>';return;}
+    await r.text();toast('✅ 업로드·자동분류 완료');if(out)out.innerHTML='<span class="ok">완료</span>';await loadCases(true);applyView();
+  }catch(e){toast('인테이크 실패 · '+(e&&e.code?e.code:''));}
+}
+function dzOver(ev){ev.preventDefault();ev.currentTarget.classList.add('drag');}
+function dzLeave(ev){ev.currentTarget.classList.remove('drag');}
 function intakeZip(id){
   const inp=document.createElement("input");inp.type="file";inp.accept=".zip";
   inp.onchange=async()=>{const file=inp.files[0];if(!file)return;
@@ -2267,6 +2286,8 @@ async function productDetailCard(cid){
 function openProduct(cid,pid){PRODUCT_SEL=pid;applyView();}
 function closeProduct(){PRODUCT_SEL=null;applyView();}
 async function saveProduct(cid){try{await API(`/cases/${cid}/products/${PRODUCT_SEL}`,{method:"PATCH",body:JSON.stringify({category:v("pdCat"),registration_type:v("pdReg"),status:v("pdStatus")})});toast("제품 저장됨");applyView();}catch(e){toast("저장 실패 · "+(e&&e.code?e.code:""));}}
+const PROD_OPEN=new Set();
+function toggleProdGroup(el,pid){if(el&&el.parentElement){el.parentElement.classList.toggle('open');if(PROD_OPEN.has(pid))PROD_OPEN.delete(pid);else PROD_OPEN.add(pid);}}
 SCREEN.integration=async()=>{
   const id=CURCASE;
   const [sjph,prods,mats,matrix]=await Promise.all([API(`/cases/${id}/sjph`).catch(()=>({elements:[]})),API(`/cases/${id}/products`).catch(()=>[]),API(`/cases/${id}/materials`).catch(()=>[]),API(`/cases/${id}/matrix`).catch(()=>({links:[]}))]);
@@ -2282,7 +2303,20 @@ SCREEN.integration=async()=>{
       <span>${esc(e.label||e.element)}</span>${tag(cl,e.status||"—")}</div>
       <div class="bar"><i style="width:${vv}%;background:var(--${cl})"></i></div></div>`;}).join("")
     :'<div class="muted small">SJPH 요소 없음</div>';
-  const pRows=(prods||[]).map(p=>`<div class="li clickable" onclick="openProduct('${id}','${p.product_id}')"><div class="ic t-info">📦</div><div class="tx"><b>${esc(p.name)} <span class="go-arrow">→</span></b><div>${esc(p.category||"")}${p.registration_type?' · '+esc(p.registration_type):''}</div></div><div class="when">${bTag(p.status==='certified'?'ok':p.status==='under_review'?'info':p.status==='expired'?'bad':'mute',p.status||'draft')} ${p.material_count||0}🧪${p.risk_count?` <span class="bad">⚠${p.risk_count}</span>`:''}</div></div>`).join("")||'<div class="li"><div class="tx muted small">제품 없음</div></div>';
+  const _linkMap={};(matrix.links||[]).forEach(lk=>{const pid=Array.isArray(lk)?lk[0]:lk.product_id,mid=Array.isArray(lk)?lk[1]:lk.material_id;(_linkMap[pid]=_linkMap[pid]||[]).push(mid);});
+  const _matById={};mats.forEach(m=>_matById[m.material_id]=m);
+  const pRows=(prods||[]).map(p=>{
+    const myMats=(_linkMap[p.product_id]||[]).map(mid=>_matById[mid]).filter(Boolean);
+    const op=PROD_OPEN.has(p.product_id);
+    const sub=myMats.length?myMats.map(m=>`<div class="li" style="padding:4px 8px 4px 24px"><div class="tx" style="flex:1"><b style="font-size:12px">${esc(m.name)}</b>${m.e_number?` <span class="muted small">${esc(m.e_number)}</span>`:''}</div>${bTag(statusColor(m.status||m.result),m.status||m.result)}</div>`).join(""):'<div class="muted small" style="padding:4px 24px">연결된 원재료 없음 — 아래 매트릭스에서 링크</div>';
+    return `<div class="nav-group${op?' open':''}">
+      <div class="nav-group-label" style="text-transform:none;font-size:13px;color:var(--ink);letter-spacing:0;font-weight:600" onclick="toggleProdGroup(this,'${p.product_id}')">
+        <span>📦 ${esc(p.name)} <span class="muted" style="font-weight:400">${myMats.length}🧪${p.risk_count?` · <span class="bad">⚠${p.risk_count}</span>`:''} · ${esc(p.category||'—')}</span></span>
+        <span class="nav-caret">▸</span></div>
+      <div class="nav-group-items">${sub}
+        <div style="padding:5px 24px"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="openProduct('${id}','${p.product_id}')">제품 상세 →</button></div></div>
+    </div>`;
+  }).join("")||'<div class="li"><div class="tx muted small">제품 없음</div></div>';
   return `
   ${pdCard}
   <div class="grid side">
