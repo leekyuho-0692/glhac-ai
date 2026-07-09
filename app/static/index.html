@@ -405,10 +405,10 @@ const NAV = [
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
 const NAV_GROUPS=[
   {label:"개요 · Overview", ids:["caseList"]},
-  {label:"신청·서류 · Application", ids:["application","preassess","materials"]},
-  {label:"심사·판정 · Audit", ids:["audit","mockAudit","evaluation","fatwa","certificate"]},
+  {label:"신청·서류 · Application", ids:["application","preassess","materials","integration"]},
+  {label:"심사·판정 · Audit", ids:["mockAudit","audit","evaluation","fatwa","certificate"]},
   {label:"계약·지원 · Support", ids:["invoice","payments","deposits","notifyLog","consultation","system"]},
-  {label:"기타 · Others", ids:["integration","assistant","feedback"]},
+  {label:"기타 · Others", ids:["assistant","feedback"]},
   {label:"내 정보 관리 · My Data", ids:["documents"]},   // M6: 문서=내 자료함(맨 뒤 이동)
 ];
 const ROLE_DEF = {
@@ -3651,7 +3651,7 @@ async function seedReset(){if(!confirm("seed를 초기화할까요? (데모 데�
 /* ---- case detail (tabbed, live) ---- */
 async function renderCaseDetail(id, tab){
   const c=await API(`/cases/${id}`);
-  const tabs=[["overview","개요","Overview"],["materials","원재료","Materials"],["documents","문서","Documents"],["audit","심사","Audit"]];
+  const tabs=[["overview","개요","Overview"],["materials","원재료","Materials"],["documents","문서","Documents"],["audit","현장심사","On-site Audit"]];
   const head=`
     <div class="detail-top">
       <button class="btn" onclick="history.back()">← 목록으로 · Back</button>
