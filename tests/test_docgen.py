@@ -257,3 +257,11 @@ def test_consultation_flow(tmp_path):
     assert rr["status"] == "answered"
     pc = m.patch_consultation(cid, body={"status": "closed"}, user=admin, db=db)
     assert pc["status"] == "closed"
+
+
+def test_upload_case_document(tmp_path):
+    import base64
+    db = _seed_db(tmp_path)
+    b64 = base64.b64encode(b"hello world pdf").decode()
+    r = m.upload_case_document("case1", body={"filename": "m.pdf", "file_b64": b64, "doc_type": "mock_audit_evidence"}, user=USER, db=db)
+    assert r["doc_type"] == "mock_audit_evidence" and r["document_id"]

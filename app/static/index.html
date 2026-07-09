@@ -431,8 +431,8 @@ const MENU_ACCESS = {
   materials:["client","consultant","auditor","admin"],
   integration:["client","consultant","auditor","admin"],
   documents:["client","consultant","auditor","sharia","ops","admin"],
-  audit:    ["auditor","sharia","ops","admin"],
-  mockAudit:["auditor","sharia","ops","admin"],
+  audit:    ["client","consultant","auditor","sharia","ops","admin"],
+  mockAudit:["client","consultant","auditor","sharia","ops","admin"],
   evaluation:["client","auditor","sharia","ops","admin"],
   invoice:  ["client","consultant","ops","admin"],
   payments: ["ops","admin"],
@@ -2866,7 +2866,28 @@ async function addAuditorPool(id){const name=v("apoolName");if(!name){toast("심
 async function delAuditorPool(id,poolId){if(!confirm("심사원을 제거할까요?"))return;try{await API(`/cases/${id}/auditor-pool/${poolId}`,{method:"DELETE"});toast("제거됨");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 
 /* 9) Mock Audit */
+async function mockAuditClientView(id){
+  if(!id) return `<div class="card"><div class="body muted">케이스를 선택하세요 · Select a case.</div></div>`;
+  const [hist,docs]=await Promise.all([API('/cases/'+id+'/mock-audit').catch(()=>({decisions:[]})),API('/cases/'+id+'/documents').catch(()=>[])]);
+  const decisions=(hist&&hist.decisions)||[];
+  const galleryHtml=docs.length? `<div class="gallery">`+docs.slice(0,12).map(d=>`<div class="thumb" style="cursor:pointer"><span onclick="viewDoc('${d.document_id}')">${/png|jpg|jpeg|img/i.test(d.filename||"")?'📷':'📄'} ${esc((d.filename||"").slice(0,16))}</span>${geoLink(d)}</div>`).join("")+`</div>` : '<div class="muted small">제출 자료 없음 — 아래 [자료 업로드]</div>';
+  const decisionHtml=decisions.length? decisions.map(d=>`<div class="li"><div class="ic t-${d.result==='pass'?'ok':'bad'}">${d.result==='pass'?'✓':'✕'}</div><div class="tx"><b>${esc(d.result)}</b><div class="small">${esc(d.reason||"")}</div></div></div>`).join("") : '<div class="li"><div class="tx muted small">아직 판정 없음 — 자료 제출 후 오디터 검토 대기</div></div>';
+  const statusBanner=decisions.some(d=>d.result==='pass')?`<div class="banner ok">✓ 모의심사 통과 — 현장심사 단계로</div>`:(decisions.some(d=>d.result==='reject')?`<div class="banner bad">✕ 보완 필요 — 사유 확인 후 자료 재제출</div>`:`<div class="banner warn">ℹ 자료 제출 후 오디터 모의심사 검토 대기</div>`);
+  return `<div class="banner info" style="margin-bottom:16px">📋 모의심사 · Mock Audit — 사전심사와 동일하게 자료를 제출하면 오디터가 검토·판정합니다.</div>`
+    + `<div class="grid side">`
+    + `<div class="card"><h3>제출 자료 <span class="en">· Submitted</span><span class="r">${docs.length}건</span></h3><div class="body">${galleryHtml}<div style="margin-top:10px"><button class="btn pri" onclick="uploadMockDoc('${id}')">📎 자료 업로드 · Upload</button></div></div></div>`
+    + `<div class="card"><h3>판정 결과 <span class="en">· Result</span></h3><div class="body">${statusBanner}<div class="list" style="margin:8px -1px 0">${decisionHtml}</div></div></div>`
+    + `</div>`;
+}
+async function uploadMockDoc(id){
+  const inp=document.createElement("input");inp.type="file";inp.accept="image/*,.pdf";
+  inp.onchange=async()=>{const file=inp.files[0];if(!file)return;const b64=await fileB64(file);
+    try{await API('/cases/'+id+'/documents',{method:"POST",body:JSON.stringify({filename:file.name,file_b64:b64,doc_type:"mock_audit_evidence"})});toast("자료 업로드 · "+file.name);applyView();}
+    catch(e){toast("업로드 실패 · "+((e&&e.code)||""));}};
+  inp.click();
+}
 SCREEN.mockAudit=async()=>{
+  if(!["auditor","sharia","ops","admin"].includes(ROLE)) return await mockAuditClientView(CURCASE);
   const queue=await API("/mock-audit/queue");
   const qpg=pageSlice("mockq",queue,10);
   const rows=qpg.items.length?qpg.items.map(q=>`<tr class="clickable" onclick="openMock('${q.case_id}')">

@@ -3012,6 +3012,27 @@ def patch_consultation(cid: str, body: dict = None,
     return {"id": row.id, "status": row.status}
 
 
+@app.post("/cases/{case_id}/documents")
+def upload_case_document(case_id: str, body: dict = None,
+                        user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """범용 케이스 문서 업로드(모의심사 자료 등) — 클라이언트도 자기 케이스에 첨부."""
+    from .intake import _ctype
+    c = _get_case(db, case_id, user)
+    b = body or {}
+    fn = b.get("filename") or "document"
+    b64 = b.get("file_b64")
+    if not b64:
+        raise HTTPException(400, {"code": "NO_FILE"})
+    b64 = _validate_upload(b64, fn)
+    d = models.DocumentAsset(case_id=case_id, filename=fn, doc_type=(b.get("doc_type") or "other"),
+                             content_b64=b64, content_type=_ctype(fn))
+    db.add(d)
+    db.flush()
+    _audit(db, user, "document.upload", "document", d.document_id)
+    db.commit()
+    return {"document_id": d.document_id, "filename": fn, "doc_type": d.doc_type}
+
+
 @app.get("/cases/{case_id}/gen-docs")
 def list_gendocs(case_id: str, doc_type: str = None,
                  user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
