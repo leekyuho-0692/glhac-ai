@@ -2660,28 +2660,46 @@ async function loadFacMulti(id){
 function renderFacMulti(id){
   const b=document.getElementById("facMultiBody"); if(!b)return;
   let html='<div class="btnrow" style="margin-bottom:10px"><button class="btn" onclick="classifyFacs(\''+id+'\')">📂 문서 분류(등록증→공장)</button><button class="btn" onclick="addFacM(\''+id+'\')">＋ 공장 추가</button></div>';
-  if(!FAC_LIST.length){ html+='<div class="muted small">등록된 공장이 없습니다. [문서 분류] 또는 [공장 추가]를 누르세요.</div>'; b.innerHTML=html; return; }
+  if(!FAC_LIST.length){
+    // 등록된 공장이 없으면 안내문 대신 빈 입력 필드를 바로 노출(첫 공장 즉시 입력·저장)
+    html+=facFields(null);
+    html+='<div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="saveFacNew(\''+id+'\')">💾 저장 · 첫 공장 등록</button></div>';
+    b.innerHTML=html; return;
+  }
   let chips='<div class="btnrow" style="flex-wrap:wrap;gap:6px;margin-bottom:12px">';
   FAC_LIST.forEach(function(f,i){ const active=i===FAC_SEL; chips+='<button class="btn" style="'+(active?'background:var(--accent);color:#fff':'')+'" onclick="selFac(\''+id+'\','+i+')">'+esc(f.label||('공장'+(i+1)))+'</button>'; });
   chips+='</div>'; html+=chips;
   const sel=FAC_LIST[FAC_SEL]; if(!sel){ b.innerHTML=html; return; }
-  const pe=sel.profile_ext||{};
-  html+='<div class="field"><label>리스트 이름 · Label</label><input class="v" id="facLabel" value="'+esc(sel.label||'')+'"></div>';
-  html+='<div class="field"><label>제조업체명 · Manufacturer</label><input class="v" id="facName" value="'+esc(sel.name||'')+'"></div>';
-  html+='<div class="field"><label>공장등록번호</label><input class="v" id="facRegNo" value="'+esc(sel.reg_no||'')+'"></div>';
-  html+='<div class="field"><label>공장주소</label><input class="v" id="facAddr" value="'+esc(sel.address||'')+'"></div>';
-  html+='<div class="field"><label>도시</label><input class="v" id="facCity" value="'+esc(sel.city||'')+'"></div>';
-  html+='<div class="field"><label>국가</label><input class="v" id="facCountry" value="'+esc(sel.country||'')+'"></div>';
-  html+='<div class="field"><label>우편</label><input class="v" id="facZip" value="'+esc(sel.zip||'')+'"></div>';
-  html+='<div class="field"><label>전화</label><input class="v" id="facPhone" value="'+esc(pe.phone||'')+'"></div>';
-  html+='<div class="field"><label>이메일</label><input class="v" id="facEmail" value="'+esc(pe.email||'')+'"></div>';
-  html+='<div class="field"><label>담당자PIC 이름</label><input class="v" id="facPicName" value="'+esc(pe.pic_name||'')+'"></div>';
-  html+='<div class="field"><label>PIC 직책</label><input class="v" id="facPicTitle" value="'+esc(pe.pic_title||'')+'"></div>';
+  html+=facFields(sel);
   html+='<div class="muted small" style="margin-top:4px">분류된 문서: '+((sel.source_docs||[]).length)+'건</div>';
   html+='<div class="btnrow" style="margin-top:10px"><button class="btn" onclick="saveFac(\''+id+'\')">💾 저장</button><button class="btn" onclick="delFacM(\''+id+'\',\''+sel.facility_id+'\')">🗑 삭제</button></div>';
   b.innerHTML=html;
 }
+function facFields(sel){
+  const pe=(sel&&sel.profile_ext)||{};
+  const g=function(k){ return esc((sel&&sel[k])||''); };
+  return '<div class="field"><label>리스트 이름 · Label</label><input class="v" id="facLabel" value="'+g('label')+'"></div>'
+    +'<div class="field"><label>제조업체명 · Manufacturer</label><input class="v" id="facName" value="'+g('name')+'"></div>'
+    +'<div class="field"><label>공장등록번호</label><input class="v" id="facRegNo" value="'+g('reg_no')+'"></div>'
+    +'<div class="field"><label>공장주소</label><input class="v" id="facAddr" value="'+g('address')+'"></div>'
+    +'<div class="field"><label>도시</label><input class="v" id="facCity" value="'+g('city')+'"></div>'
+    +'<div class="field"><label>국가</label><input class="v" id="facCountry" value="'+g('country')+'"></div>'
+    +'<div class="field"><label>우편</label><input class="v" id="facZip" value="'+g('zip')+'"></div>'
+    +'<div class="field"><label>전화</label><input class="v" id="facPhone" value="'+esc(pe.phone||'')+'"></div>'
+    +'<div class="field"><label>이메일</label><input class="v" id="facEmail" value="'+esc(pe.email||'')+'"></div>'
+    +'<div class="field"><label>담당자PIC 이름</label><input class="v" id="facPicName" value="'+esc(pe.pic_name||'')+'"></div>'
+    +'<div class="field"><label>PIC 직책</label><input class="v" id="facPicTitle" value="'+esc(pe.pic_title||'')+'"></div>';
+}
 function selFac(id,i){ FAC_SEL=i; renderFacMulti(id); }
+async function saveFacNew(id){
+  const g=function(x){ const el=document.getElementById(x); return el?el.value:undefined; };
+  const body={label:g('facLabel')||'공장1',name:g('facName'),reg_no:g('facRegNo'),address:g('facAddr'),city:g('facCity'),country:g('facCountry'),zip:g('facZip'),profile_ext:{phone:g('facPhone'),email:g('facEmail'),pic_name:g('facPicName'),pic_title:g('facPicTitle')}};
+  try{
+    const r=await API('/cases/'+id+'/factories',{method:"POST",body:JSON.stringify({label:body.label,name:body.name})});
+    if(r&&r.facility_id){ await API('/facilities/'+r.facility_id,{method:"PATCH",body:JSON.stringify(body)}); }
+    toast("첫 공장 등록"); FAC_SEL=0; await loadFacMulti(id);
+  }catch(e){ toast("등록 실패 · "+((e&&e.code)||"")); }
+}
 async function saveFac(id){
   const sel=FAC_LIST[FAC_SEL]; if(!sel)return;
   const g=function(x){ const el=document.getElementById(x); return el?el.value:undefined; };
