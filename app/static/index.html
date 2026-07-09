@@ -5,17 +5,20 @@
 <title>GL-HAC AI · 할랄·샤리아 인증 플랫폼</title>
 <style>
   :root{
-    --shell:#0F172A; --shell2:#1E293B; --line:#E2E8F0; --line2:#CBD5E1;
-    --bg:#F1F5F9; --card:#FFFFFF; --ink:#0F172A; --ink2:#475569; --ink3:#94A3B8;
-    --accent:#2563EB; --accent2:#1D4ED8; --accent-soft:#EFF6FF;
-    --ok:#16A34A; --ok-soft:#DCFCE7; --warn:#D97706; --warn-soft:#FEF3C7;
+    /* GL-HAC 프로토타입 팔레트(할랄 녹색) — 라이트 기본, 흰 사이드바 */
+    --shell:#FFFFFF; --shell2:#EEF4EF; --line:#DBE6DE; --line2:#C7D6CC;
+    --bg:#EEF4EF; --card:#FFFFFF; --ink:#182219; --ink2:#4A5A50; --ink3:#7A8A80;
+    --accent:#0B5D2A; --accent2:#08461F; --accent-soft:#E6F2E9;
+    --ok:#127A38; --ok-soft:#E6F2E9; --warn:#C9701F; --warn-soft:#FFF3E0;
     --bad:#DC2626; --bad-soft:#FEE2E2; --gold:#B45309; --gold-soft:#FEF3C7;
-    --nav-active:#334155; --shadow:0 1px 2px rgba(15,23,42,.06),0 4px 12px rgba(15,23,42,.05);
+    --nav-active:#0B5D2A; --shadow:0 1px 2px rgba(16,32,24,.06),0 4px 12px rgba(16,32,24,.05);
     --radius:12px;
   }
   html[data-theme="dark"]{
+    /* 다크 유지: 사이드바만 다시 어둡게 오버라이드 */
+    --shell:#0F172A; --shell2:#1E293B;
     --bg:#0B1120; --card:#111827; --ink:#E5E7EB; --ink2:#94A3B8; --ink3:#64748B;
-    --line:#1F2937; --line2:#334155; --accent-soft:#0F1E3D;
+    --line:#1F2937; --line2:#334155; --accent-soft:#0F2A19;
     --ok-soft:#052e16; --warn-soft:#3a2606; --bad-soft:#3a0d0d; --gold-soft:#3a2606;
     --shadow:0 1px 2px rgba(0,0,0,.4),0 4px 14px rgba(0,0,0,.3);
   }
@@ -24,31 +27,34 @@
     font-family:"Pretendard","Malgun Gothic",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
     font-size:15.5px;line-height:1.55;-webkit-font-smoothing:antialiased;}
   .app{display:flex;min-height:100vh}
-  aside{width:264px;flex:0 0 264px;background:var(--shell);color:#CBD5E1;
+  aside{width:212px;flex:0 0 212px;background:var(--shell);color:var(--ink2);border-right:1px solid var(--line);
     display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
   .hamburger{display:none;background:transparent;border:1px solid var(--line2);color:var(--ink2);
     font-size:18px;line-height:1;border-radius:9px;width:40px;height:40px;cursor:pointer;flex:0 0 auto}
   .navscrim{display:none}
   /* 키보드 포커스 가시화(마우스 클릭엔 미노출) — 접근성 */
   :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
-  .brand{padding:18px 20px 10px}
-  .brand b{color:#fff;font-size:17px;letter-spacing:-.3px}
-  .brand small{display:block;color:#64748B;font-size:11px;margin-top:2px}
-  nav{padding:6px 10px 10px;display:flex;flex-direction:column;gap:2px}
-  nav a{display:flex;align-items:center;gap:11px;padding:11px 14px;border-radius:9px;
-    color:#CBD5E1;text-decoration:none;font-size:14.5px;cursor:pointer;transition:.12s;white-space:nowrap}
-  nav a .en{color:#64748B;font-size:12px;margin-left:auto}
-  nav a:hover{background:#1E293B;color:#fff}
-  nav a.active{background:var(--nav-active);color:#fff;font-weight:600}
-  nav a.active .en{color:#93C5FD}
+  .brand{display:flex;align-items:center;gap:10px;padding:18px 16px 14px;border-bottom:1px solid var(--line)}
+  .brand .shield{width:36px;height:40px;flex:0 0 auto;background:var(--accent);border-radius:8px 8px 14px 14px;
+    display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px}
+  .brand .txt{min-width:0}
+  .brand b{display:block;color:var(--accent);font-size:16px;font-weight:900;letter-spacing:-.2px;line-height:1.1}
+  .brand small{display:block;color:var(--ink3);font-size:10px;font-weight:700;letter-spacing:1px;margin-top:2px}
+  nav{padding:10px 10px;display:flex;flex-direction:column;gap:2px}
+  nav a{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:9px;
+    color:var(--ink2);text-decoration:none;font-size:14px;font-weight:600;cursor:pointer;transition:.12s;white-space:nowrap}
+  nav a .en{color:var(--ink3);font-size:12px;font-weight:400;margin-left:auto}
+  nav a:hover{background:var(--shell2);color:var(--ink)}
+  nav a.active{background:var(--nav-active);color:#fff;font-weight:700}
+  nav a.active .en{color:rgba(255,255,255,.75)}
   .nav-group{margin-bottom:6px}
-  .nav-group-label{font-size:10.5px;color:#64748B;text-transform:uppercase;letter-spacing:.6px;padding:10px 14px 6px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none}
-  .nav-group-label:hover{color:#94A3B8}
+  .nav-group-label{font-size:10.5px;color:var(--ink3);text-transform:uppercase;letter-spacing:.6px;padding:10px 14px 6px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none}
+  .nav-group-label:hover{color:var(--ink2)}
   .nav-caret{font-size:9px;transition:transform .18s}
   .nav-group.open .nav-caret{transform:rotate(90deg)}
   .nav-group-items{display:none}
   .nav-group.open .nav-group-items{display:block}
-  .navfoot{margin-top:auto;padding:12px 20px;color:#475569;font-size:11px;border-top:1px solid #1E293B}
+  .navfoot{margin-top:auto;padding:12px 18px;color:var(--ink3);font-size:11px;border-top:1px solid var(--line)}
   main{flex:1;min-width:0;display:flex;flex-direction:column}
   .topbar{height:66px;background:var(--card);border-bottom:1px solid var(--line);
     display:flex;align-items:center;gap:12px;padding:0 26px;position:sticky;top:0;z-index:5}
@@ -330,7 +336,7 @@
 <div class="app" id="appView" style="display:none">
   <div class="navscrim" id="navScrim" onclick="toggleNav(false)"></div>
   <aside id="sidebar">
-    <div class="brand"><b>GL-HAC AI</b><small>할랄·샤리아 인증 · Halal Certification</small></div>
+    <div class="brand"><span class="shield" aria-hidden="true">☪</span><span class="txt"><b>GL-HAC</b><small>GLOBAL HALAL</small></span></div>
     <nav id="nav"></nav>
     <div class="navfoot" id="navfoot"></div>
   </aside>
