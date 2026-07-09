@@ -388,7 +388,7 @@ const NAV = [
   ["materials","🧪","원재료","Materials","스크리닝·Screen"],
   ["integration","🔗","SJPH/HPAS 통합","Integration","통합·Integration"],
   ["documents","📁","문서","Documents","문서·Docs"],
-  ["audit","🏭","심사","Audit","심사중·Auditing"],
+  ["audit","🏭","현장심사","On-site Audit","현장심사·On-site"],
   ["mockAudit","🧷","모의 심사","Mock Audit","모의심사·Mock"],
   ["evaluation","✅","SJPH/HPAS 평가","Evaluation","평가·Eval"],
   ["invoice","🧾","계약","Contract","계약·Contract"],
@@ -3365,6 +3365,7 @@ SCREEN.fatwa=async()=>{
           <button class="btn pri" ${isProvisional?'':'disabled'} onclick="fatwaFinalApprove('${id}')">${isFinal?'✓ 최종승인 완료':'최종승인 (scope 동결)'}</button>
           ${!isProvisional&&!isFinal?'<span class="chip" style="margin-left:6px">샤리아 가승인 후 활성화</span>':''}</div>`:''}
         ${!canProvisional&&!canFinal?'<span class="chip">🔒 샤리아(가승인)·최고운영자(최종승인) 전용</span>':''}
+        ${canProvisional?`<button class="btn" style="margin-top:10px" onclick="setFatwaCommittee('${id}','${esc((fd&&fd.decision)||'pending')}')">✎ 위원 구성 · Committee</button>`:''}
         <button class="btn" style="margin-top:10px" onclick="fatwaDoc('${id}')">📄 결정문 생성·다운로드</button>
       </div></div>
     <div class="card"><h3>위원 구성 <span class="en">· Members</span></h3>
@@ -3387,6 +3388,14 @@ SCREEN.fatwa=async()=>{
 };
 async function fatwaVoteBtn(el,id){await fatwaVote(id,el.getAttribute('data-m'),el.getAttribute('data-v'));}
 async function fatwaVote(id,member,vote){try{await API(`/cases/${id}/fatwa/vote`,{method:"POST",body:JSON.stringify({member,vote})});toast("투표 · "+member+" → "+vote);applyView();}catch(e){toast("투표 실패 · "+(e&&e.code?e.code:""));}}
+async function setFatwaCommittee(id,decision){
+  const f=await dialog("파트와 위원 구성 · Committee",[{key:"head",label:"위원장 · Head",required:true},{key:"secretary",label:"간사 · Secretary"},{key:"members",label:"위원 (쉼표 구분) · Members",placeholder:"Dr. Ahmad, Ust. Farhan"}]);
+  if(!f)return;
+  const extra=(f.members||"").split(",").map(s=>s.trim()).filter(Boolean);
+  const voters=[...new Set([f.head,f.secretary,...extra].filter(Boolean))];  // 위원장·간사·위원 모두 투표 대상
+  try{await API('/cases/'+id+'/fatwa',{method:"PATCH",body:JSON.stringify({decision:decision||"pending",committee_head:f.head,committee_secretary:f.secretary,committee_members:voters})});toast("위원 구성 저장 · "+voters.length+"명");applyView();}
+  catch(e){toast("실패 · "+((e&&e.code)||""));}
+}
 async function fatwaDecide(id,decision){try{await API(`/cases/${id}/fatwa`,{method:"PATCH",body:JSON.stringify({decision})});toast(decision==='approved'?"가승인 완료":"결정 · "+decision);await loadCases(true);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function fatwaFinalApprove(id){if(!confirm("최종 승인하시겠습니까? (scope 동결·인증서 발급 가능)"))return;try{await API(`/cases/${id}/fatwa/final-approve`,{method:"POST",body:"{}"});toast("최종 승인 완료");await loadCases(true);applyView();}catch(e){toast("최종승인 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
 async function fatwaDoc(id){try{const r=await API(`/cases/${id}/fatwa/document`,{method:"POST",body:"{}"});downloadText("fatwa_"+short(id)+".txt",r.document||"");toast("결정문 생성·다운로드");}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
