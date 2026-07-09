@@ -2944,6 +2944,74 @@ def get_case_journey(case_id: str, user=Depends(auth.get_current_user), db=Depen
     return {"case_id": case_id, "status": st, "milestone": mi, "current": current_idx, "stages": result_stages}
 
 
+# ===== 고객 상담(consultation) 서브시스템 — 관리자 고객대응 (회의 2026-07-09) =====
+@app.post("/consultations")
+def create_consultation(body: dict = None, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """문의 제출(로그인 사용자) — 관리자가 응대."""
+    b = body or {}
+    subject = (b.get("subject") or "").strip()
+    message = (b.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, {"code": "EMPTY_MESSAGE"})
+    row = models.Consultation(org_id=user.get("org_id"), case_id=(b.get("case_id") or None),
+                              channel=(b.get("channel") or "inapp"), subject=subject or "(제목없음)",
+                              message=message, created_by=user["uid"])
+    db.add(row)
+    _audit(db, user, "consultation.create", "consultation", None)
+    db.commit()
+    return {"id": row.id, "status": row.status, "subject": row.subject}
+
+
+@app.get("/consultations")
+def list_consultations(status: str = None, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """상담 목록 — 관리자/운영자는 전체, 그 외는 본인 조직만."""
+    q = db.query(models.Consultation)
+    if user["role"] not in ("admin", "operator"):
+        q = q.filter(models.Consultation.org_id == user.get("org_id"))
+    if status:
+        q = q.filter(models.Consultation.status == status)
+    rows = q.order_by(models.Consultation.created_at.desc()).all()
+    return [{"id": r.id, "org_id": r.org_id, "case_id": r.case_id, "channel": r.channel,
+             "subject": r.subject, "message": r.message, "status": r.status, "response": r.response,
+             "responder": r.responder, "created_at": str(r.created_at)[:19],
+             "answered_at": str(r.answered_at)[:19] if r.answered_at else None} for r in rows]
+
+
+@app.post("/consultations/{cid}/respond")
+def respond_consultation(cid: str, body: dict = None,
+                         user=Depends(auth.require_roles("admin", "operator")), db=Depends(get_db)):
+    """관리자/운영자 응대 — 상태 answered."""
+    row = db.get(models.Consultation, cid)
+    if not row:
+        raise HTTPException(404, {"code": "CONSULTATION_NOT_FOUND"})
+    resp = ((body or {}).get("response") or "").strip()
+    if not resp:
+        raise HTTPException(400, {"code": "EMPTY_RESPONSE"})
+    row.response = resp
+    row.responder = user["uid"]
+    row.status = "answered"
+    row.answered_at = datetime.utcnow()
+    _audit(db, user, "consultation.respond", "consultation", cid)
+    db.commit()
+    return {"id": row.id, "status": row.status, "response": row.response}
+
+
+@app.patch("/consultations/{cid}")
+def patch_consultation(cid: str, body: dict = None,
+                       user=Depends(auth.require_roles("admin", "operator")), db=Depends(get_db)):
+    """상태 변경(관리자/운영자) — open|answered|closed."""
+    row = db.get(models.Consultation, cid)
+    if not row:
+        raise HTTPException(404, {"code": "CONSULTATION_NOT_FOUND"})
+    st = (body or {}).get("status")
+    if st not in ("open", "answered", "closed"):
+        raise HTTPException(400, {"code": "BAD_STATUS"})
+    row.status = st
+    _audit(db, user, "consultation.patch", "consultation", cid)
+    db.commit()
+    return {"id": row.id, "status": row.status}
+
+
 @app.get("/cases/{case_id}/gen-docs")
 def list_gendocs(case_id: str, doc_type: str = None,
                  user=Depends(auth.get_current_user), db: Session = Depends(get_db)):

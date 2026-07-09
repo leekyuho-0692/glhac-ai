@@ -243,3 +243,17 @@ def test_propose_audit_dates(tmp_path):
     auditor = {"uid": "a1", "role": "auditor", "org_id": "org1"}
     r = m.propose_audit_dates(p.id, body={"dates": ["2026-08-05", "2026-08-06", "2026-08-08"]}, user=auditor, db=db)
     assert len(r["proposed"]) == 3 and "일정변경 제안" in r["note"]
+
+
+def test_consultation_flow(tmp_path):
+    db = _seed_db(tmp_path)
+    r = m.create_consultation(body={"subject": "질문", "message": "인증 절차 문의"}, user=USER, db=db)
+    assert r["status"] == "open"
+    cid = r["id"]
+    lst = m.list_consultations(user=USER, db=db)
+    assert any(c["id"] == cid for c in lst)
+    admin = {"uid": "adm", "role": "admin", "org_id": "org1"}
+    rr = m.respond_consultation(cid, body={"response": "3주 소요됩니다"}, user=admin, db=db)
+    assert rr["status"] == "answered"
+    pc = m.patch_consultation(cid, body={"status": "closed"}, user=admin, db=db)
+    assert pc["status"] == "closed"

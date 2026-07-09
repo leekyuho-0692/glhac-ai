@@ -472,6 +472,23 @@ class Contract(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Consultation(Base):
+    """고객 상담/문의 (관리자 고객대응) — 회의 2026-07-09 반영."""
+    __tablename__ = "consultation"
+    id = Column(String, primary_key=True, default=uid)
+    org_id = Column(String, index=True)
+    case_id = Column(String)            # nullable
+    channel = Column(String, default="inapp")   # inapp|phone|email|kakao|whatsapp
+    subject = Column(String)
+    message = Column(Text)
+    status = Column(String, default="open")      # open|answered|closed
+    response = Column(Text)
+    responder = Column(String)
+    created_by = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    answered_at = Column(DateTime)
+
+
 class CorrectiveAction(Base):
     """시정조치 CAR(§P2 CAR advanced) — finding별 제출→검토→종결 라이프사이클."""
     __tablename__ = "corrective_action"

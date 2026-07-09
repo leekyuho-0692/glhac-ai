@@ -399,6 +399,7 @@ const NAV = [
   ["certificate","🏅","인증서","Certificate","발급·Issue"],
   ["assistant","🤖","AI 어시스턴트","Assistant","AI 보조·Assist"],
   ["feedback","💬","개선 피드백","Feedback","건의·Feedback"],
+  ["consultation","☎️","상담","Support","상담·Support"],
   ["system","⚙️","시스템 설정","System","admin"],
 ];
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
@@ -406,7 +407,7 @@ const NAV_GROUPS=[
   {label:"개요 · Overview", ids:["caseList"]},
   {label:"신청·서류 · Application", ids:["application","preassess","materials"]},
   {label:"심사·판정 · Audit", ids:["audit","mockAudit","evaluation","fatwa","certificate"]},
-  {label:"계약·지원 · Support", ids:["invoice","payments","deposits","notifyLog","system"]},
+  {label:"계약·지원 · Support", ids:["invoice","payments","deposits","notifyLog","consultation","system"]},
   {label:"기타 · Others", ids:["integration","assistant","feedback"]},
   {label:"내 정보 관리 · My Data", ids:["documents"]},   // M6: 문서=내 자료함(맨 뒤 이동)
 ];
@@ -441,6 +442,7 @@ const MENU_ACCESS = {
   certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
   feedback: ["client","consultant","auditor","sharia","ops","admin"],
+  consultation: ["client","consultant","ops","admin"],   // 상담: 클라이언트 제출·관리자 응대
   system:   ["admin"],
 };
 const CASE_SCOPED = new Set(["workflow","application","preassess","materials","integration",
@@ -2946,6 +2948,44 @@ async function dropSjphEvidence(ev,cid,key){
 }
 async function postDiscussion(id){const el=document.getElementById("discInput");const text=el.value.trim();if(!text)return;try{await API(`/cases/${id}/discussions`,{method:"POST",body:JSON.stringify({kind:"comment",text})});toast("협의 등록");applyView();}catch(e){toast("등록 실패 · "+(e&&e.code?e.code:""));}}
 
+/* 상담(고객대응) 서브시스템 — 클라이언트 제출·관리자 응대 (회의 2026-07-09) */
+const submitConsultation = async () => {
+  const f = await dialog("문의하기 · New Inquiry", [
+    { key: "subject", label: "제목 · Subject" },
+    { key: "message", label: "문의 내용 · Message", type: "textarea", required: true }
+  ]);
+  if (!f) return;
+  try { await API('/consultations', { method: "POST", body: JSON.stringify({ subject: f.subject, message: f.message }) }); toast("문의 등록"); applyView(); }
+  catch (e) { toast("등록 실패 · " + ((e && e.code) || "")); }
+};
+const respondConsultation = async (cid) => {
+  const f = await dialog("상담 답변 · Respond", [{ key: "response", label: "답변 내용 · Response", type: "textarea", required: true }]);
+  if (!f) return;
+  try { await API('/consultations/' + cid + '/respond', { method: "POST", body: JSON.stringify({ response: f.response }) }); toast("답변 등록"); applyView(); }
+  catch (e) { toast("답변 실패 · " + ((e && e.code) || "")); }
+};
+const patchConsultation = async (cid, status) => {
+  try { await API('/consultations/' + cid, { method: "PATCH", body: JSON.stringify({ status }) }); toast("상담 · " + status); applyView(); }
+  catch (e) { toast("실패 · " + ((e && e.code) || "")); }
+};
+SCREEN.consultation = async () => {
+  const isStaff = ['admin', 'ops'].includes(ROLE);
+  const rows = await API('/consultations').catch(() => []);
+  const statusColor = s => s === 'answered' ? 'ok' : (s === 'closed' ? 'mute' : 'warn');
+  const submitCard = `<div class="card"><h3>문의하기 <span class="en">· New Inquiry</span></h3><div class="body"><button class="btn pri" onclick="submitConsultation()">✏️ 새 문의 작성</button></div></div>`;
+  let listHtml;
+  if (!rows.length) { listHtml = '<div class="muted small">문의 없음</div>'; }
+  else {
+    listHtml = rows.map(r => {
+      const header = `<b>${esc(r.subject)}</b> ${bTag(statusColor(r.status), r.status)} <span class="muted small">· ${esc(r.channel)} · ${esc(r.created_at)}</span>`;
+      const message = `<div class="small" style="white-space:pre-wrap;margin-top:4px">${esc(r.message)}</div>`;
+      const responseHtml = r.response ? `<div style="background:var(--ok-soft);border-radius:8px;padding:8px;margin-top:6px"><b>답변</b><div style="white-space:pre-wrap">${esc(r.response)}</div></div>` : '';
+      const staffButtons = isStaff ? `<div class="btnrow" style="margin-top:6px"><button class="btn" onclick="respondConsultation('${r.id}')">답변</button>${r.status !== 'closed' ? `<button class="btn" onclick="patchConsultation('${r.id}','closed')">종료</button>` : ''}</div>` : '';
+      return `<div class="card" style="margin-bottom:10px">${header}${message}${responseHtml}${staffButtons}</div>`;
+    }).join('');
+  }
+  return submitCard + `<div class="muted small" style="margin:10px 0 6px;font-weight:600">상담 내역 · Consultations (${rows.length})</div>` + listHtml;
+};
 /* 11) Invoice */
 SCREEN.invoice=async()=>{
   const id=CURCASE;const inv=await API(`/cases/${id}/invoices`).catch(()=>[]);
