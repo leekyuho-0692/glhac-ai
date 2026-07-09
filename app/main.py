@@ -3209,7 +3209,8 @@ def get_gendoc_pdf(gen_doc_id: str, user=Depends(auth.get_current_user), db: Ses
               "company_info": "기업정보 · Company Info (Form.1)",
               "facility_info": "시설정보 · Facility Info (Form.2)",
               "contract": "계약서 · Contract (FORM 4.1)",
-              "fatwa_decree": "할랄 판결문 · Fatwa Decision"}
+              "fatwa_decree": "할랄 판결문 · Fatwa Decision",
+              "material_report": "성분 분석 리포트 스냅샷 · Material Report"}
     title = labels.get(g.doc_type, g.doc_type)
     subtitle = "%s · v%s · %s" % (c.company_name or "", g.version, g.status)
     pdf = _render_pdf(title, g.content or "", subtitle=subtitle,
@@ -4981,9 +4982,48 @@ def explain_ingredient(body: schemas.ExplainReq, user=Depends(auth.get_current_u
 _VERDICT_KO = {"CLEARED": "할랄 허용", "NEEDS_EVIDENCE": "증빙 필요", "BLOCK": "차단(하람)"}
 
 
+def _material_source_docs(db, case_id):
+    """M2: 성분별 소스 증빙문서 매핑 material_id → [{document_id, filename}]."""
+    out = {}
+    rows = db.query(models.DocumentAsset).filter_by(case_id=case_id).filter(models.DocumentAsset.material_id.isnot(None)).all()
+    for d in rows:
+        out.setdefault(d.material_id, []).append({"document_id": d.document_id, "filename": d.filename})
+    return out
+
+
+@app.post("/cases/{case_id}/material-report/snapshot")
+def save_material_report_snapshot(case_id, body: dict = None, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """M2: 오디터 체크 + 성분 리포트 스냅샷을 gen-doc(material_report)로 저장(이력 보존·클라이언트 전달)."""
+    c = _get_case(db, case_id, user)
+    b = body or {}
+    checked = b.get("checked") or []
+    note = b.get("note") or ""
+    mats = db.query(models.Material).filter_by(case_id=case_id).all()
+    src = _material_source_docs(db, case_id)
+    lines = [
+        "[성분 분석 리포트 스냅샷 — %s]" % (c.company_name or case_id[:8]),
+        "체크 완료: %d / 전체 %d" % (len(checked), len(mats)),
+        "확인자: %s (%s)" % (user.get("uid"), user.get("role")),
+        "",
+    ]
+    for m in mats:
+        docs = src.get(m.material_id) or []
+        mark = "✔" if m.material_id in checked else "·"
+        doclbl = ", ".join(d["filename"] for d in docs) or "-"
+        lines.append("%s %s — 문서: %s" % (mark, m.name, doclbl))
+    if note:
+        lines += ["", "메모: " + note]
+    content = "\n".join(lines)
+    g = _save_gendoc(db, c, "material_report", content, user)
+    _audit(db, user, "material_report.snapshot", "case", case_id)
+    db.commit()
+    return {"gen_doc_id": g.gen_doc_id, "version": g.version, "checked": len(checked), "total": len(mats)}
+
+
 def _material_report(db, c):
     """케이스 원재료 전수를 온톨로지로 분석해 종합 보고서 데이터로 집계 (설계 C·v2 이관)."""
     mats = db.query(models.Material).filter_by(case_id=c.case_id).order_by(models.Material.name).all()
+    _src = _material_source_docs(db, c.case_id)  # M2: 성분별 소스문서(고유번호·위치)
     rows, summary = [], {"total": 0, "cleared": 0, "needs_evidence": 0, "blocked": 0,
                          "najis": 0, "critical": []}
     _CATS = {"제품 원재료": ("raw", "additive", "processing_aid"), "세척제": ("sanitizer",),
@@ -5014,6 +5054,7 @@ def _material_report(db, c):
                      "required_evidence": exp.get("required_evidence") or [],
                      "alternatives": exp.get("alternatives") or [],
                      "evidence_count": m.evidence_count if hasattr(m, "evidence_count") else None,
+                     "source_docs": _src.get(m.material_id) or [],  # M2: 문서 고유번호·위치→뷰어링크
                      "explanation": exp.get("explanation") or ""})
     category_registration = [{"category": k, "count": cat_counts[k],
                               "registered": cat_counts[k] > 0} for k in _CATS]

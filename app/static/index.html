@@ -2311,6 +2311,11 @@ async function matLoadDetail(mid,name){
   }catch(e){box.textContent=T('상세 불러오기 실패');}
 }
 function closeReport(){document.getElementById("reportOverlay").style.display="none";}
+async function saveMatSnapshot(id){
+  const checked=[...document.querySelectorAll('.matChk:checked')].map(el=>el.getAttribute('data-mid')).filter(Boolean);
+  try{const r=await API(`/cases/${id}/material-report/snapshot`,{method:"POST",body:JSON.stringify({checked})});toast("스냅샷 저장 · 체크 "+r.checked+"/"+r.total);}
+  catch(e){toast("스냅샷 실패 · "+((e&&e.code)||""));}
+}
 async function materialReport(id){
   try{
     const r=await API(`/cases/${id}/material-report`);
@@ -2323,11 +2328,14 @@ async function materialReport(id){
       <b class="small">필수 원재료 카테고리 · Required categories</b>
       <div style="margin-top:5px">${catReg.map(c=>`<span style="display:inline-block;margin:2px 8px 2px 0;font-size:12px"><b style="color:${c.registered?'#0b7a35':'#b42318'}">${c.registered?'●':'○'}</b> ${esc(c.category)} <span class="muted">${c.count}</span></span>`).join("")}</div>
       ${catReg.some(c=>c.category!=='제품 원재료'&&!c.registered)?`<div class="small" style="color:#b42318;margin-top:5px">⚠ 세척제·포장재·윤활제 중 미등록 항목 — 심사 단계 보완 요청 가능</div>`:''}</div>`:'';
+    const canChk=['auditor','sharia','ops','admin'].includes(ROLE);
     const rows=(r.materials||[]).map(m=>`<div class="li" style="padding:8px 0;border-bottom:1px solid var(--line)">
-      <div class="tx"><b>${esc(m.name)}${m.e_number?' ('+esc(m.e_number)+')':''}</b> ${bTag(vColor(m.verdict),T(m.verdict_ko||m.verdict||'—'))}${m.najis?' '+bTag("bad","najis"):''}${m.severity?' <span class="muted small">· '+esc(m.severity)+'</span>':''}</div>
+      <div class="tx" style="display:flex;align-items:center;gap:6px">${canChk?`<input type="checkbox" class="matChk" data-mid="${esc(m.material_id||"")}">`:''}<b>${esc(m.name)}${m.e_number?' ('+esc(m.e_number)+')':''}</b> ${bTag(vColor(m.verdict),T(m.verdict_ko||m.verdict||'—'))}${m.najis?' '+bTag("bad","najis"):''}${m.severity?' <span class="muted small">· '+esc(m.severity)+'</span>':''}</div>
       <div class="small" style="white-space:pre-wrap;color:var(--ink2);margin-top:2px">${esc(m.explanation||"")}</div>
+      <div class="small" style="margin-top:3px">${(m.source_docs||[]).map(d=>`<span class="chip" style="cursor:pointer" title="${T('문서 뷰어')}" onclick="viewDoc('${d.document_id}')">📄 ${esc(d.filename||d.document_id)}</span>`).join(' ')||`<span class="muted small">${T('연결 문서 없음')}</span>`}</div>
     </div>`).join("")||`<div class="muted" style="padding:12px">${T('원재료 없음')}</div>`;
-    document.getElementById("reportBody").innerHTML=cards+catHtml+rows+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
+    const snapBtn=canChk?`<div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="saveMatSnapshot('${id}')">💾 ${T('스냅샷 저장·전달')}</button><span class="muted small">${T('체크한 성분·문서를 이력으로 저장(클라이언트 전달)')}</span></div>`:'';
+    document.getElementById("reportBody").innerHTML=cards+catHtml+rows+snapBtn+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
     document.getElementById("reportPdfBtn").onclick=()=>serverPdf(`/cases/${id}/material-report.pdf`,"material_report.pdf");
     document.getElementById("reportOverlay").style.display="grid";
     localizeUI(document.getElementById("reportBody"));

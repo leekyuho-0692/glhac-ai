@@ -212,3 +212,17 @@ def test_case_journey_11_stages(tmp_path):
         assert lab in labels
     # 정확히 하나의 current
     assert sum(1 for s in r["stages"] if s["status"] == "current") == 1
+
+
+def test_material_report_snapshot_and_source_docs(tmp_path):
+    db = _seed_db(tmp_path)
+    db.add(models.Material(material_id="m1", case_id="case1", name="Gelatin A"))
+    db.add(models.DocumentAsset(case_id="case1", filename="coa.pdf", doc_type="halal_certificate", material_id="m1"))
+    db.commit()
+    # 리포트 rows에 source_docs 포함
+    rep = m._material_report(db, m._get_case(db, "case1", USER))
+    row = next(r for r in rep["materials"] if r["material_id"] == "m1")
+    assert row["source_docs"] and row["source_docs"][0]["filename"] == "coa.pdf"
+    # 스냅샷 저장(오디터 체크·이력)
+    r = m.save_material_report_snapshot("case1", body={"checked": ["m1"], "note": "확인"}, user=USER, db=db)
+    assert r["checked"] == 1 and r["gen_doc_id"]
