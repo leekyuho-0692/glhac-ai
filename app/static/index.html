@@ -2082,6 +2082,7 @@ SCREEN.application=async()=>{
         ${c.draft_state==='returned'&&c.return_reason?`<div class="banner bad" style="margin-bottom:8px">${T('↩ 반려됨 · 사유:')} ${esc(c.return_reason)}</div>`:''}
         <div style="margin-bottom:4px">${draftBadge(c.draft_state)}</div>
       </div></div>
+    ${facMultiPanel(id)}
     <div class="card"><h3>🏭 공장·시설 · Facility Info <span class="en">· 시설 데이터 양식(Form.2)</span></h3>
       <div class="body">
         <div style="border:1px solid var(--line2);border-radius:10px;padding:10px;margin-bottom:14px;background:var(--panel2,#fafafa)">
@@ -2564,6 +2565,7 @@ SCREEN.documents=async()=>{
   const rvwSummary=docs.length?`<div class="chipbar" style="margin-bottom:14px"><span class="muted small">검수 요약 · Review</span>${Object.entries(rvw).map(([k,vv])=>`${bTag(statusColor(k),k)} <b style="margin-right:8px">${vv}</b>`).join("")}</div>`:"";
   return `
   ${rvwSummary}
+  ${docGenBar(id)}
   <div class="grid side">
     <div class="card"><h3>필수서류 체크리스트 <span class="en">· Checklist</span><span class="r">${chk.complete?'완료':'미완'}</span></h3>
       <div class="body">${chkHtml}
@@ -2574,6 +2576,87 @@ SCREEN.documents=async()=>{
   <div class="card" style="margin-top:16px"><h3>문서 뷰어 <span class="en">· Viewer</span><span class="r">${sel?esc(sel.filename||""):"선택 없음"}</span></h3>
     <div class="body">${viewer}</div></div>`;
 };
+/* ===== 문서 자동생성 UI (6종) — 백엔드 gen-doc/리치PDF 엔드포인트 배선 ===== */
+function docGenBar(id){
+  const buttons=[];
+  buttons.push(`<button class="btn" onclick="genCompanyInfo('${id}')">📄 기업정보(Company Info)</button>`);
+  buttons.push(`<button class="btn" onclick="genContract('${id}')">📄 계약서(Contract)</button>`);
+  if(['auditor','sharia','ops','admin'].includes(ROLE)){
+    buttons.push(`<button class="btn" onclick="serverPdf('/cases/${id}/factory-audit.pdf','factory_audit.pdf')">📄 현장심사보고서(Factory Audit)</button>`);
+  }
+  buttons.push(`<button class="btn" onclick="serverPdf('/cases/${id}/sjph-manual.pdf','sjph_manual.pdf')">📄 SJPH 매뉴얼</button>`);
+  if(['sharia','ops','admin'].includes(ROLE)){
+    buttons.push(`<button class="btn" onclick="genFatwaDecree('${id}')">📄 파트와 판결문(Fatwa Decree)</button>`);
+  }
+  return `<div class="card"><h3>📄 문서 자동생성 <span class="en">· Document Generation</span></h3><div class="body"><div class="btnrow">${buttons.join('')}</div></div></div>`;
+}
+async function genCompanyInfo(id){
+  try{const r=await API(`/cases/${id}/docs/company-info`,{method:"POST",body:"{}"});toast("기업정보 생성");serverPdf(`/gen-docs/${r.gen_doc_id}/pdf`,"company_info.pdf");}
+  catch(e){toast("생성 실패 · "+((e&&e.code)||""));}
+}
+async function genContract(id){
+  try{await API(`/cases/${id}/contract/generate`,{method:"POST",body:"{}"});toast("계약서 생성");serverPdf(`/cases/${id}/contract/pdf`,"contract.pdf");}
+  catch(e){toast("생성 실패 · "+((e&&e.code)||""));}
+}
+async function genFatwaDecree(id){
+  try{await API(`/cases/${id}/fatwa/decree`,{method:"POST",body:"{}"});toast("판결문 생성");serverPdf(`/cases/${id}/fatwa/decree.pdf`,"fatwa_decree.pdf");}
+  catch(e){toast("생성 실패 · "+((e&&e.code)||""));}
+}
+/* ===== 공장 다건 분류 패널 (Facility 1:N) ===== */
+let FAC_LIST=[];let FAC_SEL=0;
+function facMultiPanel(id){
+  const prev=AFTER_RENDER;
+  AFTER_RENDER=function(){ if(prev) try{prev()}catch(_){}; loadFacMulti(id); };
+  return '<div class="card"><h3>🏭 공장 목록 · Factories <span class="en">· 다건 분류(1:N)</span></h3><div class="body"><div id="facMultiBody" class="muted small">불러오는 중…</div></div></div>';
+}
+async function loadFacMulti(id){
+  try{ const r=await API(`/cases/${id}/factories`); FAC_LIST=(r&&r.factories)||[]; if(FAC_SEL>=FAC_LIST.length)FAC_SEL=0; renderFacMulti(id); }
+  catch(e){ const b=document.getElementById("facMultiBody"); if(b)b.innerHTML='<div class="muted small">공장 정보를 불러오지 못했습니다.</div>'; }
+}
+function renderFacMulti(id){
+  const b=document.getElementById("facMultiBody"); if(!b)return;
+  let html='<div class="btnrow" style="margin-bottom:10px"><button class="btn" onclick="classifyFacs(\''+id+'\')">📂 문서 분류(등록증→공장)</button><button class="btn" onclick="addFacM(\''+id+'\')">＋ 공장 추가</button></div>';
+  if(!FAC_LIST.length){ html+='<div class="muted small">등록된 공장이 없습니다. [문서 분류] 또는 [공장 추가]를 누르세요.</div>'; b.innerHTML=html; return; }
+  let chips='<div class="btnrow" style="flex-wrap:wrap;gap:6px;margin-bottom:12px">';
+  FAC_LIST.forEach(function(f,i){ const active=i===FAC_SEL; chips+='<button class="btn" style="'+(active?'background:var(--accent);color:#fff':'')+'" onclick="selFac(\''+id+'\','+i+')">'+esc(f.label||('공장'+(i+1)))+'</button>'; });
+  chips+='</div>'; html+=chips;
+  const sel=FAC_LIST[FAC_SEL]; if(!sel){ b.innerHTML=html; return; }
+  const pe=sel.profile_ext||{};
+  html+='<div class="field"><label>리스트 이름 · Label</label><input class="v" id="facLabel" value="'+esc(sel.label||'')+'"></div>';
+  html+='<div class="field"><label>제조업체명 · Manufacturer</label><input class="v" id="facName" value="'+esc(sel.name||'')+'"></div>';
+  html+='<div class="field"><label>공장등록번호</label><input class="v" id="facRegNo" value="'+esc(sel.reg_no||'')+'"></div>';
+  html+='<div class="field"><label>공장주소</label><input class="v" id="facAddr" value="'+esc(sel.address||'')+'"></div>';
+  html+='<div class="field"><label>도시</label><input class="v" id="facCity" value="'+esc(sel.city||'')+'"></div>';
+  html+='<div class="field"><label>국가</label><input class="v" id="facCountry" value="'+esc(sel.country||'')+'"></div>';
+  html+='<div class="field"><label>우편</label><input class="v" id="facZip" value="'+esc(sel.zip||'')+'"></div>';
+  html+='<div class="field"><label>전화</label><input class="v" id="facPhone" value="'+esc(pe.phone||'')+'"></div>';
+  html+='<div class="field"><label>이메일</label><input class="v" id="facEmail" value="'+esc(pe.email||'')+'"></div>';
+  html+='<div class="field"><label>담당자PIC 이름</label><input class="v" id="facPicName" value="'+esc(pe.pic_name||'')+'"></div>';
+  html+='<div class="field"><label>PIC 직책</label><input class="v" id="facPicTitle" value="'+esc(pe.pic_title||'')+'"></div>';
+  html+='<div class="muted small" style="margin-top:4px">분류된 문서: '+((sel.source_docs||[]).length)+'건</div>';
+  html+='<div class="btnrow" style="margin-top:10px"><button class="btn" onclick="saveFac(\''+id+'\')">💾 저장</button><button class="btn" onclick="delFacM(\''+id+'\',\''+sel.facility_id+'\')">🗑 삭제</button></div>';
+  b.innerHTML=html;
+}
+function selFac(id,i){ FAC_SEL=i; renderFacMulti(id); }
+async function saveFac(id){
+  const sel=FAC_LIST[FAC_SEL]; if(!sel)return;
+  const g=function(x){ const el=document.getElementById(x); return el?el.value:undefined; };
+  const body={label:g('facLabel'),name:g('facName'),reg_no:g('facRegNo'),address:g('facAddr'),city:g('facCity'),country:g('facCountry'),zip:g('facZip'),profile_ext:{phone:g('facPhone'),email:g('facEmail'),pic_name:g('facPicName'),pic_title:g('facPicTitle')}};
+  try{ await API('/facilities/'+sel.facility_id,{method:"PATCH",body:JSON.stringify(body)}); toast("공장 저장"); await loadFacMulti(id); }
+  catch(e){ toast("저장 실패 · "+((e&&e.code)||"")); }
+}
+async function addFacM(id){
+  try{ await API('/cases/'+id+'/factories',{method:"POST",body:"{}"}); toast("공장 추가"); FAC_SEL=FAC_LIST.length; await loadFacMulti(id); }
+  catch(e){ toast("추가 실패"); }
+}
+async function delFacM(id,fid){
+  try{ await API('/cases/'+id+'/factories/'+fid,{method:"DELETE"}); toast("공장 삭제"); FAC_SEL=0; await loadFacMulti(id); }
+  catch(e){ toast("삭제 실패"); }
+}
+async function classifyFacs(id){
+  try{ const r=await API('/cases/'+id+'/factories/classify',{method:"POST",body:"{}"}); toast("분류 완료 · "+((r&&r.classified)||0)+"개 공장"); await loadFacMulti(id); }
+  catch(e){ toast("분류 실패 · "+((e&&e.code)||"")); }
+}
 function selectDoc(did){DOC_SEL=did;applyView();}
 async function translateDoc(docId){
   const box=document.getElementById("docTrans");if(!box)return;

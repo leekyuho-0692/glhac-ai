@@ -2376,6 +2376,521 @@ def gen_audit_report(case_id: str,
     return {"report": content, "version": g.version, "gen_doc_id": g.gen_doc_id, "status": g.status}
 
 
+def _g(d, k):
+    """profile_ext 등 opaque JSON 방어적 접근 — 없으면 '-'."""
+    return str((d or {}).get(k) or "-")
+
+
+@app.post("/cases/{case_id}/docs/company-info")
+def gen_company_info(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """Company Info (Form.1 기업정보) 생성 — 회원가입 OCR·신청서 자동채움 병합. gen-doc 저장."""
+    c = _get_case(db, case_id, user)
+    org = db.get(models.Org, c.org_id)
+    px = c.profile_ext or {}
+    pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").first()
+    if c.product_ids:
+        products = db.query(models.Product).filter(models.Product.product_id.in_(c.product_ids)).all()
+    else:
+        products = db.query(models.Product).filter_by(org_id=c.org_id).all()
+    lines = []
+    lines.append("[기업정보 · Company Info (Form.1) — %s]" % (c.company_name or c.case_id[:8]))
+    lines.append("회사명: %s" % (c.company_name or "-"))
+    lines.append("대표자: %s" % (c.responsible_person or "-"))
+    lines.append("사업자등록번호: %s" % (c.nib or "-"))
+    lines.append("회사주소: %s" % (c.address or (org.address if org else None) or "-"))
+    lines.append("공장주소: %s" % (c.factory_address or "-"))
+    lines.append("할랄감독자: %s" % (pen.name if pen else (c.halal_supervisor or "-")))
+    lines.append("이메일: %s" % (c.email or "-"))
+    lines.append("전화: %s" % (c.phone or "-"))
+    lines.append("담당자PIC: %s / %s" % (_g(px, "pic_name"), _g(px, "pic_title")))
+    lines.append("업무담당CP: %s / %s" % (_g(px, "cp_name"), _g(px, "cp_title")))
+    lines.append("등록유형: %s" % _g(px, "registration_type"))
+    lines.append("신청유형: %s" % _g(px, "application_type"))
+    lines.append("등록현황: %s" % _g(px, "registration_status"))
+    lines.append("경로: %s" % (c.pathway or "-"))
+    lines.append("SiHALAL: %s" % (c.sehati_eligible or "-"))
+    lines.append("생산능력: %s" % _g(px, "production_capacity"))
+    lines.append("제품수: %s" % len(products))
+    lines.append("제품 목록:")
+    if products:
+        for p in products:
+            lines.append("- %s (%s)" % (p.name, p.category or "-"))
+    else:
+        lines.append("- 없음")
+    lines.append("※ 회원가입 OCR·신청서 자동채움. 확인 후 저장(HIL).")
+    content = "\n".join(lines)
+    g = _save_gendoc(db, c, "company_info", content, user)
+    db.commit()
+    return {"document": content, "version": g.version, "gen_doc_id": g.gen_doc_id}
+
+
+@app.post("/cases/{case_id}/facilities/{facility_id}/docs/facility-info")
+def gen_facility_info(case_id: str, facility_id: str,
+                      user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """Facility Info (Form.2 시설데이터) 생성 — 업체1:공장N, 공장별 생성. gen-doc 저장."""
+    c = _get_case(db, case_id, user)
+    f = db.get(models.Facility, facility_id)
+    if not f or f.org_id != c.org_id:
+        raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
+    fx = f.profile_ext or {}
+    lines = []
+    lines.append("[시설정보 · Facility Info (Form.2) — %s]" % (f.name or facility_id[:8]))
+    lines.append("제조업체명: %s" % (f.name or "-"))
+    lines.append("공장주소: %s" % (f.address or "-"))
+    lines.append("도시: %s" % (f.city or "-"))
+    lines.append("국가: %s" % (f.country or "-"))
+    lines.append("우편번호: %s" % (f.zip or "-"))
+    lines.append("공장등록번호: %s" % (f.reg_no or "-"))
+    lines.append("시설전화: %s" % _g(fx, "phone"))
+    lines.append("시설이메일: %s" % _g(fx, "email"))
+    lines.append("담당자PIC: %s / %s" % (_g(fx, "pic_name"), _g(fx, "pic_title")))
+    lines.append("업무담당CP: %s / %s" % (_g(fx, "cp_name"), _g(fx, "cp_title")))
+    lines.append("※ 업체1:공장N — 공장별 시설정보 각각 생성.")
+    content = "\n".join(lines)
+    g = _save_gendoc(db, c, "facility_info", content, user)
+    db.commit()
+    return {"document": content, "version": g.version, "gen_doc_id": g.gen_doc_id}
+
+
+CONTRACT_STATIC_SECTIONS = [
+    ("SECTION 3 · GL HAC Commitment", "GL HAC는 인도네시아 할랄표준(SJPH)에 따라 전문적으로 심사를 수행하고, 심사보고서를 BPJPH에 제출하며, 고객 정보를 법령·BPJPH 요구 외에는 기밀로 유지하고, 인도네시아 할랄표준의 중요한 변경을 고객에게 통지한다."),
+    ("SECTION 4 · Client Commitment", "고객은 (a) 인도네시아 할랄제품보증시스템(SJPH)의 모든 요건 준수, (b) 심사에 진실하고 완전한 정보 제공, (c) 심사팀·BPJPH 대표의 현장·문서·인원 접근 보장, (d) 사내 HPAS/SJPH 구축·유지, (e) 수수료 일정 납부, (f) 제품·원재료·공정·소유권의 중대한 변경 즉시 통지, (g) 인증서 발급 시 규정에 따른 할랄 라벨 사용, (h) 인증 종료·정지·철회 시 할랄 라벨 사용 중단을 약정한다."),
+    ("SECTION 7 · Confidentiality", "양 당사자는 법령(한국·인도네시아) 또는 BPJPH 요구가 없는 한 상대의 영업정보를 기밀로 유지한다."),
+    ("SECTION 8 · Governing Law & Dispute", "본 계약은 대한민국 법률에 따르며, 분쟁은 우선 협의로, 미해결 시 KCAB 중재(서울) 또는 대한민국 법원으로 해결한다."),
+    ("SECTION 9 · Duration & Termination", "본 계약은 서명일부터 발효되어 고객의 할랄 인증서가 만료·철회되거나 계약 조건에 따라 종료될 때까지 유효하며, 일방의 중대한 위반 시 종료될 수 있다."),
+]
+
+
+@app.post("/cases/{case_id}/contract/generate")
+def gen_contract(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """Contract (FORM 4.1) 생성 — 정적 법률조항 + 동적(회사·제품·수수료) 병합. Contract 레코드 + gen-doc 저장."""
+    c = _get_case(db, case_id, user)
+    if c.product_ids:
+        products = db.query(models.Product).filter(models.Product.product_id.in_(c.product_ids)).all()
+    else:
+        products = db.query(models.Product).filter_by(case_id=case_id).all()
+    invoice = db.query(models.Invoice).filter_by(case_id=case_id).order_by(models.Invoice.created_at.desc()).first()
+    fee = invoice.total if invoice else None
+    categories = list(dict.fromkeys(p.category for p in products if p.category))
+    contract = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if not contract:
+        contract = models.Contract(case_id=case_id, org_id=c.org_id, party_a=c.company_name,
+                                   effective_date=str(datetime.utcnow().date()), scope=categories,
+                                   product_ids=[p.product_id for p in products], fee=fee, status="issued")
+        db.add(contract)
+        db.flush()
+        contract.contract_no = "HAC-" + contract.contract_id[:8].upper()
+    else:
+        contract.party_a = c.company_name
+        contract.effective_date = str(datetime.utcnow().date())
+        contract.scope = categories
+        contract.product_ids = [p.product_id for p in products]
+        contract.fee = fee
+        contract.status = "issued"
+        if not contract.contract_no:
+            contract.contract_no = "HAC-" + contract.contract_id[:8].upper()
+    products_str = ", ".join(p.name for p in products) or "-"
+    content = "\n".join([
+        "[계약서 · Contract (FORM 4.1) — %s]" % (c.company_name or c.case_id[:8]),
+        "계약번호: %s" % contract.contract_no,
+        "발효일: %s" % contract.effective_date,
+        "Party A (고객사): %s" % (contract.party_a or "-"),
+        "Party B: Halal Certification Body (HCB) GL HAC Korea",
+        "인증범위: %s" % (", ".join(categories) if categories else "-"),
+        "대상제품: %s" % products_str,
+        "수수료: %s" % (("%s %s" % (fee, contract.currency)) if fee else "별도 청구서"),
+        "상태: %s" % contract.status])
+    gendoc = _save_gendoc(db, c, "contract", content, user)
+    db.commit()
+    return {"contract_id": contract.contract_id, "contract_no": contract.contract_no,
+            "gen_doc_id": gendoc.gen_doc_id, "status": contract.status}
+
+
+@app.get("/cases/{case_id}/contract/pdf")
+def get_contract_pdf(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """Contract 리치 PDF — 정적 법률조항 + 동적 필드 + 양자 서명블록."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    ct = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if not ct:
+        raise HTTPException(404, {"code": "CONTRACT_NOT_FOUND"})
+    products = db.query(models.Product).filter(models.Product.product_id.in_(ct.product_ids)).all() if ct.product_ids else []
+    blocks = [
+        {"type": "heading", "text": "HALAL CERTIFICATION AGREEMENT · FORM 4.1-HCB-GL HAC", "level": 1},
+        {"type": "kv", "label": "NO", "value": ct.contract_no or ""},
+        {"type": "kv", "label": "Effective Date", "value": ct.effective_date or ""},
+        {"type": "kv", "label": "Party A", "value": ct.party_a or ""},
+        {"type": "kv", "label": "Party B", "value": "Halal Certification Body (HCB) GL HAC Korea"},
+        {"type": "heading", "text": "SECTION 1 · Halal Standard", "level": 2},
+        {"type": "para", "text": "Party A는 다음 할랄인증 기준을 준수한다: " + (ct.standard or "SJPH")},
+        {"type": "heading", "text": "SECTION 2 · Scope of Certification", "level": 2},
+        {"type": "para", "text": "인증 범위: " + (", ".join(ct.scope or []) or "-")},
+        {"type": "table", "headers": ["No", "Product", "Category"],
+         "rows": [[i + 1, p.name, p.category or "-"] for i, p in enumerate(products)], "widths": [0.12, 0.55, 0.33]},
+    ]
+    for heading, body in CONTRACT_STATIC_SECTIONS:
+        blocks.append({"type": "heading", "text": heading, "level": 2})
+        blocks.append({"type": "para", "text": body})
+    blocks.append({"type": "heading", "text": "SECTION 6 · Service Fee", "level": 2})
+    blocks.append({"type": "kv", "label": "Fee", "value": (("%s %s" % (ct.fee, ct.currency)) if ct.fee else "별도 청구서")})
+    blocks.append({"type": "spacer", "h": 10})
+    sigs = ct.signatures or []
+    slots = []
+    for role, party in [("For GL HAC", "B"), ("For CLIENT (" + (ct.party_a or "") + ")", "A")]:
+        match = next((s for s in sigs if s.get("party") == party), None)
+        slots.append({"role": role, "name": (match.get("name", "") if match else ""),
+                      "signed": bool(match and match.get("signed_at"))})
+    blocks.append({"type": "signature", "slots": slots})
+    pdf = _render_pdf_rich("Halal Certification Agreement", blocks, subtitle=ct.party_a,
+                           footer="GL-HAC AI · Contract " + (ct.contract_no or ""))
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=contract_%s.pdf" % case_id[:8]})
+
+
+@app.post("/contracts/{contract_id}/sign")
+def sign_contract(contract_id: str, party: str = "A", name: str = "",
+                  user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """계약 서명 기록 — party A(고객)/B(GL HAC). 양측 서명 완료 시 status=signed."""
+    ct = db.get(models.Contract, contract_id)
+    if not ct:
+        raise HTTPException(404, {"code": "CONTRACT_NOT_FOUND"})
+    sigs = list(ct.signatures or [])
+    sigs.append({"party": party, "name": name, "title": "", "signed_at": str(datetime.utcnow())})
+    ct.signatures = sigs
+    if any(s.get("party") == "A" for s in sigs) and any(s.get("party") == "B" for s in sigs):
+        ct.status = "signed"
+    db.commit()
+    return {"contract_id": contract_id, "status": ct.status, "signatures": ct.signatures}
+
+
+@app.post("/cases/{case_id}/fatwa/decree")
+def gen_fatwa_decree(case_id, user=Depends(rbac.require_action("fatwa.document.read")), db=Depends(get_db)):
+    """Fatwa Decision(HALAL DECREE) 생성 — 위원회 결정·제품·서명 병합. gen-doc 저장."""
+    c = _get_case(db, case_id, user)
+    _audit(db, user, "fatwa.decree.generate", "fatwa", case_id, case_id)
+    fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
+    prods = db.query(models.Product).filter_by(case_id=case_id).all()
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    lines = []
+    lines.append("[할랄 판결문 · Fatwa Decision (HALAL DECREE) — %s]" % (c.company_name or case_id[:8]))
+    lines.append("결정번호: %s" % (fd.decision_no if fd and fd.decision_no else "(미발급)"))
+    lines.append("결정: %s" % (fd.decision if fd else "pending"))
+    lines.append("위원장: %s" % ((fd.committee_head if fd else None) or "-"))
+    lines.append("간사: %s" % ((fd.committee_secretary if fd else None) or "-"))
+    lines.append("위원: %s" % (", ".join(fd.committee_members) if fd and fd.committee_members else "-"))
+    lines.append("대상제품: %s" % (", ".join(p.name for p in prods) or "-"))
+    lines.append("유효기간(Valid Until): %s" % ((cert.expiry_date if cert else None) or "-"))
+    lines.append("※ 고정 전문(꾸란·하디스 보일러플레이트)은 정적 자산으로 결합됨.")
+    g = _save_gendoc(db, c, "fatwa_decree", "\n".join(lines), user)
+    db.commit()
+    return {"document": "\n".join(lines), "version": g.version, "gen_doc_id": g.gen_doc_id,
+            "decision": (fd.decision if fd else "pending")}
+
+
+@app.get("/cases/{case_id}/fatwa/decree.pdf")
+def get_fatwa_decree_pdf(case_id, user=Depends(rbac.require_action("fatwa.document.read")), db=Depends(get_db)):
+    """Fatwa Decree 리치 PDF — 정적 전문(있으면 삽입) + 결정·제품부록 + 위원회 3서명."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
+    prods = db.query(models.Product).filter_by(case_id=case_id).all()
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    head = fd.committee_head if fd else None
+    sec = fd.committee_secretary if fd else None
+    members = (fd.committee_members or []) if fd else []
+    first_member = members[0] if members else None
+    votes = {v.member: v.vote for v in db.query(models.FatwaVote).filter_by(case_id=case_id).all()}
+
+    def _signed(nm):
+        return bool(nm) and (votes.get(nm) == "approve" or (fd and fd.decided_at is not None))
+
+    preamble_path = os.path.join(os.path.dirname(__file__), "static", "fatwa_preamble.pdf")
+    preamble_bytes = open(preamble_path, "rb").read() if os.path.exists(preamble_path) else None
+    blocks = []
+    if preamble_bytes:
+        blocks.append({"type": "static_pdf", "data": preamble_bytes})
+    blocks.append({"type": "heading", "text": "SHARIA COMMITTEE — GL Halal Center (GLHAC)", "level": 1})
+    blocks.append({"type": "heading", "text": "REGARDING: HALAL PRODUCT DECISION", "level": 2})
+    blocks.append({"type": "kv", "label": "Number", "value": fd.decision_no if fd and fd.decision_no else "-"})
+    blocks.append({"type": "kv", "label": "Decision", "value": fd.decision if fd else "pending"})
+    blocks.append({"type": "kv", "label": "Company", "value": c.company_name or "-"})
+    blocks.append({"type": "kv", "label": "Factory", "value": c.factory_address or "-"})
+    if not preamble_bytes:
+        blocks.append({"type": "para", "text": "[CONSIDERING] 꾸란·하디스·피끄 및 MUI 지침에 근거 (고정 전문 — 정적 자산 미탑재 시 요약 표기)."})
+    blocks.append({"type": "para", "text": "[DECIDED] 부록의 제품은 할랄로 결정된다."})
+    blocks.append({"type": "heading", "text": "APPENDIX · Products", "level": 2})
+    rows = [[str(i + 1), prod.name, prod.category or ""] for i, prod in enumerate(prods)]
+    blocks.append({"type": "table", "headers": ["No", "Product", "Category"], "rows": rows, "widths": [0.12, 0.55, 0.33]})
+    blocks.append({"type": "kv", "label": "Valid Until", "value": (cert.expiry_date if cert else None) or "-"})
+    blocks.append({"type": "kv", "label": "Decision Date", "value": str(fd.decided_at)[:10] if fd and fd.decided_at else "-"})
+    blocks.append({"type": "spacer", "h": 10})
+    blocks.append({"type": "signature", "slots": [
+        {"role": "위원장 (Leader)", "name": head or "", "signed": _signed(head)},
+        {"role": "간사 (Secretary)", "name": sec or "", "signed": _signed(sec)},
+        {"role": "위원 (Member)", "name": first_member or "", "signed": _signed(first_member)},
+    ]})
+    pdf = _render_pdf_rich("HALAL DECREE · Fatwa Decision", blocks, subtitle=(c.company_name or ""),
+                           footer="GL-HAC AI · Fatwa " + ((fd.decision_no if fd and fd.decision_no else "") or ""))
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=fatwa_decree_%s.pdf" % case_id[:8]})
+
+
+@app.get("/cases/{case_id}/factory-audit.pdf")
+def get_factory_audit_pdf(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """Factory Audit Report 리치 PDF — 재료 C/NC표·지적·HPAS 5기준·증거사진(geo)·심사원/감독자 서명."""
+    import base64
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    mats = db.query(models.Material).filter_by(case_id=case_id).all()
+    finds = db.query(models.AuditFinding).filter_by(case_id=case_id).all()
+    hpas = db.query(models.HpasEvaluation).filter_by(case_id=case_id).all()
+    pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").first()
+    lph = db.query(models.LphAssignment).filter_by(case_id=case_id).first()
+    photos = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
+    HPAS_KO = {"commitment": "① 경영책임·서약", "materials": "② 원료", "process": "③ 생산공정",
+               "product": "④ 제품", "monitoring": "⑤ 모니터링"}
+
+    def cnc(m):
+        return "NC" if (m.screen_result in ("BLOCK", "NEEDS_EVIDENCE")) else "C"
+
+    blocks = []
+    blocks.append({"type": "heading", "text": "FACTORY AUDIT REPORT · 현장심사 보고서", "level": 1})
+    blocks.append({"type": "kv", "label": "기업", "value": c.company_name or "-"})
+    blocks.append({"type": "kv", "label": "공장", "value": c.factory_address or "-"})
+    blocks.append({"type": "kv", "label": "심사팀(LPH)", "value": lph.lph_name if lph else "-"})
+    blocks.append({"type": "heading", "text": "1. 원재료 목록 · Materials (C/NC)", "level": 2})
+    mat_rows = [[str(i + 1), m.name, m.mat_type or "-", m.source or "-", cnc(m),
+                 (m.screen_status or m.screen_severity or "-")] for i, m in enumerate(mats)] or [["-", "없음", "", "", "", ""]]
+    blocks.append({"type": "table", "headers": ["No", "Name·Brand", "Type", "Source", "C/NC", "Findings"],
+                   "widths": [0.08, 0.30, 0.16, 0.16, 0.10, 0.20], "rows": mat_rows})
+    blocks.append({"type": "heading", "text": "2. 지적사항 · Findings", "level": 2})
+    find_rows = [[f.area or "-", f.finding or "-", f.severity or "-", f.status or "-"] for f in finds] or [["-", "없음", "", ""]]
+    blocks.append({"type": "table", "headers": ["구역", "지적", "심각도", "상태"],
+                   "widths": [0.25, 0.4, 0.17, 0.18], "rows": find_rows})
+    blocks.append({"type": "heading", "text": "3. HPAS 5기준 · Criteria", "level": 2})
+    hpa_rows = [[HPAS_KO.get(h.element, h.element), h.status or "-", h.note or "-"] for h in hpas] or [["-", "없음", ""]]
+    blocks.append({"type": "table", "headers": ["기준", "상태", "비고"], "widths": [0.34, 0.2, 0.46], "rows": hpa_rows})
+    blocks.append({"type": "heading", "text": "4. 증거 사진 · Evidence Photos", "level": 2})
+    img_count = 0
+    for d in photos:
+        if img_count >= 6:
+            break
+        if d.content_b64 and (d.content_type or "").startswith("image/"):
+            try:
+                img_data = base64.b64decode(d.content_b64)
+                caption = "%s · %s%s" % (d.filename, d.doc_type or "",
+                                         (" · GPS %.4f,%.4f" % (d.lat, d.lng) if d.lat and d.lng else ""))
+                blocks.append({"type": "image", "data": img_data, "caption": caption})
+                img_count += 1
+            except Exception:
+                continue
+    if img_count == 0:
+        blocks.append({"type": "para", "text": "첨부된 이미지 증거 없음."})
+    blocks.append({"type": "spacer", "h": 10})
+    blocks.append({"type": "signature", "slots": [
+        {"role": "Lead Auditor", "name": (lph.lph_name if lph else (finds[0].auditor if finds else "")) or "", "signed": bool(finds)},
+        {"role": "Halal Supervisor", "name": (pen.name if pen else ""), "signed": bool(pen)},
+    ]})
+    pdf = _render_pdf_rich("Factory Audit Report", blocks, subtitle=(c.company_name or ""),
+                           footer="GL-HAC AI · Factory Audit " + case_id[:8])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=factory_audit_%s.pdf" % case_id[:8]})
+
+
+SJPH_APPENDICES = [
+    ("Appendix 1. 할랄정책 포스터", "auto", None),
+    ("Appendix 2. 할랄관리팀 임명장", "upload", "halal_supervisor"),
+    ("Appendix 3. 할랄교육 자료·이수", "upload", "training"),
+    ("Appendix 4. 사용재료 목록", "auto", None),
+    ("Appendix 5. 전제품 재료목록", "auto", None),
+    ("Appendix 6. 재료 구매기록", "upload", "purchase_log"),
+    ("Appendix 7. 입고검사 기록", "upload", "receiving_log"),
+    ("Appendix 8. 무돈육시설 선언서", "auto", None),
+    ("Appendix 9. 시설 배치도", "upload", "facility_layout"),
+    ("Appendix 10. 보관 기록", "upload", "usage_log"),
+    ("Appendix 11. 생산 공정흐름도", "upload", "production_flow"),
+    ("Appendix 12. 생산 기록", "upload", "production_log"),
+    ("Appendix 13. 유통·판매 기록", "upload", "distribution_log"),
+    ("Appendix 14. 신규재료 승인", "auto", None),
+    ("Appendix 15. 내부심사 체크리스트", "upload", "internal_audit"),
+    ("Appendix 16. 경영검토 회의록", "upload", None),
+    ("Appendix 17. 종합 요약", "auto", None),
+]
+
+
+@app.get("/cases/{case_id}/sjph-manual.pdf")
+def get_sjph_manual_pdf(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """SJPH/HPAS Manual 리치 PDF — 5장(HPAS) + 17부록(자동생성/증빙업로드 매핑) + 증빙 게이트."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    have = _ensure_hpas(db, case_id)
+    ev = {e.item_key for e in db.query(models.SjphEvidence).filter_by(case_id=case_id).all()}
+    pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").first()
+    mats = db.query(models.Material).filter_by(case_id=case_id).all()
+    prods = db.query(models.Product).filter_by(case_id=case_id).all()
+    appx_rows = []
+    done = 0
+    upload_total = 0
+    for i, (label, typ, key) in enumerate(SJPH_APPENDICES):
+        if typ == "auto":
+            st = "자동생성"
+        else:
+            upload_total += 1
+            st = "완료" if (key and key in ev) else "미첨부"
+            if st == "완료":
+                done += 1
+        appx_rows.append([str(i + 1), label, ("자동생성" if typ == "auto" else "증빙업로드"), st])
+    gate_ok = (done == upload_total)
+    chap_rows = [[str(idx + 1), HPAS_KO.get(el, el), (o.status if o else "-"), (o.note if o and o.note else "-")]
+                 for idx, el in enumerate(HPAS_ELEMENTS) for o in [have.get(el)]]
+    blocks = [
+        {"type": "heading", "text": "%s — Halal Product Assurance System (SJPH/HPAS) Manual" % (c.company_name or case_id[:8]), "level": 1},
+        {"type": "kv", "label": "할랄감독자", "value": pen.name if pen else "(미지정)"},
+        {"type": "kv", "label": "제품 수", "value": str(len(prods))},
+        {"type": "kv", "label": "원재료 수", "value": str(len(mats))},
+        {"type": "kv", "label": "증빙 진행", "value": "%d/%d" % (done, upload_total)},
+        {"type": "heading", "text": "본문 · 5대 기준 (HPAS Chapters)", "level": 2},
+        {"type": "table", "headers": ["Ch", "기준", "상태", "비고"], "widths": [0.1, 0.34, 0.18, 0.38], "rows": chap_rows},
+        {"type": "heading", "text": "부록 · 17 Appendices (증빙 소스)", "level": 2},
+        {"type": "table", "headers": ["No", "부록", "소스", "상태"], "widths": [0.08, 0.54, 0.18, 0.20], "rows": appx_rows},
+        {"type": "para", "text": ("✔ 전 증빙 완료 — Manual SJPH 생성 가능. 자동생성 후 실물 사본 보관 필수." if gate_ok
+                                  else "⚠ 증빙 미완료(%d/%d) — 전 항목 완료 전까지 공식 Manual SJPH 생성 비활성. 본 문서는 준비용 초안." % (done, upload_total))},
+        {"type": "spacer", "h": 8},
+        {"type": "para", "text": "※ 하람·고위험 원재료는 증빙 필수. 공식 SJPH는 BPJPH/SIHALAL 절차로 확정."},
+    ]
+    pdf = _render_pdf_rich("SJPH/HPAS Manual", blocks, subtitle=(c.company_name or ""),
+                           footer="GL-HAC AI · SJPH Manual " + case_id[:8])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=sjph_manual_%s.pdf" % case_id[:8]})
+
+
+# ===== 공장 다건 분류 (Facility 1:N) — 스키마 무변경(case.facility_ids + profile_ext.label/source_docs) =====
+def _fac_dict(f):
+    pe = f.profile_ext or {}
+    return {"facility_id": f.facility_id, "label": pe.get("label") or f.name or "공장",
+            "name": f.name, "address": f.address, "city": f.city, "country": f.country,
+            "zip": f.zip, "reg_no": f.reg_no, "profile_ext": pe, "source_docs": pe.get("source_docs") or []}
+
+
+def _fac_key(reg_no, name, addr):
+    import re
+    if reg_no and str(reg_no).strip():
+        return "reg:" + re.sub(r"\s+", "", str(reg_no)).lower()
+    return "na:" + re.sub(r"\s+", "", ((name or "") + (addr or "")).lower())
+
+
+def _case_facilities(db, c):
+    ids = c.facility_ids or []
+    return db.query(models.Facility).filter(models.Facility.facility_id.in_(ids)).all() if ids else []
+
+
+@app.get("/cases/{case_id}/factories")
+def list_factories(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    c = _get_case(db, case_id, user)
+    return {"factories": [_fac_dict(f) for f in _case_facilities(db, c)]}
+
+
+@app.post("/cases/{case_id}/factories")
+def add_factory(case_id, body: dict = None, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """빈 공장 수동 추가 — 리스트에 공장N 자동 라벨."""
+    c = _get_case(db, case_id, user)
+    ids = list(c.facility_ids or [])
+    label = (body or {}).get("label") or ("공장%d" % (len(ids) + 1))
+    f = models.Facility(org_id=c.org_id, name=(body or {}).get("name"),
+                        profile_ext={"label": label, "source_docs": []})
+    db.add(f)
+    db.flush()
+    ids.append(f.facility_id)
+    c.facility_ids = ids
+    db.commit()
+    return _fac_dict(f)
+
+
+@app.patch("/facilities/{facility_id}")
+def update_factory(facility_id, body: dict = None, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """공장 필드/라벨 수정 — 리스트 이름(label) 수기 변경 포함."""
+    f = db.get(models.Facility, facility_id)
+    if not f:
+        raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
+    if user["role"] != "admin" and f.org_id != user["org_id"]:
+        raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
+    b = body or {}
+    for col in ["name", "address", "city", "country", "zip", "reg_no"]:
+        if col in b:
+            setattr(f, col, b[col])
+    pe = dict(f.profile_ext or {})
+    for k in ["label", "phone", "email", "pic_name", "pic_title", "cp_name", "cp_title", "manufacturer_name"]:
+        if k in b:
+            pe[k] = b[k]
+    if isinstance(b.get("profile_ext"), dict):
+        pe.update(b["profile_ext"])
+    f.profile_ext = pe
+    db.commit()
+    return _fac_dict(f)
+
+
+@app.delete("/cases/{case_id}/factories/{facility_id}")
+def delete_factory(case_id, facility_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    c = _get_case(db, case_id, user)
+    ids = [x for x in (c.facility_ids or []) if x != facility_id]
+    c.facility_ids = ids
+    f = db.get(models.Facility, facility_id)
+    if f and (user["role"] == "admin" or f.org_id == c.org_id):
+        db.delete(f)
+    db.commit()
+    return {"deleted": facility_id, "remaining": ids}
+
+
+@app.post("/cases/{case_id}/factories/classify")
+def classify_factories(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """공장등록증(factory_registration) 문서를 등록번호 우선 dedup으로 분류 → Facility 생성/갱신.
+    문서·공장 없으면 빈 공장1 자동 생성."""
+    c = _get_case(db, case_id, user)
+    _audit(db, user, "factory.classify", "case", case_id, case_id)
+    docs = db.query(models.DocumentAsset).filter_by(case_id=case_id, doc_type="factory_registration").all()
+    groups = {}
+    for d in docs:
+        fld = d.fields or {}
+        reg = fld.get("factory_reg_no")
+        addr = fld.get("factory_address") or fld.get("address")
+        nm = fld.get("manufacturer") or fld.get("company_name")
+        g = groups.setdefault(_fac_key(reg, nm, addr), {"reg": reg, "addr": addr, "name": nm, "docs": []})
+        g["docs"].append(d.document_id)
+    existing = _case_facilities(db, c)
+    by_key = {_fac_key(f.reg_no, f.name, f.address): f for f in existing}
+    ids = list(c.facility_ids or [])
+    n = len(existing)
+    for key, g in groups.items():
+        f = by_key.get(key)
+        if not f:
+            n += 1
+            f = models.Facility(org_id=c.org_id, name=g["name"], reg_no=g["reg"], address=g["addr"],
+                                profile_ext={"label": "공장%d" % n, "source_docs": []})
+            db.add(f)
+            db.flush()
+            ids.append(f.facility_id)
+        else:
+            if g["name"] and not f.name:
+                f.name = g["name"]
+            if g["reg"] and not f.reg_no:
+                f.reg_no = g["reg"]
+            if g["addr"] and not f.address:
+                f.address = g["addr"]
+        pe = dict(f.profile_ext or {})
+        pe["source_docs"] = sorted(set((pe.get("source_docs") or []) + g["docs"]))
+        if not pe.get("label"):
+            pe["label"] = "공장%d" % n
+        f.profile_ext = pe
+    if not groups and not existing:
+        f = models.Facility(org_id=c.org_id, profile_ext={"label": "공장1", "source_docs": []})
+        db.add(f)
+        db.flush()
+        ids.append(f.facility_id)
+    c.facility_ids = list(dict.fromkeys(ids))
+    db.commit()
+    return {"classified": len(groups), "factories": [_fac_dict(f) for f in _case_facilities(db, c)]}
+
+
 @app.get("/cases/{case_id}/gen-docs")
 def list_gendocs(case_id: str, doc_type: str = None,
                  user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -2444,6 +2959,193 @@ def _render_pdf(title, body, subtitle=None, footer=None):
     return doc.tobytes()
 
 
+def _render_pdf_rich(title, blocks, subtitle=None, footer=None):
+    """리치 문서 렌더러(§7 확장) — heading/para/kv/table/image/signature/static_pdf 블록 지원.
+    기존 _render_pdf(텍스트 전용)는 그대로 유지하고, 사진·표·서명·정적PDF가 필요한 문서에 사용."""
+    import fitz
+    W, H = fitz.paper_size("a4")
+    margin, fs, lh = 56, 10.5, 15.5
+    font, maxw = "korea", (W - 2 * margin)
+    doc = fitz.open()
+
+    def wrap(text, fsize, width):
+        words = str(text).split()
+        lines, line = [], ""
+        for w in words:
+            test = line + (" " if line else "") + w
+            if fitz.get_text_length(test, fontname=font, fontsize=fsize) > width and line:
+                lines.append(line)
+                line = w
+            else:
+                line = test
+        if line:
+            lines.append(line)
+        return lines or [""]
+
+    pages = []
+    pg = doc.new_page(width=W, height=H)
+    pages.append(pg)
+    y = margin
+
+    def need(space):
+        nonlocal pg, y
+        if y + space > H - margin - 20:
+            pg = doc.new_page(width=W, height=H)
+            pages.append(pg)
+            y = margin
+
+    # Title / subtitle / rule
+    pg.insert_text((margin, y + 18), title, fontname=font, fontsize=18)
+    y += 30
+    if subtitle:
+        pg.insert_text((margin, y + 10), subtitle, fontname=font, fontsize=10, color=(0.5, 0.5, 0.5))
+        y += 16
+    pg.draw_line((margin, y), (W - margin, y), color=(0.7, 0.7, 0.7), width=0.5)
+    y += 12
+
+    for block in blocks or []:
+        t = block.get("type")
+        if t == "heading":
+            text = block.get("text", "")
+            if not text:
+                continue
+            fsize, gap = (14, 6) if block.get("level", 1) == 1 else (12, 4)
+            need(fsize + gap * 2)
+            y += gap
+            pg.insert_text((margin, y + fsize), text, fontname=font, fontsize=fsize, color=(0.15, 0.15, 0.15))
+            y += fsize + gap
+        elif t == "para":
+            text = block.get("text", "")
+            if not text:
+                continue
+            for line in wrap(text, fs, maxw):
+                need(lh)
+                pg.insert_text((margin, y + fs), line, fontname=font, fontsize=fs)
+                y += lh
+            y += 4
+        elif t == "kv":
+            label, value = block.get("label", ""), block.get("value", "")
+            val_x = margin + 140
+            val_w = W - margin - val_x
+            if val_w < 20:
+                val_w = maxw / 2
+            val_lines = wrap(value, fs, val_w)
+            need(max(len(val_lines), 1) * lh + 4)
+            pg.insert_text((margin, y + fs), str(label) + ": ", fontname=font, fontsize=fs, color=(0.45, 0.45, 0.45))
+            for i, vl in enumerate(val_lines):
+                pg.insert_text((val_x, y + fs + i * lh), vl, fontname=font, fontsize=fs)
+            y += max(len(val_lines), 1) * lh + 4
+        elif t == "spacer":
+            h = int(block.get("h", 0))
+            need(h)
+            y += h
+        elif t == "pagebreak":
+            pg = doc.new_page(width=W, height=H)
+            pages.append(pg)
+            y = margin
+        elif t == "table":
+            headers = block.get("headers", [])
+            rows = block.get("rows", [])
+            if not headers:
+                continue
+            ncols = len(headers)
+            widths = block.get("widths")
+            col_w = [w * maxw for w in widths] if (widths and len(widths) == ncols) else [maxw / ncols] * ncols
+            t_fs, t_lh = 9, lh - 3
+
+            def row_h(cells):
+                mx = 1
+                for i, cell in enumerate(cells):
+                    cw = max(col_w[i] - 4, 10)
+                    mx = max(mx, len(wrap(str(cell), t_fs, cw)))
+                return mx * t_lh + 4
+
+            def draw_row(cells, fill=None):
+                nonlocal y, pg
+                rh = row_h(cells)
+                need(rh)
+                x0 = margin
+                for i, cell in enumerate(cells):
+                    x1 = x0 + col_w[i]
+                    if fill:
+                        pg.draw_rect((x0, y, x1, y + rh), fill=fill, color=(0.7, 0.7, 0.7), width=0.4)
+                    else:
+                        pg.draw_rect((x0, y, x1, y + rh), color=(0.7, 0.7, 0.7), width=0.3)
+                    for j, line in enumerate(wrap(str(cell), t_fs, max(col_w[i] - 4, 10))):
+                        pg.insert_text((x0 + 3, y + t_fs + 2 + j * t_lh), line, fontname=font, fontsize=t_fs)
+                    x0 = x1
+                y += rh
+
+            draw_row(headers, fill=(0.94, 0.95, 0.98))
+            for r in rows:
+                draw_row(list(r))
+            y += 6
+        elif t == "image":
+            data = block.get("data")
+            if not data:
+                continue
+            img_w = block.get("width") or min(maxw, 260)
+            try:
+                pix = fitz.Pixmap(data)
+                img_h = int(pix.height * img_w / pix.width) if pix.width else 120
+                need(img_h + 16)
+                pg.insert_image(fitz.Rect(margin, y, margin + img_w, y + img_h), stream=data)
+                y += img_h + 2
+                cap = block.get("caption")
+                if cap:
+                    pg.insert_text((margin, y + 8), cap, fontname=font, fontsize=8, color=(0.5, 0.5, 0.5))
+                    y += 14
+                else:
+                    y += 4
+            except Exception:
+                need(lh)
+                pg.insert_text((margin, y + fs), "[이미지 로드 실패]", fontname=font, fontsize=fs, color=(0.5, 0.5, 0.5))
+                y += lh + 4
+        elif t == "signature":
+            slots = block.get("slots", [])
+            if not slots:
+                continue
+            per_row = min(3, len(slots))
+            slot_w = (maxw - (per_row - 1) * 12) / per_row
+            row_h_sig = 62
+            for idx, slot in enumerate(slots):
+                col = idx % per_row
+                if col == 0:
+                    need(row_h_sig)
+                    if idx > 0:
+                        y += row_h_sig
+                x = margin + col * (slot_w + 12)
+                pg.insert_text((x, y + 9), str(slot.get("role", "")), fontname=font, fontsize=9, color=(0.3, 0.3, 0.3))
+                pg.insert_text((x, y + 38), str(slot.get("name", "")), fontname=font, fontsize=9)
+                pg.draw_line((x, y + 42), (x + slot_w - 8, y + 42), color=(0.5, 0.5, 0.5), width=0.5)
+                if slot.get("signed"):
+                    pg.insert_text((x, y + 54), "✔ 서명완료", fontname=font, fontsize=8, color=(0, 0.5, 0))
+                else:
+                    pg.insert_text((x, y + 54), "(미서명)", fontname=font, fontsize=8, color=(0.5, 0.5, 0.5))
+            y += row_h_sig + 6
+        elif t == "static_pdf":
+            data = block.get("data")
+            if not data:
+                continue
+            try:
+                src = fitz.open(stream=data, filetype="pdf")
+                doc.insert_pdf(src)
+                src.close()
+                pg = doc.new_page(width=W, height=H)
+                pages.append(pg)
+                y = margin
+            except Exception:
+                need(lh)
+                pg.insert_text((margin, y + fs), "[정적 PDF 삽입 실패]", fontname=font, fontsize=fs, color=(0.5, 0.5, 0.5))
+                y += lh + 4
+
+    # doc.insert_pdf()가 기존 Page 참조를 무효화하므로 stale한 pages 리스트 대신 현재 문서 페이지를 순회
+    if footer:
+        for p in doc:
+            p.insert_text((margin, H - margin + 4), footer, fontname=font, fontsize=8, color=(0.5, 0.5, 0.5))
+    return doc.tobytes()
+
+
 @app.get("/gen-docs/{gen_doc_id}/pdf")
 def get_gendoc_pdf(gen_doc_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """생성 문서(SJPH Manual·Audit Report)를 PDF로 다운로드(§7)."""
@@ -2453,7 +3155,11 @@ def get_gendoc_pdf(gen_doc_id: str, user=Depends(auth.get_current_user), db: Ses
     if not g:
         raise HTTPException(404, {"code": "GENDOC_NOT_FOUND"})
     c = _get_case(db, g.case_id, user)
-    labels = {"sjph_manual": "SJPH Manual", "audit_report": "현장심사 보고서 · Audit Report"}
+    labels = {"sjph_manual": "SJPH Manual", "audit_report": "현장심사 보고서 · Audit Report",
+              "company_info": "기업정보 · Company Info (Form.1)",
+              "facility_info": "시설정보 · Facility Info (Form.2)",
+              "contract": "계약서 · Contract (FORM 4.1)",
+              "fatwa_decree": "할랄 판결문 · Fatwa Decision"}
     title = labels.get(g.doc_type, g.doc_type)
     subtitle = "%s · v%s · %s" % (c.company_name or "", g.version, g.status)
     pdf = _render_pdf(title, g.content or "", subtitle=subtitle,

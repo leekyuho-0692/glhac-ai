@@ -453,6 +453,25 @@ class FatwaVote(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Contract(Base):
+    """할랄인증 계약서 (FORM 4.1-HCB-GL HAC) — 정적 법률조항 + 동적 병합필드."""
+    __tablename__ = "contract"
+    contract_id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, index=True, nullable=False)
+    org_id = Column(String)
+    contract_no = Column(String)
+    party_a = Column(String)            # 회사명
+    effective_date = Column(String)     # ISO date str
+    standard = Column(String, default="SJPH")
+    scope = Column(JSON)                # ["Foods","Beverages",...]
+    product_ids = Column(JSON)
+    fee = Column(Float)
+    currency = Column(String, default="KRW")
+    status = Column(String, default="draft")   # draft|issued|signed
+    signatures = Column(JSON)           # [{"party":"A"|"B","name","title","signed_at"}]
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CorrectiveAction(Base):
     """시정조치 CAR(§P2 CAR advanced) — finding별 제출→검토→종결 라이프사이클."""
     __tablename__ = "corrective_action"
