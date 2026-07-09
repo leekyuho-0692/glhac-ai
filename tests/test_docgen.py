@@ -265,3 +265,15 @@ def test_upload_case_document(tmp_path):
     b64 = base64.b64encode(b"hello world pdf").decode()
     r = m.upload_case_document("case1", body={"filename": "m.pdf", "file_b64": b64, "doc_type": "mock_audit_evidence"}, user=USER, db=db)
     assert r["doc_type"] == "mock_audit_evidence" and r["document_id"]
+
+
+def test_fatwa_client_status(tmp_path):
+    db = _seed_db(tmp_path)
+    r = m.get_fatwa_status("case1", user=USER, db=db)
+    assert r["fatwa_status"] == "none" and r["decision"] == "pending"
+    db.add(models.FatwaDecision(case_id="case1", decision="approved", decision_no="F-1",
+                                committee_head="A", committee_secretary="B", committee_members=["C"]))
+    db.add(models.FatwaVote(case_id="case1", member="A", vote="approve"))
+    db.commit()
+    r2 = m.get_fatwa_status("case1", user=USER, db=db)
+    assert r2["decision"] == "approved" and r2["votes_approve"] == 1 and r2["committee_size"] == 3

@@ -3695,6 +3695,22 @@ def get_fatwa_votes(case_id: str, user=Depends(auth.get_current_user), db: Sessi
     return _fatwa_tally(db, case_id, detail=True)
 
 
+@app.get("/cases/{case_id}/fatwa/status")
+def get_fatwa_status(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """클라이언트용 파트와 진행 상태 요약 — 위원회 내부 투표/노트는 제외, 상태·결정·서명 진행 카운트만."""
+    c = _get_case(db, case_id, user)
+    fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
+    votes = db.query(models.FatwaVote).filter_by(case_id=case_id).all()
+    members = (fd.committee_members if fd and fd.committee_members else []) or []
+    total = len([x for x in [fd.committee_head if fd else None, fd.committee_secretary if fd else None] if x]) + len(members)
+    return {"case_id": case_id, "fatwa_status": c.fatwa_status or "none",
+            "decision": (fd.decision if fd else "pending"), "decision_no": (fd.decision_no if fd else None),
+            "decided_at": str(fd.decided_at)[:19] if fd and fd.decided_at else None,
+            "final_approved_at": str(fd.final_approved_at)[:19] if fd and fd.final_approved_at else None,
+            "votes_total": len(votes), "votes_approve": sum(1 for v in votes if v.vote == "approve"),
+            "committee_size": total or None}
+
+
 @app.post("/cases/{case_id}/certificate/issue")
 def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
                       user=Depends(rbac.require_action("certificate.issue")),

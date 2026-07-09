@@ -438,7 +438,7 @@ const MENU_ACCESS = {
   payments: ["ops","admin"],
   deposits: ["ops","admin"],
   notifyLog: ["ops","admin"],
-  fatwa:    ["sharia","ops","admin"],
+  fatwa:    ["client","consultant","auditor","sharia","ops","admin"],
   certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
   feedback: ["client","consultant","auditor","sharia","ops","admin"],
@@ -3253,7 +3253,25 @@ async function createInvoice(id){
 }
 
 /* 12) Fatwa */
+async function fatwaClientStatus(id){
+  if(!id) return `<div class="card"><div class="body muted">케이스를 선택하세요 · Select a case.</div></div>`;
+  let s={};try{s=await API('/cases/'+id+'/fatwa/status');}catch(_){}
+  const st=s.fatwa_status||'none';
+  const label={none:'심의 전',review:'심의 중',provisional:'가승인',approved:'최종승인',conditional:'조건부',rejected:'반려'}[st]||st;
+  const color=st==='approved'?'ok':(st==='rejected'?'bad':(st==='conditional'?'warn':'info'));
+  const banner={approved:'✓ 파트와 최종 승인 — 인증서 발급 단계로',rejected:'✕ 반려 — 보완 후 재심',conditional:'⚠ 조건부 승인 — 조건 이행 필요'}[st]||'ℹ 파트와 위원회 심의 진행 중';
+  return `<div class="banner info" style="margin-bottom:16px">⚖️ 파트와 · Fatwa — 위원회 심의 진행 상태(읽기 전용). 위원 개별 의견 등 상세 심의는 비공개입니다.</div>
+    <div class="card"><h3>파트와 진행 상태 <span class="en">· Fatwa Status</span> <span class="r">${bTag(color,label)}</span></h3><div class="body">
+      <div class="banner ${color}" style="margin-bottom:12px">${banner}</div>
+      <div class="kv"><span>결정 · Decision</span><b>${esc(s.decision||'pending')}</b></div>
+      <div class="kv"><span>결정번호 · No</span><b>${esc(s.decision_no||'—')}</b></div>
+      <div class="kv"><span>위원 서명 진행 · Signatures</span><b>${s.votes_approve||0} / ${s.committee_size||s.votes_total||0}</b></div>
+      <div class="kv"><span>가승인 · Provisional</span><b>${esc(s.decided_at||'—')}</b></div>
+      <div class="kv"><span>최종승인 · Final</span><b>${esc(s.final_approved_at||'—')}</b></div>
+    </div></div>`;
+}
 SCREEN.fatwa=async()=>{
+  if(!["sharia","ops","admin"].includes(ROLE)) return await fatwaClientStatus(CURCASE);
   let fdash={counts:{},items:[]};try{fdash=await API("/fatwa/dashboard");}catch(_){}
   const fc=fdash.counts||{};
   const fcard=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:22px;color:var(--${c})">${n||0}</span><span class="l">${l}</span></div></div>`;
