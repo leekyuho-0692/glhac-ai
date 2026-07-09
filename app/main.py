@@ -3719,7 +3719,15 @@ def get_fatwa_status(case_id: str, user=Depends(auth.get_current_user), db: Sess
     votes = db.query(models.FatwaVote).filter_by(case_id=case_id).all()
     members = (fd.committee_members if fd and fd.committee_members else []) or []
     total = len([x for x in [fd.committee_head if fd else None, fd.committee_secretary if fd else None] if x]) + len(members)
-    return {"case_id": case_id, "fatwa_status": c.fatwa_status or "none",
+    # fatwa_status 필드가 미설정(none)이어도 케이스 단계로 진행 상태 보정
+    fs = c.fatwa_status or "none"
+    if fs == "none":
+        st = c.status or ""
+        if _mi(st) >= 4 or st == "certificate_issued":
+            fs = "approved"
+        elif _mi(st) == 3 or st.startswith("fatwa"):
+            fs = "review"
+    return {"case_id": case_id, "fatwa_status": fs,
             "decision": (fd.decision if fd else "pending"), "decision_no": (fd.decision_no if fd else None),
             "decided_at": str(fd.decided_at)[:19] if fd and fd.decided_at else None,
             "final_approved_at": str(fd.final_approved_at)[:19] if fd and fd.final_approved_at else None,

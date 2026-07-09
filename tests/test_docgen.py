@@ -287,3 +287,12 @@ def test_get_contract_status(tmp_path):
     m.sign_contract(ct.contract_id, party="A", name="X", user=USER, db=db)
     r = m.get_contract("case1", user=USER, db=db)
     assert r["exists"] and r["signed_a"] and not r["signed_b"]
+
+
+def test_fatwa_status_derives_from_case_stage(tmp_path):
+    db = _seed_db(tmp_path)
+    c = db.query(models.CaseApplication).filter_by(case_id="case1").first()
+    c.status = "fatwa_review"
+    db.commit()
+    r = m.get_fatwa_status("case1", user=USER, db=db)
+    assert r["fatwa_status"] == "review"  # fatwa_status=none이어도 케이스 단계로 보정
