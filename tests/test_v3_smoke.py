@@ -345,6 +345,32 @@ def test_search_context_fallback_returns_list():
     assert isinstance(res, list)
 
 
+def test_mock_evidence_documents_tagged_and_listed():
+    """모의감사 클라이언트 뷰 백엔드: doc_type=mock_evidence_* 태깅 저장 + 목록에
+    created_at 노출(섹션별 업로드 일시) + 영상(mp4) 확장자 업로드 허용."""
+    import base64
+    png = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA"
+           "C0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC")   # 1x1 PNG
+    mp4 = base64.b64encode(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom").decode()
+    with TestClient(app) as c:
+        adm = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"company_name": "Mock EV Co", "org_id": "org_demo"},
+                     headers=_h(adm)).json()["case_id"]
+        r1 = c.post(f"/cases/{cid}/documents",
+                    json={"filename": "storage.png", "file_b64": png,
+                          "doc_type": "mock_evidence_material_storage"}, headers=_h(adm))
+        assert r1.status_code == 200, r1.text
+        assert r1.json()["doc_type"] == "mock_evidence_material_storage"
+        r2 = c.post(f"/cases/{cid}/documents",
+                    json={"filename": "line.mp4", "file_b64": mp4,
+                          "doc_type": "mock_evidence_production_video"}, headers=_h(adm))
+        assert r2.status_code == 200, r2.text   # 영상 확장자 허용 확인
+        docs = c.get(f"/cases/{cid}/documents", headers=_h(adm)).json()
+        by = {d["doc_type"]: d for d in docs}
+        assert "mock_evidence_material_storage" in by and "mock_evidence_production_video" in by
+        assert by["mock_evidence_material_storage"]["created_at"], "created_at 미노출"
+
+
 if __name__ == "__main__":
     tests = [test_password_pbkdf2_and_legacy_upgrade,
              test_login_rate_limited,
@@ -364,7 +390,8 @@ if __name__ == "__main__":
              test_mockaudit_no_transition_on_non_mock_state,
              test_worklist_queues_rbac,
              test_ask_injects_domain_ontology,
-             test_context_health_endpoint, test_search_context_fallback_returns_list]
+             test_context_health_endpoint, test_search_context_fallback_returns_list,
+             test_mock_evidence_documents_tagged_and_listed]
     ok = 0
     for fn in tests:
         try:

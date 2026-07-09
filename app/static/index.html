@@ -3258,57 +3258,94 @@ async function addAuditorPool(id){const name=v("apoolName");if(!name){toast("심
 async function delAuditorPool(id,poolId){if(!confirm("심사원을 제거할까요?"))return;try{await API(`/cases/${id}/auditor-pool/${poolId}`,{method:"DELETE"});toast("제거됨");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 
 /* 9) Mock Audit */
+/* ── 모의감사 클라이언트 뷰(P0-5 오디터뷰와 무관) — 프로토타입 목업 재현 ──
+   섹션 = doc_type "mock_evidence_{key}" 태깅(스키마 무변경). 카운트/썸네일은 documents 필터. */
+const MOCK_EV_SECTIONS=[
+  {key:"material_storage",n:1,icon:"🏬",tone:"info",ko:"원자재 보관 구역",video:false,
+    desc:"원자재 보관 구역의 사진을 업로드해 주세요. 라벨링, 구분 보관, 보관 상태가 잘 보이도록 촬영해 주세요."},
+  {key:"production_video",n:2,icon:"🏭",tone:"gold",ko:"생산 공정 (영상)",video:true,
+    desc:"원료 투입부터 완제품 생산까지의 전체 공정을 영상으로 촬영하여 업로드해 주세요."},
+  {key:"product_storage",n:3,icon:"📦",tone:"ok",ko:"완제품 보관 구역",video:false,
+    desc:"완제품 보관 구역의 사진을 업로드해 주세요. 라벨링, 구분 보관, 보관 상태가 잘 보이도록 촬영해 주세요."},
+  {key:"facility",n:4,icon:"🏗️",tone:"warn",ko:"생산 시설 및 설비",video:false,
+    desc:"생산 시설의 전체 전경, 설비, 위생 상태 등을 사진으로 업로드해 주세요."},
+  {key:"hygiene",n:5,icon:"🧽",tone:"bad",ko:"위생 및 청소 관리",video:false,
+    desc:"청소 도구 보관 장소, 세척 소독 시설, 해충 방제 상태 등 위생 관리 상태를 사진으로 업로드해 주세요."}
+];
+function mevDate(iso){if(!iso)return '—';const d=new Date(iso);if(isNaN(d.getTime()))return String(iso).slice(0,16).replace('T',' ');
+  const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}.${p(d.getMonth()+1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
+function mevSectionCard(id,sec,list){
+  const tint=({info:['accent-soft','accent'],ok:['ok-soft','ok'],warn:['warn-soft','warn'],gold:['gold-soft','gold'],bad:['bad-soft','bad']})[sec.tone]||['accent-soft','accent'];
+  const has=list.length>0;const latest=has?list[0]:null;
+  const badge=has?`<span class="tag t-ok">${T('완료')}</span>`:`<span class="tag t-warn">${T('미시작')}</span>`;
+  const cntTxt=has?`<div class="small" style="margin-top:8px;font-weight:600">${list.length}${sec.video?T('개 영상 업로드됨'):T('개 파일 업로드됨')}</div>
+      <div class="muted small">${T('업로드 일시')}: ${mevDate(latest&&latest.created_at)}</div>`:'';
+  let media,actions;
+  if(has&&sec.video){
+    media=`<div style="position:relative;width:240px;max-width:100%;aspect-ratio:16/9;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:#000">
+      <video id="mev_vid_${sec.key}" data-mevdoc="${latest.document_id}" data-mevvid="1" style="width:100%;height:100%;object-fit:cover" muted playsinline preload="metadata"></video>
+      <div onclick="mevPlay('${sec.key}')" style="position:absolute;inset:0;display:grid;place-items:center;cursor:pointer;color:#fff;font-size:34px;text-shadow:0 1px 8px rgba(0,0,0,.7)">▶</div></div>`;
+    actions=`<button class="btn" onclick="mevPlay('${sec.key}')">▶ ${T('미리보기')}</button>
+      <button class="btn" onclick="uploadMockDoc('${id}','${sec.key}')">⬆ ${T('교체')}</button>`;
+  }else if(has){
+    const show=list.slice(0,4);const extra=list.length-4;
+    media=`<div style="display:flex;gap:8px;flex-wrap:wrap">`+show.map((d,i)=>{
+      const over=(i===3&&extra>0)?`<span style="position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.55);color:#fff;font-size:18px;font-weight:700">+${extra}</span>`:'';
+      return `<div class="mev-thumb" data-mevdoc="${d.document_id}" onclick="viewDoc('${d.document_id}')" title="${esc(d.filename||'')}" style="position:relative;width:66px;height:66px;border-radius:8px;border:1px solid var(--line);background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 12%,var(--card)),var(--card));background-size:cover;background-position:center;cursor:pointer">${over}</div>`;}).join('')+`</div>`;
+    actions=`<button class="btn" onclick="mockViewSection('${id}','${sec.key}')">👁 ${T('모두 보기')}</button>
+      <button class="btn" onclick="uploadMockDoc('${id}','${sec.key}')">⬆ ${T('교체')}</button>`;
+  }else{
+    media=`<div class="dropzone" style="width:320px;max-width:100%;margin:0" onclick="uploadMockDoc('${id}','${sec.key}')">⬆ ${T('파일을 업로드하거나 드래그 앤 드롭하세요')}<div class="muted" style="margin-top:2px">${T('PNG, JPG, JPEG 형식 (최대 100MB)')}</div></div>`;
+    actions=`<button class="btn" disabled>👁 ${T('보기')}</button>
+      <button class="btn pri" onclick="uploadMockDoc('${id}','${sec.key}')">⬆ ${T('업로드')}</button>`;
+  }
+  return `<div class="card" style="margin-bottom:12px"
+      ondragover="event.preventDefault();this.style.outline='2px dashed var(--accent)';this.style.outlineOffset='-2px'"
+      ondragleave="this.style.outline=''"
+      ondrop="this.style.outline='';dropMockEvidence(event,'${id}','${sec.key}')">
+    <div class="body" style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+      <div style="width:52px;height:52px;flex:0 0 52px;border-radius:12px;display:grid;place-items:center;font-size:24px;background:var(--${tint[0]});color:var(--${tint[1]})">${sec.icon}</div>
+      <div style="flex:1 1 240px;min-width:200px">
+        <div style="font-weight:700;font-size:15px">${sec.n}. ${T(sec.ko)}</div>
+        <div class="muted small" style="margin-top:4px;line-height:1.5">${T(sec.desc)}</div>
+      </div>
+      <div style="flex:0 0 auto;min-width:140px">${badge}${cntTxt}</div>
+      <div style="flex:0 0 auto;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        ${media}
+        <div style="display:flex;flex-direction:column;gap:8px">${actions}</div>
+      </div>
+    </div></div>`;
+}
+async function loadMockMedia(){
+  const nodes=document.querySelectorAll('[data-mevdoc]');
+  for(const el of nodes){const docId=el.getAttribute('data-mevdoc');const isVid=el.getAttribute('data-mevvid')==='1';
+    try{const r=await fetch('/documents/'+docId+'/file',{headers:{Authorization:'Bearer '+token()}});
+      if(!r.ok)continue;const b=await r.blob();const u=URL.createObjectURL(b);
+      if(isVid){el.src=u;}else{el.style.backgroundImage='url('+u+')';el.style.backgroundSize='cover';el.style.backgroundPosition='center';}
+      setTimeout(()=>URL.revokeObjectURL(u),120000);
+    }catch(_){}}
+}
 async function mockAuditClientView(id){
-  if(!id) return `<div class="card"><div class="body muted">케이스를 선택하세요 · Select a case.</div></div>`;
-  const [c, chk, mats, hist, docs] = await Promise.all([
-    API('/cases/'+id).catch(()=>({})),
-    API('/cases/'+id+'/doc-checklist').catch(()=>({checklist:[],missing:[],complete:false})),
-    API('/cases/'+id+'/materials').catch(()=>[]),
-    API('/cases/'+id+'/mock-audit').catch(()=>({decisions:[]})),
-    API('/cases/'+id+'/documents').catch(()=>[])
-  ]);
-  const decisions=(hist&&hist.decisions)||[];
-  const passed=decisions.some(d=>d.result==='pass');
-  const rejected=decisions.some(d=>d.result==='reject');
-  const mc={haram:0,mushbooh:0,halal:0,unknown:0};
-  mats.forEach(m=>{const st=String(m.status||m.screen_status||'unknown').toLowerCase(); mc[st]=(mc[st]||0)+1;});
-  const okIcon=b=>b?'<span class="ic t-ok" style="display:inline-flex">✓</span>':'<span class="ic t-info" style="display:inline-flex">○</span>';
-  const hasHalalCert=(chk.checklist||[]).some(it=>/halal|인증서/i.test(it.doc_type||it.label||it.name||'')&&(it.present||it.ok||it.status==='ok'));
-  const matsReady=mc.haram===0&&(mc.haram+mc.mushbooh+mc.halal)>0;
-  const docsReady=!!chk.complete;
-  const analysis = `<div class="li">${okIcon(hasHalalCert)}<div class="tx">할랄 인증서 · Halal cert</div></div>`
-    +`<div class="li">${okIcon(docsReady)}<div class="tx">필요 서류 준비 · Documents (${(chk.missing||[]).length?T('누락')+' '+(chk.missing||[]).length:T('완료')})</div></div>`
-    +`<div class="li">${okIcon(matsReady)}<div class="tx">성분 검토 · Materials (하람 ${mc.haram}·의심 ${mc.mushbooh}·할랄 ${mc.halal})</div></div>`;
-  const chkHtml=(chk.checklist||[]).map(it=>{const present=it.present||it.ok||it.status==='ok'; return `<div class="li">${okIcon(present)}<div class="tx">${esc(T(it.doc_type_ko||it.label||it.doc_type||it.name||''))}</div><span class="muted small">${present?T('제출'):T('미제출')}</span></div>`;}).join('')||'<div class="muted small">체크 항목 없음</div>';
-  const photoBanner = passed?`<div class="banner ok">✓ 모의심사 통과 — 현장심사 단계로</div>`:(rejected?`<div class="banner bad">✕ 조건 미충족 — 아래 사유의 수정조치 후 자료 재제출</div>`:`<div class="banner warn">ℹ 자료 제출 후 오디터가 사진·서류를 검토해 조건부 판정합니다</div>`);
-  const decisionHtml=decisions.map(d=>`<div class="li"><div class="ic t-${d.result==='pass'?'ok':'bad'}">${d.result==='pass'?'✓':'✕'}</div><div class="tx"><b>${esc(d.result)}</b><div class="small">${esc(d.reason||'')}</div></div></div>`).join('')||'<div class="li"><div class="tx muted small">판정 이력 없음</div></div>';
-  const gallery=docs.length?`<div class="gallery">`+docs.slice(0,12).map(d=>`<div class="thumb" style="cursor:pointer"><span onclick="viewDoc('${d.document_id}')">${/png|jpg|jpeg|img/i.test(d.filename||'')?'📷':'📄'} ${esc((d.filename||'').slice(0,16))}</span>${geoLink(d)}</div>`).join('')+`</div>`:'<div class="muted small">제출 자료 없음</div>';
-  return `<div class="banner info" style="margin-bottom:16px">📋 모의심사 · Mock Audit — 사전심사와 동일한 방식으로 자료 제출 → 오디터가 전체 리스트·상세분석·사진으로 조건부 판정합니다.</div>
-<div class="grid side">
-  <div>
-    <div class="card"><h3>모의심사 대상 <span class="en">· Mock Audit</span><span class="r">${esc(c.company_name||'')}</span></h3>
-      <div class="body">
-        <div class="kv"><span>경로 · Pathway</span><b>${esc(c.pathway||'미확정')}</b></div>
-        <div class="kv"><span>제출 자료 · Submitted</span><b>${docs.length}건</b></div>
-        <div style="margin-top:10px">${gallery}</div>
-        <div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="uploadMockDoc('${id}')">📎 자료 업로드 · Upload</button></div>
-      </div></div>
-    <div class="card" style="margin-top:16px"><h3>제출 항목 체크 <span class="en">· Checklist</span></h3>
-      <div class="body tight" style="max-height:320px;overflow:auto">${chkHtml}</div></div>
-  </div>
-  <div>
-    <div class="card"><h3>상세 분석 <span class="en">· Analysis</span></h3>
-      <div class="body">
-        ${photoBanner}
-        <div class="muted small" style="margin:10px 0 4px;font-weight:600">준비 상태 · Readiness</div>
-        <div class="list" style="margin:0 -1px">${analysis}</div>
-        <div class="muted small" style="margin:12px 0 4px;font-weight:600">원재료 스크리닝 · Screening</div>
-        <div class="btnrow" style="flex-wrap:wrap;gap:6px">${tag('bad',T('하람')+' '+mc.haram)} ${tag('warn',T('의심')+' '+mc.mushbooh)} ${tag('ok',T('할랄')+' '+mc.halal)} ${tag('mute',T('미판정')+' '+(mc.unknown||0))}</div>
-        <div class="muted small" style="margin:12px 0 4px;font-weight:600">모의 판정 이력 · Decisions</div>
-        <div class="list" style="margin:0 -1px">${decisionHtml}</div>
-      </div></div>
-  </div>
-</div>`;
+  if(!id) return `<div class="card"><div class="body muted">${T('케이스를 선택하세요')} · Select a case.</div></div>`;
+  const docs=await API('/cases/'+id+'/documents').catch(()=>[]);
+  const bySec={};MOCK_EV_SECTIONS.forEach(s=>bySec[s.key]=[]);
+  (docs||[]).forEach(d=>{const dt=String(d.doc_type||'');const p='mock_evidence_';
+    if(dt.indexOf(p)===0){const k=dt.slice(p.length);if(bySec[k])bySec[k].push(d);}});
+  Object.keys(bySec).forEach(k=>bySec[k].sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||''))));
+  let done=0;MOCK_EV_SECTIONS.forEach(s=>{if(bySec[s.key].length)done++;});
+  const total=MOCK_EV_SECTIONS.length,notStarted=total-done,inProg=0;
+  const kpis=[['완료',done,'ok','📋'],['진행 중',inProg,'info','🕐'],['미시작',notStarted,'warn','⊖'],['전체 필수 항목',total,'mute','📄']];
+  const kpiHtml=`<div class="grid four" style="margin-bottom:16px">`+kpis.map(([l,n,t,ic])=>`<div class="card"><div class="body" style="display:flex;align-items:center;gap:14px">
+    <div style="width:46px;height:46px;flex:0 0 46px;border-radius:12px;display:grid;place-items:center;font-size:22px;background:var(--${t==='mute'?'accent-soft':t+'-soft'});color:var(--${t==='mute'?'ink3':t})">${ic}</div>
+    <div class="kpi"><span class="l">${T(l)}</span><span class="n" style="color:var(--${t==='mute'?'ink':t})">${n} <span style="font-size:14px;font-weight:400;color:var(--ink3)">${T('항목')}</span></span></div>
+  </div></div>`).join('')+`</div>`;
+  const secHtml=MOCK_EV_SECTIONS.map(s=>mevSectionCard(id,s,bySec[s.key])).join('');
+  const prev=AFTER_RENDER;AFTER_RENDER=function(){if(prev)try{prev()}catch(_){};loadMockMedia();};
+  return `<div class="banner info" style="margin-bottom:16px"><span>ℹ</span><div><b>${T('모의 감사 안내')}</b><div class="small" style="margin-top:3px;font-weight:400">${T('실제 현장 상황을 정확히 보여줄 수 있는 최신 사진 및 영상을 업로드해 주세요. 감사자는 현장 감사에 앞서 해당 자료를 검토하게 됩니다.')}</div></div></div>
+  ${kpiHtml}
+  <h3 style="margin:18px 0 12px;font-size:16px">${T('필수 업로드 항목')}</h3>
+  ${secHtml}
+  <div class="banner info" style="margin-top:8px"><span>ℹ</span><div><b>${T('중요 안내')}</b><div class="small" style="margin-top:3px;font-weight:400">${T('모든 필수 항목을 빠짐없이 명확하게 업로드해야 합니다. 불완전하거나 불명확한 자료는 모의 감사 검토에 영향을 줄 수 있습니다.')}</div></div></div>`;
 }
 async function contractStageCard(id){
   if(!id) return '';
@@ -3342,13 +3379,33 @@ async function signContract(contractId, party){
     toast(T('서명 완료'));applyView();}
   catch(e){toast(T('서명 실패')+' · '+(e&&e.code?e.code:''));}
 }
-async function uploadMockDoc(id){
-  const inp=document.createElement("input");inp.type="file";inp.accept="image/*,.pdf";
-  inp.onchange=async()=>{const file=inp.files[0];if(!file)return;const b64=await fileB64(file);
-    try{await API('/cases/'+id+'/documents',{method:"POST",body:JSON.stringify({filename:file.name,file_b64:b64,doc_type:"mock_audit_evidence"})});toast("자료 업로드 · "+file.name);applyView();}
-    catch(e){toast("업로드 실패 · "+((e&&e.code)||""));}};
+async function uploadMockDoc(id,section){
+  const sec=MOCK_EV_SECTIONS.find(s=>s.key===section)||{};
+  const inp=document.createElement("input");inp.type="file";
+  inp.accept=sec.video?"video/*":"image/*";inp.multiple=true;
+  inp.onchange=async()=>{const files=Array.prototype.slice.call(inp.files||[]);if(files.length)await uploadMockFiles(id,section,files);};
   inp.click();
 }
+async function uploadMockFiles(id,section,files){
+  let ok=0;
+  for(const file of files){try{const b64=await fileB64(file);
+    await API('/cases/'+id+'/documents',{method:"POST",body:JSON.stringify({filename:file.name,file_b64:b64,doc_type:"mock_evidence_"+section})});ok++;}
+    catch(e){toast(T('업로드 실패')+' · '+((e&&e.code)||''));}}
+  if(ok)toast(T('자료 업로드')+' · '+ok+T('건'));
+  applyView();
+}
+async function dropMockEvidence(ev,id,section){
+  ev.preventDefault();
+  const files=(ev.dataTransfer&&ev.dataTransfer.files)?Array.prototype.slice.call(ev.dataTransfer.files):[];
+  if(files.length)await uploadMockFiles(id,section,files);
+}
+async function mockViewSection(id,section){
+  const docs=await API('/cases/'+id+'/documents').catch(()=>[]);
+  const list=(docs||[]).filter(d=>String(d.doc_type||'')==='mock_evidence_'+section);
+  if(!list.length){toast(T('제출 자료 없음'));return;}
+  viewDoc(list[0].document_id);
+}
+function mevPlay(section){const v=document.getElementById('mev_vid_'+section);if(v){try{v.muted=false;v.controls=true;v.play();}catch(_){}}}
 let MOCKTAB="manual";
 function setMockTab(t){MOCKTAB=t;applyView();}
 SCREEN.mockAudit=async()=>{

@@ -88,7 +88,8 @@ def _sandboxed_path(raw_path: str) -> str:
 # 문서 P0(§9.3): 업로드 검증 — 크기·확장자 allowlist·매직바이트 sniff
 _UPLOAD_MAX_BYTES = 10 * 1024 * 1024
 _UPLOAD_EXT_ALLOW = {"pdf", "png", "jpg", "jpeg", "webp", "gif",
-                     "xlsx", "xls", "docx", "doc", "csv", "txt", "hwp"}
+                     "xlsx", "xls", "docx", "doc", "csv", "txt", "hwp",
+                     "mp4", "mov", "webm", "m4v"}   # 모의감사 생산공정 영상(§P0-5 클라이언트 뷰)
 
 
 def _validate_upload(file_b64, filename, max_bytes=_UPLOAD_MAX_BYTES):
@@ -2443,6 +2444,7 @@ def list_documents(case_id: str, user=Depends(auth.get_current_user), db: Sessio
              "doc_type_ko": DOC_KO.get(d.doc_type, d.doc_type),
              "confidence": d.confidence, "fields": d.fields, "excerpt": d.text_excerpt,
              "review_status": d.review_status, "has_file": bool(d.content_b64),
+             "created_at": d.created_at.isoformat() if d.created_at else None,
              "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source} for d in rows]
 
 

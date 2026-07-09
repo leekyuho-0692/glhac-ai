@@ -10,7 +10,9 @@ _MIME = {"pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpe
          "bmp": "image/bmp", "tiff": "image/tiff", "tif": "image/tiff", "webp": "image/webp",
          "txt": "text/plain; charset=utf-8", "csv": "text/csv",
          "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-         "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+         "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+         "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm",
+         "m4v": "video/x-m4v"}
 
 
 def _ctype(name):
