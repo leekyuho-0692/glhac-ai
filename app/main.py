@@ -4063,6 +4063,46 @@ def update_onsite_checklist(case_id: str, body: schemas.OnsiteChecklistReq,
     return {"item_key": body.item_key, "result": body.result, "ok": True}
 
 
+# ── 현장감사 전자서명(감사자·할랄감독관) — 스키마 무변경, WorkflowEvent(onsite.sign, latest-wins).
+#    Phase 4 audit_report.sign(보고서 서명)과 별개: 이건 현장 체크리스트 서명(캔버스 dataURL). ──
+@app.post("/cases/{case_id}/onsite/sign")
+def onsite_sign(case_id: str, body: dict = None,
+                user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    b = body or {}
+    party = b.get("party")
+    if party not in ("auditor", "supervisor"):
+        raise HTTPException(422, {"code": "BAD_PARTY", "allowed": ["auditor", "supervisor"]})
+    image = b.get("image")
+    if not isinstance(image, str) or not image.startswith("data:image/"):
+        raise HTTPException(422, {"code": "BAD_IMAGE"})
+    if len(image) > 400000:
+        raise HTTPException(413, {"code": "IMAGE_TOO_LARGE"})
+    name = (b.get("name") or "").strip() or None
+    c = _get_case(db, case_id, user)
+    sm.record_event(db, c, c.status, c.status, "onsite.sign", user["role"], user["uid"],
+                    {"party": party, "image": image, "name": name})
+    db.commit()
+    return {"ok": True, "party": party}
+
+
+@app.get("/cases/{case_id}/onsite/sign")
+def get_onsite_sign(case_id: str, user=Depends(auth.get_current_user),
+                    db: Session = Depends(get_db)):
+    c = _get_case(db, case_id, user)
+    events = (db.query(models.WorkflowEvent)
+              .filter(models.WorkflowEvent.case_id == case_id,
+                      models.WorkflowEvent.action == "onsite.sign")
+              .order_by(models.WorkflowEvent.created_at.asc()).all())
+    out = {"auditor": None, "supervisor": None}
+    for e in events:
+        p = e.payload or {}
+        party = p.get("party")
+        if party in out:
+            out[party] = {"image": p.get("image"), "name": p.get("name"),
+                          "at": e.created_at.isoformat() if e.created_at else None}
+    return out
+
+
 # ── S3-5 심사원 풀 배정 ───────────────────────────────────────────────────────
 @app.get("/cases/{case_id}/auditor-pool")
 def get_auditor_pool(case_id: str, user=Depends(auth.get_current_user),

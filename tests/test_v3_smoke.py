@@ -371,6 +371,33 @@ def test_mock_evidence_documents_tagged_and_listed():
         assert by["mock_evidence_material_storage"]["created_at"], "created_at 미노출"
 
 
+def test_onsite_sign_stored_and_retrieved():
+    """현장감사 전자서명 신규 라우트: POST /cases/{id}/onsite/sign 저장(party별 latest-wins),
+    GET 조회 반환. 잘못된 party·비-dataURL 이미지 거부. Phase 4 audit_report.sign과 별개."""
+    sig = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+           "AAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC")
+    with TestClient(app) as c:
+        adm = _tok(c, "admin", "admin")
+        cid = c.post("/cases", json={"company_name": "Onsite Sign Co", "org_id": "org_demo"},
+                     headers=_h(adm)).json()["case_id"]
+        # 초기: 둘 다 None
+        assert c.get(f"/cases/{cid}/onsite/sign", headers=_h(adm)).json() == {"auditor": None, "supervisor": None}
+        # 감사자 서명 저장
+        r = c.post(f"/cases/{cid}/onsite/sign", json={"party": "auditor", "image": sig, "name": "홍길동"}, headers=_h(adm))
+        assert r.status_code == 200 and r.json()["party"] == "auditor", r.text
+        # 잘못된 party 거부
+        assert c.post(f"/cases/{cid}/onsite/sign", json={"party": "x", "image": sig}, headers=_h(adm)).status_code == 422
+        # 비-dataURL 이미지 거부
+        assert c.post(f"/cases/{cid}/onsite/sign", json={"party": "supervisor", "image": "nope"}, headers=_h(adm)).status_code == 422
+        # 감독관 서명 저장 + 감사자 갱신(latest-wins)
+        c.post(f"/cases/{cid}/onsite/sign", json={"party": "supervisor", "image": sig, "name": "김할랄"}, headers=_h(adm))
+        c.post(f"/cases/{cid}/onsite/sign", json={"party": "auditor", "image": sig, "name": "이감사"}, headers=_h(adm))
+        got = c.get(f"/cases/{cid}/onsite/sign", headers=_h(adm)).json()
+        assert got["auditor"]["name"] == "이감사", got            # 최신 우선
+        assert got["supervisor"]["name"] == "김할랄", got
+        assert got["auditor"]["image"].startswith("data:image/"), got
+
+
 if __name__ == "__main__":
     tests = [test_password_pbkdf2_and_legacy_upgrade,
              test_login_rate_limited,
@@ -391,7 +418,8 @@ if __name__ == "__main__":
              test_worklist_queues_rbac,
              test_ask_injects_domain_ontology,
              test_context_health_endpoint, test_search_context_fallback_returns_list,
-             test_mock_evidence_documents_tagged_and_listed]
+             test_mock_evidence_documents_tagged_and_listed,
+             test_onsite_sign_stored_and_retrieved]
     ok = 0
     for fn in tests:
         try:
