@@ -3455,6 +3455,28 @@ def create_audit_plan(case_id: str, body: schemas.AuditPlanReq,
     return {"id": p.id, "scheduled_date": p.scheduled_date, "status": p.status}
 
 
+@app.post("/audit-plans/{plan_id}/propose-dates")
+def propose_audit_dates(plan_id: str, body: dict = None,
+                        user=Depends(auth.require_roles("auditor", "operator")),
+                        db: Session = Depends(get_db)):
+    """M5: 현장심사 일정변경 제안 — 클라이언트 제시일 불가 시 오디터가 후보일 2~3개 제안(note 저장·알림)."""
+    p = db.get(models.AuditPlan, plan_id)
+    if not p:
+        raise HTTPException(404, {"code": "PLAN_NOT_FOUND"})
+    c = _get_case(db, p.case_id, user)
+    dates = [str(d) for d in ((body or {}).get("dates") or []) if str(d).strip()][:3]
+    if not dates:
+        raise HTTPException(400, {"code": "NO_DATES"})
+    p.note = "일정변경 제안: " + ", ".join(dates)
+    p.status = "scheduled"
+    sm.record_event(db, c, c.status, c.status, "audit.plan.propose", user["role"], user["uid"], {"dates": dates})
+    _notify(db, c, "audit_scheduled", "현장심사 일정변경 제안",
+            "%s — 현장심사 후보일 제안: %s (택1)" % (c.company_name or "", ", ".join(dates)),
+            channels=["inapp", "sms"], role="applicant")
+    db.commit()
+    return {"id": p.id, "proposed": dates, "note": p.note, "status": p.status}
+
+
 @app.get("/cases/{case_id}/audit-plans")
 def list_audit_plans(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)

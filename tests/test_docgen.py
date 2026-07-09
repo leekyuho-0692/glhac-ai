@@ -233,3 +233,13 @@ def test_contract_fee_override(tmp_path):
     m.gen_contract("case1", body={"fee": 9999000}, user=USER, db=db)
     ct = db.query(models.Contract).filter_by(case_id="case1").first()
     assert ct.fee == 9999000  # M4: 특수조항 수동 금액 override
+
+
+def test_propose_audit_dates(tmp_path):
+    db = _seed_db(tmp_path)
+    p = models.AuditPlan(case_id="case1", scheduled_date="2026-08-01", status="scheduled")
+    db.add(p)
+    db.commit()
+    auditor = {"uid": "a1", "role": "auditor", "org_id": "org1"}
+    r = m.propose_audit_dates(p.id, body={"dates": ["2026-08-05", "2026-08-06", "2026-08-08"]}, user=auditor, db=db)
+    assert len(r["proposed"]) == 3 and "일정변경 제안" in r["note"]

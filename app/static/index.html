@@ -2784,7 +2784,7 @@ SCREEN.audit=async()=>{
       <div class="list" style="margin:0 -1px">${lphHtml}</div>
       <div class="body" style="border-top:1px solid var(--line)">
         <div class="small" style="font-weight:600;margin-bottom:6px">현장심사 일정 · Schedule (${plans.length})</div>
-        ${plans.length?plans.map(p=>`<div class="li" style="padding:4px 0"><div class="tx" style="flex:1"><b>📅 ${esc(p.scheduled_date)}</b><div class="muted small">${esc(p.lph_name||"")} ${esc(p.scope||"")} ${bTag(p.status==='completed'?'ok':p.status==='cancelled'?'mute':'info',p.status)}</div></div>${canReview&&p.status==='scheduled'?`<div class="when"><button class="btn" style="padding:2px 7px;font-size:11px" onclick="patchPlan('${p.id}','completed')">완료</button></div>`:''}</div>`).join(""):'<div class="muted small">등록된 일정 없음</div>'}
+        ${plans.length?plans.map(p=>`<div class="li" style="padding:4px 0"><div class="tx" style="flex:1"><b>📅 ${esc(p.scheduled_date)}</b><div class="muted small">${esc(p.lph_name||"")} ${esc(p.scope||"")} ${bTag(p.status==='completed'?'ok':p.status==='cancelled'?'mute':'info',p.status)}</div></div>${canReview&&p.status==='scheduled'?`<div class="when" style="display:flex;gap:4px"><button class="btn" style="padding:2px 7px;font-size:11px" onclick="proposeAuditDates('${p.id}')">일정변경 제안</button><button class="btn" style="padding:2px 7px;font-size:11px" onclick="patchPlan('${p.id}','completed')">완료</button></div>`:''}${p.note?`<div class="muted small" style="color:var(--accent);flex-basis:100%">↳ ${esc(p.note)}</div>`:''}</div>`).join(""):'<div class="muted small">등록된 일정 없음</div>'}
         ${canPlan?`<button class="btn" style="margin-top:6px" onclick="schedulePlan('${id}')">📅 일정 등록 · Schedule</button>`:''}
       </div>
       <div class="body" style="border-top:1px solid var(--line)">
@@ -2826,6 +2826,13 @@ SCREEN.audit=async()=>{
 };
 async function schedulePlan(id){const r=await dialog("현장심사 일정 · Schedule",[{key:"scheduled_date",label:"일자 · Date",type:"date",required:true},{key:"lph_name",label:"LPH 기관 · LPH"},{key:"scope",label:"범위 · Scope",placeholder:"onsite audit"}]);if(!r)return;try{await API(`/cases/${id}/audit-plan`,{method:"POST",body:JSON.stringify({scheduled_date:r.scheduled_date,lph_name:r.lph_name||null,scope:r.scope||null})});toast("일정 등록");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function patchPlan(pid,status){try{await API(`/audit-plans/${pid}`,{method:"PATCH",body:JSON.stringify({status})});toast("일정 · "+status);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
+async function proposeAuditDates(pid){
+  const r=await dialog("현장심사 일정변경 제안 · 후보일 2~3개",[{key:"d1",label:"후보일 1 · Date 1",type:"date",required:true},{key:"d2",label:"후보일 2 · Date 2",type:"date"},{key:"d3",label:"후보일 3 · Date 3",type:"date"}]);
+  if(!r)return;
+  const dates=[r.d1,r.d2,r.d3].filter(Boolean);
+  try{await API(`/audit-plans/${pid}/propose-dates`,{method:"POST",body:JSON.stringify({dates})});toast("일정변경 제안 · "+dates.length+"개 후보일");applyView();}
+  catch(e){toast("제안 실패 · "+((e&&e.code)||""));}
+}
 async function submitCar(fid){const r=await dialog("시정조치 제출 · CAR",[{key:"description",label:"조치 내용 · Action",type:"textarea",required:true},{key:"due_date",label:"완료 기한 · Due",type:"date"}]);if(!r)return;try{await API(`/findings/${fid}/car`,{method:"POST",body:JSON.stringify({description:r.description,due_date:r.due_date||null})});toast("시정조치 제출");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function reviewCar(cid,status){try{await API(`/car/${cid}/review`,{method:"PATCH",body:JSON.stringify({status})});toast("CAR "+(status==='accepted'?'수용':'반려'));applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function closeOnsite(id){
