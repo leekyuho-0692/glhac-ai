@@ -2891,6 +2891,56 @@ def classify_factories(case_id, user=Depends(auth.get_current_user), db=Depends(
     return {"classified": len(groups), "factories": [_fac_dict(f) for f in _case_facilities(db, c)]}
 
 
+# ===== M1: 클라이언트 11단계 여정(journey) 진행 — case.status 마일스톤 + 레코드 도출 =====
+_MILESTONE = {}
+for _mi_index, _statuses in enumerate([
+    ["onboarding", "application_draft", "ai_pre_assessment_ready", "ai_pre_assessment_running", "pathway_determination"],
+    ["self_declare_eligible", "sjph_lite_prepared", "pendamping_verification", "self_declaration_submitted", "supplementation_required", "supplementation_submitted", "consultant_review", "document_pre_audit_requested", "document_pre_audit_in_review", "document_pre_audit_approved", "lph_assignment"],
+    ["onsite_audit_scheduled", "onsite_audit_in_progress", "corrective_action_required", "corrective_action_submitted", "audit_closed", "hpas_evaluation_ready", "final_package_preparation", "committee_verification"],
+    ["fatwa_review", "fatwa_approved"],
+    ["certificate_issued", "post_certification_monitoring", "change_impact", "renewal_preparation"],
+]):
+    for _s in _statuses:
+        _MILESTONE[_s] = _mi_index
+
+
+def _mi(status):
+    return _MILESTONE.get(status, 0)
+
+
+@app.get("/cases/{case_id}/journey")
+def get_case_journey(case_id: str, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """클라이언트 전 단계 여정(11) — 회원가입→신청→사전검토→계약→입금→할랄매뉴얼→모의→현장→오디터리포트→파트와→인증서."""
+    c = _get_case(db, case_id, user)
+    st = c.status or "onboarding"
+    mi = _mi(st)
+    contract = db.query(models.Contract).filter_by(case_id=case_id).first()
+    paid = db.query(models.Invoice).filter_by(case_id=case_id).filter(models.Invoice.status == "paid").first()
+    sjph = db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type="sjph_manual").first()
+    areport = db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type="audit_report").first()
+    fatwa = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    stages = [
+        ("signup", "회원가입", True),
+        ("application", "신청", st not in ("onboarding", "application_draft")),
+        ("preassess", "사전검토", (st == "document_pre_audit_approved" or mi >= 2)),
+        ("contract", "계약", bool(contract and contract.status in ("issued", "signed"))),
+        ("payment", "입금확인", bool(paid)),
+        ("halal_manual", "할랄매뉴얼", bool(sjph)),
+        ("mock_audit", "모의실사", mi >= 2),
+        ("onsite", "현장실사", (st in ("audit_closed", "hpas_evaluation_ready", "final_package_preparation", "committee_verification") or mi >= 3)),
+        ("audit_report", "오디터리포트", (bool(areport) or mi >= 3)),
+        ("fatwa", "파트와", (bool(fatwa and fatwa.decision in ("approved", "conditional")) or mi >= 4)),
+        ("certificate", "인증서", (bool(cert) or st == "certificate_issued")),
+    ]
+    current_idx = next((i for i, (_, _, done) in enumerate(stages) if not done), len(stages) - 1)
+    result_stages = []
+    for i, (key, label, done) in enumerate(stages):
+        status = "done" if done else ("current" if i == current_idx else "todo")
+        result_stages.append({"key": key, "label": label, "status": status})
+    return {"case_id": case_id, "status": st, "milestone": mi, "current": current_idx, "stages": result_stages}
+
+
 @app.get("/cases/{case_id}/gen-docs")
 def list_gendocs(case_id: str, doc_type: str = None,
                  user=Depends(auth.get_current_user), db: Session = Depends(get_db)):

@@ -1717,12 +1717,39 @@ function progressBar(status){
     const cls=(i<cur||(issued&&i===4))?"done":i===cur?"cur":"todo";
     return `<div class="step ${cls}"><div class="dot">${cls==='done'?'✓':(i+1)}</div><span>${T(s[1])}<span class="en">${s[2]}</span></span></div>${i<4?`<div class="stepline ${i<cur?'done':''}"></div>`:''}`;}).join("")}</div>`;
 }
+/* ===== M1: 클라이언트 11단계 전체 진행 여정 스텝바 ===== */
+function journeyCard(id){
+  const prev=AFTER_RENDER;
+  AFTER_RENDER=function(){ if(prev)try{prev();}catch(_){}; loadJourney(id); };
+  return '<div class="card" style="margin-bottom:16px"><h3>전체 진행 단계 <span class="en">· Client Journey (11단계)</span></h3><div class="body"><div id="journeyBar" class="muted small">불러오는 중…</div></div></div>';
+}
+async function loadJourney(id){
+  try{
+    const r=await API('/cases/'+id+'/journey');
+    const el=document.getElementById('journeyBar'); if(!el)return;
+    const stages=(r&&r.stages)||[];
+    if(!stages.length){ el.innerHTML='<div class="muted small">진행 정보 없음</div>'; return; }
+    el.innerHTML=renderJourney(stages);
+  }catch(e){ const el=document.getElementById('journeyBar'); if(el)el.innerHTML='<div class="muted small">진행 정보를 불러오지 못했습니다.</div>'; }
+}
+function renderJourney(stages){
+  let html='<div class="stepbar" style="overflow-x:auto">';
+  for(let i=0;i<stages.length;i++){
+    const stage=stages[i];
+    const cls=stage.status==='done'?'done':(stage.status==='current'?'cur':'');
+    const dotContent=stage.status==='done'?'✓':(i+1);
+    html+='<div class="step '+cls+'"><div class="dot">'+dotContent+'</div><span>'+esc(stage.label)+'</span></div>';
+    if(i<stages.length-1){ html+='<div class="stepline '+(stage.status==='done'?'done':'')+'"></div>'; }
+  }
+  html+='</div>';
+  return html;
+}
 function fatwaLabel(s){return {none:"심의 전",provisional:"가승인",approved:"최종승인",rejected:"반려",conditional:"조건부"}[s]||s;}
 function fatwaColor(s){return {approved:"ok",provisional:"info",rejected:"bad",conditional:"warn"}[s]||"mute";}
 SCREEN.dashboard=async()=>{
   const [sum,cases]=await Promise.all([API("/dashboard/summary"),loadCases(true)]);
   const _cc=CURCASE?cases.find(c=>c.case_id===CURCASE):null;
-  const caseProg=_cc?`<div class="card" style="margin-bottom:16px"><h3>진행 단계 <span class="en">· Progress</span><span class="r">${esc(_cc.company_name||"")}</span></h3><div class="body">${progressBar(_cc.status)}</div></div>`:"";
+  const caseProg=_cc?`${journeyCard(_cc.case_id)}<div class="card" style="margin-bottom:16px"><h3>진행 단계 <span class="en">· Progress</span><span class="r">${esc(_cc.company_name||"")}</span></h3><div class="body">${progressBar(_cc.status)}</div></div>`:"";
   let analytics=null;
   if(["ops","admin"].includes(ROLE)){try{analytics=await API("/analytics/summary");}catch(_){}}
   const kpi=sum.kpi||{total:0,issued:0,action:0,in_progress:0};

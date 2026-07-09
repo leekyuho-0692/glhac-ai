@@ -200,3 +200,15 @@ def test_facility_info_after_classify(tmp_path):
     fid = r["factories"][0]["facility_id"]
     doc = m.gen_facility_info("case1", fid, USER, db)  # D2 정합
     assert "ABC Busan Plant" in doc["document"]
+
+
+def test_case_journey_11_stages(tmp_path):
+    db = _seed_db(tmp_path)
+    r = m.get_case_journey("case1", user=USER, db=db)
+    assert len(r["stages"]) == 11
+    assert r["stages"][0]["key"] == "signup" and r["stages"][0]["status"] == "done"
+    labels = [s["label"] for s in r["stages"]]
+    for lab in ["회원가입", "계약", "할랄매뉴얼", "모의실사", "파트와", "인증서"]:
+        assert lab in labels
+    # 정확히 하나의 current
+    assert sum(1 for s in r["stages"] if s["status"] == "current") == 1
