@@ -2531,28 +2531,19 @@ def patch_sjph(case_id: str, body: schemas.SjphElementReq,
 
 @app.post("/cases/{case_id}/sjph/manual")
 def sjph_manual(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    """SJPH/HPAS 매뉴얼 결정적 생성 (v1 상속). 결제 게이트: 청구 존재 시 결제완료 필요(§2.2 비용방지)."""
+    """SJPH/HPAS 매뉴얼 결정적 생성 — 공식 템플릿(GLHAC HPAS SJPH Template) 구조로 케이스 데이터 채움.
+    결제 게이트: 청구 존재 시 결제완료 필요(§2.2 비용방지). gen-doc 버전 저장(Rizky #3·#11)."""
     c = _get_case(db, case_id, user)
     _invs = db.query(models.Invoice).filter_by(case_id=case_id).all()
     if _invs and not any(i.status == "paid" for i in _invs):
         raise HTTPException(409, {"code": "PAYMENT_REQUIRED",
                                   "detail": "AI SJPH 매뉴얼 생성 전 결제 완료가 필요합니다."})
-    have = _ensure_hpas(db, case_id)
-    pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").first()
-    mats = db.query(models.Material).filter_by(case_id=case_id).all()
-    crit = [m.name for m in mats if m.screen_result in ("BLOCK", "NEEDS_EVIDENCE")]
-    lines = ["[SJPH/HPAS 매뉴얼 — %s]" % (c.company_name or c.case_id[:8]),
-             "할랄감독자(Penyelia Halal): %s" % (pen.name if pen else "(미지정 ⛔)"),
-             "경로: %s" % c.pathway, ""]
-    for el in HPAS_ELEMENTS:
-        lines.append("· %s: %s%s" % (HPAS_KO[el], have[el].status,
-                                     (" — " + have[el].note) if have[el].note else ""))
-    lines += ["", "원재료 %d건, 증빙 필요/차단 %d건: %s" % (len(mats), len(crit), ", ".join(crit[:8]) or "없음"),
-              "※ 본 매뉴얼은 준비용. 공식 SJPH는 BPJPH/SIHALAL 절차로 확정."]
-    manual = "\n".join(lines)
+    blocks = _sjph_manual_blocks(db, c)
+    company = c.company_name or c.case_id[:8]
+    manual = _sjph_blocks_to_text(company, blocks)
     g = _save_gendoc(db, c, "sjph_manual", manual, user)  # 버전 저장(Rizky #3·#11)
     db.commit()
-    return {"manual": manual, "version": g.version, "gen_doc_id": g.gen_doc_id}
+    return {"manual": manual, "version": g.version, "gen_doc_id": g.gen_doc_id, "blocks": len(blocks)}
 
 
 def _next_version(db, case_id, doc_type):
@@ -3149,20 +3140,246 @@ SJPH_APPENDICES = [
     ("Appendix 17. 종합 요약", "auto", None),
 ]
 
+# ===== SJPH/HPAS Manual — 공식 템플릿(GLHAC HPAS SJPH Template.docx) 정합 정적 원문(EN/KO 병기) =====
+# 아래 문구는 템플릿 원문 그대로. 동적값(회사명·감독관·재료·제품)은 _sjph_manual_blocks에서 치환.
+SJPH_LEGAL_BASIS = [
+    "Law No. 33 of 2014 concerning Halal Product Assurance / 할랄제품보장에 관한 2014년 법률 제33호",
+    "Law No. 6 of 2023 concerning Job Creation / 고용창출에 관한 2023년 법률 제6호",
+    "Government Regulation No. 39 of 2021 concerning the Implementation of the Halal Product Assurance Sector / 할랄제품보장 분야 시행에 관한 2021년 정부령 제39호",
+    "Regulation of the Minister of Religious Affairs No. 42 of 2024 concerning the Administration of Halal Product Assurance / 할랄제품보장 운영에 관한 2024년 종교부 장관령 제42호",
+    "Decree of the Minister of Religious Affairs No. 982 of 2019 concerning Halal Certification Services / 할랄 인증 서비스에 관한 2019년 종교부 장관 결정 제982호",
+    "Decree of the Minister of Religious Affairs No. 748 of 2021 concerning Types of Products Required to Obtain Halal Certification / 할랄 인증 의무 제품 유형에 관한 2021년 종교부 장관 결정 제748호",
+    "Decree of the Minister of Religious Affairs No. 944 of 2024 concerning Types of Products Required to Obtain Halal Certification / 할랄 인증 의무 제품 유형에 관한 2024년 종교부 장관 결정 제944호",
+    "Decree of the Head of BPJPH No. 57 of 2021 concerning the Criteria for the Halal Product Assurance System / 할랄제품보장청(BPJPH) 청장 결정 제57호(2021) — 할랄제품보장시스템 기준",
+]
+SJPH_PURPOSE_EN = ("The Halal Product Assurance System (HPAS) Manual is prepared as a guideline for the "
+                   "implementation of the SJPH within the company, in order to maintain the continuity of "
+                   "halal production in accordance with halal certification requirements established by the "
+                   "Halal Product Assurance Organizing Agency (BPJPH) and the halal determination decisions "
+                   "issued by the Indonesian Ulama Council (MUI).")
+SJPH_PURPOSE_KO = ("할랄제품보장시스템(SJPH) 매뉴얼은 회사 내 SJPH 운영의 지침으로 작성되었으며, 할랄제품보장청(BPJPH)에서 "
+                   "정한 할랄 인증 요건과 인도네시아 울레마 협의회(MUI)의 제품 할랄성 결정에 따라 할랄 생산의 지속성을 "
+                   "유지하기 위한 목적을 가진다.")
+SJPH_SCOPE_EN = ("The SJPH Manual is a document that serves as a guideline for the implementation of the SJPH "
+                 "within the company. This SJPH Manual applies to all company facilities related to the halal "
+                 "product process (PPH), including outlets, toll manufacturing facilities, and rented warehouses.")
+SJPH_SCOPE_KO = ("SJPH 매뉴얼은 회사 내 SJPH 운영을 위한 지침 문서이다. 본 SJPH 매뉴얼은 아웃렛, 위탁생산 시설 및 임대 "
+                 "창고를 포함하여 할랄 제품 공정(PPH)과 관련된 회사의 모든 시설에 적용된다.")
+SJPH_POLICY = [
+    "Using certified halal ingredients. / 인증된 할랄 재료 사용.",
+    "Implementing the Halal Product Process (PPH) at all production stages. / 모든 생산 단계에서 할랄 제품 공정(PPH)을 시행.",
+    "Providing adequate resources and facilities to support the implementation of HPAS. / HPAS 구현을 지원하기 위해 적절한 자원 및 시설 제공.",
+    "Ensuring that all personnel understand and adhere to this halal policy. / 모든 직원이 이 할랄 정책을 이해하고 준수하도록 보장.",
+    "Communicating the halal policy to all relevant stakeholders. / 모든 관련 이해관계자에게 할랄 정책을 전달.",
+    "Halal policy poster attached in appendix 1. / 할랄 정책 포스터는 부록 1에 첨부되어 있습니다.",
+]
+SJPH_HRD = [
+    "Internal Training: All personnel involved in the PPH will receive internal training on HPAS. / 내부 교육: PPH에 관련된 모든 직원은 HPAS에 대한 내부 교육을 받게 됩니다.",
+    "External Training: The Halal Supervisor will attend training organized by BPJPH or other designated institutions. / 외부 교육: 할랄 감독관은 BPJPH 또는 기타 지정된 기관이 주최하는 교육에 참석하게 됩니다.",
+    "Documentation: The company will maintain training records as proof of implementation. / 문서화: 당사는 구현의 증거로 교육 기록을 유지합니다.",
+]
+SJPH_PROCUREMENT = [
+    "All materials are purchased from suppliers who can guarantee their halal status and possess a valid Halal Certificate, except for exempted materials. / 모든 재료는 면제된 재료를 제외하고, 할랄 상태를 보증하고 유효한 할랄 인증서를 소지한 공급업체로부터 구매해야 합니다.",
+    "Upon arrival, the receiving team inspects supporting documents and ensures there is no cross-contamination. / 도착 시, 수령 팀은 보조 문서를 검사하고 교차 오염이 없는지 확인해야 합니다.",
+    "Materials are stored separately from non-halal materials. / 재료는 비할랄 재료와 별도로 보관해야 합니다.",
+    "Appendix 7 (Ingredient Inspection Form) is filled out for every incoming material. / 부록 7(재료 검사 양식)은 새로운 재료가 도착할 때마다 작성됩니다.",
+    "Appendix 8 (Ingredient Purchase Records) records every material purchase. / 부록 8(재료 구매 기록)은 모든 재료 구매를 기록합니다.",
+    "Appendix 9 (Ingredient Storage Records) is filled out for every material storage event. / 부록 9(재료 보관 기록)는 재료가 보관될 때마다 작성됩니다.",
+]
+SJPH_HPP_DOCS = [
+    ["1.", "Production Facility Layout / 생산 시설 배치도", "[ ]", "생산 시설 이미지 또는 배치도 첨부"],
+    ["2.", "Production Flow Diagram / 생산 흐름도", "[ ]", "할랄 생산 공정 흐름도 첨부"],
+    ["3.", "Material Receiving Log / 원료 입고 기록", "[ ]", "원료의 원산지·준수 여부 추적 기록"],
+    ["4.", "Material Purchase Log / 원료 구매 기록", "[ ]", "영수증·구매 내역서 등 첨부"],
+    ["5.", "Production Log / 생산 기록", "[ ]", "일일/배치 생산 결과·로트 코드"],
+    ["6.", "Distribution Log / 유통 기록", "[ ]", "제품 유통·판매 기록"],
+]
+SJPH_CLOSING = ("I hereby declare that all information and documents provided in this application are true and "
+                "correct. I understand that any intentional misrepresentation, falsification, or deliberate "
+                "concealment of facts that leads to non-compliance or the detection of non-halal/impure (najis) "
+                "substances will be subject to legal prosecution in accordance with applicable laws. / "
+                "본 신청서에 제공된 모든 정보와 문서가 진실하고 정확함을 서약합니다. 고의적인 허위 진술·위조·사실 은폐로 "
+                "비준수 또는 비할랄/불순물(나지스) 성분이 발견될 경우 관련 법률에 따라 법적 처벌을 받을 수 있음을 이해합니다.")
 
-@app.get("/cases/{case_id}/sjph-manual.pdf")
-def get_sjph_manual_pdf(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
-    """SJPH/HPAS Manual 리치 PDF — 5장(HPAS) + 17부록(자동생성/증빙업로드 매핑) + 증빙 게이트."""
-    from fastapi.responses import Response
-    c = _get_case(db, case_id, user)
-    have = _ensure_hpas(db, case_id)
-    ev = {e.item_key for e in db.query(models.SjphEvidence).filter_by(case_id=case_id).all()}
+
+def _sjph_mat_judgment(m):
+    """Material screen 결과 → EN/KO 판정 라벨(없으면 '—')."""
+    s = (m.screen_status or m.screen_result or "").lower()
+    mp = {"halal": "Halal 할랄", "haram": "Haram 하람", "mushbooh": "Mushbooh 의심",
+          "syubhat": "Mushbooh 의심", "block": "Blocked 차단", "needs_evidence": "Evidence req. 증빙필요",
+          "pass": "Halal 할랄", "clear": "Halal 할랄", "ok": "Halal 할랄"}
+    return mp.get(s, (m.screen_status or m.screen_result or "—"))
+
+
+def _sjph_manual_blocks(db, c):
+    """공식 SJPH/HPAS Template 구조로 _render_pdf_rich 블록 생성.
+    표지 → 법적근거 → Bismillah → 목적·범위 → 고객정보 → 1~5장 → 종결서약 → HPAS 준비도 → 부록.
+    정적 원문은 템플릿 원문 그대로(EN/KO 병기), 동적값은 케이스 데이터로 치환(없으면 '—')."""
+    from datetime import datetime as _dt
+    px = c.profile_ext or {}
     pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").first()
-    mats = db.query(models.Material).filter_by(case_id=case_id).all()
-    prods = db.query(models.Product).filter_by(case_id=case_id).all()
-    appx_rows = []
-    done = 0
-    upload_total = 0
+    mats = db.query(models.Material).filter_by(case_id=c.case_id).all()
+    prods = db.query(models.Product).filter_by(case_id=c.case_id).all()
+    have = _ensure_hpas(db, c.case_id)
+    ev = {e.item_key for e in db.query(models.SjphEvidence).filter_by(case_id=c.case_id).all()}
+    D = "—"
+    company = c.company_name or c.case_id[:8]
+    today = _dt.utcnow().strftime("%Y-%m-%d")  # 서버 UTC(요구: Date.now 금지)
+    sup_name = pen.name if pen else (c.halal_supervisor or D)
+    resp = c.responsible_person or D
+
+    def v(x):
+        return x if (x not in (None, "")) else D
+
+    def px2(a, b):
+        return "%s / %s" % (v(px.get(a)), v(px.get(b)))
+
+    B = []
+    # ---------- 표지 ----------
+    B += [
+        {"type": "kv", "label": "Company Name / 회사명", "value": company},
+        {"type": "kv", "label": "Date / 날짜", "value": today},
+        {"type": "kv", "label": "Version / 버전", "value": "GL-HAC HPAS Manual 1.0 · 2026 April 1st version"},
+        {"type": "signature", "slots": [
+            {"role": "Audited by · GL-HAC Halal Auditor", "name": D, "signed": False},
+            {"role": "Reviewed by · GL-HAC Sharia Board", "name": D, "signed": False},
+        ]},
+    ]
+    # ---------- 법적 근거 ----------
+    B.append({"type": "heading", "text": "LEGAL BASIS · 법적 근거", "level": 2})
+    B += [{"type": "para", "text": "· " + law} for law in SJPH_LEGAL_BASIS]
+    # ---------- Bismillah ----------
+    B.append({"type": "para", "text": "Bismillah ar-Rahman ar-Rahim — 가장 자비롭고 은혜로우신 하나님의 이름으로"})
+    # ---------- 목적·범위 ----------
+    B += [
+        {"type": "heading", "text": "PURPOSE AND SCOPE · 목적 및 적용 범위", "level": 2},
+        {"type": "para", "text": "Purpose / 목적"},
+        {"type": "para", "text": SJPH_PURPOSE_EN},
+        {"type": "para", "text": SJPH_PURPOSE_KO},
+        {"type": "para", "text": "Scope / 범위"},
+        {"type": "para", "text": SJPH_SCOPE_EN},
+        {"type": "para", "text": SJPH_SCOPE_KO},
+    ]
+    # ---------- 고객 정보(Client Information — Template Table) ----------
+    B.append({"type": "heading", "text": "Client Information · 고객 정보", "level": 2})
+    B.append({"type": "table", "headers": ["Field / 항목", "Value / 내용"], "widths": [0.4, 0.6], "rows": [
+        ["Client / Company Name 고객·회사명", company],
+        ["Address 회사 주소", v(c.address)],
+        ["Factory Address 공장 주소", v(c.factory_address)],
+        ["Phone 전화", v(c.phone)],
+        ["Email 이메일", v(c.email)],
+        ["Business Reg. No (NIB/ID TAX) 사업자번호", v(c.nib)],
+        ["PIC Name / Title 담당자·직책", px2("pic_name", "pic_title")],
+        ["Contact Person Name / Title 업무담당자·직책", px2("cp_name", "cp_title")],
+        ["Registration Type 등록유형", v(px.get("registration_type"))],
+        ["Application Type 신청유형", v(px.get("application_type"))],
+        ["Registration Status 등록현황", v(px.get("registration_status"))],
+        ["Production Capacity 생산능력", v(px.get("production_capacity"))],
+        ["Total Products 제품 수", str(len(prods))],
+    ]})
+    # ---------- 1. Halal Commitment & Responsibility ----------
+    B.append({"type": "heading", "text": "1. Halal Commitment & Responsibility · 할랄 서약 및 책임", "level": 2})
+    B.append({"type": "heading", "text": "A. Halal Policy · 할랄 정책", "level": 2})
+    B.append({"type": "para", "text": "%s is fully committed to consistently and continuously producing halal "
+                                      "products in accordance with Islamic law and applicable regulations. / "
+                                      "%s은(는) 이슬람 율법과 관련 규정에 따라 일관적·지속적으로 할랄 제품을 생산할 것을 "
+                                      "전적으로 서약합니다. This policy includes / 이 정책은 다음을 포함합니다:" % (company, company)})
+    B += [{"type": "para", "text": "· " + p} for p in SJPH_POLICY]
+    B.append({"type": "heading", "text": "B. Halal Management Team · 할랄 관리팀", "level": 2})
+    B.append({"type": "para", "text": "The management of %s appoints a Halal Supervisor to be responsible for "
+                                      "managing, monitoring, and ensuring the proper implementation of HPAS. / "
+                                      "%s 경영진은 HPAS의 올바른 구현을 관리·모니터링·보장할 책임이 있는 할랄 감독관을 "
+                                      "임명합니다." % (company, company)})
+    B.append({"type": "kv", "label": "Name / 성명", "value": sup_name})
+    B.append({"type": "kv", "label": "Position / 직책", "value": "Halal Supervisor / 할랄 감독관"})
+    team_rows, n = [], 0
+    if resp != D:
+        n += 1
+        team_rows.append([str(n), resp, "Responsible Person / 책임자", "Management", D])
+    n += 1
+    team_rows.append([str(n), sup_name, "Halal Supervisor / 할랄 감독관", "Halal Supervisor", D])
+    if c.halal_supervisor and c.halal_supervisor not in (sup_name, resp):
+        n += 1
+        team_rows.append([str(n), c.halal_supervisor, "Halal Supervisor / 할랄 감독관", "Halal Supervisor", D])
+    B.append({"type": "table", "headers": ["No", "Name / 성명", "Position / 직책", "In Team / 팀내 역할", "Sign / 서명"],
+              "widths": [0.07, 0.3, 0.28, 0.23, 0.12], "rows": team_rows})
+    B.append({"type": "para", "text": "The Halal Management Team and/or Halal Supervisor have read and understood "
+                                      "the HPAS Manual and will implement all of its criteria. / 할랄 관리팀 및/또는 "
+                                      "할랄 감독자는 HPAS 매뉴얼을 읽고 이해하였으며 설명된 모든 기준을 이행합니다."})
+    B.append({"type": "heading", "text": "C. Human Resource Development · 인적 자원 개발", "level": 2})
+    B += [{"type": "para", "text": "· " + h} for h in SJPH_HRD]
+    # ---------- 2. Raw Materials ----------
+    B.append({"type": "heading", "text": "2. Raw Materials · 원료", "level": 2})
+    B.append({"type": "heading", "text": "2.1 Halal Materials List · 할랄 재료 목록", "level": 2})
+    B.append({"type": "para", "text": "All ingredients used in %s's products are halal (whether certified or "
+                                      "excluded from the halal certification mandate). Form-5 lists all materials "
+                                      "with name, producer, and country of origin. / %s의 제품에 사용되는 모든 재료는 "
+                                      "할랄이며, Form-5(사용 재료 목록)에 재료명·생산자·원산지를 포함해 작성됩니다." % (company, company)})
+    mat_rows = [[str(i + 1), m.name, v(m.mat_type), v(m.supplier), _sjph_mat_judgment(m)]
+                for i, m in enumerate(mats)] or [["—", D, D, D, D]]
+    B.append({"type": "table", "headers": ["No", "Material / 재료명", "Type / 유형", "Producer / 생산자", "Status / 판정"],
+              "widths": [0.07, 0.32, 0.17, 0.24, 0.2], "rows": mat_rows})
+    B.append({"type": "heading", "text": "2.2 Material Procurement Procedure · 재료 조달 절차", "level": 2})
+    B += [{"type": "para", "text": "· " + p} for p in SJPH_PROCUREMENT]
+    # ---------- 3. Halal Production Process ----------
+    B.append({"type": "heading", "text": "3. Halal Production Process (HPP) · 생산 공정", "level": 2})
+    B.append({"type": "heading", "text": "A. Pork-Free Statement · 돼지고기 성분 무첨가 서약", "level": 2})
+    B.append({"type": "para", "text": "I, the undersigned below / 아래 서명인은 다음과 같이 선언합니다:"})
+    B.append({"type": "kv", "label": "Full name / 성명", "value": resp})
+    B.append({"type": "kv", "label": "Identity Number / 주민등록번호", "value": D})
+    B.append({"type": "kv", "label": "Position / 직위", "value": ("Responsible Person / 책임자" if resp != D else D)})
+    B.append({"type": "para", "text": "I hereby declare that our production facility is completely free from pork "
+                                      "and its derivatives, and there is no cross-contamination from non-halal "
+                                      "products. The facility and all its equipment are maintained clean and free "
+                                      "from impurities (najis). / 당사의 생산 시설은 돼지고기 및 그 부산물로부터 완전히 "
+                                      "자유로우며, 비할랄 제품으로부터의 교차 오염이 없음을 선언합니다. 생산 시설과 모든 "
+                                      "장비는 깨끗하고 불순물(나지스)로부터 자유로운 상태를 유지합니다."})
+    B.append({"type": "kv", "label": "Date / 날짜", "value": today})
+    B.append({"type": "signature", "slots": [{"role": "Name & Position / 성명·직책", "name": resp, "signed": False}]})
+    B.append({"type": "heading", "text": "B. Required HPP Documents and Logs · 필수 HPP 문서·기록", "level": 2})
+    B.append({"type": "table", "headers": ["No", "Item / 항목", "Completion / 완료", "Evidence / 증빙"],
+              "widths": [0.07, 0.45, 0.15, 0.33], "rows": SJPH_HPP_DOCS})
+    # ---------- 4. Product Criteria ----------
+    B.append({"type": "heading", "text": "4. Product Criteria · 제품 기준", "level": 2})
+    B.append({"type": "heading", "text": "4.1 Product Design · 제품 디자인", "level": 2})
+    B.append({"type": "para", "text": "Product names, logos, packaging, and images are not in conflict with "
+                                      "Islamic law or social norms. Form-3 lists all products manufactured and "
+                                      "indicates which are submitted for halal certification. / 제품명·로고·포장·이미지는 "
+                                      "이슬람 율법이나 사회적 규범과 충돌하지 않습니다. Form-3(생산 제품 목록)에 제조된 모든 "
+                                      "제품과 할랄 인증 신청 제품을 표시합니다."})
+    prod_rows = [[str(i + 1), p.name, v(p.category), v(p.registration_type), v(p.status)]
+                 for i, p in enumerate(prods)] or [["—", D, D, D, D]]
+    B.append({"type": "table", "headers": ["No", "Product / 제품명", "Category / 분류", "Reg. Type / 등록유형", "Status / 상태"],
+              "widths": [0.07, 0.35, 0.23, 0.2, 0.15], "rows": prod_rows})
+    B.append({"type": "heading", "text": "4.2 Labeling and Identification · 라벨링 및 식별", "level": 2})
+    B.append({"type": "para", "text": "Certified products carry the Halal Label on the packaging in a visible, "
+                                      "durable location. Each product has an identification code (e.g., batch "
+                                      "number, production date) for traceability. / 인증된 제품은 포장에 눈에 잘 띄고 "
+                                      "내구성 있는 위치에 할랄 라벨을 표시하며, 각 제품은 추적성을 위한 식별 코드(예: 배치 "
+                                      "번호, 생산 날짜)를 가집니다."})
+    # ---------- 5. Monitoring and Evaluation ----------
+    B.append({"type": "heading", "text": "5. Monitoring and Evaluation · 모니터링 및 평가", "level": 2})
+    B.append({"type": "heading", "text": "5.1 Internal Audit · 내부 감사", "level": 2})
+    B.append({"type": "para", "text": "An internal HPAS audit is conducted at least once a year to evaluate the "
+                                      "consistency of implementation. Audit results are documented. / HPAS 내부 감사는 "
+                                      "구현의 일관성을 평가하기 위해 1년에 최소 한 번 수행되며, 결과는 문서화됩니다."})
+    B.append({"type": "heading", "text": "5.2 Management Review · 경영 검토", "level": 2})
+    B.append({"type": "para", "text": "Management reviews the implementation of HPAS to ensure effectiveness. The "
+                                      "results of the review are reported to the BPJPH. / 경영진은 HPAS의 효과성을 "
+                                      "보장하기 위해 구현을 검토하며, 결과는 BPJPH에 보고됩니다."})
+    # ---------- 종결 서약 ----------
+    B.append({"type": "heading", "text": "Closing Statement · 종결 서약", "level": 2})
+    B.append({"type": "para", "text": SJPH_CLOSING})
+    B.append({"type": "signature", "slots": [{"role": "Name & Position / 성명·직책", "name": resp, "signed": False}]})
+    # ---------- HPAS 5요소 준비도(내부 진행 참고) ----------
+    B.append({"type": "heading", "text": "HPAS 5-Element Readiness · HPAS 5요소 준비도", "level": 2})
+    chap_rows = [[str(idx + 1), HPAS_KO.get(el, el), (o.status if o else "-"), (o.note if o and o.note else "-")]
+                 for idx, el in enumerate(HPAS_ELEMENTS) for o in [have.get(el)]]
+    B.append({"type": "table", "headers": ["Ch", "Element / 기준", "Status / 상태", "Note / 비고"],
+              "widths": [0.1, 0.34, 0.18, 0.38], "rows": chap_rows})
+    # ---------- 부록(17종) + 증빙 게이트 ----------
+    B.append({"type": "heading", "text": "Appendices · 부록 (17종, 증빙 소스)", "level": 2})
+    appx_rows, done, upload_total = [], 0, 0
     for i, (label, typ, key) in enumerate(SJPH_APPENDICES):
         if typ == "auto":
             st = "자동생성"
@@ -3172,26 +3389,48 @@ def get_sjph_manual_pdf(case_id, user=Depends(auth.get_current_user), db=Depends
             if st == "완료":
                 done += 1
         appx_rows.append([str(i + 1), label, ("자동생성" if typ == "auto" else "증빙업로드"), st])
+    B.append({"type": "table", "headers": ["No", "Appendix / 부록", "Source / 소스", "Status / 상태"],
+              "widths": [0.08, 0.54, 0.18, 0.2], "rows": appx_rows})
     gate_ok = (done == upload_total)
-    chap_rows = [[str(idx + 1), HPAS_KO.get(el, el), (o.status if o else "-"), (o.note if o and o.note else "-")]
-                 for idx, el in enumerate(HPAS_ELEMENTS) for o in [have.get(el)]]
-    blocks = [
-        {"type": "heading", "text": "%s — Halal Product Assurance System (SJPH/HPAS) Manual" % (c.company_name or case_id[:8]), "level": 1},
-        {"type": "kv", "label": "할랄감독자", "value": pen.name if pen else "(미지정)"},
-        {"type": "kv", "label": "제품 수", "value": str(len(prods))},
-        {"type": "kv", "label": "원재료 수", "value": str(len(mats))},
-        {"type": "kv", "label": "증빙 진행", "value": "%d/%d" % (done, upload_total)},
-        {"type": "heading", "text": "본문 · 5대 기준 (HPAS Chapters)", "level": 2},
-        {"type": "table", "headers": ["Ch", "기준", "상태", "비고"], "widths": [0.1, 0.34, 0.18, 0.38], "rows": chap_rows},
-        {"type": "heading", "text": "부록 · 17 Appendices (증빙 소스)", "level": 2},
-        {"type": "table", "headers": ["No", "부록", "소스", "상태"], "widths": [0.08, 0.54, 0.18, 0.20], "rows": appx_rows},
-        {"type": "para", "text": ("✔ 전 증빙 완료 — Manual SJPH 생성 가능. 자동생성 후 실물 사본 보관 필수." if gate_ok
-                                  else "⚠ 증빙 미완료(%d/%d) — 전 항목 완료 전까지 공식 Manual SJPH 생성 비활성. 본 문서는 준비용 초안." % (done, upload_total))},
-        {"type": "spacer", "h": 8},
-        {"type": "para", "text": "※ 하람·고위험 원재료는 증빙 필수. 공식 SJPH는 BPJPH/SIHALAL 절차로 확정."},
-    ]
-    pdf = _render_pdf_rich("SJPH/HPAS Manual", blocks, subtitle=(c.company_name or ""),
-                           footer="GL-HAC AI · SJPH Manual " + case_id[:8])
+    B.append({"type": "para", "text": ("✔ 전 증빙 완료 — Manual SJPH 생성 가능. 자동생성 후 실물 사본 보관 필수."
+                                       if gate_ok else
+                                       "⚠ 증빙 미완료(%d/%d) — 전 항목 완료 전까지 공식 Manual SJPH 생성 비활성. 본 문서는 준비용 초안." % (done, upload_total))})
+    B.append({"type": "spacer", "h": 8})
+    B.append({"type": "para", "text": "※ 하람·고위험 원재료는 증빙 필수. 공식 SJPH는 BPJPH/SIHALAL 절차로 확정."})
+    return B
+
+
+def _sjph_blocks_to_text(company, blocks):
+    """SJPH 블록 → gen-doc 저장용 텍스트(회사명·감독관명 등 내용 포함). 버전관리 content."""
+    L = ["[SJPH/HPAS Manual — %s]" % company]
+    for b in blocks or []:
+        t = b.get("type")
+        if t == "heading":
+            L += ["", "== %s ==" % b.get("text", "")]
+        elif t == "para":
+            L.append(b.get("text", ""))
+        elif t == "kv":
+            L.append("%s: %s" % (b.get("label", ""), b.get("value", "")))
+        elif t == "table":
+            L.append(" | ".join(str(x) for x in b.get("headers", [])))
+            for r in b.get("rows", []):
+                L.append(" | ".join(str(x) for x in r))
+        elif t == "signature":
+            for s in b.get("slots", []):
+                L.append("[서명] %s: %s" % (s.get("role", ""), s.get("name", "") or "—"))
+    return "\n".join(L)
+
+
+@app.get("/cases/{case_id}/sjph-manual.pdf")
+def get_sjph_manual_pdf(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """SJPH/HPAS Manual 리치 PDF — 공식 템플릿(GLHAC HPAS SJPH Template) 구조 정합.
+    표지·법적근거·Bismillah·목적범위·고객정보·1~5장·종결서약·HPAS준비도·17부록 + 증빙 게이트."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    blocks = _sjph_manual_blocks(db, c)
+    pdf = _render_pdf_rich("Halal Product Assurance System (HPAS) Manual", blocks,
+                           subtitle=(c.company_name or ""),
+                           footer="GL-HAC AI · SJPH/HPAS Manual " + case_id[:8])
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": "attachment; filename=sjph_manual_%s.pdf" % case_id[:8]})
 
