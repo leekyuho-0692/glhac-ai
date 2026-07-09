@@ -1,5 +1,5 @@
 """요청 스키마 (Pydantic v2)."""
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -87,6 +87,49 @@ class FatwaReq(BaseModel):
 class MockAuditDecisionReq(BaseModel):
     result: str                      # pass|reject
     reason: Optional[str] = None     # reject 시 필수
+
+
+class MockAuditManualReq(BaseModel):
+    decision: str                    # approve|reject
+    comment: Optional[str] = None    # reject 시 필수(보완요청 사유)
+
+
+class MockAuditEvidenceReq(BaseModel):
+    section: str                     # MOCK_EVIDENCE_SECTIONS 키
+    verdict: str                     # comply|nonconformity
+    corrective_action: Optional[str] = None   # nonconformity 시 권장(빈값 허용)
+
+
+class PreassessReviewReq(BaseModel):        # P0-3 사전심사 오디터 3섹션 검토
+    sections: Dict[str, Any]                # {documents:{ok,note}, materials:{ok,note}, process:{ok,note}}
+    verdict: str                            # ready|supplement
+    note: Optional[str] = None
+
+
+class PreassessDocRequestReq(BaseModel):    # P0-3 오디터 추가서류 요청·전송
+    items: List[Dict[str, Any]]             # [{doc_type, note}]
+    message: Optional[str] = None
+
+
+class PreassessResubmitReq(BaseModel):      # P0-3 클라이언트 재제출
+    note: Optional[str] = None
+
+
+class AuditReportReturnReq(BaseModel):      # P0-4 오디터 보고서 보완 반려
+    comment: str                            # 보완 요청 사유(필수)
+
+
+class AuditReportResubmitReq(BaseModel):    # P0-4 클라이언트 재제출
+    note: Optional[str] = None
+
+
+class AuditReportReconfirmReq(BaseModel):   # P0-4 오디터 수정확인
+    decision: str                           # ok|hold
+    note: Optional[str] = None
+
+
+class AuditReportSignReq(BaseModel):        # P0-4 오디터 E-서명
+    name: str                               # 서명자명(필수)
 
 
 class OnsiteChecklistReq(BaseModel):

@@ -1096,6 +1096,227 @@ def mock_audit_decide(case_id: str, body: schemas.MockAuditDecisionReq,
     return {"ok": True, "result": result, "transitioned_to": transitioned_to}
 
 
+# ── P0-5: 모의심사 오디터 뷰 3종 — 스키마 무변경, WorkflowEvent(latest-wins)로 저장 ──
+# 5개 증거 섹션 고정 상수(고정 순서·키). 조회 시 섹션별 최신 이벤트가 현재 판정.
+MOCK_EVIDENCE_SECTIONS = [("material_storage", "원재료 보관"), ("production_video", "생산 공정 영상"),
+                          ("product_storage", "제품 보관"), ("facility", "생산 시설"),
+                          ("hygiene", "위생 관리")]
+
+
+def _mock_manual_latest(db, case_id):
+    """할랄매뉴얼 검토 최신 상태(mock_audit.manual, latest-wins)."""
+    e = (db.query(models.WorkflowEvent)
+         .filter(models.WorkflowEvent.case_id == case_id,
+                 models.WorkflowEvent.action == "mock_audit.manual")
+         .order_by(models.WorkflowEvent.created_at.desc()).first())
+    if not e:
+        return None
+    p = e.payload or {}
+    return {"decision": p.get("decision"), "comment": p.get("comment", ""), "round": p.get("round", 0),
+            "actor": e.actor_id, "at": e.created_at.isoformat() if e.created_at else None}
+
+
+def _mock_evidence_latest(db, case_id):
+    """섹션별 최신 판정 맵(mock_audit.evidence append → latest-wins)."""
+    evs = (db.query(models.WorkflowEvent)
+           .filter(models.WorkflowEvent.case_id == case_id,
+                   models.WorkflowEvent.action == "mock_audit.evidence")
+           .order_by(models.WorkflowEvent.created_at.asc()).all())
+    latest = {}
+    for e in evs:
+        p = e.payload or {}
+        sec = p.get("section")
+        if sec:
+            latest[sec] = {"verdict": p.get("verdict"), "corrective_action": p.get("corrective_action", ""),
+                           "actor": e.actor_id, "at": e.created_at.isoformat() if e.created_at else None}
+    return latest
+
+
+def _mock_report_latest(db, case_id):
+    """AI 모의심사 리포트 최신(mock_audit.ai_report)."""
+    e = (db.query(models.WorkflowEvent)
+         .filter(models.WorkflowEvent.case_id == case_id,
+                 models.WorkflowEvent.action == "mock_audit.ai_report")
+         .order_by(models.WorkflowEvent.created_at.desc()).first())
+    return (e.payload or {}) if e else None
+
+
+@app.post("/cases/{case_id}/mock-audit/manual")
+def mock_audit_manual(case_id: str, body: schemas.MockAuditManualReq,
+                      user=Depends(rbac.require_action("audit.mock_decide")),
+                      db: Session = Depends(get_db)):
+    """① 할랄매뉴얼(SJPH/HPAS) 검토 승인/반려 — 반려 왕복 시 재작성 회차(round) 누적. latest-wins."""
+    c = _get_case(db, case_id, user)
+    decision = (body.decision or "").lower()
+    if decision not in ("approve", "reject"):
+        raise HTTPException(422, {"code": "INVALID_DECISION", "allowed": ["approve", "reject"]})
+    comment = (body.comment or "").strip()
+    if decision == "reject" and not comment:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    # round = 지금까지 이 케이스의 mock_audit.manual reject 이벤트 수 + 1
+    prior = (db.query(models.WorkflowEvent)
+             .filter(models.WorkflowEvent.case_id == case_id,
+                     models.WorkflowEvent.action == "mock_audit.manual").all())
+    reject_count = sum(1 for e in prior if (e.payload or {}).get("decision") == "reject")
+    rnd = reject_count + 1
+    sm.record_event(db, c, c.status, c.status, "mock_audit.manual", user["role"], user["uid"],
+                    {"decision": decision, "comment": comment, "round": rnd})
+    if decision == "reject":
+        _notify(db, c, "mock_audit.manual_return", "할랄매뉴얼 보완 요청", body=comment, role="applicant")
+    db.commit()
+    return {"ok": True, "decision": decision, "round": rnd}
+
+
+@app.post("/cases/{case_id}/mock-audit/evidence-verdict")
+def mock_audit_evidence_verdict(case_id: str, body: schemas.MockAuditEvidenceReq,
+                                user=Depends(rbac.require_action("audit.mock_decide")),
+                                db: Session = Depends(get_db)):
+    """② 5개 증거 섹션별 적합/부적합 판정 — append 기록, 조회 시 섹션별 최신(latest-wins)."""
+    c = _get_case(db, case_id, user)
+    valid = {k for k, _ in MOCK_EVIDENCE_SECTIONS}
+    if body.section not in valid:
+        raise HTTPException(422, {"code": "BAD_SECTION", "allowed": [k for k, _ in MOCK_EVIDENCE_SECTIONS]})
+    verdict = (body.verdict or "").lower()
+    if verdict not in ("comply", "nonconformity"):
+        raise HTTPException(422, {"code": "INVALID_VERDICT", "allowed": ["comply", "nonconformity"]})
+    ca = (body.corrective_action or "").strip()
+    sm.record_event(db, c, c.status, c.status, "mock_audit.evidence", user["role"], user["uid"],
+                    {"section": body.section, "verdict": verdict, "corrective_action": ca})
+    db.commit()
+    return {"ok": True, "section": body.section, "verdict": verdict}
+
+
+def _mock_ai_report_build(db, c):
+    """③ 결정적 집계 → 요약·권고 텍스트. LLM 보강은 호출부에서 옵션 처리."""
+    case_id = c.case_id
+    latest_ev = _mock_evidence_latest(db, case_id)
+    sections, comply, nonconf = [], 0, 0
+    for k, ko in MOCK_EVIDENCE_SECTIONS:
+        v = latest_ev.get(k, {})
+        vd = v.get("verdict")
+        if vd == "comply":
+            comply += 1
+        elif vd == "nonconformity":
+            nonconf += 1
+        sections.append({"section": k, "label": ko, "verdict": vd,
+                         "corrective_action": v.get("corrective_action", "")})
+    have = _ensure_hpas(db, case_id)
+    hpas_ok = sum(1 for el in HPAS_ELEMENTS if have[el].status == "ok")
+    sjph_completion = round(hpas_ok / len(HPAS_ELEMENTS) * 100)
+    evidence_docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).count()
+    manual = _mock_manual_latest(db, case_id)
+    manual_status = manual.get("decision") if manual else None
+    manual_round = manual.get("round") if manual else 0
+    manual_ko = {"approve": "승인", "reject": "반려"}.get(manual_status, "미검토")
+    overall = "적합" if (nonconf == 0 and comply > 0) else ("부적합" if nonconf > 0 else "미판정")
+    summary = ("모의심사 준비자료 종합평가 — 증거 섹션 적합 %d · 부적합 %d(총 %d), "
+               "SJPH/HPAS 완성도 %d%%, 제출 증거 %d건, 할랄매뉴얼 검토 %s. 종합 %s." % (
+                   comply, nonconf, len(MOCK_EVIDENCE_SECTIONS), sjph_completion,
+                   evidence_docs, manual_ko, overall))
+    recs = []
+    for s in sections:
+        if s["verdict"] == "nonconformity":
+            recs.append("· %s 부적합 — 시정조치 필요%s" % (
+                s["label"], (": " + s["corrective_action"]) if s["corrective_action"] else ""))
+    if sjph_completion < 100:
+        recs.append("· SJPH/HPAS 미완성 요소 보완(현재 %d%%)" % sjph_completion)
+    if manual_status != "approve":
+        recs.append("· 할랄매뉴얼 검토 승인 필요(현재 %s)" % manual_ko)
+    if not recs:
+        recs.append("· 준비자료 양호 — 현장심사 단계 진행 권고")
+    return {"summary": summary, "recommendations": "\n".join(recs), "verdict_overall": overall,
+            "comply": comply, "nonconformity": nonconf, "sections": sections,
+            "sjph_completion": sjph_completion, "evidence_docs": evidence_docs,
+            "manual_status": manual_status, "manual_round": manual_round}
+
+
+@app.post("/cases/{case_id}/mock-audit/ai-report/run")
+def mock_audit_ai_report_run(case_id: str,
+                             user=Depends(rbac.require_action("audit.mock_decide")),
+                             db: Session = Depends(get_db)):
+    """③ AI 모의심사 리포트 — 결정적 집계(CI 안전) + LLM 보강(옵션·실패 시 폴백)."""
+    c = _get_case(db, case_id, user)
+    report = _mock_ai_report_build(db, c)
+    # LLM 보강은 옵션 — 미가용/실패/타임아웃 시 결정적 요약으로 폴백.
+    llm_note = ""
+    try:
+        prompt = ("다음 모의심사 집계로 심사관용 3~4문장 총평을 한국어로 작성.\n[요약]\n%s\n[권고]\n%s"
+                  % (report["summary"], report["recommendations"]))
+        out = ai_local.llm_text("당신은 인도네시아 할랄 인증 모의심사관입니다. 간결한 총평만 작성.",
+                                 prompt, timeout=30)
+        if out and out.strip():
+            llm_note = out.strip()
+    except Exception:  # noqa: BLE001
+        llm_note = ""
+    report["llm_note"] = llm_note
+    report["generated_at"] = datetime.utcnow().isoformat()
+    sm.record_event(db, c, c.status, c.status, "mock_audit.ai_report", user["role"], user["uid"], report)
+    db.commit()
+    return {"ok": True, "report": report}
+
+
+@app.get("/cases/{case_id}/mock-audit/detail")
+def mock_audit_detail(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """오디터 뷰 통합 조회 — 매뉴얼 최신+round·코멘트 이력, 섹션별 최신 verdict(5), 제출 증거, 리포트 최신."""
+    c = _get_case(db, case_id, user)
+    manual = _mock_manual_latest(db, case_id)
+    manual_evs = (db.query(models.WorkflowEvent)
+                  .filter(models.WorkflowEvent.case_id == case_id,
+                          models.WorkflowEvent.action == "mock_audit.manual")
+                  .order_by(models.WorkflowEvent.created_at.desc()).all())
+    manual_history = [{"decision": (e.payload or {}).get("decision"),
+                       "comment": (e.payload or {}).get("comment", ""),
+                       "round": (e.payload or {}).get("round"), "actor": e.actor_id,
+                       "at": e.created_at.isoformat() if e.created_at else None} for e in manual_evs]
+    latest_ev = _mock_evidence_latest(db, case_id)
+    sections = [{"section": k, "label": ko,
+                 "verdict": latest_ev.get(k, {}).get("verdict"),
+                 "corrective_action": latest_ev.get(k, {}).get("corrective_action", ""),
+                 "at": latest_ev.get(k, {}).get("at")} for k, ko in MOCK_EVIDENCE_SECTIONS]
+    docs = [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
+             "review_status": d.review_status, "has_file": bool(d.content_b64)}
+            for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all()]
+    return {"case_id": case_id, "status": c.status,
+            "manual": manual, "manual_history": manual_history,
+            "sections": sections, "documents": docs,
+            "ai_report": _mock_report_latest(db, case_id)}
+
+
+@app.get("/cases/{case_id}/mock-audit/ai-report.pdf")
+def mock_audit_ai_report_pdf(case_id: str,
+                             user=Depends(rbac.require_action("audit.mock_decide")),
+                             db: Session = Depends(get_db)):
+    """최신 AI 모의심사 리포트를 리치 PDF로. 리포트 미생성 시 즉석 집계로 렌더."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    rep = _mock_report_latest(db, case_id) or _mock_ai_report_build(db, c)
+    sec_rows = [[s.get("label", s.get("section", "")),
+                 {"comply": "적합", "nonconformity": "부적합"}.get(s.get("verdict"), "미판정"),
+                 s.get("corrective_action") or "-"] for s in rep.get("sections", [])]
+    blocks = [
+        {"type": "heading", "text": "AI 모의심사 리포트 · Mock Audit AI Report", "level": 1},
+        {"type": "kv", "label": "종합 판정", "value": rep.get("verdict_overall", "-")},
+        {"type": "kv", "label": "증거 섹션", "value": "적합 %d · 부적합 %d" % (rep.get("comply", 0), rep.get("nonconformity", 0))},
+        {"type": "kv", "label": "SJPH/HPAS 완성도", "value": "%d%%" % rep.get("sjph_completion", 0)},
+        {"type": "kv", "label": "제출 증거", "value": "%d건" % rep.get("evidence_docs", 0)},
+        {"type": "heading", "text": "증거 섹션 판정 · Evidence Verdicts", "level": 2},
+        {"type": "table", "headers": ["섹션", "판정", "시정조치"], "widths": [0.3, 0.18, 0.52],
+         "rows": sec_rows or [["-", "미판정", "-"]]},
+        {"type": "heading", "text": "종합 요약 · Summary", "level": 2},
+        {"type": "para", "text": rep.get("summary", "")},
+        {"type": "heading", "text": "권고 · Recommendations", "level": 2},
+    ]
+    for line in (rep.get("recommendations") or "").split("\n"):
+        blocks.append({"type": "para", "text": line})
+    if rep.get("llm_note"):
+        blocks.append({"type": "heading", "text": "AI 총평 · AI Note", "level": 2})
+        blocks.append({"type": "para", "text": rep["llm_note"]})
+    pdf = _render_pdf_rich("Mock Audit AI Report", blocks, subtitle=(c.company_name or ""),
+                           footer="GL-HAC AI · Mock Audit " + case_id[:8])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=mock_audit_ai_%s.pdf" % case_id[:8]})
+
+
 # ── v3: 역할별 작업 큐(worklist) — 조직 스코프, read-only ──────────────
 AUDIT_STAGES = {"document_pre_audit_requested", "document_pre_audit_in_review",
                 "document_pre_audit_approved", "lph_assignment", "onsite_audit_scheduled",
@@ -2452,6 +2673,196 @@ def gen_facility_info(case_id: str, facility_id: str,
     return {"document": content, "version": g.version, "gen_doc_id": g.gen_doc_id}
 
 
+# ===== 프로필 템플릿 미리보기 (Company Info Form.1 · Factory Audit 기업정보) =====
+# 저장된 케이스/시설 데이터를 docx 양식 그대로 채워 ①HTML 오버레이 뷰어 ②PDF 저장.
+# 폼을 한 번만 조립(단일 소스) → preview(JSON)와 .pdf 라우트가 동일 rows 사용.
+BISMILLAH_AR = "بِسْمِ اللهِ الرَّحْمَنِ الرَّحِيمِ"
+BISMILLAH_KO = "가장 자비롭고, 은혜로우신, 하나님의 이름으로"
+
+
+def _pv(*vals):
+    """프로필 값 — 첫 비어있지 않은 값(저장 데이터), 없으면 em-dash."""
+    for v in vals:
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return "—"
+
+
+def _prow(label_en, label_ko, *vals):
+    return {"label_en": label_en, "label_ko": label_ko, "value": _pv(*vals)}
+
+
+def _company_info_form(db, c):
+    """Company Info (Form.1 Client Intake) 폼 조립 — 미리보기·PDF 공용 단일 소스.
+    필드 매핑은 gen_company_info와 동일(회원가입 OCR·신청서 저장분 기준)."""
+    org = db.get(models.Org, c.org_id)
+    px = c.profile_ext or {}
+    pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").first()
+    if c.product_ids:
+        products = db.query(models.Product).filter(models.Product.product_id.in_(c.product_ids)).all()
+    else:
+        products = db.query(models.Product).filter_by(org_id=c.org_id).all()
+    g = lambda k: px.get(k)  # noqa: E731
+    sections = [
+        {"name": "기본 정보 · General", "rows": [
+            _prow("Date", "날짜"),
+            _prow("Agent/Representative Name", "에이전트/대표자 이름", c.responsible_person),
+            _prow("Client Name", "고객 이름", c.responsible_person),
+            _prow("Client Organization / Company Name", "고객 기관/회사 이름", c.company_name),
+        ]},
+        {"name": "고객 정보 · Client Information", "rows": [
+            _prow("Office Phone", "사무실 전화번호", g("office_phone")),
+            _prow("Cell Phone", "핸드폰 전화번호", c.phone),
+            _prow("Email Address", "메일 주소", c.email),
+            _prow("Address", "회사 주소", c.address, (org.address if org else None)),
+            _prow("City", "도시", g("city")),
+            _prow("Country", "국가", g("country")),
+            _prow("ZIP Code", "우편번호", g("zip")),
+            _prow("Occupation/Business Type", "직종/사업 유형", g("business_type")),
+        ]},
+        {"name": "담당자 · PIC / CP", "rows": [
+            _prow("Person In Charge (PIC) Name", "담당자 이름", g("pic_name")),
+            _prow("PIC Title", "담당자 직책", g("pic_title")),
+            _prow("PIC MobilePhone", "담당자 핸드폰 전화번호", g("pic_phone")),
+            _prow("PIC Email Address", "담당자 메일 주소", g("pic_email")),
+            _prow("Contact Person (CP) Name", "업무담당자 이름", g("cp_name")),
+            _prow("CP Title", "업무 담당자 직책", g("cp_title")),
+            _prow("CP Mobile Phone", "업무 담당자 핸드폰 전화번호", g("cp_phone")),
+            _prow("CP Email Address", "업무 담당자 메일 주소", g("cp_email")),
+        ]},
+        {"name": "등록·제품 · Registration & Product", "rows": [
+            _prow("Registration Type", "등록유형", g("registration_type")),
+            _prow("Application Type", "신청유형", g("application_type")),
+            _prow("Registration Status", "등록현황", g("registration_status")),
+            _prow("Product Type", "제품유형", g("product_type")),
+            _prow("Does Si HALAL exist", "Si할랄 존재여부", g("si_halal")),
+            _prow("Product Marketing Type", "제품 마케팅 유형", g("marketing_type")),
+            _prow("Total Employee", "총 직원 수", g("total_employee")),
+            _prow("Production Capacity", "생산능력", g("production_capacity")),
+            _prow("ID TAX Company (*Only Indonesia)", "세금 ID", g("tax_id")),
+            _prow("Halal Supervisor", "할랄 감독자", (pen.name if pen else None), c.halal_supervisor),
+        ]},
+    ]
+    return {
+        "title": "Client Intake Form · 고객 접수 양식 (Form.1)",
+        "header": {"bismillah": BISMILLAH_AR, "bismillah_ko": BISMILLAH_KO,
+                   "form_title": "(Form.1) Client Intake Form 고객 접수 양식"},
+        "sections": sections,
+        "products": [{"no": i + 1, "name": p.name, "category": p.category or "—"}
+                     for i, p in enumerate(products)],
+    }
+
+
+def _factory_profile_form(db, c, f):
+    """Factory Audit — Company Information 블록 폼 조립(공장별). 미리보기·PDF 공용 단일 소스.
+    필드 매핑은 gen_facility_info와 동일(시설 저장분 + 케이스 기준 할랄감독자)."""
+    pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").first()
+    fx = f.profile_ext or {}
+    g = lambda k: fx.get(k)  # noqa: E731
+    label = fx.get("label") or f.name or "공장"
+    sections = [
+        {"name": "기업 정보 · Company Information", "rows": [
+            _prow("Date", "날짜"),
+            _prow("Representative Name", "대표자 이름", c.responsible_person),
+            _prow("Company Name", "회사 이름", f.name, c.company_name),
+            _prow("Business Registration Number", "사업자등록번호", f.reg_no, c.nib),
+            _prow("Office Phone", "사무실 전화번호", g("phone")),
+            _prow("Cell Phone", "핸드폰 전화번호", c.phone),
+            _prow("Email Address", "메일 주소", g("email"), c.email),
+            _prow("Address", "회사 주소", f.address, c.address),
+            _prow("City", "도시", f.city),
+            _prow("Country", "국가", f.country),
+            _prow("ZIP Code", "우편번호", f.zip),
+            _prow("Factory Address", "공장 주소", f.address, c.factory_address),
+            _prow("Halal Supervisor Name", "할랄 관리자 이름", (pen.name if pen else None), c.halal_supervisor),
+            _prow("Halal Supervisor Mobile Phone", "할랄 관리자 핸드폰 전화번호"),
+        ]},
+        {"name": "담당자 · PIC", "rows": [
+            _prow("PIC Name", "담당자 이름", g("pic_name")),
+            _prow("PIC Title", "담당자 직책", g("pic_title")),
+        ]},
+    ]
+    return {
+        "title": "Factory Audit · Company Information 기업정보",
+        "header": {"form_title": "Factory Audit Template — Company Information 기업정보 (%s)" % label},
+        "sections": sections,
+        "facility_label": label,
+    }
+
+
+def _profile_form_to_blocks(form):
+    """폼 dict → _render_pdf_rich 블록. EN/KO 병기 라벨을 표(table) 블록으로 렌더."""
+    blocks = []
+    h = form.get("header") or {}
+    if h.get("bismillah"):
+        blocks.append({"type": "para", "text": h["bismillah"]})
+    if h.get("bismillah_ko"):
+        blocks.append({"type": "para", "text": h["bismillah_ko"]})
+    if h.get("form_title"):
+        blocks.append({"type": "heading", "text": h["form_title"], "level": 1})
+    for s in form.get("sections") or []:
+        blocks.append({"type": "heading", "text": s["name"], "level": 2})
+        rows = [["%s · %s" % (r["label_en"], r["label_ko"]) if r.get("label_ko") else r["label_en"],
+                 r["value"]] for r in s["rows"]]
+        blocks.append({"type": "table", "headers": ["항목 · Field", "값 · Value"],
+                       "widths": [0.5, 0.5], "rows": rows})
+    products = form.get("products")
+    if products:
+        blocks.append({"type": "heading", "text": "제품 · Products", "level": 2})
+        prows = [[str(p["no"]), p["name"], p.get("category") or "—"] for p in products]
+        blocks.append({"type": "table", "headers": ["No", "Product 제품", "Category 분류"],
+                       "widths": [0.12, 0.55, 0.33], "rows": prows})
+    return blocks
+
+
+@app.get("/cases/{case_id}/docs/company-info/preview")
+def preview_company_info(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """업체 프로필(Form.1) 미리보기 폼(JSON) — 저장 데이터 기준, read-only·org격리."""
+    c = _get_case(db, case_id, user)
+    return _company_info_form(db, c)
+
+
+@app.get("/cases/{case_id}/docs/company-info.pdf")
+def company_info_pdf(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """업체 프로필(Form.1) PDF — preview와 동일 폼 조립을 리치PDF로 렌더(저장 없음)."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    form = _company_info_form(db, c)
+    pdf = _render_pdf_rich(form["title"], _profile_form_to_blocks(form),
+                           subtitle=(c.company_name or ""),
+                           footer="GL-HAC AI · Company Info " + case_id[:8])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=company_info_%s.pdf" % case_id[:8]})
+
+
+@app.get("/cases/{case_id}/facilities/{facility_id}/docs/factory-profile/preview")
+def preview_factory_profile(case_id: str, facility_id: str,
+                            user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """공장 프로필(Factory Audit 기업정보) 미리보기 폼(JSON) — 공장별, read-only·org격리."""
+    c = _get_case(db, case_id, user)
+    f = db.get(models.Facility, facility_id)
+    if not f or f.org_id != c.org_id:
+        raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
+    return _factory_profile_form(db, c, f)
+
+
+@app.get("/cases/{case_id}/facilities/{facility_id}/docs/factory-profile.pdf")
+def factory_profile_pdf(case_id: str, facility_id: str,
+                        user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """공장 프로필(Factory Audit 기업정보) PDF — preview와 동일 폼 렌더(저장 없음)."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    f = db.get(models.Facility, facility_id)
+    if not f or f.org_id != c.org_id:
+        raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
+    form = _factory_profile_form(db, c, f)
+    pdf = _render_pdf_rich(form["title"], _profile_form_to_blocks(form),
+                           subtitle=(f.name or c.company_name or ""),
+                           footer="GL-HAC AI · Factory Profile " + facility_id[:8])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=factory_profile_%s.pdf" % facility_id[:8]})
+
+
 CONTRACT_STATIC_SECTIONS = [
     ("SECTION 3 · GL HAC Commitment", "GL HAC는 인도네시아 할랄표준(SJPH)에 따라 전문적으로 심사를 수행하고, 심사보고서를 BPJPH에 제출하며, 고객 정보를 법령·BPJPH 요구 외에는 기밀로 유지하고, 인도네시아 할랄표준의 중요한 변경을 고객에게 통지한다."),
     ("SECTION 4 · Client Commitment", "고객은 (a) 인도네시아 할랄제품보증시스템(SJPH)의 모든 요건 준수, (b) 심사에 진실하고 완전한 정보 제공, (c) 심사팀·BPJPH 대표의 현장·문서·인원 접근 보장, (d) 사내 HPAS/SJPH 구축·유지, (e) 수수료 일정 납부, (f) 제품·원재료·공정·소유권의 중대한 변경 즉시 통지, (g) 인증서 발급 시 규정에 따른 할랄 라벨 사용, (h) 인증 종료·정지·철회 시 할랄 라벨 사용 중단을 약정한다."),
@@ -3341,6 +3752,196 @@ def approve_gendoc(gen_doc_id: str, user=Depends(auth.require_roles("auditor", "
     g.status = "approved"
     db.commit()
     return {"ok": True, "status": "approved", "version": g.version}
+
+
+# ── P0-4: 현장 심사보고서 재심 루프 + 오디터 E-서명 + 파트와 전달 게이트 ──
+# 스키마 무변경 — 보고서 문서는 기존 GeneratedDocument(audit_report) 재사용,
+# 루프·서명·게이트 상태는 WorkflowEvent(latest-wins)로 저장. P0-2~3과 동일 패턴.
+def _latest_audit_report(db, case_id):
+    """최신 audit_report GeneratedDocument(버전 내림차순 1건). 없으면 None."""
+    return (db.query(models.GeneratedDocument)
+            .filter_by(case_id=case_id, doc_type="audit_report")
+            .order_by(models.GeneratedDocument.version.desc()).first())
+
+
+def _audit_report_event_latest(db, case_id, action):
+    """action별 최신 이벤트 payload(+메타). 없으면 None. latest-wins."""
+    e = (db.query(models.WorkflowEvent)
+         .filter(models.WorkflowEvent.case_id == case_id,
+                 models.WorkflowEvent.action == action)
+         .order_by(models.WorkflowEvent.created_at.desc()).first())
+    if not e:
+        return None
+    p = dict(e.payload or {})
+    p["at"] = e.created_at.isoformat() if e.created_at else None
+    p["actor"] = e.actor_id
+    return p
+
+
+def _audit_report_return_count(db, case_id):
+    """이 케이스의 audit_report.return 이벤트 수(재심 회차 산정용)."""
+    return (db.query(models.WorkflowEvent)
+            .filter(models.WorkflowEvent.case_id == case_id,
+                    models.WorkflowEvent.action == "audit_report.return").count())
+
+
+def _fatwa_gate_check(db, c):
+    """파트와 상정 선행조건 검증 — (미충족 코드 리스트, 근거 dict) 반환.
+    (a) audit_report GeneratedDocument approved 존재
+    (b) audit_report.sign 이벤트 존재(오디터 서명)
+    (c) SJPH/HPAS complete(HPAS 5요소 ok + PenyeliaHalal active) — get_sjph 로직 재사용."""
+    missing = []
+    g = _latest_audit_report(db, c.case_id)
+    report_approved = bool(g and g.status == "approved")
+    if not report_approved:
+        missing.append("REPORT_NOT_APPROVED")
+    sign = _audit_report_event_latest(db, c.case_id, "audit_report.sign")
+    if not sign:
+        missing.append("AUDITOR_SIGN_REQUIRED")
+    have = _ensure_hpas(db, c.case_id)
+    hpas_ok = sum(1 for el in HPAS_ELEMENTS if have[el].status == "ok")
+    penyelia_ok = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").count() > 0
+    sjph_complete = (hpas_ok == len(HPAS_ELEMENTS)) and penyelia_ok
+    if not sjph_complete:
+        missing.append("SJPH_INCOMPLETE")
+    ctx = {"report_approved": report_approved, "signed": sign is not None,
+           "sjph_complete": sjph_complete, "hpas_ok": hpas_ok,
+           "hpas_total": len(HPAS_ELEMENTS), "penyelia_ok": penyelia_ok,
+           "gen_doc_id": (g.gen_doc_id if g else None),
+           "version": (g.version if g else None)}
+    return missing, ctx
+
+
+@app.post("/cases/{case_id}/audit-report/return")
+def audit_report_return(case_id: str, body: schemas.AuditReportReturnReq,
+                        user=Depends(auth.require_roles("auditor", "operator")),
+                        db: Session = Depends(get_db)):
+    """① 재심 루프 — 오디터가 보고서 보완 반려. comment 필수. round=기존 return 수+1. 클라이언트 알림."""
+    c = _get_case(db, case_id, user)
+    comment = (body.comment or "").strip()
+    if not comment:
+        raise HTTPException(422, {"code": "COMMENT_REQUIRED"})
+    rnd = _audit_report_return_count(db, case_id) + 1
+    sm.record_event(db, c, c.status, c.status, "audit_report.return", user["role"], user["uid"],
+                    {"comment": comment, "round": rnd})
+    _notify(db, c, "audit_report.return", "심사보고서 보완 요청", body=comment, role="applicant")
+    db.commit()
+    return {"ok": True, "round": rnd}
+
+
+@app.post("/cases/{case_id}/audit-report/resubmit")
+def audit_report_resubmit(case_id: str, body: schemas.AuditReportResubmitReq,
+                          user=Depends(auth.require_roles("applicant", "consultant")),
+                          db: Session = Depends(get_db)):
+    """① 재심 루프 — 클라이언트가 수정 재수신. round=현재 return 회차. 오디터 알림."""
+    c = _get_case(db, case_id, user)
+    rnd = _audit_report_return_count(db, case_id)
+    note = (body.note or "").strip()
+    sm.record_event(db, c, c.status, c.status, "audit_report.resubmit", user["role"], user["uid"],
+                    {"round": rnd, "note": note})
+    _notify(db, c, "audit_report.resubmit", "심사보고서 재제출", body=note, role="auditor")
+    db.commit()
+    return {"ok": True, "round": rnd}
+
+
+@app.post("/cases/{case_id}/audit-report/reconfirm")
+def audit_report_reconfirm(case_id: str, body: schemas.AuditReportReconfirmReq,
+                           user=Depends(auth.require_roles("auditor", "operator")),
+                           db: Session = Depends(get_db)):
+    """① 재심 루프 — 오디터가 수정확인(ok|hold). latest-wins."""
+    c = _get_case(db, case_id, user)
+    decision = (body.decision or "").lower()
+    if decision not in ("ok", "hold"):
+        raise HTTPException(422, {"code": "INVALID_DECISION", "allowed": ["ok", "hold"]})
+    note = (body.note or "").strip()
+    sm.record_event(db, c, c.status, c.status, "audit_report.reconfirm", user["role"], user["uid"],
+                    {"decision": decision, "note": note})
+    db.commit()
+    return {"ok": True, "decision": decision}
+
+
+@app.post("/cases/{case_id}/audit-report/sign")
+def audit_report_sign(case_id: str, body: schemas.AuditReportSignReq,
+                      user=Depends(auth.require_roles("auditor", "operator")),
+                      db: Session = Depends(get_db)):
+    """② 오디터 E-서명 — approved 보고서에 전자서명(파트와 상정의 선행조건). 미approved면 409."""
+    c = _get_case(db, case_id, user)
+    g = _latest_audit_report(db, case_id)
+    if not g or g.status != "approved":
+        raise HTTPException(409, {"code": "REPORT_NOT_APPROVED"})
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(422, {"code": "NAME_REQUIRED"})
+    at = datetime.utcnow().isoformat()
+    sm.record_event(db, c, c.status, c.status, "audit_report.sign", user["role"], user["uid"],
+                    {"name": name, "gen_doc_id": g.gen_doc_id, "at": at})
+    db.commit()
+    return {"ok": True, "name": name, "gen_doc_id": g.gen_doc_id, "at": at}
+
+
+@app.post("/cases/{case_id}/audit-report/send-fatwa")
+def audit_report_send_fatwa(case_id: str,
+                            user=Depends(auth.require_roles("auditor", "operator")),
+                            db: Session = Depends(get_db)):
+    """③ 파트와 전달 게이트 — (a)approved 보고서 (b)오디터 서명 (c)SJPH complete 검증.
+    미충족 시 409 FATWA_GATE_BLOCKED+missing. 통과 시 상태머신 가드가 허용할 때만 fatwa_review로
+    전이(강제 점프 금지 — _on_invoice_paid와 동일 철학). 게이트 통과 사실·이벤트는 항상 기록."""
+    c = _get_case(db, case_id, user)
+    missing, ctx = _fatwa_gate_check(db, c)
+    if missing:
+        raise HTTPException(409, {"code": "FATWA_GATE_BLOCKED", "missing": missing})
+    target = "fatwa_review"
+    transitioned_to = None
+    ok, _blk = sm.can_transition(db, c, target)
+    if ok:                              # 가드 통과 시에만 전이(아니면 게이트 통과만 기록)
+        frm = c.status
+        sm.apply_side_effects(c, target)
+        c.status = target
+        sm.record_event(db, c, frm, target, "audit_report.send_fatwa", user["role"], user["uid"],
+                        {"gate": "passed", "gen_doc_id": ctx.get("gen_doc_id")})
+        transitioned_to = target
+    else:
+        sm.record_event(db, c, c.status, c.status, "audit_report.send_fatwa", user["role"], user["uid"],
+                        {"gate": "passed", "transition_skipped": True,
+                         "gen_doc_id": ctx.get("gen_doc_id")})
+    _notify(db, c, "audit_report.send_fatwa", "파트와 상정 — 현장심사 보고서",
+            body="현장심사 보고서(서명 완료)가 파트와 심의로 상정되었습니다.", role="fatwa_liaison")
+    db.commit()
+    return {"ok": True, "transitioned_to": transitioned_to, "gate": "passed"}
+
+
+@app.get("/cases/{case_id}/audit-report/status")
+def audit_report_status(case_id: str, user=Depends(auth.get_current_user),
+                        db: Session = Depends(get_db)):
+    """통합 조회 — 오디터·클라이언트 공용(org 격리). 프런트가 재심 루프+게이트 사유를 이걸로 렌더."""
+    c = _get_case(db, case_id, user)
+    g = _latest_audit_report(db, case_id)
+    sign = _audit_report_event_latest(db, case_id, "audit_report.sign")
+    latest_return = _audit_report_event_latest(db, case_id, "audit_report.return")
+    latest_resubmit = _audit_report_event_latest(db, case_id, "audit_report.resubmit")
+    latest_reconfirm = _audit_report_event_latest(db, case_id, "audit_report.reconfirm")
+    sent = _audit_report_event_latest(db, case_id, "audit_report.send_fatwa")
+    missing, ctx = _fatwa_gate_check(db, c)
+    return {
+        "report": {"approved": bool(g and g.status == "approved"),
+                   "gen_doc_id": (g.gen_doc_id if g else None),
+                   "version": (g.version if g else None),
+                   "status": (g.status if g else None)},
+        "signed": ({"name": sign.get("name"), "at": sign.get("at"),
+                    "gen_doc_id": sign.get("gen_doc_id")} if sign else None),
+        "latest_return": ({"comment": latest_return.get("comment"),
+                           "round": latest_return.get("round"),
+                           "at": latest_return.get("at")} if latest_return else None),
+        "latest_resubmit": ({"round": latest_resubmit.get("round"),
+                             "note": latest_resubmit.get("note"),
+                             "at": latest_resubmit.get("at")} if latest_resubmit else None),
+        "latest_reconfirm": ({"decision": latest_reconfirm.get("decision"),
+                              "note": latest_reconfirm.get("note"),
+                              "at": latest_reconfirm.get("at")} if latest_reconfirm else None),
+        "return_count": _audit_report_return_count(db, case_id),
+        "fatwa_gate": {"ready": len(missing) == 0, "missing": missing, **ctx},
+        "sent_fatwa": sent is not None,
+    }
 
 
 @app.get("/cases/{case_id}/findings")
@@ -4346,6 +4947,33 @@ def add_invoice(case_id: str, body: schemas.InvoiceReq,
             "due_date": str(inv.due_date)}
 
 
+def _on_invoice_paid(db, c, user):
+    """인보이스가 paid/confirmed로 확정되는 시점의 케이스 상태 게이트(멱등).
+    결제 완료 후 모의심사 진입 단계(document_pre_audit_requested)로 전이 — 단,
+    상태머신 가드를 통과할 때만(강제 점프 금지). 이미 모의심사/이후 단계거나
+    유효 전이가 아니면 조용히 no-op. 전이 시 담당자(오디터) 배정 태스크+알림 생성.
+    스키마 무변경 — 배정 전용 모델이 없어 WorkflowEvent + Notification 큐로 기록."""
+    target = "document_pre_audit_requested"
+    # 이미 모의심사/그 이후 단계면 재전이·중복알림 금지(멱등)
+    if c.status in MOCK_AUDIT_STAGES:
+        return None
+    ok, _blk = sm.can_transition(db, c, target)
+    if not ok:
+        return None  # 가드 실패/유효 전이 아님 → 상태 유지(no-op)
+    frm = c.status
+    sm.apply_side_effects(c, target)
+    c.status = target
+    sm.record_event(db, c, frm, target, "payment.gate",
+                    (user or {}).get("role", "system"), (user or {}).get("uid"),
+                    {"trigger": "invoice_paid"})
+    # 모의심사 담당자 배정 태스크(배정 전용 모델 부재 → 이벤트로 기록) + 알림
+    sm.record_event(db, c, target, target, "mock_audit.task_created",
+                    "system", None, {"assigned_role": "auditor"})
+    _notify(db, c, "mock_audit.assigned", "모의심사 대상 배정",
+            body="결제 확정으로 모의심사 대상으로 배정되었습니다.", role="auditor")
+    return target
+
+
 @app.patch("/invoices/{invoice_id}/pay")
 def pay_invoice(invoice_id: str, user=Depends(auth.require_roles("applicant", "consultant")),
                 db: Session = Depends(get_db)):
@@ -4356,6 +4984,7 @@ def pay_invoice(invoice_id: str, user=Depends(auth.require_roles("applicant", "c
     inv.status = "paid"
     sm.record_event(db, c, c.status, c.status, "invoice.pay", user["role"], user["uid"],
                     {"invoice_id": invoice_id})
+    _on_invoice_paid(db, c, user)   # 결제확정 → 모의심사 진입 게이트(가드 통과 시)
     db.commit()
     return {"invoice_id": invoice_id, "status": "paid"}
 
@@ -4385,6 +5014,8 @@ def record_payment(invoice_id: str, body: schemas.PaymentReq,
             "before": frm, "after": inv.status}, commit=False)
     sm.record_event(db, c, c.status, c.status, "invoice.payment", user["role"], user["uid"],
                     {"invoice_id": invoice_id, "method": body.method, "amount": paid_amt})
+    if inv.status == "paid":        # 자동승인(va/card·금액일치) 확정 → 모의심사 진입 게이트
+        _on_invoice_paid(db, c, user)
     db.commit()
     return {"payment_id": p.id, "invoice_id": invoice_id, "amount": p.amount,
             "method": p.method, "status": p.status, "invoice_status": inv.status}
@@ -4426,6 +5057,9 @@ def set_invoice_status(invoice_id: str, body: schemas.InvoiceStatusReq,
                                   currency="IDR", method="manual", status="confirmed", paid_by=user["uid"]))
     _audit(db, user, "payment.status", "invoice", invoice_id, inv.case_id,
            {"before": frm, "after": body.status, "reason": body.reason}, commit=False)
+    if body.status == "paid":       # 관리자 결제확정 → 모의심사 진입 게이트
+        c = _get_case(db, inv.case_id, user)
+        _on_invoice_paid(db, c, user)
     db.commit()
     return {"invoice_id": invoice_id, "status": inv.status}
 
@@ -5571,6 +6205,119 @@ def pathway_confirm(case_id: str, body: schemas.PathwayConfirm,
                     {"pathway": body.pathway, "override_reason": body.override_reason})
     db.commit()
     return {"pathway": c.pathway, "next_state": target, "assessment": a}
+
+
+# ── P0-3: 사전심사 오디터 회신 루프 — 스키마 무변경, WorkflowEvent(latest-wins)로 저장 ──
+# stageBar stage3(=auditor_reviewed)의 근거를 채운다. Phase 2 mock_audit 헬퍼와 동일 패턴.
+PREASSESS_SECTIONS = ("documents", "materials", "process")   # 문서·재료·제조 3섹션(고정 키)
+
+
+def _preassess_review_latest(db, case_id):
+    """오디터 3섹션 검토 최신(preassess.review, latest-wins)."""
+    e = (db.query(models.WorkflowEvent)
+         .filter(models.WorkflowEvent.case_id == case_id,
+                 models.WorkflowEvent.action == "preassess.review")
+         .order_by(models.WorkflowEvent.created_at.desc()).first())
+    if not e:
+        return None
+    p = e.payload or {}
+    return {"sections": p.get("sections", {}), "verdict": p.get("verdict"),
+            "note": p.get("note", ""), "at": e.created_at.isoformat() if e.created_at else None}
+
+
+def _preassess_doc_requests(db, case_id):
+    """추가서류 요청 이력(preassess.doc_request, 회차 오름차순)."""
+    evs = (db.query(models.WorkflowEvent)
+           .filter(models.WorkflowEvent.case_id == case_id,
+                   models.WorkflowEvent.action == "preassess.doc_request")
+           .order_by(models.WorkflowEvent.created_at.asc()).all())
+    return [{"items": (e.payload or {}).get("items", []), "message": (e.payload or {}).get("message", ""),
+             "round": (e.payload or {}).get("round"),
+             "at": e.created_at.isoformat() if e.created_at else None} for e in evs]
+
+
+def _preassess_resubmit_latest(db, case_id):
+    """클라이언트 재제출 최신(preassess.resubmit, latest-wins)."""
+    e = (db.query(models.WorkflowEvent)
+         .filter(models.WorkflowEvent.case_id == case_id,
+                 models.WorkflowEvent.action == "preassess.resubmit")
+         .order_by(models.WorkflowEvent.created_at.desc()).first())
+    if not e:
+        return None
+    p = e.payload or {}
+    return {"round": p.get("round"), "note": p.get("note", ""),
+            "at": e.created_at.isoformat() if e.created_at else None}
+
+
+@app.post("/cases/{case_id}/preassess/review")
+def preassess_review(case_id: str, body: schemas.PreassessReviewReq,
+                     user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator")),
+                     db: Session = Depends(get_db)):
+    """① 오디터 3섹션(문서·재료·제조) 검토 기록 — auditor_reviewed 근거. latest-wins."""
+    c = _get_case(db, case_id, user)
+    verdict = (body.verdict or "").lower()
+    if verdict not in ("ready", "supplement"):
+        raise HTTPException(422, {"code": "INVALID_VERDICT", "allowed": ["ready", "supplement"]})
+    sections = body.sections or {}
+    bad = set(sections.keys()) - set(PREASSESS_SECTIONS)
+    if bad:
+        raise HTTPException(422, {"code": "BAD_SECTION", "allowed": list(PREASSESS_SECTIONS),
+                                  "got": sorted(bad)})
+    sm.record_event(db, c, c.status, c.status, "preassess.review", user["role"], user["uid"],
+                    {"sections": sections, "verdict": verdict, "note": (body.note or "").strip()})
+    db.commit()
+    return {"ok": True, "verdict": verdict}
+
+
+@app.post("/cases/{case_id}/preassess/doc-request")
+def preassess_doc_request(case_id: str, body: schemas.PreassessDocRequestReq,
+                          user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator")),
+                          db: Session = Depends(get_db)):
+    """② 추가/부족 요청 서류 생성·전송 — round 누적 + 클라이언트 알림."""
+    c = _get_case(db, case_id, user)
+    items = body.items or []
+    if not items:
+        raise HTTPException(422, {"code": "ITEMS_REQUIRED"})
+    # round = 지금까지 이 케이스의 preassess.doc_request 이벤트 수 + 1
+    prior = (db.query(models.WorkflowEvent)
+             .filter(models.WorkflowEvent.case_id == case_id,
+                     models.WorkflowEvent.action == "preassess.doc_request").count())
+    rnd = prior + 1
+    msg = (body.message or "").strip()
+    sm.record_event(db, c, c.status, c.status, "preassess.doc_request", user["role"], user["uid"],
+                    {"items": items, "message": msg, "round": rnd})
+    _notify(db, c, "preassess.doc_request", "사전심사 추가서류 요청", body=msg, role="applicant")
+    db.commit()
+    return {"ok": True, "round": rnd, "items": len(items)}
+
+
+@app.post("/cases/{case_id}/preassess/resubmit")
+def preassess_resubmit(case_id: str, body: schemas.PreassessResubmitReq,
+                       user=Depends(auth.require_roles("applicant", "consultant")),
+                       db: Session = Depends(get_db)):
+    """③ 클라이언트 재업로드 후 재제출 표시 — 오디터 알림. round=현재 doc_request 회차."""
+    c = _get_case(db, case_id, user)
+    reqs = _preassess_doc_requests(db, case_id)
+    rnd = reqs[-1]["round"] if reqs else None
+    note = (body.note or "").strip()
+    sm.record_event(db, c, c.status, c.status, "preassess.resubmit", user["role"], user["uid"],
+                    {"round": rnd, "note": note})
+    _notify(db, c, "preassess.resubmit", "사전심사 재제출", body=note, role="auditor")
+    db.commit()
+    return {"ok": True, "round": rnd}
+
+
+@app.get("/cases/{case_id}/preassess/review")
+def preassess_review_get(case_id: str, user=Depends(auth.get_current_user),
+                         db: Session = Depends(get_db)):
+    """통합 조회 — 오디터·클라이언트 공용(org 격리). 프런트 stageBar·양측 뷰가 이걸로 렌더."""
+    _get_case(db, case_id, user)
+    review = _preassess_review_latest(db, case_id)
+    history = _preassess_doc_requests(db, case_id)
+    resubmit = _preassess_resubmit_latest(db, case_id)
+    return {"reviewed": review is not None, "review": review,
+            "doc_request": (history[-1] if history else None),
+            "doc_request_history": history, "resubmit": resubmit}
 
 
 # ---------- transition ----------
