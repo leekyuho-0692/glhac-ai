@@ -2550,6 +2550,22 @@ def get_contract_pdf(case_id: str, user=Depends(auth.get_current_user), db: Sess
                     headers={"Content-Disposition": "attachment; filename=contract_%s.pdf" % case_id[:8]})
 
 
+@app.get("/cases/{case_id}/contract")
+def get_contract(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """계약 진행 상태 조회 — 계약 단계 화면(진행 표시)용. 계약+서명 상태."""
+    _get_case(db, case_id, user)
+    ct = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if not ct:
+        return {"exists": False}
+    sigs = ct.signatures or []
+    return {"exists": True, "contract_id": ct.contract_id, "contract_no": ct.contract_no,
+            "status": ct.status, "fee": ct.fee, "currency": ct.currency,
+            "effective_date": ct.effective_date,
+            "signed_a": any(s.get("party") == "A" for s in sigs),
+            "signed_b": any(s.get("party") == "B" for s in sigs),
+            "signatures": sigs}
+
+
 @app.post("/contracts/{contract_id}/sign")
 def sign_contract(contract_id: str, party: str = "A", name: str = "",
                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):

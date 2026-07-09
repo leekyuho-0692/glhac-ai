@@ -277,3 +277,13 @@ def test_fatwa_client_status(tmp_path):
     db.commit()
     r2 = m.get_fatwa_status("case1", user=USER, db=db)
     assert r2["decision"] == "approved" and r2["votes_approve"] == 1 and r2["committee_size"] == 3
+
+
+def test_get_contract_status(tmp_path):
+    db = _seed_db(tmp_path)
+    assert m.get_contract("case1", user=USER, db=db)["exists"] is False
+    m.gen_contract("case1", user=USER, db=db)
+    ct = db.query(models.Contract).filter_by(case_id="case1").first()
+    m.sign_contract(ct.contract_id, party="A", name="X", user=USER, db=db)
+    r = m.get_contract("case1", user=USER, db=db)
+    assert r["exists"] and r["signed_a"] and not r["signed_b"]

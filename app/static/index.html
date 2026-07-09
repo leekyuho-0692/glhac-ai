@@ -2868,16 +2868,69 @@ async function delAuditorPool(id,poolId){if(!confirm("심사원을 제거할까�
 /* 9) Mock Audit */
 async function mockAuditClientView(id){
   if(!id) return `<div class="card"><div class="body muted">케이스를 선택하세요 · Select a case.</div></div>`;
-  const [hist,docs]=await Promise.all([API('/cases/'+id+'/mock-audit').catch(()=>({decisions:[]})),API('/cases/'+id+'/documents').catch(()=>[])]);
+  const [c, chk, mats, hist, docs] = await Promise.all([
+    API('/cases/'+id).catch(()=>({})),
+    API('/cases/'+id+'/doc-checklist').catch(()=>({checklist:[],missing:[],complete:false})),
+    API('/cases/'+id+'/materials').catch(()=>[]),
+    API('/cases/'+id+'/mock-audit').catch(()=>({decisions:[]})),
+    API('/cases/'+id+'/documents').catch(()=>[])
+  ]);
   const decisions=(hist&&hist.decisions)||[];
-  const galleryHtml=docs.length? `<div class="gallery">`+docs.slice(0,12).map(d=>`<div class="thumb" style="cursor:pointer"><span onclick="viewDoc('${d.document_id}')">${/png|jpg|jpeg|img/i.test(d.filename||"")?'📷':'📄'} ${esc((d.filename||"").slice(0,16))}</span>${geoLink(d)}</div>`).join("")+`</div>` : '<div class="muted small">제출 자료 없음 — 아래 [자료 업로드]</div>';
-  const decisionHtml=decisions.length? decisions.map(d=>`<div class="li"><div class="ic t-${d.result==='pass'?'ok':'bad'}">${d.result==='pass'?'✓':'✕'}</div><div class="tx"><b>${esc(d.result)}</b><div class="small">${esc(d.reason||"")}</div></div></div>`).join("") : '<div class="li"><div class="tx muted small">아직 판정 없음 — 자료 제출 후 오디터 검토 대기</div></div>';
-  const statusBanner=decisions.some(d=>d.result==='pass')?`<div class="banner ok">✓ 모의심사 통과 — 현장심사 단계로</div>`:(decisions.some(d=>d.result==='reject')?`<div class="banner bad">✕ 보완 필요 — 사유 확인 후 자료 재제출</div>`:`<div class="banner warn">ℹ 자료 제출 후 오디터 모의심사 검토 대기</div>`);
-  return `<div class="banner info" style="margin-bottom:16px">📋 모의심사 · Mock Audit — 사전심사와 동일하게 자료를 제출하면 오디터가 검토·판정합니다.</div>`
-    + `<div class="grid side">`
-    + `<div class="card"><h3>제출 자료 <span class="en">· Submitted</span><span class="r">${docs.length}건</span></h3><div class="body">${galleryHtml}<div style="margin-top:10px"><button class="btn pri" onclick="uploadMockDoc('${id}')">📎 자료 업로드 · Upload</button></div></div></div>`
-    + `<div class="card"><h3>판정 결과 <span class="en">· Result</span></h3><div class="body">${statusBanner}<div class="list" style="margin:8px -1px 0">${decisionHtml}</div></div></div>`
-    + `</div>`;
+  const passed=decisions.some(d=>d.result==='pass');
+  const rejected=decisions.some(d=>d.result==='reject');
+  const mc={haram:0,mushbooh:0,halal:0,unknown:0};
+  mats.forEach(m=>{const st=String(m.status||m.screen_status||'unknown').toLowerCase(); mc[st]=(mc[st]||0)+1;});
+  const okIcon=b=>b?'<span class="ic t-ok" style="display:inline-flex">✓</span>':'<span class="ic t-info" style="display:inline-flex">○</span>';
+  const hasHalalCert=(chk.checklist||[]).some(it=>/halal|인증서/i.test(it.doc_type||it.label||it.name||'')&&(it.present||it.ok||it.status==='ok'));
+  const matsReady=mc.haram===0&&(mc.haram+mc.mushbooh+mc.halal)>0;
+  const docsReady=!!chk.complete;
+  const analysis = `<div class="li">${okIcon(hasHalalCert)}<div class="tx">할랄 인증서 · Halal cert</div></div>`
+    +`<div class="li">${okIcon(docsReady)}<div class="tx">필요 서류 준비 · Documents (${(chk.missing||[]).length?T('누락')+' '+(chk.missing||[]).length:T('완료')})</div></div>`
+    +`<div class="li">${okIcon(matsReady)}<div class="tx">성분 검토 · Materials (하람 ${mc.haram}·의심 ${mc.mushbooh}·할랄 ${mc.halal})</div></div>`;
+  const chkHtml=(chk.checklist||[]).map(it=>{const present=it.present||it.ok||it.status==='ok'; return `<div class="li">${okIcon(present)}<div class="tx">${esc(T(it.doc_type_ko||it.label||it.doc_type||it.name||''))}</div><span class="muted small">${present?T('제출'):T('미제출')}</span></div>`;}).join('')||'<div class="muted small">체크 항목 없음</div>';
+  const photoBanner = passed?`<div class="banner ok">✓ 모의심사 통과 — 현장심사 단계로</div>`:(rejected?`<div class="banner bad">✕ 조건 미충족 — 아래 사유의 수정조치 후 자료 재제출</div>`:`<div class="banner warn">ℹ 자료 제출 후 오디터가 사진·서류를 검토해 조건부 판정합니다</div>`);
+  const decisionHtml=decisions.map(d=>`<div class="li"><div class="ic t-${d.result==='pass'?'ok':'bad'}">${d.result==='pass'?'✓':'✕'}</div><div class="tx"><b>${esc(d.result)}</b><div class="small">${esc(d.reason||'')}</div></div></div>`).join('')||'<div class="li"><div class="tx muted small">판정 이력 없음</div></div>';
+  const gallery=docs.length?`<div class="gallery">`+docs.slice(0,12).map(d=>`<div class="thumb" style="cursor:pointer"><span onclick="viewDoc('${d.document_id}')">${/png|jpg|jpeg|img/i.test(d.filename||'')?'📷':'📄'} ${esc((d.filename||'').slice(0,16))}</span>${geoLink(d)}</div>`).join('')+`</div>`:'<div class="muted small">제출 자료 없음</div>';
+  return `<div class="banner info" style="margin-bottom:16px">📋 모의심사 · Mock Audit — 사전심사와 동일한 방식으로 자료 제출 → 오디터가 전체 리스트·상세분석·사진으로 조건부 판정합니다.</div>
+<div class="grid side">
+  <div>
+    <div class="card"><h3>모의심사 대상 <span class="en">· Mock Audit</span><span class="r">${esc(c.company_name||'')}</span></h3>
+      <div class="body">
+        <div class="kv"><span>경로 · Pathway</span><b>${esc(c.pathway||'미확정')}</b></div>
+        <div class="kv"><span>제출 자료 · Submitted</span><b>${docs.length}건</b></div>
+        <div style="margin-top:10px">${gallery}</div>
+        <div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="uploadMockDoc('${id}')">📎 자료 업로드 · Upload</button></div>
+      </div></div>
+    <div class="card" style="margin-top:16px"><h3>제출 항목 체크 <span class="en">· Checklist</span></h3>
+      <div class="body tight" style="max-height:320px;overflow:auto">${chkHtml}</div></div>
+  </div>
+  <div>
+    <div class="card"><h3>상세 분석 <span class="en">· Analysis</span></h3>
+      <div class="body">
+        ${photoBanner}
+        <div class="muted small" style="margin:10px 0 4px;font-weight:600">준비 상태 · Readiness</div>
+        <div class="list" style="margin:0 -1px">${analysis}</div>
+        <div class="muted small" style="margin:12px 0 4px;font-weight:600">원재료 스크리닝 · Screening</div>
+        <div class="btnrow" style="flex-wrap:wrap;gap:6px">${tag('bad',T('하람')+' '+mc.haram)} ${tag('warn',T('의심')+' '+mc.mushbooh)} ${tag('ok',T('할랄')+' '+mc.halal)} ${tag('mute',T('미판정')+' '+(mc.unknown||0))}</div>
+        <div class="muted small" style="margin:12px 0 4px;font-weight:600">모의 판정 이력 · Decisions</div>
+        <div class="list" style="margin:0 -1px">${decisionHtml}</div>
+      </div></div>
+  </div>
+</div>`;
+}
+async function contractStageCard(id){
+  if(!id) return '';
+  const [ct, invs] = await Promise.all([
+    API('/cases/'+id+'/contract').catch(()=>({exists:false})),
+    API('/cases/'+id+'/invoices').catch(()=>[])
+  ]);
+  const paid=(invs||[]).some(i=>i.status==='paid');
+  const hasInv=(invs||[]).length>0;
+  const steps=[['계약서','contract', ct.exists], ['고객 서명','client sign', !!ct.signed_a], ['GLHAC 서명','glhac sign', !!ct.signed_b], ['청구서','invoice', hasInv], ['입금확인','payment', paid]];
+  let cur=steps.findIndex(s=>!s[2]); if(cur===-1)cur=steps.length-1;
+  const stepbar=steps.map((s,i)=>{const done=s[2]; const cls=done?'done':(i===cur?'now':''); return `<div class="step ${cls}" style="min-width:78px">${i+1}. ${s[0]}<span class="en"> · ${s[1]}</span></div>`+(i<steps.length-1?'<span class="arrow">→</span>':'');}).join('');
+  const statusBanner = paid?`<div class="banner ok">✓ 입금 확인 완료 — 모의심사 진행 가능</div>`:(ct.exists?`<div class="banner warn">ℹ 계약·결제 진행 중 — 서명/입금 완료 시 모의심사로</div>`:`<div class="banner info">계약 대기 — 사전심사 완료 후 계약서가 생성됩니다</div>`);
+  return `<div class="card" style="margin-bottom:16px"><h3>계약 단계 진행 <span class="en">· Contract stage</span>${ct.contract_no?`<span class="r">${esc(ct.contract_no)}</span>`:''}</h3><div class="body"><div class="flow" style="overflow-x:auto">${stepbar}</div><div style="margin-top:10px">${statusBanner}</div>${ct.fee?`<div class="kv" style="margin-top:6px"><span>계약금액</span><b>${Number(ct.fee).toLocaleString()} ${esc(ct.currency||'KRW')}</b></div>`:''}</div></div>`;
 }
 async function uploadMockDoc(id){
   const inp=document.createElement("input");inp.type="file";inp.accept="image/*,.pdf";
@@ -3034,6 +3087,7 @@ SCREEN.invoice=async()=>{
     :'<div class="muted small">청구서를 선택하세요.</div>';
   const st2=inv.reduce((a,i)=>{const t=(i.total==null?i.amount:i.total)||0;a.total+=t;if(i.status==='paid')a.paid+=t;else a.unpaid+=t;return a;},{total:0,paid:0,unpaid:0});
   return `
+  ${await contractStageCard(id)}
   <div class="grid three" style="margin-bottom:16px">
     <div class="card"><div class="body kpi"><span class="n" style="font-size:24px">${fmtIDR(st2.total)}</span><span class="l">총 청구액 · Total</span></div></div>
     <div class="card"><div class="body kpi"><span class="n" style="font-size:24px;color:var(--ok)">${fmtIDR(st2.paid)}</span><span class="l">결제 완료 · Paid</span></div></div>
