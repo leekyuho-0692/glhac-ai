@@ -395,8 +395,11 @@ const NAV = [
   ["integration","🔗","SJPH/HPAS 통합","Integration","통합·Integration"],
   ["documents","📁","문서","Documents","문서·Docs"],
   ["audit","🏭","현장심사","On-site Audit","현장심사·On-site"],
+  ["onsiteCalendar","📅","현장심사 캘린더","On-site Calendar","일정 조율·Schedule"],
   ["mockAudit","🧷","모의 심사","Mock Audit","모의심사·Mock"],
+  ["manualBuilder","📓","할랄매뉴얼","Halal Manual","작성·Manual"],
   ["evaluation","✅","SJPH/HPAS 평가","Evaluation","평가·Eval"],
+  ["resubmitCenter","♻️","보완·재전송","Resubmit Center","보완·Resubmit"],
   ["invoice","🧾","계약","Contract","계약·Contract"],
   ["payments","💰","결제 관리","Payments","결제·Admin"],
   ["deposits","🏦","입금 매칭","Deposits","입금·Matching"],
@@ -411,10 +414,10 @@ const NAV = [
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
 const NAV_GROUPS=[
   {label:"개요 · Overview", ids:["caseList"]},
-  {label:"신청·서류 · Application", ids:["application","preassess","materials","integration"]},
-  {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // 여정순: 계약·입금확인·결제 단계(심사 앞)
-  {label:"심사·판정 · Audit", ids:["evaluation","mockAudit","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의실사→현장·리포트→파트와→인증서
-  {label:"지원 · Support", ids:["consultation","notifyLog","system"]},   // prod 항목 유지
+  {label:"신청·서류 · Application", ids:["application","preassess","materials","integration","resubmitCenter"]},   // + resubmitCenter(3c)
+  {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // 여정순 계약·결제(심사 앞) + prod 결제항목
+  {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
+  {label:"지원 · Support", ids:["consultation","notifyLog","system"]},   // prod notifyLog 유지
   {label:"기타 · Others", ids:["assistant","feedback"]},   // prod 고유 그룹 유지
   {label:"내 정보 관리 · My Data", ids:["documents"]},   // M6: 문서=내 자료함(맨 뒤 이동)
 ];
@@ -437,10 +440,13 @@ const MENU_ACCESS = {
   preassess:["client","consultant","admin"],
   materials:["client","consultant","auditor","admin"],
   integration:["client","consultant","auditor","admin"],
+  manualBuilder:["client","consultant","admin"],
   documents:["client","consultant","auditor","sharia","ops","admin"],
   audit:    ["client","consultant","auditor","sharia","ops","admin"],
+  onsiteCalendar:["client","consultant","auditor","ops","admin"],   // A08: 클라 제시 + 오디터 확정
   mockAudit:["client","consultant","auditor","sharia","ops","admin"],
   evaluation:["client","auditor","sharia","ops","admin"],
+  resubmitCenter:["client","consultant","admin","auditor","ops"],   // A09: 클라이언트/컨설턴트/관리자 재제출 + 오디터·ops 상태열람
   invoice:  ["client","consultant","ops","admin"],
   payments: ["ops","admin"],
   deposits: ["ops","admin"],
@@ -453,7 +459,7 @@ const MENU_ACCESS = {
   system:   ["admin"],
 };
 const CASE_SCOPED = new Set(["workflow","application","preassess","materials","integration",
-  "documents","audit","evaluation","invoice","fatwa","certificate","assistant"]);
+  "documents","audit","onsiteCalendar","evaluation","invoice","fatwa","certificate","assistant","manualBuilder","resubmitCenter"]);
 
 let ROLE="client", CUR="caseList", FILTERS={}, DETAIL=null;
 let RBAC_ACTIONS={};                          // /rbac/actions 파생 — API와 동일 action_id
@@ -606,8 +612,8 @@ const ID_LABEL={
   pre_audit:"Pra-audit",onsite:"Lapangan",certification:"Sertifikasi",supervision:"Pengawasan",
 };
 const NAV_ID={"feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
-  integration:"Integrasi",documents:"Dokumen",audit:"Audit",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
-  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",system:"Sistem"};
+  integration:"Integrasi",documents:"Dokumen",audit:"Audit",onsiteCalendar:"현장심사 캘린더",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
+  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",system:"Sistem"};
 function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
@@ -1875,7 +1881,7 @@ const WS_STAGE_MAP={
 /* 서버 라벨 없을 때 폴백 KO 라벨(정본 11단계) */
 const WS_STAGE_KO={signup:"회원가입",application:"신청",preassess:"사전검토",contract:"계약",payment:"입금확인",halal_manual:"할랄매뉴얼",mock_audit:"모의실사",onsite:"현장실사",audit_report:"오디터리포트",fatwa:"파트와",certificate:"인증서"};
 let WSTREE_STAGES=null;  // 최근 journey stages 캐시(재렌더용)
-/* 케이스 디테일 overview 최상단 배치용 — 상단 진행 스텝바(4 매크로) + 세로 단계 카드.
+/* 케이스 디테일 overview 최상단 배치용 — 진행 스텝바(11단계, 각 단계 클릭 이동) 단일 카드.
    renderCaseDetail 경로는 applyView가 AFTER_RENDER를 호출하지 않으므로 setTimeout으로 fetch 예약. */
 function wsStagesCard(id){
   setTimeout(function(){ loadWsStages(id); },0);
@@ -1891,38 +1897,24 @@ async function loadWsStages(id){
 function renderWsStages(){
   const wrap=document.getElementById('wsStagesWrap'); if(!wrap)return;
   const stages=WSTREE_STAGES||[];   // 서버 stages(11) 그대로 — 순서·라벨 유지
-  const head='<div class="card"><h3>'+T('인증 워크스페이스')+' <span class="en">· Certification workspace</span></h3>';
-  if(!stages.length){ wrap.innerHTML=head+'<div class="body"><div class="muted small">'+T('진행 정보 없음')+'</div></div></div>'; return; }
   const doneCnt=stages.filter(s=>s.status==='done').length;
-  const ICON={done:'✓',current:'●',todo:'○'}, TCOL={done:'ok',current:'info',todo:'mute'};
-  // ── 상단 진행 스텝바(가로): 서버 stages 순서 그대로(11), 현재 단계 강조. 11개라 가로 스크롤 ──
+  const badge=stages.length?'<span class="r"><span class="tag t-'+(doneCnt===stages.length?'ok':'mute')+'">'+doneCnt+'/'+stages.length+' '+T('완료')+'</span></span>':'';
+  const head='<div class="card"><h3>'+T('인증 워크스페이스')+' <span class="en">· Certification workspace</span>'+badge+'</h3>';
+  if(!stages.length){ wrap.innerHTML=head+'<div class="body"><div class="muted small">'+T('진행 정보 없음')+'</div></div></div>'; return; }
+  // ── 진행 스텝바(가로)를 유일한 워크스페이스로: 각 단계는 접근 가능한 역할이면 클릭 이동 링크 ──
   let bar='<div class="stepbar" style="overflow-x:auto">';
   stages.forEach((s,i)=>{
     const cls=s.status==='done'?'done':(s.status==='current'?'cur':'');
     const m=WS_STAGE_MAP[s.key]||{};
     const ko=esc(s.label||WS_STAGE_KO[s.key]||s.key);
-    bar+='<div class="step '+cls+'"><div class="dot">'+(s.status==='done'?'✓':(i+1))+'</div><span>'+ko+(m.en?'<span class="en">'+esc(m.en)+'</span>':'')+'</span></div>';
+    const screen=m.screen||null;
+    const canGo=!!(screen&&MENU_ACCESS[screen]&&MENU_ACCESS[screen].includes(ROLE));
+    const attr=canGo?(' style="cursor:pointer" title="'+esc(ko)+' →" onclick="go(\''+screen+'\')"'):'';
+    bar+='<div class="step '+cls+'"'+attr+'><div class="dot">'+(s.status==='done'?'✓':(i+1))+'</div><span>'+ko+(m.en?'<span class="en">'+esc(m.en)+'</span>':'')+'</span></div>';
     if(i<stages.length-1)bar+='<div class="stepline '+(s.status==='done'?'done':'')+'"></div>';
   });
   bar+='</div>';
-  // ── 세로 단계 목록: 카드 1개 안에 11행(한 행 = 한 단계). 가로로 몰리지 않게 ──
-  let rows='';
-  stages.forEach(s=>{
-    const m=WS_STAGE_MAP[s.key]||{};
-    const st=s.status||'todo';
-    const screen=m.screen||null;
-    const canGo=!!(screen&&MENU_ACCESS[screen]&&MENU_ACCESS[screen].includes(ROLE));
-    const gated=!!(screen&&!canGo);   // 화면은 있으나 역할 접근 불가 → 상태만
-    const ic=ICON[st]||'○', col=TCOL[st]||'mute', cur=(st==='current');
-    const ko=esc(s.label||WS_STAGE_KO[s.key]||s.key);
-    rows+='<div class="li '+(canGo?'clickable':'')+'"'+(cur?' style="background:var(--accent-soft)"':'')+(canGo?' onclick="go(\''+screen+'\')"':'')+'>'
-      +'<div class="ic t-'+col+'">'+ic+'</div>'
-      +'<div class="tx"><b>'+ko+(m.en?'<span class="en"> · '+esc(m.en)+'</span>':'')+'</b>'+(gated?' <span class="muted small">'+T('접근 제한')+'</span>':'')+'</div>'
-      +(canGo?'<div class="when go-arrow">→</div>':'')+'</div>';
-  });
-  const badge='<span class="tag t-'+(doneCnt===stages.length?'ok':'mute')+'">'+doneCnt+'/'+stages.length+' '+T('완료')+'</span>';
-  wrap.innerHTML=head+'<div class="body">'+bar+'</div></div>'
-    +'<div class="card" style="margin-top:16px"><h3>'+T('인증 진행 단계')+' <span class="en">· 11-step</span><span class="r">'+badge+'</span></h3><div class="list">'+rows+'</div></div>';
+  wrap.innerHTML=head+'<div class="body">'+bar+'</div></div>';
 }
 function fatwaLabel(s){return {none:"심의 전",provisional:"가승인",approved:"최종승인",rejected:"반려",conditional:"조건부"}[s]||s;}
 function fatwaColor(s){return {approved:"ok",provisional:"info",rejected:"bad",conditional:"warn"}[s]||"mute";}
@@ -3210,6 +3202,137 @@ async function proposeAuditDates(pid){
   try{await API(`/audit-plans/${pid}/propose-dates`,{method:"POST",body:JSON.stringify({dates})});toast("일정변경 제안 · "+dates.length+"개 후보일");applyView();}
   catch(e){toast("제안 실패 · "+((e&&e.code)||""));}
 }
+/* ===== A08: 현장심사 일정 캘린더(클라이언트 주도 조율) — SCREEN.onsiteCalendar =====
+   스키마 무변경 · 백엔드 /cases/{id}/onsite-schedule(propose/reschedule/confirm) 사용.
+   SCREEN.audit(현장심사 로직·audit-plan)와는 별개 화면(중복 없음). */
+let OC={y:0,mo:0,sel:new Set(),data:null,cid:null};
+const OC_DOW=["일","월","화","수","목","금","토"];
+const OC_MON=["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
+function ocPad(n){return (n<10?"0":"")+n;}
+function ocKey(y,mo,d){return y+"-"+ocPad(mo+1)+"-"+ocPad(d);}   // YYYY-MM-DD
+function ocToday(){const t=new Date();return ocKey(t.getFullYear(),t.getMonth(),t.getDate());}
+function ocCanPropose(){return ["client","consultant"].includes(ROLE);}   // 클라이언트측 제시
+function ocCanAudit(){return ["auditor","ops","admin"].includes(ROLE);}    // 오디터 확정·재조율
+function ocPaint(){
+  const grid=document.getElementById("ocGrid"); if(!grid)return;
+  const lbl=document.getElementById("ocMonLbl"); if(lbl)lbl.textContent=OC.y+"년 "+OC_MON[OC.mo];
+  const d=OC.data||{}; const cli=new Set(d.client_dates||[]); const aud=new Set(d.auditor_dates||[]);
+  const conf=(d.confirmed&&d.confirmed.date)||"";
+  const first=new Date(OC.y,OC.mo,1).getDay(), days=new Date(OC.y,OC.mo+1,0).getDate();
+  const clickable=ocCanPropose()||ocCanAudit();
+  let cells=OC_DOW.map(w=>`<div class="oc-h">${w}</div>`).join("");
+  for(let i=0;i<first;i++)cells+="<div></div>";
+  for(let dd=1;dd<=days;dd++){
+    const k=ocKey(OC.y,OC.mo,dd); let cls="oc-d",mk="";
+    if(k===conf){cls+=" oc-conf";mk="✓";}
+    else if(aud.has(k)){cls+=" oc-cand";mk="!";}
+    else if(cli.has(k)){cls+=" oc-cli";}
+    if(OC.sel.has(k))cls+=" oc-sel";
+    cells+=`<div class="${cls}"${clickable?` onclick="ocPick('${k}')"`:""}><span>${dd}</span>${mk?`<small>${mk}</small>`:""}</div>`;
+  }
+  grid.innerHTML=cells;
+  const info=document.getElementById("ocSelInfo");
+  if(info)info.textContent=OC.sel.size?(T('선택')+" "+OC.sel.size+T('일')):T('날짜를 클릭해 선택');
+}
+function ocMonth(delta){OC.mo+=delta;if(OC.mo<0){OC.mo=11;OC.y--;}if(OC.mo>11){OC.mo=0;OC.y++;}ocPaint();}
+function ocPick(k){if(OC.sel.has(k))OC.sel.delete(k);else OC.sel.add(k);ocPaint();}
+async function ocPropose(){
+  const dates=[...OC.sel].sort();
+  if(!dates.length){toast(T('가능 날짜를 선택하세요'));return;}
+  try{await API(`/cases/${OC.cid}/onsite-schedule/propose`,{method:"POST",body:JSON.stringify({dates})});toast(T('가능일 제시 완료')+" · "+dates.length);applyView();}
+  catch(e){toast(T('제시 실패')+" · "+((e&&e.code)||""));}
+}
+async function ocReschedule(){
+  const dates=[...OC.sel].sort();
+  if(dates.length<1||dates.length>3){toast(T('후보일 2~3개를 선택하세요'));return;}
+  try{await API(`/cases/${OC.cid}/onsite-schedule/reschedule`,{method:"POST",body:JSON.stringify({dates})});toast(T('후보일 재제안 완료'));applyView();}
+  catch(e){toast(T('재제안 실패')+" · "+((e&&e.code)||""));}
+}
+async function ocConfirm(){
+  const dates=[...OC.sel];
+  if(dates.length!==1){toast(T('확정할 날짜 1개를 선택하세요'));return;}
+  const r=await dialog(T('현장심사 방문일 확정'),[{key:"time",label:T('방문 시각 · Time'),type:"text",placeholder:"10:00"},{key:"note",label:T('비고 · Note'),type:"text"}]);
+  if(!r)return;
+  try{await API(`/cases/${OC.cid}/onsite-schedule/confirm`,{method:"POST",body:JSON.stringify({date:dates[0],time:r.time||"",note:r.note||""})});toast(T('일정 확정')+" · "+dates[0]);applyView();}
+  catch(e){toast(T('확정 실패')+" · "+((e&&e.code)||""));}
+}
+SCREEN.onsiteCalendar=async()=>{
+  const id=CURCASE;
+  let data;
+  try{data=await API(`/cases/${id}/onsite-schedule`);}
+  catch(e){data={status:"none",client_dates:[],auditor_dates:[],confirmed:null,history:[]};}
+  OC.data=data; OC.cid=id; OC.sel=new Set();
+  const conf=(data.confirmed&&data.confirmed.date)?data.confirmed:null;
+  const anchor=(conf&&conf.date)||(data.client_dates||[])[0]||(data.auditor_dates||[])[0]||ocToday();
+  const ap=String(anchor).split("-"); OC.y=+ap[0]||new Date().getFullYear(); OC.mo=Math.max(0,Math.min(11,(+ap[1]||1)-1));
+  const prev=AFTER_RENDER; AFTER_RENDER=function(){ if(prev)try{prev();}catch(_){}; ocPaint(); };
+  const s=data.status;
+  const stg={r0:'done',
+             r1:s!=='none'?'done':'now',
+             r2:(s==='reproposed'||s==='confirmed')?'done':(s==='proposed'?'now':''),
+             r3:s==='confirmed'?'done':(s==='reproposed'?'now':'')};
+  const steps=`<div class="stepbar" style="overflow-x:auto;margin-bottom:16px">
+    <div class="step ${stg.r0}"><div class="dot">${stg.r0==='done'?'✓':1}</div><span>${T('모의감사 완료')}<span class="en">Mock done</span></span></div><div class="stepline ${stg.r0==='done'?'done':''}"></div>
+    <div class="step ${stg.r1}"><div class="dot">${stg.r1==='done'?'✓':2}</div><span>${T('가능일 제시')}<span class="en">Propose</span></span></div><div class="stepline ${(stg.r1==='done')?'done':''}"></div>
+    <div class="step ${stg.r2}"><div class="dot">${stg.r2==='done'?'✓':3}</div><span>${T('재조율')}<span class="en">Reschedule</span></span></div><div class="stepline ${(stg.r2==='done')?'done':''}"></div>
+    <div class="step ${stg.r3}"><div class="dot">${stg.r3==='done'?'✓':4}</div><span>${T('오디터 확정')}<span class="en">Confirm</span></span></div></div>`;
+  const stMeta={proposed:['warn',T('제시됨')],reproposed:['info',T('재조율 중')],confirmed:['ok',T('확정')],none:['mute',T('미개시')]};
+  const stx=stMeta[s]||stMeta.none;
+  const kpis=`<div class="kpirow" style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:16px">
+    <div class="card"><div class="body"><div class="kpi"><div><div class="n" style="font-size:18px;font-weight:700"><span class="tag t-${stx[0]}">${stx[1]}</span></div><div class="l">${T('조율 상태')}</div></div></div></div></div>
+    <div class="card"><div class="body"><div class="kpi"><div><div class="n" style="font-size:20px;font-weight:800">${conf?esc(conf.date)+(conf.time?" "+esc(conf.time):""):"—"}</div><div class="l">${T('확정 방문일시')}</div></div></div></div></div>
+    <div class="card"><div class="body"><div class="kpi"><div><div class="n" style="font-size:20px;font-weight:800">${(data.client_dates||[]).length}<small class="muted"> ${T('일')}</small></div><div class="l">${T('클라이언트 제시일 수')}</div></div></div></div></div></div>`;
+  const kindMeta={propose:['🙋',T('클라이언트 제시'),'warn'],reschedule:['🔁',T('오디터 재제안'),'info'],confirm:['✅',T('확정'),'ok']};
+  const histHtml=(data.history||[]).length?data.history.slice().reverse().map(h=>{
+    const m=kindMeta[h.kind]||['📆',h.kind,'mute'];
+    const dtxt=[(h.dates||[]).join(", "),h.time,h.note].filter(Boolean).join(" · ");
+    return `<div class="li"><div class="ic t-${m[2]}">${m[0]}</div><div class="tx"><b>${esc(m[1])}</b><div>${esc(dtxt||"—")}</div></div><div class="when">${esc(String(h.at||"").slice(0,16).replace("T"," "))}</div></div>`;
+  }).join(""):`<div class="li"><div class="tx muted small">${T('조율 이력 없음')}</div></div>`;
+  const propBtn=ocCanPropose()?`<button class="btn pri" onclick="ocPropose()">📤 ${T('가능일 제시')}</button>`:"";
+  const audBtns=ocCanAudit()?`<button class="btn ok" onclick="ocConfirm()">✅ ${T('선택일 확정')}</button><button class="btn" onclick="ocReschedule()">🔁 ${T('후보일 재제안')}</button>`:"";
+  const roleHint=ocCanPropose()?T('가능한 날짜를 클릭해 여러 개 선택한 뒤 제시하세요.'):ocCanAudit()?T('클라이언트 제시일을 확인해 1개를 확정하거나, 불가 시 후보일 2~3개를 선택해 재제안하세요.'):T('일정 조율 현황을 열람합니다.');
+  return `
+  <style>
+  .oc-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+  .oc-h{text-align:center;font-size:11px;font-weight:700;color:var(--ink3);padding:4px}
+  .oc-d{aspect-ratio:1;border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:13px;font-weight:600;position:relative;background:var(--card)}
+  .oc-d[onclick]{cursor:pointer;user-select:none}
+  .oc-d[onclick]:hover{border-color:var(--accent)}
+  .oc-d small{position:absolute;right:6px;bottom:4px;font-size:12px}
+  .oc-cli{background:var(--warn-soft);border-color:var(--warn);color:var(--warn)}
+  .oc-cand{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+  .oc-conf{background:var(--accent);border-color:var(--accent);color:#fff}
+  .oc-sel{outline:2px solid var(--gold);outline-offset:-2px}
+  .oc-lgd{display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;font-size:12px;font-weight:600;color:var(--ink3)}
+  .oc-lgd i{display:inline-block;width:13px;height:13px;border-radius:4px;margin-right:5px;vertical-align:-1px;border:1px solid var(--line)}
+  .oc-grid2{display:grid;grid-template-columns:1.5fr 1fr;gap:16px}
+  @media(max-width:1000px){.oc-grid2{grid-template-columns:1fr}.kpirow{grid-template-columns:1fr}}
+  </style>
+  <div class="banner info" style="margin-bottom:14px">🗓 ${T('현장심사 방문일은 클라이언트가 가능 날짜를 제시하고 오디터가 확정합니다. 불가 시 오디터가 후보일 2~3개를 재제안해 재조율합니다.')}</div>
+  ${steps}
+  ${kpis}
+  <div class="oc-grid2">
+    <div class="card"><h3>${T('현장심사 일정 캘린더')} <span class="en">· On-site Calendar</span>
+      <span class="r"><button class="btn" style="padding:4px 10px" onclick="ocMonth(-1)">‹</button> <b id="ocMonLbl" style="min-width:96px;display:inline-block;text-align:center"></b> <button class="btn" style="padding:4px 10px" onclick="ocMonth(1)">›</button></span></h3>
+      <div class="body">
+        <div class="oc-cal" id="ocGrid"></div>
+        <div class="oc-lgd">
+          <span><i style="background:var(--warn-soft);border-color:var(--warn)"></i>${T('클라이언트 제시')}</span>
+          <span><i style="background:var(--accent-soft);border-color:var(--accent)"></i>${T('오디터 후보일')}</span>
+          <span><i style="background:var(--accent);border-color:var(--accent)"></i>${T('확정')}</span>
+          <span><i style="outline:2px solid var(--gold);outline-offset:-2px"></i>${T('선택 중')}</span>
+        </div>
+        <div class="banner" style="background:var(--bg);margin-top:12px"><span id="ocSelInfo" class="muted small"></span></div>
+        <div class="muted small" style="margin-top:8px">${esc(roleHint)}</div>
+        <div class="btnrow" style="margin-top:10px">${propBtn}${audBtns}</div>
+      </div></div>
+    <div class="card"><h3>${T('일정 조율 이력')} <span class="en">· History</span> <span class="r">${(data.history||[]).length}</span></h3>
+      <div class="body tight">${histHtml}</div>
+      ${conf?`<div class="body" style="border-top:1px solid var(--line)"><div class="banner ok">✅ ${T('확정')}: <b style="margin-left:4px">${esc(conf.date)}${conf.time?" "+esc(conf.time):""}</b></div></div>`:""}
+    </div>
+  </div>
+  <div class="banner info" style="margin-top:14px">ⓘ ${T('현장 실사 종료 후에는 증거 자료(사진·영상)를 전부 첨부해야 하며, 각 파일에는 촬영자·촬영시각·해시가 기록됩니다.')}</div>`;
+};
 async function submitCar(fid){const r=await dialog("시정조치 제출 · CAR",[{key:"description",label:"조치 내용 · Action",type:"textarea",required:true},{key:"due_date",label:"완료 기한 · Due",type:"date"}]);if(!r)return;try{await API(`/findings/${fid}/car`,{method:"POST",body:JSON.stringify({description:r.description,due_date:r.due_date||null})});toast("시정조치 제출");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function reviewCar(cid,status){try{await API(`/car/${cid}/review`,{method:"PATCH",body:JSON.stringify({status})});toast("CAR "+(status==='accepted'?'수용':'반려'));applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function closeOnsite(id){
@@ -3739,6 +3862,212 @@ async function dropSjphEvidence(ev,cid,key){
   const b64=await fileB64(file);
   try{await API(`/cases/${cid}/sjph-evidence`,{method:"POST",body:JSON.stringify({item_key:key,file_b64:b64,filename:file.name})});toast("증빙 드롭 업로드 · "+file.name);applyView();}
   catch(e){toast("업로드 실패 · "+((e&&e.code)||""));}
+}
+
+/* ===== A09: 보완·재전송 센터 — SCREEN.resubmitCenter =====
+   각 심사 단계(신청 반려·사전심사 회신루프 P0-3·현장보고서 재심 P0-4·CAR 시정조치)의
+   보완/추가서류 요청을 집약(GET /cases/{id}/resubmit-center, 조회 전용·스키마 무변경)해
+   한 화면에 모으고, 각 항목에서 기존 단계별 resubmit 엔드포인트로 재제출한다.
+   목업 glhac_resubmit.html 재현. 기존 화면(preassess/audit)과 중복 없음(집약 뷰). */
+function rcSrcMeta(src){
+  return ({preassess:['🔍','info','accent','사전심사 보완'],
+           audit_report:['🏭','gold','gold','현장보고서 재심'],
+           application:['📝','bad','bad','신청서 반려'],
+           car:['🛠','warn','warn','시정조치(CAR)']})[src]||['♻️','mute','accent',src];
+}
+function rcStatusTag(s){
+  const m={pending:['warn','대기'],resubmitted:['info','재제출됨'],resolved:['ok','해결']};
+  const x=m[s]||m.pending; return `<span class="tag t-${x[0]}">${T(x[1])}</span>`;
+}
+function rcActions(id,r,isCli){
+  if(r.status==='resolved')return `<span class="tag t-ok">✅ ${T('해결됨')}</span>`;
+  if(!isCli)return `<span class="chip">🔒 ${T('상태 열람')}</span>`;
+  if(r.source==='preassess')return `<button class="btn" onclick="intakeZip('${id}')">🗂 ${T('재업로드')}</button>
+      <input class="v" id="rcNote_preassess" placeholder="${T('재제출 메모(선택)')}" style="min-width:150px">
+      <button class="btn ok" onclick="rcResubmit('${id}','preassess')">✅ ${T('재제출')}</button>`;
+  if(r.source==='audit_report')return `<input class="v" id="rcNote_audit_report" placeholder="${T('재제출 메모(선택)')}" style="min-width:150px">
+      <button class="btn ok" onclick="rcResubmit('${id}','audit_report')">✅ ${T('재제출')}</button>`;
+  if(r.source==='application')return `<button class="btn" onclick="rcUpload('${id}')">🗂 ${T('재업로드')}</button>
+      <button class="btn ok" onclick="rcResubmit('${id}','application')">📝 ${T('신청서 수정')}</button>`;
+  if(r.source==='car')return `<button class="btn ok" onclick="rcResubmit('${id}','car','${r.finding_id}')">🛠 ${T('시정조치 제출')}</button>`;
+  return '';
+}
+SCREEN.resubmitCenter=async()=>{
+  const id=CURCASE;
+  if(!id)return `<div class="card"><div class="body muted">${T('케이스를 먼저 선택하세요.')}</div></div>`;
+  const data=await API(`/cases/${id}/resubmit-center`).catch(()=>({requests:[],counts:{pending:0,resubmitted:0,resolved:0,total:0}}));
+  const cnt=data.counts||{pending:0,resubmitted:0,resolved:0,total:0};
+  const reqs=data.requests||[];
+  const isCli=["client","consultant"].includes(ROLE);
+  const intro=`<div class="banner info" style="margin-bottom:14px">♻️ ${T('각 심사 단계에서 요청된 보완·추가서류를 한 곳에서 확인하고 재제출합니다. 요청된 자료만 재업로드하면 됩니다.')}</div>`;
+  const dueBanner=data.due_date?`<div class="banner warn" style="margin-bottom:14px">📅 ${T('마감')} · <b>${esc(data.due_date)}</b></div>`:'';
+  const kpis=[['대기',cnt.pending,'warn','⏳'],['재제출됨',cnt.resubmitted,'info','♻️'],['해결',cnt.resolved,'ok','✅'],['전체 요청',cnt.total,'mute','📋']];
+  const kpiHtml=`<div class="grid four" style="margin-bottom:16px">`+kpis.map(([l,n,t,ic])=>`<div class="card"><div class="body" style="display:flex;align-items:center;gap:14px">
+    <div style="width:46px;height:46px;flex:0 0 46px;border-radius:12px;display:grid;place-items:center;font-size:22px;background:var(--${t==='mute'?'accent-soft':t+'-soft'});color:var(--${t==='mute'?'ink3':t})">${ic}</div>
+    <div class="kpi"><span class="l">${T(l)}</span><span class="n" style="color:var(--${t==='mute'?'ink':t})">${n}</span></div>
+  </div></div>`).join('')+`</div>`;
+  const itemHtml=reqs.length?reqs.map(r=>{
+    const m=rcSrcMeta(r.source);
+    const items=(r.items||[]).length?`<div style="margin-top:6px">${(r.items||[]).map(x=>`<span class="chip">📄 ${esc(x)}</span>`).join(' ')}</div>`:'';
+    return `<div class="card" style="margin-bottom:12px"><div class="body" style="display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
+        <div style="width:40px;height:40px;flex:0 0 40px;border-radius:10px;display:grid;place-items:center;font-size:19px;background:var(--${m[2]}-soft);color:var(--${m[2]})">${m[0]}</div>
+        <div style="flex:1 1 260px;min-width:200px">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="tag t-${m[1]}">${T(r.source_ko||m[3])}</span>${r.round?`<span class="chip">${r.round}${T('회차')}</span>`:''}${rcStatusTag(r.status)}${r.severity?`<span class="chip">${bSpan(r.severity)}</span>`:''}</div>
+          <div style="font-weight:600;font-size:14px;margin-top:6px">${esc(r.reason||T('보완 요청'))}</div>
+          ${items}
+          <div class="muted small" style="margin-top:4px">${r.due?`${T('기한')} ${esc(r.due)} · `:''}${r.at?esc(String(r.at).slice(0,16).replace('T',' ')):''}</div>
+        </div>
+        <div style="flex:0 0 auto;display:flex;flex-direction:column;gap:8px;align-items:stretch;min-width:150px">${rcActions(id,r,isCli)}</div>
+      </div></div>`;
+  }).join(''):`<div class="card"><div class="body muted" style="text-align:center;padding:26px">✅ ${T('보완·재전송 요청이 없습니다.')}</div></div>`;
+  const preItem=reqs.find(r=>r.source==='preassess');
+  const histHtml=(preItem&&(preItem.history||[]).length)?`<div class="card" style="margin-top:16px"><h3>${T('재전송 이력')} <span class="en">· History</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('회차')}</th><th>${T('요청 서류 수')}</th><th>${T('요청일')}</th></tr></thead><tbody>
+    ${preItem.history.map(h=>`<tr><td>${h.round||'-'}${T('회차')}</td><td>${h.count||0}</td><td class="muted small">${h.at?esc(String(h.at).slice(0,16).replace('T',' ')):'—'}</td></tr>`).join('')}
+    ${preItem.resubmit?`<tr><td class="t-ok">↳ ${T('재제출')}</td><td>${preItem.resubmit.round||'-'}${T('회차')}</td><td class="muted small">${preItem.resubmit.at?esc(String(preItem.resubmit.at).slice(0,16).replace('T',' ')):'—'}</td></tr>`:''}
+    </tbody></table></div></div>`:'';
+  return `${intro}${dueBanner}${kpiHtml}
+    <div class="card" style="margin-bottom:12px"><h3>${T('보완 요청 항목')} <span class="en">· Requests</span><span class="r">${T('대기')} ${cnt.pending} · ${T('재제출됨')} ${cnt.resubmitted} · ${T('해결')} ${cnt.resolved}</span></h3></div>
+    ${itemHtml}
+    ${histHtml}`;
+};
+async function rcResubmit(id,source,findingId){
+  if(source==='preassess'){
+    if(!confirm(T('추가서류를 재제출할까요? 오디터에게 알림이 전송됩니다.')))return;
+    try{await API(`/cases/${id}/preassess/resubmit`,{method:"POST",body:JSON.stringify({note:v("rcNote_preassess")})});toast(T('재제출 완료'));applyView();}
+    catch(e){toast(T('재제출 실패')+' · '+(e&&e.code?e.code:''));}
+  }else if(source==='audit_report'){
+    if(!confirm(T('심사보고서를 재제출할까요? 오디터에게 알림이 전송됩니다.')))return;
+    try{await API(`/cases/${id}/audit-report/resubmit`,{method:"POST",body:JSON.stringify({note:v("rcNote_audit_report")})});toast(T('재제출 완료'));applyView();}
+    catch(e){toast(T('재제출 실패')+' · '+(e&&e.code?e.code:''));}
+  }else if(source==='application'){
+    go('application');
+  }else if(source==='car'){
+    submitCar(findingId);
+  }
+}
+function rcUpload(id){
+  const inp=document.createElement("input");inp.type="file";inp.multiple=true;
+  inp.onchange=async()=>{const files=Array.prototype.slice.call(inp.files||[]);let ok=0;
+    for(const file of files){try{const b64=await fileB64(file);
+      await API('/cases/'+id+'/documents',{method:"POST",body:JSON.stringify({filename:file.name,file_b64:b64,doc_type:"resubmit"})});ok++;}
+      catch(e){toast(T('업로드 실패')+' · '+((e&&e.code)||''));}}
+    if(ok){toast(T('자료 업로드')+' · '+ok+T('건'));}applyView();};
+  inp.click();
+}
+
+/* ── 할랄매뉴얼 빌더(§12-5) — 섹션 드래그 재배치 + 이미지 삽입 → SJPH 매뉴얼 생성(기존 재사용) ── */
+const MB_ICON={halal_policy:"📜",halal_declaration:"📋",org_chart:"🏢",material_process:"⚙️"};
+const MB_DESC={
+  halal_policy:"할랄 정책·경영진 방침의 기본 보일러플레이트. 회사명·서명란만 병합됩니다.",
+  halal_declaration:"최고경영자 서명 할랄 선언서. 서명 이미지를 빈칸에 삽입합니다.",
+  org_chart:"할랄감독자(Penyelia Halal)·팀 조직도. 조직도 이미지를 빈 공간에 드롭.",
+  material_process:"원재료 목록·제조 공정도. 신청 단계 데이터 자동 연동 + 공정도 이미지 첨부.",
+};
+let MB_DRAG=null;
+SCREEN.manualBuilder=async()=>{
+  const id=CURCASE;
+  const L=await API(`/cases/${id}/sjph-manual/layout`).catch(()=>({sections:[],done:0,total:0,ready:false}));
+  const secs=L.sections||[];
+  const canEdit=["client","consultant","admin"].includes(ROLE);
+  const cards=secs.map((s,i)=>{
+    const dnd=canEdit?`draggable="true" ondragstart="mbDragStart(event,'${s.key}')" ondragend="mbDragEnd()" ondragover="mbDragOver(event)" ondrop="mbReorder(event,'${id}','${s.key}')"`:'';
+    const badge=s.has_default?tag('ok','✓ 기본내용 포함'):tag(s.image?'ok':'warn',s.image?'✓ 이미지 삽입됨':'기본내용 확인 필요');
+    const imgBlock=s.image
+      ? `<div style="margin-top:10px;height:88px;border-radius:8px;background:linear-gradient(135deg,var(--accent-soft),var(--accent));display:flex;align-items:center;justify-content:center;gap:10px;color:#fff;font-weight:700">🖼 ${esc(s.image.filename||'이미지')} 삽입됨${canEdit?` <span style="color:#fff;text-decoration:underline;cursor:pointer;font-weight:600" onclick="mbRemoveImage('${id}','${s.key}')">✕ 제거</span>`:''}</div>`
+      : '';
+    const dz=canEdit?`<div class="dropzone" ondragover="dzOver(event)" ondragleave="dzLeave(event)" ondrop="mbDropImage(event,'${id}','${s.key}')" onclick="mbUploadImage('${id}','${s.key}')">⭱ <b>${T('이미지/자료를 드래그 앤 드롭')}</b> · ${T('클릭 업로드')}<br><span class="muted small">PDF · 이미지</span></div>`:'';
+    return `<div class="card" ${dnd} style="${canEdit?'cursor:grab;':''}margin-bottom:0">
+      <h3 style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <span>${canEdit?'⋮⋮ ':''}${MB_ICON[s.key]||'📄'} ${i+1}. ${esc(s.ko)} <span class="en">· ${esc(s.en)}</span></span>${badge}</h3>
+      <div class="body">
+        <div class="muted small" style="margin-bottom:6px">${esc(MB_DESC[s.key]||'')}</div>
+        ${dz}${imgBlock}
+      </div></div>`;
+  }).join("")||'<div class="muted small">섹션 없음</div>';
+  const pct=L.total?Math.round((L.done/L.total)*100):0;
+  const ready=!!L.ready;
+  const genBtn=ready
+    ? `<button class="btn pri" onclick="mbGenerate('${id}')">📄 SJPH 매뉴얼 생성 (${L.done}/${L.total})</button>`
+    : `<button class="btn" disabled style="opacity:.5" title="모든 섹션 완료 필요">📄 SJPH 매뉴얼 생성 (${L.done}/${L.total})</button>`;
+  const warn=ready?'':`<div class="banner warn" style="margin-bottom:12px">⚠️ 미완료 섹션 있음 — 이미지 삽입이 필요한 섹션(조직도 등)을 완료하면 매뉴얼 생성이 활성화됩니다.</div>`;
+  return `
+  <div class="banner info" style="margin-bottom:16px">ⓘ 섹션 기본내용을 확인하고 ${canEdit?'드래그로 순서를 바꾸며 ':''}빈 공간에 이미지를 드롭하면 문서에 삽입됩니다. 완료 후 <b>SJPH 매뉴얼</b>을 생성합니다. (기존 SJPH Manual 재사용)</div>
+  <div class="card" style="margin-bottom:16px"><div class="body" style="display:flex;align-items:center;gap:14px">
+    <div style="font-weight:800;white-space:nowrap">진행률 ${L.done} / ${L.total} 섹션</div>
+    <div class="bar" style="flex:1"><i style="width:${pct}%"></i></div>
+    <div class="muted small">${pct}%</div></div></div>
+  <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">${cards}</div>
+  <div class="card"><h3>매뉴얼 생성 <span class="en">· Generate</span></h3><div class="body">
+    ${warn}
+    <div class="btnrow">${genBtn}
+      <button class="btn" onclick="serverPdf('/cases/${id}/sjph-manual.pdf','sjph_manual.pdf')">👁 미리보기 · PDF</button>
+      ${canEdit?`<button class="btn" onclick="mbSaveLayout('${id}')">💾 임시저장</button>`:''}
+    </div></div></div>`;
+};
+function mbDragStart(ev,key){MB_DRAG=key;try{ev.dataTransfer.effectAllowed='move';ev.dataTransfer.setData('text/plain',key);}catch(_){}}
+function mbDragEnd(){MB_DRAG=null;}
+function mbDragOver(ev){if(MB_DRAG)ev.preventDefault();}
+function mbCurState(L){const order=(L.sections||[]).map(s=>s.key);const inserts={};(L.sections||[]).forEach(s=>{if(s.image)inserts[s.key]=s.image;});return {order,inserts};}
+async function mbReorder(ev,cid,targetKey){
+  ev.preventDefault();
+  const src=MB_DRAG;MB_DRAG=null;
+  if(!src||src===targetKey)return;
+  try{
+    const L=await API(`/cases/${cid}/sjph-manual/layout`);
+    const {order,inserts}=mbCurState(L);
+    const from=order.indexOf(src),to=order.indexOf(targetKey);
+    if(from<0||to<0)return;
+    order.splice(to,0,order.splice(from,1)[0]);
+    await API(`/cases/${cid}/sjph-manual/layout`,{method:"POST",body:JSON.stringify({order,inserts})});
+    toast("섹션 순서 변경");applyView();
+  }catch(e){toast("순서 변경 실패 · "+((e&&e.code)||""));}
+}
+async function mbAttach(cid,key,file){
+  try{
+    const b64=await fileB64(file);
+    const d=await API(`/cases/${cid}/documents`,{method:"POST",body:JSON.stringify({filename:file.name,file_b64:b64,doc_type:"manual_section"})});
+    const L=await API(`/cases/${cid}/sjph-manual/layout`);
+    const {order,inserts}=mbCurState(L);
+    inserts[key]={document_id:d.document_id,filename:file.name};
+    await API(`/cases/${cid}/sjph-manual/layout`,{method:"POST",body:JSON.stringify({order,inserts})});
+    toast("이미지 삽입 · "+file.name);applyView();
+  }catch(e){toast("삽입 실패 · "+((e&&e.code)||""));}
+}
+async function mbDropImage(ev,cid,key){
+  ev.preventDefault();ev.stopPropagation();
+  if(ev.currentTarget&&ev.currentTarget.classList)ev.currentTarget.classList.remove('drag');
+  const file=ev.dataTransfer&&ev.dataTransfer.files&&ev.dataTransfer.files[0];
+  if(!file)return;
+  await mbAttach(cid,key,file);
+}
+function mbUploadImage(cid,key){
+  const inp=document.createElement("input");inp.type="file";inp.accept="image/*,.pdf";
+  inp.onchange=async()=>{const f=inp.files[0];if(f)await mbAttach(cid,key,f);};
+  inp.click();
+}
+async function mbRemoveImage(cid,key){
+  try{
+    const L=await API(`/cases/${cid}/sjph-manual/layout`);
+    const {order}=mbCurState(L);const inserts={};(L.sections||[]).forEach(s=>{if(s.image&&s.key!==key)inserts[s.key]=s.image;});
+    await API(`/cases/${cid}/sjph-manual/layout`,{method:"POST",body:JSON.stringify({order,inserts})});
+    toast("이미지 제거");applyView();
+  }catch(e){toast("제거 실패 · "+((e&&e.code)||""));}
+}
+async function mbSaveLayout(cid){
+  try{
+    const L=await API(`/cases/${cid}/sjph-manual/layout`);
+    const {order,inserts}=mbCurState(L);
+    await API(`/cases/${cid}/sjph-manual/layout`,{method:"POST",body:JSON.stringify({order,inserts})});
+    toast("임시저장 완료");
+  }catch(e){toast("저장 실패 · "+((e&&e.code)||""));}
+}
+async function mbGenerate(cid){
+  try{
+    const r=await API(`/cases/${cid}/sjph/manual`,{method:"POST",body:"{}"});
+    toast("SJPH 매뉴얼 v"+r.version+" 생성 — 미리보기");
+    serverPdf(`/cases/${cid}/sjph-manual.pdf`,"sjph_manual.pdf");
+  }catch(e){toast("생성 실패 · "+((e&&e.code)||(e&&e.detail)||""));}
 }
 async function postDiscussion(id){const el=document.getElementById("discInput");const text=el.value.trim();if(!text)return;try{await API(`/cases/${id}/discussions`,{method:"POST",body:JSON.stringify({kind:"comment",text})});toast("협의 등록");applyView();}catch(e){toast("등록 실패 · "+(e&&e.code?e.code:""));}}
 

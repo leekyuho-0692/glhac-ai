@@ -2546,6 +2546,79 @@ def sjph_manual(case_id: str, user=Depends(auth.get_current_user), db: Session =
     return {"manual": manual, "version": g.version, "gen_doc_id": g.gen_doc_id, "blocks": len(blocks)}
 
 
+# ── 할랄매뉴얼 빌더(§12-5): 섹션 순서·이미지 삽입 상태 저장 ──
+# 스키마 무변경 — WorkflowEvent(action="sjph_manual.layout", latest-wins). 생성은 위 sjph/manual 재사용.
+# 섹션 상수: (key, KO, EN, has_default) — has_default=False는 이미지 삽입 시 완료.
+SJPH_MANUAL_SECTIONS = [
+    ("halal_policy", "할랄 기본문구", "Halal Policy", True),
+    ("halal_declaration", "할랄 선언서", "Halal Declaration", True),
+    ("org_chart", "담당자 · 조직도", "Supervisor & Org Chart", False),
+    ("material_process", "재료 · 공정", "Materials & Process", True),
+]
+
+
+def _sjph_manual_layout_latest(db, case_id):
+    e = (db.query(models.WorkflowEvent)
+         .filter(models.WorkflowEvent.case_id == case_id,
+                 models.WorkflowEvent.action == "sjph_manual.layout")
+         .order_by(models.WorkflowEvent.created_at.desc()).first())
+    return (e.payload or {}) if e else None
+
+
+def _sjph_manual_layout_view(db, case_id):
+    """저장상태 + 섹션 상수 → 정규화(순서 보정·미지의 키 제거·완료도)."""
+    saved = _sjph_manual_layout_latest(db, case_id) or {}
+    keys = [s[0] for s in SJPH_MANUAL_SECTIONS]
+    kset = set(keys)
+    meta = {s[0]: {"ko": s[1], "en": s[2], "has_default": s[3]} for s in SJPH_MANUAL_SECTIONS}
+    order = [k for k in (saved.get("order") or []) if k in kset]
+    for k in keys:
+        if k not in order:
+            order.append(k)
+    inserts = {}
+    for k, v in (saved.get("inserts") or {}).items():
+        if k in kset and isinstance(v, dict) and v.get("document_id"):
+            inserts[k] = {"document_id": str(v.get("document_id")), "filename": str(v.get("filename") or "")}
+    sections = []
+    for k in order:
+        img = inserts.get(k)
+        complete = bool(meta[k]["has_default"] or img)
+        sections.append({"key": k, "ko": meta[k]["ko"], "en": meta[k]["en"],
+                         "has_default": meta[k]["has_default"], "image": img, "complete": complete})
+    done = sum(1 for s in sections if s["complete"])
+    return {"order": order, "inserts": inserts, "sections": sections,
+            "done": done, "total": len(sections), "ready": done == len(sections)}
+
+
+@app.get("/cases/{case_id}/sjph-manual/layout")
+def get_sjph_manual_layout(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """할랄매뉴얼 빌더 상태(섹션 순서·이미지 삽입) 조회 — 없으면 기본 순서."""
+    _get_case(db, case_id, user)
+    return _sjph_manual_layout_view(db, case_id)
+
+
+@app.post("/cases/{case_id}/sjph-manual/layout")
+def set_sjph_manual_layout(case_id: str, body: dict = None,
+                           user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """섹션 순서·이미지 삽입 상태 저장(latest-wins). 알려진 키만 허용, 미지의 키는 무시."""
+    c = _get_case(db, case_id, user)
+    b = body or {}
+    keys = [s[0] for s in SJPH_MANUAL_SECTIONS]
+    kset = set(keys)
+    order = [k for k in (b.get("order") or []) if k in kset]
+    for k in keys:
+        if k not in order:
+            order.append(k)
+    inserts = {}
+    for k, v in (b.get("inserts") or {}).items():
+        if k in kset and isinstance(v, dict) and v.get("document_id"):
+            inserts[k] = {"document_id": str(v.get("document_id")), "filename": str(v.get("filename") or "")}
+    sm.record_event(db, c, c.status, c.status, "sjph_manual.layout", user["role"], user["uid"],
+                    {"order": order, "inserts": inserts})
+    db.commit()
+    return _sjph_manual_layout_view(db, case_id)
+
+
 def _next_version(db, case_id, doc_type):
     return db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type=doc_type).count() + 1
 
@@ -4534,6 +4607,116 @@ def patch_audit_plan(plan_id: str, body: schemas.AuditPlanPatchReq,
         p.note = body.note
     db.commit()
     return {"id": p.id, "status": p.status, "scheduled_date": p.scheduled_date}
+
+
+# ---------- A08: 현장심사 일정 캘린더 — 클라이언트 주도 조율(§12-7) ----------
+# 스키마 무변경 · WorkflowEvent(onsite_schedule.*) append → latest-wins 파생.
+# 기존 audit-plan/propose-dates(오디터→클라 후보일)와 방향/네임스페이스 구분:
+#   propose    = 클라이언트가 방문 가능 날짜/기간을 제시 (client → auditor)
+#   reschedule = 제시일 불가 시 오디터가 후보일 2~3개 재제안 (auditor → client)
+#   confirm    = 오디터가 방문일시 확정
+_ONSITE_SCHED_ACTIONS = ("onsite_schedule.propose", "onsite_schedule.reschedule",
+                         "onsite_schedule.confirm")
+
+
+def _onsite_sched_state(db, case_id):
+    """onsite_schedule.* 이벤트를 시간순으로 접어 현재 조율 상태 파생(이력 포함)."""
+    evs = (db.query(models.WorkflowEvent)
+           .filter(models.WorkflowEvent.case_id == case_id,
+                   models.WorkflowEvent.action.in_(_ONSITE_SCHED_ACTIONS))
+           .order_by(models.WorkflowEvent.created_at.asc(),
+                     models.WorkflowEvent.event_id.asc()).all())
+    history, client_dates, auditor_dates, confirmed, status = [], [], [], None, "none"
+    for e in evs:
+        p = e.payload or {}
+        kind = e.action.split(".")[-1]
+        dates = [str(d) for d in (p.get("dates") or [])]
+        if not dates and p.get("date"):
+            dates = [str(p.get("date"))]
+        history.append({"kind": kind, "actor_role": e.actor_type, "actor_id": e.actor_id,
+                        "at": e.created_at.isoformat() if e.created_at else None,
+                        "dates": dates, "note": p.get("note", ""),
+                        "period": p.get("period", ""), "time": p.get("time", "")})
+        if kind == "propose":
+            client_dates, auditor_dates, confirmed, status = dates, [], None, "proposed"
+        elif kind == "reschedule":
+            auditor_dates, confirmed, status = dates, None, "reproposed"
+        elif kind == "confirm":
+            confirmed = {"date": str(p.get("date") or ""), "time": str(p.get("time") or "")}
+            status = "confirmed"
+    return {"status": status, "client_dates": client_dates, "auditor_dates": auditor_dates,
+            "confirmed": confirmed, "history": history}
+
+
+@app.get("/cases/{case_id}/onsite-schedule")
+def get_onsite_schedule(case_id: str, user=Depends(auth.get_current_user),
+                        db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    return _onsite_sched_state(db, case_id)
+
+
+@app.post("/cases/{case_id}/onsite-schedule/propose")
+def onsite_schedule_propose(case_id: str, body: dict = None,
+                            user=Depends(auth.require_roles(
+                                "applicant", "consultant", "penyelia_halal", "pendamping_pph")),
+                            db: Session = Depends(get_db)):
+    """클라이언트가 방문 가능 날짜(캘린더 선택)·기간을 제시."""
+    c = _get_case(db, case_id, user)
+    body = body or {}
+    dates = [str(d) for d in (body.get("dates") or []) if str(d).strip()][:31]
+    if not dates:
+        raise HTTPException(400, {"code": "NO_DATES"})
+    payload = {"dates": dates, "period": str(body.get("period") or ""),
+               "note": str(body.get("note") or "")}
+    sm.record_event(db, c, c.status, c.status, "onsite_schedule.propose",
+                    user["role"], user["uid"], payload)
+    _notify(db, c, "audit_scheduled", "현장심사 가능일 제시",
+            "%s — 클라이언트가 방문 가능일 %d개를 제시했습니다." % (c.company_name or "", len(dates)),
+            channels=["inapp"], role="auditor")
+    db.commit()
+    return _onsite_sched_state(db, case_id)
+
+
+@app.post("/cases/{case_id}/onsite-schedule/reschedule")
+def onsite_schedule_reschedule(case_id: str, body: dict = None,
+                               user=Depends(auth.require_roles("auditor", "operator")),
+                               db: Session = Depends(get_db)):
+    """제시일 불가 시 오디터가 후보일 2~3개 재제안(왕복)."""
+    c = _get_case(db, case_id, user)
+    body = body or {}
+    dates = [str(d) for d in (body.get("dates") or []) if str(d).strip()][:3]
+    if not dates:
+        raise HTTPException(400, {"code": "NO_DATES"})
+    payload = {"dates": dates, "note": str(body.get("note") or "")}
+    sm.record_event(db, c, c.status, c.status, "onsite_schedule.reschedule",
+                    user["role"], user["uid"], payload)
+    _notify(db, c, "audit_scheduled", "현장심사 후보일 재제안",
+            "%s — 오디터가 후보일 %s 중 택1을 제안했습니다." % (c.company_name or "", ", ".join(dates)),
+            channels=["inapp"], role="applicant")
+    db.commit()
+    return _onsite_sched_state(db, case_id)
+
+
+@app.post("/cases/{case_id}/onsite-schedule/confirm")
+def onsite_schedule_confirm(case_id: str, body: dict = None,
+                            user=Depends(auth.require_roles("auditor", "operator")),
+                            db: Session = Depends(get_db)):
+    """오디터가 방문일시를 확정."""
+    c = _get_case(db, case_id, user)
+    body = body or {}
+    date = str((body or {}).get("date") or "").strip()
+    if not date:
+        raise HTTPException(400, {"code": "NO_DATE"})
+    tm = str(body.get("time") or "").strip()
+    payload = {"date": date, "time": tm, "note": str(body.get("note") or "")}
+    sm.record_event(db, c, c.status, c.status, "onsite_schedule.confirm",
+                    user["role"], user["uid"], payload)
+    _notify(db, c, "audit_scheduled", "현장심사 일정 확정",
+            "%s — 현장심사 방문일이 %s%s 로 확정되었습니다." % (
+                c.company_name or "", date, (" " + tm) if tm else ""),
+            channels=["inapp", "sms"], role="applicant")
+    db.commit()
+    return _onsite_sched_state(db, case_id)
 
 
 # ---------- CAR 시정조치 라이프사이클 (§P2 CAR advanced) ----------
@@ -6639,6 +6822,106 @@ def preassess_review_get(case_id: str, user=Depends(auth.get_current_user),
     return {"reviewed": review is not None, "review": review,
             "doc_request": (history[-1] if history else None),
             "doc_request_history": history, "resubmit": resubmit}
+
+
+# ---------- A09: 보완·재전송 센터(집약 조회 전용) ----------
+# 각 단계(신청 반려 · 사전심사 회신루프 · 현장보고서 재심 · CAR 시정조치)의
+# 보완/추가서류 요청을 한 곳에 모아 반환한다. 스키마 무변경 — 기존 WorkflowEvent·
+# 테이블 조회만 서버에서 합친다(신규 쓰기·마이그레이션 없음).
+@app.get("/cases/{case_id}/resubmit-center")
+def resubmit_center(case_id: str, user=Depends(auth.get_current_user),
+                    db: Session = Depends(get_db)):
+    """보완·재전송 센터 집약 — 출처단계·사유·회차·기한·상태를 정규화한 requests 리스트."""
+    c = _get_case(db, case_id, user)
+    reqs = []
+
+    # ① 신청서 반려(return-application) — draft_state=returned / return_reason
+    app_ret = (db.query(models.WorkflowEvent)
+               .filter(models.WorkflowEvent.case_id == case_id,
+                       models.WorkflowEvent.action == "application.return")
+               .order_by(models.WorkflowEvent.created_at.desc()).first())
+    if app_ret:
+        returned = (c.draft_state == "returned")
+        reqs.append({
+            "key": "application", "source": "application", "source_ko": "신청서 반려",
+            "reason": c.return_reason or (app_ret.payload or {}).get("reason", ""),
+            "items": [], "round": None,
+            "status": "pending" if returned else "resolved",
+            "due": c.due_date,
+            "at": app_ret.created_at.isoformat() if app_ret.created_at else None,
+            "action": "application"})
+
+    # ② 사전심사 회신루프(P0-3) — 추가서류 요청 이력 + 재제출 + 오디터 재검토
+    pre_hist = _preassess_doc_requests(db, case_id)
+    if pre_hist:
+        latest = pre_hist[-1]
+        review = _preassess_review_latest(db, case_id)
+        resub = _preassess_resubmit_latest(db, case_id)
+        rnd = latest.get("round")
+        if review and review.get("verdict") == "ready":
+            status = "resolved"
+        elif resub and resub.get("round") == rnd:
+            status = "resubmitted"
+        else:
+            status = "pending"
+        items = [(it.get("doc_type_ko") or it.get("doc_type") or "")
+                 for it in (latest.get("items") or [])]
+        reqs.append({
+            "key": "preassess", "source": "preassess", "source_ko": "사전심사 보완",
+            "reason": latest.get("message", ""), "items": items, "round": rnd,
+            "status": status, "due": c.due_date, "at": latest.get("at"),
+            "action": "preassess_resubmit", "resubmit": resub,
+            "history": [{"round": h.get("round"), "count": len(h.get("items") or []),
+                         "at": h.get("at")} for h in pre_hist]})
+
+    # ③ 현장 심사보고서 재심루프(P0-4) — 보완 반려 + 재제출 + 수정확인
+    ret = _audit_report_event_latest(db, case_id, "audit_report.return")
+    if ret:
+        resub = _audit_report_event_latest(db, case_id, "audit_report.resubmit")
+        recon = _audit_report_event_latest(db, case_id, "audit_report.reconfirm")
+        rnd = ret.get("round")
+        if recon and recon.get("decision") == "ok":
+            status = "resolved"
+        elif resub and (resub.get("round") == rnd
+                        or (resub.get("at") or "") >= (ret.get("at") or "")):
+            status = "resubmitted"
+        else:
+            status = "pending"
+        reqs.append({
+            "key": "audit_report", "source": "audit_report", "source_ko": "현장보고서 재심",
+            "reason": ret.get("comment", ""), "items": [], "round": rnd,
+            "status": status, "due": c.due_date, "at": ret.get("at"),
+            "action": "audit_report_resubmit",
+            "resubmit": ({"round": resub.get("round"), "at": resub.get("at")} if resub else None)})
+
+    # ④ CAR 시정조치 — 미해결 지적별 보완 요청(제출→검토→종결)
+    findings = db.query(models.AuditFinding).filter_by(case_id=case_id).all()
+    cars = (db.query(models.CorrectiveAction).filter_by(case_id=case_id)
+            .order_by(models.CorrectiveAction.created_at.desc()).all())
+    cars_by_f = {}
+    for x in cars:
+        cars_by_f.setdefault(x.finding_id, []).append(x)
+    for f in findings:
+        fcars = cars_by_f.get(f.finding_id, [])
+        if f.status == "closed" or any(x.status in ("accepted", "closed") for x in fcars):
+            status = "resolved"
+        elif any(x.status == "submitted" for x in fcars):
+            status = "resubmitted"
+        else:
+            status = "pending"
+        fat = getattr(f, "created_at", None)
+        reqs.append({
+            "key": "finding:" + f.finding_id, "source": "car", "source_ko": "시정조치(CAR)",
+            "reason": f.finding or "", "items": [], "round": len(fcars),
+            "status": status, "due": f.due_date, "severity": f.severity,
+            "finding_id": f.finding_id, "action": "car",
+            "at": fat.isoformat() if fat else None})
+
+    counts = {"pending": 0, "resubmitted": 0, "resolved": 0, "total": len(reqs)}
+    for r in reqs:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    return {"case_id": case_id, "company_name": c.company_name,
+            "due_date": c.due_date, "requests": reqs, "counts": counts}
 
 
 # ---------- transition ----------
