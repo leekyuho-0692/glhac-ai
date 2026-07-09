@@ -2895,9 +2895,9 @@ SCREEN.evaluation=async()=>{
   const [h,sev]=await Promise.all([API(`/cases/${id}/hpas-auto`).catch(()=>({elements:[]})),API(`/cases/${id}/sjph-evidence`).catch(()=>({items:[]}))]);
   const els=h.elements||[];
   const canSev=["client","consultant","admin"].includes(ROLE);
-  const sevHtml=(sev.items||[]).map(it=>`<div class="check">
+  const sevHtml=(sev.items||[]).map(it=>`<div class="check"${canSev?` ondragover="event.preventDefault();this.style.background='var(--accent-soft)'" ondragleave="this.style.background=''" ondrop="this.style.background='';dropSjphEvidence(event,'${id}','${it.item_key}')" title="${T('파일을 드롭하여 업로드')}"`:''}>
       <div class="cbox ${it.uploaded?'on':''}">${it.uploaded?'✓':''}</div>
-      <b style="flex:1">${esc(it.label)}</b>
+      <b style="flex:1">${esc(it.label)}${(!it.uploaded&&canSev)?' <span class="muted small">· ⬇ '+T('드롭 업로드')+'</span>':''}</b>
       ${it.uploaded?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="viewDoc('${it.document_id}')">보기</button>`:(canSev?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="uploadSjphEvidence('${id}','${it.item_key}')">업로드</button>`:'<span class="muted small">미제출</span>')}
     </div>`).join("")||'<div class="muted small">증빙 항목 없음</div>';
   const rows=els.map(e=>`<tr><td><b>${esc(e.label||e.element)}</b><div class="muted small">${esc(e.reason||"")}</div></td>
@@ -2922,6 +2922,13 @@ async function uploadSjphEvidence(cid,key){
   inp.onchange=async()=>{const file=inp.files[0];if(!file)return;const b64=await fileB64(file);
     try{await API(`/cases/${cid}/sjph-evidence`,{method:"POST",body:JSON.stringify({item_key:key,file_b64:b64,filename:file.name})});toast("증빙 업로드");applyView();}catch(e){toast("업로드 실패 · "+(e&&e.code?e.code:""));}};
   inp.click();
+}
+async function dropSjphEvidence(ev,cid,key){
+  ev.preventDefault();
+  const file=ev.dataTransfer&&ev.dataTransfer.files&&ev.dataTransfer.files[0]; if(!file)return;
+  const b64=await fileB64(file);
+  try{await API(`/cases/${cid}/sjph-evidence`,{method:"POST",body:JSON.stringify({item_key:key,file_b64:b64,filename:file.name})});toast("증빙 드롭 업로드 · "+file.name);applyView();}
+  catch(e){toast("업로드 실패 · "+((e&&e.code)||""));}
 }
 async function postDiscussion(id){const el=document.getElementById("discInput");const text=el.value.trim();if(!text)return;try{await API(`/cases/${id}/discussions`,{method:"POST",body:JSON.stringify({kind:"comment",text})});toast("협의 등록");applyView();}catch(e){toast("등록 실패 · "+(e&&e.code?e.code:""));}}
 
