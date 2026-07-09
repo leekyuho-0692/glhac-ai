@@ -4103,6 +4103,46 @@ def get_onsite_sign(case_id: str, user=Depends(auth.get_current_user),
     return out
 
 
+# ── 파트와 위원 전자서명(위원장·위원) — 스키마 무변경, WorkflowEvent(fatwa.sign, latest-wins per member).
+#    onsite.sign 패턴 동일. 기존 fatwa 투표/결정(P0-4)과 별개의 위원 개별 캔버스 서명. ──
+@app.post("/cases/{case_id}/fatwa/sign")
+def fatwa_sign(case_id: str, body: dict = None,
+               user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    b = body or {}
+    member = (b.get("member") or "").strip()
+    if not member:
+        raise HTTPException(422, {"code": "BAD_MEMBER"})
+    image = b.get("image")
+    if not isinstance(image, str) or not image.startswith("data:image/"):
+        raise HTTPException(422, {"code": "BAD_IMAGE"})
+    if len(image) > 400000:
+        raise HTTPException(413, {"code": "IMAGE_TOO_LARGE"})
+    name = (b.get("name") or "").strip() or None
+    c = _get_case(db, case_id, user)
+    sm.record_event(db, c, c.status, c.status, "fatwa.sign", user["role"], user["uid"],
+                    {"member": member, "image": image, "name": name})
+    db.commit()
+    return {"ok": True, "member": member}
+
+
+@app.get("/cases/{case_id}/fatwa/sign")
+def get_fatwa_sign(case_id: str, user=Depends(auth.get_current_user),
+                   db: Session = Depends(get_db)):
+    c = _get_case(db, case_id, user)
+    events = (db.query(models.WorkflowEvent)
+              .filter(models.WorkflowEvent.case_id == case_id,
+                      models.WorkflowEvent.action == "fatwa.sign")
+              .order_by(models.WorkflowEvent.created_at.asc()).all())
+    out = {}
+    for e in events:
+        p = e.payload or {}
+        m = p.get("member")
+        if m:
+            out[m] = {"image": p.get("image"), "name": p.get("name"),
+                      "at": e.created_at.isoformat() if e.created_at else None}
+    return {"signatures": out}
+
+
 # ── S3-5 심사원 풀 배정 ───────────────────────────────────────────────────────
 @app.get("/cases/{case_id}/auditor-pool")
 def get_auditor_pool(case_id: str, user=Depends(auth.get_current_user),

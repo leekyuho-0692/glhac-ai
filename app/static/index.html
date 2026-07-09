@@ -412,9 +412,10 @@ const NAV = [
 const NAV_GROUPS=[
   {label:"개요 · Overview", ids:["caseList"]},
   {label:"신청·서류 · Application", ids:["application","preassess","materials","integration"]},
-  {label:"심사·판정 · Audit", ids:["mockAudit","audit","evaluation","fatwa","certificate"]},
-  {label:"계약·지원 · Support", ids:["invoice","payments","deposits","notifyLog","consultation","system"]},
-  {label:"기타 · Others", ids:["assistant","feedback"]},
+  {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // 여정순: 계약·입금확인·결제 단계(심사 앞)
+  {label:"심사·판정 · Audit", ids:["evaluation","mockAudit","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의실사→현장·리포트→파트와→인증서
+  {label:"지원 · Support", ids:["consultation","notifyLog","system"]},   // prod 항목 유지
+  {label:"기타 · Others", ids:["assistant","feedback"]},   // prod 고유 그룹 유지
   {label:"내 정보 관리 · My Data", ids:["documents"]},   // M6: 문서=내 자료함(맨 뒤 이동)
 ];
 const ROLE_DEF = {
@@ -1855,95 +1856,73 @@ function renderJourney(stages){
   html+='</div>';
   return html;
 }
-/* ===== 인증 워크스페이스 트리(클라이언트) — journey 11단계를 그룹형 접기/펼치기 네비 트리로 =====
-   journey key → 실제 SCREEN 매핑. jkey 없는 노드(원재료·문서)는 화면 바로가기(상태 없음). */
-const WSTREE_GROUPS=[
-  {key:"apply",label:"신청 · Application",nodes:[
-    {ko:"신청",en:"Application",screen:"application",jkey:"application"},
-    {ko:"사전검토",en:"Pre-assessment",screen:"preassess",jkey:"preassess"},
-    {ko:"원재료",en:"Materials",screen:"materials"},
-    {ko:"문서",en:"Documents",screen:"documents"},
-  ]},
-  {key:"contract",label:"계약·결제 · Contract",nodes:[
-    {ko:"계약",en:"Contract",screen:"invoice",jkey:"contract"},
-    {ko:"입금확인",en:"Payment",screen:"invoice",jkey:"payment"},
-  ]},
-  {key:"audit",label:"심사 · Audit",nodes:[
-    {ko:"할랄매뉴얼",en:"Halal manual",screen:"evaluation",jkey:"halal_manual"},
-    {ko:"모의실사",en:"Mock audit",screen:"mockAudit",jkey:"mock_audit"},
-    {ko:"현장실사",en:"On-site audit",screen:"audit",jkey:"onsite"},
-    {ko:"오디터리포트",en:"Audit report",screen:"audit",jkey:"audit_report"},
-  ]},
-  {key:"cert",label:"인증 · Certification",nodes:[
-    {ko:"파트와",en:"Fatwa",screen:"fatwa",jkey:"fatwa"},
-    {ko:"인증서",en:"Certificate",screen:"certificate",jkey:"certificate"},
-  ]},
-];
-let WSTREE_OPEN=null;    // 펼친 그룹 key Set (null=미초기화 → 현재 단계 그룹 자동 펼침)
-let WSTREE_STAGES=null;  // 최근 journey stages 캐시(그룹 접기/펼치기 재렌더용)
-/* 순수함수: journey stages → 그룹별 {done,total} 요약 (단위 검증용) */
-function wsTreeSummary(stages){
-  const smap={};(stages||[]).forEach(s=>{smap[s.key]=s.status;});
-  return WSTREE_GROUPS.map(g=>{
-    const jn=g.nodes.filter(n=>n.jkey);
-    return {key:g.key,total:jn.length,done:jn.filter(n=>smap[n.jkey]==='done').length};
-  });
+/* ===== 인증 워크스페이스(클라이언트) — 클라이언트 여정 11단계를 그대로 반영 =====
+   서버 GET /cases/{id}/journey 의 stages(11개)를 순서·라벨 그대로 표시(임의 그룹/추가/삭제 금지).
+   여기서는 stage.key → 실제 SCREEN 매핑만 상수로 둔다(라벨은 서버 stages 사용). */
+const WS_STAGE_MAP={
+  signup:      {screen:null,          en:"Sign-up"},
+  application: {screen:"application",  en:"Application"},
+  preassess:   {screen:"preassess",   en:"Pre-assessment"},
+  contract:    {screen:"invoice",     en:"Contract"},
+  payment:     {screen:"invoice",     en:"Payment"},
+  halal_manual:{screen:"evaluation",  en:"Halal manual"},
+  mock_audit:  {screen:"mockAudit",   en:"Mock audit"},
+  onsite:      {screen:"audit",       en:"On-site audit"},
+  audit_report:{screen:"audit",       en:"Audit report"},
+  fatwa:       {screen:"fatwa",       en:"Fatwa"},
+  certificate: {screen:"certificate", en:"Certificate"},
+};
+/* 서버 라벨 없을 때 폴백 KO 라벨(정본 11단계) */
+const WS_STAGE_KO={signup:"회원가입",application:"신청",preassess:"사전검토",contract:"계약",payment:"입금확인",halal_manual:"할랄매뉴얼",mock_audit:"모의실사",onsite:"현장실사",audit_report:"오디터리포트",fatwa:"파트와",certificate:"인증서"};
+let WSTREE_STAGES=null;  // 최근 journey stages 캐시(재렌더용)
+/* 케이스 디테일 overview 최상단 배치용 — 상단 진행 스텝바(4 매크로) + 세로 단계 카드.
+   renderCaseDetail 경로는 applyView가 AFTER_RENDER를 호출하지 않으므로 setTimeout으로 fetch 예약. */
+function wsStagesCard(id){
+  setTimeout(function(){ loadWsStages(id); },0);
+  return '<div id="wsStagesWrap" style="margin-bottom:16px"><div class="card"><h3>'+T('인증 워크스페이스')+' <span class="en">· Certification workspace</span></h3><div class="body"><div id="wsStagesBody" class="muted small">'+T('불러오는 중…')+'</div></div></div></div>';
 }
-function wsTreeCard(id){
-  const prev=AFTER_RENDER;
-  AFTER_RENDER=function(){ if(prev)try{prev();}catch(_){}; loadWsTree(id); };
-  return '<div class="card" id="wsTreeCard" style="margin-bottom:16px"><h3>'+T('인증 워크스페이스')+' <span class="en">· Certification workspace</span></h3><div class="body"><div id="wsTreeBody" class="muted small">'+T('불러오는 중…')+'</div></div></div>';
-}
-async function loadWsTree(id){
+async function loadWsStages(id){
   try{
     const r=await API('/cases/'+id+'/journey');
     WSTREE_STAGES=(r&&r.stages)||[];
-    renderWsTree();
-  }catch(e){ const el=document.getElementById('wsTreeBody'); if(el)el.innerHTML='<div class="muted small">'+T('진행 정보를 불러오지 못했습니다.')+'</div>'; }
+    renderWsStages();
+  }catch(e){ const el=document.getElementById('wsStagesBody'); if(el)el.innerHTML='<div class="muted small">'+T('진행 정보를 불러오지 못했습니다.')+'</div>'; }
 }
-function wsTreeToggle(gkey){
-  if(!WSTREE_OPEN)WSTREE_OPEN=new Set();
-  if(WSTREE_OPEN.has(gkey))WSTREE_OPEN.delete(gkey);else WSTREE_OPEN.add(gkey);
-  renderWsTree();
-}
-function renderWsTree(){
-  const el=document.getElementById('wsTreeBody'); if(!el)return;
-  const stages=WSTREE_STAGES||[];
-  const smap={}; stages.forEach(s=>{smap[s.key]=s.status;});
-  // 최초 렌더: 현재 단계가 속한 그룹을 펼침(없으면 첫 그룹)
-  if(WSTREE_OPEN===null){
-    WSTREE_OPEN=new Set();
-    const curKey=(stages.find(s=>s.status==='current')||{}).key;
-    let opened=false;
-    WSTREE_GROUPS.forEach(g=>{ if(g.nodes.some(n=>n.jkey===curKey)){WSTREE_OPEN.add(g.key);opened=true;} });
-    if(!opened&&WSTREE_GROUPS[0])WSTREE_OPEN.add(WSTREE_GROUPS[0].key);
-  }
+function renderWsStages(){
+  const wrap=document.getElementById('wsStagesWrap'); if(!wrap)return;
+  const stages=WSTREE_STAGES||[];   // 서버 stages(11) 그대로 — 순서·라벨 유지
+  const head='<div class="card"><h3>'+T('인증 워크스페이스')+' <span class="en">· Certification workspace</span></h3>';
+  if(!stages.length){ wrap.innerHTML=head+'<div class="body"><div class="muted small">'+T('진행 정보 없음')+'</div></div></div>'; return; }
+  const doneCnt=stages.filter(s=>s.status==='done').length;
   const ICON={done:'✓',current:'●',todo:'○'}, TCOL={done:'ok',current:'info',todo:'mute'};
-  let html='';
-  WSTREE_GROUPS.forEach(g=>{
-    const jn=g.nodes.filter(n=>n.jkey);
-    const doneN=jn.filter(n=>smap[n.jkey]==='done').length;
-    const open=WSTREE_OPEN.has(g.key);
-    const [gko,gen]=g.label.split(' · ');
-    const sumTag=jn.length?`<div class="when"><span class="tag t-${doneN===jn.length?'ok':'mute'}">${doneN}/${jn.length} ${T('완료')}</span></div>`:'';
-    html+='<div class="wstree-group">';
-    html+=`<div class="li clickable" style="font-weight:600" onclick="wsTreeToggle('${g.key}')">
-      <div class="ic t-mute">${open?'▾':'▸'}</div>
-      <div class="tx" style="flex:1"><b>${T(gko)}<span class="en"> · ${esc(gen||'')}</span></b></div>${sumTag}</div>`;
-    if(open){
-      g.nodes.forEach(n=>{
-        const st=n.jkey?(smap[n.jkey]||'todo'):null;
-        const canGo=!!(MENU_ACCESS[n.screen]&&MENU_ACCESS[n.screen].includes(ROLE));
-        const ic=st?ICON[st]:'·', col=st?TCOL[st]:'info', cur=(st==='current');
-        html+=`<div class="li ${canGo?'clickable':''}" style="padding-left:26px${cur?';background:var(--accent-soft)':''}" ${canGo?`onclick="go('${n.screen}')"`:''}>
-          <div class="ic t-${col}">${ic}</div>
-          <div class="tx"><b>${T(n.ko)}<span class="en"> · ${esc(n.en)}</span></b>${!canGo?' <span class="muted small">'+T('접근 제한')+'</span>':''}</div>
-          ${canGo?'<div class="when go-arrow">→</div>':''}</div>`;
-      });
-    }
-    html+='</div>';
+  // ── 상단 진행 스텝바(가로): 서버 stages 순서 그대로(11), 현재 단계 강조. 11개라 가로 스크롤 ──
+  let bar='<div class="stepbar" style="overflow-x:auto">';
+  stages.forEach((s,i)=>{
+    const cls=s.status==='done'?'done':(s.status==='current'?'cur':'');
+    const m=WS_STAGE_MAP[s.key]||{};
+    const ko=esc(s.label||WS_STAGE_KO[s.key]||s.key);
+    bar+='<div class="step '+cls+'"><div class="dot">'+(s.status==='done'?'✓':(i+1))+'</div><span>'+ko+(m.en?'<span class="en">'+esc(m.en)+'</span>':'')+'</span></div>';
+    if(i<stages.length-1)bar+='<div class="stepline '+(s.status==='done'?'done':'')+'"></div>';
   });
-  el.innerHTML=html;
+  bar+='</div>';
+  // ── 세로 단계 목록: 카드 1개 안에 11행(한 행 = 한 단계). 가로로 몰리지 않게 ──
+  let rows='';
+  stages.forEach(s=>{
+    const m=WS_STAGE_MAP[s.key]||{};
+    const st=s.status||'todo';
+    const screen=m.screen||null;
+    const canGo=!!(screen&&MENU_ACCESS[screen]&&MENU_ACCESS[screen].includes(ROLE));
+    const gated=!!(screen&&!canGo);   // 화면은 있으나 역할 접근 불가 → 상태만
+    const ic=ICON[st]||'○', col=TCOL[st]||'mute', cur=(st==='current');
+    const ko=esc(s.label||WS_STAGE_KO[s.key]||s.key);
+    rows+='<div class="li '+(canGo?'clickable':'')+'"'+(cur?' style="background:var(--accent-soft)"':'')+(canGo?' onclick="go(\''+screen+'\')"':'')+'>'
+      +'<div class="ic t-'+col+'">'+ic+'</div>'
+      +'<div class="tx"><b>'+ko+(m.en?'<span class="en"> · '+esc(m.en)+'</span>':'')+'</b>'+(gated?' <span class="muted small">'+T('접근 제한')+'</span>':'')+'</div>'
+      +(canGo?'<div class="when go-arrow">→</div>':'')+'</div>';
+  });
+  const badge='<span class="tag t-'+(doneCnt===stages.length?'ok':'mute')+'">'+doneCnt+'/'+stages.length+' '+T('완료')+'</span>';
+  wrap.innerHTML=head+'<div class="body">'+bar+'</div></div>'
+    +'<div class="card" style="margin-top:16px"><h3>'+T('인증 진행 단계')+' <span class="en">· 11-step</span><span class="r">'+badge+'</span></h3><div class="list">'+rows+'</div></div>';
 }
 function fatwaLabel(s){return {none:"심의 전",provisional:"가승인",approved:"최종승인",rejected:"반려",conditional:"조건부"}[s]||s;}
 function fatwaColor(s){return {approved:"ok",provisional:"info",rejected:"bad",conditional:"warn"}[s]||"mute";}
@@ -2065,9 +2044,8 @@ SCREEN.caseList=async()=>{
       <td>${c.due_date?dueBadge(c.due_date):'<span class="muted">—</span>'}</td></tr>`).join("")
     : `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">조건에 맞는 케이스 없음 · No cases</td></tr>`;
   const canNew=["client","consultant","admin"].includes(ROLE);
-  // M-트리: 클라이언트 + 현재 선택 케이스(CURCASE) 있으면 인증 워크스페이스 트리를 상단에 노출
-  const wsTree=(ROLE==='client'&&CURCASE)?wsTreeCard(CURCASE):"";
-  return `${wsTree}${filterChips()}
+  // 인증 워크스페이스는 케이스 디테일 overview(renderCaseDetail)로 이전됨 — 리스트 화면에서는 미노출
+  return `${filterChips()}
   <div class="chipbar" style="margin-bottom:12px">
     <input class="v" style="width:auto;flex:1;max-width:280px" placeholder="🔍 검색 (기업·번호) — Enter" value="${esc(FILTERS.q||'')}" onkeydown="if(event.key==='Enter'){FILTERS.q=this.value;PAGES={};applyView();}">
     <select class="v" style="width:auto" onchange="CASE_SORT=this.value;applyView()">
@@ -4066,8 +4044,11 @@ async function fatwaClientStatus(id){
       <div class="kv"><span>최종승인 · Final</span><b>${esc(s.final_approved_at||'—')}</b></div>
     </div></div>`;
 }
+/* 파트와 결정 — 목업 재구현(SCREEN.fatwa). 작성용=sharia·ops·admin, 열람용=client·consultant·auditor.
+   기존 투표/결정(P0-4)·2단계승인은 fatwaCommitteeAdvanced(<details>)로 보존. */
 SCREEN.fatwa=async()=>{
-  if(!["sharia","ops","admin"].includes(ROLE)) return await fatwaClientStatus(CURCASE);
+  const editable=["sharia","ops","admin"].includes(ROLE);
+  if(!editable) return await fatwaDecisionView(CURCASE,false);
   let fdash={counts:{},items:[]};try{fdash=await API("/fatwa/dashboard");}catch(_){}
   const fc=fdash.counts||{};
   const fcard=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:22px;color:var(--${c})">${n||0}</span><span class="l">${l}</span></div></div>`;
@@ -4076,7 +4057,13 @@ SCREEN.fatwa=async()=>{
     <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">${fcard(fc.review,"심의 대기","warn")}${fcard(fc.provisional,"가승인","info")}${fcard(fc.approved,"최종승인","ok")}${fcard((fc.rejected||0)+(fc.conditional||0),"반려/조건부","bad")}</div>
     <div class="body tight"><table><thead><tr><th>회사</th><th>파트와 상태</th><th>결정번호</th></tr></thead><tbody>${frows}</tbody></table></div></div></div>`;
   if(!CURCASE)return fatwaDashHtml+'<div class="card"><div class="body muted">위 목록에서 케이스를 선택하면 위원회 심의 상세가 표시됩니다.</div></div>';
-  const id=CURCASE;const fd=await API(`/cases/${id}/fatwa`).catch(()=>({decision:"pending"}));
+  const mock=await fatwaDecisionView(CURCASE,true);
+  const advanced=await fatwaCommitteeAdvanced(CURCASE);
+  return fatwaDashHtml + mock + advanced;
+};
+/* 기존 심의 상세(위원 구성·2단계 승인·위원회 투표) — P0-4 fatwa 로직 보존, 접이식 */
+async function fatwaCommitteeAdvanced(id){
+  const fd=await API(`/cases/${id}/fatwa`).catch(()=>({decision:"pending"}));
   const members=fd.committee_members||[];
   let voteTally=null;
   if(CAN("fatwa.propose")||["ops","sharia","admin"].includes(ROLE)){try{voteTally=await API(`/cases/${id}/fatwa/votes`);}catch(_){}}
@@ -4090,8 +4077,8 @@ SCREEN.fatwa=async()=>{
   const stageBanner=isFinal?["ok","✓ 최종 승인 완료 (최고운영자)"]
     :isProvisional?["info","⏳ 가승인 (샤리아) — 최종 결제자 최종승인 대기"]
     :fst==="rejected"?["bad","⛔ 반려됨"]:fst==="conditional"?["warn","조건부 승인"]:["mute","심의 전"];
-  return fatwaDashHtml + `
-  <div class="grid side">
+  return `<details style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;padding:8px 4px">⚖️ ${T('심의 상세 (위원 구성·2단계 승인·투표)')} <span class="en">· Committee detail</span></summary>
+  <div class="grid side" style="margin-top:12px">
     <div class="card"><h3>파트와 위원회 심의 <span class="en">· Committee</span><span class="r">${bSpan(fst)}</span></h3>
       <div class="body">
         <div class="banner ${stageBanner[0]==='mute'?'info':stageBanner[0]}" style="margin-bottom:12px">${stageBanner[1]}${fd.decision_no?" · "+esc(fd.decision_no):""}${fd.final_approved_at?" · 최종 "+esc(String(fd.final_approved_at).slice(0,16)):""}</div>
@@ -4126,8 +4113,156 @@ SCREEN.fatwa=async()=>{
           <button class="btn bad" style="padding:3px 9px" data-m="${esc(nm)}" data-v="reject" onclick="fatwaVoteBtn(this,'${id}')">${cur==='reject'?'✓ ':''}반대</button>
           <button class="btn" style="padding:3px 9px" data-m="${esc(nm)}" data-v="abstain" onclick="fatwaVoteBtn(this,'${id}')">${cur==='abstain'?'✓ ':''}기권</button></span></div>`;}).join("")||'<span class="muted small">위원이 없습니다.</span>'
         :'<span class="muted small">투표 상세·행사는 샤리아 위원 전용입니다.</span>'}
-    </div></div>`:''}`;
-};
+    </div></div>`:''}</details>`;
+}
+/* 파트와 결정 목업 뷰 — editable=true(파트와 담당 작성용) / false(클라·컨설·오디터 열람용) */
+var FATWA_SIGN_CACHE={};
+async function fatwaDecisionView(id,editable){
+  editable=editable!==false;
+  if(!id) return `<div class="card"><div class="body muted">${T('케이스를 선택하세요')} · Select a case.</div></div>`;
+  const [fd,prods,plans,pool,gendocs,sign]=await Promise.all([
+    API(`/cases/${id}/fatwa`).catch(()=>({decision:"pending"})),
+    API(`/cases/${id}/products`).catch(()=>[]),
+    API(`/cases/${id}/audit-plans`).catch(()=>[]),
+    API(`/cases/${id}/auditor-pool`).catch(()=>[]),
+    API(`/cases/${id}/gen-docs`).catch(()=>[]),
+    API(`/cases/${id}/fatwa/sign`).catch(()=>({signatures:{}}))
+  ]);
+  const c=curCaseObj();
+  const company=esc((c&&(c.company_name||c.company))||'—');
+  const auditDate=(plans&&plans.length)?esc(plans[0].scheduled_date||'—'):'—';
+  const auditor=(pool&&pool.length)?esc(pool[0].name||'—'):'—';
+  let supervisor='—';
+  (pool||[]).forEach(p=>{const r=String(p.role_in_team||'').toLowerCase();
+    if(supervisor==='—'&&(r.indexOf('supervisor')>=0||r.indexOf('penyelia')>=0))supervisor=esc(p.name||'—');});
+  if(supervisor==='—'&&pool&&pool.length>1)supervisor=esc(pool[1].name||'—');
+  const latestOf=(dt)=>{const arr=(gendocs||[]).filter(g=>g.doc_type===dt);return arr.length?arr[0]:null;};  // gen-docs = 버전 내림차순
+  const manualDoc=latestOf('sjph_manual'), reportDoc=latestOf('audit_report');
+  const docCard=(title,doc,pdfUrl,fname)=>`<div class="card" style="flex:1 1 320px;min-width:280px"><div class="body" style="display:flex;align-items:center;gap:12px">
+      <div style="width:44px;height:44px;border-radius:10px;background:var(--accent-soft);display:grid;place-items:center;font-size:22px">📄</div>
+      <div style="flex:1"><div style="font-weight:700">${title} <span class="tag t-info">PDF</span></div>
+        <div class="muted small" style="margin-top:2px">${T('업로드일')}: ${doc?esc(String(doc.created_at).slice(0,16).replace('T',' ')):'—'}${doc?' · v'+esc(doc.version):''}</div></div>
+      <button class="btn" onclick="serverPdf('${pdfUrl}','${fname}')">⬇ ${T('다운로드')}</button>
+    </div></div>`;
+  const prodRows=(prods||[]).map((p,i)=>`<tr>
+      <td style="text-align:center;padding:9px 6px">${i+1}</td>
+      <td style="padding:9px 6px"><b>${esc(p.name||'—')}</b></td>
+      <td style="padding:9px 6px">${esc(p.brand||'—')}</td>
+      <td style="padding:9px 6px">${esc(p.category||'—')}</td>
+      <td style="padding:9px 6px">${esc(p.packing||'—')}</td></tr>`).join('')||`<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">${T('등록된 제품이 없습니다')}</td></tr>`;
+  const decision=fd.decision||'pending';
+  const approved=decision==='approved'||fd.fatwa_status==='approved'||fd.fatwa_status==='provisional';
+  const head=fd.committee_head;const mems=(fd.committee_members||[]).map(m=>typeof m==='string'?m:(m&&m.name)||'').filter(Boolean);
+  const rest=mems.filter(nm=>nm&&nm!==head);
+  const slots=[{key:'chairman',role:T('위원장 (Chairman)'),name:head||''},
+    {key:'member1',role:T('위원 (Member)'),name:rest[0]||''},
+    {key:'member2',role:T('위원 (Member)'),name:rest[1]||''}];
+  const sigs=(sign&&sign.signatures)||{};
+  FATWA_SIGN_CACHE={};
+  slots.forEach(s=>{const g=sigs[s.key];if(g&&g.image){FATWA_SIGN_CACHE[s.key]={image:g.image,name:g.name,at:g.at};}});
+  const namedSlots=slots.filter(s=>s.name);
+  const allSigned=namedSlots.length>0 && namedSlots.every(s=>FATWA_SIGN_CACHE[s.key]);
+  const sigCards=slots.map((s,i)=>{
+    const g=FATWA_SIGN_CACHE[s.key];const signed=!!g;
+    return `<div class="card" style="flex:1 1 220px;min-width:200px"><div class="body">
+      <div>${signed?`<span class="tag t-ok">✓ ${T('서명 완료')}</span>`:`<span class="tag t-warn">${T('서명 대기')}</span>`}</div>
+      <div style="font-weight:700;margin-top:8px">${i+1}. ${s.role}</div>
+      <div style="margin-top:2px">${esc(s.name||T('위원 미지정'))}</div>
+      <div class="muted small" style="margin-top:2px">${T('서명일')}: ${signed&&g.at?esc(String(g.at).slice(0,16).replace('T',' ')):'—'}</div>
+      <canvas id="sigcanvas_fatwa_${s.key}" width="300" height="90" style="width:100%;margin-top:8px;border:1px solid var(--line);border-radius:8px;background:var(--card);touch-action:none;display:block;cursor:${editable&&s.name?'crosshair':'default'}"></canvas>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        ${editable&&s.name?`<button class="btn" style="padding:4px 10px;font-size:12px" onclick="fatwaClearSig('${id}','${s.key}')">↺ ${T('지우기')}</button>`:''}
+        ${signed?`<button class="btn" style="padding:4px 10px;font-size:12px" onclick="fatwaViewSig('${s.key}')">👁 ${T('서명 보기')}</button>`:''}
+      </div></div></div>`;
+  }).join('');
+  const prev=AFTER_RENDER;
+  AFTER_RENDER=function(){if(prev)try{prev()}catch(_){};initFatwaSignPads(id,editable,slots);};
+  return `
+  ${editable?'':`<div class="card" style="margin-bottom:16px"><div class="banner info">👁 ${T('열람용 · 결과·서명·문서 열람만')}</div></div>`}
+  <div class="card" style="margin-bottom:16px"><div class="body" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+    <div><h2 style="margin:0;font-size:20px">${T('파트와 결정')}</h2>
+      <div class="muted small" style="margin-top:4px">${T('HPAS 및 현장 감사 보고서를 검토하고 제품에 대한 할랄 파트와 결정을 진행하세요.')}</div></div>
+    <button class="btn" onclick="toast(T('가이드는 준비 중입니다'))">❔ ${T('가이드 보기')}</button>
+  </div></div>
+  <div class="card" style="margin-bottom:16px"><div class="body"><div style="display:flex;gap:16px;flex-wrap:wrap">
+    <div style="flex:1 1 150px;min-width:130px"><div class="muted small">${T('감사 기업')}</div><div style="font-weight:700;margin-top:2px">${company}</div></div>
+    <div style="flex:1 1 150px;min-width:130px"><div class="muted small">${T('현장 감사일')}</div><div style="font-weight:700;margin-top:2px">${auditDate}</div></div>
+    <div style="flex:1 1 150px;min-width:130px"><div class="muted small">${T('감사자 (Auditor)')}</div><div style="font-weight:700;margin-top:2px">${auditor}</div></div>
+    <div style="flex:1 1 150px;min-width:130px"><div class="muted small">${T('할랄 감독관 (Halal Supervisor)')}</div><div style="font-weight:700;margin-top:2px">${supervisor}</div></div>
+  </div></div></div>
+  <div class="card" style="margin-bottom:16px"><h3>${T('관련 문서')} <span class="en">· Documents</span></h3>
+    <div class="body"><div class="muted small" style="margin-bottom:10px">${T('아래 문서를 다운로드하여 검토하세요.')}</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      ${docCard(T('HPAS 매뉴얼 및 심사 문서'),manualDoc,'/cases/'+id+'/sjph-manual.pdf','hpas_manual.pdf')}
+      ${docCard(T('현장 감사 보고서'),reportDoc,'/cases/'+id+'/factory-audit.pdf','audit_report.pdf')}
+    </div></div></div>
+  <div class="card" style="margin-bottom:16px"><h3>${T('제품 목록')} <span class="en">· Products</span><span class="r">${T('총 제품 수')}: ${(prods||[]).length}</span></h3>
+    <div class="body"><div class="muted small" style="margin-bottom:10px">${T('파트와 결정을 진행할 제품 목록입니다.')}</div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr style="border-bottom:2px solid var(--line)">
+        <th style="text-align:center;padding:8px 6px;width:40px">No</th><th style="text-align:left;padding:8px 6px">${T('제품명 (Product Name)')}</th>
+        <th style="text-align:left;padding:8px 6px">${T('브랜드 (Brand)')}</th><th style="text-align:left;padding:8px 6px">${T('제품 유형 (Product Type)')}</th>
+        <th style="text-align:left;padding:8px 6px">${T('포장 단위 (Packing)')}</th></tr></thead>
+      <tbody>${prodRows}</tbody></table></div>
+    <div class="muted small" style="margin-top:8px">ℹ ${T('위 제품 목록은 감사 기업이 제출한 정보입니다. 파트와 결정 전 최종 확인 바랍니다.')}</div>
+    </div></div>
+  <div class="card" style="margin-bottom:16px"><h3>${T('파트와 결정 확인')} <span class="en">· Decision</span></h3>
+    <div class="body"><div class="banner ${approved?'ok':'info'}">
+      <b>${approved?'✓ ':'⏳ '}${T('HPAS 매뉴얼과 감사자의 현장 감사 보고서에 근거하여,')}</b><br>
+      <b>${T('파트와 위원회는 상기 제품이 할랄임을 결정합니다.')}</b>${fd.decision_no?' · '+esc(fd.decision_no):''}</div></div></div>
+  <div class="card" style="margin-bottom:16px"><h3>${T('파트와 위원회 전자 서명 (E-Signature)')} <span class="en">· Sign</span></h3>
+    <div class="body"><div class="muted small" style="margin-bottom:10px">${T('모든 위원이 서명해야 문서를 생성할 수 있습니다.')}</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">${sigCards}</div>
+    ${editable?`<div class="btnrow" style="margin-top:16px">
+      <button class="btn ok" onclick="fatwaDecide('${id}','approved')">✓ ${T('승인 (Approve)')}</button>
+      <button class="btn bad" onclick="fatwaDecide('${id}','rejected')">✕ ${T('반려 (Reject)')}</button>
+    </div><div class="muted small" style="margin-top:6px">${T('승인 시 파트와 문서를 생성합니다. 반려 시 재검토가 필요합니다.')}</div>`:''}
+    </div></div>
+  <div class="card" style="margin-bottom:16px"><h3>${T('AI 파트와 문서 생성')} <span class="en">· AI document</span></h3>
+    <div class="body"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:stretch">
+      <div style="flex:1 1 240px"><div class="small" style="font-weight:600;margin-bottom:6px">${T('생성 가능 문서')}</div>
+        <div class="check"><div class="cbox on">✓</div><b style="flex:1">${T('파트와 결정서 (Fatwa Decision Letter)')}</b></div>
+        <div class="muted small" style="margin-top:6px">${T('문서에는 제품 목록 및 모든 위원 전자 서명이 포함됩니다.')}</div></div>
+      <div style="flex:1 1 180px;text-align:center">
+        <div class="muted small" style="margin-bottom:6px">${T('문서 미리보기 (예시)')}</div>
+        <div style="border:1px dashed var(--line);border-radius:10px;padding:22px;background:var(--accent-soft)"><div style="font-size:32px">📄</div><div class="small" style="font-weight:700;margin-top:6px">FATWA DECISION</div><div class="muted small">HALAL</div></div></div>
+      <div style="flex:1 1 200px;display:grid;place-items:center;text-align:center;border:1px dashed var(--accent);border-radius:10px;padding:14px">
+        <div><div style="font-size:32px">🤖</div><div style="font-weight:700;margin:6px 0">${T('AI 문서 생성')}</div>
+        ${editable?`<button class="btn pri" onclick="genFatwaDecree('${id}')">${T('문서 생성하기')}</button>
+          ${allSigned?'':`<div class="muted small" style="margin-top:6px">${T('모든 위원 서명 후 권장')}</div>`}`:`<button class="btn" onclick="serverPdf('/cases/${id}/fatwa/decree.pdf','fatwa_decree.pdf')">⬇ ${T('결정서 다운로드')}</button>`}</div></div>
+    </div>
+    <div class="muted small" style="margin-top:10px">ℹ ${T('생성된 파트와 문서는 PDF 형식으로 다운로드할 수 있으며, 모든 위원 전자 서명이 포함됩니다.')}</div>
+    </div></div>`;
+}
+function initFatwaSignPads(id,editable,slots){
+  editable=editable!==false;
+  (slots||[]).forEach(function(s){
+    const cv=document.getElementById('sigcanvas_fatwa_'+s.key);if(!cv)return;
+    const ctx=cv.getContext('2d');if(!ctx)return;
+    ctx.lineWidth=2;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#0B5D2A';
+    const cached=FATWA_SIGN_CACHE[s.key];
+    if(cached&&cached.image){const img=new Image();img.onload=function(){try{ctx.drawImage(img,0,0,cv.width,cv.height)}catch(_){}};img.src=cached.image;}
+    if(!editable||!s.name){cv.style.cursor='default';return;}
+    let drawing=false,dirty=false,lx=0,ly=0;
+    const pt=function(e){const r=cv.getBoundingClientRect();const sx=cv.width/r.width,sy=cv.height/r.height;
+      return {x:(e.clientX-r.left)*sx,y:(e.clientY-r.top)*sy};};
+    cv.onpointerdown=function(e){e.preventDefault();drawing=true;const p=pt(e);lx=p.x;ly=p.y;try{cv.setPointerCapture(e.pointerId)}catch(_){}};
+    cv.onpointermove=function(e){if(!drawing)return;e.preventDefault();const p=pt(e);
+      ctx.beginPath();ctx.moveTo(lx,ly);ctx.lineTo(p.x,p.y);ctx.stroke();lx=p.x;ly=p.y;dirty=true;};
+    const end=function(e){if(!drawing)return;if(e)e.preventDefault();drawing=false;
+      if(dirty){dirty=false;saveFatwaSig(id,s,cv);}};
+    cv.onpointerup=end;cv.onpointerleave=end;cv.onpointercancel=end;
+  });
+}
+async function saveFatwaSig(id,slot,cv){
+  let image;try{image=cv.toDataURL('image/png');}catch(_){return;}
+  if(image&&image.length>400000){toast(T('서명 용량 초과'));return;}
+  try{await API('/cases/'+id+'/fatwa/sign',{method:'POST',body:JSON.stringify({member:slot.key,name:slot.name,image:image})});
+    FATWA_SIGN_CACHE[slot.key]={image:image,name:slot.name,at:new Date().toISOString()};toast(T('서명 저장')+' · '+slot.name);}
+  catch(e){toast(T('서명 저장 실패')+' · '+((e&&e.code)||''));}
+}
+function fatwaClearSig(id,key){const cv=document.getElementById('sigcanvas_fatwa_'+key);if(cv){const ctx=cv.getContext('2d');if(ctx)ctx.clearRect(0,0,cv.width,cv.height);}FATWA_SIGN_CACHE[key]=null;}
+function fatwaViewSig(key){const g=FATWA_SIGN_CACHE[key];if(!g||!g.image){toast(T('서명 없음'));return;}const w=window.open('');if(w)w.document.write('<img src="'+esc(g.image)+'" style="max-width:100%">');}
 async function fatwaVoteBtn(el,id){await fatwaVote(id,el.getAttribute('data-m'),el.getAttribute('data-v'));}
 async function fatwaVote(id,member,vote){try{await API(`/cases/${id}/fatwa/vote`,{method:"POST",body:JSON.stringify({member,vote})});toast("투표 · "+member+" → "+vote);applyView();}catch(e){toast("투표 실패 · "+(e&&e.code?e.code:""));}}
 async function setFatwaCommittee(id,decision){
@@ -4408,7 +4543,7 @@ async function renderCaseDetail(id, tab){
     let disc=[];try{disc=await API(`/cases/${id}/discussions`);}catch(_){}
     const phases=(w.phases||[]);
     const flow=phases.map((p,i)=>`<div class="step ${p.status==="done"?"done":p.status==="current"?"now":(p.done?"done":p.current?"now":"")}" style="min-width:64px">${esc(p.label||p.state||p.key||"")}</div>${i<phases.length-1?'<span class="arrow">›</span>':''}`).join("")||'<div class="muted small">—</div>';
-    panel=`<div class="card" style="margin-bottom:16px"><h3>인증 진행 단계 <span class="en">· Milestone (5단계)</span><span class="r">${esc(w.state_label||c.status||"—")}</span></h3><div class="body">${progressBar(c.status)}</div></div>
+    panel=`${wsStagesCard(id)}<div class="card" style="margin-bottom:16px"><h3>인증 진행 단계 <span class="en">· Milestone (5단계)</span><span class="r">${esc(w.state_label||c.status||"—")}</span></h3><div class="body">${progressBar(c.status)}</div></div>
     <div class="grid side">
       <div class="card"><h3>케이스 진행 단계 <span class="en">· Workflow</span></h3>
         <div class="body"><div class="flow" style="margin-bottom:14px">${flow}</div>
