@@ -2630,7 +2630,13 @@ async function genCompanyInfo(id){
   catch(e){toast("생성 실패 · "+((e&&e.code)||""));}
 }
 async function genContract(id){
-  try{await API(`/cases/${id}/contract/generate`,{method:"POST",body:"{}"});toast("계약서 생성");serverPdf(`/cases/${id}/contract/pdf`,"contract.pdf");}
+  let body={};
+  if(['ops','admin','consultant'].includes(ROLE)){
+    const f=await dialog("계약서 생성 · 특수조항 금액",[{key:"fee",label:"계약금액(원) — 비우면 기본/청구서 금액",type:"text"}]);
+    if(f===null)return;
+    if(f.fee&&!isNaN(Number(f.fee)))body.fee=Number(f.fee);
+  }
+  try{await API(`/cases/${id}/contract/generate`,{method:"POST",body:JSON.stringify(body)});toast("계약서 생성"+(body.fee?" · "+Number(body.fee).toLocaleString()+"원":""));serverPdf(`/cases/${id}/contract/pdf`,"contract.pdf");}
   catch(e){toast("생성 실패 · "+((e&&e.code)||""));}
 }
 async function genFatwaDecree(id){

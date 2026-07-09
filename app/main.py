@@ -2462,15 +2462,18 @@ CONTRACT_STATIC_SECTIONS = [
 
 
 @app.post("/cases/{case_id}/contract/generate")
-def gen_contract(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    """Contract (FORM 4.1) 생성 — 정적 법률조항 + 동적(회사·제품·수수료) 병합. Contract 레코드 + gen-doc 저장."""
+def gen_contract(case_id: str, body: dict = None, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """Contract (FORM 4.1) 생성 — 정적 법률조항 + 동적(회사·제품·수수료) 병합. Contract 레코드 + gen-doc 저장.
+    M4: body.fee(특수조항 계약금액 수동 override)·body.currency 지원."""
     c = _get_case(db, case_id, user)
+    b = body or {}
     if c.product_ids:
         products = db.query(models.Product).filter(models.Product.product_id.in_(c.product_ids)).all()
     else:
         products = db.query(models.Product).filter_by(case_id=case_id).all()
     invoice = db.query(models.Invoice).filter_by(case_id=case_id).order_by(models.Invoice.created_at.desc()).first()
-    fee = invoice.total if invoice else None
+    _bfee = b.get("fee")  # M4: 특수조항 수동 금액
+    fee = _bfee if _bfee not in (None, "") else (invoice.total if invoice else None)
     categories = list(dict.fromkeys(p.category for p in products if p.category))
     contract = db.query(models.Contract).filter_by(case_id=case_id).first()
     if not contract:

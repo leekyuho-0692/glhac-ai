@@ -79,7 +79,7 @@ def test_gendoc_pdf_renders(tmp_path):
 
 def test_contract_generate_pdf_sign(tmp_path):
     db = _seed_db(tmp_path)
-    r = m.gen_contract("case1", USER, db)
+    r = m.gen_contract("case1", user=USER, db=db)
     assert r["contract_no"].startswith("HAC-") and r["status"] == "issued"
     # 리치 PDF 렌더(정적 법률조항 + 제품표 + 서명블록)
     resp = m.get_contract_pdf("case1", USER, db)
@@ -226,3 +226,10 @@ def test_material_report_snapshot_and_source_docs(tmp_path):
     # 스냅샷 저장(오디터 체크·이력)
     r = m.save_material_report_snapshot("case1", body={"checked": ["m1"], "note": "확인"}, user=USER, db=db)
     assert r["checked"] == 1 and r["gen_doc_id"]
+
+
+def test_contract_fee_override(tmp_path):
+    db = _seed_db(tmp_path)
+    m.gen_contract("case1", body={"fee": 9999000}, user=USER, db=db)
+    ct = db.query(models.Contract).filter_by(case_id="case1").first()
+    assert ct.fee == 9999000  # M4: 특수조항 수동 금액 override
