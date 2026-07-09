@@ -2794,7 +2794,10 @@ def _fac_dict(f):
 def _fac_key(reg_no, name, addr):
     import re
     if reg_no and str(reg_no).strip():
-        return "reg:" + re.sub(r"\s+", "", str(reg_no)).lower()
+        # 등록번호에 발급일자·라벨 등 잡음이 섞여도 병합되도록 가장 긴 숫자열을 정규키로 사용
+        runs = re.findall(r"\d+", str(reg_no))
+        canon = max(runs, key=len) if runs else re.sub(r"\s+", "", str(reg_no)).lower()
+        return "reg:" + canon
     return "na:" + re.sub(r"\s+", "", ((name or "") + (addr or "")).lower())
 
 

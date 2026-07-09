@@ -296,3 +296,21 @@ def test_fatwa_status_derives_from_case_stage(tmp_path):
     db.commit()
     r = m.get_fatwa_status("case1", user=USER, db=db)
     assert r["fatwa_status"] == "review"  # fatwa_status=none이어도 케이스 단계로 보정
+
+
+def test_fac_key_merges_regno_with_date_noise():
+    # 공장등록증 OCR에서 발급일자가 등록번호에 섞여도 같은 공장으로 병합되어야 함
+    clean = m._fac_key("427302017384122", "BIO ROSETTE.,LTD", "addr-en")
+    noisy = m._fac_key("2026-01-22 427302017384122", "(주)바이오로제트", "addr-ko")
+    assert clean == noisy == "reg:427302017384122"
+
+
+def test_fac_key_distinct_regno_not_merged():
+    a = m._fac_key("100000000000001", "A", "x")
+    b = m._fac_key("100000000000002", "B", "y")
+    assert a != b
+
+
+def test_fac_key_falls_back_to_name_addr_without_regno():
+    assert m._fac_key(None, "Buzzup", "seoul").startswith("na:")
+    assert m._fac_key("", "Buzzup", "seoul") == m._fac_key(None, " Buzzup ", "seoul")
