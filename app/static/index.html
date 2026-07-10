@@ -6050,7 +6050,7 @@ function productCertCard(id,pc){
     <td class="muted small">${esc(p.expiry_date||'—')}</td>
     <td style="white-space:nowrap">
       <button class="btn" style="padding:2px 8px;font-size:11px" onclick="serverPdf('/cases/${id}/certificate/products/${p.product_id}.pdf','cert_${esc(p.certificate_no)}.pdf')">📄 PDF</button>
-      <button class="btn" style="padding:2px 8px;font-size:11px" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${esc(p.qr_token)}'),'_blank')">🔗 ${T('검증')}</button>
+      ${p.qr_token?`<button class="btn" style="padding:2px 8px;font-size:11px" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${esc(p.qr_token)}'),'_blank')">🔗 ${T('검증')}</button>`:`<span class="muted small" title="${T('구 발급분 — 공개 검증 토큰 없음')}">${T('검증 불가')}</span>`}
     </td></tr>`).join('');
   return `<div class="card" style="margin-top:16px"><h3>📦 ${T('제품별 개별 인증서')} <span class="en">· Per-product certificates</span><span class="r">${pc.count}${T('건')}</span></h3>
     <div class="body tight">

@@ -634,7 +634,8 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
     """공개 인증서 검증(§11.5·§14 P1) — 인증 불필요, 민감정보 미노출.
     제품별 인증서 토큰({parent}.{product_id[:8]})도 동일 경로로 검증(범위 확장)."""
     base_token, _, prod_frag = qr_token.partition(".")
-    cert = db.query(models.HalalCertificate).filter_by(qr_token=base_token).first()
+    cert = (db.query(models.HalalCertificate).filter_by(qr_token=base_token).first()
+            if base_token else None)
     if not cert:
         raise HTTPException(404, {"code": "CERT_NOT_FOUND", "valid": False})
     product_scope = None
@@ -5912,7 +5913,8 @@ def _product_cert_meta(db, cert, product):
             "halal_mark_no": _halal_mark_no(cert),
             "issue_date": cert.issue_date, "expiry_date": cert.expiry_date,
             "status": cert.status,
-            "qr_token": "%s.%s" % (cert.qr_token or "", product.product_id[:8])}
+            # 모 인증서에 검증토큰이 없는 구(舊) 발급분은 제품 토큰도 없음(공개검증 불가) — "."만 남는 깨진 토큰 방지
+            "qr_token": ("%s.%s" % (cert.qr_token, product.product_id[:8])) if cert.qr_token else None}
 
 
 @app.get("/cases/{case_id}/certificate/products")
@@ -5959,7 +5961,7 @@ def product_certificate_pdf(case_id: str, product_id: str,
         "만료 · Valid until : %s" % (cert.expiry_date or "-"), "",
         "본 제품은 SJPH 및 샤리아 기준에 따라 할랄(HALAL) 인증되었음을 증명합니다.",
         "Produk ini disertifikasi HALAL sesuai SJPH dan kriteria Syariah.", "",
-        "공개 검증 · Verify : /verify/%s" % meta["qr_token"],
+        "공개 검증 · Verify : %s" % ("/verify/%s" % meta["qr_token"] if meta["qr_token"] else "-"),
         "전자서명 · Signed  : %s" % ("예 · Yes" if sig else "아니오 · No"),
     ]
     _audit(db, user, "certificate.product_pdf", "certificate", product_id, case_id)
