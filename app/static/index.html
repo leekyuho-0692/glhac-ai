@@ -314,7 +314,8 @@
 <!-- ===================== LOGIN ===================== -->
 <div id="loginView">
   <form class="loginbox" id="loginForm" onsubmit="doLogin(event)">
-    <h1>GL-HAC AI</h1>
+    <div id="tenantLogo" style="display:none;margin-bottom:10px"></div>
+    <h1 id="loginBrand">GL-HAC AI</h1>
     <div class="sub">할랄·샤리아 인증 플랫폼 · Halal Certification</div>
     <input id="loginUser" placeholder="아이디 · Username" autocomplete="username" autofocus>
     <input id="loginPass" type="password" placeholder="비밀번호 · Password" autocomplete="current-password">
@@ -6039,9 +6040,27 @@ async function fatwaFinalApprove(id){if(!confirm("최종 승인하시겠습니�
 async function fatwaDoc(id){try{const r=await API(`/cases/${id}/fatwa/document`,{method:"POST",body:"{}"});downloadText("fatwa_"+short(id)+".txt",r.document||"");toast("결정문 생성·다운로드");}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
 
 /* 13) Certificate */
+/* 범위확장: 제품별 개별 인증서 — 모 인증서 파생(번호 {parent}-P{n}, 검증토큰 {parent}.{pid8}) */
+function productCertCard(id,pc){
+  if(!pc||!pc.issued||!(pc.items||[]).length)return '';
+  const rows=pc.items.map(p=>`<tr>
+    <td><b>${esc(p.product_name)}</b>${p.category?`<div class="muted small">${esc(p.category)}</div>`:''}</td>
+    <td style="font-family:ui-monospace,monospace;font-size:11.5px">${esc(p.certificate_no)}</td>
+    <td>${tag(p.status==='active'?'ok':'mute',p.status||'—')}</td>
+    <td class="muted small">${esc(p.expiry_date||'—')}</td>
+    <td style="white-space:nowrap">
+      <button class="btn" style="padding:2px 8px;font-size:11px" onclick="serverPdf('/cases/${id}/certificate/products/${p.product_id}.pdf','cert_${esc(p.certificate_no)}.pdf')">📄 PDF</button>
+      <button class="btn" style="padding:2px 8px;font-size:11px" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${esc(p.qr_token)}'),'_blank')">🔗 ${T('검증')}</button>
+    </td></tr>`).join('');
+  return `<div class="card" style="margin-top:16px"><h3>📦 ${T('제품별 개별 인증서')} <span class="en">· Per-product certificates</span><span class="r">${pc.count}${T('건')}</span></h3>
+    <div class="body tight">
+      <div class="muted small" style="margin-bottom:8px">${T('모 인증서')} <b>${esc(pc.parent_certificate_no||'')}</b> ${T('의 동결 제품 범위에서 파생됩니다. 각 제품은 고유 인증번호·공개 검증 토큰을 가지며 모 인증서의 유효성·전자서명을 승계합니다.')}</div>
+      <table><thead><tr><th>${T('제품')}</th><th>${T('제품 인증번호')}</th><th>${T('상태')}</th><th>${T('만료')}</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    </div></div>`;
+}
 SCREEN.certificate=async()=>{
   const id=CURCASE;
-  const [c,ciHist]=await Promise.all([API(`/cases/${id}/certificate`).catch(()=>({issued:false})),API(`/cases/${id}/certificate/change-impact-history`).catch(()=>[])]);
+  const [c,ciHist,pc]=await Promise.all([API(`/cases/${id}/certificate`).catch(()=>({issued:false})),API(`/cases/${id}/certificate/change-impact-history`).catch(()=>[]),API(`/cases/${id}/certificate/products`).catch(()=>({issued:false,items:[]}))]);
   const co=curCaseObj();
   const canIssue=CAN("certificate.issue");  // 단일 매트릭스 파생(API와 동일 action_id)
   const certCard=c.issued?`<div class="cert">
@@ -6085,6 +6104,7 @@ SCREEN.certificate=async()=>{
           ${c.issued&&CAN("certificate.unlock")?`<button class="btn" onclick="unlockCert('${id}')">잠금해제 · Unlock</button>`:''}
           ${!canIssue?'<span class="chip">🔒 발급 — 최고운영자(최종 결제자)</span>':''}</div></div></div>
   </div>
+  ${productCertCard(id,pc)}
   <div class="card" style="margin-top:16px"><h3>변경영향 분석 이력 <span class="en">· Change-impact history</span><span class="r">${(ciHist||[]).length}건</span></h3>
     <div class="body tight"><table><thead><tr><th>일시</th><th>변경 유형</th><th>위험도</th><th>점수</th><th>영향 제품</th><th>조치</th></tr></thead>
       <tbody>${(ciHist||[]).length?(ciHist||[]).map(x=>`<tr>
@@ -6322,7 +6342,7 @@ SCREEN.system=async()=>{
       <td><select class="v" style="font-size:12px;padding:3px 6px;width:auto" onchange="patchUserRole('${u.user_id}',this.value)">${roleOpts(u.role)}</select></td>
       <td class="muted small">${esc(u.org_id||"")}</td>
       <td style="text-align:right"><button class="btn bad" style="padding:3px 8px;font-size:12px" onclick="delUser('${u.user_id}')">✕</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
-  const oRows=(orgs||[]).map(o=>`<tr><td><b>${esc(o.name||o.org_id)}</b></td><td class="muted small">${esc(o.org_id)}</td><td>${o.case_count==null?(o.cases==null?"—":o.cases):o.case_count}</td></tr>`).join("")||'<tr><td colspan="3" class="muted">없음</td></tr>';
+  const oRows=(orgs||[]).map(o=>`<tr><td><b>${esc(o.name||o.org_id)}</b></td><td class="muted small">${esc(o.org_id)}</td><td>${o.case_count==null?(o.cases==null?"—":o.cases):o.case_count}</td><td style="white-space:nowrap"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="tenantPanel('${esc(o.org_id)}')">🌐 ${T('도메인·브랜딩')}</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
   return `
   <div class="grid three">
     <div class="card"><h3>사용자 <span class="en">· Users</span><span class="r">${users.length}</span></h3>
@@ -6334,7 +6354,7 @@ SCREEN.system=async()=>{
           <select class="v" id="nuRole" style="width:auto">${roleOpts('applicant')}</select>
           <button class="btn pri" onclick="createUser()">생성</button></div></div></div>
     <div class="card"><h3>조직 <span class="en">· Orgs</span><span class="r">${(orgs||[]).length}</span></h3>
-      <div class="body tight"><table><thead><tr><th>조직</th><th>ID</th><th>케이스</th></tr></thead><tbody>${oRows}</tbody></table></div>
+      <div class="body tight"><table><thead><tr><th>조직</th><th>ID</th><th>케이스</th><th>${T('테넌트')}</th></tr></thead><tbody>${oRows}</tbody></table></div>
       <div class="body" style="border-top:1px solid var(--line)">
         <div class="btnrow"><input class="v" id="noId" placeholder="org_id" style="width:110px">
           <input class="v" id="noName" placeholder="조직명" style="flex:1;min-width:90px">
@@ -6378,6 +6398,52 @@ async function createUser(){const username=v("nuUser"),password=v("nuPass")||"pw
 async function patchUserRole(uid,role){try{await API(`/admin/users/${uid}`,{method:"PATCH",body:JSON.stringify({role})});toast("역할 변경 · "+role);}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function delUser(uid){if(!confirm("사용자를 삭제할까요?"))return;try{await API(`/admin/users/${uid}`,{method:"DELETE"});toast("사용자 삭제");applyView();}catch(e){toast("삭제 실패 · "+(e&&e.code?e.code:""));}}
 async function createOrg(){const org_id=v("noId"),name=v("noName");if(!org_id){toast("조직 ID 입력");return}try{await API("/admin/orgs",{method:"POST",body:JSON.stringify({org_id,name})});toast("조직 생성 · "+org_id);applyView();}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
+/* 범위확장: 화이트라벨 — 요청 호스트가 테넌트 도메인이면 로그인 브랜드·주색상·로케일 적용 */
+function applyTenantBranding(t){
+  if(!t)return;
+  try{
+    if(t.brand_name){const el=document.getElementById("loginBrand");if(el)el.textContent=t.brand_name;document.title=t.brand_name;}
+    if(t.logo_url){const lw=document.getElementById("tenantLogo");if(lw){lw.innerHTML=`<img src="${esc(t.logo_url)}" alt="${esc(t.brand_name||'logo')}" style="max-height:52px;max-width:200px">`;lw.style.display="";}}
+    if(t.primary_color&&/^#[0-9a-fA-F]{6}$/.test(t.primary_color))document.documentElement.style.setProperty("--accent",t.primary_color);
+    if(t.locale){const m={ko:0,en:1,id:2};if(m[t.locale]!=null&&localStorage.getItem("glhac_lang")==null)try{localStorage.setItem("glhac_lang",String(m[t.locale]));}catch(_){}}
+  }catch(_){}
+}
+/* 범위확장: 멀티테넌트 도메인·화이트라벨 관리 패널 */
+const TSTAT={draft:['mute','미설정'],domain_pending:['warn','DNS 검증 대기'],active:['ok','활성'],suspended:['bad','정지']};
+async function tenantPanel(orgId){
+  let t={};try{t=await API(`/admin/orgs/${orgId}/tenant`);}catch(e){toast(T('조회 실패')+' · '+((e&&e.code)||''));return;}
+  const b=t.branding||{}, st=TSTAT[t.domain_status||'draft']||TSTAT.draft;
+  const ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:rgba(12,22,16,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:22px";
+  ov.innerHTML=`<div class="modalbox" style="max-width:600px;width:100%;max-height:86vh;overflow:auto">
+    <h3>🌐 ${T('도메인·화이트라벨')} <span class="en">· ${esc(orgId)}</span></h3>
+    <div class="banner ${st[0]==='ok'?'ok':st[0]==='bad'?'bad':'info'}" style="margin-bottom:10px">${T('도메인 상태')}: <b>${T(st[1])}</b>${t.domain?` · ${esc(t.domain)}`:''}${t.verified_at?` · ${T('검증')} ${esc(String(t.verified_at).slice(0,16))}`:''}</div>
+    ${t.verify_txt_record?`<div class="banner warn" style="margin-bottom:10px"><b>${T('DNS TXT 레코드 등록 필요')}</b><div style="font-family:ui-monospace,monospace;font-size:11.5px;margin-top:4px;word-break:break-all">${esc(t.verify_txt_record)}</div><div class="muted small">${T('도메인 DNS에 위 TXT 값을 등록한 뒤 [DNS 검증]을 누르세요.')}</div></div>`:''}
+    <div class="field"><label>${T('도메인')} (예: halal.example.com)</label><input class="v" id="tnDomain" value="${esc(t.domain||'')}" placeholder="halal.example.com"></div>
+    <div class="btnrow" style="margin-bottom:12px">
+      <button class="btn pri" data-act="setdom">${T('도메인 등록·토큰 발급')}</button>
+      <button class="btn" data-act="verify">${T('DNS 검증')}</button>
+      ${ROLE==='admin'?`<button class="btn gold" data-act="manual">${T('수동 활성')}</button><button class="btn bad" data-act="suspend">${T('정지')}</button>`:''}
+    </div>
+    <div class="divide"></div>
+    <div style="font-weight:700;margin:8px 0 6px">${T('화이트라벨 브랜딩')}</div>
+    <div class="field"><label>${T('브랜드명')}</label><input class="v" id="tnBrand" value="${esc(b.brand_name||'')}"></div>
+    <div class="field"><label>${T('로고 URL')} (https:// ${T('또는')} /static/)</label><input class="v" id="tnLogo" value="${esc(b.logo_url||'')}"></div>
+    <div class="field"><label>${T('주 색상')} (#RRGGBB)</label><input class="v" id="tnColor" value="${esc(b.primary_color||'')}" placeholder="#0b5d2a"></div>
+    <div class="field"><label>${T('기본 언어')}</label><select class="v" id="tnLocale">${['','ko','en','id'].map(l=>`<option value="${l}"${b.locale===l?' selected':''}>${l||T('미지정')}</option>`).join('')}</select></div>
+    <div class="field"><label>${T('지원 이메일')}</label><input class="v" id="tnEmail" value="${esc(b.support_email||'')}"></div>
+    <div class="btnrow" style="margin-top:10px"><button class="btn pri" data-act="brand">${T('브랜딩 저장')}</button><button class="btn" data-act="x">${T('닫기')}</button></div></div>`;
+  ov.addEventListener("click",e=>{if(e.target===ov)ov.remove();});
+  const close=()=>ov.remove();
+  const call=async(fn,okMsg)=>{try{await fn();toast(okMsg);close();applyView();}catch(e){toast(T('실패')+' · '+((e&&e.code)||''));}};
+  ov.querySelector('[data-act="x"]').onclick=close;
+  ov.querySelector('[data-act="setdom"]').onclick=()=>call(()=>API(`/admin/orgs/${orgId}/domain`,{method:"POST",body:JSON.stringify({domain:v("tnDomain")})}),T('도메인 등록 · TXT 토큰 발급됨'));
+  ov.querySelector('[data-act="verify"]').onclick=()=>call(()=>API(`/admin/orgs/${orgId}/verify-domain`,{method:"POST",body:"{}"}),T('도메인 검증 완료 · 활성'));
+  const man=ov.querySelector('[data-act="manual"]'); if(man)man.onclick=()=>call(()=>API(`/admin/orgs/${orgId}/activate-domain`,{method:"POST",body:JSON.stringify({status:"active"})}),T('수동 활성 완료'));
+  const sus=ov.querySelector('[data-act="suspend"]'); if(sus)sus.onclick=()=>call(()=>API(`/admin/orgs/${orgId}/activate-domain`,{method:"POST",body:JSON.stringify({status:"suspended"})}),T('도메인 정지'));
+  ov.querySelector('[data-act="brand"]').onclick=()=>call(()=>API(`/admin/orgs/${orgId}/branding`,{method:"POST",body:JSON.stringify({brand_name:v("tnBrand"),logo_url:v("tnLogo"),primary_color:v("tnColor"),locale:v("tnLocale"),support_email:v("tnEmail")})}),T('브랜딩 저장됨'));
+  document.body.appendChild(ov);
+}
 async function reseedOntology(){if(!confirm("온톨로지를 재시드할까요?"))return;try{const r=await API("/admin/ontology/reseed",{method:"POST",body:"{}"});toast("재시드 · "+(r.ontology_count==null?"완료":r.ontology_count));applyView();}catch(e){toast("실패");}}
 async function seedReset(){if(!confirm("seed를 초기화할까요? (데모 데이터 재생성)"))return;try{await API("/admin/seed-reset",{method:"POST",body:"{}"});toast("seed 초기화");await loadCases(true);applyView();}catch(e){toast("실패");}}
 
@@ -6496,7 +6562,10 @@ function parseHash(){
 }
 async function boot(){
   if(!token()){document.getElementById("appView").style.display="none";document.getElementById("loginView").style.display="grid";
-    try{const cfg=await fetch("/public-config").then(r=>r.json());if(cfg&&cfg.dev_mode){const dp=document.getElementById("demoPanel");if(dp)dp.style.display="";}}catch(_){}
+    try{const cfg=await fetch("/public-config").then(r=>r.json());
+      if(cfg&&cfg.dev_mode){const dp=document.getElementById("demoPanel");if(dp)dp.style.display="";}
+      applyTenantBranding(cfg&&cfg.tenant);   // 범위확장: 도메인 매칭 시 화이트라벨 적용
+    }catch(_){}
     return;}
   try{const th=localStorage.getItem("glhac_theme")||"light";document.documentElement.setAttribute("data-theme",th);document.getElementById("themePill").textContent=th==="dark"?"☀️ 라이트":"🌙 다크";}catch(_){}
   try{LANG=parseInt(localStorage.getItem("glhac_lang")||"0",10)||0;applyLang();}catch(_){}

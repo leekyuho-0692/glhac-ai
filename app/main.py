@@ -18,6 +18,7 @@ log = logging.getLogger("glhac")
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from .db import Base, engine, get_db, SessionLocal
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from . import observability as obs
@@ -469,18 +470,179 @@ def metrics_summary(user=Depends(auth.require_roles("operator"))):
     return obs.snapshot()
 
 
+# ── 멀티테넌트 도메인·화이트라벨 (범위 확장) — 스키마 무변경(Org.profile_ext에 tenant 서브키).
+#    profile_ext.tenant = {domain, domain_status, domain_token, verified_at,
+#                          branding:{brand_name, logo_url, primary_color, locale, support_email}} ──
+TENANT_KEY = "tenant"
+TENANT_DOMAIN_STATUSES = ("draft", "domain_pending", "active", "suspended")
+
+
+def _tenant(o):
+    return dict((o.profile_ext or {}).get(TENANT_KEY) or {})
+
+
+def _set_tenant(db, o, patch):
+    pe = dict(o.profile_ext or {})
+    t = dict(pe.get(TENANT_KEY) or {})
+    t.update(patch)
+    pe[TENANT_KEY] = t
+    o.profile_ext = pe
+    flag_modified(o, "profile_ext")   # JSON 컬럼 in-place 변경 감지
+    return t
+
+
+def _org_by_domain(db, host):
+    host = (host or "").split(":")[0].strip().lower()
+    if not host:
+        return None
+    for o in db.query(models.Org).all():
+        t = _tenant(o)
+        if t.get("domain", "").lower() == host and t.get("domain_status") == "active":
+            return o
+    return None
+
+
 @app.get("/public-config")
-def public_config():
-    """로그인 화면용 공개 설정 — dev 모드에서만 데모 계정 노출."""
-    return {"dev_mode": auth.dev_mode()}
+def public_config(request: Request, db: Session = Depends(get_db)):
+    """로그인 화면용 공개 설정 — dev 모드 + 요청 호스트에 매칭되는 테넌트 화이트라벨 브랜딩."""
+    out = {"dev_mode": auth.dev_mode()}
+    try:
+        o = _org_by_domain(db, request.headers.get("host"))
+        if o:
+            b = dict(_tenant(o).get("branding") or {})
+            out["tenant"] = {"org_id": o.org_id, "name": o.name,
+                             "brand_name": b.get("brand_name") or o.name,
+                             "logo_url": b.get("logo_url"), "primary_color": b.get("primary_color"),
+                             "locale": b.get("locale"), "support_email": b.get("support_email")}
+    except Exception as e:  # noqa: BLE001 — 브랜딩 실패가 로그인을 막지 않는다
+        log.warning("public-config tenant 조회 실패: %s", e)
+    return out
+
+
+@app.get("/admin/orgs/{org_id}/tenant")
+def get_org_tenant(org_id: str, user=Depends(auth.require_roles("operator")),
+                   db: Session = Depends(get_db)):
+    o = db.get(models.Org, org_id)
+    if not o:
+        raise HTTPException(404, {"code": "ORG_NOT_FOUND"})
+    t = _tenant(o)
+    return {"org_id": org_id, "domain": t.get("domain"), "domain_status": t.get("domain_status", "draft"),
+            "verify_txt_record": ("glhac-verify=" + t["domain_token"]) if t.get("domain_token") else None,
+            "verified_at": t.get("verified_at"), "branding": t.get("branding") or {}}
+
+
+@app.post("/admin/orgs/{org_id}/domain")
+def set_org_domain(org_id: str, body: dict = None, user=Depends(auth.require_roles("operator")),
+                   db: Session = Depends(get_db)):
+    """도메인 등록 — 검증 토큰을 발급하고 domain_pending으로 전환(DNS TXT 레코드로 소유 증명)."""
+    import re as _re
+    import secrets as _secrets
+    o = db.get(models.Org, org_id)
+    if not o:
+        raise HTTPException(404, {"code": "ORG_NOT_FOUND"})
+    dom = str((body or {}).get("domain") or "").strip().lower().rstrip(".")
+    if not _re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+", dom):
+        raise HTTPException(422, {"code": "BAD_DOMAIN"})
+    for other in db.query(models.Org).filter(models.Org.org_id != org_id).all():
+        if _tenant(other).get("domain", "").lower() == dom:
+            raise HTTPException(409, {"code": "DOMAIN_TAKEN"})
+    token = _secrets.token_hex(16)
+    t = _set_tenant(db, o, {"domain": dom, "domain_status": "domain_pending",
+                            "domain_token": token, "verified_at": None})
+    db.commit()
+    return {"org_id": org_id, "domain": dom, "domain_status": t["domain_status"],
+            "verify_txt_record": "glhac-verify=" + token,
+            "hint": "DNS TXT 레코드에 위 값을 등록한 뒤 verify-domain을 호출하세요."}
+
+
+@app.post("/admin/orgs/{org_id}/verify-domain")
+def verify_org_domain(org_id: str, user=Depends(auth.require_roles("operator")),
+                      db: Session = Depends(get_db)):
+    """DNS TXT 조회로 도메인 소유 검증 → active. dnspython 없으면 424(수동 승인 경로 제공)."""
+    o = db.get(models.Org, org_id)
+    if not o:
+        raise HTTPException(404, {"code": "ORG_NOT_FOUND"})
+    t = _tenant(o)
+    dom, token = t.get("domain"), t.get("domain_token")
+    if not (dom and token):
+        raise HTTPException(409, {"code": "DOMAIN_NOT_SET"})
+    try:
+        import dns.resolver as _dns
+    except ImportError:
+        raise HTTPException(424, {"code": "DNS_RESOLVER_UNAVAILABLE",
+                                  "hint": "pip install dnspython 또는 admin 수동 승인(activate-domain) 사용"})
+    want = "glhac-verify=" + token
+    try:
+        answers = _dns.resolve(dom, "TXT")
+        found = any(want in b.decode() for a in answers for b in a.strings)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(409, {"code": "DNS_LOOKUP_FAILED", "detail": str(e)[:120]})
+    if not found:
+        raise HTTPException(409, {"code": "TXT_RECORD_NOT_FOUND", "expected": want})
+    _set_tenant(db, o, {"domain_status": "active", "verified_at": datetime.utcnow().isoformat()})
+    db.commit()
+    return {"org_id": org_id, "domain": dom, "domain_status": "active"}
+
+
+@app.post("/admin/orgs/{org_id}/activate-domain")
+def activate_org_domain(org_id: str, body: dict = None, user=Depends(auth.require_roles()),
+                        db: Session = Depends(get_db)):
+    """DNS 검증 우회 수동 활성/정지 — admin 전용(감사 로그 남김)."""
+    o = db.get(models.Org, org_id)
+    if not o:
+        raise HTTPException(404, {"code": "ORG_NOT_FOUND"})
+    st = str((body or {}).get("status") or "active")
+    if st not in TENANT_DOMAIN_STATUSES:
+        raise HTTPException(422, {"code": "BAD_STATUS", "allowed": list(TENANT_DOMAIN_STATUSES)})
+    if not _tenant(o).get("domain"):
+        raise HTTPException(409, {"code": "DOMAIN_NOT_SET"})
+    _set_tenant(db, o, {"domain_status": st,
+                        "verified_at": datetime.utcnow().isoformat() if st == "active" else None})
+    _audit(db, user, "org.domain_" + st, "org", org_id, None, {"manual": True}, commit=False)
+    db.commit()
+    return {"org_id": org_id, "domain_status": st}
+
+
+@app.post("/admin/orgs/{org_id}/branding")
+def set_org_branding(org_id: str, body: dict = None, user=Depends(auth.require_roles("operator")),
+                     db: Session = Depends(get_db)):
+    """화이트라벨 브랜딩 — 로그인·헤더에 노출될 브랜드명·로고·주색상·로케일·지원메일."""
+    import re as _re
+    o = db.get(models.Org, org_id)
+    if not o:
+        raise HTTPException(404, {"code": "ORG_NOT_FOUND"})
+    b = body or {}
+    color = str(b.get("primary_color") or "").strip()
+    if color and not _re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        raise HTTPException(422, {"code": "BAD_COLOR", "hint": "#RRGGBB"})
+    logo = str(b.get("logo_url") or "").strip()
+    if logo and not logo.startswith(("https://", "/static/")):
+        raise HTTPException(422, {"code": "BAD_LOGO_URL", "hint": "https:// 또는 /static/ 경로만 허용"})
+    loc = str(b.get("locale") or "").strip()
+    if loc and loc not in ("ko", "en", "id"):
+        raise HTTPException(422, {"code": "BAD_LOCALE", "allowed": ["ko", "en", "id"]})
+    branding = {"brand_name": str(b.get("brand_name") or "")[:60] or None, "logo_url": logo or None,
+                "primary_color": color or None, "locale": loc or None,
+                "support_email": str(b.get("support_email") or "")[:80] or None}
+    _set_tenant(db, o, {"branding": branding})
+    db.commit()
+    return {"org_id": org_id, "branding": branding}
 
 
 @app.get("/verify/{qr_token}")
 def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
-    """공개 인증서 검증(§11.5·§14 P1) — 인증 불필요, 민감정보 미노출."""
-    cert = db.query(models.HalalCertificate).filter_by(qr_token=qr_token).first()
+    """공개 인증서 검증(§11.5·§14 P1) — 인증 불필요, 민감정보 미노출.
+    제품별 인증서 토큰({parent}.{product_id[:8]})도 동일 경로로 검증(범위 확장)."""
+    base_token, _, prod_frag = qr_token.partition(".")
+    cert = db.query(models.HalalCertificate).filter_by(qr_token=base_token).first()
     if not cert:
         raise HTTPException(404, {"code": "CERT_NOT_FOUND", "valid": False})
+    product_scope = None
+    if prod_frag:
+        p = next((x for x in _cert_products(db, cert) if x.product_id.startswith(prod_frag)), None)
+        if not p:
+            raise HTTPException(404, {"code": "PRODUCT_NOT_IN_SCOPE", "valid": False})
+        product_scope = _product_cert_meta(db, cert, p)
     c = db.get(models.CaseApplication, cert.case_id)
     valid = cert.status == "active"
     try:
@@ -494,11 +656,17 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
     if sig:
         _, expected = _sign_payload(_cert_canonical(cert))
         sig_valid = (expected == sig.signature_value)
-    return {"valid": valid, "certificate_no": cert.certificate_no,
-            "company_name": (c.company_name if c else None),
-            "status": cert.status, "issue_date": cert.issue_date,
-            "expiry_date": cert.expiry_date, "scope": cert.scope,
-            "signed": bool(sig), "signature_valid": sig_valid}
+    out = {"valid": valid, "certificate_no": cert.certificate_no,
+           "company_name": (c.company_name if c else None),
+           "status": cert.status, "issue_date": cert.issue_date,
+           "expiry_date": cert.expiry_date, "scope": cert.scope,
+           "signed": bool(sig), "signature_valid": sig_valid}
+    if product_scope:   # 제품별 인증서 검증 — 해당 제품으로 범위 축소 응답
+        out.update({"certificate_no": product_scope["certificate_no"],
+                    "parent_certificate_no": cert.certificate_no,
+                    "product_name": product_scope["product_name"],
+                    "scope": [product_scope["product_name"]]})
+    return out
 
 
 @app.get("/rbac/actions")
@@ -5715,6 +5883,92 @@ def _cert_pdf_bytes(db, c, cert):
     return _render_pdf("GL-HAC AI · Halal Certificate", "\n".join(lines),
                        subtitle=cert.certificate_no or "",
                        footer="공개 검증 페이지에서 진위를 확인하세요 · Verify authenticity at /verify")
+
+
+# ── 제품별 개별 인증서 (범위 확장) — 스키마 무변경.
+#    모(母) 인증서(HalalCertificate)를 근거로 제품 단위 파생 인증서를 렌더한다.
+#    · 제품 인증번호 : {certificate_no}-P{n}  (동결 제품 순번, 안정적)
+#    · 제품 검증토큰 : {qr_token}.{product_id[:8]}  → /verify/{token} 이 파싱해 제품 스코프로 응답
+#    발급 사실·유효성은 모 인증서가 정본이므로 별도 저장이 필요 없다(이중 정본 방지). ──
+def _cert_products(db, cert):
+    """발급 시 동결된 제품 목록(정본) — 동결 없으면 현재 제품으로 폴백."""
+    ids = list(cert.frozen_product_ids or [])
+    if ids:
+        rows = db.query(models.Product).filter(models.Product.product_id.in_(ids)).all()
+        order = {pid: i for i, pid in enumerate(ids)}
+        return sorted(rows, key=lambda p: order.get(p.product_id, 999))
+    return db.query(models.Product).filter_by(case_id=cert.case_id).order_by(models.Product.name).all()
+
+
+def _product_cert_meta(db, cert, product):
+    prods = _cert_products(db, cert)
+    idx = next((i for i, p in enumerate(prods) if p.product_id == product.product_id), None)
+    if idx is None:
+        return None
+    return {"product_id": product.product_id, "product_name": product.name,
+            "category": product.category,
+            "certificate_no": "%s-P%d" % (cert.certificate_no or "HC", idx + 1),
+            "parent_certificate_no": cert.certificate_no,
+            "halal_mark_no": _halal_mark_no(cert),
+            "issue_date": cert.issue_date, "expiry_date": cert.expiry_date,
+            "status": cert.status,
+            "qr_token": "%s.%s" % (cert.qr_token or "", product.product_id[:8])}
+
+
+@app.get("/cases/{case_id}/certificate/products")
+def list_product_certificates(case_id: str, user=Depends(auth.get_current_user),
+                              db: Session = Depends(get_db)):
+    """제품별 개별 인증서 목록 — 모 인증서 발급 후 제품 수만큼 파생."""
+    _get_case(db, case_id, user)
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
+    if not cert:
+        return {"issued": False, "parent_certificate_no": None, "items": [], "count": 0}
+    items = [i for i in (_product_cert_meta(db, cert, p) for p in _cert_products(db, cert)) if i]
+    return {"issued": True, "parent_certificate_no": cert.certificate_no,
+            "items": items, "count": len(items)}
+
+
+@app.get("/cases/{case_id}/certificate/products/{product_id}.pdf")
+def product_certificate_pdf(case_id: str, product_id: str,
+                            user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """제품 단위 인증서 PDF — 모 인증서 유효성·전자서명을 승계."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
+    if not cert:
+        raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
+    p = db.query(models.Product).filter_by(case_id=case_id, product_id=product_id).first()
+    if not p:
+        raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
+    meta = _product_cert_meta(db, cert, p)
+    if not meta:
+        raise HTTPException(409, {"code": "PRODUCT_NOT_IN_SCOPE",
+                                  "detail": "발급 시 동결된 제품 범위에 없습니다."})
+    sig = (db.query(models.Signature).filter_by(subject_type="certificate", subject_id=cert.id)
+           .order_by(models.Signature.signed_at.desc()).first())
+    lines = [
+        "SERTIFIKAT HALAL (PRODUK) · 제품별 할랄 인증서", "",
+        "기업 · Perusahaan  : %s" % (c.company_name or "-"),
+        "제품 · Produk      : %s%s" % (p.name or "-", (" (" + p.category + ")") if p.category else ""),
+        "제품 인증번호 · No : %s" % meta["certificate_no"],
+        "모 인증번호 · Parent : %s" % (cert.certificate_no or "-"),
+        "할랄마크번호 · No. Ketetapan Halal : %s" % (meta["halal_mark_no"] or "-"),
+        "파트와 결정번호 · No. Fatwa        : %s" % (_case_fatwa_no(db, case_id) or "-"),
+        "상태 · Status      : %s" % cert.status,
+        "발급 · Issued      : %s" % (cert.issue_date or "-"),
+        "만료 · Valid until : %s" % (cert.expiry_date or "-"), "",
+        "본 제품은 SJPH 및 샤리아 기준에 따라 할랄(HALAL) 인증되었음을 증명합니다.",
+        "Produk ini disertifikasi HALAL sesuai SJPH dan kriteria Syariah.", "",
+        "공개 검증 · Verify : /verify/%s" % meta["qr_token"],
+        "전자서명 · Signed  : %s" % ("예 · Yes" if sig else "아니오 · No"),
+    ]
+    _audit(db, user, "certificate.product_pdf", "certificate", product_id, case_id)
+    db.commit()
+    pdf = _render_pdf("GL-HAC AI · Halal Certificate (Product)", "\n".join(lines),
+                      subtitle=meta["certificate_no"],
+                      footer="공개 검증 페이지에서 진위를 확인하세요 · Verify authenticity at /verify")
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=cert_%s.pdf" % meta["certificate_no"]})
 
 
 @app.get("/cases/{case_id}/certificate")
