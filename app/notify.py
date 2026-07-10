@@ -132,6 +132,29 @@ def _send_webhook(contacts, text, notification=None):
         return {"channel": "webhook", "ok": False, "reason": "webhook_error:%s" % str(e)[:60]}
 
 
+def channel_status():
+    """채널별 설정·구현 상태를 반환한다(관리자 가시성).
+
+    크리덴셜 '값'은 절대 노출하지 않고 '존재 여부(bool)'만 계산한다.
+      - inapp    : 항상 connected(DB 저장)
+      - sms/whatsapp : Twilio 크리덴셜 완비 시 connected, 아니면 unset
+      - kakao    : 대행사 연동 미구현 → 항상 stub(키가 있어도 준비중)
+    """
+    e = os.environ.get
+    twilio_core = bool(e("GLHAC_TWILIO_SID") and e("GLHAC_TWILIO_TOKEN"))
+    sms_ok = bool(twilio_core and e("GLHAC_TWILIO_SMS_FROM"))
+    wa_ok = bool(twilio_core and e("GLHAC_TWILIO_WA_FROM"))
+    kakao_key = bool(e("GLHAC_KAKAO_API_KEY"))
+    return {
+        "inapp": {"configured": True, "implemented": True, "status": "connected"},
+        "sms": {"configured": sms_ok, "implemented": True,
+                "status": "connected" if sms_ok else "unset"},
+        "whatsapp": {"configured": wa_ok, "implemented": True,
+                     "status": "connected" if wa_ok else "unset"},
+        "kakao": {"configured": kakao_key, "implemented": False, "status": "stub"},
+    }
+
+
 PROVIDERS = {"sms": _send_sms, "kakao": _send_kakao, "whatsapp": _send_whatsapp,
              "email": _send_email, "webhook": _send_webhook}
 

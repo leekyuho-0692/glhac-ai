@@ -964,6 +964,17 @@ def admin_list_notifications(status: str = None, limit: int = 100,
     return {"counts": counts, "total": len(items), "items": items}
 
 
+@app.get("/admin/notify-channels")
+def admin_notify_channels(user=Depends(auth.require_roles("operator"))):
+    """알림봇 채널 설정·구현 상태(읽기전용, 스키마 무변경).
+
+    크리덴셜 '값'은 노출하지 않고 존재여부(bool)만 반환한다. 프런트 알림봇 바에서
+    채널별 연결됨/미설정/스텁 배지를 정직하게 표시하기 위한 최소 조회 엔드포인트.
+    """
+    from . import notify as _nt
+    return {"channels": _nt.channel_status()}
+
+
 @app.post("/admin/scan-expiry")
 def scan_expiry(user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
     """만료 임박 인증서 스캔 → 90/60/30일 알림 생성 (Rizky #7). 운영 시 cron 주기 실행."""
@@ -6212,6 +6223,95 @@ def get_workflow(case_id: str, user=Depends(auth.get_current_user), db: Session 
         nexts.append({"to": ns, "to_label": _STATE_KO.get(ns, ns), "allowed": ok, "blockers": bl})
     return {"state": cur, "state_label": _STATE_KO.get(cur, cur), "pathway": c.pathway,
             "phases": out, "next_states": nexts, "blockers": sm.evaluate_blocking(db, c)}
+
+
+# ── 워크플로우 모니터(관리자·운영자) — 전 케이스 진행단계·핸드오프·게이트 집약 ──
+# 스키마 무변경: 기존 상태머신/청구/파트와 데이터를 read-only로 fold. stage→처리(대기) 역할 매핑만 신규.
+_STAGE_OWNER = {
+    "onboarding": "client", "application_draft": "client",
+    "ai_pre_assessment_ready": "client", "ai_pre_assessment_running": "client",
+    "pathway_determination": "consultant",
+    "self_declare_eligible": "client", "sjph_lite_prepared": "client",
+    "pendamping_verification": "consultant", "self_declaration_submitted": "client",
+    "committee_verification": "ops",
+    "supplementation_required": "client", "supplementation_submitted": "consultant",
+    "consultant_review": "consultant",
+    "document_pre_audit_requested": "ops", "document_pre_audit_in_review": "auditor",
+    "document_pre_audit_approved": "auditor", "lph_assignment": "ops",
+    "onsite_audit_scheduled": "auditor", "onsite_audit_in_progress": "auditor",
+    "corrective_action_required": "client", "corrective_action_submitted": "auditor",
+    "audit_closed": "auditor", "hpas_evaluation_ready": "auditor",
+    "final_package_preparation": "ops", "fatwa_review": "sharia",
+    "fatwa_approved": "ops", "certificate_issued": "sharia",
+    "post_certification_monitoring": "client", "change_impact": "client",
+    "renewal_preparation": "client",
+}
+
+
+@app.get("/admin/workflow-monitor")
+def admin_workflow_monitor(user=Depends(auth.require_roles("operator")),
+                           db: Session = Depends(get_db)):
+    """관리자·운영자 워크플로우 모니터 — 전 케이스의 현재단계·다음전이·차단·핸드오프(대기 역할)·
+    주요 게이트(결제/AI 사전평가/파트와) 통과·대기를 단일 집약(읽기전용). 신규 쓰기·스키마 변경 없음."""
+    q = db.query(models.CaseApplication)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    cases = q.order_by(models.CaseApplication.created_at.desc()).all()
+    # batch fold(N+1 회피): 케이스별 게이트 판단용 인보이스·파트와를 1회 조회로 인덱싱
+    fds = {f.case_id: f for f in db.query(models.FatwaDecision).all()}
+    invs = {}
+    for iv in db.query(models.Invoice).all():
+        invs.setdefault(iv.case_id, []).append(iv)
+    # 상태 진행순 랭크(정규경로 superset) — 게이트 통과/대기 추론용
+    _rank = {}
+    for i, s in enumerate([s for (_k, _ko, ss) in (_WF_COMMON + _WF_REGULER + _WF_POST) for s in ss]):
+        _rank.setdefault(s, i)
+    rows, pipeline = [], {}
+    gate_sum = {"payment": {"ok": 0, "wait": 0}, "ai_report": {"ok": 0, "wait": 0},
+                "fatwa": {"ok": 0, "wait": 0}}
+    blocked_total = 0
+    for c in cases:
+        cur = c.status
+        phases = _wf_phases(c.pathway)
+        cur_idx = next((i for i, (k, ko, ss) in enumerate(phases) if cur in ss), None)
+        phase_key = phases[cur_idx][0] if cur_idx is not None else "branch"
+        phase_label = phases[cur_idx][1] if cur_idx is not None else "경로 결정 대기"
+        pipeline[phase_key] = pipeline.get(phase_key, 0) + 1
+        nxt = sorted(sm.TRANSITIONS.get(cur, set()))
+        next_state = nxt[0] if nxt else None
+        blockers = [b.get("code") for b in sm.evaluate_blocking(db, c)]
+        if blockers:
+            blocked_total += 1
+        rank = _rank.get(cur, -1)
+        case_invs = invs.get(c.case_id, [])
+        paid = any((iv.status or "") in ("paid", "settlement", "settled") for iv in case_invs)
+        g_pay = "ok" if paid else ("wait" if case_invs else "na")
+        g_ai = ("ok" if rank >= _rank.get("pathway_determination", 99)
+                else ("wait" if cur in ("ai_pre_assessment_ready", "ai_pre_assessment_running") else "na"))
+        fd = fds.get(c.case_id)
+        g_fatwa = ("ok" if (fd and fd.final_approved_at)
+                   else ("wait" if (cur in ("hpas_evaluation_ready", "final_package_preparation", "fatwa_review")
+                                    or (fd and fd.decision in ("approved", "conditional"))) else "na"))
+        for key, gv in (("payment", g_pay), ("ai_report", g_ai), ("fatwa", g_fatwa)):
+            if gv in ("ok", "wait"):
+                gate_sum[key][gv] += 1
+        rows.append({"case_id": c.case_id, "company": c.company_name, "pathway": c.pathway,
+                     "status": cur, "status_label": _STATE_KO.get(cur, cur),
+                     "phase_key": phase_key, "phase_label": phase_label,
+                     "owner": _STAGE_OWNER.get(cur, "ops"),
+                     "next_state": next_state,
+                     "next_label": _STATE_KO.get(next_state, next_state) if next_state else None,
+                     "blockers": blockers, "blocker_count": len(blockers),
+                     "due_date": c.due_date,
+                     "gates": {"payment": g_pay, "ai_report": g_ai, "fatwa": g_fatwa}})
+    _porder = ["prep", "assess", "pathway", "branch", "sd_sjph", "sd_submit", "sd_committee",
+               "rg_suppl", "rg_doc", "rg_audit", "rg_hpas", "rg_fatwa", "issue", "post"]
+    _plabel = {seg[0]: seg[1] for seg in (_WF_COMMON + _WF_SEHATI + _WF_REGULER + _WF_POST)}
+    _plabel["branch"] = "경로 결정 대기"
+    pipeline_out = [{"key": k, "label": _plabel.get(k, k), "count": pipeline[k]}
+                    for k in _porder if pipeline.get(k)]
+    return {"cases": rows, "pipeline": pipeline_out, "gates_summary": gate_sum,
+            "totals": {"cases": len(cases), "blocked": blocked_total}}
 
 
 _ENUMS = {

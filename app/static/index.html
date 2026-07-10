@@ -66,6 +66,13 @@
   .pill.live{background:var(--ok-soft);color:var(--ok);border-color:transparent;font-weight:600}
   .pill select{border:none;background:transparent;color:inherit;font-size:12px;outline:none;max-width:160px}
   .dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 20%,transparent)}
+  /* Live 실시간 배지(topbar) — 순수 CSS 펄스 */
+  .pill.live{cursor:default}
+  .pill.live .live-dot{width:8px;height:8px;flex:0 0 auto;border-radius:50%;background:var(--ok);animation:livePulse 1.8s ease-out infinite}
+  .pill.live.offline{background:var(--line);color:var(--ink3)}
+  .pill.live.offline .live-dot{background:var(--ink3);animation:none;box-shadow:none}
+  @keyframes livePulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 55%,transparent)}70%{box-shadow:0 0 0 7px color-mix(in srgb,var(--ok) 0%,transparent)}100%{box-shadow:0 0 0 0 transparent}}
+  @media (prefers-reduced-motion:reduce){.pill.live .live-dot{animation:none}}
   .content{padding:26px;display:none}
   .content.show{display:block}
   .page-h{display:flex;align-items:flex-end;gap:12px;margin-bottom:4px}
@@ -345,6 +352,7 @@
       <button class="hamburger" id="hamburger" onclick="toggleNav()" aria-label="메뉴 열기 · Open menu" aria-controls="sidebar" aria-expanded="false">☰</button>
       <div class="crumb" id="crumb"><b>대시보드</b> · Dashboard</div>
       <div class="spacer"></div>
+      <span class="pill live" id="livePill" role="status" aria-live="polite" title="실시간 연결 상태 · Live status"><span class="live-dot" id="liveDot" aria-hidden="true"></span><span id="liveLabel">Live · 실시간</span></span>
       <span class="pill" id="casePill" style="display:none">📁 <select id="caseSel" onchange="onCaseChange(this.value)"></select></span>
       <span style="position:relative"><span class="pill" id="notifBell" role="button" tabindex="0" aria-label="알림 · Notifications" onclick="toggleNotif()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleNotif()}">🔔 <b id="notifCount" style="display:none;color:var(--bad)">0</b></span>
         <div id="notifPanel" class="notif-panel"></div></span>
@@ -404,6 +412,7 @@ const NAV = [
   ["payments","💰","결제 관리","Payments","결제·Admin"],
   ["deposits","🏦","입금 매칭","Deposits","입금·Matching"],
   ["notifyLog","📣","알림 발송","Notifications","발송·Delivery"],
+  ["workflowMonitor","🔀","워크플로우 모니터","Workflow Monitor","핸드오프·Handoff"],
   ["fatwa","⚖️","파트와","Fatwa","심의·Fatwa"],
   ["certificate","🏅","인증서","Certificate","발급·Issue"],
   ["assistant","🤖","AI 어시스턴트","Assistant","AI 보조·Assist"],
@@ -414,10 +423,10 @@ const NAV = [
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
 const NAV_GROUPS=[
   {label:"개요 · Overview", ids:["caseList"]},
-  {label:"신청·서류 · Application", ids:["application","preassess","materials","integration","resubmitCenter"]},   // + resubmitCenter(3c)
-  {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // 여정순 계약·결제(심사 앞) + prod 결제항목
+  {label:"신청·서류 · Application", ids:["application","preassess","materials","integration","resubmitCenter"]},
+  {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
-  {label:"지원 · Support", ids:["consultation","notifyLog","system"]},   // prod notifyLog 유지
+  {label:"지원 · Support", ids:["workflowMonitor","consultation","notifyLog","system"]},   // + workflowMonitor(4a), prod notifyLog 유지
   {label:"기타 · Others", ids:["assistant","feedback"]},   // prod 고유 그룹 유지
   {label:"내 정보 관리 · My Data", ids:["documents"]},   // M6: 문서=내 자료함(맨 뒤 이동)
 ];
@@ -451,6 +460,7 @@ const MENU_ACCESS = {
   payments: ["ops","admin"],
   deposits: ["ops","admin"],
   notifyLog: ["ops","admin"],
+  workflowMonitor: ["ops","admin"],   // 전역 운영 모니터(케이스 무관) — ops·admin 전용
   fatwa:    ["client","consultant","auditor","sharia","ops","admin"],
   certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
@@ -613,7 +623,7 @@ const ID_LABEL={
 };
 const NAV_ID={"feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
   integration:"Integrasi",documents:"Dokumen",audit:"Audit",onsiteCalendar:"현장심사 캘린더",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
-  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",system:"Sistem"};
+  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",workflowMonitor:"워크플로우 모니터",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",system:"Sistem"};
 function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
@@ -1596,6 +1606,21 @@ function localizeUI(root){
     ["placeholder","aria-label","title"].forEach(a=>{const v=el.getAttribute(a);if(v&&UI_STRINGS[v.trim()])el.setAttribute(a,UI_STRINGS[v.trim()]);});
   });
 }
+/* ---- stale CURCASE 중앙 방어 ----
+   삭제/무효 케이스 id가 CURCASE·localStorage(glhac_case)에 남으면, catch 없는 첫
+   /cases/{id} fetch가 오류(errCard)를 낸다. CASE_SCOPED 화면 진입 시 현재 케이스
+   유효성을 한 곳에서 1회 검증 → 실패 시 stale로 간주해 정리(null)하고 무케이스로 폴백.
+   이렇게 모든 CASE_SCOPED 화면(workflow·application·materials·onsiteCalendar 등)이
+   개별 수정 없이 함께 보호된다. */
+async function ensureCurCaseValid(){
+  if(!CASE_SCOPED.has(CUR) || !CURCASE) return;
+  try{ await API(`/cases/${CURCASE}`); }
+  catch(_){
+    FETCH_ERRORS=Math.max(0,FETCH_ERRORS-1);   // 의도된 stale 프로브 실패는 경고배너 집계에서 제외
+    try{ localStorage.removeItem("glhac_case"); }catch(__){}
+    CURCASE=null;
+  }
+}
 async function applyView(){
   const pages=document.getElementById("pages");
   FETCH_ERRORS=0;
@@ -1615,7 +1640,9 @@ async function applyView(){
   pages.innerHTML=`<div class="content show" id="pgHost">${pageHead(CUR)}<div class="card"><div class="body muted">불러오는 중… · loading</div></div></div>`;
   const host=document.getElementById("pgHost");
   try{
-    if(CASE_SCOPED.has(CUR) && !CURCASE){
+    await ensureCurCaseValid();
+    // application(신청)은 케이스 없어도 '신규 신청 생성' UI를 자체 렌더 → 가드에서 제외
+    if(CASE_SCOPED.has(CUR) && !CURCASE && CUR!=="application"){
       host.innerHTML=pageHead(CUR)+`<div class="card"><div class="body muted">표시할 케이스가 없습니다. <a onclick="go('caseList')" style="color:var(--accent);cursor:pointer">케이스 목록</a>에서 선택하거나 새 신청을 생성하세요.</div></div>`;
     }else{
       const inner=await (SCREEN[CUR]?SCREEN[CUR]():Promise.resolve('<div class="card"><div class="body muted">준비 중</div></div>'));
@@ -1669,6 +1696,44 @@ const NOTIF_ICON={certificate_issued:"🏅",fatwa_approved:"⚖️",audit_schedu
 async function refreshNotifCount(){
   try{const r=await API("/notifications/unread-count");const b=document.getElementById("notifCount");
     if(r.count>0){b.textContent=r.count>99?"99+":r.count;b.style.display="";}else b.style.display="none";}catch(_){}
+}
+
+/* ---- Live 실시간 배지 (topbar) — /health 경량 폴링(30초) + 표시 갱신(5초), 화면 이탈 시 정지 ---- */
+let _liveLast=0;               // 마지막 성공 시각(ms)
+let _liveNext=0;               // 다음 네트워크 폴링 예정 시각(ms)
+function _liveAgo(){
+  if(!_liveLast)return T("연결 중…");
+  const s=Math.max(0,Math.round((Date.now()-_liveLast)/1000));
+  if(s<5)return T("방금 갱신");
+  return s+T("초 전");
+}
+function renderLiveBadge(){
+  const pill=document.getElementById("livePill"),lab=document.getElementById("liveLabel");
+  if(!pill||!lab)return;
+  if(_liveLast&&Date.now()-_liveLast<=90000){        // 90초 내 성공 → 온라인
+    pill.classList.remove("offline");
+    lab.textContent="Live · "+T("실시간")+" · "+_liveAgo();
+  }else{                                              // 폴링 실패/지연 → 오프라인
+    pill.classList.add("offline");
+    lab.textContent=T("오프라인");
+  }
+}
+async function pollLive(){
+  try{const r=await fetch("/health",{cache:"no-store"});if(r&&r.ok)_liveLast=Date.now();}catch(_){}
+  renderLiveBadge();
+}
+function liveLoop(){                                   // 단일 5초 인터벌: 30초마다 폴링, 그 외엔 표시만 갱신
+  if(document.hidden)return;                           // 화면 이탈 시 아무 작업 안 함(폴링·렌더 정지)
+  if(Date.now()>=_liveNext){_liveNext=Date.now()+30000;pollLive();}
+  else renderLiveBadge();
+}
+function startLiveBadge(){
+  if(window._liveStarted)return;window._liveStarted=true;
+  _liveNext=Date.now()+30000;pollLive();              // 즉시 1회
+  window._livePoll=setInterval(liveLoop,5000);
+  document.addEventListener("visibilitychange",()=>{  // 복귀 시 즉시 재폴링
+    if(!document.hidden){_liveNext=Date.now()+30000;pollLive();}
+  });
 }
 async function renderRightPanel(){
   const el=document.getElementById("rpanelBody"); if(!el)return;
@@ -2228,6 +2293,28 @@ async function preResubmit(id){
   if(!confirm(T("추가서류를 재제출할까요? 오디터에게 알림이 전송됩니다.")))return;
   try{await API(`/cases/${id}/preassess/resubmit`,{method:"POST",body:JSON.stringify({note:v("prResubNote")})});toast(T("재제출 완료"));applyView();}
   catch(e){toast(T("재제출 실패")+" · "+(e&&e.code?e.code:""));}
+}
+/* 신청 화면 무케이스 UI — (a)케이스 없을 때 신규 신청 생성 (b)stale CURCASE 폴백 공용 */
+function newApplicationCard(){
+  const canApp=["client","consultant","admin"].includes(ROLE);
+  return `<div class="card"><h3>${T('신규 할랄 인증 신청')} <span class="en">· New Application</span></h3>
+    <div class="body">
+      <div class="banner info" style="margin-bottom:12px">${T('진행 중인 케이스가 없습니다. 기업명을 입력해 새 신청을 생성하세요. 생성 후 서류(사업자·공장등록증)를 올리면 AI가 프로필을 자동 추출합니다.')}</div>
+      ${canApp?`<div class="field"><label>${T('기업명')} · Company Name</label><input class="v" id="apNewCompany" placeholder="${T('기업명을 입력하세요')}" onkeydown="if(event.key==='Enter')createApplication()"></div>
+      <div class="btnrow"><button class="btn pri" onclick="createApplication()">＋ ${T('신규 신청 생성')} · Create</button>
+      <button class="btn" onclick="go('caseList')">${T('케이스 목록')} · Cases</button></div>`
+      :`<div class="muted small">${T('신청 생성 권한이 없습니다. 케이스 목록에서 배정된 케이스를 선택하세요.')} <a onclick="go('caseList')" style="color:var(--accent);cursor:pointer">${T('케이스 목록')}</a></div>`}
+    </div></div>`;
+}
+async function createApplication(){
+  const nm=v("apNewCompany");
+  if(!nm){toast(T('기업명을 입력하세요'));return;}
+  try{
+    const c=await API("/cases",{method:"POST",body:JSON.stringify({company_name:nm,is_msme:true})});
+    toast(T('케이스 생성됨'));
+    CURCASE=c.case_id;try{localStorage.setItem("glhac_case",c.case_id)}catch(_){}
+    await loadCases(true);go("application");   // 생성된 케이스의 신청 폼으로 진입
+  }catch(e){toast(T('생성 실패')+" · "+(e&&e.code?e.code:T('권한 확인')));}
 }
 SCREEN.application=async()=>{
   // 진입 모드: ①내 케이스에서 선택(CURCASE 있음)=그 신청 정보 / ②신청 직접 진입=새 신청(회사정보 자동 프리필)
@@ -4252,10 +4339,12 @@ async function fbComment(id){const el=document.getElementById("fbCm_"+id);const 
   try{await API(`/feedback/${id}/comments`,{method:"POST",body:JSON.stringify({body})});toast(T('답변 등록'));applyView();}catch(e){toast(T('실패')+" · "+(e&&e.code?e.code:""));}}
 SCREEN.notifyLog=async()=>{
   const d=await API("/admin/notifications").catch(()=>({counts:{},items:[]}));
+  const chd=await API("/admin/notify-channels").catch(()=>({channels:{}}));
   const cc=d.counts||{}, items=d.items||[];
   const card=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:22px;color:var(--${c})">${n||0}</span><span class="l">${l}</span></div></div>`;
   const rows=items.length?items.map(n=>`<tr><td class="muted small">${esc((n.created_at||"").slice(5,16))}</td><td><b>${esc(n.title||n.event_type||"")}</b></td><td>${(n.channels||[]).map(ch=>`<span class="chip">${esc(ch)}</span>`).join(" ")}</td><td>${bTag(notifColor(n.status),T(notifLabel(n.status)))}${n.attempts?` <span class="muted small">×${n.attempts}</span>`:""}</td><td class="muted small">${esc(n.last_error||"")}</td></tr>`).join(""):'<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">알림 없음</td></tr>';
   return `
+  ${notifyBotBar(chd.channels||{},items)}
   <div class="card" style="margin-bottom:16px"><h3>알림 발송 · 실행 <span class="en">· Delivery</span></h3>
     <div class="body"><div class="banner info" style="margin-bottom:10px">미발송 큐를 즉시 발송합니다. Twilio/SMTP 크리덴셜 설정 시 실제 SMS·이메일 전송, 미설정 시 로그(stub) 후 완료. 백그라운드 워커로 자동발송도 가능합니다.</div>
       <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">${card(cc.unsent,"미발송","warn")}${card(cc.sent,"발송됨","ok")}${card(cc.failed,"실패","bad")}${card(cc.sending,"발송중","info")}</div>
@@ -4265,7 +4354,89 @@ SCREEN.notifyLog=async()=>{
 };
 function notifLabel(s){return {unsent:"미발송",sent:"발송됨",failed:"실패",sending:"발송중"}[s]||s;}
 function notifColor(s){return {sent:"ok",failed:"bad",unsent:"warn",sending:"info"}[s]||"mute";}
+/* ===== 알림봇 채널 상태 바 — 채널별 연결/미설정/스텁 정직 표기 + 최근 발송현황(전역, 관리자/운영자) =====
+   데이터소스: GET /admin/notify-channels(크리덴셜 존재여부 bool만) + /admin/notifications 목록(최근 발송 집계). 신규 쓰기 없음. */
+function notifBotStatus(s){return {connected:["ok","연결됨"],unset:["mute","미설정"],stub:["warn","스텁·준비중"]}[s]||["mute","미설정"];}
+function notifyBotBar(channels,items){
+  const meta=[["inapp","인앱","In-app","🔔"],["sms","SMS","SMS","💬"],["kakao","카카오톡","KakaoTalk","🟡"],["whatsapp","WhatsApp","WhatsApp","🟢"]];
+  const st={}; (items||[]).forEach(n=>{(n.channels||[]).forEach(c=>{const o=st[c]||(st[c]={total:0,sent:0,wait:0,failed:0});o.total++;if(n.status==="sent")o.sent++;else if(n.status==="failed")o.failed++;else o.wait++;});});
+  const chips=meta.map(([k,ko,en,ic])=>{
+    const c=channels[k]||{status:(k==="inapp"?"connected":k==="kakao"?"stub":"unset")};
+    const [col,lbl]=notifBotStatus(c.status), o=st[k]||{total:0,sent:0,wait:0,failed:0};
+    const recent=o.total?`<span class="muted small">${T("최근")} ${o.sent}/${o.total} ${T("성공")}${o.wait?" · "+o.wait+" "+T("대기"):""}</span>`:`<span class="muted small">${T("발송 없음")}</span>`;
+    return `<div class="chip" style="display:inline-flex;align-items:center;gap:7px;padding:6px 10px">
+      <b>${ic} ${T(ko)}<span class="en"> · ${en}</span></b>
+      <span class="tag t-${col}">${T(lbl)}</span>${recent}</div>`;
+  }).join("");
+  return `<div class="card" style="margin-bottom:16px"><h3>${T("알림봇 채널 상태")} <span class="en">· Notification Bot</span></h3>
+    <div class="body">
+      <div class="banner info" style="margin-bottom:10px">${T("채널별 연결 상태를 정직하게 표시합니다. 카카오톡은 대행사 연동 미구현(스텁), SMS·WhatsApp은 Twilio 크리덴셜 설정 시 실동작합니다. 크리덴셜 값은 노출하지 않습니다.")}</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">${chips}</div></div></div>`;
+}
 async function drainNotifications(){try{const r=await API("/admin/notifications/drain",{method:"POST",body:"{}"});toast("발송 "+(r.sent||0)+" · 실패 "+(r.failed||0)+" · 동의제외 "+(r.consent_skipped||0));applyView();}catch(e){toast("발송 실패 · "+(e&&e.code?e.code:""));}}
+
+/* ===== 워크플로우 모니터(관리자·운영자) — 전 케이스 핸드오프·게이트 집약 (전역 화면, CASE_SCOPED 아님) =====
+   집약 조회 전용: GET /admin/workflow-monitor (신규 쓰기 없음, 기존 상태머신·청구·파트와 데이터 fold). */
+let WFMON_STAGE="";
+function wfmonFilter(k){WFMON_STAGE=(WFMON_STAGE===k?"":k);applyView();}
+function ownerBadge(o){const cm={client:"info",consultant:"info",auditor:"gold",sharia:"warn",ops:"mute",admin:"mute"};
+  const rd=(typeof ROLE_DEF!=="undefined"&&ROLE_DEF[o])||{ko:o,en:o};
+  return `<span class="tag t-${cm[o]||'mute'}">${esc(T(rd.ko))}<span class="en"> · ${esc(rd.en)}</span></span>`;}
+function gateCell(g){g=g||{};const dot=(v,ko)=>{const c=v==="ok"?"ok":v==="wait"?"warn":"mute",ic=v==="ok"?"✓":v==="wait"?"…":"–";
+  return `<span class="tag t-${c}" title="${esc(ko)}" style="padding:2px 7px">${ic} ${esc(ko)}</span>`;};
+  return `<span style="display:inline-flex;gap:4px;flex-wrap:wrap">${dot(g.payment,T('결제'))}${dot(g.ai_report,T('AI평가'))}${dot(g.fatwa,T('파트와'))}</span>`;}
+SCREEN.workflowMonitor=async()=>{
+  const d=await API("/admin/workflow-monitor").catch(()=>({cases:[],pipeline:[],gates_summary:{},totals:{}}));
+  const all=d.cases||[], pipe=d.pipeline||[], gs=d.gates_summary||{}, tot=d.totals||{};
+  const rowsAll=WFMON_STAGE?all.filter(r=>r.phase_key===WFMON_STAGE):all;
+  // KPI: 전체·병목(차단)·결제 대기·파트와 대기
+  const kpi=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:26px;color:var(--${c})">${n}</span><span class="l">${l}</span></div></div>`;
+  const kpis=`<div class="grid four" style="margin-bottom:16px">
+    ${kpi(tot.cases||0,T('전체 진행 케이스'),'ink')}
+    ${kpi(tot.blocked||0,T('병목·차단(blocker)'),(tot.blocked?'bad':'ink3'))}
+    ${kpi((gs.payment&&gs.payment.wait)||0,T('결제 게이트 대기'),'warn')}
+    ${kpi((gs.fatwa&&gs.fatwa.wait)||0,T('파트와 심의 대기'),'gold')}</div>`;
+  // 파이프라인 뷰 — 단계별 케이스 수(클릭 → 표 필터)
+  const maxc=Math.max(1,...pipe.map(p=>p.count),1);
+  const pipeBars=pipe.length?pipe.map(p=>`<div class="sb clickable" onclick="wfmonFilter('${esc(p.key)}')" title="${esc(p.label)} · 클릭→필터" style="cursor:pointer${WFMON_STAGE===p.key?';font-weight:800':''}">
+      <span>${esc(p.label)}${WFMON_STAGE===p.key?' ◀':''}</span><div class="bar"><i style="width:${Math.round(p.count/maxc*100)}%"></i></div><b>${p.count}</b></div>`).join(""):'<div class="muted small">진행 중 케이스 없음</div>';
+  // 게이트 상태(집계) — 결제→모의심사·AI 사전평가·파트와 정족수
+  const gbar=(ko,g)=>{g=g||{ok:0,wait:0};const tt=(g.ok||0)+(g.wait||0);const pct=tt?Math.round((g.ok||0)/tt*100):0;
+    return `<div style="margin-bottom:12px"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px"><b>${esc(ko)}</b><span class="muted small">${T('통과')} ${g.ok||0} · ${T('대기')} ${g.wait||0}</span></div>
+      <div class="bar"><i style="width:${pct}%;background:var(--ok)"></i></div></div>`;};
+  // 핸드오프 표 — 현재 소유자→다음 액션·게이트·기한
+  const tr=rowsAll.length?rowsAll.map(r=>{
+    const blk=r.blocker_count>0;
+    const nextTx=r.next_label?`${esc(koText(r.next_state)||r.next_label)}`:'<span class="muted">—</span>';
+    return `<tr class="clickable"${blk?' style="background:color-mix(in srgb,var(--bad) 6%,transparent)"':''} onclick="openCase('${esc(r.case_id)}')">
+      <td style="font-family:ui-monospace,monospace;font-size:12px">${short(r.case_id)} <span class="go-arrow">→</span></td>
+      <td><b>${esc(r.company||'—')}</b><div class="muted small">${bTag(r.pathway==='self_declare'?'info':'mute',r.pathway||'—')}</div></td>
+      <td>${bTag(statusColor(r.status),r.status||'—')}<div class="muted small">${esc(r.phase_label||'')}</div></td>
+      <td>${ownerBadge(r.owner)}</td>
+      <td>➡ ${nextTx}${blk?` <span class="tag t-bad" title="${esc((r.blockers||[]).join(', '))}">⛔ ${r.blocker_count} blocker</span>`:''}</td>
+      <td>${gateCell(r.gates)}</td>
+      <td>${r.due_date?dueBadge(r.due_date):'<span class="muted">—</span>'}</td></tr>`;}).join("")
+    : `<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">${WFMON_STAGE?T('선택 단계에 케이스 없음'):T('진행 중 케이스 없음')}</td></tr>`;
+  return `
+  <div class="banner info" style="margin-bottom:16px">🔀 <b>${T('워크플로우 모니터')}</b> — ${T('각 케이스가 어느 역할에서 멈춰 있는지(핸드오프)·주요 게이트 통과여부를 한눈에 봅니다. 읽기 전용 집약 화면 · 행 클릭 → 케이스 상세.')}</div>
+  ${kpis}
+  <div class="grid side" style="margin-bottom:16px">
+    <div class="card"><h3>${T('파이프라인')} <span class="en">· Pipeline</span><span class="r">${T('단계별 케이스 수 · 클릭→필터')}</span></h3>
+      <div class="body"><div class="stagebars">${pipeBars}</div>
+        ${WFMON_STAGE?`<div class="chipbar" style="margin-top:10px"><span class="fchip clear" onclick="WFMON_STAGE='';applyView()">${T('단계 필터 해제')} ✕</span></div>`:''}</div></div>
+    <div class="card"><h3>${T('게이트 상태')} <span class="en">· Gates</span><span class="r">${T('결제→심사·AI평가·파트와')}</span></h3>
+      <div class="body">
+        ${gbar(T('결제 게이트 (결제→모의·현장심사)'),gs.payment)}
+        ${gbar(T('AI 사전평가 리포트'),gs.ai_report)}
+        ${gbar(T('파트와 결정·정족수'),gs.fatwa)}
+        <div class="muted small">${T('통과=ok · 대기=진행/증빙 필요 · 해당없음은 집계 제외')}</div>
+      </div></div>
+  </div>
+  <div class="card"><h3>${T('Handoff · 대기 역할·다음 액션')} <span class="en">· Handoff monitor</span><span class="r">${rowsAll.length}${T('건')}${WFMON_STAGE?' / '+T('필터중'):''}</span></h3>
+    <div class="body tight"><table>
+      <thead><tr><th>${T('케이스')}</th><th>${T('업체')}</th><th>${T('현재 단계')}</th><th>${T('현재 소유자')}</th><th>${T('다음 액션')}</th><th>${T('게이트')}</th><th>D-day</th></tr></thead>
+      <tbody>${tr}</tbody></table></div></div>`;
+};
 SCREEN.deposits=async()=>{
   const [dep,cand]=await Promise.all([API("/admin/deposits").catch(()=>({items:[]})),API("/admin/payments/match-candidates").catch(()=>({items:[]}))]);
   const deps=dep.items||[], cands=cand.items||[];
@@ -4855,6 +5026,38 @@ async function reseedOntology(){if(!confirm("온톨로지를 재시드할까요?
 async function seedReset(){if(!confirm("seed를 초기화할까요? (데모 데이터 재생성)"))return;try{await API("/admin/seed-reset",{method:"POST",body:"{}"});toast("seed 초기화");await loadCases(true);applyView();}catch(e){toast("실패");}}
 
 /* ---- case detail (tabbed, live) ---- */
+/* 워크플로우 게이트(단일 케이스) 시각화 — 조회 전용. 기존 GET 재사용:
+   /cases/{id}/workflow(blockers) · /cases/{id}/audit-report/status(fatwa_gate) · /cases/{id}/invoices(paid).
+   ⚠️ 4a 워크플로우 모니터(전역 집계)와 구분 — 여긴 이 케이스의 게이트만. 신규 백엔드 없음. */
+const BLOCKER_KO={RISK_NOT_LOW:'위험도 Low 아님',NOT_MSME:'MSME(소상공인) 아님',HAS_CRITICAL_MATERIAL:'중대(critical) 원재료 존재',MATERIAL_EVIDENCE_INCOMPLETE:'원재료 증빙 미완',PENDAMPING_NOT_VERIFIED:'펜담핑(Pendamping) 미검증',SIHALAL_IDENTITY_UNVERIFIED:'SIHALAL 신원 미검증',PENYELIA_HALAL_MISSING:'페냐리아 할랄 미지정',FATWA_NOT_APPROVED:'파트와 미승인',SCOPE_NOT_FROZEN:'인증범위 미동결',UNRESOLVED_MAJOR_NC:'미해결 주요 부적합(major NC)',UNPAID_INVOICE:'미결제 청구서',INVALID_TRANSITION:'허용되지 않는 전이'};
+async function workflowGatesCard(id,w){
+  let arep={},invs=[];
+  try{arep=await API(`/cases/${id}/audit-report/status`);}catch(_){}
+  try{invs=await API(`/cases/${id}/invoices`);}catch(_){}
+  const grow=(name,en,state,cond,action)=>{
+    const badge=state==='ok'?`<span class="tag t-ok">✓ ${T('통과')}</span>`:state==='block'?`<span class="tag t-bad">⛔ ${T('차단')}</span>`:`<span class="tag t-warn">○ ${T('대기')}</span>`;
+    return `<tr><td><b>${esc(name)}</b><span class="en"> · ${esc(en)}</span></td><td style="white-space:nowrap">${badge}</td><td class="small">${cond||'—'}</td><td class="small muted">${action||''}</td></tr>`;
+  };
+  const rows=[];
+  // 1) 결제 게이트: 결제확인 → 모의심사 진입
+  const hasInv=(invs||[]).length>0, paid=(invs||[]).some(i=>i.status==='paid');
+  rows.push(grow(T('결제 게이트'),'Payment → Mock audit',paid?'ok':'wait',
+    paid?T('결제 확인됨'):(hasInv?T('청구서 발행 · 결제 대기'):T('청구서 발행 전')),
+    paid?'':T('결제 확인 시 모의심사 진입')));
+  // 2) 파트와 상정 게이트(P0-4): audit-report/status.fatwa_gate
+  const gate=arep.fatwa_gate||{missing:[]}, sent=!!arep.sent_fatwa;
+  const missChips=(gate.missing||[]).map(m=>`<span class="tag t-warn">${T(GATE_KO[m]||m)}</span>`).join(' ');
+  rows.push(grow(T('파트와 상정 게이트'),'Fatwa gate (P0-4)',(sent||gate.ready)?'ok':'wait',
+    sent?T('파트와 상정 완료'):(gate.ready?T('상정 요건 충족'):(missChips||T('요건 미충족'))),
+    (sent||gate.ready)?'':T('보고서 승인 · 오디터 서명 · SJPH 완료 필요')));
+  // 3) 일반 차단(blocker): workflow.blockers
+  const blk=(w&&w.blockers)||[];
+  if(blk.length){blk.forEach(b=>{const cd=(typeof b==='string')?b:(b.code||'');rows.push(grow(T('진행 차단'),cd,'block',T(BLOCKER_KO[cd]||cd),T('미충족 요건 해소 필요')));});}
+  else{rows.push(grow(T('진행 차단'),'Blockers','ok',T('차단 없음'),''));}
+  return `<div class="card" style="margin-bottom:16px"><h3>${T('워크플로우 게이트')} <span class="en">· Workflow gates</span><span class="r">${T('이 케이스')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('게이트')}</th><th>${T('상태')}</th><th>${T('조건 · 사유')}</th><th>${T('다음 액션')}</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
+    <div class="body" style="border-top:1px solid var(--line)"><div class="small muted">${T('조회 전용 — 전역 집계는 워크플로우 모니터 참조')}</div></div></div>`;
+}
 async function renderCaseDetail(id, tab){
   const c=await API(`/cases/${id}`);
   const tabs=[["overview","개요","Overview"],["materials","원재료","Materials"],["documents","문서","Documents"],["audit","현장심사","On-site Audit"]];
@@ -4870,6 +5073,7 @@ async function renderCaseDetail(id, tab){
     let w={};try{w=await API(`/cases/${id}/workflow`);}catch(_){}
     let rd={};try{rd=await API(`/cases/${id}/readiness`);}catch(_){}
     let disc=[];try{disc=await API(`/cases/${id}/discussions`);}catch(_){}
+    let gatesCard="";try{gatesCard=await workflowGatesCard(id,w);}catch(_){}
     const phases=(w.phases||[]);
     const flow=phases.map((p,i)=>`<div class="step ${p.status==="done"?"done":p.status==="current"?"now":(p.done?"done":p.current?"now":"")}" style="min-width:64px">${esc(p.label||p.state||p.key||"")}</div>${i<phases.length-1?'<span class="arrow">›</span>':''}`).join("")||'<div class="muted small">—</div>';
     panel=`${wsStagesCard(id)}<div class="card" style="margin-bottom:16px"><h3>인증 진행 단계 <span class="en">· Milestone (5단계)</span><span class="r">${esc(w.state_label||c.status||"—")}</span></h3><div class="body">${progressBar(c.status)}</div></div>
@@ -4894,6 +5098,7 @@ async function renderCaseDetail(id, tab){
             <button class="btn" onclick="exportReport('${id}')">📄 종합 보고서</button></div>
         </div></div>
     </div>
+    ${gatesCard}
     <div class="card" style="margin-top:16px"><h3>협의 · Discussion <span class="en">· thread</span><span class="r">${disc.length}건</span></h3>
       <div class="body">
         <div class="chatlog" style="max-height:240px">${disc.length?disc.map(d=>`<div class="msg a" style="max-width:100%"><b>${esc(d.author||d.author_role||"—")}</b> <span class="muted small">· ${esc(d.kind||"comment")} ${esc((d.created_at||"").slice(0,16))}</span><br>${esc(d.text)}</div>`).join(""):'<div class="muted small">협의 내역 없음</div>'}</div>
@@ -4949,6 +5154,7 @@ async function boot(){
   navigate(init,true);
   refreshNotifCount();
   if(!window._notifPoll)window._notifPoll=setInterval(refreshNotifCount,60000);
+  startLiveBadge();
 }
 boot();
 </script>
