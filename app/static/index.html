@@ -4711,8 +4711,9 @@ SCREEN.manualBuilder=async()=>{
   <div class="card"><h3>매뉴얼 생성 <span class="en">· Generate</span></h3><div class="body">
     ${warn}
     <div class="btnrow">${genBtn}
-      <button class="btn" onclick="pdfPreview('/cases/${id}/sjph-manual.pdf','SJPH 매뉴얼 (KO·EN 기준양식)','sjph_manual.pdf')">👁 미리보기 · Preview</button>
+      <button class="btn" onclick="pdfPreview('/cases/${id}/sjph-manual.pdf','SJPH 매뉴얼 (기준 템플릿 양식·KO·EN)','sjph_manual.pdf')">👁 미리보기 · Preview</button>
       <button class="btn ghost" onclick="serverPdf('/cases/${id}/sjph-manual.pdf','sjph_manual.pdf')">⬇ PDF</button>
+      <button class="btn ghost" onclick="serverPdf('/cases/${id}/sjph-manual.docx','sjph_manual.docx')">📝 DOCX (원본 양식)</button>
       ${canEdit?`<button class="btn" onclick="mbSaveLayout('${id}')">💾 임시저장</button>`:''}
     </div></div></div>`;
 };

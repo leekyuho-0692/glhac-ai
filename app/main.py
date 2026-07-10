@@ -3595,16 +3595,206 @@ def _sjph_blocks_to_text(company, blocks):
     return "\n".join(L)
 
 
-@app.get("/cases/{case_id}/sjph-manual.pdf")
-def get_sjph_manual_pdf(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
-    """SJPH/HPAS Manual 리치 PDF — 공식 템플릿(GLHAC HPAS SJPH Template) 구조 정합.
-    표지·법적근거·Bismillah·목적범위·고객정보·1~5장·종결서약·HPAS준비도·17부록 + 증빙 게이트."""
+# ===== SJPH Manual — 원본 docx 템플릿 병합 (회의 2026-07-10: 기준 파일과 완전히 동일한 양식) =====
+SJPH_TEMPLATE_DOCX = os.path.join(os.path.dirname(__file__), "assets", "GLHAC_HPAS_SJPH_Template.docx")
+
+
+def _sjph_docx_para_replace(p, repl):
+    txt = p.text
+    new = txt
+    for k, v in repl.items():
+        if k in new:
+            new = new.replace(k, v)
+    if new != txt:
+        if p.runs:
+            p.runs[0].text = new
+            for r in p.runs[1:]:
+                r.text = ""
+        else:
+            p.add_run(new)
+
+
+def _sjph_docx_cell_set(cell, value):
+    p = cell.paragraphs[0]
+    if p.runs:
+        p.runs[0].text = str(value)
+        for r in p.runs[1:]:
+            r.text = ""
+    else:
+        p.add_run(str(value))
+
+
+def _sjph_docx_label_fill(tbl, prefix, value):
+    """라벨 폼 셀(예: 'Date 날짜')에 값을 굵게 덧붙임 — 첫 매칭 셀만."""
+    v = "" if value is None else str(value).strip()
+    if not v:
+        return
+    for row in tbl.rows:
+        for cell in row.cells:
+            t = cell.text.strip()
+            if t.startswith(prefix) and v not in t:
+                run = cell.add_paragraph().add_run(v)
+                run.bold = True
+                return
+
+
+def _sjph_manual_docx_bytes(db, c):
+    """기준 템플릿 docx를 열어 실데이터 병합 — 양식(표지·표·부록17·EN/KO 병기) 원본 그대로 유지."""
+    import io as _io
+    import docx as _docx
+    doc = _docx.Document(SJPH_TEMPLATE_DOCX)
+    company = c.company_name or ""
+    px = c.profile_ext or {}
+    today = date.today().isoformat()
+    ceo = px.get("ceo_name") or c.responsible_person or ""
+    sup = c.halal_supervisor or px.get("pic_name") or ""
+    repl = {
+        "[Your company Name]": company, "[Your Company Name]": company,
+        "[Company Name]": company, "[회사명]": company, "[귀사명]": company,
+        "[Company Letterhead]": company,
+        "[CEO NAME]": ceo or "CEO", "[HALAL SUPERVISOR NAME]": sup or "Halal Supervisor",
+        "[PLACE]": px.get("city") or "", "[Place]": px.get("city") or "", "[장소]": px.get("city") or "",
+    }
+    for p in doc.paragraphs:
+        _sjph_docx_para_replace(p, repl)
+        if p.text.strip().replace("\t", "").replace(" ", "") in ("Date:", "Date/날짜:"):
+            p.add_run(" " + today)
+    for t in doc.tables:
+        for row in t.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    _sjph_docx_para_replace(p, repl)
+    # 고객 정보 폼(표지 뒤 16x6 표) — 라벨 셀에 실데이터 병합
+    info_tbl = next((t for t in doc.tables
+                     if t.rows and t.rows[0].cells[0].text.strip().startswith("Date 날짜")), None)
+    if info_tbl is not None:
+        pathway_app = "Self-Declare" if (c.pathway == "self_declare") else "Regular"
+        for prefix, val in [
+            ("Date 날짜", today), ("Client Name 고객 이름", c.responsible_person),
+            ("Client Organization / Company Name", company),
+            ("Office Phone", c.phone), ("Email Address 메일 주소", c.email),
+            ("Address 회사 주소", c.address), ("City 도시", px.get("city")),
+            ("Country 국가", px.get("country")), ("ZIP Code", px.get("zip")),
+            ("Occupation/Business Type", px.get("business_type")),
+            ("Person In Charge (PIC) Name", px.get("pic_name")),
+            ("PIC Title", px.get("pic_title")), ("PIC MobilePhone", px.get("pic_phone")),
+            ("PIC Email Address", px.get("pic_email")),
+            ("Contact Person (CP) Name", px.get("cp_name")), ("CP Title", px.get("cp_title")),
+            ("CP Mobile Phone", px.get("cp_phone")), ("CP Email Address", px.get("cp_email")),
+            ("Registration Type 등록유형", px.get("registration_type")),
+            ("Aplication Type 신청유형", px.get("application_type") or pathway_app),
+            ("Registration Status 등록현황", px.get("registration_status") or "New"),
+            ("Product Type 제품유형", px.get("product_type")),
+            ("Total Employee 총 직원 수", px.get("total_employee")),
+            ("Product Marketing Type", px.get("marketing_type")),
+            ("ID TAX Company", px.get("tax_id")),
+            ("Production Capacity 생산능력", px.get("production_capacity")),
+        ]:
+            _sjph_docx_label_fill(info_tbl, prefix, val)
+    # 할랄 관리팀 표(본문 1장·부록2 동일 양식) — 이름 셀 치환
+    for t in doc.tables:
+        for row in t.rows:
+            for cell in row.cells:
+                s = cell.text.strip()
+                if s == "CEO name" and ceo:
+                    _sjph_docx_cell_set(cell, ceo)
+                elif s.startswith("HALAL SUPERVISOR name") and sup:
+                    _sjph_docx_cell_set(cell, sup)
+    # Appendix 4 사용재료 목록표 — 원재료 실데이터 행 채움 (헤더 2행 아래부터)
+    mats = db.query(models.Material).filter_by(case_id=c.case_id).all()
+    ap4 = next((t for t in doc.tables
+                if t.rows and "Appendix.4" in t.rows[0].cells[0].text), None)
+    if ap4 is not None and mats:
+        start = 4   # 0 제목 / 1 공백 / 2·3 헤더(병합)
+        for i, m in enumerate(mats):
+            while start + i >= len(ap4.rows):
+                ap4.add_row()
+            cells = ap4.rows[start + i].cells
+            vals = [str(i + 1), m.name or "", m.name or "", m.mat_type or "",
+                    m.supplier or "", "", m.supplier or "",
+                    ("Y" if m.cert == "certified" else "N"), m.cert_no or "", "",
+                    ("제출 Submitted" if m.evidence_provided else "")]
+            for ci, v in enumerate(vals[:len(cells)]):
+                if v:
+                    _sjph_docx_cell_set(cells[ci], v)
+    # Appendix 5 원재료×제품 매트릭스 — 제품명 헤더 치환 + 사용여부 ✔
+    prods = db.query(models.Product).filter_by(case_id=c.case_id).all()
+    links = db.query(models.ProductMaterial).all()
+    used = {(l.product_id, l.material_id) for l in links}
+    ap5 = next((t for t in doc.tables
+                if t.rows and "Appendix 5" in t.rows[0].cells[0].text), None)
+    if ap5 is not None and mats:
+        hdr_ri = 3   # 'product name A 제품명 A' 행
+        if len(ap5.rows) > hdr_ri:
+            hcells = ap5.rows[hdr_ri].cells
+            for pi, pr in enumerate(prods[:6]):
+                ci = 3 + pi
+                if ci < len(hcells):
+                    _sjph_docx_cell_set(hcells[ci], pr.name or "")
+        start = hdr_ri + 1
+        for i, m in enumerate(mats):
+            while start + i >= len(ap5.rows):
+                ap5.add_row()
+            cells = ap5.rows[start + i].cells
+            _sjph_docx_cell_set(cells[0], str(i + 1))
+            if len(cells) > 1:
+                _sjph_docx_cell_set(cells[1], m.name or "")
+            if len(cells) > 2:
+                _sjph_docx_cell_set(cells[2], m.name or "")
+            for pi, pr in enumerate(prods[:6]):
+                ci = 3 + pi
+                if ci < len(cells):
+                    _sjph_docx_cell_set(cells[ci], "V" if (pr.product_id, m.material_id) in used else "-")
+    buf = _io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def _docx_to_pdf_bytes(docx_bytes):
+    """LibreOffice headless 변환 — 호출별 고유 프로필로 동시실행 락 회피."""
+    import shutil as _sh
+    import subprocess as _sp
+    import tempfile as _tf
+    so = _sh.which("soffice") or "/Applications/LibreOffice.app/Contents/MacOS/soffice"
+    if not os.path.exists(so):
+        raise RuntimeError("soffice(LibreOffice) not found")
+    with _tf.TemporaryDirectory() as td:
+        src = os.path.join(td, "manual.docx")
+        with open(src, "wb") as f:
+            f.write(docx_bytes)
+        _sp.run([so, "--headless", "--norestore",
+                 "-env:UserInstallation=file://%s/lo" % td,
+                 "--convert-to", "pdf", "--outdir", td, src],
+                check=True, timeout=180, capture_output=True)
+        with open(os.path.join(td, "manual.pdf"), "rb") as f:
+            return f.read()
+
+
+@app.get("/cases/{case_id}/sjph-manual.docx")
+def get_sjph_manual_docx(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """SJPH Manual — 기준 템플릿 원본 양식 그대로 실데이터 병합한 DOCX."""
     from fastapi.responses import Response
     c = _get_case(db, case_id, user)
-    blocks = _sjph_manual_blocks(db, c)
-    pdf = _render_pdf_rich("Halal Product Assurance System (HPAS) Manual", blocks,
-                           subtitle=(c.company_name or ""),
-                           footer="GL-HAC AI · SJPH/HPAS Manual " + case_id[:8])
+    data = _sjph_manual_docx_bytes(db, c)
+    return Response(content=data,
+                    media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": "attachment; filename=sjph_manual_%s.docx" % case_id[:8]})
+
+
+@app.get("/cases/{case_id}/sjph-manual.pdf")
+def get_sjph_manual_pdf(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """SJPH/HPAS Manual PDF — 기준 docx 템플릿에 실데이터 병합 후 LibreOffice 변환(양식 1:1).
+    변환 불가 환경에서만 기존 리치 렌더러로 폴백."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    try:
+        pdf = _docx_to_pdf_bytes(_sjph_manual_docx_bytes(db, c))
+    except Exception as e:
+        log.warning("sjph docx->pdf 변환 실패, 리치 렌더러 폴백: %s", e)
+        blocks = _sjph_manual_blocks(db, c)
+        pdf = _render_pdf_rich("Halal Product Assurance System (HPAS) Manual", blocks,
+                               subtitle=(c.company_name or ""),
+                               footer="GL-HAC AI · SJPH/HPAS Manual " + case_id[:8])
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": "attachment; filename=sjph_manual_%s.pdf" % case_id[:8]})
 
