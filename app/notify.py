@@ -61,12 +61,31 @@ def _send_whatsapp(contacts, text, notification=None):
 
 
 def _send_kakao(contacts, text, notification=None):
+    """카카오 알림톡 — 비즈메시지 대행사(Solapi·Aligo·NHN 등) HTTP API 제네릭 연동(P3 실구현).
+    GLHAC_KAKAO_API_URL + GLHAC_KAKAO_API_KEY 설정 시 실발송, 미설정 시 no_credentials 폴백
+    (SMS/WhatsApp의 Twilio 크리덴셜 게이트와 동일 패턴). 선택: SENDER_KEY·TEMPLATE_CODE."""
     to = contacts.get("phone")
-    if not os.environ.get("GLHAC_KAKAO_API_KEY"):
-        log.info("[KakaoTalk stub · no key] to=%s :: %s", to, text)
+    url = os.environ.get("GLHAC_KAKAO_API_URL")
+    key = os.environ.get("GLHAC_KAKAO_API_KEY")
+    if not (url and key):
+        log.info("[KakaoTalk stub · no credentials] to=%s :: %s", to, text)
         return {"channel": "kakao", "ok": False, "reason": "no_credentials"}
-    log.warning("[KakaoTalk 미구현 — 발송 안 됨] to=%s", to)
-    return {"channel": "kakao", "ok": False, "reason": "not_implemented"}
+    if not to:
+        return {"channel": "kakao", "ok": False, "reason": "no_contact"}
+    try:
+        import httpx
+        r = httpx.post(url, timeout=10,
+                       headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
+                       json={"to": to, "text": text,
+                             "senderKey": os.environ.get("GLHAC_KAKAO_SENDER_KEY", ""),
+                             "templateCode": os.environ.get("GLHAC_KAKAO_TEMPLATE_CODE", "")})
+        ok = 200 <= r.status_code < 300
+        if not ok:
+            log.warning("[KakaoTalk 발송 실패] to=%s http=%s body=%s", to, r.status_code, r.text[:200])
+        return {"channel": "kakao", "ok": ok, "reason": None if ok else ("http_%d" % r.status_code)}
+    except Exception as e:  # noqa: BLE001
+        log.warning("[KakaoTalk 발송 오류] to=%s err=%s", to, e)
+        return {"channel": "kakao", "ok": False, "reason": "send_error"}
 
 
 def _send_email(contacts, text, notification=None):
@@ -138,20 +157,21 @@ def channel_status():
     크리덴셜 '값'은 절대 노출하지 않고 '존재 여부(bool)'만 계산한다.
       - inapp    : 항상 connected(DB 저장)
       - sms/whatsapp : Twilio 크리덴셜 완비 시 connected, 아니면 unset
-      - kakao    : 대행사 연동 미구현 → 항상 stub(키가 있어도 준비중)
+      - kakao    : 대행사 HTTP API 실구현(P3) — URL+KEY 완비 시 connected, 아니면 unset
     """
     e = os.environ.get
     twilio_core = bool(e("GLHAC_TWILIO_SID") and e("GLHAC_TWILIO_TOKEN"))
     sms_ok = bool(twilio_core and e("GLHAC_TWILIO_SMS_FROM"))
     wa_ok = bool(twilio_core and e("GLHAC_TWILIO_WA_FROM"))
-    kakao_key = bool(e("GLHAC_KAKAO_API_KEY"))
+    kakao_ok = bool(e("GLHAC_KAKAO_API_URL") and e("GLHAC_KAKAO_API_KEY"))
     return {
         "inapp": {"configured": True, "implemented": True, "status": "connected"},
         "sms": {"configured": sms_ok, "implemented": True,
                 "status": "connected" if sms_ok else "unset"},
         "whatsapp": {"configured": wa_ok, "implemented": True,
                      "status": "connected" if wa_ok else "unset"},
-        "kakao": {"configured": kakao_key, "implemented": False, "status": "stub"},
+        "kakao": {"configured": kakao_ok, "implemented": True,
+                  "status": "connected" if kakao_ok else "unset"},
     }
 
 

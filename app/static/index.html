@@ -2386,7 +2386,14 @@ SCREEN.dashboard=async()=>{
       <div class="body">
         ${notif.length?notif.map(([cl,ic,tx,cid])=>`<div class="banner ${cl} clickable" style="margin-bottom:10px" onclick="openCase('${cid}')">${ic} ${esc(tx)} <span class="go-arrow">→</span></div>`).join(""):'<div class="banner ok">✓ 처리 필요한 알림 없음</div>'}
         <div class="divide"></div>
-        <div class="small muted">🌐 수출대상국 인증 매핑 · World overlay (KR·MY·SA) — 준비 중</div>
+        <div class="small" style="font-weight:700;margin-bottom:6px">🌐 ${T('수출대상국 인증 매핑')} <span class="en">· World overlay</span></div>
+        <table style="font-size:11.5px;width:100%"><thead><tr><th>${T('대상국')}</th><th>${T('인증기관')}</th><th>BPJPH ${T('상호인정')}</th></tr></thead><tbody>
+          <tr><td>🇮🇩 ID</td><td>BPJPH (SJPH)</td><td>${bTag('ok',T('기준'))}</td></tr>
+          <tr><td>🇰🇷 KR</td><td>KMF · KHA</td><td>${bTag('ok',T('상호인정'))}</td></tr>
+          <tr><td>🇲🇾 MY</td><td>JAKIM</td><td>${bTag('ok',T('상호인정'))}</td></tr>
+          <tr><td>🇸🇦 SA</td><td>SFDA·SHC</td><td>${bTag('warn',T('별도 등록 필요'))}</td></tr>
+        </tbody></table>
+        <div class="small muted" style="margin-top:4px">${T('수출 시 대상국 기관의 BPJPH 인정 여부를 확인하세요 — 미인정 국가는 현지 재인증이 필요합니다.')}</div>
       </div></div>
     <div class="card"><h3>최근 감사 이벤트 <span class="en">· Audit events</span><span class="r">🔗 해시체인</span></h3>
       <div class="list">${evHtml}</div></div>
@@ -3664,6 +3671,33 @@ async function serverPdf(url,name){
     a.href=u;a.download=name||"document.pdf";a.click();setTimeout(()=>URL.revokeObjectURL(u),60000);}
   catch(e){toast("PDF 실패");}
 }
+/* P3: 가이드 뷰어 — toast 스텁이던 '가이드 보기'를 실제 콘텐츠 모달로 대체 */
+function showGuide(title, html){
+  const ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:rgba(12,22,16,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:22px";
+  ov.innerHTML=`<div class="modalbox" style="max-width:640px;width:100%;max-height:86vh;overflow:auto">
+    <h3 style="display:flex;align-items:center;justify-content:space-between">❔ ${esc(title)} <button class="btn" data-act="x">✕ ${T('닫기')}</button></h3>
+    <div style="font-size:13.5px;line-height:1.75;padding:4px 2px">${html}</div></div>`;
+  ov.addEventListener("click",e=>{if(e.target===ov)ov.remove();});
+  ov.querySelector('[data-act="x"]').onclick=()=>ov.remove();
+  document.body.appendChild(ov);
+}
+const GUIDE_MOCK_AUDIT=()=>`
+  <div class="banner info" style="margin-bottom:10px">${T('모의 감사는 현장 감사 전 감사자가 증거 자료를 사전 검토하는 단계입니다. 아래 5개 필수 항목을 빠짐없이 업로드하세요.')}</div>
+  <b>1. ${T('원자재 보관 구역')}</b> — ${T('라벨링·할랄/비할랄 구분 보관·보관 상태가 보이도록 촬영')}<br>
+  <b>2. ${T('생산 공정(영상)')}</b> — ${T('원료 투입부터 완제품까지 전체 공정을 끊김 없이 촬영')}<br>
+  <b>3. ${T('완제품 보관 구역')}</b> — ${T('제품 라벨·보관 조건이 식별되도록')}<br>
+  <b>4. ${T('생산 시설·설비')}</b> — ${T('설비 전경·세척 상태·라인 분리 여부')}<br>
+  <b>5. ${T('위생·청소 관리')}</b> — ${T('세척 도구 보관·세제(할랄 적합) 라벨·소독 기록')}<br>
+  <div class="banner warn" style="margin-top:10px">${T('판정은 가능/불가능(+수정조치)으로 나가며, 불완전한 자료는 반려될 수 있습니다. PNG/JPG·영상, 파일당 최대 100MB.')}</div>`;
+const GUIDE_FATWA=()=>`
+  <div class="banner info" style="margin-bottom:10px">${T('파트와 심의는 HPAS 매뉴얼과 현장 감사 보고서를 근거로 제품의 할랄 여부를 결정하는 절차입니다.')}</div>
+  <b>① ${T('상정')}</b> — ${T('오디터가 심사보고서 E-서명 후 위원회로 전달')}<br>
+  <b>② ${T('검토')}</b> — ${T('위원회가 HPAS 매뉴얼·현장 보고서·원재료 판정을 검토')}<br>
+  <b>③ ${T('2단계 승인')}</b> — ${T('샤리아 가승인(provisional) → 최고결정자 최종승인(scope 동결)')}<br>
+  <b>④ ${T('위원 서명')}</b> — ${T('위원장 포함 정족수(의장+2인) 전자서명')}<br>
+  <b>⑤ ${T('결정문·인증서')}</b> — ${T('Fatwa 결정문 자동생성 → 인증서 발급')}<br>
+  <div class="banner warn" style="margin-top:10px">${T('반려 시 대상 선택: 오디터 재작업(보고서 보완) 또는 클라이언트 보완(자료 재제출). 재방문 없이 문서 재확인으로 처리됩니다.')}</div>`;
 /* 회의 2026-07-10: 미리보기 = 다운로드가 아니라 화면 내 인라인 뷰어(양식+실데이터 그대로 표시). 다운로드는 뷰어 안의 보조 버튼 */
 async function pdfPreview(url,title,name){
   try{
@@ -4417,7 +4451,7 @@ async function onsiteAuditView(id,editable){
   <div class="card" style="margin-bottom:16px"><div class="body" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
     <div><h2 style="margin:0;font-size:20px">${T('현장 감사 (On-site Audit)')}</h2>
       <div class="muted small" style="margin-top:4px">${editable?T('각 항목을 확인하고 준수 여부를 선택한 후, 필요 시 비고를 작성해 주세요.'):T('감사 결과 열람 (읽기 전용)')}</div></div>
-    <button class="btn" onclick="toast(T('감사 가이드는 준비 중입니다'))">❔ ${T('감사 가이드 보기')}</button>
+    <button class="btn" onclick="showGuide(T('모의 감사 가이드'),GUIDE_MOCK_AUDIT())">❔ ${T('감사 가이드 보기')}</button>
   </div></div>
   <div class="card" style="margin-bottom:16px"><div class="body"><div style="display:flex;gap:16px;flex-wrap:wrap">
     <div style="flex:1 1 150px;min-width:130px"><div class="muted small">${T('감사 기업')}</div><div style="font-weight:700;margin-top:2px">${company}</div></div>
@@ -5807,7 +5841,7 @@ async function fatwaDecisionView(id,editable){
   <div class="card" style="margin-bottom:16px"><div class="body" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
     <div><h2 style="margin:0;font-size:20px">${T('파트와 결정')}</h2>
       <div class="muted small" style="margin-top:4px">${T('HPAS 및 현장 감사 보고서를 검토하고 제품에 대한 할랄 파트와 결정을 진행하세요.')}</div></div>
-    <button class="btn" onclick="toast(T('가이드는 준비 중입니다'))">❔ ${T('가이드 보기')}</button>
+    <button class="btn" onclick="showGuide(T('파트와 심의 가이드'),GUIDE_FATWA())">❔ ${T('가이드 보기')}</button>
   </div></div>
   <div class="card" style="margin-bottom:16px"><div class="body"><div style="display:flex;gap:16px;flex-wrap:wrap">
     <div style="flex:1 1 150px;min-width:130px"><div class="muted small">${T('감사 기업')}</div><div style="font-weight:700;margin-top:2px">${company}</div></div>

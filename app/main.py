@@ -5418,10 +5418,13 @@ def renew_request(case_id: str, body: schemas.RenewRequestReq = schemas.RenewReq
 @app.post("/cases/{case_id}/renew")
 def renew_case(case_id: str, user=Depends(rbac.require_action("certificate.renew")),
                db: Session = Depends(get_db)):
-    """S8-2: C5 갱신 케이스 파생(승인·실행) — 문서 P0: operator 전용(신청과 권한 분리)."""
+    """S8-2: C5 갱신 케이스 파생(승인·실행) — 문서 P0: operator 전용(신청과 권한 분리).
+    P3: 원 케이스는 renewal_preparation으로 전진(사후관리 체인 경유) — 고아 상태였던
+    renewal_preparation에 비즈니스 트리거 부여. 갱신은 사후관리·변경영향 상태에서도 허용."""
     src = _get_case(db, case_id, user)
-    if src.status != "certificate_issued":
-        raise HTTPException(400, {"code": "NOT_ISSUED", "detail": "인증서 발급 케이스만 갱신 가능합니다."})
+    if src.status not in ("certificate_issued", "post_certification_monitoring",
+                          "change_impact", "renewal_preparation"):   # renewal_preparation=재갱신(반복 호출 호환)
+        raise HTTPException(400, {"code": "NOT_ISSUED", "detail": "인증서 발급(또는 사후관리) 케이스만 갱신 가능합니다."})
     import uuid
     new_id = uuid.uuid4().hex
     new_c = models.CaseApplication(
@@ -5447,7 +5450,17 @@ def renew_case(case_id: str, user=Depends(rbac.require_action("certificate.renew
     db.commit()
     sm.record_event(db, new_c, None, "onboarding", "case.renew", user["role"], user["uid"],
                     {"parent_case_id": case_id})
-    return {"new_case_id": new_id, "parent_case_id": case_id,
+    # P3: 원 케이스를 renewal_preparation까지 전진 — certificate_issued면 사후관리 경유
+    cur = src.status
+    for st in ("post_certification_monitoring", "renewal_preparation"):
+        if sm.allowed(cur, st):
+            sm.apply_side_effects(src, st)
+            sm.record_event(db, src, cur, st, "case.renew.auto", user["role"], user["uid"],
+                            {"new_case_id": new_id})
+            cur = st
+    src.status = cur
+    db.commit()
+    return {"new_case_id": new_id, "parent_case_id": case_id, "parent_status": src.status,
             "products_copied": len(prods), "materials_copied": len(mats)}
 
 

@@ -77,24 +77,37 @@ ok("blockers 배열", isinstance(blockers, list), type(blockers).__name__)
 for b in blockers:
     ok(f"blocker {b.get('code')} code 존재", "code" in b, b)
 
-# pathway별 phases 분기: DB 직접 설정 후 workflow 확인
+# pathway별 phases 분기 — DB 직접 UPDATE는 서버 커넥션 풀 스냅숏이 못 보는 경합(플레이키)이라
+# API 경유(pathway/confirm)로 현대화. SD는 MSME+무임계재료+SIHALAL 검증으로 가드 통과.
+def _to_pathway_determination(cid):
+    for st in ("application_draft", "ai_pre_assessment_ready",
+               "ai_pre_assessment_running", "pathway_determination"):
+        httpx.post(f"{B}/cases/{cid}/transition", headers=HC, json={"to_state": st})
+    httpx.post(f"{B}/cases/{cid}/pathway/assess", headers=HC)
+
+
 cb = httpx.post(f"{B}/cases", headers=HC,
-                json={"company_name": "S11 SD Co", "org_id": "org_demo"}).json()
+                json={"company_name": "S11 SD Co", "org_id": "org_demo", "is_msme": True}).json()
 if "case_id" in cb:
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("UPDATE case_application SET pathway='self_declare' WHERE case_id=?", (cb["case_id"],))
-    conn.commit(); conn.close()
-    ws = httpx.get(f"{B}/cases/{cb['case_id']}/workflow", headers=HC).json()
+    cbid = cb["case_id"]
+    httpx.post(f"{B}/cases/{cbid}/products", headers=HC, json={"name": "S11P"})
+    ei = httpx.post(f"{B}/cases/{cbid}/sihalal/identity/link", headers=HC,
+                    json={"external_email": "s11sd@x.com"}).json()
+    httpx.post(f"{B}/sihalal/identity/{ei['external_identity_id']}/verify", headers=HC,
+               json={"expected_identifier": "s11sd@x.com"})
+    _to_pathway_determination(cbid)
+    httpx.post(f"{B}/cases/{cbid}/pathway/confirm", headers=HC, json={"pathway": "self_declare"})
+    ws = httpx.get(f"{B}/cases/{cbid}/workflow", headers=HC).json()
     phase_keys = [p.get("key") for p in ws.get("phases", [])]
     ok("자기선언 경로 sd_sjph 단계 포함", "sd_sjph" in phase_keys, phase_keys)
 
 cc = httpx.post(f"{B}/cases", headers=HC,
-                json={"company_name": "S11 RG Co", "org_id": "org_demo"}).json()
+                json={"company_name": "S11 RG Co", "org_id": "org_demo", "is_msme": False}).json()
 if "case_id" in cc:
-    conn2 = sqlite3.connect(DB_PATH)
-    conn2.execute("UPDATE case_application SET pathway='reguler' WHERE case_id=?", (cc["case_id"],))
-    conn2.commit(); conn2.close()
-    wr = httpx.get(f"{B}/cases/{cc['case_id']}/workflow", headers=HC).json()
+    ccid = cc["case_id"]
+    _to_pathway_determination(ccid)
+    httpx.post(f"{B}/cases/{ccid}/pathway/confirm", headers=HC, json={"pathway": "reguler"})
+    wr = httpx.get(f"{B}/cases/{ccid}/workflow", headers=HC).json()
     phase_keys_r = [p.get("key") for p in wr.get("phases", [])]
     ok("정규 경로 rg_suppl 단계 포함", "rg_suppl" in phase_keys_r, phase_keys_r)
 
