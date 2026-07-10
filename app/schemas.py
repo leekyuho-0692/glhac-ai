@@ -505,3 +505,8 @@ class RegulationUpsertReq(BaseModel):
 class RegulationTransitionReq(BaseModel):
     to_state: str                           # draft|review|effective|retired
     reason: Optional[str] = None            # 상태전이 사유(발효/폐지 시 권장)
+
+
+class AuditorProfileReq(BaseModel):
+    specialty: Optional[str] = None                            # 전문분야(예: 식품 전문)
+    languages: List[str] = Field(default_factory=list)         # 지원언어 키 다중(id|en|ar 등)

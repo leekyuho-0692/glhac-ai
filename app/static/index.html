@@ -1064,6 +1064,19 @@ const UI_STRINGS={
   "오디터(업무량순)":"Auditor (urut beban kerja)",
   "오디터 배정 완료":"Auditor berhasil ditugaskan",
   "배정 실패":"Penugasan gagal",
+  // §i18n P2-6 오디터 배정 카드
+  "후보 오디터":"Kandidat Auditor",
+  "업무량 최소 — 자동선정 후보":"Beban kerja terendah — kandidat pilihan otomatis",
+  "전문분야":"Bidang Keahlian",
+  "전문분야 미설정":"Bidang keahlian belum diatur",
+  "언어 미설정":"Bahasa belum diatur",
+  "예: 식품 전문":"Contoh: Spesialis pangan",
+  "지원언어(쉼표로 구분: id, en, ar)":"Bahasa (pisahkan koma: id, en, ar)",
+  "배정할 케이스":"Kasus untuk ditugaskan",
+  "오디터 프로필 설정":"Pengaturan Profil Auditor",
+  "프로필 편집":"Ubah profil",
+  "프로필 저장됨":"Profil tersimpan",
+  "프로필 저장 실패":"Gagal menyimpan profil",
   // §i18n 고해상도·원재료교정
   "OCR 오독 교정":"Koreksi kesalahan baca OCR",
   "원재료명 교정 · Rename":"Koreksi nama bahan baku · Rename",
@@ -4912,12 +4925,64 @@ async function opsReject(cid){
 async function opsAssign(cid){
   const auds=(OPS_DATA&&OPS_DATA.auditors&&OPS_DATA.auditors.auditors)||[];
   if(!auds.length){toast(T("배정 가능한 오디터 없음"));return;}
-  const opts=auds.map(a=>({value:a.user_id,label:a.username+" ("+T("담당")+" "+a.load+")"}));
+  const opts=auds.map(a=>({value:a.user_id,label:a.username+" ("+T("담당")+" "+a.load+(a.specialty?(" · "+a.specialty):"")+")"}));
   const v=await dialog(T("오디터 배정"),[{key:"auditor_id",label:T("오디터(업무량순)"),type:"select",options:opts,value:opts[0].value,required:true}]);
   if(!v)return;
   try{const r=await API("/ops/cases/"+cid+"/assign-auditor",{method:"POST",body:JSON.stringify({auditor_id:v.auditor_id})});
     toast(T("오디터 배정 완료")+" · "+esc(r.auditor_name)+" ("+r.load+")");applyView();}
   catch(e){toast(T("배정 실패")+" · "+((e&&e.code)||""));}
+}
+/* ===== P2-6 오디터 배정 카드 — 후보 오디터를 전문분야·언어·업무량 진행바와 함께 카드로 노출 ===== */
+const LANG_LABEL={id:"ID",en:"EN",ar:"AR",ko:"KO",ms:"MS"};   // 지원언어 코드→배지
+function opsLangChips(langs){
+  const arr=(langs||[]).filter(Boolean);
+  if(!arr.length)return `<span class="muted small">${T('언어 미설정')}</span>`;
+  return arr.map(l=>`<span class="tag t-info" style="margin:0 4px 2px 0">${esc(LANG_LABEL[String(l).toLowerCase()]||l)}</span>`).join("");
+}
+function opsLoadColor(pct){pct=Number(pct)||0;return pct>=80?'var(--bad)':(pct>=50?'var(--warn)':'var(--ok)');}
+function opsAuditorRow(uid){const auds=(OPS_DATA&&OPS_DATA.auditors&&OPS_DATA.auditors.auditors)||[];return auds.find(a=>a.user_id===uid)||null;}
+/* 카드 [배정]: 이 오디터에게 배정할 미배정 케이스를 선택 → 기존 assign-auditor 재사용 */
+async function opsAssignByAuditor(uid){
+  const a=opsAuditorRow(uid); if(!a){toast(T("배정 실패"));return;}
+  const unas=(OPS_DATA&&OPS_DATA.auditors&&OPS_DATA.auditors.unassigned)||[];
+  if(!unas.length){toast(T("미배정 심사 케이스가 없습니다."));return;}
+  const opts=unas.map(u=>({value:u.case_id,label:(u.company||short(u.case_id))+" · "+(koText(u.status)||u.status_label||u.status)}));
+  const v=await dialog(T("오디터 배정")+" · "+a.username,[{key:"case_id",label:T("배정할 케이스"),type:"select",options:opts,value:opts[0].value,required:true}]);
+  if(!v)return;
+  try{const r=await API("/ops/cases/"+v.case_id+"/assign-auditor",{method:"POST",body:JSON.stringify({auditor_id:uid})});
+    toast(T("오디터 배정 완료")+" · "+esc(r.auditor_name)+" ("+r.load+")");applyView();}
+  catch(e){toast(T("배정 실패")+" · "+((e&&e.code)||""));}
+}
+/* 프로필 편집(✎): 전문분야·지원언어를 auditor.profile 이벤트로 저장(latest-wins) */
+async function opsAuditorProfile(uid){
+  const a=opsAuditorRow(uid); if(!a){toast(T("배정 실패"));return;}
+  const v=await dialog(T("오디터 프로필 설정")+" · "+a.username,[
+    {key:"specialty",label:T("전문분야"),type:"text",value:a.specialty||"",placeholder:T("예: 식품 전문")},
+    {key:"languages",label:T("지원언어(쉼표로 구분: id, en, ar)"),type:"text",value:(a.languages||[]).join(", "),placeholder:"id, en, ar"}]);
+  if(!v)return;
+  const langs=String(v.languages||"").split(",").map(s=>s.trim().toLowerCase()).filter(Boolean);
+  try{await API("/ops/auditors/"+uid+"/profile",{method:"POST",body:JSON.stringify({specialty:v.specialty||"",languages:langs})});
+    toast(T("프로필 저장됨"));applyView();}
+  catch(e){toast(T("프로필 저장 실패")+" · "+((e&&e.code)||""));}
+}
+/* 후보 오디터 카드 목록 — recommend=업무량 최소(정렬상 첫 카드) */
+function opsAuditorCards(auds){
+  if(!auds||!auds.length)return `<div class="muted small">${T('오디터 없음')}</div>`;
+  return `<div class="grid" style="gap:8px">`+auds.map((a,i)=>{
+    const pct=Number(a.load_pct)||0, col=opsLoadColor(pct);
+    const rec=(i===0)?`<span class="tag t-ok" style="margin-left:6px" title="${T('업무량 최소 — 자동선정 후보')}">${T('추천')}</span>`:"";
+    return `<div class="card" style="padding:10px;border:1px solid var(--line);border-radius:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div><b>${esc(a.username)}</b>${rec}</div>
+        <button class="btn xs ghost" title="${T('프로필 편집')}" onclick="opsAuditorProfile('${esc(a.user_id)}')">✎</button>
+      </div>
+      <div class="muted small" style="margin:4px 0">${a.specialty?('🎯 '+esc(a.specialty)):('<span class="muted">'+T('전문분야 미설정')+'</span>')}</div>
+      <div style="margin:2px 0 6px">${opsLangChips(a.languages)}</div>
+      <div class="small" style="display:flex;justify-content:space-between"><span class="muted">${T('담당')} <b>${a.load||0}</b> / ${a.capacity||0}</span><span style="color:${col}">${pct}%</span></div>
+      <div style="height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin:4px 0 8px"><i style="display:block;height:100%;width:${Math.min(100,pct)}%;background:${col}"></i></div>
+      <button class="btn xs" onclick="opsAssignByAuditor('${esc(a.user_id)}')">👤 ${T('배정')}</button>
+    </div>`;
+  }).join("")+`</div>`;
 }
 /* 이번 주(월~일) 범위에 드는 일정 이벤트 수 — M7 운영KPI '이번 주 현장실사' 집계용(프런트) */
 function weekRangeISO(){
@@ -4988,8 +5053,11 @@ SCREEN.opsDashboard=async()=>{
   const asg=aud.assigned||[];
   const asgTbl=asg.length?`<div class="muted small" style="margin:10px 0 4px">${T('배정 완료')}</div><table>
     <tbody>${asg.map(a=>`<tr class="clickable" onclick="openCase('${esc(a.case_id)}')"><td><b>${esc(a.company||'—')}</b></td><td>${bTag(statusColor(a.status),a.status)}</td><td>👤 ${esc(a.auditor_name||'—')} <button class="btn xs ghost" onclick="event.stopPropagation();opsAssign('${esc(a.case_id)}')">${T('재배정')}</button></td></tr>`).join("")}</tbody></table>`:"";
+  const audCards=opsAuditorCards(aud.auditors||[]);   // P2-6 후보 오디터 카드(전문분야·언어·업무량 진행바)
   const audPanel=`<div class="card"><h3>👥 ${T('오디터 배정')} <span class="en">· Auditor Assignment</span><span class="r">${unas.length}${T('건 미배정')}</span></h3>
-    <div class="body tight">${unTbl}${asgTbl}</div></div>`;
+    <div class="body tight">${unTbl}${asgTbl}
+      <div class="muted small" style="margin:12px 0 6px">${T('후보 오디터')} <span class="en">· Candidates</span></div>
+      ${audCards}</div></div>`;
   return `
   <div class="banner info" style="margin-bottom:16px">🗺️ <b>${T('최고운영자 운영현황')}</b> — ${T('지역별 분포·처리 캐파·신규 업체 승인·오디터 배정을 한 화면에서 운영합니다. 지도 대신 집계표+드릴다운(오프라인/CSP 안전).')}</div>
   ${kpis}

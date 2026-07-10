@@ -6798,6 +6798,41 @@ def _ops_pending_data(db, user, cases=None, fac_map=None):
     return {"items": out, "count": len(out)}
 
 
+# ── P2-6 오디터 프로필(전문분야·언어) — 스키마 무변경 sentinel(WorkflowEvent latest-wins) ──
+# User 모델에 컬럼을 추가하지 않고, 오디터 user_id를 case_id 스코프로 삼아 "auditor.profile"
+# 이벤트 스트림을 만든다(regulations의 reg_id 방식과 동일). 최신 이벤트 payload = 현재 프로필.
+AUDITOR_PROFILE_ACTION = "auditor.profile"
+AUDITOR_BASE_CAPACITY = 8   # 업무량 진행바 정규화 기준 캐파(오디터 1인 동시 담당 권장 상한)
+
+
+def _auditor_shim(user_id):
+    """record_event(해시체인)용 최소 case 쉼 — 오디터 user_id를 case_id 스코프로 사용."""
+    import types
+    return types.SimpleNamespace(case_id=user_id, org_id=None)
+
+
+def _auditor_profile(db, user_id):
+    """최신 auditor.profile payload = 현재 프로필(latest-wins). 없으면 None."""
+    last = (db.query(models.WorkflowEvent)
+            .filter(models.WorkflowEvent.case_id == user_id,
+                    models.WorkflowEvent.action == AUDITOR_PROFILE_ACTION)
+            .order_by(models.WorkflowEvent.created_at.desc(),
+                      models.WorkflowEvent.event_id.desc()).first())
+    if last is None:
+        return None
+    p = last.payload or {}
+    return {"specialty": p.get("specialty"),
+            "languages": p.get("languages", []) or [],
+            "updated_at": last.created_at.isoformat() if last.created_at else None}
+
+
+def _auditor_load_pct(load):
+    """업무량을 기준 캐파 대비 백분율(0~100)로 정규화 — 진행바 색상 판정용."""
+    if AUDITOR_BASE_CAPACITY <= 0:
+        return 0
+    return min(100, round(load / AUDITOR_BASE_CAPACITY * 100))
+
+
 def _ops_auditors_data(db, user, cases=None):
     cases = _ops_cases(db, user) if cases is None else cases
     assignments = _ops_latest_assignment(db, [c.case_id for c in cases])
@@ -6806,7 +6841,16 @@ def _ops_auditors_data(db, user, cases=None):
         aid = p.get("auditor_id")
         if aid:
             load[aid] = load.get(aid, 0) + 1
-    auditors = [{"user_id": a.user_id, "username": a.username, "load": load.get(a.user_id, 0)}
+
+    def _auditor_row(a):
+        prof = _auditor_profile(db, a.user_id) or {}
+        n = load.get(a.user_id, 0)
+        return {"user_id": a.user_id, "username": a.username, "load": n,
+                "load_pct": _auditor_load_pct(n), "capacity": AUDITOR_BASE_CAPACITY,
+                "specialty": prof.get("specialty"),
+                "languages": prof.get("languages", []) or [],
+                "profile_updated_at": prof.get("updated_at")}
+    auditors = [_auditor_row(a)
                 for a in sorted(_ops_auditor_users(db, user), key=lambda a: load.get(a.user_id, 0))]
     unassigned = []
     for c in cases:
@@ -6853,6 +6897,25 @@ def ops_pending_companies(user=Depends(auth.require_roles("operator")), db: Sess
 @app.get("/ops/auditors")
 def ops_auditors(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
     return _ops_auditors_data(db, user)
+
+
+@app.post("/ops/auditors/{user_id}/profile")
+def ops_auditor_profile(user_id: str, body: schemas.AuditorProfileReq,
+                        user=Depends(auth.require_roles("operator")),
+                        db: Session = Depends(get_db)):
+    """P2-6 오디터 프로필(전문분야·언어) 설정 — 스키마 무변경, auditor.profile 이벤트 latest-wins.
+    대상은 오디터 유저여야 하며 operator는 자기 조직 스코프로 제한(admin은 전체)."""
+    target = db.query(models.User).filter_by(user_id=user_id, role="auditor").first()
+    if target is None:
+        raise HTTPException(404, {"code": "AUDITOR_NOT_FOUND"})
+    if user["role"] != "admin" and target.org_id != user["org_id"]:
+        raise HTTPException(403, {"code": "FORBIDDEN_ORG_SCOPE"})
+    payload = {"specialty": (body.specialty or "").strip() or None,
+               "languages": [s for s in (body.languages or []) if s]}
+    sm.record_event(db, _auditor_shim(user_id), None, None, AUDITOR_PROFILE_ACTION,
+                    user["role"], user["uid"], payload)
+    db.commit()
+    return {"ok": True, "user_id": user_id, "profile": _auditor_profile(db, user_id)}
 
 
 @app.get("/ops/calendar")
