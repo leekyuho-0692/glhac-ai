@@ -25,7 +25,7 @@ ACTION_ROLES = {
     "material.add": {"applicant", "consultant", "penyelia_halal"},
     "material.delete": {"applicant", "consultant", "penyelia_halal"},
     "material.evidence": {"applicant", "consultant", "penyelia_halal"},
-    "document.review": {"consultant"},
+    "document.review": {"consultant", "auditor"},   # A05: 오디터 문서 단위 판정(승인/반려/재요청) — 설계 정본
     "sjph.edit": {"applicant", "consultant", "penyelia_halal"},
     "finding.add": {"auditor", "consultant"},
     "finding.update": {"auditor", "consultant"},

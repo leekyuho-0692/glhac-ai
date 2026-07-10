@@ -416,6 +416,7 @@ const NAV = [
   ["workflow","🧭","워크스페이스","Workspace","진행·In progress"],
   ["application","📝","신청","Application","신청·Intake"],
   ["assignments","📬","배정함","Assignments","수락·거절"],   // 오디터 배정 수락/거절 루프
+  ["notifCenter","🔔","알림 센터","Notifications","내 알림·읽음관리"],   // C13 클라이언트 알림 센터
   ["preassess","🔍","사전심사","Pre-assessment","AI 판정·Assess"],
   ["materials","🧪","원재료","Materials","스크리닝·Screen"],
   ["aiExtractions","🔬","AI 검수 큐","AI Review Queue","데이터 정확성·Review"],
@@ -452,7 +453,7 @@ const NAV_GROUPS=[
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
   {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","regulations","consultation","notifyLog","auditLog","system"]},   // prod notifyLog 유지 + 운영현황·종합캘린더·규정법령·감사로그
   {label:"기타 · Others", ids:["assistant","feedback"]},   // prod 고유 그룹 유지
-  {label:"내 정보 관리 · My Data", ids:["documents","vault"]},   // M6: 문서=내 자료함 · P1-#4 자료함(Vault)
+  {label:"내 정보 관리 · My Data", ids:["documents","vault","notifCenter"]},   // M6: 문서=내 자료함 · P1-#4 자료함(Vault) · C13 알림 센터
 ];
 const ROLE_DEF = {
   client:    {ko:"클라이언트", en:"Client",     scope:"own"},
@@ -479,12 +480,13 @@ const MENU_ACCESS = {
   documents:["client","consultant","auditor","sharia","ops","admin"],
   vault:["client","consultant","admin"],   // P1-#4 자료함 — 클라이언트 중심(담당 컨설턴트·관리자 열람)
   assignments:["auditor","ops","admin"],   // 오디터=본인 배정함 / ops·admin=거절 회신·응답 현황
+  notifCenter:["client","consultant","auditor","sharia","ops","admin"],   // C13 알림 센터(수신함) — notifyLog는 발송측
   audit:    ["client","consultant","auditor","sharia","ops","admin"],
   onsiteCalendar:["client","consultant","auditor","ops","admin"],   // A08: 클라 제시 + 오디터 확정
   mockAudit:["client","consultant","auditor","sharia","ops","admin"],
   evaluation:["client","auditor","sharia","ops","admin"],
   resubmitCenter:["client","consultant","admin","auditor","ops"],   // A09: 클라이언트/컨설턴트/관리자 재제출 + 오디터·ops 상태열람
-  invoice:  ["client","consultant","ops","admin"],
+  invoice:  ["client","consultant","auditor","ops","admin"],   // C12: 오디터 열람(조회) — 결제상태 확인, 쓰기는 화면 내 canMark/서버 RBAC로 차단
   payments: ["ops","admin"],
   deposits: ["ops","admin"],
   notifyLog: ["ops","admin"],
@@ -2573,6 +2575,38 @@ async function assignRespond(cid,decision){
   catch(e){toast(T('처리 실패')+' · '+((e&&e.code)||''));}
 }
 
+/* C13 알림 센터 — 수신 알림 타임라인·타입 필터·읽음 관리(전용 화면). 벨 드롭다운의 전체 뷰 */
+let NOTIF_FILTER="all";
+const NC_ICON={"certificate_issued":["ok","🏅"],"audit_scheduled":["info","📅"],"payment_confirmed":["ok","💰"],
+  "ops.auditor_assigned":["warn","📬"],"auditor.assignment_rejected":["bad","⛔"],"auditor.assignment_accepted":["ok","✅"],
+  "preassess.resubmit":["warn","♻️"],"fatwa.returned_to_auditor":["bad","⚖️"],"fatwa.returned_supplement":["warn","♻️"],
+  "application.submitted":["info","📝"],"document_requested":["warn","📄"],"audit_closed":["ok","🏭"],
+  "mock_audit.task_created":["info","🧷"]};
+SCREEN.notifCenter=async()=>{
+  const list=await API("/notifications").catch(()=>[]);
+  const types=[...new Set(list.map(n=>n.event_type).filter(Boolean))];
+  const filtered=NOTIF_FILTER==="all"?list:(NOTIF_FILTER==="unread"?list.filter(n=>!n.read):list.filter(n=>n.event_type===NOTIF_FILTER));
+  const unread=list.filter(n=>!n.read).length;
+  const chips=[["all",T('전체'),list.length],["unread",T('안읽음'),unread]].concat(types.map(t=>[t,t,list.filter(n=>n.event_type===t).length]))
+    .map(([k,l,c])=>`<span class="fchip${NOTIF_FILTER===k?'':' clear'}" style="cursor:pointer" onclick="NOTIF_FILTER='${esc(k)}';applyView()">${esc(l)} <b style="pointer-events:none">${c}</b></span>`).join('');
+  const rows=filtered.slice().reverse().map(n=>{const ic=NC_ICON[n.event_type]||["mute","🔔"];
+    return `<div class="li${n.read?'':' clickable'}" style="${n.read?'':'background:var(--accent-soft)'}" ${n.case_id?`onclick="openCase('${n.case_id}')"`:''}>
+      <div class="ic t-${ic[0]}">${ic[1]}</div>
+      <div class="tx"><b>${esc(n.title||n.event_type||'알림')}</b>${n.read?'':` ${tag('warn',T('신규'))}`}
+        <div class="muted small" style="white-space:pre-wrap">${esc(n.body||'')}</div>
+        <div class="muted small">${esc(String(n.created_at||'').slice(0,16).replace('T',' '))}${n.case_id?` · ${short(n.case_id)}`:''}${(n.channels&&n.channels.length)?` · ${n.channels.map(esc).join(', ')}`:''}</div></div>
+      ${n.read?'':`<button class="btn xs" onclick="event.stopPropagation();notifRead('${n.id}')">${T('읽음')}</button>`}</div>`;}).join('')
+    ||`<div class="li"><div class="tx muted small">${T('해당 알림이 없습니다.')}</div></div>`;
+  return `
+  <div class="banner ${unread?'warn':'ok'}" style="margin-bottom:12px">🔔 ${unread?`${T('읽지 않은 알림')} <b>${unread}${T('건')}</b>`:T('모든 알림을 확인했습니다.')}</div>
+  <div class="chipbar" style="margin-bottom:10px">${chips}</div>
+  <div class="card"><h3>🔔 ${T('알림 센터')} <span class="en">· Notifications</span>
+    ${unread?`<span class="r"><button class="btn xs" onclick="notifReadAll()">✓ ${T('모두 읽음')}</button></span>`:''}</h3>
+    <div class="list" style="max-height:none">${rows}</div></div>`;
+};
+async function notifRead(id){try{await API(`/notifications/${id}/read`,{method:"POST",body:"{}"});applyView();}catch(e){toast(T('실패'));}}
+async function notifReadAll(){try{await API("/notifications/read-all",{method:"POST",body:"{}"});toast(T('모두 읽음 처리'));applyView();}catch(e){toast(T('실패'));}}
+
 /* 4) Application */
 SCREEN.preassess=async()=>{
   const id=CURCASE;
@@ -3547,7 +3581,7 @@ SCREEN.documents=async()=>{
     return `<div class="check"><div class="cbox ${present?'on':''}">${present?'✓':''}</div>
       <b style="flex:1">${esc(T(it.doc_type_ko||it.label||it.doc_type||it.name||it))}</b><span class="muted small">${present?T('제출'):T('미제출')}</span></div>`;}).join("")
     :'<div class="muted small">체크리스트 없음</div>';
-  const canReview=["consultant","admin"].includes(ROLE);
+  const canReview=["consultant","auditor","admin"].includes(ROLE);   // A05: 오디터 문서 판정 포함(rbac document.review와 정합)
   const sel=docs.find(d=>d.document_id===DOC_SEL)||docs.find(d=>d.has_file)||docs[0]||null;
   const docHtml=docs.length?`<div class="filegrid">${docs.map(d=>`<div class="filecard" style="align-items:flex-start;${sel&&d.document_id===sel.document_id?'border-color:var(--accent);background:var(--accent-soft)':''}" onclick="selectDoc('${d.document_id}')">
       <div class="fico">${/png|jpg|jpeg|img/i.test(d.filename||"")?'🖼':'📄'}</div>
