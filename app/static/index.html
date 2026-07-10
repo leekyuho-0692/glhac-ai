@@ -138,7 +138,10 @@
   .side-r{grid-template-columns:1fr 1.55fr}
   .three{grid-template-columns:1fr 1fr 1fr}
   .four{grid-template-columns:repeat(4,1fr)}
+  .five{grid-template-columns:repeat(5,1fr)}
+  @media(max-width:1200px){.five{grid-template-columns:repeat(3,1fr)}}
   @media(max-width:1080px){.two,.side,.side-r,.three,.four{grid-template-columns:1fr}}
+  @media(max-width:760px){.five{grid-template-columns:1fr}}
   /* ── 모바일 반응형(≤820px): 오프캔버스 드로어 + 햄버거 ── */
   @media(max-width:820px){
     .hamburger{display:inline-flex;align-items:center;justify-content:center}
@@ -502,6 +505,13 @@ let RBAC_ACTIONS={};                          // /rbac/actions 파생 — API와
 function CAN(a){return !!RBAC_ACTIONS[a];}     // UI 버튼 노출은 단일 매트릭스에서 판단
 let CURCASE=null, CASES_CACHE=[];
 let INV_SEL=null, DOC_SEL=null, SIHALAL_EID={};
+/* M1: 오디터 업무함 유형별 탭 — status 기반 클라이언트 분류(신규 필드 불필요) */
+const AUDITOR_TABS=[
+  ["all","전체","📋",()=>true],
+  ["assigned","배정 심사","🔍",s=>["document_pre_audit_requested","document_pre_audit_in_review","document_pre_audit_approved","lph_assignment"].includes(s)],
+  ["onsite","현장·보고서","🏭",s=>["onsite_audit_scheduled","onsite_audit_in_progress"].includes(s)],
+  ["corrective","재심·시정","🛠",s=>["corrective_action_required","corrective_action_submitted"].includes(s)]];
+let AUDITOR_TAB="all";
 let ASSESS_CACHE={}, INTAKE_OUT={}, PRODUCT_SEL=null, PAY_SEL=null;
 let CASE_SORT="recent";
 let LANG=0; const LANGS=["🌐 KO · EN","🌐 한국어","🌐 Bahasa"];
@@ -793,7 +803,7 @@ function buildNav(){
   if(rest.length){shown+=rest.length;html+=grp("기타 · Other", rest.map(x=>x[0]), rest.map(link));}
   nav.innerHTML=html;
   document.getElementById("navfoot").innerHTML=
-    `${T('노출 메뉴')} ${shown} / 15<br><span style="color:#64748B">scope · ${T(scopeLabel())}</span>`;
+    `${T('표시중')} ${shown} / ${T('전체')} ${NAV.length}<br><span style="color:#64748B">scope · ${T(scopeLabel())}</span>`;
 }
 function toggleNavGroup(el){if(el&&el.parentElement)el.parentElement.classList.toggle("open");}
 function toggleNav(on){
@@ -839,6 +849,26 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n P3 UI 마감 — navfoot·신규업체·오디터KPI/탭·재전송이력
+  "표시중":"Ditampilkan",
+  "신청일":"Tgl. Pengajuan",
+  "업종":"Sektor",
+  "이번 주 현장실사":"Audit Lapangan Pekan Ini",
+  "처리 대기":"Menunggu Proses",
+  "미해결 부적합":"Ketidaksesuaian Terbuka",
+  "배정 심사":"Audit Ditugaskan",
+  "현장·보고서":"Lapangan·Laporan",
+  "재심·시정":"Tinjau Ulang·Koreksi",
+  "대상":"Sasaran",
+  "검토자":"Peninjau",
+  "결과":"Hasil",
+  "보완요청":"Minta Pelengkapan",
+  "검토 대기":"Menunggu Tinjauan",
+  "클라이언트 재제출":"Pengajuan Ulang Klien",
+  "운영자":"Operator",
+  "파트와 담당":"Petugas Fatwa",
+  "관리자":"Administrator",
+  "클릭 → 케이스로 이동":"Klik → buka kasus",
   // §i18n P2-1 현장캘린더 후보일 택1 수락 · P2-2 입금증빙 업로드 · P2-3 비밀번호 확인
   "이 날짜로 확정 요청":"Minta konfirmasi tanggal ini",
   "희망 방문 시각 · Time":"Waktu kunjungan yang diinginkan · Time",
@@ -1993,7 +2023,7 @@ async function renderRightPanel(){
      <div style="margin-bottom:8px">${bSpan(c.status||"—")}</div>
      <div style="overflow-x:auto">${progressBar(c.status||"onboarding")}</div></div>
    <div class="rpsec"><div class="rptitle">알림 · Notifications <span class="muted small">${notifs.filter(n=>!n.read).length} unread</span></div>
-     ${notifs.slice(0,5).map(n=>`<div class="rpnote ${n.read?"":"unread"}"><b>${esc(n.title||n.event_type||"")}</b><div class="muted small">${esc((n.body||"").slice(0,70))}</div></div>`).join("")||'<div class="muted small">알림 없음</div>'}</div>
+     ${notifs.slice(0,5).map(n=>`<div class="rpnote ${n.read?"":"unread"}"${n.case_id?` style="cursor:pointer" onclick="openNotif('${n.id}','${esc(n.case_id)}')" title="${T('클릭 → 케이스로 이동')}"`:''}><b>${esc(n.title||n.event_type||"")}</b><div class="muted small">${esc((n.body||"").slice(0,70))}${n.case_id?' <span class="go-arrow">→</span>':''}</div></div>`).join("")||'<div class="muted small">알림 없음</div>'}</div>
    <div class="rpsec" style="border-bottom:none"><div class="rptitle">논의 · Discussion</div>
      <div class="rpdisc">${disc.slice(-8).map(d=>`<div class="rpmsg"><b class="small">${esc(d.author||d.author_role||"")}</b> <span class="muted small">${esc(String(d.created_at||"").slice(5,16))}</span><div class="small">${esc(d.text||"")}</div></div>`).join("")||'<div class="muted small">아직 논의 없음</div>'}</div>
      <div class="btnrow" style="margin-top:8px"><input class="v" id="rpDiscInput" placeholder="메시지 입력…" style="flex:1;font-size:12px" onkeydown="if(event.key===\'Enter\')postDiscussion(\'${id}\')"><button class="btn pri" style="padding:5px 10px" onclick="postDiscussion(\'${id}\')">전송</button></div></div>`;
@@ -2338,17 +2368,35 @@ SCREEN.caseList=async()=>{
   if(FILTERS.q){const q=FILTERS.q.toLowerCase();cases=cases.filter(c=>(c.company_name||"").toLowerCase().includes(q)||c.case_id.toLowerCase().includes(q));}
   if(FILTERS.region){cases=cases.filter(c=>c.province===FILTERS.region);}
   if(CASE_SORT==="due")cases=cases.slice().sort((a,b)=>{const da=dueDays(a.due_date),db=dueDays(b.due_date);if(da==null&&db==null)return 0;if(da==null)return 1;if(db==null)return -1;return da-db;});
+  // M1/M2/M3: 오디터 업무함 — KPI 카드(담당·이번주현장·처리대기·미해결부적합) + status 유형별 탭
+  let auditorHead="", isAud=(ROLE==='auditor');
+  if(isAud){
+    if(!AUDITOR_TABS.some(t=>t[0]===AUDITOR_TAB))AUDITOR_TAB="all";
+    const counts={};AUDITOR_TABS.forEach(t=>counts[t[0]]=cases.filter(c=>t[3](c.status)).length);
+    const activeTab=AUDITOR_TABS.find(t=>t[0]===AUDITOR_TAB)||AUDITOR_TABS[0];
+    cases=cases.filter(c=>activeTab[3](c.status));
+    let ad=null;try{ad=await API('/auditor/dashboard');}catch(_){}
+    const kpi=(n,l,c,ic)=>`<div class="card"><div class="body" style="display:flex;align-items:center;gap:12px"><div style="font-size:22px">${ic}</div><div class="kpi"><span class="l">${l}</span><span class="n" style="font-size:24px;color:var(--${c})">${n}</span></div></div></div>`;
+    const kcards=ad?`<div class="grid four" style="margin-bottom:14px">
+      ${kpi(ad.assigned_count||0,T('담당 케이스'),'ink','📋')}
+      ${kpi(ad.week_onsite||0,T('이번 주 현장실사'),(ad.week_onsite?'accent':'ink3'),'🏭')}
+      ${kpi(ad.pending_review||0,T('처리 대기'),(ad.pending_review?'gold':'ink3'),'⏳')}
+      ${kpi(ad.open_findings||0,T('미해결 부적합'),(ad.open_findings?'bad':'ink3'),'⚠️')}</div>`:'';
+    const tabHtml=`<div class="chipbar" style="margin-bottom:10px">${AUDITOR_TABS.map(t=>`<span class="fchip${AUDITOR_TAB===t[0]?'':' clear'}" style="cursor:pointer" onclick="AUDITOR_TAB='${t[0]}';PAGES={};applyView()">${t[2]} ${T(t[1])} <b style="pointer-events:none">${counts[t[0]]}</b></span>`).join('')}</div>`;
+    auditorHead=kcards+tabHtml;
+  }
   const pg=pageSlice("caseList",cases,10);
   const rows=pg.items.length?pg.items.map(c=>`<tr class="clickable" onclick="openCase('${c.case_id}')">
       <td style="font-family:ui-monospace,monospace;font-size:12px">${short(c.case_id)} <span class="go-arrow">→</span></td>
       <td><b>${esc(c.company_name||"—")}</b></td>
       <td>${bTag(c.pathway==="self_declare"?"info":"mute",c.pathway||"—")}</td>
       <td>${bTag(statusColor(c.status),c.status||"—")} ${draftBadge(c.draft_state)}</td>
+      <td>${c.auditor_name?esc(c.auditor_name):'<span class="muted">—</span>'}</td>
       <td>${c.due_date?dueBadge(c.due_date):'<span class="muted">—</span>'}</td></tr>`).join("")
-    : `<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">조건에 맞는 케이스 없음 · No cases</td></tr>`;
+    : `<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">조건에 맞는 케이스 없음 · No cases</td></tr>`;
   const canNew=["client","consultant","admin"].includes(ROLE);
   // 인증 워크스페이스는 케이스 디테일 overview(renderCaseDetail)로 이전됨 — 리스트 화면에서는 미노출
-  return `${filterChips()}
+  return `${filterChips()}${auditorHead}
   <div class="chipbar" style="margin-bottom:12px">
     <input class="v" style="width:auto;flex:1;max-width:280px" placeholder="🔍 검색 (기업·번호) — Enter" value="${esc(FILTERS.q||'')}" onkeydown="if(event.key==='Enter'){FILTERS.q=this.value;PAGES={};applyView();}">
     <select class="v" style="width:auto" onchange="CASE_SORT=this.value;applyView()">
@@ -2358,7 +2406,7 @@ SCREEN.caseList=async()=>{
   </div>
   <div class="card"><h3>케이스 테이블 <span class="en">· Case table</span><span class="r">${ROLE==='auditor'?'배정 심사 관리':'row 클릭 → 상세'}</span></h3>
     <div class="body tight"><table>
-      <thead><tr><th>번호 · ID</th><th>기업 · Company</th><th>경로</th><th>상태 · Status</th><th>기한 · Due</th></tr></thead>
+      <thead><tr><th>번호 · ID</th><th>기업 · Company</th><th>경로</th><th>상태 · Status</th><th>담당 · Auditor</th><th>기한 · Due</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     ${pager("caseList",pg)}
     <div class="body btnrow" style="border-top:1px solid var(--line)">
@@ -4426,10 +4474,14 @@ SCREEN.resubmitCenter=async()=>{
       </div></div>`;
   }).join(''):`<div class="card"><div class="body muted" style="text-align:center;padding:26px">✅ ${T('보완·재전송 요청이 없습니다.')}</div></div>`;
   const preItem=reqs.find(r=>r.source==='preassess');
+  // M13: 이력 컬럼 — 대상(요청 서류)·검토자(요청 actor)·결과(최신 검토 판정)
+  const _actorKo=a=>({auditor:'오디터',operator:'운영자',fatwa_liaison:'파트와 담당',admin:'관리자'})[a]||a||'—';
+  const _verdictTag=v=>v==='ready'?`<span class="tag t-ok">✅ ${T('승인')}</span>`:(v==='supplement'?`<span class="tag t-warn">↩ ${T('보완요청')}</span>`:`<span class="muted small">${T('검토 대기')}</span>`);
   const histHtml=(preItem&&(preItem.history||[]).length)?`<div class="card" style="margin-top:16px"><h3>${T('재전송 이력')} <span class="en">· History</span></h3>
-    <div class="body tight"><table><thead><tr><th>${T('회차')}</th><th>${T('요청 서류 수')}</th><th>${T('요청일')}</th></tr></thead><tbody>
-    ${preItem.history.map(h=>`<tr><td>${h.round||'-'}${T('회차')}</td><td>${h.count||0}</td><td class="muted small">${h.at?esc(String(h.at).slice(0,16).replace('T',' ')):'—'}</td></tr>`).join('')}
-    ${preItem.resubmit?`<tr><td class="t-ok">↳ ${T('재제출')}</td><td>${preItem.resubmit.round||'-'}${T('회차')}</td><td class="muted small">${preItem.resubmit.at?esc(String(preItem.resubmit.at).slice(0,16).replace('T',' ')):'—'}</td></tr>`:''}
+    <div class="body tight"><table><thead><tr><th>${T('회차')}</th><th>${T('대상')}</th><th>${T('검토자')}</th><th>${T('요청일')}</th></tr></thead><tbody>
+    ${preItem.history.map(h=>`<tr><td>${h.round||'-'}${T('회차')}</td><td class="muted small">${(h.items&&h.items.length)?esc(h.items.join(', ')):(h.count||0)+' '+T('건')}</td><td>${T(_actorKo(h.actor))}</td><td class="muted small">${h.at?esc(String(h.at).slice(0,16).replace('T',' ')):'—'}</td></tr>`).join('')}
+    ${preItem.resubmit?`<tr><td class="t-ok">↳ ${T('재제출')}</td><td class="muted small" colspan="2">${T('클라이언트 재제출')}${preItem.resubmit.round?' · '+preItem.resubmit.round+T('회차'):''}</td><td class="muted small">${preItem.resubmit.at?esc(String(preItem.resubmit.at).slice(0,16).replace('T',' ')):'—'}</td></tr>`:''}
+    <tr><td colspan="3" style="text-align:right"><b>${T('결과')}</b></td><td>${_verdictTag(preItem.review_verdict)}</td></tr>
     </tbody></table></div></div>`:'';
   return `${intro}${dueBanner}${kpiHtml}
     <div class="card" style="margin-bottom:12px"><h3>${T('보완 요청 항목')} <span class="en">· Requests</span><span class="r">${T('대기')} ${cnt.pending} · ${T('재제출됨')} ${cnt.resubmitted} · ${T('해결')} ${cnt.resolved}</span></h3></div>
@@ -4867,16 +4919,30 @@ async function opsAssign(cid){
     toast(T("오디터 배정 완료")+" · "+esc(r.auditor_name)+" ("+r.load+")");applyView();}
   catch(e){toast(T("배정 실패")+" · "+((e&&e.code)||""));}
 }
+/* 이번 주(월~일) 범위에 드는 일정 이벤트 수 — M7 운영KPI '이번 주 현장실사' 집계용(프런트) */
+function weekRangeISO(){
+  const d=new Date();const dow=(d.getDay()+6)%7;   // 월=0 기준
+  const mon=new Date(d);mon.setDate(d.getDate()-dow);
+  const sun=new Date(mon);sun.setDate(mon.getDate()+6);
+  const iso=x=>x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');
+  return [iso(mon),iso(sun)];
+}
+function weekEventCount(events){
+  const [ms,ss]=weekRangeISO();
+  return (events||[]).filter(e=>{const dd=String(e.date||'').slice(0,10);return dd>=ms&&dd<=ss;}).length;
+}
 SCREEN.opsDashboard=async()=>{
-  const d=await API("/ops/dashboard").catch(()=>null);
+  const [d,cal]=await Promise.all([API("/ops/dashboard").catch(()=>null),API("/ops/calendar").catch(()=>null)]);
   if(!d)return `<div class="card"><div class="body muted">${T('운영현황을 불러오지 못했습니다.')}</div></div>`;
   OPS_DATA=d;
   const rg=d.regions||{regions:[]}, cap=d.capacity||{}, pend=d.pending_companies||{items:[]}, aud=d.auditors||{};
   const kpi=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:26px;color:var(--${c})">${n}</span><span class="l">${l}</span></div></div>`;
   const bl=cap.backlog||{};
-  const kpis=`<div class="grid four" style="margin-bottom:16px">
+  const weekOnsite=weekEventCount((cal&&cal.events)||[]);   // M7: 이번 주(월~일) 예정 현장실사
+  const kpis=`<div class="grid five" style="margin-bottom:16px">
     ${kpi(cap.total||0,T('전체 케이스'),'ink')}
     ${kpi(pend.count||0,T('신규 업체 승인 대기'),(pend.count?'warn':'ink3'))}
+    ${kpi(weekOnsite,T('이번 주 현장실사'),(weekOnsite?'accent':'ink3'))}
     ${kpi((bl.doc_audit_wait||0)+(bl.onsite_wait||0),T('심사·현장 적체'),(((bl.doc_audit_wait||0)+(bl.onsite_wait||0))?'gold':'ink3'))}
     ${kpi((aud.unassigned||[]).length,T('오디터 미배정'),(((aud.unassigned||[]).length)?'bad':'ink3'))}</div>`;
   /* ① 지역별 현황 — 집계표 + 클릭 드릴다운 */
@@ -4905,9 +4971,11 @@ SCREEN.opsDashboard=async()=>{
       <div class="muted small" style="margin:10px 0 4px">${T('오디터별 담당 케이스 수')}</div><div class="tight">${loadTbl}</div></div></div>`;
   /* ③ 신규 업체 승인/거절 */
   const pitems=pend.items||[];
-  const pendTbl=pitems.length?`<table><thead><tr><th>${T('업체')}</th><th>${T('지역')}</th><th>${T('담당자')}</th><th>${T('처리')}</th></tr></thead>
+  const pendTbl=pitems.length?`<table><thead><tr><th>${T('업체')}</th><th>${T('업종')}</th><th>${T('지역')}</th><th>${T('담당자')}</th><th>${T('신청일')}</th><th>${T('처리')}</th></tr></thead>
     <tbody>${pitems.map(p=>`<tr><td><b>${esc(p.company||'—')}</b><div class="muted small">${short(p.case_id)}${p.nib?' · NIB '+esc(p.nib):''}</div></td>
+      <td>${p.sector?esc(p.sector):'<span class="muted">—</span>'}</td>
       <td>${esc(p.region||'—')}</td><td>${esc(p.responsible_person||'—')}</td>
+      <td class="muted small">${p.created_at?esc(String(p.created_at).slice(0,10)):'—'}</td>
       <td><button class="btn xs" onclick="opsApprove('${esc(p.case_id)}')">✅ ${T('승인')}</button> <button class="btn xs ghost" onclick="opsReject('${esc(p.case_id)}')">⛔ ${T('거절')}</button></td></tr>`).join("")}</tbody></table>`:`<div class="muted small">${T('승인 대기 중인 신규 업체가 없습니다.')}</div>`;
   const pendPanel=`<div class="card"><h3>🆕 ${T('신규 업체 승인/거절')} <span class="en">· Onboarding</span><span class="r">${pitems.length}${T('건')}</span></h3>
     <div class="body tight">${pendTbl}</div></div>`;

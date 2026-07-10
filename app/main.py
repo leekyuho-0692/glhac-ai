@@ -886,9 +886,13 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     total = q.count()
     rows = (q.order_by(models.CaseApplication.created_at.desc())
             .offset(offset).limit(limit).all())
+    # E2/M2: 배정 오디터(ops.auditor_assigned latest-wins) — 목록에 담당자 노출·오디터 KPI 집계용
+    assign = _ops_latest_assignment(db, [c.case_id for c in rows])
     items = [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
               "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
-              "province": _province_of(c.factory_address or c.address)}
+              "province": _province_of(c.factory_address or c.address),
+              "auditor_id": (assign.get(c.case_id) or {}).get("auditor_id"),
+              "auditor_name": (assign.get(c.case_id) or {}).get("auditor_name")}
              for c in rows]
     return {"total": total, "limit": limit, "offset": offset,
             "count": len(items), "items": items}
@@ -6785,9 +6789,11 @@ def _ops_pending_data(db, user, cases=None, fac_map=None):
     for c in onboarding:
         if decisions.get(c.case_id) == "rejected":
             continue   # 이미 거절 처리된 건 대기목록에서 제외
+        px = c.profile_ext or {}
         out.append({"case_id": c.case_id, "company": c.company_name, "org_id": c.org_id,
                     "region": _case_province(c, fac_map) or "미지정",
                     "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "sector": px.get("business_type") or px.get("registration_type") or None,
                     "nib": c.nib, "responsible_person": c.responsible_person})
     return {"items": out, "count": len(out)}
 
@@ -6898,6 +6904,46 @@ def ops_calendar(user=Depends(auth.require_roles("operator")), db: Session = Dep
         by_date.setdefault(e["date"], []).append(e)
     return {"events": events, "by_date": by_date, "count": len(events),
             "case_count": len(set(e["case_id"] for e in events))}
+
+
+@app.get("/auditor/dashboard")
+def auditor_dashboard(user=Depends(auth.require_roles("auditor", "operator", "admin")),
+                      db: Session = Depends(get_db)):
+    """M2·M3 오디터 운영 KPI — 담당(배정) 케이스 스코프 집계(읽기전용, 스키마 무변경).
+    담당 = ops.auditor_assigned 최신 배정이 본인인 케이스. 이번주 현장실사·처리대기·미해결 부적합."""
+    q = db.query(models.CaseApplication)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    cases = q.all()
+    assign = _ops_latest_assignment(db, [c.case_id for c in cases])
+    if user["role"] == "auditor":
+        mine = [c for c in cases if (assign.get(c.case_id) or {}).get("auditor_id") == user["uid"]]
+    else:
+        mine = cases   # operator/admin: 조직/전체 스코프
+    mine_ids = [c.case_id for c in mine]
+    today = datetime.utcnow().date()
+    monday = today - timedelta(days=today.weekday())
+    ms, ss = monday.isoformat(), (monday + timedelta(days=6)).isoformat()
+    week_onsite = 0
+    if mine_ids:
+        plans = (db.query(models.AuditPlan)
+                 .filter(models.AuditPlan.case_id.in_(mine_ids),
+                         models.AuditPlan.scheduled_date.isnot(None)).all())
+        for p in plans:
+            if (p.status or "") == "cancelled":
+                continue
+            d = str(p.scheduled_date or "")[:10]
+            if ms <= d <= ss:
+                week_onsite += 1
+    pending_review = sum(1 for c in mine if c.status in AUDIT_STAGES)
+    open_findings = 0
+    if mine_ids:
+        open_findings = (db.query(models.AuditFinding)
+                         .filter(models.AuditFinding.case_id.in_(mine_ids),
+                                 models.AuditFinding.status == "open").count())
+    return {"assigned_count": len(mine), "week_onsite": week_onsite,
+            "pending_review": pending_review, "open_findings": open_findings,
+            "week_start": ms, "week_end": ss}
 
 
 @app.post("/ops/companies/{case_id}/approve")
@@ -7573,7 +7619,7 @@ def _preassess_doc_requests(db, case_id):
                    models.WorkflowEvent.action == "preassess.doc_request")
            .order_by(models.WorkflowEvent.created_at.asc()).all())
     return [{"items": (e.payload or {}).get("items", []), "message": (e.payload or {}).get("message", ""),
-             "round": (e.payload or {}).get("round"),
+             "round": (e.payload or {}).get("round"), "actor": e.actor_type,
              "at": e.created_at.isoformat() if e.created_at else None} for e in evs]
 
 
@@ -7703,12 +7749,25 @@ def resubmit_center(case_id: str, user=Depends(auth.get_current_user),
             status = "pending"
         items = [(it.get("doc_type_ko") or it.get("doc_type") or "")
                  for it in (latest.get("items") or [])]
+        # M13: 이력 컬럼 — 검토자(요청 actor)·대상(요청 서류)·최신 검토 결과
+        def _hist_item_names(raw):
+            names = []
+            for it in (raw or []):
+                if isinstance(it, dict):
+                    names.append(it.get("doc_type_ko") or it.get("doc_type") or "")
+                else:
+                    names.append(str(it))
+            return [n for n in names if n]
+        review_verdict = (review or {}).get("verdict")
         reqs.append({
             "key": "preassess", "source": "preassess", "source_ko": "사전심사 보완",
             "reason": latest.get("message", ""), "items": items, "round": rnd,
             "status": status, "due": c.due_date, "at": latest.get("at"),
             "action": "preassess_resubmit", "resubmit": resub,
+            "review_verdict": review_verdict,
             "history": [{"round": h.get("round"), "count": len(h.get("items") or []),
+                         "actor": h.get("actor"),
+                         "items": _hist_item_names(h.get("items")),
                          "at": h.get("at")} for h in pre_hist]})
 
     # ③ 현장 심사보고서 재심루프(P0-4) — 보완 반려 + 재제출 + 수정확인
