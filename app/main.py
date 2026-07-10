@@ -867,7 +867,7 @@ def gen_report(case_id: str, user=Depends(auth.get_current_user), db: Session = 
          "[차단사유] %s" % (", ".join(b["code"] for b in blockers) or "없음"),
          "[SJPH 5요소] " + ", ".join("%s=%s" % (k, have[k].status) for k in HPAS_ELEMENTS),
          "[심사지적] 총 %d (미해결 %d)" % (len(findings), sum(1 for f in findings if f.status == "open")),
-         "[청구] %d건 (미결제 %d)" % (len(invs), sum(1 for i in invs if i.status == "unpaid")),
+         "[청구] %d건 (미결제 %d)" % (len(invs), sum(1 for i in invs if i.status not in sm.INVOICE_SETTLED)),
          "[Fatwa] %s · scope동결 %s" % (c.fatwa_status, c.scope_frozen),
          "[인증서] %s" % (cert.certificate_no if cert else "미발급"), "",
          "※ 준비용 보고서. 공식 발급은 BPJPH/SIHALAL 절차로 확정."]
@@ -6634,7 +6634,7 @@ def analytics_summary(user=Depends(auth.require_roles("operator")), db: Session 
     invs = (db.query(models.Invoice)
             .filter(models.Invoice.case_id.in_(case_ids)).all() if case_ids else [])
     revenue_paid = round(sum(i.total or 0 for i in invs if i.status == "paid"), 2)
-    revenue_outstanding = round(sum(i.total or 0 for i in invs if i.status == "unpaid"), 2)
+    revenue_outstanding = round(sum(i.total or 0 for i in invs if i.status not in sm.INVOICE_SETTLED), 2)
     return {"cases_total": len(cases), "cases_by_status": by_status, "cases_by_pathway": by_pathway,
             "cases_by_month": by_month, "certificates_active": len([x for x in certs if x.status == "active"]),
             "certs_by_month": certs_by_month, "revenue_paid": revenue_paid,

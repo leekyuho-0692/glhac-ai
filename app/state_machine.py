@@ -162,9 +162,15 @@ def guard_final_package(db, case):
     return g
 
 
+# 인보이스 종결 상태 — 이 외(waiting_payment·need_verification·unpaid[legacy] 등)는 전부 미결제로 간주.
+# 과거 status=="unpaid"만 검사해 waiting_payment 기본값이 게이트를 통과하던 결함(2026-07-10 전수검사) 수정.
+INVOICE_SETTLED = {"paid", "refunded", "expired", "cancelled"}
+
+
 def has_unpaid_invoice(db, case_id):
     from .models import Invoice
-    return db.query(Invoice).filter_by(case_id=case_id, status="unpaid").count() > 0
+    return db.query(Invoice).filter(Invoice.case_id == case_id,
+                                    ~Invoice.status.in_(INVOICE_SETTLED)).count() > 0
 
 
 def guard_payment(db, case):
