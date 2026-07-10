@@ -473,3 +473,28 @@ class FeedbackCommentReq(BaseModel):
 
 class MaterialRenameReq(BaseModel):
     name: str          # OCR 오독 교정용 원재료명
+
+
+# ── M01 최고운영자 운영현황(P0-3차) — 신규 업체 승인/거절·오디터 배정 ──
+class OpsRejectReq(BaseModel):
+    reason: str                       # 신규 업체 거절 사유(필수)
+
+
+class OpsAssignAuditorReq(BaseModel):
+    auditor_id: str                   # 배정 대상 오디터(app_user.user_id, role=auditor)
+
+
+# ── P0-4차: M06 규정·법령 관리 — 스키마 무변경(WorkflowEvent latest-wins) ──
+class RegulationUpsertReq(BaseModel):
+    title: str                              # 법령/규정 제목(필수)
+    reg_number: Optional[str] = None        # 법령번호
+    effective_date: Optional[str] = None    # 시행일(YYYY-MM-DD 문자열)
+    category: Optional[str] = None          # 분류(law|regulation|fatwa|standard|guideline)
+    summary: Optional[str] = None           # 본문요약
+    impact_stages: List[str] = Field(default_factory=list)     # 영향 심사단계 키 다중선택
+    impact_sections: List[str] = Field(default_factory=list)   # 영향 증거섹션 키 다중선택
+
+
+class RegulationTransitionReq(BaseModel):
+    to_state: str                           # draft|review|effective|retired
+    reason: Optional[str] = None            # 상태전이 사유(발효/폐지 시 권장)

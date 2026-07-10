@@ -311,6 +311,10 @@ class DocumentAsset(Base):
     lat = Column(Float)            # 촬영 위치 위도 — 현장실사 사진 EXIF GPS/브라우저
     lng = Column(Float)            # 촬영 위치 경도
     geo_source = Column(String)    # exif|browser|manual — 위치 출처
+    uploaded_by = Column(String)   # 업로더 uid — 증거 귀속(감사 A08 누가)
+    uploader_role = Column(String) # 업로더 역할 — 증거 귀속(감사 A08 누가)
+    captured_at = Column(String)   # EXIF DateTimeOriginal 원본 촬영시각 — 증거 귀속(A08 언제)
+    file_hash = Column(String)     # sha256 파일 해시 — 증거 무결성(A08 무결성)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -1290,7 +1290,10 @@ def mock_audit_detail(case_id: str, user=Depends(auth.get_current_user), db: Ses
                  "corrective_action": latest_ev.get(k, {}).get("corrective_action", ""),
                  "at": latest_ev.get(k, {}).get("at")} for k, ko in MOCK_EVIDENCE_SECTIONS]
     docs = [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
-             "review_status": d.review_status, "has_file": bool(d.content_b64)}
+             "review_status": d.review_status, "has_file": bool(d.content_b64),
+             "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source,
+             "uploaded_by": d.uploaded_by, "uploader_role": d.uploader_role,
+             "captured_at": d.captured_at, "file_hash": d.file_hash}
             for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all()]
     return {"case_id": case_id, "status": c.status,
             "manual": manual, "manual_history": manual_history,
@@ -1620,6 +1623,30 @@ def _exif_gps(b64_or_bytes):
         lat, latr, lng, lngr = gps.get(2), gps.get(1), gps.get(4), gps.get(3)
         if lat and lng and latr and lngr:
             return (round(dms(lat, latr), 6), round(dms(lng, lngr), 6))
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _exif_datetime(b64_or_bytes):
+    """이미지 EXIF 원본 촬영시각(DateTimeOriginal) 추출 → 문자열 또는 None. 증거 귀속(A08 '언제')."""
+    try:
+        import io
+        from PIL import Image, ExifTags
+        data = b64_or_bytes if isinstance(b64_or_bytes, (bytes, bytearray)) else base64.b64decode(
+            str(b64_or_bytes).split(",")[-1])
+        exif = Image.open(io.BytesIO(data)).getexif()
+        dto = None
+        try:  # DateTimeOriginal(36867)/DateTimeDigitized(36868)은 Exif 서브 IFD에 존재
+            sub = exif.get_ifd(ExifTags.IFD.Exif)
+            dto = sub.get(36867) or sub.get(36868)
+        except Exception:  # noqa: BLE001
+            dto = None
+        if not dto:
+            dto = exif.get(306)  # 폴백: DateTime(파일 기록시각)
+        if dto:
+            s = str(dto).strip()
+            return s or None
     except Exception:  # noqa: BLE001
         return None
     return None
@@ -2460,7 +2487,9 @@ def list_documents(case_id: str, user=Depends(auth.get_current_user), db: Sessio
              "confidence": d.confidence, "fields": d.fields, "excerpt": d.text_excerpt,
              "review_status": d.review_status, "has_file": bool(d.content_b64),
              "created_at": d.created_at.isoformat() if d.created_at else None,
-             "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source} for d in rows]
+             "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source,
+             "uploaded_by": d.uploaded_by, "uploader_role": d.uploader_role,
+             "captured_at": d.captured_at, "file_hash": d.file_hash} for d in rows]
 
 
 @app.get("/documents/{document_id}/file")
@@ -3074,10 +3103,41 @@ def sign_contract(contract_id: str, party: str = "A", name: str = "",
     return {"contract_id": contract_id, "status": ct.status, "signatures": ct.signatures}
 
 
+def _fatwa_quorum_ok(db, case_id):
+    """파트와 정족수 검증 — fatwa.sign 이벤트(member별 latest-wins) 조회.
+    위원장(chairman) 서명 존재 AND 고유 서명자 총 ≥ 2 여부 반환.
+    반환: (ok: bool, missing: list[str], ctx: dict). missing 코드: NO_CHAIRMAN / NEED_2_MEMBERS."""
+    events = (db.query(models.WorkflowEvent)
+              .filter(models.WorkflowEvent.case_id == case_id,
+                      models.WorkflowEvent.action == "fatwa.sign")
+              .order_by(models.WorkflowEvent.created_at.asc()).all())
+    signers = {}   # member key -> signed(bool), latest-wins per member
+    for e in events:
+        p = e.payload or {}
+        mk = p.get("member")
+        if not mk:
+            continue
+        img = p.get("image")
+        signers[mk] = isinstance(img, str) and img.startswith("data:image/")
+    valid = [mk for mk, ok in signers.items() if ok]
+    has_chairman = any("chairman" in str(mk).lower() for mk in valid)
+    missing = []
+    if not has_chairman:
+        missing.append("NO_CHAIRMAN")
+    if len(valid) < 2:
+        missing.append("NEED_2_MEMBERS")
+    ok = not missing
+    return ok, missing, {"chairman_signed": has_chairman, "signer_count": len(valid), "signers": valid}
+
+
 @app.post("/cases/{case_id}/fatwa/decree")
 def gen_fatwa_decree(case_id, user=Depends(rbac.require_action("fatwa.document.read")), db=Depends(get_db)):
-    """Fatwa Decision(HALAL DECREE) 생성 — 위원회 결정·제품·서명 병합. gen-doc 저장."""
+    """Fatwa Decision(HALAL DECREE) 생성 — 위원회 결정·제품·서명 병합. gen-doc 저장.
+    정족수 하드게이트: 위원장 서명 + 서명 위원 총 ≥ 2 미충족 시 409 FATWA_QUORUM_NOT_MET."""
     c = _get_case(db, case_id, user)
+    ok_q, missing_q, qctx = _fatwa_quorum_ok(db, case_id)
+    if not ok_q:
+        raise HTTPException(409, {"code": "FATWA_QUORUM_NOT_MET", "missing": missing_q, **qctx})
     _audit(db, user, "fatwa.decree.generate", "fatwa", case_id, case_id)
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     prods = db.query(models.Product).filter_by(case_id=case_id).all()
@@ -3783,8 +3843,23 @@ def upload_case_document(case_id: str, body: dict = None,
     if not b64:
         raise HTTPException(400, {"code": "NO_FILE"})
     b64 = _validate_upload(b64, fn)
-    d = models.DocumentAsset(case_id=case_id, filename=fn, doc_type=(b.get("doc_type") or "other"),
+    doc_type = b.get("doc_type") or "other"
+    d = models.DocumentAsset(case_id=case_id, filename=fn, doc_type=doc_type,
                              content_b64=b64, content_type=_ctype(fn))
+    # A08 증거 귀속 메타 — 모의/현장 증거(사진·영상)에 누가·언제·어디서·무결성 기록
+    if doc_type.startswith("mock_evidence_") or doc_type.startswith("onsite_evidence_"):
+        import hashlib as _hl
+        try:
+            _raw = base64.b64decode(str(b64).split(",")[-1])
+        except Exception:  # noqa: BLE001
+            _raw = (b64 or "").encode("utf-8", "ignore")
+        d.uploaded_by = user["uid"]
+        d.uploader_role = user["role"]
+        d.file_hash = _hl.sha256(_raw).hexdigest()
+        d.captured_at = _exif_datetime(b64)       # EXIF 촬영시각(없으면 None)
+        _gps = _exif_gps(b64)                      # EXIF GPS(기존 헬퍼 재사용)
+        if _gps:
+            d.lat, d.lng, d.geo_source = _gps[0], _gps[1], "exif"
     db.add(d)
     db.flush()
     _audit(db, user, "document.upload", "document", d.document_id)
@@ -6318,6 +6393,257 @@ def admin_workflow_monitor(user=Depends(auth.require_roles("operator")),
             "totals": {"cases": len(cases), "blocked": blocked_total}}
 
 
+# ══ M01 최고운영자 운영현황 대시보드 (P0-3차) ═════════════════════════════
+# 스키마 무변경: CaseApplication/WorkflowEvent/Notification/User/Facility 조회·집계만.
+# 신규 승인/거절/배정은 WorkflowEvent(latest-wins) + Notification 큐로 기록(전용 테이블 없음).
+_OPS_PENDING_STATES = {"onboarding"}          # 신규 업체 승인 대기(초기 상태)
+_ONSITE_STATES = {"onsite_audit_scheduled", "onsite_audit_in_progress"}
+_DOCAUDIT_STATES = {"document_pre_audit_requested", "document_pre_audit_in_review"}
+
+
+def _ops_cases(db, user):
+    """운영자 스코프 케이스(admin=전체, operator=자기 조직)."""
+    q = db.query(models.CaseApplication)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    return q.order_by(models.CaseApplication.created_at.desc()).all()
+
+
+def _ops_fac_province(db, user):
+    """org_id → province(첫 시설 city/address 기반). 케이스 주소에 지역이 없을 때 보조."""
+    q = db.query(models.Facility)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    out = {}
+    for f in q.all():
+        if f.org_id in out:
+            continue
+        prov = _province_of(f.city or f.address)
+        if prov:
+            out[f.org_id] = prov
+    return out
+
+
+def _case_province(c, fac_map):
+    return _province_of(c.factory_address or c.address) or fac_map.get(c.org_id)
+
+
+def _ops_latest_company_decision(db, case_ids):
+    """케이스별 최신 신규업체 승인/거절 결정(ops.company_*, latest-wins)."""
+    out = {}
+    if not case_ids:
+        return out
+    evs = (db.query(models.WorkflowEvent)
+           .filter(models.WorkflowEvent.action.in_(["ops.company_approved", "ops.company_rejected"]),
+                   models.WorkflowEvent.case_id.in_(case_ids))
+           .order_by(models.WorkflowEvent.created_at.asc(),
+                     models.WorkflowEvent.event_id.asc()).all())
+    for e in evs:   # asc 순회 → 마지막(최신)이 out에 남음
+        out[e.case_id] = "approved" if e.action.endswith("approved") else "rejected"
+    return out
+
+
+def _ops_latest_assignment(db, case_ids):
+    """케이스별 최신 오디터 배정(ops.auditor_assigned, latest-wins)."""
+    out = {}
+    if not case_ids:
+        return out
+    evs = (db.query(models.WorkflowEvent)
+           .filter(models.WorkflowEvent.action == "ops.auditor_assigned",
+                   models.WorkflowEvent.case_id.in_(case_ids))
+           .order_by(models.WorkflowEvent.created_at.asc(),
+                     models.WorkflowEvent.event_id.asc()).all())
+    for e in evs:
+        out[e.case_id] = e.payload or {}
+    return out
+
+
+def _ops_auditor_users(db, user):
+    q = db.query(models.User).filter_by(role="auditor")
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    return q.all()
+
+
+def _ops_regions_data(db, user, cases=None, fac_map=None):
+    cases = _ops_cases(db, user) if cases is None else cases
+    fac_map = _ops_fac_province(db, user) if fac_map is None else fac_map
+    buckets = {}
+    for c in cases:
+        prov = _case_province(c, fac_map)
+        key = prov or "미지정"
+        buckets.setdefault(key, []).append(
+            {"case_id": c.case_id, "company": c.company_name, "status": c.status,
+             "status_label": _STATE_KO.get(c.status, c.status), "pathway": c.pathway})
+    regions = [{"province": k, "count": len(v), "cases": v}
+               for k, v in sorted(buckets.items(), key=lambda x: (-len(x[1]), x[0]))]
+    has_data = any(k != "미지정" for k in buckets)
+    return {"regions": regions, "has_region_data": has_data, "total": len(cases),
+            "unassigned_region": len(buckets.get("미지정", []))}
+
+
+def _ops_capacity_data(db, user, cases=None):
+    cases = _ops_cases(db, user) if cases is None else cases
+    by_status = {}
+    for c in cases:
+        by_status[c.status] = by_status.get(c.status, 0) + 1
+    status_rows = [{"status": s, "label": _STATE_KO.get(s, s), "count": n}
+                   for s, n in sorted(by_status.items(), key=lambda x: -x[1])]
+    backlog = {
+        "pending_company": sum(1 for c in cases if c.status in _OPS_PENDING_STATES),
+        "doc_audit_wait": sum(1 for c in cases if c.status in _DOCAUDIT_STATES),
+        "onsite_wait": sum(1 for c in cases if c.status in _ONSITE_STATES),
+        "fatwa_wait": sum(1 for c in cases if c.status in FATWA_STAGES),
+        "corrective_wait": sum(1 for c in cases if c.status == "corrective_action_required"),
+    }
+    assignments = _ops_latest_assignment(db, [c.case_id for c in cases])
+    load = {}
+    for p in assignments.values():
+        aid = p.get("auditor_id")
+        if aid:
+            load[aid] = load.get(aid, 0) + 1
+    auditors = _ops_auditor_users(db, user)
+    auditor_load = [{"user_id": a.user_id, "username": a.username, "load": load.get(a.user_id, 0)}
+                    for a in sorted(auditors, key=lambda a: -load.get(a.user_id, 0))]
+    return {"by_status": status_rows, "backlog": backlog, "auditor_load": auditor_load,
+            "total": len(cases)}
+
+
+def _ops_pending_data(db, user, cases=None, fac_map=None):
+    cases = _ops_cases(db, user) if cases is None else cases
+    fac_map = _ops_fac_province(db, user) if fac_map is None else fac_map
+    onboarding = [c for c in cases if c.status in _OPS_PENDING_STATES]
+    decisions = _ops_latest_company_decision(db, [c.case_id for c in onboarding])
+    out = []
+    for c in onboarding:
+        if decisions.get(c.case_id) == "rejected":
+            continue   # 이미 거절 처리된 건 대기목록에서 제외
+        out.append({"case_id": c.case_id, "company": c.company_name, "org_id": c.org_id,
+                    "region": _case_province(c, fac_map) or "미지정",
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "nib": c.nib, "responsible_person": c.responsible_person})
+    return {"items": out, "count": len(out)}
+
+
+def _ops_auditors_data(db, user, cases=None):
+    cases = _ops_cases(db, user) if cases is None else cases
+    assignments = _ops_latest_assignment(db, [c.case_id for c in cases])
+    load = {}
+    for p in assignments.values():
+        aid = p.get("auditor_id")
+        if aid:
+            load[aid] = load.get(aid, 0) + 1
+    auditors = [{"user_id": a.user_id, "username": a.username, "load": load.get(a.user_id, 0)}
+                for a in sorted(_ops_auditor_users(db, user), key=lambda a: load.get(a.user_id, 0))]
+    unassigned = []
+    for c in cases:
+        if c.status in AUDIT_STAGES and c.case_id not in assignments:
+            unassigned.append({"case_id": c.case_id, "company": c.company_name,
+                               "status": c.status, "status_label": _STATE_KO.get(c.status, c.status),
+                               "pathway": c.pathway})
+    assigned = []
+    for c in cases:
+        p = assignments.get(c.case_id)
+        if p and c.status in AUDIT_STAGES:
+            assigned.append({"case_id": c.case_id, "company": c.company_name,
+                             "status": c.status, "status_label": _STATE_KO.get(c.status, c.status),
+                             "auditor_id": p.get("auditor_id"), "auditor_name": p.get("auditor_name")})
+    return {"auditors": auditors, "unassigned": unassigned, "assigned": assigned}
+
+
+@app.get("/ops/dashboard")
+def ops_dashboard(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """M01 최고운영자 운영현황 — 지역/처리캐파/신규업체승인/오디터배정 단일 집약(읽기전용)."""
+    cases = _ops_cases(db, user)
+    fac_map = _ops_fac_province(db, user)
+    return {"regions": _ops_regions_data(db, user, cases, fac_map),
+            "capacity": _ops_capacity_data(db, user, cases),
+            "pending_companies": _ops_pending_data(db, user, cases, fac_map),
+            "auditors": _ops_auditors_data(db, user, cases)}
+
+
+@app.get("/ops/regions")
+def ops_regions(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    return _ops_regions_data(db, user)
+
+
+@app.get("/ops/capacity")
+def ops_capacity(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    return _ops_capacity_data(db, user)
+
+
+@app.get("/ops/pending-companies")
+def ops_pending_companies(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    return _ops_pending_data(db, user)
+
+
+@app.get("/ops/auditors")
+def ops_auditors(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    return _ops_auditors_data(db, user)
+
+
+@app.post("/ops/companies/{case_id}/approve")
+def ops_company_approve(case_id: str, user=Depends(auth.require_roles("operator")),
+                        db: Session = Depends(get_db)):
+    """신규 업체 승인 — 상태전이는 상태머신 가드 통과 시에만. WorkflowEvent 기록 + 알림."""
+    c = _get_case(db, case_id, user)
+    frm = c.status
+    target = "application_draft"
+    transitioned = None
+    ok, blk = sm.can_transition(db, c, target)
+    if ok:
+        sm.apply_side_effects(c, target)
+        c.status = target
+        transitioned = target
+    sm.record_event(db, c, frm, c.status, "ops.company_approved", user["role"], user["uid"],
+                    {"transitioned_to": transitioned})
+    _notify(db, c, "ops.company_approved", "신규 업체 승인",
+            body="최고운영자가 신규 업체 등록을 승인했습니다.", role="consultant")
+    db.commit()
+    return {"ok": True, "transitioned_to": transitioned, "blockers": ([] if ok else blk)}
+
+
+@app.post("/ops/companies/{case_id}/reject")
+def ops_company_reject(case_id: str, body: schemas.OpsRejectReq,
+                       user=Depends(auth.require_roles("operator")),
+                       db: Session = Depends(get_db)):
+    """신규 업체 거절 — 사유 필수. 상태 유지(불법전이 금지) + 반려표시 + WorkflowEvent·알림."""
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    c = _get_case(db, case_id, user)
+    c.draft_state = "returned"
+    c.return_reason = reason
+    sm.record_event(db, c, c.status, c.status, "ops.company_rejected", user["role"], user["uid"],
+                    {"reason": reason})
+    _notify(db, c, "ops.company_rejected", "신규 업체 거절", body=reason, role="consultant")
+    db.commit()
+    return {"ok": True, "reason": reason}
+
+
+@app.post("/ops/cases/{case_id}/assign-auditor")
+def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
+                       user=Depends(auth.require_roles("operator")),
+                       db: Session = Depends(get_db)):
+    """미배정 케이스에 오디터 배정 — 업무량 기반. WorkflowEvent(latest-wins) + 오디터 알림."""
+    c = _get_case(db, case_id, user)
+    au = db.get(models.User, body.auditor_id)
+    if not au or au.role != "auditor":
+        raise HTTPException(404, {"code": "AUDITOR_NOT_FOUND", "auditor_id": body.auditor_id})
+    if user["role"] != "admin" and au.org_id != user["org_id"]:
+        raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
+    sm.record_event(db, c, c.status, c.status, "ops.auditor_assigned", user["role"], user["uid"],
+                    {"auditor_id": au.user_id, "auditor_name": au.username})
+    _notify(db, c, "ops.auditor_assigned", "오디터 배정",
+            body="%s 님이 심사 담당으로 배정되었습니다." % au.username, role="auditor")
+    db.commit()
+    cases = _ops_cases(db, user)
+    assignments = _ops_latest_assignment(db, [x.case_id for x in cases])
+    load = sum(1 for p in assignments.values() if p.get("auditor_id") == au.user_id)
+    return {"ok": True, "case_id": case_id, "auditor_id": au.user_id,
+            "auditor_name": au.username, "load": load}
+
+
 _ENUMS = {
     "material_type": [("raw", "원료"), ("additive", "첨가물"), ("processing_aid", "가공보조제"),
                       ("packaging", "포장재"), ("lubricant", "윤활제"), ("sanitizer", "세정/살균제")],
@@ -7368,6 +7694,241 @@ def add_feedback_comment(feedback_id: str, body: schemas.FeedbackCommentReq,
                                 author_role=user["role"], body=body.body.strip())
     db.add(cm); fb.updated_at = datetime.utcnow(); db.commit()
     return {"comment_id": cm.comment_id}
+
+
+# ── P0-4차: M06 규정·법령 관리 — 스키마 무변경, WorkflowEvent(latest-wins)로 저장 ──
+# 법령은 case에 종속되지 않는 전역 데이터다. 이 레포엔 case_id 없는 전역 WorkflowEvent 선례가
+# 없으므로(모든 이벤트가 case_id 필수·nullable=False), 각 법령을 자체 reg_id("reg_"+uuid)로
+# 발급하고 그 reg_id를 WorkflowEvent.case_id에 담아 "법령 단위 이벤트 스트림"을 만든다.
+# → 별도 테이블 0개. record_event(해시체인 포함)를 reg_id 스코프로 그대로 재사용.
+#   content = 최신 regulation.upserted 이벤트(수정마다 append = 버전 누적).
+#   state   = 최신 상태전이 이벤트의 to_status(없으면 draft).
+REG_ACTION_PREFIX = "regulation."
+REG_STATES = ("draft", "review", "effective", "retired")
+# to_state → (허용 이전상태, 기록 action). 발효(effective)는 review에서만.
+REG_TRANSITIONS = {
+    "review":    {"from": ("draft",),               "action": "regulation.submitted"},
+    "effective": {"from": ("review",),              "action": "regulation.approved"},
+    "retired":   {"from": ("review", "effective"),  "action": "regulation.retired"},
+    "draft":     {"from": ("review",),              "action": "regulation.reopened"},
+}
+# 영향 매핑 카탈로그(프런트 다중선택 소스). 저장은 payload에 키 문자열 리스트로.
+REG_IMPACT_STAGES = [("preassess", "사전심사"), ("mock_audit", "모의심사"),
+                     ("onsite", "현장심사"), ("fatwa", "파트와 심의"), ("certificate", "인증서 발급")]
+REG_IMPACT_SECTIONS = list(MOCK_EVIDENCE_SECTIONS)   # 증거 섹션 키 재사용(원재료보관·생산영상 등)
+REG_CATEGORIES = [("law", "법률"), ("regulation", "시행령·규정"), ("fatwa", "파트와·종교규정"),
+                  ("standard", "기술표준"), ("guideline", "지침")]
+
+
+def _reg_events(db, reg_id, actions=None):
+    """해당 법령(reg_id) 이벤트를 시간순으로. actions로 필터 옵션."""
+    q = (db.query(models.WorkflowEvent)
+         .filter(models.WorkflowEvent.case_id == reg_id,
+                 models.WorkflowEvent.action.like(REG_ACTION_PREFIX + "%")))
+    if actions:
+        q = q.filter(models.WorkflowEvent.action.in_(actions))
+    return q.order_by(models.WorkflowEvent.created_at.asc(),
+                      models.WorkflowEvent.event_id.asc()).all()
+
+
+def _reg_ids(db):
+    """등록된 모든 법령 reg_id(중복 제거)."""
+    rows = (db.query(models.WorkflowEvent.case_id)
+            .filter(models.WorkflowEvent.action.like(REG_ACTION_PREFIX + "%"))
+            .distinct().all())
+    return [r[0] for r in rows]
+
+
+def _reg_content(db, reg_id, evs=None):
+    """최신 regulation.upserted payload = 현재 내용(latest-wins)."""
+    evs = evs if evs is not None else _reg_events(db, reg_id)
+    ups = [e for e in evs if e.action == "regulation.upserted"]
+    if not ups:
+        return None
+    last = ups[-1]
+    p = last.payload or {}
+    return {"title": p.get("title", ""), "reg_number": p.get("reg_number"),
+            "effective_date": p.get("effective_date"), "category": p.get("category"),
+            "summary": p.get("summary", ""),
+            "impact_stages": p.get("impact_stages", []) or [],
+            "impact_sections": p.get("impact_sections", []) or [],
+            "version": p.get("version", len(ups)), "version_count": len(ups),
+            "updated_by": last.actor_id,
+            "updated_at": last.created_at.isoformat() if last.created_at else None}
+
+
+def _reg_state(db, reg_id, evs=None):
+    """최신 상태 = 마지막 to_status(없으면 draft)."""
+    evs = evs if evs is not None else _reg_events(db, reg_id)
+    st = "draft"
+    for e in evs:
+        if e.to_status:
+            st = e.to_status
+    return st
+
+
+def _reg_versions(db, reg_id, evs=None):
+    """버전 타임라인 — upserted 이벤트를 시간순으로(누가·언제·무엇)."""
+    evs = evs if evs is not None else _reg_events(db, reg_id)
+    out = []
+    for i, e in enumerate([x for x in evs if x.action == "regulation.upserted"], start=1):
+        p = e.payload or {}
+        out.append({"version": p.get("version", i), "title": p.get("title", ""),
+                    "reg_number": p.get("reg_number"), "effective_date": p.get("effective_date"),
+                    "category": p.get("category"), "summary": p.get("summary", ""),
+                    "impact_stages": p.get("impact_stages", []) or [],
+                    "impact_sections": p.get("impact_sections", []) or [],
+                    "actor": e.actor_id,
+                    "at": e.created_at.isoformat() if e.created_at else None})
+    return out
+
+
+def _reg_history(db, reg_id, evs=None):
+    """전체 변경 이력(내용수정+상태전이) 시간순 — 감사용."""
+    evs = evs if evs is not None else _reg_events(db, reg_id)
+    KO = {"regulation.upserted": "내용 등록·수정", "regulation.submitted": "검토 상신",
+          "regulation.approved": "발효 승인", "regulation.retired": "폐지",
+          "regulation.reopened": "초안 회귀"}
+    out = []
+    for e in evs:
+        p = e.payload or {}
+        out.append({"action": e.action, "label": KO.get(e.action, e.action),
+                    "from_state": e.from_status, "to_state": e.to_status,
+                    "reason": p.get("reason", ""), "version": p.get("version"),
+                    "actor": e.actor_id, "actor_type": e.actor_type,
+                    "at": e.created_at.isoformat() if e.created_at else None})
+    return out
+
+
+def _reg_shim(reg_id):
+    """record_event(해시체인)용 최소 case 쉼 — reg_id를 case_id 스코프로 사용(전역 데이터)."""
+    import types
+    return types.SimpleNamespace(case_id=reg_id, org_id=None)
+
+
+def _reg_summary_row(db, reg_id):
+    evs = _reg_events(db, reg_id)
+    content = _reg_content(db, reg_id, evs)
+    if content is None:
+        return None
+    return {"reg_id": reg_id, "state": _reg_state(db, reg_id, evs),
+            "title": content["title"], "reg_number": content["reg_number"],
+            "category": content["category"], "effective_date": content["effective_date"],
+            "impact_stages": content["impact_stages"], "impact_sections": content["impact_sections"],
+            "version_count": content["version_count"],
+            "updated_at": content["updated_at"], "updated_by": content["updated_by"]}
+
+
+@app.get("/regulations/meta")
+def regulations_meta(user=Depends(auth.require_roles("operator"))):
+    """프런트 폼 소스 — 분류·영향 심사단계·영향 증거섹션·상태전이 카탈로그."""
+    return {"categories": [{"key": k, "label": v} for k, v in REG_CATEGORIES],
+            "impact_stages": [{"key": k, "label": v} for k, v in REG_IMPACT_STAGES],
+            "impact_sections": [{"key": k, "label": v} for k, v in REG_IMPACT_SECTIONS],
+            "states": list(REG_STATES),
+            "transitions": {k: v["from"] for k, v in REG_TRANSITIONS.items()}}
+
+
+@app.get("/regulations")
+def regulations_list(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """법령 목록(각 항목 최신 내용·상태). 최신 수정순 정렬."""
+    rows = [r for r in (_reg_summary_row(db, rid) for rid in _reg_ids(db)) if r]
+    rows.sort(key=lambda r: r.get("updated_at") or "", reverse=True)
+    return {"items": rows, "count": len(rows)}
+
+
+@app.get("/regulations/{reg_id}")
+def regulation_detail(reg_id: str, user=Depends(auth.require_roles("operator")),
+                      db: Session = Depends(get_db)):
+    """상세 = 현재 내용 + 상태 + 버전 이력 + 전체 변경이력(영향매핑 포함)."""
+    evs = _reg_events(db, reg_id)
+    content = _reg_content(db, reg_id, evs)
+    if content is None:
+        raise HTTPException(404, {"code": "REGULATION_NOT_FOUND"})
+    return {"reg_id": reg_id, "state": _reg_state(db, reg_id, evs), "content": content,
+            "versions": _reg_versions(db, reg_id, evs), "history": _reg_history(db, reg_id, evs)}
+
+
+@app.get("/regulations/{reg_id}/history")
+def regulation_history(reg_id: str, user=Depends(auth.require_roles("operator")),
+                       db: Session = Depends(get_db)):
+    """변경 이력만(버전 타임라인 + 상태전이 로그)."""
+    evs = _reg_events(db, reg_id)
+    if not evs:
+        raise HTTPException(404, {"code": "REGULATION_NOT_FOUND"})
+    return {"reg_id": reg_id, "versions": _reg_versions(db, reg_id, evs),
+            "history": _reg_history(db, reg_id, evs)}
+
+
+def _reg_upsert_payload(body, version):
+    return {"title": (body.title or "").strip(), "reg_number": (body.reg_number or None),
+            "effective_date": (body.effective_date or None), "category": (body.category or None),
+            "summary": (body.summary or ""),
+            "impact_stages": list(body.impact_stages or []),
+            "impact_sections": list(body.impact_sections or []), "version": version}
+
+
+@app.post("/regulations")
+def regulation_create(body: schemas.RegulationUpsertReq,
+                      user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """신규 법령 draft 생성 — reg_id 발급, version 1 기록."""
+    if not (body.title or "").strip():
+        raise HTTPException(422, {"code": "TITLE_REQUIRED"})
+    import uuid
+    reg_id = "reg_" + uuid.uuid4().hex[:12]
+    sm.record_event(db, _reg_shim(reg_id), None, "draft", "regulation.upserted",
+                    user["role"], user["uid"], _reg_upsert_payload(body, 1))
+    db.commit()
+    return {"ok": True, "reg_id": reg_id, "state": "draft", "version": 1}
+
+
+@app.put("/regulations/{reg_id}")
+def regulation_update(reg_id: str, body: schemas.RegulationUpsertReq,
+                      user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """법령 수정 = 새 버전 누적(상태는 유지). 영향매핑도 같은 payload에 저장."""
+    if not (body.title or "").strip():
+        raise HTTPException(422, {"code": "TITLE_REQUIRED"})
+    evs = _reg_events(db, reg_id)
+    if _reg_content(db, reg_id, evs) is None:
+        raise HTTPException(404, {"code": "REGULATION_NOT_FOUND"})
+    state = _reg_state(db, reg_id, evs)
+    ver = sum(1 for e in evs if e.action == "regulation.upserted") + 1
+    sm.record_event(db, _reg_shim(reg_id), state, state, "regulation.upserted",
+                    user["role"], user["uid"], _reg_upsert_payload(body, ver))
+    db.commit()
+    return {"ok": True, "reg_id": reg_id, "state": state, "version": ver}
+
+
+@app.post("/regulations/{reg_id}/transition")
+def regulation_transition(reg_id: str, body: schemas.RegulationTransitionReq,
+                          user=Depends(auth.require_roles("operator")),
+                          db: Session = Depends(get_db)):
+    """상태전이 draft→review→effective(발효)·retired. 발효 시 관련 역할에 알림."""
+    to_state = (body.to_state or "").strip()
+    if to_state not in REG_TRANSITIONS:
+        raise HTTPException(422, {"code": "INVALID_STATE", "allowed": list(REG_TRANSITIONS.keys())})
+    evs = _reg_events(db, reg_id)
+    content = _reg_content(db, reg_id, evs)
+    if content is None:
+        raise HTTPException(404, {"code": "REGULATION_NOT_FOUND"})
+    cur = _reg_state(db, reg_id, evs)
+    rule = REG_TRANSITIONS[to_state]
+    if cur not in rule["from"]:
+        raise HTTPException(409, {"code": "ILLEGAL_TRANSITION", "from": cur, "to": to_state,
+                                  "allowed_from": list(rule["from"])})
+    reason = (body.reason or "").strip()
+    sm.record_event(db, _reg_shim(reg_id), cur, to_state, rule["action"],
+                    user["role"], user["uid"], {"reason": reason, "version": content["version"]})
+    # 발효 시 운영·감사 역할에 인앱 알림(전용 테이블 없음 — Notification 큐, case=None 전역).
+    if to_state == "effective":
+        title = "법령 발효 · %s" % (content["title"] or reg_id)
+        body_txt = "법령번호 %s · 시행일 %s%s" % (
+            content["reg_number"] or "-", content["effective_date"] or "-",
+            (" · 사유: " + reason) if reason else "")
+        for rid in ("operator", "auditor"):
+            _notify(db, None, "regulation.effective", title, body=body_txt, role=rid)
+    db.commit()
+    return {"ok": True, "reg_id": reg_id, "from": cur, "to": to_state, "action": rule["action"]}
 
 
 # ---------- 정적 UI (M2) ----------
