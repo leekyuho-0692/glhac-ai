@@ -849,6 +849,42 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // ① 정량 기준 비교표(사전심사·성분리포트) · ② 재제출 이전↔새 제출본 비교(P2-7)
+  "정량 기준 비교표":"Tabel Kriteria vs Pengukuran",
+  "항목":"Item",
+  "할랄 기준":"Kriteria Halal",
+  "측정값":"Nilai Ukur",
+  "판정":"Putusan",
+  "미측정":"Belum Diukur",
+  "적합":"Sesuai",
+  "부적합":"Tidak Sesuai",
+  "확인필요":"Perlu Verifikasi",
+  "하람 — 사용 불가":"Haram — tidak boleh dipakai",
+  "조건부 — 유래 증빙 필요":"Bersyarat — perlu bukti asal-usul",
+  "najis 불허(설비 전용·세척)":"najis dilarang (alat khusus·pencucian)",
+  "심각도":"Tingkat",
+  "정성 기준 위반(하람·증빙필요·najis) 원재료가 없습니다.":"Tidak ada bahan yang melanggar kriteria kualitatif (haram·perlu bukti·najis).",
+  "정량 측정값이 시스템에 저장되어 있지 않습니다":"Nilai ukur kuantitatif tidak tersimpan di sistem",
+  "시스템은 온톨로지 정성 기준(할랄상태·심각도·najis·캐리어)만 보유합니다. 에탄올 함량·중금속(Pb) 등 정량 임계·실측값은 미등록/미측정이므로 측정값은 ‘미측정’으로 표기합니다.":"Sistem hanya menyimpan kriteria kualitatif ontologi (status halal·tingkat·najis·pembawa). Ambang kuantitatif·nilai ukur seperti kadar etanol·logam berat (Pb) tidak terdaftar/terukur, sehingga kolom nilai ukur ditandai 'Belum Diukur'.",
+  "이전↔새 제출본 비교":"Perbandingan Berkas Lama↔Baru",
+  "서류":"Berkas",
+  "이전 제출본":"Berkas Lama",
+  "새 제출본":"Berkas Baru",
+  "차이":"Selisih",
+  "신규":"Baru",
+  "변경":"Berubah",
+  "재제출":"Kirim Ulang",
+  "동일":"Sama",
+  "미재제출":"Belum Dikirim Ulang",
+  "＋ 신규":"＋ Baru",
+  "✎ 변경":"✎ Berubah",
+  "♻️ 재제출":"♻️ Kirim Ulang",
+  "＝ 동일":"＝ Sama",
+  "⚠ 미재제출":"⚠ Belum Dikirim Ulang",
+  "제출 없음":"Tidak ada berkas",
+  "경계 기준":"Batas acuan",
+  "그 이전=이전 제출본, 이후=새 제출본. 서류종류별 최신본 비교.":"Sebelumnya=berkas lama, sesudahnya=berkas baru. Membandingkan versi terbaru per jenis berkas.",
+  "아직 재제출된 서류가 없습니다. 재업로드 후 새 제출본이 표시됩니다.":"Belum ada berkas yang dikirim ulang. Setelah diunggah ulang, berkas baru akan tampil.",
   // §i18n P3 UI 마감 — navfoot·신규업체·오디터KPI/탭·재전송이력
   "표시중":"Ditampilkan",
   "신청일":"Tgl. Pengajuan",
@@ -3030,6 +3066,37 @@ async function saveMatSnapshot(id){
   try{const r=await API(`/cases/${id}/material-report/snapshot`,{method:"POST",body:JSON.stringify({checked})});toast("스냅샷 저장 · 체크 "+r.checked+"/"+r.total);}
   catch(e){toast("스냅샷 실패 · "+((e&&e.code)||""));}
 }
+/* ① 정량 기준 비교표 — 측정값 vs 할랄 기준.
+   정직성: 시스템(IngredientOntology·Material)은 정성 기준(할랄상태·심각도·najis·캐리어)만 보유하고
+   에탄올 함량·중금속(Pb) 등 정량 임계/실측값은 미저장이다. 따라서 기준·판정은 실제 온톨로지 판정에서
+   가져오되 측정값 컬럼은 '미측정'으로 정직하게 표기한다. 데이터 날조 없음. */
+function matCriteriaTable(materials){
+  const critMap={BLOCK:['bad','부적합'],NEEDS_EVIDENCE:['warn','확인필요']};
+  const jm=v=>critMap[v]||['ok','적합'];
+  const rowsData=(materials||[]).filter(m=>(m.verdict!=='CLEARED'&&m.verdict!=='PASS')||m.najis);
+  const critStd=m=>{
+    let s;
+    if(m.verdict==='BLOCK')s=T('하람 — 사용 불가');
+    else if(m.verdict==='NEEDS_EVIDENCE')s=T('조건부 — 유래 증빙 필요');
+    else s=T('할랄 허용');
+    if(m.najis)s+=' · '+T('najis 불허(설비 전용·세척)');
+    if((m.required_evidence||[]).length)s+=' · '+T('증빙')+': '+m.required_evidence.map(esc).join(', ');
+    if(m.severity)s+=' ('+T('심각도')+' '+esc(m.severity)+')';
+    return s;
+  };
+  const rows=rowsData.map(m=>{const j=jm(m.verdict);return `<tr>
+    <td><b>${esc(m.name)}${m.e_number?' ('+esc(m.e_number)+')':''}</b></td>
+    <td class="small">${critStd(m)}</td>
+    <td class="muted small" title="${T('정량 측정값이 시스템에 저장되어 있지 않습니다')}">${T('미측정')}</td>
+    <td style="white-space:nowrap"><span class="tag t-${j[0]}">${T(j[1])}</span></td>
+  </tr>`;}).join('');
+  const body=rows||`<tr><td colspan="4" class="muted small" style="padding:10px">${T('정성 기준 위반(하람·증빙필요·najis) 원재료가 없습니다.')}</td></tr>`;
+  return `<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+    <div style="font-weight:700;margin-bottom:4px">${T('정량 기준 비교표')} <span class="en">· Criteria vs Measurement</span></div>
+    <div class="muted small" style="margin-bottom:8px">${T('시스템은 온톨로지 정성 기준(할랄상태·심각도·najis·캐리어)만 보유합니다. 에탄올 함량·중금속(Pb) 등 정량 임계·실측값은 미등록/미측정이므로 측정값은 ‘미측정’으로 표기합니다.')}</div>
+    <table><thead><tr><th>${T('항목')}</th><th>${T('할랄 기준')}</th><th>${T('측정값')}</th><th>${T('판정')}</th></tr></thead>
+    <tbody>${body}</tbody></table></div>`;
+}
 async function materialReport(id){
   try{
     const r=await API(`/cases/${id}/material-report`);
@@ -3049,7 +3116,7 @@ async function materialReport(id){
       <div class="small" style="margin-top:3px">${(m.source_docs||[]).map(d=>`<span class="chip" style="cursor:pointer" title="${T('문서 뷰어')}" onclick="viewDoc('${d.document_id}')">📄 ${esc(d.filename||d.document_id)}</span>`).join(' ')||`<span class="muted small">${T('연결 문서 없음')}</span>`}</div>
     </div>`).join("")||`<div class="muted" style="padding:12px">${T('원재료 없음')}</div>`;
     const snapBtn=canChk?`<div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="saveMatSnapshot('${id}')">💾 ${T('스냅샷 저장·전달')}</button><span class="muted small">${T('체크한 성분·문서를 이력으로 저장(클라이언트 전달)')}</span></div>`:'';
-    document.getElementById("reportBody").innerHTML=cards+catHtml+rows+snapBtn+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
+    document.getElementById("reportBody").innerHTML=cards+catHtml+rows+matCriteriaTable(r.materials||[])+snapBtn+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
     document.getElementById("reportPdfBtn").onclick=()=>serverPdf(`/cases/${id}/material-report.pdf`,"material_report.pdf");
     document.getElementById("reportOverlay").style.display="grid";
     localizeUI(document.getElementById("reportBody"));
@@ -4445,6 +4512,41 @@ function rcStatusTag(s){
   const m={pending:['warn','대기'],resubmitted:['info','재제출됨'],resolved:['ok','해결']};
   const x=m[s]||m.pending; return `<span class="tag t-${x[0]}">${T(x[1])}</span>`;
 }
+/* P2-7: 사전심사 재제출 — 이전 제출본↔새 제출본 side-by-side 비교 패널.
+   backend resubmit-center의 preassess.compare(경계=최신 보완요청 시각, doc_type별 최신본
+   비교)를 좌(이전)·우(새) 나란히 렌더. 차이=신규/변경/재제출/동일/미재제출. 파일은 viewDoc 재사용. */
+function rcDiffTag(st){
+  const m={added:['ok','＋ 신규'],changed:['warn','✎ 변경'],resubmitted:['info','♻️ 재제출'],
+           unchanged:['mute','＝ 동일'],missing:['bad','⚠ 미재제출']};
+  const x=m[st]||m.unchanged; return `<span class="tag t-${x[0]}">${T(x[1])}</span>`;
+}
+function rcDocChip(d){
+  if(!d)return `<span class="muted small">${T('제출 없음')}</span>`;
+  const name=esc(d.filename||d.document_id);
+  return d.has_file
+    ? `<span class="chip" style="cursor:pointer" title="${T('문서 뷰어')}" onclick="viewDoc('${d.document_id}')">📄 ${name}</span>`
+    : `<span class="chip">📄 ${name}</span>`;
+}
+function rcComparePanel(cmp){
+  if(!cmp||!(cmp.diff||[]).length)return '';
+  const c=cmp.counts||{};
+  const kpi=[['신규',c.added||0,'ok'],['변경',c.changed||0,'warn'],['재제출',c.resubmitted||0,'info'],['동일',c.unchanged||0,'mute'],['미재제출',c.missing||0,'bad']]
+    .filter(x=>x[1]>0).map(x=>`<span class="tag t-${x[2]}">${T(x[0])} ${x[1]}</span>`).join(' ');
+  const bound=cmp.boundary_at?esc(String(cmp.boundary_at).slice(0,16).replace('T',' ')):'';
+  const rows=(cmp.diff||[]).map(x=>`<tr>
+      <td style="white-space:nowrap"><b>${esc(x.doc_type_ko||x.doc_type||'—')}</b></td>
+      <td>${rcDocChip(x.prev)}</td>
+      <td>${rcDocChip(x.new)}</td>
+      <td style="white-space:nowrap">${rcDiffTag(x.status)}</td>
+    </tr>`).join('');
+  const empty=!cmp.has_new?`<div class="muted small" style="margin-top:6px">↳ ${T('아직 재제출된 서류가 없습니다. 재업로드 후 새 제출본이 표시됩니다.')}</div>`:'';
+  return `<div class="card" style="margin-top:16px"><h3>${T('이전↔새 제출본 비교')} <span class="en">· Submission Diff</span>${kpi?`<span class="r">${kpi}</span>`:''}</h3>
+    <div class="body tight">
+      <div class="muted small" style="margin-bottom:6px">${T('경계 기준')} · ${T('보완요청')} ${bound} — ${T('그 이전=이전 제출본, 이후=새 제출본. 서류종류별 최신본 비교.')}</div>
+      <table><thead><tr><th>${T('서류')}</th><th>${T('이전 제출본')}</th><th>${T('새 제출본')}</th><th>${T('차이')}</th></tr></thead>
+      <tbody>${rows}</tbody></table>${empty}
+    </div></div>`;
+}
 function rcActions(id,r,isCli){
   if(r.status==='resolved')return `<span class="tag t-ok">✅ ${T('해결됨')}</span>`;
   if(!isCli)return `<span class="chip">🔒 ${T('상태 열람')}</span>`;
@@ -4496,9 +4598,11 @@ SCREEN.resubmitCenter=async()=>{
     ${preItem.resubmit?`<tr><td class="t-ok">↳ ${T('재제출')}</td><td class="muted small" colspan="2">${T('클라이언트 재제출')}${preItem.resubmit.round?' · '+preItem.resubmit.round+T('회차'):''}</td><td class="muted small">${preItem.resubmit.at?esc(String(preItem.resubmit.at).slice(0,16).replace('T',' ')):'—'}</td></tr>`:''}
     <tr><td colspan="3" style="text-align:right"><b>${T('결과')}</b></td><td>${_verdictTag(preItem.review_verdict)}</td></tr>
     </tbody></table></div></div>`:'';
+  const compareHtml=(preItem&&preItem.compare)?rcComparePanel(preItem.compare):'';
   return `${intro}${dueBanner}${kpiHtml}
     <div class="card" style="margin-bottom:12px"><h3>${T('보완 요청 항목')} <span class="en">· Requests</span><span class="r">${T('대기')} ${cnt.pending} · ${T('재제출됨')} ${cnt.resubmitted} · ${T('해결')} ${cnt.resolved}</span></h3></div>
     ${itemHtml}
+    ${compareHtml}
     ${histHtml}`;
 };
 async function rcResubmit(id,source,findingId){

@@ -7770,6 +7770,59 @@ def preassess_review_get(case_id: str, user=Depends(auth.get_current_user),
             "doc_request_history": history, "resubmit": resubmit}
 
 
+def _resubmit_doc_compare(db, case_id):
+    """P2-7: 사전심사 재제출 — 이전 제출본↔새 제출본 비교(스키마 무변경, 조회 전용).
+
+    경계 = 최신 preassess.doc_request(오디터 보완요청) 시각. 이 시각 이전 업로드는
+    '이전 제출본', 이후 업로드는 '새(재)제출본'으로 나눈다. doc_type별 최신본을 비교해
+    신규(added)/변경(changed)/동일(unchanged)/재제출(resubmitted·해시미확인)/
+    미재제출(missing) 판정. 기존 DocumentAsset·WorkflowEvent만 읽는다."""
+    from .intake import DOC_KO
+    boundary_ev = (db.query(models.WorkflowEvent)
+                   .filter(models.WorkflowEvent.case_id == case_id,
+                           models.WorkflowEvent.action == "preassess.doc_request")
+                   .order_by(models.WorkflowEvent.created_at.desc()).first())
+    if not boundary_ev or not boundary_ev.created_at:
+        return None
+    boundary = boundary_ev.created_at
+    docs = (db.query(models.DocumentAsset).filter_by(case_id=case_id)
+            .order_by(models.DocumentAsset.created_at.asc()).all())
+
+    def _slim(d):
+        return {"document_id": d.document_id, "filename": d.filename,
+                "doc_type": d.doc_type, "doc_type_ko": DOC_KO.get(d.doc_type, d.doc_type),
+                "file_hash": d.file_hash, "has_file": bool(d.content_b64),
+                "uploaded_by": d.uploaded_by, "uploader_role": d.uploader_role,
+                "at": d.created_at.isoformat() if d.created_at else None}
+    prev_by, new_by = {}, {}
+    for d in docs:
+        if not d.created_at:
+            continue
+        # created_at 오름차순 순회 → doc_type별 최신본이 각 버킷에 남는다(latest-wins)
+        (new_by if d.created_at >= boundary else prev_by)[d.doc_type] = _slim(d)
+    diff = []
+    for dt in sorted(set(prev_by) | set(new_by), key=str):
+        p, n = prev_by.get(dt), new_by.get(dt)
+        if p and n:
+            if p.get("file_hash") and n.get("file_hash"):
+                st = "unchanged" if p["file_hash"] == n["file_hash"] else "changed"
+            else:
+                st = "resubmitted"   # 재업로드됐으나 해시 미기록 → 내용 동일성 미확인
+        elif n:
+            st = "added"
+        else:
+            st = "missing"   # 이전엔 있었으나 재제출 안 됨
+        diff.append({"doc_type": dt, "doc_type_ko": DOC_KO.get(dt, dt),
+                     "status": st, "prev": p, "new": n})
+    counts = {"added": 0, "changed": 0, "unchanged": 0, "resubmitted": 0, "missing": 0}
+    for x in diff:
+        counts[x["status"]] += 1
+    return {"boundary_at": boundary.isoformat(),
+            "prev_docs": list(prev_by.values()), "new_docs": list(new_by.values()),
+            "diff": diff, "counts": counts,
+            "has_new": bool(new_by)}
+
+
 # ---------- A09: 보완·재전송 센터(집약 조회 전용) ----------
 # 각 단계(신청 반려 · 사전심사 회신루프 · 현장보고서 재심 · CAR 시정조치)의
 # 보완/추가서류 요청을 한 곳에 모아 반환한다. 스키마 무변경 — 기존 WorkflowEvent·
@@ -7828,6 +7881,7 @@ def resubmit_center(case_id: str, user=Depends(auth.get_current_user),
             "status": status, "due": c.due_date, "at": latest.get("at"),
             "action": "preassess_resubmit", "resubmit": resub,
             "review_verdict": review_verdict,
+            "compare": _resubmit_doc_compare(db, case_id),   # P2-7: 이전↔새 제출본 비교
             "history": [{"round": h.get("round"), "count": len(h.get("items") or []),
                          "actor": h.get("actor"),
                          "items": _hist_item_names(h.get("items")),
