@@ -1809,6 +1809,12 @@ const UI_STRINGS={
   "제출 자료":"Materi yang Diserahkan",
   "클릭→원본":"Klik → Asli",
   "제출 자료 없음":"Tidak Ada Materi yang Diserahkan",
+  "의견 저장":"Simpan Opini",
+  "서버에 저장되어 감사추적·AI 보고서에 반영됩니다.":"Disimpan di server dan tercermin dalam jejak audit & laporan AI.",
+  "열기":"Buka",
+  "제출 자료 모두 보기":"Lihat Semua Materi",
+  "모의심사 증거 모두 보기":"Lihat Semua Bukti Audit Simulasi",
+  "현장 증거 모두 보기":"Lihat Semua Bukti Lapangan",
   "매뉴얼 검토":"Review Manual",
   "증거 판정":"Penilaian Bukti",
   "재작성":"Tulis Ulang",
@@ -2911,7 +2917,7 @@ async function matLoadDetail(mid,name){
       ${(r.sources&&r.sources.length)?`<div class="muted small" style="margin-top:4px">${T('근거')}: ${esc(r.sources.slice(0,4).join(", "))}</div>`:''}</div>`;
   }catch(e){box.textContent=T('상세 불러오기 실패');}
 }
-function closeReport(){document.getElementById("reportOverlay").style.display="none";}
+function closeReport(){document.getElementById("reportOverlay").style.display="none";var _pb=document.getElementById("reportPdfBtn");if(_pb)_pb.style.display="";}
 /* ===== 프로필 템플릿 미리보기 (Company Info Form.1 · Factory Audit 기업정보) ===== */
 function renderProfileForm(form){
   const hd=form.header||{};
@@ -3951,11 +3957,34 @@ async function dropMockEvidence(ev,id,section){
   const files=(ev.dataTransfer&&ev.dataTransfer.files)?Array.prototype.slice.call(ev.dataTransfer.files):[];
   if(files.length)await uploadMockFiles(id,section,files);
 }
-async function mockViewSection(id,section){
+// '모두 보기' — 해당 섹션/증거의 전체 파일을 갤러리로 노출(reportOverlay 재사용). 각 항목은 viewDoc로 원본 열람.
+async function showEvidenceGallery(id,docType,titleText){
   const docs=await API('/cases/'+id+'/documents').catch(()=>[]);
-  const list=(docs||[]).filter(d=>String(d.doc_type||'')==='mock_evidence_'+section);
+  const list=(docs||[]).filter(d=>String(d.doc_type||'')===docType)
+    .sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
   if(!list.length){toast(T('제출 자료 없음'));return;}
-  viewDoc(list[0].document_id);
+  const rb=document.getElementById('reportBody');
+  rb.innerHTML=`<div class="muted small" style="margin-bottom:10px">${T('전체')} ${list.length}${T('건')} · ${T('클릭→원본')}</div>`+
+    `<div style="display:flex;flex-direction:column;gap:8px">`+list.map(d=>{
+      const did=esc(d.document_id);const fn=d.filename||'';
+      const isVid=/\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(fn);
+      const isImg=/\.(png|jpe?g|gif|webp|bmp)$/i.test(fn);
+      return `<div class="li" style="display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--line);border-radius:8px;cursor:pointer" onclick="viewDoc('${did}')">
+        <div ${isImg?`data-galdoc="${did}"`:''} style="width:56px;height:56px;flex:0 0 56px;border-radius:8px;border:1px solid var(--line);background:var(--accent-soft);background-size:cover;background-position:center;display:grid;place-items:center;font-size:22px">${isVid?'🎬':(isImg?'':'📄')}</div>
+        <div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(fn||did)}</div><div class="muted small">${mevDate(d.created_at)}</div></div>
+        <span class="btn" style="padding:4px 10px;font-size:12px;pointer-events:none">👁 ${T('열기')}</span>
+      </div>`;}).join('')+`</div>`;
+  document.getElementById('reportTitle').textContent=titleText||T('제출 자료 모두 보기');
+  const pb=document.getElementById('reportPdfBtn');if(pb)pb.style.display='none';
+  document.getElementById('reportOverlay').style.display='grid';
+  rb.querySelectorAll('[data-galdoc]').forEach(async el=>{
+    try{const r=await fetch('/documents/'+el.getAttribute('data-galdoc')+'/file',{headers:{Authorization:'Bearer '+token()}});
+      if(!r.ok)return;const b=await r.blob();const u=URL.createObjectURL(b);
+      el.style.backgroundImage='url('+u+')';setTimeout(()=>URL.revokeObjectURL(u),120000);}catch(_){}
+  });
+}
+async function mockViewSection(id,section){
+  return showEvidenceGallery(id,'mock_evidence_'+section,T('모의심사 증거 모두 보기'));
 }
 function mevPlay(section){const v=document.getElementById('mev_vid_'+section);if(v){try{v.muted=false;v.controls=true;v.play();}catch(_){}}}
 let MOCKTAB="manual";
@@ -4119,7 +4148,7 @@ async function onsiteAuditView(id,editable){
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:8px">
               <span class="muted small">${editable?T('증거 사진 최소 2매 · 동영상 업로드 (드래그 앤 드롭 가능)'):T('증거 사진 · 열람용')}</span>
               ${editable?`<button class="btn" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="uploadOnsiteEvidence('${id}','${key}')">⬆ ${T('사진/영상 첨부')}</button>`:''}
-              ${cnt>0?`<button class="btn" style="${editable?'':'margin-left:auto;'}padding:4px 10px;font-size:12px" onclick="viewDoc('${esc(list[0].document_id)}')">👁 ${T('모두 보기')}</button>`:''}
+              ${cnt>0?`<button class="btn" style="${editable?'':'margin-left:auto;'}padding:4px 10px;font-size:12px" onclick="showEvidenceGallery('${id}','onsite_evidence_${key}',T('현장 증거 모두 보기'))">👁 ${T('모두 보기')}</button>`:''}
             </div>
           </div>
         </td>
@@ -4176,6 +4205,7 @@ async function onsiteAuditView(id,editable){
       <div style="margin-top:16px">
         <div class="small" style="font-weight:600;margin-bottom:6px">${T('종합 평가 의견')}</div>
         <textarea id="onsiteOpinion" class="v" rows="3" placeholder="${editable?T('종합 의견을 입력하세요.'):''}" ${editable?`oninput="onsiteSaveOpinion('${id}',this.value)"`:'readonly'} style="width:100%;resize:vertical"></textarea>
+        ${editable?`<div class="btnrow" style="margin-top:8px;align-items:center;flex-wrap:wrap"><button class="btn pri" onclick="onsiteSaveOpinionServer('${id}')">💾 ${T('의견 저장')}</button><span class="muted small">${T('서버에 저장되어 감사추적·AI 보고서에 반영됩니다.')}</span></div>`:''}
       </div>
     </div></div>
   <div class="card" style="margin-bottom:16px"><h3>${T('2. 전자 서명 (E-Signature)')} <span class="en">· Sign</span></h3>
@@ -4238,7 +4268,20 @@ async function onsiteSetNote(id,key,val){
 }
 function onsiteHpasDetail(i){const r=ONSITE_HPAS_REASONS[i];toast(r?String(r):T('상세 정보 없음'));}
 function onsiteSaveOpinion(id,val){try{localStorage.setItem('glhac_onsite_opinion_'+id,val)}catch(_){}}
-function restoreOnsiteOpinion(id){try{const v=localStorage.getItem('glhac_onsite_opinion_'+id);if(v){const el=document.getElementById('onsiteOpinion');if(el)el.value=v;}}catch(_){}}
+async function onsiteSaveOpinionServer(id){
+  const el=document.getElementById('onsiteOpinion');const val=el?el.value:'';
+  try{await API('/cases/'+id+'/onsite-opinion',{method:'POST',body:JSON.stringify({opinion:val})});
+    try{localStorage.setItem('glhac_onsite_opinion_'+id,val)}catch(_){}
+    toast(T('의견 저장'));}
+  catch(e){toast(T('저장 실패')+' · '+((e&&e.code)||''));}
+}
+async function restoreOnsiteOpinion(id){
+  const el=document.getElementById('onsiteOpinion');if(!el)return;
+  let v=null;
+  try{const r=await API('/cases/'+id+'/onsite-opinion');if(r&&typeof r.opinion==='string'&&r.opinion)v=r.opinion;}catch(_){}
+  if(!v){try{v=localStorage.getItem('glhac_onsite_opinion_'+id)||null;}catch(_){}}
+  if(v)el.value=v;
+}
 function initOnsiteSignPads(id,editable){
   editable=editable!==false;
   ['auditor','supervisor'].forEach(function(party){

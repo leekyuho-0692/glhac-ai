@@ -2684,6 +2684,17 @@ def _save_gendoc(db, c, doc_type, content, user, status="draft"):
     return g
 
 
+def _latest_onsite_opinion(db, case_id):
+    """현장심사 종합 의견 최신값(WorkflowEvent action=onsite.opinion, latest-wins). 없으면 None."""
+    e = (db.query(models.WorkflowEvent)
+         .filter(models.WorkflowEvent.case_id == case_id,
+                 models.WorkflowEvent.action == "onsite.opinion")
+         .order_by(models.WorkflowEvent.created_at.desc(),
+                   models.WorkflowEvent.event_id.desc()).first())
+    op = (e.payload or {}).get("opinion") if e else None
+    return op if (op and str(op).strip()) else None
+
+
 @app.post("/cases/{case_id}/audit-report")
 def gen_audit_report(case_id: str,
                      user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator")),
@@ -2707,8 +2718,11 @@ def gen_audit_report(case_id: str,
     ca = ["- %s → %s" % (f.finding, f.corrective_action) for f in finds if f.corrective_action]
     L += ca or ["- 없음"]
     L += ["", "■ 권고사항 · Recommendations",
-          ("- 미해결 중대 부적합 종결 후 최종 패키지 상정" if major_open else "- 모든 지적 종결 — 파트와 상정 가능"),
-          "", "※ 오디터 검토·승인 필요."]
+          ("- 미해결 중대 부적합 종결 후 최종 패키지 상정" if major_open else "- 모든 지적 종결 — 파트와 상정 가능")]
+    op = _latest_onsite_opinion(db, case_id)
+    if op:
+        L += ["", "■ 오디터 종합 의견 · Auditor overall opinion", op]
+    L += ["", "※ 오디터 검토·승인 필요."]
     content = "\n".join(L)
     g = _save_gendoc(db, c, "audit_report", content, user)
     db.commit()
@@ -4511,6 +4525,35 @@ def get_onsite_sign(case_id: str, user=Depends(auth.get_current_user),
             out[party] = {"image": p.get("image"), "name": p.get("name"),
                           "at": e.created_at.isoformat() if e.created_at else None}
     return out
+
+
+# ── 현장심사 종합 평가 의견 서버 영속(E7) — 스키마 무변경, WorkflowEvent(onsite.opinion, latest-wins).
+#    기존 브라우저 localStorage 저장을 대체: 타 기기·감사추적·AI보고서(gen_audit_report) 반영. ──
+@app.post("/cases/{case_id}/onsite-opinion")
+def save_onsite_opinion(case_id: str, body: dict = None,
+                        user=Depends(auth.require_roles("auditor", "operator")),
+                        db: Session = Depends(get_db)):
+    b = body or {}
+    opinion = b.get("opinion")
+    if opinion is None:
+        opinion = ""
+    if not isinstance(opinion, str):
+        raise HTTPException(422, {"code": "BAD_OPINION"})
+    opinion = opinion.strip()
+    if len(opinion) > 8000:
+        raise HTTPException(413, {"code": "OPINION_TOO_LONG"})
+    c = _get_case(db, case_id, user)
+    sm.record_event(db, c, c.status, c.status, "onsite.opinion", user["role"], user["uid"],
+                    {"opinion": opinion})
+    db.commit()
+    return {"ok": True, "opinion": opinion}
+
+
+@app.get("/cases/{case_id}/onsite-opinion")
+def get_onsite_opinion(case_id: str, user=Depends(auth.get_current_user),
+                       db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    return {"opinion": _latest_onsite_opinion(db, case_id) or ""}
 
 
 # ── 파트와 위원 전자서명(위원장·위원) — 스키마 무변경, WorkflowEvent(fatwa.sign, latest-wins per member).
