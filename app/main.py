@@ -5112,6 +5112,56 @@ def unlock_certificate(case_id: str, body: schemas.UnlockReq,
     return {"scope_frozen": False, "reason": reason, "message": "재인증 모드 언락 완료"}
 
 
+# ---------- P2-4: 할랄마크번호·파트와참조번호·전체 ZIP (스키마 무변경) ----------
+def _halal_mark_no(cert):
+    """할랄마크번호(No. Ketetapan Halal) — 스키마 무변경: 인증서 id 기반 결정적 파생값.
+    신규 컬럼 없이 발급마다 안정적으로 동일값. BPJPH 'ID+14자리' 형식 모사."""
+    if not cert or not cert.id:
+        return None
+    try:
+        seed = int(cert.id[:12], 16)   # id는 hex uuid
+    except (ValueError, TypeError):
+        seed = abs(hash(cert.id))
+    return "ID" + str(10000000000000 + (seed % 89999999999999))
+
+
+def _case_fatwa_no(db, case_id):
+    """파트와 결정번호(No. Fatwa) — FatwaDecision.decision_no 조인(신규 저장 없음)."""
+    fd = (db.query(models.FatwaDecision).filter_by(case_id=case_id)
+          .order_by(models.FatwaDecision.decided_at.desc().nullslast()).first())
+    if not fd:
+        fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
+    return (fd.decision_no if fd else None) or None
+
+
+def _cert_pdf_bytes(db, c, cert):
+    """인증서 PDF 렌더 — 할랄마크번호·파트와결정번호 포함(certificate_pdf·bundle 재사용)."""
+    sig = (db.query(models.Signature).filter_by(subject_type="certificate", subject_id=cert.id)
+           .order_by(models.Signature.signed_at.desc()).first())
+    lines = [
+        "SERTIFIKAT HALAL · 할랄 인증서",
+        "",
+        "기업 · Perusahaan : %s" % (c.company_name or "-"),
+        "인증번호 · No     : %s" % (cert.certificate_no or "-"),
+        "할랄마크번호 · No. Ketetapan Halal : %s" % (_halal_mark_no(cert) or "-"),
+        "파트와 결정번호 · No. Fatwa        : %s" % (_case_fatwa_no(db, cert.case_id) or "-"),
+        "상태 · Status     : %s" % cert.status,
+        "발급 · Issued     : %s" % (cert.issue_date or "-"),
+        "만료 · Valid until : %s" % (cert.expiry_date or "-"),
+        "범위 · Scope      : %s" % (", ".join(cert.scope or []) or "-"),
+        "",
+        "본 제품은 SJPH 및 샤리아 기준에 따라 할랄(HALAL) 인증되었음을 증명합니다.",
+        "Produk ini disertifikasi HALAL sesuai SJPH dan kriteria Syariah.",
+        "",
+        "공개 검증 · Verify : /verify/%s" % (cert.qr_token or "-"),
+        "전자서명 · Signed  : %s%s" % ("예 · Yes" if sig else "아니오 · No",
+                                       (" (" + (sig.provider or "") + ")") if sig else ""),
+    ]
+    return _render_pdf("GL-HAC AI · Halal Certificate", "\n".join(lines),
+                       subtitle=cert.certificate_no or "",
+                       footer="공개 검증 페이지에서 진위를 확인하세요 · Verify authenticity at /verify")
+
+
 @app.get("/cases/{case_id}/certificate")
 def get_certificate(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
@@ -5129,6 +5179,8 @@ def get_certificate(case_id: str, user=Depends(auth.get_current_user), db: Sessi
     return {"issued": True, "certificate_no": cert.certificate_no, "scope": cert.scope,
             "issue_date": cert.issue_date, "expiry_date": cert.expiry_date, "status": cert.status,
             "days_to_expiry": days,
+            "halal_mark_no": _halal_mark_no(cert),          # P2-4 할랄마크번호(No. Ketetapan Halal)
+            "fatwa_decision_no": _case_fatwa_no(db, case_id),  # P2-4 파트와 결정번호(No. Fatwa) 조인
             "frozen_product_ids": cert.frozen_product_ids,
             "frozen_material_ids": cert.frozen_material_ids,
             "qr_token": cert.qr_token,
@@ -5147,31 +5199,42 @@ def certificate_pdf(case_id: str, user=Depends(auth.get_current_user), db: Sessi
     cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
     if not cert:
         raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
-    sig = (db.query(models.Signature).filter_by(subject_type="certificate", subject_id=cert.id)
-           .order_by(models.Signature.signed_at.desc()).first())
-    lines = [
-        "SERTIFIKAT HALAL · 할랄 인증서",
-        "",
-        "기업 · Perusahaan : %s" % (c.company_name or "-"),
-        "인증번호 · No     : %s" % (cert.certificate_no or "-"),
-        "상태 · Status     : %s" % cert.status,
-        "발급 · Issued     : %s" % (cert.issue_date or "-"),
-        "만료 · Valid until : %s" % (cert.expiry_date or "-"),
-        "범위 · Scope      : %s" % (", ".join(cert.scope or []) or "-"),
-        "",
-        "본 제품은 SJPH 및 샤리아 기준에 따라 할랄(HALAL) 인증되었음을 증명합니다.",
-        "Produk ini disertifikasi HALAL sesuai SJPH dan kriteria Syariah.",
-        "",
-        "공개 검증 · Verify : /verify/%s" % (cert.qr_token or "-"),
-        "전자서명 · Signed  : %s%s" % ("예 · Yes" if sig else "아니오 · No",
-                                       (" (" + (sig.provider or "") + ")") if sig else ""),
-    ]
-    pdf = _render_pdf("GL-HAC AI · Halal Certificate", "\n".join(lines),
-                      subtitle=cert.certificate_no or "",
-                      footer="공개 검증 페이지에서 진위를 확인하세요 · Verify authenticity at /verify")
+    pdf = _cert_pdf_bytes(db, c, cert)   # 할랄마크번호·파트와결정번호 포함(공통 렌더)
     fn = "certificate_%s.pdf" % (cert.certificate_no or case_id[:8])
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
+
+
+@app.get("/cases/{case_id}/certificate/bundle.zip")
+def certificate_bundle(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """P2-4: 전체 ZIP 다운로드 — 인증서 PDF + 관련 생성문서(매뉴얼·심사보고서·결정문 등 GeneratedDocument).
+    가드는 인증서 조회와 동일(_get_case org 격리 + 인증서 존재)."""
+    import io
+    import zipfile
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
+    c = _get_case(db, case_id, user)
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    if not cert:
+        raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
+    _audit(db, user, "certificate.bundle", "certificate", case_id, case_id)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("certificate_%s.pdf" % (cert.certificate_no or case_id[:8]),
+                   _cert_pdf_bytes(db, c, cert))
+        # 관련 생성문서(버전관리 GeneratedDocument) — 매뉴얼·심사보고서·결정문 등
+        seen = {}
+        for g in (db.query(models.GeneratedDocument).filter_by(case_id=case_id)
+                  .order_by(models.GeneratedDocument.doc_type,
+                            models.GeneratedDocument.version).all()):
+            base = "%s_v%d" % (g.doc_type or "document", g.version or 1)
+            seen[base] = seen.get(base, 0) + 1
+            suffix = "" if seen[base] == 1 else "_%d" % seen[base]
+            z.writestr("docs/%s%s.txt" % (base, suffix), g.content or "")
+    buf.seek(0)
+    fn = "halal_bundle_%s.zip" % (cert.certificate_no or case_id[:8])
+    return StreamingResponse(buf, media_type="application/zip",
+                             headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
 
 
 def _idr(n):
@@ -7183,33 +7246,122 @@ def add_sjph_evidence(case_id: str, body: schemas.SjphEvidenceReq,
     return {"item_key": body.item_key, "ok": True}
 
 
+# P2-5: 평가 항목별 오디터 판정(3-state) latest-wins — WorkflowEvent(action=evaluation.verdict)
+HPAS_AUTO_ELEMENTS = ("commitment", "materials", "process", "product", "monitoring")
+# 항목별 SJPH 증빙 키 매핑(증거카운트용)
+_ELEMENT_EV_KEYS = {
+    "commitment": ["halal_supervisor", "training"],
+    "process": ["production_flow", "facility_layout"],
+    "monitoring": ["internal_audit", "purchase_log", "receiving_log",
+                   "usage_log", "production_log", "distribution_log"],
+}
+
+
+def _eval_verdicts(db, case_id):
+    """행별 오디터 판정 latest-wins: element -> 'good'|'gap'|'fail'."""
+    out = {}
+    rows = (db.query(models.WorkflowEvent)
+            .filter_by(case_id=case_id, action="evaluation.verdict")
+            .order_by(models.WorkflowEvent.created_at.asc(),
+                      models.WorkflowEvent.event_id.asc()).all())
+    for ev in rows:
+        p = ev.payload or {}
+        if p.get("element"):
+            out[p["element"]] = p.get("verdict")
+    return out
+
+
 @app.get("/cases/{case_id}/hpas-auto")
 def hpas_auto(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    """HPAS 5요소 자동 증빙 유도 (업로드/원재료/제품/매트릭스/SJPH증빙에서) — 설계 G3."""
+    """HPAS 5요소 자동 증빙 유도 (업로드/원재료/제품/매트릭스/SJPH증빙에서) — 설계 G3.
+    P2-5: status(ok/gap 하위호환 유지)에 더해 3-state(state3: good/gap/fail, 오디터 판정 우선),
+    항목별 증거카운트(evidence_docs 📎 / evidence_media 🎥) 제공."""
     c = _get_case(db, case_id, user)
     pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").count() > 0
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
     bad = [m for m in mats if m.screen_result in ("BLOCK", "NEEDS_EVIDENCE")]
     prods = db.query(models.Product).filter_by(case_id=case_id).count()
     photos = db.query(models.DocumentAsset).filter_by(case_id=case_id, doc_type="product_photo").count()
+    vids = (db.query(models.DocumentAsset)
+            .filter(models.DocumentAsset.case_id == case_id,
+                    models.DocumentAsset.content_type.like("video/%")).count())
+    mat_ev = sum(1 for m in mats if m.evidence_provided)
     sev = {e.item_key for e in db.query(models.SjphEvidence).filter_by(case_id=case_id)}
+    verdicts = _eval_verdicts(db, case_id)
 
     def st(cond):
         return "ok" if cond else "gap"
-    elements = [
-        {"element": "commitment", "label": "책임과 약속", "status": st(pen and "halal_supervisor" in sev),
-         "reason": "할랄감독자 지정+교육 증빙"},
-        {"element": "materials", "label": "원재료", "status": st(bool(mats) and not bad),
-         "reason": "임계원재료 %d건" % len(bad)},
-        {"element": "process", "label": "할랄제품공정", "status": st("production_flow" in sev),
-         "reason": "공정 흐름도 증빙"},
-        {"element": "product", "label": "제품", "status": st(prods > 0 and photos > 0),
-         "reason": "제품 %d·사진 %d" % (prods, photos)},
-        {"element": "monitoring", "label": "모니터링·평가", "status": st("internal_audit" in sev),
-         "reason": "내부 심사 기록"},
+
+    def ev_docs(el):
+        if el == "materials":
+            return mat_ev
+        if el == "product":
+            return photos
+        return sum(1 for k in _ELEMENT_EV_KEYS.get(el, []) if k in sev)
+
+    def ev_media(el):
+        return vids if el in ("product", "process") else 0
+
+    def merge3(el, det):   # 오디터 판정 우선, 없으면 자동판정(ok→good, gap→gap)
+        v = verdicts.get(el)
+        if v in ("good", "gap", "fail"):
+            return v
+        return "good" if det == "ok" else "gap"
+
+    base = [
+        ("commitment", "책임과 약속", st(pen and "halal_supervisor" in sev), "할랄감독자 지정+교육 증빙"),
+        ("materials", "원재료", st(bool(mats) and not bad), "임계원재료 %d건" % len(bad)),
+        ("process", "할랄제품공정", st("production_flow" in sev), "공정 흐름도 증빙"),
+        ("product", "제품", st(prods > 0 and photos > 0), "제품 %d·사진 %d" % (prods, photos)),
+        ("monitoring", "모니터링·평가", st("internal_audit" in sev), "내부 심사 기록"),
     ]
+    elements = [{"element": el, "label": lab, "status": det, "reason": rsn,
+                 "state3": merge3(el, det), "verdict": verdicts.get(el),
+                 "evidence_docs": ev_docs(el), "evidence_media": ev_media(el)}
+                for el, lab, det, rsn in base]
     ok = sum(1 for e in elements if e["status"] == "ok")
-    return {"elements": elements, "auto_completion": round(ok / 5 * 100)}
+    good = sum(1 for e in elements if e["state3"] == "good")
+    fail = sum(1 for e in elements if e["state3"] == "fail")
+    return {"elements": elements, "auto_completion": round(ok / 5 * 100),
+            "good": good, "gap": 5 - good - fail, "fail": fail}
+
+
+@app.post("/cases/{case_id}/evaluation/verdict")
+def evaluation_verdict(case_id: str, body: dict = None,
+                       user=Depends(auth.require_roles("auditor", "operator")),
+                       db: Session = Depends(get_db)):
+    """P2-5: 평가 항목 행별 오디터 판정(good/gap/fail) 저장(WorkflowEvent latest-wins) +
+    부적합/보완 시 시정조치(CAR) 자동생성(finding_id='eval:{element}', CorrectiveAction 흐름 재사용)."""
+    body = body or {}
+    el = str(body.get("element") or "").strip()
+    vd = str(body.get("verdict") or "").strip()
+    if el not in HPAS_AUTO_ELEMENTS:
+        raise HTTPException(422, {"code": "BAD_ELEMENT"})
+    if vd not in ("good", "gap", "fail"):
+        raise HTTPException(422, {"code": "BAD_VERDICT"})
+    c = _get_case(db, case_id, user)
+    sm.record_event(db, c, c.status, c.status, "evaluation.verdict", user["role"], user["uid"],
+                    {"element": el, "verdict": vd})
+    car_id = None
+    if vd in ("gap", "fail"):
+        fid = "eval:" + el
+        ex = (db.query(models.CorrectiveAction)
+              .filter(models.CorrectiveAction.case_id == case_id,
+                      models.CorrectiveAction.finding_id == fid,
+                      models.CorrectiveAction.status.in_(("submitted", "rejected"))).first())
+        if ex:
+            car_id = ex.id
+        else:
+            car = models.CorrectiveAction(
+                case_id=case_id, finding_id=fid,
+                description="[자동생성] 평가 항목 '%s' %s 판정 — 시정조치 필요"
+                            % (el, "부적합" if vd == "fail" else "보완"),
+                status="submitted", submitted_by=user["uid"])
+            db.add(car)
+            db.flush()
+            car_id = car.id
+    db.commit()
+    return {"element": el, "verdict": vd, "car_id": car_id}
 
 
 @app.get("/cases/{case_id}/doc-checklist")

@@ -1415,6 +1415,18 @@ const UI_STRINGS={
   "심사중":"Sedang diaudit","사후 모니터링":"Pemantauan Pasca","종결":"Ditutup","비활성":"Nonaktif",
   "활성":"Aktif","양호":"Baik","보완":"Perbaikan","미검수":"Belum ditinjau","미발급":"Belum terbit",
   "인증서 발급":"Terbitkan Sertifikat","LPH 배정":"Penugasan LPH","문서":"Dokumen","신청":"Aplikasi",
+  /* P2-4 인증서(할랄마크·파트와참조·ZIP) + P2-5 평가(3-state·판정·증거) i18n */
+  "할랄마크번호 · No. Ketetapan Halal:":"Nomor Ketetapan Halal · No. Ketetapan Halal:",
+  "파트와 결정번호 · No. Fatwa:":"Nomor Fatwa · No. Fatwa:",
+  "⤓ 전체 ZIP":"⤓ Unduh ZIP",
+  "적합후보":"Kandidat Sesuai","적합":"Sesuai","부적합":"Tidak Sesuai",
+  "판정":"Putusan","증거":"Bukti","오디터 판정":"Putusan Auditor",
+  "첨부 증거":"Bukti terlampir","드롭 업로드":"Unggah seret","파일을 드롭하여 업로드":"Seret berkas untuk mengunggah",
+  "요소 적합후보":"elemen kandidat sesuai",
+  "⛔ 부적합 항목 있음 — 시정조치 필요":"⛔ Ada item tidak sesuai — perlu tindakan korektif",
+  "✓ 상정 기준 충족":"✓ Memenuhi syarat pengajuan","ℹ 보완 항목 확인":"ℹ Periksa item perbaikan",
+  "적합 판정":"Putusan sesuai","부적합 판정 · 시정조치 생성":"Putusan tidak sesuai · buat tindakan korektif",
+  "판정 실패":"Gagal memutuskan",
   // 네비/페이지 헤더(한글 라벨)
   "대시보드":"Dasbor","내 케이스":"Kasus Saya","워크스페이스":"Ruang Kerja","원재료 AI":"Bahan AI",
   "SJPH/HPAS 통합":"Integrasi SJPH/HPAS","SJPH/HPAS 평가":"Evaluasi SJPH/HPAS","청구":"Penagihan",
@@ -4269,18 +4281,27 @@ SCREEN.evaluation=async()=>{
       <b style="flex:1">${esc(it.label)}${(!it.uploaded&&canSev)?' <span class="muted small">· ⬇ '+T('드롭 업로드')+'</span>':''}</b>
       ${it.uploaded?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="viewDoc('${it.document_id}')">보기</button>`:(canSev?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="uploadSjphEvidence('${id}','${it.item_key}')">업로드</button>`:'<span class="muted small">미제출</span>')}
     </div>`).join("")||'<div class="muted small">증빙 항목 없음</div>';
-  const rows=els.map(e=>`<tr><td><b>${esc(e.label||e.element)}</b><div class="muted small">${esc(e.reason||"")}</div></td>
-      <td>${tag(e.status==="ok"?"ok":"warn",e.status==="ok"?"양호":"보완")}</td></tr>`).join("")||`<tr><td colspan="2" class="muted" style="text-align:center;padding:18px">평가 항목 없음</td></tr>`;
-  const okc=els.filter(e=>e.status==="ok").length;
+  const canVerdict=["auditor","ops","admin"].includes(ROLE);   // 오디터 원클릭 판정 권한
+  const s3of=e=>e.state3||(e.status==="ok"?"good":"gap");
+  const B3={good:["ok","적합후보"],gap:["warn","보완"],fail:["bad","부적합"]};   // 3-state 배지
+  const rows=els.map(e=>{const b=B3[s3of(e)]||B3.gap;
+    return `<tr><td><b>${esc(e.label||e.element)}</b><div class="muted small">${esc(e.reason||"")}</div></td>
+      <td>${tag(b[0],b[1])}</td>
+      <td class="muted small" style="white-space:nowrap" title="${T('첨부 증거')}">📎 ${e.evidence_docs||0} · 🎥 ${e.evidence_media||0}</td>
+      <td>${canVerdict?`<span class="btnrow" style="gap:4px">
+        <button class="btn ok" style="padding:2px 8px;font-size:11px" onclick="evalVerdict('${id}','${e.element}','good')">적합</button>
+        <button class="btn bad" style="padding:2px 8px;font-size:11px" onclick="evalVerdict('${id}','${e.element}','fail')">부적합</button></span>`:'<span class="muted small">—</span>'}</td></tr>`;}).join("")||`<tr><td colspan="4" class="muted" style="text-align:center;padding:18px">평가 항목 없음</td></tr>`;
+  const okc=els.filter(e=>s3of(e)==="good").length;
+  const failc=els.filter(e=>s3of(e)==="fail").length;
   return `
   <div class="grid side">
-    <div class="card"><h3>HPAS 자동 평가 <span class="en">· HPAS auto</span><span class="r">${okc}/${els.length} 양호</span></h3>
-      <div class="body tight"><table><thead><tr><th>평가 항목 · Item</th><th>결과</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="card"><h3>HPAS 자동 평가 <span class="en">· HPAS auto</span><span class="r">${okc}/${els.length} 적합후보${failc?` · ${failc} 부적합`:''}</span></h3>
+      <div class="body tight"><table><thead><tr><th>평가 항목 · Item</th><th>판정</th><th>증거</th><th>${canVerdict?'오디터 판정':'—'}</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="applyView()">🔄 HPAS 재판정 · Re-evaluate</button></div></div>
     <div class="card"><h3>파트와 상정 준비 <span class="en">· To Fatwa</span></h3>
       <div class="body">
-        <div class="scorebox" style="margin-bottom:14px"><span class="big" style="color:var(--ok)">${okc}</span><span class="muted">/ ${els.length} 요소 충족</span></div>
-        <div class="banner ${okc===els.length&&els.length?'ok':'info'}" style="margin-bottom:12px">${okc===els.length&&els.length?'✓ 상정 기준 충족':'ℹ 보완 항목 확인'}</div>
+        <div class="scorebox" style="margin-bottom:14px"><span class="big" style="color:var(--ok)">${okc}</span><span class="muted">/ ${els.length} 요소 적합후보</span></div>
+        <div class="banner ${failc?'bad':(okc===els.length&&els.length?'ok':'info')}" style="margin-bottom:12px">${failc?'⛔ 부적합 항목 있음 — 시정조치 필요':(okc===els.length&&els.length?'✓ 상정 기준 충족':'ℹ 보완 항목 확인')}</div>
         <button class="btn gold" onclick="go('fatwa')">파트와 화면으로 · To Fatwa →</button></div></div>
   </div>
   <div class="card" style="margin-top:16px"><h3>SJPH 증빙 <span class="en">· Evidence</span><span class="r">${sev.uploaded||0}/${sev.total||0} · ${sev.completion||0}%</span></h3>
@@ -4298,6 +4319,11 @@ async function dropSjphEvidence(ev,cid,key){
   const b64=await fileB64(file);
   try{await API(`/cases/${cid}/sjph-evidence`,{method:"POST",body:JSON.stringify({item_key:key,file_b64:b64,filename:file.name})});toast("증빙 드롭 업로드 · "+file.name);applyView();}
   catch(e){toast("업로드 실패 · "+((e&&e.code)||""));}
+}
+async function evalVerdict(id,element,verdict){   // P2-5: 행별 오디터 판정 → verdict 저장 + 부적합/보완 시 CAR 자동생성
+  try{await API(`/cases/${id}/evaluation/verdict`,{method:"POST",body:JSON.stringify({element,verdict})});
+    toast(verdict==="good"?"적합 판정":"부적합 판정 · 시정조치 생성");applyView();}
+  catch(e){toast("판정 실패 · "+((e&&e.code)||""));}
 }
 
 /* ===== A09: 보완·재전송 센터 — SCREEN.resubmitCenter =====
@@ -5490,6 +5516,8 @@ SCREEN.certificate=async()=>{
       <div class="divide"></div>
       <div class="small">본 제품은 SJPH 및 샤리아 기준에 따라 <b>할랄(HALAL)</b> 인증되었음을 증명합니다.</div>
       <div class="no">No. ${esc(c.certificate_no||"—")} · Issued ${esc(c.issue_date||"—")} · Valid until ${esc(c.expiry_date||"—")}</div>
+      <div class="small" style="margin-top:6px">할랄마크번호 · No. Ketetapan Halal: <b>${esc(c.halal_mark_no||"—")}</b></div>
+      <div class="small">파트와 결정번호 · No. Fatwa: <b>${esc(c.fatwa_decision_no||"—")}</b></div>
       ${c.qr_token?`<div class="small" style="margin-top:8px;word-break:break-all">🔗 공개검증 · Verify: <a href="/ui/verify.html?token=${encodeURIComponent(c.qr_token)}" target="_blank" style="color:var(--gold)">/ui/verify.html?token=${esc((c.qr_token||"").slice(0,10))}…</a></div>`:''}
     </div>`
     :`<div class="banner info">아직 발급되지 않았습니다 · not issued</div>`;
@@ -5497,7 +5525,7 @@ SCREEN.certificate=async()=>{
   <div class="grid side">
     <div class="card"><h3>할랄 인증서 <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
       <div class="body">${certCard}
-        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(c.certificate_no||"")}.pdf')">📄 인증서 PDF 다운로드</button><button class="btn" onclick="printCert('${id}')">🖨 인쇄</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
+        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(c.certificate_no||"")}.pdf')">📄 인증서 PDF 다운로드</button><button class="btn" onclick="serverPdf('/cases/${id}/certificate/bundle.zip','halal_bundle_${esc(c.certificate_no||"")}.zip')">⤓ 전체 ZIP</button><button class="btn" onclick="printCert('${id}')">🖨 인쇄</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
         ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span></div>`:''}
         ${c.issued&&c.status&&c.status!=='active'?`<div class="banner ${c.status==='withdrawn'?'bad':'warn'}" style="margin-top:10px">${c.status==='withdrawn'?'⛔ 철회됨 · Withdrawn':'⏸ 정지됨 · Suspended'}</div>`:''}
         ${c.issued&&CAN("certificate.suspend")?`<div class="btnrow" style="margin-top:10px">
