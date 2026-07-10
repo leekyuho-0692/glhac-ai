@@ -2381,16 +2381,25 @@ def save_draft(case_id: str, user=Depends(auth.require_roles("applicant", "consu
 @app.post("/cases/{case_id}/submit-application")
 def submit_application(case_id: str, user=Depends(auth.require_roles("applicant", "consultant")),
                        db: Session = Depends(get_db)):
-    """작성완료 제출 — 컨설턴트 검토로 넘김."""
+    """작성완료 제출 — AI 사전평가 체인 경유 후 경로판정 대기로.
+    (전수검사 G1 수정: 종전엔 consultant_review로 직접 점프해 pathway_determination을
+    건너뛰어 pathway/confirm이 WRONG_STATE로 영구 불가 → 자기선언 경로 진입 차단)"""
     c = _get_case(db, case_id, user)
     prev = c.status
     c.draft_state = "completed"
     c.return_reason = None
     if c.status in ("onboarding", "application_draft"):
-        c.status = "consultant_review"
+        cur = c.status
+        for st in ("application_draft", "ai_pre_assessment_ready",
+                   "ai_pre_assessment_running", "pathway_determination"):
+            if sm.allowed(cur, st):
+                sm.record_event(db, c, cur, st, "application.submit.auto", user["role"], user["uid"])
+                cur = st
+        c.status = cur
     sm.record_event(db, c, prev, c.status, "application.submit", user["role"], user["uid"])
     _notify(db, c, "application.submitted", "신청서 작성완료 제출",
-            "%s 신청서가 제출되었습니다." % (c.company_name or c.case_id), role="consultant")
+            "%s 신청서가 제출되었습니다. 경로판정(자기선언/정규) 확정 대기." % (c.company_name or c.case_id),
+            role="consultant")
     db.commit()
     return _case_dict(c)
 
@@ -7882,6 +7891,19 @@ def pathway_assess(case_id: str, user=Depends(auth.get_current_user), db: Sessio
 def pathway_confirm(case_id: str, body: schemas.PathwayConfirm,
                     user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    # 구제 경로(G1 수정 이전 제출분): consultant_review에 pathway 미확정으로 걸린 케이스는
+    # 상태 전이 없이 pathway 라벨만 확정 허용(reguler 한정 — 자기선언 전환은 반려→재제출 경유).
+    if c.status == "consultant_review" and c.pathway in ("undetermined", None, ""):
+        if body.pathway == "self_declare":
+            raise HTTPException(409, {"code": "PATHWAY_LOCKED_USE_RETURN",
+                                      "hint": "자기선언 전환은 신청 반려(return-application) 후 재제출로 경로판정을 거치세요."})
+        a = sm.assess_pathway(db, c)
+        c.risk_category = a["risk_category"]
+        c.pathway = "reguler"
+        sm.record_event(db, c, c.status, c.status, "pathway.confirm", user["role"], user["uid"],
+                        {"pathway": "reguler", "repair": True, "override_reason": body.override_reason})
+        db.commit()
+        return {"pathway": c.pathway, "next_state": c.status, "assessment": a}
     if c.status != "pathway_determination":
         raise HTTPException(409, {"code": "WRONG_STATE", "need": "pathway_determination", "have": c.status})
     a = sm.assess_pathway(db, c)
