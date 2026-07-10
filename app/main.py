@@ -217,6 +217,23 @@ def _notify_worker_loop(interval=30):
             pass
 
 
+def _seed_auditor_profiles(db):
+    """P3: 오디터 프로필(전문분야·언어·캐파) 시드 — 프로필 이벤트가 없는 오디터만 1회 적재.
+    운영자가 ✎로 편집한 프로필(latest-wins)은 절대 덮어쓰지 않는다."""
+    for username, prof in auth.DEFAULT_AUDITOR_PROFILES.items():
+        u = db.query(models.User).filter_by(username=username).first()
+        if not u:
+            continue
+        has = (db.query(models.WorkflowEvent)
+               .filter(models.WorkflowEvent.case_id == u.user_id,
+                       models.WorkflowEvent.action == AUDITOR_PROFILE_ACTION).count())
+        if has:
+            continue
+        sm.record_event(db, _auditor_shim(u.user_id), None, None, AUDITOR_PROFILE_ACTION,
+                        "system", "seed", dict(prof))
+    db.commit()
+
+
 @app.on_event("startup")
 def _startup():
     auth.enforce_secret()   # 프로덕션에서 기본 시크릿이면 부팅 차단(토큰 위조 방지)
@@ -227,6 +244,10 @@ def _startup():
     try:
         seed(db)
         auth.seed_users(db)
+        if os.environ.get("GLHAC_DEV") == "1":
+            _seed_auditor_profiles(db)   # 데모 시드 계정에만 프로필 부여
+        # load_ontology는 ORM 인스턴스를 모듈 캐시에 담으므로 반드시 마지막 —
+        # 이후 commit()이 나면 캐시 객체가 expire되어 DetachedInstanceError가 난다.
         screening.load_ontology(db)
     finally:
         db.close()
@@ -1508,6 +1529,170 @@ def _norm_material(name):
     s = re.sub(r"\([^)]*\)", "", s)           # (중국), (대상) 등 괄호 제거
     s = re.sub(r"[\s\-_·,#]|중국산|국내산|수입", "", s)
     return s.strip()
+
+
+# ── 정량 기준·측정값 (P3 데이터 선행) — 정성 온톨로지가 못 다루는 임계 판정의 근거 ──
+# 출처: SJPH/HAS 23000 · MUI Fatwa(khamr 0.5%) · BPOM 중금속 한계(식품 일반). 운영 시 규정 버전과 연동.
+QUANT_CRITERIA = {
+    "ethanol_pct":  {"ko": "에탄올 함량", "unit": "%",   "max": 0.5,  "basis": "MUI Fatwa · khamr 기준 (<0.5%)"},
+    "lead_ppm":     {"ko": "중금속 (Pb)", "unit": "ppm", "max": 2.0,  "basis": "BPOM 식품 중금속 한계"},
+    "cadmium_ppm":  {"ko": "중금속 (Cd)", "unit": "ppm", "max": 0.3,  "basis": "BPOM 식품 중금속 한계"},
+    "mercury_ppm":  {"ko": "중금속 (Hg)", "unit": "ppm", "max": 0.03, "basis": "BPOM 식품 중금속 한계"},
+    "arsenic_ppm":  {"ko": "중금속 (As)", "unit": "ppm", "max": 1.0,  "basis": "BPOM 식품 중금속 한계"},
+    "pork_dna":     {"ko": "돈지·돼지 DNA", "unit": "detect", "max": 0.0, "basis": "불검출 필수 (PCR)"},
+}
+
+
+def _quant_verdict(param_key, value):
+    crit = QUANT_CRITERIA.get(param_key)
+    if not crit or value is None:
+        return "unknown"
+    try:
+        return "pass" if float(value) <= float(crit["max"]) else "fail"
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+@app.get("/meta/quant-criteria")
+def get_quant_criteria(user=Depends(auth.get_current_user)):
+    """정량 기준 카탈로그 — 프런트 입력 폼·비교표의 기준 소스."""
+    return {"criteria": [dict(key=k, **v) for k, v in QUANT_CRITERIA.items()]}
+
+
+@app.get("/cases/{case_id}/measurements")
+def list_measurements(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    rows = (db.query(models.MaterialMeasurement).filter_by(case_id=case_id)
+            .order_by(models.MaterialMeasurement.created_at.desc()).all())
+    names = {m.material_id: m.name for m in db.query(models.Material).filter_by(case_id=case_id)}
+    out = []
+    for r in rows:
+        crit = QUANT_CRITERIA.get(r.param_key, {})
+        out.append({"measurement_id": r.measurement_id, "material_id": r.material_id,
+                    "material_name": names.get(r.material_id), "param_key": r.param_key,
+                    "param_ko": crit.get("ko", r.param_key), "value": r.value, "unit": r.unit or crit.get("unit"),
+                    "threshold": crit.get("max"), "basis": crit.get("basis"), "verdict": r.verdict,
+                    "method": r.method, "lab_name": r.lab_name, "tested_at": r.tested_at,
+                    "document_id": r.document_id, "note": r.note})
+    return {"items": out, "count": len(out),
+            "fail_count": sum(1 for x in out if x["verdict"] == "fail")}
+
+
+@app.post("/cases/{case_id}/measurements")
+def add_measurement(case_id: str, body: dict = None,
+                    user=Depends(auth.require_roles("applicant", "consultant", "auditor", "operator")),
+                    db: Session = Depends(get_db)):
+    """정량 측정값 등록(성적서 기반) — 서버가 임계와 대조해 verdict 계산."""
+    b = body or {}
+    pk = str(b.get("param_key") or "").strip()
+    if pk not in QUANT_CRITERIA:
+        raise HTTPException(422, {"code": "BAD_PARAM", "allowed": sorted(QUANT_CRITERIA)})
+    c = _get_case(db, case_id, user)
+    mid = b.get("material_id") or None
+    if mid and not db.query(models.Material).filter_by(case_id=case_id, material_id=mid).first():
+        raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
+    try:
+        val = float(b["value"]) if b.get("value") is not None else None
+    except (TypeError, ValueError):
+        raise HTTPException(422, {"code": "BAD_VALUE"})
+    vd = _quant_verdict(pk, val)
+    row = models.MaterialMeasurement(
+        case_id=case_id, material_id=mid, param_key=pk, value=val,
+        unit=str(b.get("unit") or QUANT_CRITERIA[pk]["unit"]), method=str(b.get("method") or ""),
+        lab_name=str(b.get("lab_name") or ""), tested_at=str(b.get("tested_at") or "")[:10],
+        document_id=b.get("document_id"), verdict=vd, note=str(b.get("note") or ""),
+        recorded_by=user["uid"])
+    db.add(row)
+    sm.record_event(db, c, c.status, c.status, "material.measurement", user["role"], user["uid"],
+                    {"param_key": pk, "value": val, "verdict": vd, "material_id": mid})
+    db.commit()
+    return {"measurement_id": row.measurement_id, "param_key": pk, "value": val,
+            "threshold": QUANT_CRITERIA[pk]["max"], "verdict": vd}
+
+
+@app.delete("/measurements/{measurement_id}")
+def delete_measurement(measurement_id: str,
+                       user=Depends(auth.require_roles("applicant", "consultant", "auditor", "operator")),
+                       db: Session = Depends(get_db)):
+    row = db.get(models.MaterialMeasurement, measurement_id)
+    if not row:
+        raise HTTPException(404, {"code": "NOT_FOUND"})
+    _get_case(db, row.case_id, user)   # 조직 격리
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
+# ── 원재료 크로스케이스 재사용 (P3 데이터 선행) — 회의: "기존 할랄인증 받은 원재료는
+#    새로 만들지 말고 기존 리스트 재사용, 케이스 간 중복 데이터 없이" ──
+@app.get("/orgs/materials/catalog")
+def org_material_catalog(q: str = Query("", max_length=80), limit: int = Query(50, le=200),
+                         user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """조직 내 기존 케이스들의 원재료 카탈로그(정규화명 dedup) — 신규 케이스에서 재사용."""
+    org_cases = [c.case_id for c in db.query(models.CaseApplication.case_id)
+                 .filter(models.CaseApplication.org_id == user.get("org_id")).all()]
+    if not org_cases:
+        return {"items": [], "count": 0}
+    rows = db.query(models.Material).filter(models.Material.case_id.in_(org_cases)).all()
+    best = {}
+    for m in rows:
+        key = _norm_material(m.name)
+        if q and q.lower() not in (m.name or "").lower():
+            continue
+        cur = best.get(key)
+        # 우선순위: 증빙 보유 > CLEARED/PASS 판정 > 인증번호 보유 > 최신
+        rank = (1 if m.evidence_provided else 0, 1 if m.screen_result in ("CLEARED", "PASS") else 0,
+                1 if m.cert_no else 0)
+        if not cur or rank > cur[0]:
+            best[key] = (rank, m)
+    items = [{"name": m.name, "e_number": m.e_number, "mat_type": m.mat_type, "source": m.source,
+              "supplier": m.supplier, "cert": m.cert, "cert_no": m.cert_no,
+              "screen_result": m.screen_result, "screen_status": m.screen_status,
+              "evidence_provided": bool(m.evidence_provided), "source_case_id": m.case_id}
+             for _, m in sorted(best.values(), key=lambda x: -x[0][0])][:limit]
+    return {"items": items, "count": len(items)}
+
+
+@app.post("/cases/{case_id}/materials/reuse")
+def reuse_materials(case_id: str, body: dict = None,
+                    user=Depends(auth.require_roles("applicant", "consultant")),
+                    db: Session = Depends(get_db)):
+    """카탈로그에서 선택한 원재료를 현재 케이스로 복사 — 이미 있는 정규화명은 건너뜀(중복 방지)."""
+    c = _get_case(db, case_id, user)
+    names = [str(n).strip() for n in ((body or {}).get("names") or []) if str(n).strip()]
+    if not names:
+        raise HTTPException(422, {"code": "NO_NAMES"})
+    org_cases = [x.case_id for x in db.query(models.CaseApplication.case_id)
+                 .filter(models.CaseApplication.org_id == c.org_id).all()]
+    src = db.query(models.Material).filter(models.Material.case_id.in_(org_cases)).all()
+    have = {_norm_material(m.name) for m in db.query(models.Material).filter_by(case_id=case_id)}
+    by_key = {}
+    for m in src:
+        by_key.setdefault(_norm_material(m.name), m)
+    added, skipped = [], []
+    for n in names:
+        k = _norm_material(n)
+        if k in have:
+            skipped.append(n)
+            continue
+        m = by_key.get(k)
+        if not m:
+            skipped.append(n)
+            continue
+        nm = models.Material(case_id=case_id, name=m.name, e_number=m.e_number, mat_type=m.mat_type,
+                             source=m.source, supplier=m.supplier, cert=m.cert, cert_no=m.cert_no,
+                             evidence_provided=False)   # 증빙은 케이스별 재확인(안전측)
+        db.add(nm)
+        try:
+            screening.apply_screen(nm)   # 재스크리닝(온톨로지 갱신 반영)
+        except Exception:  # noqa: BLE001
+            pass
+        have.add(k)
+        added.append(m.name)
+    sm.record_event(db, c, c.status, c.status, "material.reuse", user["role"], user["uid"],
+                    {"added": added, "skipped": skipped})
+    db.commit()
+    return {"added": added, "skipped": skipped, "added_count": len(added)}
 
 
 @app.post("/cases/{case_id}/materials/dedup")
@@ -7541,9 +7726,26 @@ def _material_report(db, c):
                      "explanation": exp.get("explanation") or ""})
     category_registration = [{"category": k, "count": cat_counts[k],
                               "registered": cat_counts[k] > 0} for k in _CATS]
+    # P3: 정량 측정값(파라미터별 최신) — 정량 기준 비교표의 '측정값' 컬럼 소스
+    meas = {}
+    for r in (db.query(models.MaterialMeasurement).filter_by(case_id=c.case_id)
+              .order_by(models.MaterialMeasurement.created_at.asc()).all()):
+        crit = QUANT_CRITERIA.get(r.param_key, {})
+        meas[r.param_key] = {"param_key": r.param_key, "param_ko": crit.get("ko", r.param_key),
+                             "value": r.value, "unit": r.unit or crit.get("unit"),
+                             "threshold": crit.get("max"), "basis": crit.get("basis"),
+                             "verdict": r.verdict, "material_id": r.material_id,
+                             "lab_name": r.lab_name, "tested_at": r.tested_at,
+                             "document_id": r.document_id}
+    quant = [meas.get(k) or {"param_key": k, "param_ko": v["ko"], "value": None, "unit": v["unit"],
+                             "threshold": v["max"], "basis": v["basis"], "verdict": "unknown"}
+             for k, v in QUANT_CRITERIA.items()]
     return {"case_id": c.case_id, "company_name": c.company_name,
             "summary": summary, "materials": rows,
-            "category_registration": category_registration}
+            "category_registration": category_registration,
+            "quantitative": quant,
+            "quant_measured": len(meas), "quant_total": len(QUANT_CRITERIA),
+            "quant_fail": sum(1 for q in quant if q.get("verdict") == "fail")}
 
 
 @app.get("/cases/{case_id}/material-report")

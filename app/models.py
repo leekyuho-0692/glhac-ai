@@ -653,3 +653,26 @@ class FeedbackComment(Base):
     author_role = Column(String, nullable=False)
     body = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MaterialMeasurement(Base):
+    """원재료 정량 측정값 (P3-데이터 선행) — 에탄올%·중금속 ppm 등 실측치.
+
+    정성 온톨로지(IngredientOntology)가 다루지 못하는 정량 임계 판정의 근거.
+    param_key는 QUANT_CRITERIA 키, verdict는 서버가 임계와 대조해 계산·저장한다.
+    """
+    __tablename__ = "material_measurement"
+    measurement_id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    material_id = Column(String, index=True)      # None = 케이스(제품) 단위 측정
+    param_key = Column(String, nullable=False)    # ethanol_pct | lead_ppm | ...
+    value = Column(Float)
+    unit = Column(String)
+    method = Column(String)                       # 시험법(예: GC-MS, ICP-MS)
+    lab_name = Column(String)
+    tested_at = Column(String)                    # ISO date (성적서 시험일)
+    document_id = Column(String)                  # 근거 문서(CoA/성적서)
+    verdict = Column(String)                      # pass | fail | unknown
+    note = Column(Text)
+    recorded_by = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)

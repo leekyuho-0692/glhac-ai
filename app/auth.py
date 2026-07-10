@@ -51,9 +51,19 @@ DEFAULT_USERS = [
     ("penyelia1", "pw", "penyelia_halal", "org_demo"),
     ("pendamping1", "pw", "pendamping_pph", "org_demo"),
     ("auditor1", "pw", "auditor", "org_demo"),
+    ("auditor2", "pw", "auditor", "org_demo"),     # P3: 배정 카드 데모용 복수 오디터
+    ("auditor3", "pw", "auditor", "org_demo"),
     ("fatwa1", "pw", "fatwa_liaison", "org_demo"),
     ("operator1", "pw", "operator", "org_demo"),   # v3: 최고 업무운영자(최종승인자)
 ]
+
+# P3: 오디터 프로필 시드(전문분야·언어·캐파) — 종전엔 운영자가 ✎로 직접 입력해야 '미설정'을 벗어났다.
+# username → profile payload (main._seed_auditor_profiles가 WorkflowEvent sentinel로 적재).
+DEFAULT_AUDITOR_PROFILES = {
+    "auditor1": {"specialty": ["식품"], "languages": ["ID", "EN"], "capacity": 8},
+    "auditor2": {"specialty": ["화장품", "식품"], "languages": ["ID"], "capacity": 6},
+    "auditor3": {"specialty": ["식품", "의약"], "languages": ["ID", "EN", "AR"], "capacity": 8},
+}
 
 # ---- 비밀번호 해시: PBKDF2-HMAC-SHA256 (stdlib, 신규 의존성 없음) ----
 _PBKDF2_ROUNDS = 200_000

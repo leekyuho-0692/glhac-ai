@@ -3045,6 +3045,7 @@ SCREEN.materials=async()=>{
         <button class="btn" onclick="exportMaterialsXlsx('${id}')">⬇ Excel</button>
         <button class="btn pri" onclick="materialReport('${id}')">📄 성분 분석 보고서 · Report</button>
         ${canMatWrite?`<button class="btn" onclick="dedupMaterials('${id}')">🧹 ${T('중복 정리')}</button>
+        <button class="btn" onclick="reuseMaterials('${id}')">♻️ ${T('기존 원재료 재사용')}</button>
         <button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 인테이크</button>
         <button class="btn" onclick="labelOcr('${id}')">📷 라벨 OCR</button>`:''}
         <button class="btn" onclick="screenText('${id}')">🔤 텍스트 스크리닝</button></div>
@@ -3154,6 +3155,65 @@ async function saveMatSnapshot(id){
    정직성: 시스템(IngredientOntology·Material)은 정성 기준(할랄상태·심각도·najis·캐리어)만 보유하고
    에탄올 함량·중금속(Pb) 등 정량 임계/실측값은 미저장이다. 따라서 기준·판정은 실제 온톨로지 판정에서
    가져오되 측정값 컬럼은 '미측정'으로 정직하게 표기한다. 데이터 날조 없음. */
+/* P3: 정량 측정값 표 — 실측치 저장(MaterialMeasurement) 후 기준 대조 판정 표시.
+   미등록 파라미터는 여전히 '미측정'으로 정직 표기(날조 없음). */
+function quantTable(rep,id){
+  const q=rep.quantitative||[];
+  const canEdit=["client","consultant","auditor","ops","admin"].includes(ROLE);
+  const vt=v=>v==='pass'?['ok','적합']:v==='fail'?['bad','부적합']:['mute','미측정'];
+  const rows=q.map(x=>{const t=vt(x.verdict);return `<tr>
+    <td><b>${esc(x.param_ko)}</b><div class="muted small">${esc(x.basis||'')}</div></td>
+    <td class="small">≤ ${esc(String(x.threshold))} ${esc(x.unit||'')}</td>
+    <td class="small">${x.value==null?`<span class="muted" title="${T('측정값 미등록')}">${T('미측정')}</span>`:`<b>${esc(String(x.value))}</b> ${esc(x.unit||'')}${x.lab_name?`<div class="muted small">${esc(x.lab_name)}${x.tested_at?' · '+esc(x.tested_at):''}</div>`:''}`}</td>
+    <td style="white-space:nowrap"><span class="tag t-${t[0]}">${T(t[1])}</span></td>
+    ${canEdit?`<td><button class="btn" style="padding:2px 8px;font-size:11px" onclick="addMeasurement('${id}','${x.param_key}')">${x.value==null?'＋ '+T('등록'):'✎ '+T('갱신')}</button></td>`:''}
+  </tr>`;}).join('');
+  return `<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px">
+    <div style="font-weight:700;margin-bottom:4px">${T('정량 기준 비교표')} <span class="en">· Criteria vs Measurement</span>
+      <span class="r">${rep.quant_measured||0}/${rep.quant_total||0} ${T('측정')}${rep.quant_fail?` · <span style="color:var(--bad)">${rep.quant_fail} ${T('부적합')}</span>`:''}</span></div>
+    <div class="muted small" style="margin-bottom:8px">${T('시험성적서(CoA) 실측값을 등록하면 할랄 기준과 자동 대조해 판정합니다. 미등록 항목은 미측정으로 표기됩니다.')}</div>
+    <table><thead><tr><th>${T('항목')}</th><th>${T('할랄 기준')}</th><th>${T('측정값')}</th><th>${T('판정')}</th>${canEdit?`<th></th>`:''}</tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+async function addMeasurement(id,paramKey){
+  const cr=await API('/meta/quant-criteria').catch(()=>({criteria:[]}));
+  const c=(cr.criteria||[]).find(x=>x.key===paramKey)||{};
+  const r=await dialog(`${T('측정값 등록')} · ${c.ko||paramKey}`,[
+    {key:"value",label:`${T('측정값')} (${c.unit||''}) — ${T('기준')} ≤ ${c.max}`,required:true},
+    {key:"lab_name",label:T('시험기관')},
+    {key:"method",label:T('시험법')+' (GC-MS, ICP-MS …)'},
+    {key:"tested_at",label:T('시험일')+' (YYYY-MM-DD)'}]);
+  if(!r)return;
+  try{const res=await API(`/cases/${id}/measurements`,{method:"POST",body:JSON.stringify({param_key:paramKey,value:r.value,lab_name:r.lab_name,method:r.method,tested_at:r.tested_at})});
+    toast(`${T('측정값 등록')} · ${res.verdict==='pass'?T('적합'):T('부적합')}`);materialReport(id);}
+  catch(e){toast(T('등록 실패')+' · '+((e&&e.code)||''));}
+}
+/* P3: 원재료 크로스케이스 재사용 — 조직 카탈로그에서 선택 복사(중복 방지) */
+async function reuseMaterials(id){
+  const cat=await API('/orgs/materials/catalog?limit=100').catch(()=>({items:[]}));
+  const items=cat.items||[];
+  if(!items.length){toast(T('재사용할 기존 원재료가 없습니다'));return;}
+  const ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:rgba(12,22,16,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:22px";
+  const row=m=>`<label class="li" style="cursor:pointer;align-items:center"><input type="checkbox" class="reuseChk" value="${esc(m.name)}" style="width:auto;margin-right:8px">
+    <div class="tx"><b>${esc(m.name)}</b> ${m.evidence_provided?tag('ok',T('증빙 보유')):''} ${m.cert_no?tag('info',T('인증')+' '+esc(m.cert_no)):''}
+    <div class="muted small">${esc(m.supplier||'—')} · ${esc(m.screen_status||'미판정')}</div></div></label>`;
+  ov.innerHTML=`<div class="modalbox" style="max-width:620px;width:100%;max-height:82vh;overflow:auto">
+    <h3>♻️ ${T('기존 원재료 재사용')} <span class="en">· Reuse</span></h3>
+    <div class="muted small" style="margin-bottom:8px">${T('조직 내 기존 케이스의 원재료를 복사합니다. 이미 등록된 원재료는 자동으로 건너뜁니다(중복 방지). 증빙은 케이스별로 다시 확인합니다.')}</div>
+    <div class="list" style="max-height:44vh;overflow:auto">${items.map(row).join('')}</div>
+    <div class="btnrow" style="margin-top:12px"><button class="btn pri" data-act="ok">${T('선택 항목 추가')}</button><button class="btn" data-act="x">${T('취소')}</button></div></div>`;
+  ov.addEventListener("click",e=>{if(e.target===ov)ov.remove();});
+  ov.querySelector('[data-act="x"]').onclick=()=>ov.remove();
+  ov.querySelector('[data-act="ok"]').onclick=async()=>{
+    const names=[...ov.querySelectorAll('.reuseChk:checked')].map(el=>el.value);
+    if(!names.length){toast(T('항목을 선택하세요'));return;}
+    try{const r=await API(`/cases/${id}/materials/reuse`,{method:"POST",body:JSON.stringify({names})});
+      toast(`${T('추가')} ${r.added_count}${T('건')}${r.skipped.length?` · ${T('중복 제외')} ${r.skipped.length}`:''}`);ov.remove();applyView();}
+    catch(e){toast(T('추가 실패')+' · '+((e&&e.code)||''));}
+  };
+  document.body.appendChild(ov);
+}
 function matCriteriaTable(materials){
   const critMap={BLOCK:['bad','부적합'],NEEDS_EVIDENCE:['warn','확인필요']};
   const jm=v=>critMap[v]||['ok','적합'];
@@ -3200,7 +3260,9 @@ async function materialReport(id){
       <div class="small" style="margin-top:3px">${(m.source_docs||[]).map(d=>`<span class="chip" style="cursor:pointer" title="${T('문서 뷰어')}" onclick="viewDoc('${d.document_id}')">📄 ${esc(d.filename||d.document_id)}</span>`).join(' ')||`<span class="muted small">${T('연결 문서 없음')}</span>`}</div>
     </div>`).join("")||`<div class="muted" style="padding:12px">${T('원재료 없음')}</div>`;
     const snapBtn=canChk?`<div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="saveMatSnapshot('${id}')">💾 ${T('스냅샷 저장·전달')}</button><span class="muted small">${T('체크한 성분·문서를 이력으로 저장(클라이언트 전달)')}</span></div>`:'';
-    document.getElementById("reportBody").innerHTML=cards+catHtml+rows+matCriteriaTable(r.materials||[])+snapBtn+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
+    // P3: 정량 측정값이 응답에 있으면 실측 표(quantTable), 없으면 legacy 정성표 폴백
+    const quantHtml=(r.quantitative&&r.quantitative.length)?quantTable(r,id):matCriteriaTable(r.materials||[]);
+    document.getElementById("reportBody").innerHTML=cards+catHtml+rows+quantHtml+snapBtn+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
     document.getElementById("reportPdfBtn").onclick=()=>serverPdf(`/cases/${id}/material-report.pdf`,"material_report.pdf");
     document.getElementById("reportOverlay").style.display="grid";
     localizeUI(document.getElementById("reportBody"));
