@@ -3638,6 +3638,55 @@ def _sjph_docx_label_fill(tbl, prefix, value):
                 return
 
 
+def _sjph_para_after(par):
+    """python-docx에는 insert-after가 없어 oxml로 직접 다음 위치에 문단 생성."""
+    from docx.oxml import OxmlElement
+    from docx.text.paragraph import Paragraph
+    el = OxmlElement("w:p")
+    par._p.addnext(el)
+    return Paragraph(el, par._parent)
+
+
+# 빌더 섹션 → 템플릿 삽입 앵커(해당 문단 바로 뒤에 이미지 임베드)
+SJPH_IMAGE_ANCHORS = {
+    "org_chart": "B. Halal Management Team",
+    "material_process": "Appendix 11. Production Process Flowchart",
+    "halal_declaration": "Appendix 2. Halal Management Team appointment letter",
+}
+
+
+def _sjph_insert_layout_images(doc, db, case_id):
+    """매뉴얼 빌더에서 드롭한 이미지(조직도·공정도·서명)를 docx 해당 위치에 삽입."""
+    import base64 as _b64
+    import io as _io
+    from docx.shared import Inches
+    try:
+        inserts = (_sjph_manual_layout_view(db, case_id).get("inserts") or {})
+    except Exception:
+        return
+    for key, ins in inserts.items():
+        anchor = SJPH_IMAGE_ANCHORS.get(key)
+        doc_id = (ins or {}).get("document_id")
+        if not anchor or not doc_id:
+            continue
+        d = db.get(models.DocumentAsset, doc_id)
+        if not d or not d.content_b64 or not str(d.content_type or "").startswith("image/"):
+            continue   # PDF 첨부 등 비이미지는 원문 보관만 (docx 임베드는 이미지 한정)
+        par = next((p for p in doc.paragraphs if p.text.strip().startswith(anchor)), None)
+        if par is None:
+            continue
+        try:
+            img = _b64.b64decode(d.content_b64)
+            cap_p = _sjph_para_after(par)
+            run = cap_p.add_run()
+            run.add_picture(_io.BytesIO(img), width=Inches(5.5))
+            cap = (ins or {}).get("caption") or ins.get("filename") or ""
+            if cap:
+                _sjph_para_after(cap_p).add_run(str(cap)[:600]).italic = True
+        except Exception as e:
+            log.warning("sjph 이미지 임베드 실패(%s): %s", key, e)
+
+
 def _sjph_manual_docx_bytes(db, c):
     """기준 템플릿 docx를 열어 실데이터 병합 — 양식(표지·표·부록17·EN/KO 병기) 원본 그대로 유지."""
     import io as _io
@@ -3745,6 +3794,8 @@ def _sjph_manual_docx_bytes(db, c):
                 ci = 3 + pi
                 if ci < len(cells):
                     _sjph_docx_cell_set(cells[ci], "V" if (pr.product_id, m.material_id) in used else "-")
+    # 빌더 드롭 이미지(조직도·공정도·서명) 임베드
+    _sjph_insert_layout_images(doc, db, c.case_id)
     buf = _io.BytesIO()
     doc.save(buf)
     return buf.getvalue()

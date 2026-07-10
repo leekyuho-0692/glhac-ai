@@ -2589,6 +2589,81 @@ SCREEN.preassess=async()=>{
   if(pre.reviewed)cliStage=5;                                                          // 5) 결과리포트
   const cliStepbar=isCli?`<div class="card" style="margin-bottom:16px"><h3>${T('사전심사 진행')} <span class="en">· Pre-assessment Progress</span><span class="r">${T('현재 단계')} ${cliStage}/5</span></h3>
     <div class="body"><div class="stepbar" style="overflow-x:auto">${cliSteps.map((s,i)=>{const n=i+1;const cur=n===cliStage;return `<div class="step ${cur?'cur':''}"><div class="dot">${n<cliStage?'✓':n}</div><span>${T(s[0])}<span class="en">${s[1]}</span></span></div>`+(i<cliSteps.length-1?`<div class="stepline ${n<cliStage?'done':''}"></div>`:'');}).join('')}</div></div></div>`:'';
+  /* ── A03 사전심사 오디터 뷰 (UI구성설계서): 3분할 — 좌 업체정보·제출자료 / 중 AI 리포트(문서·재료·제조) / 우 추가요청서류 자동생성.
+     클라이언트용 구성(AI 실행·대상품목)과 완전히 분리 — 회의 지적 2026-07-10 ── */
+  if(ROLE==="auditor"){
+    const audStage=pre.reviewed?4:(as?3:2);   // 1 신청중 → 2 AR 분석중 → 3 오디터 검사중 → 4 리포트 도착
+    const audSteps=[['신청중','Submitted'],['AR 분석중','AI Report'],['오디터 검사중','Reviewing'],['리포트 도착','Delivered']];
+    const audStepbar=`<div class="card" style="margin-bottom:16px"><h3>${T('사전심사')} <span class="en">· Pre-assessment (Auditor)</span><span class="r">${esc(c.company_name||'')}</span></h3>
+      <div class="body"><div class="stepbar" style="overflow-x:auto">${audSteps.map((s,i)=>{const n=i+1;const cur=n===audStage;return `<div class="step ${cur?'cur':''}"><div class="dot">${n<audStage?'✓':n}</div><span>${T(s[0])}<span class="en">${s[1]}</span></span></div>`+(i<audSteps.length-1?`<div class="stepline ${n<audStage?'done':''}"></div>`:'');}).join('')}</div></div></div>`;
+    const subItems=(chk.checklist||[]);
+    const matBad=mats.filter(m=>String(m.status||m.screen_status||'').toLowerCase()==='haram');
+    const matWarn=mats.filter(m=>String(m.status||m.screen_status||'').toLowerCase()==='mushbooh');
+    const blockers=(as&&as.blockers)||[];
+    const aiDoc = missN
+      ? (chk.missing||[]).map(x=>`<div class="banner warn" style="margin-bottom:6px;padding:8px 12px">${T('상세분석 필요')} — ${esc((x&&(x.doc_type_ko||x.doc_type))||x)} ${T('미제출')}</div>`).join('')
+      : `<div class="banner ok" style="margin-bottom:6px;padding:8px 12px">${T('정상')} — ${T('필수 서류 완비')}</div>`;
+    const aiMat = (matBad.map(m=>`<div class="banner bad" style="margin-bottom:6px;padding:8px 12px"><b>critical</b> — ${esc(m.name)} · ${T('하람')} ${T('위험')}</div>`).join('')
+      + matWarn.map(m=>`<div class="banner warn" style="margin-bottom:6px;padding:8px 12px">${T('상세분석 필요')} — ${esc(m.name)} · ${T('의심')}</div>`).join(''))
+      || `<div class="banner ok" style="margin-bottom:6px;padding:8px 12px">${T('정상')} — ${T('하람·의심 원재료 없음')} (${mc.halal}/${mats.length})</div>`;
+    const aiProc = blockers.length
+      ? blockers.map(b=>`<div class="banner warn" style="margin-bottom:6px;padding:8px 12px">${T('상세분석 필요')} — ${esc(b.code||'')}${b.target?` · ${esc(b.target)}`:''}</div>`).join('')
+      : `<div class="banner ok" style="margin-bottom:6px;padding:8px 12px">${T('정상')} — ${T('차단 사유 없음')}</div>`;
+    return `
+    ${audStepbar}
+    <div class="grid" style="grid-template-columns:1fr 1.35fr 1fr;gap:16px;align-items:start">
+      <div><!-- ① 업체 정보 · 제출 자료 -->
+        <div class="card"><h3>${T('업체 정보')} <span class="en">· Company</span></h3>
+          <div class="body">
+            <div class="kv"><span>${T('기업명')}</span><b>${esc(c.company_name||'—')}</b></div>
+            <div class="kv"><span>${T('신청일')}</span><b>${esc(String(c.created_at||'').slice(0,10)||'—')}</b></div>
+            <div class="kv"><span>${T('경로')} · Pathway</span><b>${esc(c.pathway||'미확정')}</b></div>
+            <div class="kv"><span>${T('제품')}</span><b>${prods.length}${T('건')}${prods.length?` — ${esc(prods.slice(0,2).map(p=>p.name).join(', '))}${prods.length>2?' 외':''}`:''}</b></div>
+            <div class="kv"><span>${T('원재료')}</span><b>${mats.length}${T('건')}</b></div>
+          </div></div>
+        <div class="card" style="margin-top:16px"><h3>${T('제출 자료')} <span class="en">· Documents</span><span class="r">${subItems.filter(x=>x.satisfied).length}/${subItems.length}</span></h3>
+          <div class="body tight" style="max-height:330px;overflow:auto">
+            ${subItems.map(it=>`<div class="li" style="align-items:center"><div class="tx">${it.satisfied?tag('ok',T('제출')):tag('bad',T('미제출'))} ${esc(it.doc_type_ko||it.doc_type)}</div></div>`).join('')||`<div class="muted small">${T('체크리스트 없음')}</div>`}
+            <div class="btnrow" style="margin-top:8px"><button class="btn" onclick="go('documents')">📄 ${T('문서 검토')} →</button></div>
+          </div></div>
+      </div>
+      <div><!-- ② AI 리포트 (AR 자동 분석) -->
+        <div class="card"><h3>🤖 ${T('AI 리포트')} <span class="en">· AR Auto Analysis</span>${as?`<span class="r">${tag('ok','AR '+T('완료'))}</span>`:''}</h3>
+          <div class="body">
+            ${as?'':`<div class="banner info" style="margin-bottom:10px">ℹ ${T('AI 분석 대기 — 클라이언트 제출 후 자동 분석되며, 아래 검토는 분석 완료 후 진행하세요.')}</div>`}
+            <div style="font-weight:700;font-size:13px;margin-bottom:6px">📄 ${T('문서 분석')}</div>${aiDoc}
+            <div style="font-weight:700;font-size:13px;margin:10px 0 6px">🧪 ${T('재료 분석')} <button class="btn" style="padding:2px 8px;font-size:11px;float:right" onclick="go('materials')">${T('원재료 검토')} →</button></div>${aiMat}
+            <div style="font-weight:700;font-size:13px;margin:10px 0 6px">🏭 ${T('제조 분석')}</div>${aiProc}
+          </div></div>
+        <div class="card" style="margin-top:16px"><h3>⚖️ ${T('오디터 검토')} <span class="en">· Review</span>${pre.reviewed?`<span class="r">${rv.verdict==='ready'?tag('ok',T('적합')):tag('warn',T('보완'))}</span>`:''}</h3>
+          <div class="body">
+            ${["documents","materials","process"].map(k=>{const cur=rvs[k]||{};const isNg=cur.ok===false;return `<div class="li" style="align-items:center;gap:10px;flex-wrap:wrap">
+              <div class="tx" style="min-width:52px"><b>${secKO[k]}</b></div>
+              <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="prsec_${k}" value="ok" ${isNg?'':'checked'} style="width:auto"> ${T('적합')}</label>
+              <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="prsec_${k}" value="ng" ${isNg?'checked':''} style="width:auto"> ${T('보완')}</label>
+              <input class="v" id="prnote_${k}" placeholder="${T('코멘트')}" value="${esc(cur.note||'')}" style="flex:1;min-width:120px"></div>`;}).join('')}
+            <div class="field" style="margin-top:8px"><label>${T('검토 총평')} · Note</label><input class="v" id="prReviewNote" value="${esc(rv.note||'')}"></div>
+            <div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="preReview('${id}')">💾 ${T('검토 저장')}</button></div>
+          </div></div>
+      </div>
+      <div><!-- ③ 추가 요청 서류 (자동 생성) -->
+        <div class="card"><h3>📨 ${T('추가 요청 서류')} <span class="en">· Doc Request</span></h3>
+          <div class="body">
+            <div class="muted small" style="margin-bottom:8px">${T('항목 체크 → 요청 서류 자동 구성 → 클라이언트 전송')}</div>
+            ${missItems.length?missItems.map(it=>`<label class="li" style="cursor:pointer;align-items:center"><input type="checkbox" class="prdoc" data-doc="${esc(it.doc_type)}" data-ko="${esc(it.doc_type_ko||it.doc_type)}" checked style="width:auto;margin-right:8px"> ${esc(it.doc_type_ko||it.doc_type)}</label>`).join(''):`<div class="muted small">${T('부족 서류 없음 — 아래에서 수기로 추가하세요')}</div>`}
+            <div class="btnrow" style="margin-top:6px;gap:6px;flex-wrap:wrap"><input class="v" id="prAddDoc" placeholder="${T('추가 서류명(수기)')}" style="flex:1;min-width:110px"><input class="v" id="prAddNote" placeholder="${T('비고')}" style="flex:1;min-width:90px"></div>
+            <div class="field" style="margin-top:8px"><label>${T('클라이언트 메시지')} · Message</label><input class="v" id="prMsg" placeholder="${T('요청 사유·안내를 입력')}"></div>
+            <div class="btnrow" style="margin-top:10px"><button class="btn ok" style="width:100%" onclick="preDocRequest('${id}')">📤 ${T('클라이언트로 전송')}</button></div>
+          </div></div>
+        <div class="card" style="margin-top:16px"><h3>🔁 ${T('회신 루프')} <span class="en">· Loop</span></h3>
+          <div class="body">
+            ${(pre.doc_request_history||[]).length?(pre.doc_request_history||[]).map(h=>`<div class="li"><div class="ic t-info">📤</div><div class="tx">${h.round}${T('회차')} ${T('요청')} · ${(h.items||[]).length}${T('건')}</div></div>`).join(''):`<div class="muted small">${T('요청 이력 없음')}</div>`}
+            ${pre.resubmit?`<div class="banner info" style="margin-top:8px">↩ ${T('최근 재제출')} ${pre.resubmit.round||'-'}${T('회차')} · ${esc(String(pre.resubmit.at||'').slice(0,16).replace('T',' '))}</div>`:''}
+            <div class="muted small" style="margin-top:8px">${T('문제 없으면')} <b>Pass</b>, ${T('미비 시')} <b>${T('재요청')}</b> — ${T('검토 저장의 적합/보완 판정으로 기록됩니다.')}</div>
+          </div></div>
+      </div>
+    </div>`;
+  }
   return `
   ${cliStepbar}
   <div class="grid side">
