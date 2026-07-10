@@ -1485,13 +1485,23 @@ def mock_audit_detail(case_id: str, user=Depends(auth.get_current_user), db: Ses
                  "at": latest_ev.get(k, {}).get("at")} for k, ko in MOCK_EVIDENCE_SECTIONS]
     docs = [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
              "review_status": d.review_status, "has_file": bool(d.content_b64),
+             "content_type": d.content_type,
              "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source,
              "uploaded_by": d.uploaded_by, "uploader_role": d.uploader_role,
              "captured_at": d.captured_at, "file_hash": d.file_hash}
             for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all()]
+    # 섹션별 제출 증거(사진·영상)를 판정 행에 직접 붙인다 — 오디터가 자료를 보지 않고 체크만 하는 것을 방지
+    for sec in sections:
+        dt = "mock_evidence_" + sec["section"]
+        ev = [d for d in docs if d["doc_type"] == dt]
+        ev.sort(key=lambda x: str(x.get("captured_at") or ""), reverse=True)
+        sec["evidence"] = ev
+        sec["evidence_count"] = len(ev)
     return {"case_id": case_id, "status": c.status,
             "manual": manual, "manual_history": manual_history,
             "sections": sections, "documents": docs,
+            "evidence_total": sum(s["evidence_count"] for s in sections),
+            "evidence_missing": [s["section"] for s in sections if not s["evidence_count"]],
             "ai_report": _mock_report_latest(db, case_id)}
 
 
@@ -5165,6 +5175,59 @@ def save_onsite_opinion(case_id: str, body: dict = None,
     return {"ok": True, "opinion": opinion}
 
 
+# ── 심사자(샤리아·최고승인자) 현장심사 의견 — 체크리스트는 수정 불가, 항목별 의견·코멘트만 기록.
+#    오디터가 수집한 증거를 보고 판단한다. WorkflowEvent(onsite.reviewer_opinion, latest-wins per item). ──
+ONSITE_REVIEWER_ACTION = "onsite.reviewer_opinion"
+
+
+def _onsite_reviewer_opinions(db, case_id):
+    """항목별 최신 심사자 의견 — {item_key: {opinion, comment, actor, role, at}}"""
+    out = {}
+    for e in (db.query(models.WorkflowEvent)
+              .filter(models.WorkflowEvent.case_id == case_id,
+                      models.WorkflowEvent.action == ONSITE_REVIEWER_ACTION)
+              .order_by(models.WorkflowEvent.created_at.asc(),
+                        models.WorkflowEvent.event_id.asc()).all()):
+        p = e.payload or {}
+        k = p.get("item_key")
+        if k:
+            out[k] = {"opinion": p.get("opinion"), "comment": p.get("comment", ""),
+                      "actor": e.actor_id, "role": e.actor_type,
+                      "at": e.created_at.isoformat() if e.created_at else None}
+    return out
+
+
+@app.get("/cases/{case_id}/onsite/reviewer-opinions")
+def get_onsite_reviewer_opinions(case_id: str, user=Depends(auth.get_current_user),
+                                 db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    ops = _onsite_reviewer_opinions(db, case_id)
+    return {"items": ops, "count": len(ops),
+            "negative": sum(1 for v in ops.values() if v.get("opinion") == "nonconformity")}
+
+
+@app.post("/cases/{case_id}/onsite/reviewer-opinion")
+def save_onsite_reviewer_opinion(case_id: str, body: dict = None,
+                                 user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+                                 db: Session = Depends(get_db)):
+    """샤리아·최고승인자 항목별 의견(적합/부적합) + 코멘트. 체크리스트 원본은 건드리지 않는다."""
+    b = body or {}
+    key = str(b.get("item_key") or "").strip()
+    if key not in {k for k, _ in ONSITE_ITEMS}:
+        raise HTTPException(422, {"code": "INVALID_ITEM_KEY"})
+    op = str(b.get("opinion") or "").strip()
+    if op not in ("comply", "nonconformity"):
+        raise HTTPException(422, {"code": "BAD_OPINION", "allowed": ["comply", "nonconformity"]})
+    comment = str(b.get("comment") or "").strip()[:2000]
+    if op == "nonconformity" and len(comment) < 5:
+        raise HTTPException(422, {"code": "COMMENT_REQUIRED", "hint": "부적합 의견은 코멘트 5자 이상"})
+    c = _get_case(db, case_id, user)
+    sm.record_event(db, c, c.status, c.status, ONSITE_REVIEWER_ACTION, user["role"], user["uid"],
+                    {"item_key": key, "opinion": op, "comment": comment})
+    db.commit()
+    return {"ok": True, "item_key": key, "opinion": op}
+
+
 @app.get("/cases/{case_id}/onsite-opinion")
 def get_onsite_opinion(case_id: str, user=Depends(auth.get_current_user),
                        db: Session = Depends(get_db)):
@@ -8026,6 +8089,209 @@ def _material_source_docs(db, case_id):
     for d in rows:
         out.setdefault(d.material_id, []).append({"document_id": d.document_id, "filename": d.filename})
     return out
+
+
+# ══ 사전심사 심사자 뷰(오디터·샤리아·운영자) — 기업/공장/문서 원문 + 분석 드릴다운 ══
+# 부정(하람·부적합) 우선 정렬: 심사자는 문제부터 본다.
+_NEG_RANK = {"BLOCK": 0, "NEEDS_EVIDENCE": 1, "CLEARED": 2, "PASS": 2}
+_DOC_NEG_RANK = {"rejected": 0, "rework": 1, "pending": 2, None: 2, "approved": 3}
+
+
+def _preassess_company(db, c):
+    """기업·업체 정보(신청서 프로필 + org 상세)."""
+    px = c.profile_ext or {}
+    org = db.get(models.Org, c.org_id)
+    oe = (org.profile_ext or {}) if org else {}
+    return {"company_name": c.company_name, "org_id": c.org_id,
+            "org_name": (org.name if org else None), "org_address": (org.address if org else None),
+            "nib": c.nib, "responsible_person": c.responsible_person,
+            "halal_supervisor": c.halal_supervisor, "email": c.email, "phone": c.phone,
+            "address": c.address, "pathway": c.pathway, "status": c.status,
+            "risk_category": c.risk_category, "is_msme": c.is_msme,
+            "created_at": str(c.created_at or "")[:10],
+            "profile_ext": {k: px.get(k) for k in
+                            ("city", "country", "zip", "business_type", "pic_name", "pic_title",
+                             "pic_phone", "pic_email", "cp_name", "cp_title", "cp_phone", "cp_email",
+                             "registration_type", "application_type", "registration_status",
+                             "product_type", "total_employee", "marketing_type", "tax_id",
+                             "production_capacity") if px.get(k)},
+            "org_profile_ext": oe}
+
+
+def _preassess_factories(db, c):
+    out = []
+    for f in _case_facilities(db, c):
+        d = _fac_dict(f)
+        d["source_docs"] = (f.profile_ext or {}).get("source_docs") or []
+        out.append(d)
+    return out
+
+
+def _preassess_dossier(db, c):
+    """사전심사 심사자 뷰 종합 데이터 — 기업/공장 상세 + 문서·재료 분석(부정 우선 정렬).
+
+    · materials: 원재료별 판정·근거·필요증빙·대체재·소스문서(원문 링크) — BLOCK→NEEDS_EVIDENCE→CLEARED 순
+    · documents: 문서별 분류·신뢰도·추출필드·검수상태 — rejected→rework→pending→approved 순
+    """
+    case_id = c.case_id
+    rep = _material_report(db, c)
+    mats = sorted(rep["materials"],
+                  key=lambda m: (_NEG_RANK.get(m.get("verdict"), 9), -(1 if m.get("najis") else 0),
+                                 (m.get("name") or "")))
+    from .intake import DOC_KO
+    docs = []
+    for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all():
+        docs.append({"document_id": d.document_id, "filename": d.filename,
+                     "doc_type": d.doc_type, "doc_type_ko": DOC_KO.get(d.doc_type, d.doc_type),
+                     "confidence": d.confidence, "fields": d.fields or {},
+                     "excerpt": (d.text_excerpt or "")[:1200],
+                     "review_status": d.review_status, "has_file": bool(d.content_b64),
+                     "material_id": d.material_id, "file_hash": d.file_hash,
+                     "uploaded_by": d.uploaded_by, "uploader_role": d.uploader_role,
+                     "captured_at": d.captured_at,
+                     "created_at": d.created_at.isoformat() if d.created_at else None})
+    docs.sort(key=lambda x: (_DOC_NEG_RANK.get(x["review_status"], 2),
+                             (x["confidence"] or 0), x["filename"] or ""))
+    return {"case_id": case_id, "company": _preassess_company(db, c),
+            "factories": _preassess_factories(db, c),
+            "materials": mats, "summary": rep["summary"],
+            "quantitative": rep.get("quantitative") or [],
+            "quant_fail": rep.get("quant_fail", 0),
+            "documents": docs,
+            "doc_counts": {"total": len(docs),
+                           "negative": sum(1 for d in docs if d["review_status"] in ("rejected", "rework")),
+                           "pending": sum(1 for d in docs if not d["review_status"] or d["review_status"] == "pending"),
+                           "approved": sum(1 for d in docs if d["review_status"] == "approved")},
+            "review": _preassess_review_latest(db, case_id),
+            "doc_requests": _preassess_doc_requests(db, case_id)}
+
+
+@app.get("/cases/{case_id}/preassess/dossier")
+def get_preassess_dossier(case_id: str,
+                          user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
+                                                          "consultant")),
+                          db: Session = Depends(get_db)):
+    """사전심사 심사자 뷰(오디터·샤리아·운영자·컨설턴트) 종합 데이터."""
+    c = _get_case(db, case_id, user)
+    return _preassess_dossier(db, c)
+
+
+@app.get("/cases/{case_id}/preassess-report.docx")
+def preassess_report_docx(case_id: str,
+                          user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
+                                                          "consultant")),
+                          db: Session = Depends(get_db)):
+    """사전심사 결과 보고서 — 편집 가능한 Word(.docx). 기업·공장·문서·성분(부정 우선)·판정 수록."""
+    import io as _io
+    import docx as _docx
+    from docx.shared import Pt
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    dos = _preassess_dossier(db, c)
+    doc = _docx.Document()
+    doc.add_heading("사전심사 결과 보고서 · Pre-assessment Report", level=0)
+    doc.add_paragraph("GL-HAC AI · %s · 생성일 %s" % (c.company_name or "-", date.today().isoformat()))
+
+    def table(rows, headers=None):
+        t = doc.add_table(rows=0, cols=len(headers or rows[0]))
+        t.style = "Light Grid Accent 1"
+        if headers:
+            hc = t.add_row().cells
+            for i, h in enumerate(headers):
+                hc[i].text = str(h)
+        for r in rows:
+            rc = t.add_row().cells
+            for i, v in enumerate(r):
+                rc[i].text = "" if v is None else str(v)
+        return t
+
+    comp = dos["company"]
+    doc.add_heading("1. 기업 정보 · Company", level=1)
+    px = comp.get("profile_ext") or {}
+    table([["기업명", comp.get("company_name")], ["NIB", comp.get("nib")],
+           ["대표/책임자", comp.get("responsible_person")], ["할랄 감독자", comp.get("halal_supervisor")],
+           ["주소", comp.get("address")], ["연락처", "%s / %s" % (comp.get("phone") or "-", comp.get("email") or "-")],
+           ["경로 · Pathway", comp.get("pathway")], ["위험등급", comp.get("risk_category")],
+           ["등록유형", px.get("registration_type")], ["신청유형", px.get("application_type")],
+           ["담당자(PIC)", "%s %s" % (px.get("pic_name") or "-", px.get("pic_title") or "")],
+           ["총 직원 수", px.get("total_employee")], ["생산능력", px.get("production_capacity")]],
+          headers=["항목", "내용"])
+
+    doc.add_heading("2. 공장·시설 정보 · Facilities", level=1)
+    facs = dos.get("factories") or []
+    if facs:
+        table([[f.get("label") or f.get("name"), f.get("reg_no"), f.get("address"),
+                "%s / %s" % (f.get("city") or "-", f.get("country") or "-")] for f in facs],
+              headers=["공장", "등록번호", "주소", "도시/국가"])
+    else:
+        doc.add_paragraph("등록된 공장 정보 없음.")
+
+    doc.add_heading("3. 문서 분석 · Document Analysis", level=1)
+    docs = dos.get("documents") or []
+    neg = [d for d in docs if d.get("review_status") in ("rejected", "rework")]
+    rest = [d for d in docs if d not in neg]
+    doc.add_paragraph("총 %d건 · 부정(반려·재작업) %d건" % (len(docs), len(neg)))
+    if docs:
+        table([[d.get("filename"), d.get("doc_type_ko"),
+                ("%.0f%%" % (100 * d["confidence"])) if d.get("confidence") else "-",
+                d.get("review_status") or "미검수"] for d in (neg + rest)],
+              headers=["파일", "분류", "AI 신뢰도", "검수 상태"])
+
+    doc.add_heading("4. 성분(원재료) 분석 · Material Analysis", level=1)
+    s = dos["summary"]
+    doc.add_paragraph("총 %d건 · 차단(하람) %d · 증빙필요 %d · 적합 %d · najis 위험 %d"
+                      % (s["total"], s["blocked"], s["needs_evidence"], s["cleared"], s["najis"]))
+    doc.add_paragraph("※ 부정 항목(차단·증빙필요)을 먼저 기재합니다.")
+    VK = {"BLOCK": "차단(하람)", "NEEDS_EVIDENCE": "증빙 필요", "CLEARED": "적합", "PASS": "적합"}
+    for m in dos["materials"]:
+        h = doc.add_heading("%s — %s" % (m.get("name"), VK.get(m.get("verdict"), m.get("verdict") or "-")), level=2)
+        for r in h.runs:
+            r.font.size = Pt(12)
+        if m.get("explanation"):
+            doc.add_paragraph(m["explanation"])
+        meta = []
+        if m.get("severity"):
+            meta.append("심각도 %s" % m["severity"])
+        if m.get("najis"):
+            meta.append("najis 위험")
+        if m.get("required_evidence"):
+            meta.append("필요 증빙: " + ", ".join(m["required_evidence"]))
+        if m.get("alternatives"):
+            meta.append("대체재: " + ", ".join(m["alternatives"]))
+        if m.get("source_docs"):
+            meta.append("근거 문서: " + ", ".join(d.get("filename") or d.get("document_id") for d in m["source_docs"]))
+        if meta:
+            doc.add_paragraph(" · ".join(meta))
+
+    q = [x for x in (dos.get("quantitative") or []) if x.get("value") is not None]
+    if q:
+        doc.add_heading("5. 정량 기준 비교 · Quantitative", level=1)
+        table([[x["param_ko"], "%s %s" % (x["value"], x.get("unit") or ""),
+                "≤ %s" % x.get("threshold"), {"pass": "적합", "fail": "부적합"}.get(x.get("verdict"), "-")]
+               for x in q], headers=["항목", "측정값", "기준", "판정"])
+
+    rv = dos.get("review") or {}
+    doc.add_heading("6. 오디터 검토 결과 · Auditor Review", level=1)
+    if rv:
+        secko = {"documents": "문서", "materials": "재료", "process": "제조"}
+        table([[secko.get(k, k), "적합" if (v or {}).get("ok") else "보완", (v or {}).get("note") or ""]
+               for k, v in (rv.get("sections") or {}).items()], headers=["섹션", "판정", "코멘트"])
+        doc.add_paragraph("종합 판정: %s" % {"ready": "적합(진행 가능)", "supplement": "보완 필요"}
+                          .get(rv.get("verdict"), rv.get("verdict") or "미검토"))
+        if rv.get("note"):
+            doc.add_paragraph("검토 총평: " + rv["note"])
+    else:
+        doc.add_paragraph("오디터 검토 미기록.")
+    doc.add_paragraph("")
+    doc.add_paragraph("※ 본 보고서는 AI 온톨로지 기반 준비용 분석이며, 공식 판정은 BPJPH/MUI Fatwa 절차로 확정됩니다.")
+
+    _audit(db, user, "preassess_report.docx", "case", case_id, case_id)
+    db.commit()
+    buf = _io.BytesIO()
+    doc.save(buf)
+    return Response(content=buf.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": "attachment; filename=preassess_%s.docx" % case_id[:8]})
 
 
 @app.post("/cases/{case_id}/material-report/snapshot")

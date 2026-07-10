@@ -370,7 +370,8 @@
       <div class="crumb" id="crumb"><b>대시보드</b> · Dashboard</div>
       <div class="spacer"></div>
       <span class="pill live" id="livePill" role="status" aria-live="polite" title="실시간 연결 상태 · Live status"><span class="live-dot" id="liveDot" aria-hidden="true"></span><span id="liveLabel">Live · 실시간</span></span>
-      <span class="pill" id="casePill" style="display:none">📁 <select id="caseSel" onchange="onCaseChange(this.value)"></select></span>
+      <span class="pill" id="casePill" style="display:none">📁 <select id="caseSel" onchange="onCaseChange(this.value)"></select>
+        <code id="caseIdChip" onclick="copyCaseId()" title="클릭하여 복사" style="display:none;cursor:pointer;margin-left:6px;font-size:10.5px;color:var(--ink3);font-family:ui-monospace,monospace;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle"></code></span>
       <span style="position:relative"><span class="pill" id="notifBell" role="button" tabindex="0" aria-label="알림 · Notifications" onclick="toggleNotif()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleNotif()}">🔔 <b id="notifCount" style="display:none;color:var(--bad)">0</b></span>
         <div id="notifPanel" class="notif-panel"></div></span>
       <span class="pill" role="button" tabindex="0" aria-label="케이스 패널 · Panel" onclick="toggleRPanel()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRPanel()}">📋</span>
@@ -471,7 +472,7 @@ const MENU_ACCESS = {
   caseList: ["client","consultant","auditor","sharia","ops","admin"],
   dashboard:[], workflow:[],  // 개요 통합: 케이스 디테일(renderCaseDetail)로 흡수 — 메뉴 비노출
   application:["client","consultant","admin"],
-  preassess:["client","consultant","auditor","admin"],   // 오디터 사전심사 뷰(3분할 회신루프)는 기구현 — 메뉴 접근 누락 수정(2026-07-10)
+  preassess:["client","consultant","auditor","sharia","ops","admin"],   // 심사자 뷰: 오디터·샤리아(열람)·최고운영자   // 오디터 사전심사 뷰(3분할 회신루프)는 기구현 — 메뉴 접근 누락 수정(2026-07-10)
   materials:["client","consultant","auditor","admin"],
   aiExtractions:["consultant","client","auditor","admin"],   // G14 M08 AI 검수 큐 — 백엔드 review 가드(consultant·penyelia_halal→client·auditor·fatwa_liaison)와 정합. 조회는 케이스 소유자면 가능
 
@@ -773,17 +774,27 @@ async function ensureRegions(cases){
 async function refreshCaseSel(){
   const pill=document.getElementById("casePill");
   const sel=document.getElementById("caseSel");
+  const cidChip=document.getElementById("caseIdChip");
   const cases=await loadCases();
-  if(CASE_SCOPED.has(CUR) && cases.length){
+  // 현재 케이스는 전 화면 상단에 상시 노출(케이스 스코프 화면이 아니어도) — 화면 이동해도 컨텍스트 유지
+  if(cases.length){
     if(!CURCASE || !cases.find(c=>c.case_id===CURCASE)){
       const saved=(()=>{try{return localStorage.getItem("glhac_case")}catch(_){return null}})();
       CURCASE=(saved&&cases.find(c=>c.case_id===saved))?saved:cases[0].case_id;
     }
     sel.innerHTML=cases.map(c=>`<option value="${c.case_id}"${c.case_id===CURCASE?" selected":""}>${esc(c.company_name||short(c.case_id))}</option>`).join("");
     pill.style.display="";
+    if(cidChip){cidChip.textContent=CURCASE;cidChip.title=T('케이스 ID')+' · '+CURCASE+' — '+T('클릭하여 복사');cidChip.style.display="";}
   }else{
     pill.style.display="none";
+    if(cidChip)cidChip.style.display="none";
   }
+}
+function copyCaseId(){
+  if(!CURCASE)return;
+  const done=()=>toast(T('케이스 ID 복사됨')+' · '+short(CURCASE));
+  try{navigator.clipboard.writeText(CURCASE).then(done,done);}
+  catch(_){const ta=document.createElement("textarea");ta.value=CURCASE;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");}catch(__){}ta.remove();done();}
 }
 function onCaseChange(id){CURCASE=id;try{localStorage.setItem("glhac_case",id)}catch(_){}applyView();}
 
@@ -1997,6 +2008,30 @@ async function loadDocPreview(docId){
     else{box.innerHTML=`<div class="banner info">이 형식은 인라인 미리보기를 지원하지 않습니다 · <a href="#" onclick="viewDoc('${esc(docId)}');return false" style="color:inherit;text-decoration:underline">파일 내려받기 ↓</a></div>`;}
   }catch(e){box.innerHTML='<div class="muted small">미리보기 실패</div>';}
 }
+/* 사전심사 심사자 뷰 — 문서 원문 인라인 뷰어 모달(loadDocPreview와 동일 보안 패턴: sandbox iframe·blob·SVG 차단) */
+async function docViewer(docId,title){
+  if(!docId)return;
+  const ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:rgba(12,22,16,.6);z-index:9000;display:flex;align-items:center;justify-content:center;padding:22px";
+  ov.innerHTML=`<div class="modalbox" style="width:min(940px,96vw);height:min(90vh,1100px);display:flex;flex-direction:column;overflow:hidden">
+    <h3 style="display:flex;align-items:center;gap:10px"><span style="flex:1">📄 ${esc(title||T('문서 원문'))}</span>
+      <button class="btn" data-act="dl">⬇ ${T('다운로드')}</button><button class="btn" data-act="x">✕ ${T('닫기')}</button></h3>
+    <div id="dvBody" style="flex:1;overflow:auto"><div class="muted small">${T('불러오는 중…')}</div></div></div>`;
+  const close=()=>ov.remove();
+  ov.addEventListener("click",e=>{if(e.target===ov)close();});
+  ov.querySelector('[data-act="x"]').onclick=close;
+  ov.querySelector('[data-act="dl"]').onclick=()=>viewDoc(docId);
+  document.body.appendChild(ov);
+  const box=ov.querySelector("#dvBody");
+  try{
+    const r=await fetch(`/documents/${docId}/file`,{headers:{Authorization:"Bearer "+token()}});
+    if(!r.ok){box.innerHTML=`<div class="banner info">${T('첨부 파일이 없습니다')}</div>`;return;}
+    const blob=await r.blob();const ct=(blob.type||"").toLowerCase();
+    if(ct.includes("pdf")){const u=URL.createObjectURL(blob);box.innerHTML=`<iframe src="${u}" title="PDF" sandbox style="width:100%;height:100%;min-height:70vh;border:0;background:#525659"></iframe>`;setTimeout(()=>URL.revokeObjectURL(u),180000);}
+    else if(ct.startsWith("image/")&&ct!=="image/svg+xml"){const u=URL.createObjectURL(blob);box.innerHTML=`<img src="${u}" alt="preview" style="max-width:100%">`;setTimeout(()=>URL.revokeObjectURL(u),180000);}
+    else{box.innerHTML=`<div class="banner info">${T('이 형식은 인라인 미리보기를 지원하지 않습니다')} — <a href="#" onclick="viewDoc('${esc(docId)}');return false" style="color:inherit;text-decoration:underline">${T('내려받기')} ↓</a></div>`;}
+  }catch(e){box.innerHTML=`<div class="banner bad">${T('미리보기 실패')}</div>`;}
+}
 function errCard(err){
   const code=(err&&(err.code||err.detail))||(typeof err==="string"?err:"오류");
   return `<div class="card"><div class="body"><div class="banner bad">⛔ 데이터를 불러오지 못했습니다 · ${esc(typeof code==="object"?JSON.stringify(code):code)}</div></div></div>`;
@@ -2676,78 +2711,170 @@ SCREEN.preassess=async()=>{
     <div class="body"><div class="stepbar" style="overflow-x:auto">${cliSteps.map((s,i)=>{const n=i+1;const cur=n===cliStage;return `<div class="step ${cur?'cur':''}"><div class="dot">${n<cliStage?'✓':n}</div><span>${T(s[0])}<span class="en">${s[1]}</span></span></div>`+(i<cliSteps.length-1?`<div class="stepline ${n<cliStage?'done':''}"></div>`:'');}).join('')}</div></div></div>`:'';
   /* ── A03 사전심사 오디터 뷰 (UI구성설계서): 3분할 — 좌 업체정보·제출자료 / 중 AI 리포트(문서·재료·제조) / 우 추가요청서류 자동생성.
      클라이언트용 구성(AI 실행·대상품목)과 완전히 분리 — 회의 지적 2026-07-10 ── */
-  if(ROLE==="auditor"){
-    const audStage=pre.reviewed?4:(as?3:2);   // 1 신청중 → 2 AR 분석중 → 3 오디터 검사중 → 4 리포트 도착
+  /* ── A03 사전심사 심사자 뷰(오디터·샤리아·최고운영자) — 2분할 구성.
+       좌: 기업/공장/업체 상세 + 문서 원문 링크 · 우: 오디터 검토·추가요청서류
+       하단(1분할 전체폭): AI 리포트 — 문서분석·재료분석 파일별 접이식, 부정 항목 우선 ── */
+  if(["auditor","sharia","ops"].includes(ROLE)){
+    const dos=await API(`/cases/${id}/preassess/dossier`).catch(()=>null);
+    if(!dos)return `<div class="card"><div class="body muted">${T('심사 데이터를 불러오지 못했습니다.')}</div></div>`;
+    const audStage=pre.reviewed?4:(as?3:2);
     const audSteps=[['신청중','Submitted'],['AR 분석중','AI Report'],['오디터 검사중','Reviewing'],['리포트 도착','Delivered']];
-    const audStepbar=`<div class="card" style="margin-bottom:16px"><h3>${T('사전심사')} <span class="en">· Pre-assessment (Auditor)</span><span class="r">${esc(c.company_name||'')}</span></h3>
+    const audStepbar=`<div class="card" style="margin-bottom:16px"><h3>${T('사전심사')} <span class="en">· Pre-assessment (Reviewer)</span><span class="r">${esc(c.company_name||'')}</span></h3>
       <div class="body"><div class="stepbar" style="overflow-x:auto">${audSteps.map((s,i)=>{const n=i+1;const cur=n===audStage;return `<div class="step ${cur?'cur':''}"><div class="dot">${n<audStage?'✓':n}</div><span>${T(s[0])}<span class="en">${s[1]}</span></span></div>`+(i<audSteps.length-1?`<div class="stepline ${n<audStage?'done':''}"></div>`:'');}).join('')}</div></div></div>`;
-    const subItems=(chk.checklist||[]);
-    const matBad=mats.filter(m=>String(m.status||m.screen_status||'').toLowerCase()==='haram');
-    const matWarn=mats.filter(m=>String(m.status||m.screen_status||'').toLowerCase()==='mushbooh');
-    const blockers=(as&&as.blockers)||[];
-    const aiDoc = missN
-      ? (chk.missing||[]).map(x=>`<div class="banner warn" style="margin-bottom:6px;padding:8px 12px">${T('상세분석 필요')} — ${esc((x&&(x.doc_type_ko||x.doc_type))||x)} ${T('미제출')}</div>`).join('')
-      : `<div class="banner ok" style="margin-bottom:6px;padding:8px 12px">${T('정상')} — ${T('필수 서류 완비')}</div>`;
-    const aiMat = (matBad.map(m=>`<div class="banner bad" style="margin-bottom:6px;padding:8px 12px"><b>critical</b> — ${esc(m.name)} · ${T('하람')} ${T('위험')}</div>`).join('')
-      + matWarn.map(m=>`<div class="banner warn" style="margin-bottom:6px;padding:8px 12px">${T('상세분석 필요')} — ${esc(m.name)} · ${T('의심')}</div>`).join(''))
-      || `<div class="banner ok" style="margin-bottom:6px;padding:8px 12px">${T('정상')} — ${T('하람·의심 원재료 없음')} (${mc.halal}/${mats.length})</div>`;
-    const aiProc = blockers.length
-      ? blockers.map(b=>`<div class="banner warn" style="margin-bottom:6px;padding:8px 12px">${T('상세분석 필요')} — ${esc(b.code||'')}${b.target?` · ${esc(b.target)}`:''}</div>`).join('')
-      : `<div class="banner ok" style="margin-bottom:6px;padding:8px 12px">${T('정상')} — ${T('차단 사유 없음')}</div>`;
+    const canReviewPre=["auditor","ops"].includes(ROLE);   // 샤리아는 열람(판정은 오디터·운영자)
+
+    /* ① 좌: 기업·공장·업체 정보 상세 */
+    const co=dos.company||{}, px=co.profile_ext||{};
+    const kv=(k,v)=>v?`<div class="kv"><span>${T(k)}</span><b>${esc(String(v))}</b></div>`:'';
+    const compCard=`<div class="card"><h3>🏢 ${T('기업 정보')} <span class="en">· Company</span>${co.pathway?`<span class="r">${bTag(co.pathway==='self_declare'?'info':'mute',co.pathway)}</span>`:''}</h3>
+      <div class="body">
+        ${kv('기업명',co.company_name)}${kv('NIB',co.nib)}${kv('대표·책임자',co.responsible_person)}
+        ${kv('할랄 감독자',co.halal_supervisor)}${kv('주소',co.address)}${kv('연락처',co.phone)}${kv('이메일',co.email)}
+        ${kv('위험등급',co.risk_category)}${kv('신청일',co.created_at)}
+        <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;font-size:12.5px">${T('업체 상세 정보')} <span class="en">· Details</span></summary>
+          <div style="padding-top:6px">
+          ${kv('등록유형',px.registration_type)}${kv('신청유형',px.application_type)}${kv('등록현황',px.registration_status)}
+          ${kv('업종',px.business_type)}${kv('제품유형',px.product_type)}${kv('도시',px.city)}${kv('국가',px.country)}${kv('우편번호',px.zip)}
+          ${kv('담당자(PIC)',px.pic_name)}${kv('PIC 직책',px.pic_title)}${kv('PIC 연락처',px.pic_phone)}${kv('PIC 이메일',px.pic_email)}
+          ${kv('업무담당자(CP)',px.cp_name)}${kv('CP 연락처',px.cp_phone)}
+          ${kv('총 직원 수',px.total_employee)}${kv('생산능력',px.production_capacity)}${kv('마케팅 유형',px.marketing_type)}${kv('사업자번호',px.tax_id)}
+          ${Object.keys(px).length?'':`<div class="muted small">${T('상세 정보 미입력')}</div>`}
+          </div></details>
+      </div></div>`;
+    const facs=dos.factories||[];
+    const facCard=`<div class="card" style="margin-top:16px"><h3>🏭 ${T('공장·시설 정보')} <span class="en">· Facilities</span><span class="r">${facs.length}${T('개')}</span></h3>
+      <div class="body tight">
+      ${facs.length?facs.map(f=>`<details class="dd" style="border:1px solid var(--line);border-radius:8px;margin-bottom:6px">
+        <summary style="cursor:pointer;padding:8px 10px;font-weight:700;font-size:13px">${esc(f.label||f.name||T('공장'))} <span class="muted small">${esc(f.city||'')} ${esc(f.country||'')}</span></summary>
+        <div style="padding:8px 12px;border-top:1px solid var(--line)">
+          ${kv('공장명',f.name)}${kv('등록번호',f.reg_no)}${kv('주소',f.address)}${kv('도시',f.city)}${kv('국가',f.country)}${kv('우편번호',f.zip)}
+          ${(f.source_docs||[]).length?`<div class="muted small" style="margin-top:6px">${T('원본 문서')}: ${(f.source_docs||[]).map(d=>`<span class="chip" style="cursor:pointer" onclick="docViewer('${esc(d.document_id||d)}')">📄 ${esc(d.filename||d.document_id||d)}</span>`).join(' ')}</div>`:''}
+          <div class="btnrow" style="margin-top:8px"><button class="btn xs" onclick="serverPdf('/cases/${id}/facilities/${f.facility_id}/docs/factory-profile.pdf','factory_${esc(f.facility_id.slice(0,6))}.pdf')">📄 ${T('공장 프로필 PDF')}</button></div>
+        </div></details>`).join(''):`<div class="muted small">${T('등록된 공장 없음')}</div>`}
+      </div></div>`;
+    /* 제출 서류 — 원문 뷰어 링크 */
+    const dcs=dos.doc_counts||{};
+    const docListCard=`<div class="card" style="margin-top:16px"><h3>📁 ${T('제출 문서 원문')} <span class="en">· Source documents</span>
+      <span class="r">${dcs.total||0}${T('건')}${dcs.negative?` · <span style="color:var(--bad)">${T('부정')} ${dcs.negative}</span>`:''}</span></h3>
+      <div class="body tight" style="max-height:300px;overflow:auto">
+      ${(dos.documents||[]).map(d=>{const rs=d.review_status;const t=rs==='rejected'?['bad','반려']:rs==='rework'?['bad','재작업']:rs==='approved'?['ok','승인']:['warn','미검수'];
+        return `<div class="li" style="align-items:center"><div class="tx"><b>${esc(d.filename||'-')}</b> ${tag(t[0],T(t[1]))}
+          <div class="muted small">${esc(d.doc_type_ko||d.doc_type||'')}${d.confidence?` · ${T('신뢰도')} ${Math.round(d.confidence*100)}%`:''}</div></div>
+          ${d.has_file?`<button class="btn xs" onclick="docViewer('${d.document_id}')">👁 ${T('원문 보기')}</button>`:`<span class="muted small">${T('파일 없음')}</span>`}</div>`;}).join('')
+        ||`<div class="muted small">${T('제출 문서 없음')}</div>`}
+      </div></div>`;
+
+    /* ② 우: 오디터 검토 + 추가요청서류 + 회신루프 + 보고서 출력 */
+    const reviewCard=`<div class="card"><h3>⚖️ ${T('오디터 검토')} <span class="en">· Review</span>${pre.reviewed?`<span class="r">${rv.verdict==='ready'?tag('ok',T('적합')):tag('warn',T('보완'))}</span>`:''}</h3>
+      <div class="body">
+        ${canReviewPre?["documents","materials","process"].map(k=>{const cur=rvs[k]||{};const isNg=cur.ok===false;return `<div class="li" style="align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="tx" style="min-width:52px"><b>${secKO[k]}</b></div>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="prsec_${k}" value="ok" ${isNg?'':'checked'} style="width:auto"> ${T('적합')}</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="prsec_${k}" value="ng" ${isNg?'checked':''} style="width:auto"> ${T('보완')}</label>
+          <input class="v" id="prnote_${k}" placeholder="${T('코멘트')}" value="${esc(cur.note||'')}" style="flex:1;min-width:110px"></div>`;}).join('')
+        :`<div class="banner info" style="margin-bottom:8px">ℹ ${T('샤리아 위원은 열람 전용입니다. 판정은 담당 오디터가 수행합니다.')}</div>
+          ${["documents","materials","process"].map(k=>{const cur=rvs[k]||{};return `<div class="li"><div class="tx"><b>${secKO[k]}</b> ${cur.ok===false?tag('warn',T('보완')):tag('ok',T('적합'))} <span class="muted small">${esc(cur.note||'')}</span></div></div>`;}).join('')}`}
+        ${canReviewPre?`<div class="field" style="margin-top:8px"><label>${T('검토 총평')} · Note</label><input class="v" id="prReviewNote" value="${esc(rv.note||'')}"></div>
+        <div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="preReview('${id}')">💾 ${T('검토 저장')}</button></div>`:''}
+      </div></div>`;
+    const reqCard=canReviewPre?`<div class="card" style="margin-top:16px"><h3>📨 ${T('추가 요청 서류')} <span class="en">· Doc Request</span></h3>
+      <div class="body">
+        <div class="muted small" style="margin-bottom:8px">${T('항목 체크 → 요청 서류 자동 구성 → 클라이언트 전송')}</div>
+        ${missItems.length?missItems.map(it=>`<label class="li" style="cursor:pointer;align-items:center"><input type="checkbox" class="prdoc" data-doc="${esc(it.doc_type)}" data-ko="${esc(it.doc_type_ko||it.doc_type)}" checked style="width:auto;margin-right:8px"> ${esc(it.doc_type_ko||it.doc_type)}</label>`).join(''):`<div class="muted small">${T('부족 서류 없음 — 아래에서 수기로 추가하세요')}</div>`}
+        <div class="btnrow" style="margin-top:6px;gap:6px;flex-wrap:wrap"><input class="v" id="prAddDoc" placeholder="${T('추가 서류명(수기)')}" style="flex:1;min-width:110px"><input class="v" id="prAddNote" placeholder="${T('비고')}" style="flex:1;min-width:90px"></div>
+        <div class="field" style="margin-top:8px"><label>${T('클라이언트 메시지')} · Message</label><input class="v" id="prMsg" placeholder="${T('요청 사유·안내를 입력')}"></div>
+        <div class="btnrow" style="margin-top:10px"><button class="btn ok" style="width:100%" onclick="preDocRequest('${id}')">📤 ${T('클라이언트로 전송')}</button></div>
+      </div></div>`:'';
+    const loopCard=`<div class="card" style="margin-top:16px"><h3>🔁 ${T('회신 루프')} <span class="en">· Loop</span></h3>
+      <div class="body">
+        ${(pre.doc_request_history||[]).length?(pre.doc_request_history||[]).map(h=>`<div class="li"><div class="ic t-info">📤</div><div class="tx">${h.round}${T('회차')} ${T('요청')} · ${(h.items||[]).length}${T('건')}</div></div>`).join(''):`<div class="muted small">${T('요청 이력 없음')}</div>`}
+        ${pre.resubmit?`<div class="banner info" style="margin-top:8px">↩ ${T('최근 재제출')} ${pre.resubmit.round||'-'}${T('회차')} · ${esc(String(pre.resubmit.at||'').slice(0,16).replace('T',' '))}</div>`:''}
+      </div></div>`;
+    const outCard=`<div class="card" style="margin-top:16px"><h3>📄 ${T('사전심사 보고서')} <span class="en">· Report</span></h3>
+      <div class="body">
+        <div class="muted small" style="margin-bottom:8px">${T('기업·공장·문서분석·성분분석(부정 우선)·검토 판정을 담은 편집 가능한 Word 문서로 출력합니다.')}</div>
+        <div class="btnrow">
+          <button class="btn pri" onclick="serverPdf('/cases/${id}/preassess-report.docx','preassess_${short(id)}.docx')">📝 ${T('워드(.docx) 다운로드')}</button>
+          <button class="btn" onclick="materialReport('${id}')">🔬 ${T('성분 리포트')}</button>
+          <button class="btn" onclick="serverPdf('/cases/${id}/material-report.pdf','material_report.pdf')">⬇ ${T('성분 PDF')}</button>
+        </div></div></div>`;
+
+    /* ③ 하단 1분할: AI 리포트 — 문서분석 / 재료분석 (부정 우선 · 파일별 접이식) */
+    const VK={BLOCK:['bad','차단(하람)'],NEEDS_EVIDENCE:['warn','증빙 필요'],CLEARED:['ok','적합'],PASS:['ok','적합']};
+    const negM=(dos.materials||[]).filter(m=>m.verdict==='BLOCK'||m.verdict==='NEEDS_EVIDENCE'||m.najis);
+    const posM=(dos.materials||[]).filter(m=>!(m.verdict==='BLOCK'||m.verdict==='NEEDS_EVIDENCE'||m.najis));
+    const matRow=m=>{const v=VK[m.verdict]||['mute',m.verdict||'-'];
+      return `<details class="dd" style="border:1px solid var(--line);border-radius:8px;margin-bottom:6px;${(m.verdict==='BLOCK')?'border-left:3px solid var(--bad)':(m.verdict==='NEEDS_EVIDENCE'?'border-left:3px solid var(--gold)':'')}">
+      <summary style="cursor:pointer;padding:9px 11px;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <b>${esc(m.name)}</b>${m.e_number?`<span class="muted small">(${esc(m.e_number)})</span>`:''} ${tag(v[0],T(v[1]))}
+        ${m.najis?tag('bad','najis'):''}${m.severity?`<span class="muted small">${T('심각도')} ${esc(m.severity)}</span>`:''}
+        <span class="muted small" style="margin-left:auto">${(m.source_docs||[]).length?`📄 ${(m.source_docs||[]).length}`:''}</span></summary>
+      <div style="padding:9px 12px;border-top:1px solid var(--line);font-size:12.5px">
+        ${m.explanation?`<div style="white-space:pre-wrap;margin-bottom:6px">${esc(m.explanation)}</div>`:''}
+        ${(m.required_evidence||[]).length?`<div><b>${T('필요 증빙')}</b>: ${m.required_evidence.map(esc).join(', ')}</div>`:''}
+        ${(m.alternatives||[]).length?`<div><b>${T('대체재')}</b>: ${m.alternatives.map(esc).join(', ')}</div>`:''}
+        ${(m.source_docs||[]).length?`<div style="margin-top:6px"><b>${T('근거 문서')}</b>: ${(m.source_docs||[]).map(d=>`<span class="chip" style="cursor:pointer" onclick="docViewer('${d.document_id}')">📄 ${esc(d.filename||d.document_id)}</span>`).join(' ')}</div>`:''}
+      </div></details>`;};
+    const docRow=d=>{const rs=d.review_status;const t=rs==='rejected'?['bad','반려']:rs==='rework'?['bad','재작업']:rs==='approved'?['ok','승인']:['warn','미검수'];
+      const lowConf=(d.confidence!=null&&d.confidence<0.75);
+      return `<details class="dd" style="border:1px solid var(--line);border-radius:8px;margin-bottom:6px;${(rs==='rejected'||rs==='rework')?'border-left:3px solid var(--bad)':(lowConf?'border-left:3px solid var(--gold)':'')}">
+      <summary style="cursor:pointer;padding:9px 11px;font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <b>${esc(d.filename||'-')}</b> ${tag(t[0],T(t[1]))}
+        <span class="muted small">${esc(d.doc_type_ko||d.doc_type||'')}</span>
+        ${d.confidence!=null?`<span class="muted small">${T('AI 신뢰도')} ${Math.round(d.confidence*100)}%${lowConf?' ⚠':''}</span>`:''}
+        <span style="margin-left:auto"></span></summary>
+      <div style="padding:9px 12px;border-top:1px solid var(--line);font-size:12.5px">
+        ${Object.keys(d.fields||{}).length?`<div style="margin-bottom:6px"><b>${T('AI 추출 필드')}</b><table style="font-size:11.5px;width:100%;margin-top:4px"><tbody>${Object.entries(d.fields).slice(0,12).map(([k,v])=>`<tr><td style="color:var(--ink3)">${esc(k)}</td><td>${esc(String(v))}</td></tr>`).join('')}</tbody></table></div>`:''}
+        ${d.excerpt?`<div><b>${T('원문 발췌')}</b><div class="muted small" style="white-space:pre-wrap;max-height:160px;overflow:auto;border-left:2px solid var(--line);padding-left:8px;margin-top:4px">${esc(d.excerpt)}</div></div>`:''}
+        <div class="btnrow" style="margin-top:8px">
+          ${d.has_file?`<button class="btn xs" onclick="docViewer('${d.document_id}')">👁 ${T('원문 보기')}</button>`:''}
+          ${CAN('document.review')?`<button class="btn xs ok" onclick="reviewDoc('${d.document_id}','approved')">✅ ${T('승인')}</button>
+          <button class="btn xs bad" onclick="reviewDoc('${d.document_id}','rejected')">⛔ ${T('반려')}</button>
+          <button class="btn xs" onclick="reviewDoc('${d.document_id}','rework')">♻️ ${T('재요청')}</button>`:''}
+        </div>
+        ${d.uploader_role?`<div class="muted small" style="margin-top:6px">${T('업로더')} ${esc(d.uploader_role)}${d.captured_at?` · ${T('촬영')} ${esc(String(d.captured_at).slice(0,16))}`:''}${d.file_hash?` · sha256 ${esc(d.file_hash.slice(0,10))}`:''}</div>`:''}
+      </div></details>`;};
+    const negD=(dos.documents||[]).filter(d=>d.review_status==='rejected'||d.review_status==='rework'||(d.confidence!=null&&d.confidence<0.75));
+    const posD=(dos.documents||[]).filter(d=>!(d.review_status==='rejected'||d.review_status==='rework'||(d.confidence!=null&&d.confidence<0.75)));
+    const s=dos.summary||{};
+    const aiReport=`<div class="card" style="margin-top:16px"><h3>🤖 ${T('AI 리포트')} <span class="en">· AR Auto Analysis</span>
+        <span class="r">${as?tag('ok','AR '+T('완료')):tag('warn',T('분석 대기'))}</span></h3>
+      <div class="body">
+        <div class="grid four" style="gap:10px;margin-bottom:12px">
+          <div class="kpi"><span class="l">${T('총 원재료')}</span><span class="n" style="font-size:20px">${s.total||0}</span></div>
+          <div class="kpi"><span class="l">${T('차단(하람)')}</span><span class="n" style="font-size:20px;color:var(--${s.blocked?'bad':'ink3'})">${s.blocked||0}</span></div>
+          <div class="kpi"><span class="l">${T('증빙 필요')}</span><span class="n" style="font-size:20px;color:var(--${s.needs_evidence?'gold':'ink3'})">${s.needs_evidence||0}</span></div>
+          <div class="kpi"><span class="l">${T('문서 부정')}</span><span class="n" style="font-size:20px;color:var(--${dcs.negative?'bad':'ink3'})">${dcs.negative||0}</span></div>
+        </div>
+        <div class="banner ${(s.blocked||dcs.negative)?'bad':(s.needs_evidence?'warn':'ok')}" style="margin-bottom:12px">
+          ${(s.blocked||dcs.negative)?`⛔ ${T('부정 항목이 있습니다 — 아래 목록 상단부터 확인하세요.')}`:(s.needs_evidence?`⚠ ${T('증빙이 필요한 항목이 있습니다.')}`:`✓ ${T('부정 항목 없음')}`)}
+        </div>
+
+        <div style="font-weight:800;font-size:13px;margin:6px 0 8px">📄 ${T('문서 분석')} <span class="en">· Document analysis</span>
+          <span class="muted small">— ${T('부정·저신뢰 우선')}</span></div>
+        ${negD.length?`<div class="muted small" style="margin-bottom:4px;color:var(--bad)">⛔ ${T('확인 필요')} ${negD.length}${T('건')}</div>${negD.map(docRow).join('')}`:''}
+        ${posD.length?`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12.5px;color:var(--ink3)">✓ ${T('정상 문서')} ${posD.length}${T('건')} ${T('펼치기')}</summary><div style="padding-top:6px">${posD.map(docRow).join('')}</div></details>`:''}
+        ${(!negD.length&&!posD.length)?`<div class="muted small">${T('문서 없음')}</div>`:''}
+
+        <div style="font-weight:800;font-size:13px;margin:16px 0 8px">🧪 ${T('재료 분석')} <span class="en">· Material analysis</span>
+          <span class="muted small">— ${T('부정 우선 · 클릭하여 상세')}</span></div>
+        ${negM.length?`<div class="muted small" style="margin-bottom:4px;color:var(--bad)">⛔ ${T('확인 필요')} ${negM.length}${T('건')}</div>${negM.map(matRow).join('')}`:''}
+        ${posM.length?`<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12.5px;color:var(--ink3)">✓ ${T('적합 원재료')} ${posM.length}${T('건')} ${T('펼치기')}</summary><div style="padding-top:6px">${posM.map(matRow).join('')}</div></details>`:''}
+        ${(!negM.length&&!posM.length)?`<div class="muted small">${T('원재료 없음')}</div>`:''}
+
+        ${(dos.quantitative||[]).some(q=>q.value!=null)?`<div style="font-weight:800;font-size:13px;margin:16px 0 8px">📏 ${T('정량 기준')}</div>
+        <table><thead><tr><th>${T('항목')}</th><th>${T('측정값')}</th><th>${T('기준')}</th><th>${T('판정')}</th></tr></thead><tbody>
+        ${dos.quantitative.filter(q=>q.value!=null).map(q=>`<tr><td>${esc(q.param_ko)}</td><td><b>${esc(String(q.value))}</b> ${esc(q.unit||'')}</td><td class="muted small">≤ ${esc(String(q.threshold))}</td><td>${tag(q.verdict==='pass'?'ok':'bad',q.verdict==='pass'?T('적합'):T('부적합'))}</td></tr>`).join('')}
+        </tbody></table>`:''}
+      </div></div>`;
+
     return `
     ${audStepbar}
-    <div class="grid" style="grid-template-columns:1fr 1.35fr 1fr;gap:16px;align-items:start">
-      <div><!-- ① 업체 정보 · 제출 자료 -->
-        <div class="card"><h3>${T('업체 정보')} <span class="en">· Company</span></h3>
-          <div class="body">
-            <div class="kv"><span>${T('기업명')}</span><b>${esc(c.company_name||'—')}</b></div>
-            <div class="kv"><span>${T('신청일')}</span><b>${esc(String(c.created_at||'').slice(0,10)||'—')}</b></div>
-            <div class="kv"><span>${T('경로')} · Pathway</span><b>${esc(c.pathway||'미확정')}</b></div>
-            <div class="kv"><span>${T('제품')}</span><b>${prods.length}${T('건')}${prods.length?` — ${esc(prods.slice(0,2).map(p=>p.name).join(', '))}${prods.length>2?' 외':''}`:''}</b></div>
-            <div class="kv"><span>${T('원재료')}</span><b>${mats.length}${T('건')}</b></div>
-          </div></div>
-        <div class="card" style="margin-top:16px"><h3>${T('제출 자료')} <span class="en">· Documents</span><span class="r">${subItems.filter(x=>x.satisfied).length}/${subItems.length}</span></h3>
-          <div class="body tight" style="max-height:330px;overflow:auto">
-            ${subItems.map(it=>`<div class="li" style="align-items:center"><div class="tx">${it.satisfied?tag('ok',T('제출')):tag('bad',T('미제출'))} ${esc(it.doc_type_ko||it.doc_type)}</div></div>`).join('')||`<div class="muted small">${T('체크리스트 없음')}</div>`}
-            <div class="btnrow" style="margin-top:8px"><button class="btn" onclick="go('documents')">📄 ${T('문서 검토')} →</button></div>
-          </div></div>
-      </div>
-      <div><!-- ② AI 리포트 (AR 자동 분석) -->
-        <div class="card"><h3>🤖 ${T('AI 리포트')} <span class="en">· AR Auto Analysis</span>${as?`<span class="r">${tag('ok','AR '+T('완료'))}</span>`:''}</h3>
-          <div class="body">
-            ${as?'':`<div class="banner info" style="margin-bottom:10px">ℹ ${T('AI 분석 대기 — 클라이언트 제출 후 자동 분석되며, 아래 검토는 분석 완료 후 진행하세요.')}</div>`}
-            <div style="font-weight:700;font-size:13px;margin-bottom:6px">📄 ${T('문서 분석')}</div>${aiDoc}
-            <div style="font-weight:700;font-size:13px;margin:10px 0 6px">🧪 ${T('재료 분석')} <button class="btn" style="padding:2px 8px;font-size:11px;float:right" onclick="go('materials')">${T('원재료 검토')} →</button></div>${aiMat}
-            <div style="font-weight:700;font-size:13px;margin:10px 0 6px">🏭 ${T('제조 분석')}</div>${aiProc}
-          </div></div>
-        <div class="card" style="margin-top:16px"><h3>⚖️ ${T('오디터 검토')} <span class="en">· Review</span>${pre.reviewed?`<span class="r">${rv.verdict==='ready'?tag('ok',T('적합')):tag('warn',T('보완'))}</span>`:''}</h3>
-          <div class="body">
-            ${["documents","materials","process"].map(k=>{const cur=rvs[k]||{};const isNg=cur.ok===false;return `<div class="li" style="align-items:center;gap:10px;flex-wrap:wrap">
-              <div class="tx" style="min-width:52px"><b>${secKO[k]}</b></div>
-              <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="prsec_${k}" value="ok" ${isNg?'':'checked'} style="width:auto"> ${T('적합')}</label>
-              <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="prsec_${k}" value="ng" ${isNg?'checked':''} style="width:auto"> ${T('보완')}</label>
-              <input class="v" id="prnote_${k}" placeholder="${T('코멘트')}" value="${esc(cur.note||'')}" style="flex:1;min-width:120px"></div>`;}).join('')}
-            <div class="field" style="margin-top:8px"><label>${T('검토 총평')} · Note</label><input class="v" id="prReviewNote" value="${esc(rv.note||'')}"></div>
-            <div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="preReview('${id}')">💾 ${T('검토 저장')}</button></div>
-          </div></div>
-      </div>
-      <div><!-- ③ 추가 요청 서류 (자동 생성) -->
-        <div class="card"><h3>📨 ${T('추가 요청 서류')} <span class="en">· Doc Request</span></h3>
-          <div class="body">
-            <div class="muted small" style="margin-bottom:8px">${T('항목 체크 → 요청 서류 자동 구성 → 클라이언트 전송')}</div>
-            ${missItems.length?missItems.map(it=>`<label class="li" style="cursor:pointer;align-items:center"><input type="checkbox" class="prdoc" data-doc="${esc(it.doc_type)}" data-ko="${esc(it.doc_type_ko||it.doc_type)}" checked style="width:auto;margin-right:8px"> ${esc(it.doc_type_ko||it.doc_type)}</label>`).join(''):`<div class="muted small">${T('부족 서류 없음 — 아래에서 수기로 추가하세요')}</div>`}
-            <div class="btnrow" style="margin-top:6px;gap:6px;flex-wrap:wrap"><input class="v" id="prAddDoc" placeholder="${T('추가 서류명(수기)')}" style="flex:1;min-width:110px"><input class="v" id="prAddNote" placeholder="${T('비고')}" style="flex:1;min-width:90px"></div>
-            <div class="field" style="margin-top:8px"><label>${T('클라이언트 메시지')} · Message</label><input class="v" id="prMsg" placeholder="${T('요청 사유·안내를 입력')}"></div>
-            <div class="btnrow" style="margin-top:10px"><button class="btn ok" style="width:100%" onclick="preDocRequest('${id}')">📤 ${T('클라이언트로 전송')}</button></div>
-          </div></div>
-        <div class="card" style="margin-top:16px"><h3>🔁 ${T('회신 루프')} <span class="en">· Loop</span></h3>
-          <div class="body">
-            ${(pre.doc_request_history||[]).length?(pre.doc_request_history||[]).map(h=>`<div class="li"><div class="ic t-info">📤</div><div class="tx">${h.round}${T('회차')} ${T('요청')} · ${(h.items||[]).length}${T('건')}</div></div>`).join(''):`<div class="muted small">${T('요청 이력 없음')}</div>`}
-            ${pre.resubmit?`<div class="banner info" style="margin-top:8px">↩ ${T('최근 재제출')} ${pre.resubmit.round||'-'}${T('회차')} · ${esc(String(pre.resubmit.at||'').slice(0,16).replace('T',' '))}</div>`:''}
-            <div class="muted small" style="margin-top:8px">${T('문제 없으면')} <b>Pass</b>, ${T('미비 시')} <b>${T('재요청')}</b> — ${T('검토 저장의 적합/보완 판정으로 기록됩니다.')}</div>
-          </div></div>
-      </div>
-    </div>`;
+    <div class="grid side">
+      <div>${compCard}${facCard}${docListCard}</div>
+      <div>${reviewCard}${reqCard}${loopCard}${outCard}</div>
+    </div>
+    ${aiReport}`;
   }
   return `
   ${cliStepbar}
@@ -3099,7 +3226,7 @@ SCREEN.materials=async()=>{
   const mpg=pageSlice("materials",mats,12);
   const rows=mpg.items.length?mpg.items.map(m=>{
     const cl=statusColor(m.status||m.result); const op=MAT_OPEN.has(m.material_id);
-    return `<tr class="clickable" onclick="matToggle('${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})"><td><b>${esc(m.name)}</b>${m.e_number?` <span class="chip">${esc(m.e_number)}</span>`:""} <span class="muted small">${op?'▲':'▼'}</span></td>
+    return `<tr class="clickable" onclick="matToggle('${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})"><td><b>${esc(m.name)}</b>${m.e_number?` <span class="chip">${esc(m.e_number)}</span>`:""} <span class="muted small" id="matArrow_${m.material_id}">${op?'▲':'▼'}</span></td>
       <td>${bTag(cl,m.status||m.result)}</td>
       <td>${m.severity?bTag(cl,m.severity):'<span class="muted">-</span>'}</td>
       <td class="small">${m.evidence_count?`✓ ${m.evidence_count}`:'<span class="muted">없음</span>'}</td>
@@ -3107,9 +3234,9 @@ SCREEN.materials=async()=>{
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="renameMaterial('${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})" title="${T('OCR 오독 교정')}">✎</button>
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="attachEvidence('${id}','${m.material_id}')">증빙</button>
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="rescreen('${m.material_id}')">재스크</button>
-        <button class="btn bad" style="padding:3px 7px;font-size:11px" onclick="delMaterial('${m.material_id}')">✕</button>`:''}</td></tr>${op?`<tr><td colspan="5" style="background:var(--bg);padding:0 12px 12px"><div id="matDet_${m.material_id}" class="small muted">${T('불러오는 중…')}</div></td></tr>`:''}`;}).join("")
+        <button class="btn bad" style="padding:3px 7px;font-size:11px" onclick="delMaterial('${m.material_id}')">✕</button>`:''}</td></tr><tr id="matRow_${m.material_id}" style="display:${op?'':'none'}"><td colspan="5" style="background:var(--bg);padding:0 12px 12px"><div id="matDet_${m.material_id}" class="small muted">${T('불러오는 중…')}</div></td></tr>`;}).join("")
     : `<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">원재료 없음 · 라벨 OCR·ZIP 인테이크로 추가</td></tr>`;
-  if(MAT_OPEN.size){AFTER_RENDER=()=>{MAT_OPEN.forEach((name,mid)=>matLoadDetail(mid,name));};}
+  if(MAT_OPEN.size){AFTER_RENDER=()=>{MAT_OPEN.forEach((name,mid)=>{const b=document.getElementById("matDet_"+mid);if(b&&!b.dataset.loaded){b.dataset.loaded="1";matLoadDetail(mid,name);}});};}
   const bad=mats.filter(m=>statusColor(m.status||m.result)==="bad");
   return `
   ${matCategoryChecklist(mats)}
@@ -3158,7 +3285,18 @@ async function explainMaterial(){
   }catch(e){o.textContent="해설 실패 · "+(e&&e.code?e.code:"");}
 }
 const MAT_OPEN=new Map();
-function matToggle(mid,name){if(MAT_OPEN.has(mid))MAT_OPEN.delete(mid);else MAT_OPEN.set(mid,name);applyView();}
+/* 원재료 행 펼침/접힘 — 전체 재렌더(applyView) 대신 해당 행만 토글해 화면 깜빡임 제거.
+   상세(AI 설명)는 처음 펼칠 때 1회만 조회하고 이후 캐시된 DOM을 재사용한다. */
+function matToggle(mid,name){
+  const row=document.getElementById("matRow_"+mid), arrow=document.getElementById("matArrow_"+mid);
+  const open=MAT_OPEN.has(mid);
+  if(open){MAT_OPEN.delete(mid);}else{MAT_OPEN.set(mid,name);}
+  if(!row){applyView();return;}                      // 행이 없으면(페이지 전환 등) 폴백
+  row.style.display=open?"none":"";
+  if(arrow)arrow.textContent=open?"▼":"▲";
+  const box=document.getElementById("matDet_"+mid);
+  if(!open && box && !box.dataset.loaded){box.dataset.loaded="1";matLoadDetail(mid,name);}
+}
 async function dedupMaterials(id){
   if(!confirm(T('정규화 동일명(괄호·공백·원산지 차이) 중복 원재료를 그룹당 1개만 남기고 정리합니다. 증빙 붙은 항목은 보존됩니다. 진행할까요?')))return;
   try{const r=await API(`/cases/${id}/materials/dedup`,{method:"POST",body:"{}"});
@@ -3561,6 +3699,32 @@ async function maybeCaptureGeo(cid,pid){
 }
 function geoLink(d){if(d&&d.lat!=null&&d.lng!=null){const src=d.geo_source==='exif'?'EXIF':(d.geo_source==='browser'?'GPS':'수동');return ` <a href="https://www.google.com/maps?q=${d.lat},${d.lng}" target="_blank" rel="noopener" style="color:var(--accent);font-size:11px">📍 ${d.lat.toFixed(4)},${d.lng.toFixed(4)} · ${src}</a>`;}return '';}
 /* A08 증거 귀속 배지 — 업로더(역할)·촬영시각·📍GPS·🔒해시. 메타 없으면 '' 반환(로직 불변). */
+/* 증거 미디어 인라인 로더 — data-mevimg(사진 썸네일 배경) / data-mevsrc(영상 src)를 blob으로 채운다.
+   토큰이 필요한 /documents/{id}/file 을 fetch → objectURL. SVG는 로드하지 않음(XSS 방지, docViewer와 동일 원칙). */
+async function loadEvidenceMedia(root){
+  const scope=root||document;
+  const jobs=[];
+  scope.querySelectorAll('[data-mevimg]').forEach(el=>{
+    if(el.dataset.loaded)return; el.dataset.loaded="1";
+    jobs.push((async()=>{try{
+      const r=await fetch('/documents/'+el.getAttribute('data-mevimg')+'/file',{headers:{Authorization:'Bearer '+token()}});
+      if(!r.ok)return; const b=await r.blob();
+      if((b.type||'').toLowerCase()==='image/svg+xml')return;
+      const u=URL.createObjectURL(b); el.style.backgroundImage='url('+u+')';
+      setTimeout(()=>URL.revokeObjectURL(u),300000);
+    }catch(_){}})());
+  });
+  scope.querySelectorAll('[data-mevsrc]').forEach(el=>{
+    if(el.dataset.loaded)return; el.dataset.loaded="1";
+    jobs.push((async()=>{try{
+      const r=await fetch('/documents/'+el.getAttribute('data-mevsrc')+'/file',{headers:{Authorization:'Bearer '+token()}});
+      if(!r.ok)return; const b=await r.blob();
+      const u=URL.createObjectURL(b); el.src=u;
+      setTimeout(()=>URL.revokeObjectURL(u),600000);
+    }catch(_){}})());
+  });
+  await Promise.all(jobs);
+}
 function evMetaBadge(d){if(!d)return '';const parts=[];
   if(d.uploader_role||d.uploaded_by)parts.push(`<span title="${T('업로더')}">👤 ${esc(T(d.uploader_role||'')||d.uploader_role||'')}</span>`);
   if(d.captured_at)parts.push(`<span title="${T('촬영시각')}">📸 ${esc(String(d.captured_at))}</span>`);
@@ -3878,8 +4042,11 @@ async function sdCase(id){try{const c=await API(`/cases/${id}`);return (c&&c.pat
 SCREEN.audit=async()=>{
   const id=CURCASE;
   if(await sdCase(id)) return sdExemptCard(T('현장심사'));
-  // 역할 분기: 오디터측=작성용 목업(editable=true) + 기존 오디터 기능(findings/CAR/P0-4 보고서루프), 클라이언트/컨설턴트=열람용 목업(editable=false)
+  // 역할 분기: 오디터측=작성용(editable=true) · 샤리아/최고승인자=열람+의견만(증거로 판단, 체크리스트 수정 금지)
+  //            클라이언트/컨설턴트=열람용(editable=false)
   if(!["auditor","sharia","ops","admin"].includes(ROLE)) return await onsiteAuditView(id,false);
+  const isReviewerOnly=["sharia","ops"].includes(ROLE);   // 오디터가 수집한 증거를 보고 의견만 낸다
+  if(isReviewerOnly) return await onsiteReviewerView(id);
   const onsiteMockup=await onsiteAuditView(id,true);
   const [find,onsite,lph,pool,plans,cars,arep]=await Promise.all([
     API(`/cases/${id}/findings`).catch(()=>[]),
@@ -4437,20 +4604,56 @@ SCREEN.mockAudit=async()=>{
         <div class="card" style="margin-top:16px"><h3>${T('검토 이력')} <span class="en">· History</span></h3>
           <div class="list" style="margin:0 -1px">${histHtml}</div></div>`;
     } else {
-      const secRows=(detail.sections||[]).map(s=>{const vd=s.verdict||'';
-        return `<tr><td><b>${esc(s.label||s.section)}</b></td>
-          <td><select class="v" style="width:auto" id="mev_v_${s.section}"><option value="comply"${vd==='comply'?' selected':''}>${T('적합')}</option><option value="nonconformity"${vd==='nonconformity'?' selected':''}>${T('부적합')}</option></select></td>
-          <td><input class="v" id="mev_c_${s.section}" placeholder="${T('시정조치')}" value="${esc(s.corrective_action||'')}"></td>
-          <td><button class="btn" style="padding:5px 10px;font-size:12px" onclick="mockEvidenceSave('${CURCASE}','${s.section}')">${T('저장')}</button></td></tr>`;}).join('');
+      /* 증거 판정 — 섹션별로 제출된 사진·영상을 바로 보고 판정한다(체크만으로 심사 금지).
+         사진: 인라인 썸네일(클릭 시 원본 뷰어) · 영상: 인라인 <video controls> 재생 · 미제출: 경고 배지 */
+      const secCards=(detail.sections||[]).map(s=>{
+        const vd=s.verdict||'';
+        const ev=s.evidence||[];
+        const isVid=f=>/\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(f||'')||/^video\//i.test(f||'');
+        const isImg=f=>/\.(png|jpe?g|gif|webp|bmp)$/i.test(f||'')||/^image\//i.test(f||'');
+        const media=ev.length?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+          ${ev.slice(0,8).map(d=>{
+            const vid=isVid(d.filename)||isVid(d.content_type);
+            const img=isImg(d.filename)||isImg(d.content_type);
+            if(vid)return `<div style="width:190px"><video id="mevv_${d.document_id}" data-mevsrc="${d.document_id}" controls preload="metadata" style="width:190px;height:118px;border-radius:8px;background:#000;border:1px solid var(--line)"></video>
+              <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🎬 ${esc(d.filename||'')}</div>${evMetaBadge(d)}</div>`;
+            if(img)return `<div style="width:118px"><div data-mevimg="${d.document_id}" onclick="docViewer('${d.document_id}','${esc(d.filename||'')}')" title="${T('클릭하여 원본 보기')}"
+              style="width:118px;height:88px;border-radius:8px;border:1px solid var(--line);background:var(--accent-soft);background-size:cover;background-position:center;cursor:pointer"></div>
+              <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.filename||'')}</div>${evMetaBadge(d)}</div>`;
+            return `<div style="width:118px"><div onclick="docViewer('${d.document_id}','${esc(d.filename||'')}')" style="width:118px;height:88px;border-radius:8px;border:1px solid var(--line);display:grid;place-items:center;font-size:26px;cursor:pointer">📄</div>
+              <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.filename||'')}</div></div>`;}).join('')}
+          ${ev.length>8?`<div style="display:grid;place-items:center;width:118px;height:88px;border:1px dashed var(--line2);border-radius:8px;cursor:pointer" onclick="mockViewSection('${CURCASE}','${s.section}')">+${ev.length-8}</div>`:''}
+        </div>`
+        :`<div class="banner bad" style="margin:8px 0">⛔ ${T('제출된 증거가 없습니다 — 판정 전 클라이언트에게 자료를 요청하세요.')}</div>`;
+        return `<div class="card" style="margin-bottom:12px;${ev.length?'':'border-left:3px solid var(--bad)'}">
+          <h3>${esc(s.label||s.section)} <span class="r">${ev.length?tag('ok',`📎 ${ev.length}${T('건')}`):tag('bad',T('미제출'))}${vd?` ${tag(vd==='comply'?'ok':'bad',vd==='comply'?T('적합'):T('부적합'))}`:''}</span></h3>
+          <div class="body">
+            ${media}
+            <div class="btnrow" style="gap:8px;flex-wrap:wrap;align-items:center;border-top:1px solid var(--line);padding-top:10px">
+              <select class="v" style="width:auto" id="mev_v_${s.section}">
+                <option value="comply"${vd==='comply'?' selected':''}>${T('적합')}</option>
+                <option value="nonconformity"${vd==='nonconformity'?' selected':''}>${T('부적합')}</option></select>
+              <input class="v" id="mev_c_${s.section}" placeholder="${T('시정조치·코멘트')}" value="${esc(s.corrective_action||'')}" style="flex:1;min-width:160px">
+              <button class="btn pri" style="padding:5px 12px;font-size:12px" onclick="mockEvidenceSave('${CURCASE}','${s.section}')">${T('판정 저장')}</button>
+              ${ev.length?`<button class="btn" style="padding:5px 10px;font-size:12px" onclick="mockViewSection('${CURCASE}','${s.section}')">🖼 ${T('모두 보기')}</button>`:''}
+            </div>
+            ${s.at?`<div class="muted small" style="margin-top:6px">${T('최근 판정')} ${esc(String(s.at).slice(0,16).replace('T',' '))}</div>`:''}
+          </div></div>`;}).join('');
+      const evMissing=(detail.evidence_missing||[]).length;
+      const evBanner=evMissing
+        ?`<div class="banner bad" style="margin-bottom:12px">⛔ ${T('증거 미제출 섹션')} <b>${evMissing}${T('건')}</b> — ${T('사진·영상을 확인할 수 없는 섹션은 판정하지 마세요.')}</div>`
+        :`<div class="banner ok" style="margin-bottom:12px">✓ ${T('전 섹션 증거 제출됨')} · ${T('총')} ${detail.evidence_total||0}${T('건')}</div>`;
       const rep=detail.ai_report;
       const repHtml=rep?`<div class="banner ${rep.verdict_overall==='적합'?'ok':(rep.verdict_overall==='부적합'?'bad':'warn')}" style="margin-top:10px">🧠 ${T('종합')}: ${esc(rep.verdict_overall||'-')} · ${T('적합')} ${rep.comply||0}·${T('부적합')} ${rep.nonconformity||0} · SJPH ${rep.sjph_completion||0}%</div>
         <div class="small" style="white-space:pre-wrap;margin-top:6px">${esc(rep.summary||'')}</div>
         <div class="small muted" style="white-space:pre-wrap;margin-top:6px">${esc(rep.recommendations||'')}</div>
         ${rep.llm_note?`<div class="small" style="white-space:pre-wrap;margin-top:6px;border-top:1px dashed var(--line);padding-top:6px">${esc(rep.llm_note)}</div>`:''}
         <div class="btnrow" style="margin-top:8px"><button class="btn" style="padding:5px 10px;font-size:12px" onclick="serverPdf('/cases/${CURCASE}/mock-audit/ai-report.pdf','mock_audit_report.pdf')">📄 PDF</button></div>`:`<div class="muted small" style="margin-top:8px">${T('리포트 미생성')}</div>`;
-      body=`<div class="card"><h3>${T('증거 5섹션 판정')} <span class="en">· Evidence</span></h3>
-        <div class="body tight" style="overflow-x:auto"><table><thead><tr><th>${T('섹션')}</th><th>${T('판정')}</th><th>${T('시정조치')}</th><th></th></tr></thead><tbody>${secRows}</tbody></table></div></div>
-        <div class="card" style="margin-top:16px"><h3>${T('제출 자료 (사진·문서)')} <span class="en">· Submitted media</span></h3><div class="body">${gal}</div></div>
+      body=`${evBanner}
+        <div style="font-weight:800;font-size:13.5px;margin-bottom:8px">🧷 ${T('증거 5섹션 판정')} <span class="en">· Evidence review</span>
+          <span class="muted small">— ${T('제출된 사진·영상을 확인한 뒤 판정하세요')}</span></div>
+        ${secCards}
+        <div class="card" style="margin-top:16px"><h3>${T('제출 자료 전체')} <span class="en">· All submitted media</span></h3><div class="body">${gal}</div></div>
         <div class="card" style="margin-top:16px"><h3>${T('AI 모의심사')} <span class="en">· AI report</span></h3>
           <div class="body"><button class="btn pri" onclick="mockAiReport('${CURCASE}')">🧠 ${T('AI 모의심사 리포트 생성')}</button>${repHtml}</div></div>
         <div class="card" style="margin-top:16px"><h3>${T('케이스 판정')} · ${short(CURCASE)} <span class="en">· Decision</span></h3>
@@ -4459,6 +4662,7 @@ SCREEN.mockAudit=async()=>{
             <button class="btn bad" onclick="mockDecide('${CURCASE}','reject')">거부(사유) · Reject</button></div></div>`;
     }
     panel=`<div>${tabs}${body}</div>`;
+    if(MOCKTAB==='evidence'){const prev=AFTER_RENDER;AFTER_RENDER=()=>{if(prev)try{prev();}catch(_){}loadEvidenceMedia();};}
   }
   return `<div class="banner bad" style="margin-bottom:16px">⚠ 클라이언트 미노출 — 내부 심사 화면 (RBAC 403)</div>
   <div class="grid side">
@@ -4502,6 +4706,94 @@ async function mockAiReport(id){
    전자서명=WorkflowEvent(onsite.sign) 신규 라우트, 종합의견=localStorage, AI보고서=기존 genAuditReport. 스키마 무변경. */
 var ONSITE_SIGN_CACHE={auditor:null,supervisor:null};
 var ONSITE_HPAS_REASONS=[];
+/* 현장심사 — 샤리아·최고승인자 전용 뷰(읽기 전용).
+   오디터가 현장에서 수집한 증거(사진·영상)를 확인하고, 항목별 적합/부적합 의견 + 코멘트만 남긴다.
+   체크리스트 원본·HPAS 판정·서명은 수정할 수 없다(서버 RBAC와 이중 방어). */
+async function onsiteReviewerView(id){
+  if(!id)return `<div class="card"><div class="body muted">${T('케이스를 선택하세요')}</div></div>`;
+  const [checklist,hpas,docs,sign,ops,opinion]=await Promise.all([
+    API(`/cases/${id}/onsite-checklist`).catch(()=>({items:[],comply:0,nonconformity:0,total:0,completion:0})),
+    API(`/cases/${id}/hpas-auto`).catch(()=>({elements:[]})),
+    API(`/cases/${id}/documents`).catch(()=>[]),
+    API(`/cases/${id}/onsite/sign`).catch(()=>({auditor:null,supervisor:null})),
+    API(`/cases/${id}/onsite/reviewer-opinions`).catch(()=>({items:{},negative:0})),
+    API(`/cases/${id}/onsite-opinion`).catch(()=>({opinion:''}))
+  ]);
+  const items=checklist.items||[];
+  const myOps=ops.items||{};
+  const byKey={};
+  (docs||[]).forEach(d=>{const dt=String(d.doc_type||'');const p='onsite_evidence_';
+    if(dt.startsWith(p))(byKey[dt.slice(p.length)]=byKey[dt.slice(p.length)]||[]).push(d);});
+
+  const isVid=f=>/\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(f||'');
+  const isImg=f=>/\.(png|jpe?g|gif|webp|bmp)$/i.test(f||'');
+  const mediaFor=(key)=>{
+    const list=byKey[key]||[];
+    if(!list.length)return `<div class="banner warn" style="margin:6px 0">⚠ ${T('오디터가 첨부한 증거가 없습니다 — 판단 근거 부족')}</div>`;
+    return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">${list.slice(0,6).map(d=>{
+      if(isVid(d.filename))return `<div style="width:190px"><video data-mevsrc="${d.document_id}" controls preload="metadata" style="width:190px;height:118px;border-radius:8px;background:#000;border:1px solid var(--line)"></video>
+        <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🎬 ${esc(d.filename||'')}</div>${evMetaBadge(d)}</div>`;
+      if(isImg(d.filename))return `<div style="width:118px"><div data-mevimg="${d.document_id}" onclick="docViewer('${d.document_id}',${JSON.stringify(d.filename||'').replace(/"/g,'&quot;')})" title="${T('클릭하여 미리보기')}"
+        style="width:118px;height:88px;border-radius:8px;border:1px solid var(--line);background:var(--accent-soft);background-size:cover;background-position:center;cursor:pointer"></div>
+        <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.filename||'')}</div>${evMetaBadge(d)}</div>`;
+      return `<div style="width:118px"><div onclick="docViewer('${d.document_id}')" style="width:118px;height:88px;border:1px solid var(--line);border-radius:8px;display:grid;place-items:center;font-size:24px;cursor:pointer">📄</div>
+        <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.filename||'')}</div></div>`;}).join('')}
+      ${list.length>6?`<div onclick="showEvidenceGallery('${id}','onsite_evidence_${key}',T('현장 증거 모두 보기'))" style="display:grid;place-items:center;width:118px;height:88px;border:1px dashed var(--line2);border-radius:8px;cursor:pointer">+${list.length-6}</div>`:''}
+    </div>`;
+  };
+
+  const rows=items.map((it,i)=>{
+    const key=it.item_key, res=it.result||'not_checked';
+    const audTag=res==='comply'?tag('ok',T('준수')):res==='nonconformity'?tag('bad',T('비준수')):tag('mute',T('미점검'));
+    const mo=myOps[key]||{};
+    const cnt=(byKey[key]||[]).length;
+    return `<div class="card" style="margin-bottom:12px;${mo.opinion==='nonconformity'?'border-left:3px solid var(--bad)':''}">
+      <h3 style="font-size:13.5px">${i+1}. ${esc(it.label||key)}
+        <span class="r">${audTag} <span class="muted small">${T('오디터 판정')}</span> ${cnt?tag('ok',`📎 ${cnt}`):tag('warn',T('증거 없음'))}</span></h3>
+      <div class="body">
+        ${it.note?`<div class="muted small" style="margin-bottom:4px">${T('오디터 비고')}: ${esc(it.note)}</div>`:''}
+        ${mediaFor(key)}
+        <div style="border-top:1px solid var(--line);padding-top:10px">
+          <div class="muted small" style="margin-bottom:6px">${T('심사자 의견')} <span class="en">· Reviewer opinion</span>${mo.at?` · <span class="muted small">${esc(String(mo.at).slice(0,16).replace('T',' '))}</span>`:''}</div>
+          <div class="btnrow" style="gap:8px;flex-wrap:wrap;align-items:center">
+            <select class="v" style="width:auto" id="rop_v_${key}">
+              <option value="comply"${mo.opinion==='comply'?' selected':''}>${T('적합')}</option>
+              <option value="nonconformity"${mo.opinion==='nonconformity'?' selected':''}>${T('부적합')}</option></select>
+            <input class="v" id="rop_c_${key}" placeholder="${T('코멘트 (부적합 시 필수·5자 이상)')}" value="${esc(mo.comment||'')}" style="flex:1;min-width:180px">
+            <button class="btn pri" style="padding:5px 12px;font-size:12px" onclick="saveReviewerOpinion('${id}','${key}')">${T('의견 저장')}</button>
+          </div>
+        </div>
+      </div></div>`;}).join('')||`<div class="card"><div class="body muted">${T('체크리스트 항목 없음')}</div></div>`;
+
+  const hp=(hpas.elements||[]).map(e=>`<div class="li"><div class="ic t-${e.status==='ok'?'ok':'warn'}">${e.status==='ok'?'✓':'◔'}</div><div class="tx"><b>${esc(e.label||e.element)}</b><div class="muted small">${esc(e.reason||'')}</div></div></div>`).join('')||`<div class="muted small">${T('평가 없음')}</div>`;
+  const negOps=ops.negative||0;
+  const AFTER=AFTER_RENDER;AFTER_RENDER=()=>{if(AFTER)try{AFTER();}catch(_){}loadEvidenceMedia();};
+  return `
+  <div class="banner info" style="margin-bottom:14px">👁 <b>${T('열람·의견 전용')}</b> — ${T('오디터가 현장에서 수집한 증거를 확인하고 항목별 의견(적합/부적합)과 코멘트만 기록합니다. 체크리스트·서명은 수정할 수 없습니다.')}</div>
+  ${negOps?`<div class="banner bad" style="margin-bottom:14px">⛔ ${T('부적합 의견')} <b>${negOps}${T('건')}</b></div>`:''}
+  <div class="grid side" style="margin-bottom:16px">
+    <div class="card"><h3>📋 ${T('현장심사 요약')} <span class="en">· Summary</span></h3>
+      <div class="body">
+        <div class="kv"><span>${T('오디터 준수')}</span><b>${checklist.comply||0} / ${checklist.total||0}</b></div>
+        <div class="kv"><span>${T('오디터 비준수')}</span><b style="color:var(--bad)">${checklist.nonconformity||0}</b></div>
+        <div class="kv"><span>${T('완료율')}</span><b>${checklist.completion||0}%</b></div>
+        <div class="kv"><span>${T('오디터 서명')}</span><b>${sign.auditor?T('완료'):T('미서명')}</b></div>
+        <div class="kv"><span>${T('할랄감독관 서명')}</span><b>${sign.supervisor?T('완료'):T('미서명')}</b></div>
+        ${opinion.opinion?`<div style="margin-top:8px"><div class="muted small">${T('오디터 종합 의견')}</div><div class="small" style="white-space:pre-wrap;border-left:2px solid var(--line);padding-left:8px">${esc(opinion.opinion)}</div></div>`:''}
+      </div></div>
+    <div class="card"><h3>📊 HPAS <span class="en">· 5 elements</span></h3><div class="list" style="margin:0 -1px">${hp}</div></div>
+  </div>
+  <div style="font-weight:800;font-size:13.5px;margin-bottom:8px">🏭 ${T('항목별 증거 확인 및 의견')} <span class="muted small">— ${T('사진 클릭 시 미리보기 · 영상은 재생')}</span></div>
+  ${rows}`;
+}
+async function saveReviewerOpinion(id,key){
+  const op=v("rop_v_"+key), cm=v("rop_c_"+key);
+  if(op==="nonconformity" && (cm||"").trim().length<5){toast(T('부적합 의견은 코멘트 5자 이상 필요'));return;}
+  try{await API(`/cases/${id}/onsite/reviewer-opinion`,{method:"POST",body:JSON.stringify({item_key:key,opinion:op,comment:cm})});
+    toast(T('의견 저장')+' · '+(op==='comply'?T('적합'):T('부적합')));applyView();}
+  catch(e){toast(T('저장 실패')+' · '+((e&&e.code)||''));}
+}
+
 async function onsiteAuditView(id,editable){
   editable=editable!==false;
   if(!id) return `<div class="card"><div class="body muted">${T('케이스를 선택하세요')} · Select a case.</div></div>`;
@@ -4537,7 +4829,7 @@ async function onsiteAuditView(id,editable){
     const cComp=it.result==='comply'?'checked':'';const cNon=it.result==='nonconformity'?'checked':'';
     const list=evByItem[it.item_key]||[];const cnt=list.length;
     const thumbs=list.slice(0,4).map(d=>{const did=esc(d.document_id);const isVid=/\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(d.filename||'');
-      return `<div title="${esc(d.filename||'')}" onclick="viewDoc('${did}')" ${isVid?'':`data-onsdoc="${did}"`} style="width:64px;height:64px;border-radius:8px;border:1px solid var(--line);background:var(--accent-soft);background-size:cover;background-position:center;cursor:pointer;display:grid;place-items:center;font-size:20px">${isVid?'🎬':''}</div>`;}).join('');
+      return `<div title="${esc(d.filename||'')} — ${T('클릭하여 미리보기')}" onclick="docViewer('${did}',${JSON.stringify(d.filename||'').replace(/"/g,'&quot;')})" ${isVid?'':`data-onsdoc="${did}"`} style="width:64px;height:64px;border-radius:8px;border:1px solid var(--line);background:var(--accent-soft);background-size:cover;background-position:center;cursor:pointer;display:grid;place-items:center;font-size:20px">${isVid?'🎬':''}</div>`;}).join('');
     const cntBadge=cnt>=2?`<span class="tag t-ok">${cnt}${T('개 첨부')}</span>`:`<span class="tag t-warn">${cnt}${T('개 첨부')} · ${T('최소 2매')}</span>`;
     return `<tr>
         <td style="text-align:center;vertical-align:top;padding:10px 6px">${n}</td>

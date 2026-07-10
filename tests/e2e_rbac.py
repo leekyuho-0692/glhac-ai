@@ -29,7 +29,8 @@ CASES = [
     ("케이스 생성", "POST", "/cases", {"company_name": "x", "org_id": "org_demo"}, {"consultant", "applicant", "admin"}),
     ("원재료 추가", "POST", f"/cases/{CID}/materials", {"name": "gula"}, {"consultant", "applicant", "penyelia_halal", "admin"}),
     ("SJPH 편집", "PATCH", f"/cases/{CID}/sjph", {"element": "commitment", "status": "ok"}, {"consultant", "applicant", "penyelia_halal", "admin"}),
-    ("문서 검수", "PATCH", "/documents/nope/review", {"review_status": "approved"}, {"consultant", "admin"}),
+    # A05(설계 정본): 오디터도 문서 단위 판정(승인/반려/재요청) 수행 — rbac document.review={consultant,auditor}
+    ("문서 검수", "PATCH", "/documents/nope/review", {"review_status": "approved"}, {"consultant", "auditor", "admin"}),
     ("청구 생성", "POST", f"/cases/{CID}/invoices", {"service_type": "pre_audit", "amount": 1000}, {"consultant", "admin"}),
     ("경로 확정", "POST", f"/cases/{CID}/pathway/confirm", {"pathway": "self_declare"}, {"consultant", "admin"}),
     ("SIHALAL 검증", "POST", "/sihalal/identity/nope/verify", {"expected_identifier": "x"}, {"consultant", "admin"}),
