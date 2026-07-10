@@ -7487,17 +7487,32 @@ def _ops_latest_company_decision(db, case_ids):
 
 
 def _ops_latest_assignment(db, case_ids):
-    """케이스별 최신 오디터 배정(ops.auditor_assigned, latest-wins)."""
+    """케이스별 최신 오디터 배정(ops.auditor_assigned, latest-wins) + 수락/거절 응답 병합.
+
+    수락 루프(스키마 무변경): 배정 이벤트 이후에 기록된 auditor.assignment_response 중
+    같은 auditor_id·같은 배정시각 이후의 최신 응답을 accept_status로 붙인다.
+      accept_status: pending | accepted | rejected
+    """
     out = {}
     if not case_ids:
         return out
     evs = (db.query(models.WorkflowEvent)
-           .filter(models.WorkflowEvent.action == "ops.auditor_assigned",
+           .filter(models.WorkflowEvent.action.in_(("ops.auditor_assigned",
+                                                    ASSIGN_RESPONSE_ACTION)),
                    models.WorkflowEvent.case_id.in_(case_ids))
            .order_by(models.WorkflowEvent.created_at.asc(),
                      models.WorkflowEvent.event_id.asc()).all())
     for e in evs:
-        out[e.case_id] = e.payload or {}
+        p = e.payload or {}
+        if e.action == "ops.auditor_assigned":
+            out[e.case_id] = dict(p, accept_status="pending", reject_reason=None,
+                                  responded_at=None)
+        else:   # 응답 — 현재 배정된 오디터의 응답만 반영(재배정 시 자동 무효화)
+            cur = out.get(e.case_id)
+            if cur and p.get("auditor_id") == cur.get("auditor_id"):
+                cur["accept_status"] = p.get("decision") or "pending"
+                cur["reject_reason"] = p.get("reason")
+                cur["responded_at"] = str(e.created_at)
     return out
 
 
@@ -7645,10 +7660,25 @@ def ops_dashboard(user=Depends(auth.require_roles("operator")), db: Session = De
     """M01 최고운영자 운영현황 — 지역/처리캐파/신규업체승인/오디터배정 단일 집약(읽기전용)."""
     cases = _ops_cases(db, user)
     fac_map = _ops_fac_province(db, user)
+    # 오디터 배정 응답 현황 — 거절(사유·재배정 필요) / 수락 대기
+    assign = _ops_latest_assignment(db, [c.case_id for c in cases])
+    name = {c.case_id: c.company_name for c in cases}
+    rejected, awaiting = [], []
+    for cid, a in assign.items():
+        if cid not in name:
+            continue
+        row = {"case_id": cid, "company": name[cid], "auditor_id": a.get("auditor_id"),
+               "auditor_name": a.get("auditor_name"), "reject_reason": a.get("reject_reason"),
+               "responded_at": a.get("responded_at")}
+        if a.get("accept_status") == "rejected":
+            rejected.append(row)
+        elif a.get("accept_status") == "pending":
+            awaiting.append(row)
     return {"regions": _ops_regions_data(db, user, cases, fac_map),
             "capacity": _ops_capacity_data(db, user, cases),
             "pending_companies": _ops_pending_data(db, user, cases, fac_map),
-            "auditors": _ops_auditors_data(db, user, cases)}
+            "auditors": _ops_auditors_data(db, user, cases),
+            "assignment_rejected": rejected, "assignment_awaiting": awaiting}
 
 
 @app.get("/ops/regions")
@@ -7752,7 +7782,10 @@ def auditor_dashboard(user=Depends(auth.require_roles("auditor", "operator", "ad
     cases = q.all()
     assign = _ops_latest_assignment(db, [c.case_id for c in cases])
     if user["role"] == "auditor":
-        mine = [c for c in cases if (assign.get(c.case_id) or {}).get("auditor_id") == user["uid"]]
+        # 수락한 배정만 '심사 리스트'에 편입 — 대기/거절 건은 배정함(/auditor/assignments)에서 처리
+        mine = [c for c in cases
+                if (assign.get(c.case_id) or {}).get("auditor_id") == user["uid"]
+                and (assign.get(c.case_id) or {}).get("accept_status") == "accepted"]
     else:
         mine = cases   # operator/admin: 조직/전체 스코프
     mine_ids = [c.case_id for c in mine]
@@ -7776,8 +7809,14 @@ def auditor_dashboard(user=Depends(auth.require_roles("auditor", "operator", "ad
         open_findings = (db.query(models.AuditFinding)
                          .filter(models.AuditFinding.case_id.in_(mine_ids),
                                  models.AuditFinding.status == "open").count())
+    # 배정 수락 대기 건수(오디터 KPI 타일 · 배정함 진입 유도)
+    pending_assign = sum(1 for c in cases
+                         if (assign.get(c.case_id) or {}).get("auditor_id") == user["uid"]
+                         and (assign.get(c.case_id) or {}).get("accept_status") == "pending"
+                         ) if user["role"] == "auditor" else 0
     return {"assigned_count": len(mine), "week_onsite": week_onsite,
             "pending_review": pending_review, "open_findings": open_findings,
+            "pending_assign": pending_assign,
             "week_start": ms, "week_end": ss}
 
 
@@ -7820,11 +7859,84 @@ def ops_company_reject(case_id: str, body: schemas.OpsRejectReq,
     return {"ok": True, "reason": reason}
 
 
+# ── 오디터 배정 수락/거절 루프 (스키마 무변경 · WorkflowEvent) ──
+# 관리자가 오디터를 배정하면 오디터 쪽에 "배정 대기" 리스트가 뜨고, 오디터가 수락/거절한다.
+# 수락 → 심사 리스트(담당 케이스) 편입. 거절 → 사유와 함께 관리자에게 회신(재배정 대상).
+ASSIGN_RESPONSE_ACTION = "auditor.assignment_response"
+
+
+@app.get("/auditor/assignments")
+def auditor_assignments(status: str = Query("pending", pattern="^(pending|accepted|rejected|all)$"),
+                        user=Depends(auth.require_roles("auditor", "operator", "admin")),
+                        db: Session = Depends(get_db)):
+    """오디터 배정함 — 본인에게 배정된 케이스의 수락/거절 상태별 목록.
+    operator/admin은 조직 전체(거절 회신 확인용)."""
+    q = db.query(models.CaseApplication)
+    if user["role"] != "admin":
+        q = q.filter_by(org_id=user["org_id"])
+    cases = q.all()
+    assign = _ops_latest_assignment(db, [c.case_id for c in cases])
+    items = []
+    for c in cases:
+        a = assign.get(c.case_id)
+        if not a:
+            continue
+        if user["role"] == "auditor" and a.get("auditor_id") != user["uid"]:
+            continue
+        st = a.get("accept_status") or "pending"
+        if status != "all" and st != status:
+            continue
+        items.append({"case_id": c.case_id, "company_name": c.company_name,
+                      "status": c.status, "status_label": _STATE_KO.get(c.status, c.status),
+                      "pathway": c.pathway, "created_at": str(c.created_at or "")[:10],
+                      "auditor_id": a.get("auditor_id"), "auditor_name": a.get("auditor_name"),
+                      "accept_status": st, "reject_reason": a.get("reject_reason"),
+                      "responded_at": a.get("responded_at")})
+    items.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"items": items, "count": len(items), "status": status,
+            "pending_count": sum(1 for i in items if i["accept_status"] == "pending")}
+
+
+@app.post("/cases/{case_id}/assignment/respond")
+def auditor_assignment_respond(case_id: str, body: dict = None,
+                               user=Depends(auth.require_roles("auditor")),
+                               db: Session = Depends(get_db)):
+    """오디터가 배정을 수락/거절. 거절 시 사유 필수 → 관리자에게 알림·목록 노출."""
+    b = body or {}
+    decision = str(b.get("decision") or "").strip().lower()
+    if decision not in ("accepted", "rejected"):
+        raise HTTPException(422, {"code": "BAD_DECISION", "allowed": ["accepted", "rejected"]})
+    reason = str(b.get("reason") or "").strip()
+    if decision == "rejected" and len(reason) < 5:
+        raise HTTPException(422, {"code": "REASON_REQUIRED", "hint": "거절 사유 5자 이상"})
+    c = _get_case(db, case_id, user)
+    a = _ops_latest_assignment(db, [case_id]).get(case_id)
+    if not a:
+        raise HTTPException(404, {"code": "NOT_ASSIGNED"})
+    if a.get("auditor_id") != user["uid"]:
+        raise HTTPException(403, {"code": "NOT_YOUR_ASSIGNMENT"})
+    if a.get("accept_status") in ("accepted", "rejected"):
+        raise HTTPException(409, {"code": "ALREADY_RESPONDED", "accept_status": a["accept_status"]})
+    sm.record_event(db, c, c.status, c.status, ASSIGN_RESPONSE_ACTION, user["role"], user["uid"],
+                    {"auditor_id": user["uid"], "decision": decision,
+                     "reason": reason or None})
+    if decision == "accepted":
+        _notify(db, c, "auditor.assignment_accepted", "오디터 배정 수락",
+                body="%s 님이 심사를 수락했습니다." % (a.get("auditor_name") or ""), role="operator")
+    else:
+        _notify(db, c, "auditor.assignment_rejected", "오디터 배정 거절 — 재배정 필요",
+                body="%s 님이 심사를 거절했습니다. 사유: %s" % (a.get("auditor_name") or "", reason),
+                role="operator")
+    db.commit()
+    return {"ok": True, "case_id": case_id, "decision": decision, "reason": reason or None}
+
+
 @app.post("/ops/cases/{case_id}/assign-auditor")
 def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
                        user=Depends(auth.require_roles("operator")),
                        db: Session = Depends(get_db)):
-    """미배정 케이스에 오디터 배정 — 업무량 기반. WorkflowEvent(latest-wins) + 오디터 알림."""
+    """미배정 케이스에 오디터 배정 — 업무량 기반. WorkflowEvent(latest-wins) + 오디터 알림.
+    재배정 시 이전 응답은 자동 무효화(_ops_latest_assignment가 배정 이후 응답만 반영)."""
     c = _get_case(db, case_id, user)
     au = db.get(models.User, body.auditor_id)
     if not au or au.role != "auditor":
@@ -7833,8 +7945,9 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
     sm.record_event(db, c, c.status, c.status, "ops.auditor_assigned", user["role"], user["uid"],
                     {"auditor_id": au.user_id, "auditor_name": au.username})
-    _notify(db, c, "ops.auditor_assigned", "오디터 배정",
-            body="%s 님이 심사 담당으로 배정되었습니다." % au.username, role="auditor")
+    _notify(db, c, "ops.auditor_assigned", "오디터 배정 — 수락/거절 필요",
+            body="%s 님이 심사 담당으로 배정되었습니다. 배정함에서 수락 또는 거절해 주세요." % au.username,
+            role="auditor")
     db.commit()
     cases = _ops_cases(db, user)
     assignments = _ops_latest_assignment(db, [x.case_id for x in cases])

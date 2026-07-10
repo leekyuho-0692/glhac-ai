@@ -415,6 +415,7 @@ const NAV = [
   ["caseList","📋","내 케이스","My Cases","목록·List"],
   ["workflow","🧭","워크스페이스","Workspace","진행·In progress"],
   ["application","📝","신청","Application","신청·Intake"],
+  ["assignments","📬","배정함","Assignments","수락·거절"],   // 오디터 배정 수락/거절 루프
   ["preassess","🔍","사전심사","Pre-assessment","AI 판정·Assess"],
   ["materials","🧪","원재료","Materials","스크리닝·Screen"],
   ["aiExtractions","🔬","AI 검수 큐","AI Review Queue","데이터 정확성·Review"],
@@ -445,7 +446,7 @@ const NAV = [
 ];
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
 const NAV_GROUPS=[
-  {label:"개요 · Overview", ids:["caseList"]},
+  {label:"개요 · Overview", ids:["caseList","assignments"]},   // assignments=오디터 배정함(수락/거절)
   {label:"신청·서류 · Application", ids:["application","preassess","resubmitCenter","materials","aiExtractions"]},   // 회의 2026-07-10: integration 단계 삭제(SJPH 매뉴얼로 흡수) · 보완·재전송 위로
   {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
@@ -477,6 +478,7 @@ const MENU_ACCESS = {
   manualBuilder:["client","consultant","admin"],
   documents:["client","consultant","auditor","sharia","ops","admin"],
   vault:["client","consultant","admin"],   // P1-#4 자료함 — 클라이언트 중심(담당 컨설턴트·관리자 열람)
+  assignments:["auditor","ops","admin"],   // 오디터=본인 배정함 / ops·admin=거절 회신·응답 현황
   audit:    ["client","consultant","auditor","sharia","ops","admin"],
   onsiteCalendar:["client","consultant","auditor","ops","admin"],   // A08: 클라 제시 + 오디터 확정
   mockAudit:["client","consultant","auditor","sharia","ops","admin"],
@@ -2438,7 +2440,7 @@ SCREEN.caseList=async()=>{
     const kpi=(n,l,c,ic)=>`<div class="card"><div class="body" style="display:flex;align-items:center;gap:12px"><div style="font-size:22px">${ic}</div><div class="kpi"><span class="l">${l}</span><span class="n" style="font-size:24px;color:var(--${c})">${n}</span></div></div></div>`;
     const kcards=ad?`<div class="grid four" style="margin-bottom:14px">
       ${kpi(ad.assigned_count||0,T('담당 케이스'),'ink','📋')}
-      ${kpi(ad.week_onsite||0,T('이번 주 현장실사'),(ad.week_onsite?'accent':'ink3'),'🏭')}
+      ${(ROLE==='auditor')?`<div class="card clickable" onclick="go('assignments')"><div class="body" style="display:flex;align-items:center;gap:12px"><div style="font-size:22px">📬</div><div class="kpi"><span class="l">${T('배정 수락 대기')}</span><span class="n" style="font-size:24px;color:var(--${ad.pending_assign?'gold':'ink3'})">${ad.pending_assign||0}</span></div></div></div>`:kpi(ad.week_onsite||0,T('이번 주 현장실사'),(ad.week_onsite?'accent':'ink3'),'🏭')}
       ${kpi(ad.pending_review||0,T('처리 대기'),(ad.pending_review?'gold':'ink3'),'⏳')}
       ${kpi(ad.open_findings||0,T('미해결 부적합'),(ad.open_findings?'bad':'ink3'),'⚠️')}</div>`:'';
     const tabHtml=`<div class="chipbar" style="margin-bottom:10px">${AUDITOR_TABS.map(t=>`<span class="fchip${AUDITOR_TAB===t[0]?'':' clear'}" style="cursor:pointer" onclick="AUDITOR_TAB='${t[0]}';PAGES={};applyView()">${t[2]} ${T(t[1])} <b style="pointer-events:none">${counts[t[0]]}</b></span>`).join('')}</div>`;
@@ -2528,6 +2530,47 @@ async function advance(id,target){
   if(!confirm(`상태를 '${target}'(으)로 전이할까요?`))return;
   try{await API(`/cases/${id}/transition`,{method:"POST",body:JSON.stringify({to_state:target,action:"transition"})});toast("전이 완료 · "+target);await loadCases(true);applyView();}
   catch(e){toast("전이 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}
+}
+
+/* 오디터 배정함 — 관리자 배정 → 오디터 수락/거절(사유) → 수락 시 심사 리스트 편입, 거절은 관리자에게 회신 */
+let ASSIGN_TAB="pending";
+const ASSIGN_TABS=[["pending","수락 대기","📬"],["accepted","수락함","✅"],["rejected","거절함","⛔"],["all","전체","📋"]];
+SCREEN.assignments=async()=>{
+  const isAud=ROLE==="auditor";
+  const d=await API(`/auditor/assignments?status=${ASSIGN_TAB}`).catch(()=>({items:[],count:0,pending_count:0}));
+  const items=d.items||[];
+  const st=s=>({pending:['warn','수락 대기'],accepted:['ok','수락'],rejected:['bad','거절']}[s]||['mute',s]);
+  const tabs=`<div class="chipbar" style="margin-bottom:10px">${ASSIGN_TABS.map(t=>`<span class="fchip${ASSIGN_TAB===t[0]?'':' clear'}" style="cursor:pointer" onclick="ASSIGN_TAB='${t[0]}';applyView()">${t[2]} ${T(t[1])}</span>`).join('')}</div>`;
+  const rows=items.map(i=>{const s=st(i.accept_status);return `<tr>
+    <td><b>${esc(i.company_name||'—')}</b><div class="muted small">${short(i.case_id)} · ${esc(i.pathway||'—')}</div></td>
+    <td>${bTag('info',i.status_label||i.status)}</td>
+    ${isAud?'':`<td>${esc(i.auditor_name||'—')}</td>`}
+    <td>${tag(s[0],T(s[1]))}${i.reject_reason?`<div class="muted small" title="${esc(i.reject_reason)}">💬 ${esc(i.reject_reason.slice(0,40))}${i.reject_reason.length>40?'…':''}</div>`:''}</td>
+    <td class="muted small">${esc(i.created_at||'—')}</td>
+    <td style="white-space:nowrap">${(isAud&&i.accept_status==='pending')?`
+      <button class="btn xs ok" onclick="assignRespond('${i.case_id}','accepted')">✅ ${T('수락')}</button>
+      <button class="btn xs bad" onclick="assignRespond('${i.case_id}','rejected')">⛔ ${T('거절')}</button>`
+      :`<button class="btn xs" onclick="openCase('${i.case_id}')">${T('상세')}</button>`}</td></tr>`;}).join('')
+    ||`<tr><td colspan="${isAud?5:6}" class="muted" style="text-align:center;padding:18px">${T('해당 항목 없음')}</td></tr>`;
+  const banner=isAud
+    ? (d.pending_count?`<div class="banner warn" style="margin-bottom:12px">📬 ${T('수락 대기')} <b>${d.pending_count}${T('건')}</b> — ${T('수락하면 심사 리스트에 편입되고, 거절하면 사유가 관리자에게 전달됩니다.')}</div>`
+       :`<div class="banner ok" style="margin-bottom:12px">✓ ${T('수락 대기 중인 배정이 없습니다.')}</div>`)
+    : `<div class="banner info" style="margin-bottom:12px">ℹ ${T('오디터의 배정 수락/거절 현황입니다. 거절 건은 사유를 확인하고 다른 오디터로 재배정하세요.')}</div>`;
+  return `${banner}${tabs}
+  <div class="card"><h3>📬 ${T('배정함')} <span class="en">· Assignments</span><span class="r">${d.count||0}${T('건')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('업체')}</th><th>${T('케이스 상태')}</th>${isAud?'':`<th>${T('오디터')}</th>`}<th>${T('배정 응답')}</th><th>${T('신청일')}</th><th>${T('처리')}</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+};
+async function assignRespond(cid,decision){
+  if(decision==='accepted'){
+    if(!confirm(T('이 심사를 수락하시겠습니까? 담당 심사 리스트에 편입됩니다.')))return;
+    try{await API(`/cases/${cid}/assignment/respond`,{method:"POST",body:JSON.stringify({decision})});toast(T('수락 완료 · 심사 리스트에 편입됨'));applyView();}
+    catch(e){toast(T('처리 실패')+' · '+((e&&e.code)||''));}
+    return;
+  }
+  const r=await dialog(T('배정 거절'),[{key:"reason",label:T('거절 사유')+' ('+T('5자 이상, 관리자에게 전달됩니다')+')',type:"textarea",required:true}]);
+  if(!r)return;
+  try{await API(`/cases/${cid}/assignment/respond`,{method:"POST",body:JSON.stringify({decision:"rejected",reason:r.reason})});toast(T('거절 완료 · 관리자에게 사유가 전달되었습니다'));applyView();}
+  catch(e){toast(T('처리 실패')+' · '+((e&&e.code)||''));}
 }
 
 /* 4) Application */
@@ -5383,11 +5426,27 @@ SCREEN.opsDashboard=async()=>{
     <div class="body tight">${unTbl}${asgTbl}
       <div class="muted small" style="margin:12px 0 6px">${T('후보 오디터')} <span class="en">· Candidates</span></div>
       ${audCards}</div></div>`;
+  /* 오디터 배정 응답 — 거절(사유·재배정 필요) / 수락 대기 */
+  const rej=d.assignment_rejected||[], awa=d.assignment_awaiting||[];
+  const rejTbl=rej.length?`<table><thead><tr><th>${T('업체')}</th><th>${T('오디터')}</th><th>${T('거절 사유')}</th><th>${T('처리')}</th></tr></thead>
+    <tbody>${rej.map(r=>`<tr style="background:var(--bad-soft,#fff5f5)">
+      <td><b>${esc(r.company||'—')}</b><div class="muted small">${short(r.case_id)}</div></td>
+      <td>${esc(r.auditor_name||'—')}</td>
+      <td class="small">${esc(r.reject_reason||'—')}<div class="muted small">${esc(String(r.responded_at||'').slice(0,16))}</div></td>
+      <td><button class="btn xs" onclick="opsAssign('${esc(r.case_id)}')">👤 ${T('재배정')}</button></td></tr>`).join('')}</tbody></table>`
+    :`<div class="muted small">${T('거절된 배정 없음')}</div>`;
+  const awaTbl=awa.length?`<div class="muted small" style="margin:10px 0 4px">${T('수락 대기')} <span class="en">· Awaiting</span></div>
+    <table><tbody>${awa.map(r=>`<tr><td><b>${esc(r.company||'—')}</b></td><td>${esc(r.auditor_name||'—')}</td><td>${tag('warn',T('응답 대기'))}</td></tr>`).join('')}</tbody></table>`:'';
+  const respPanel=`<div class="card"><h3>📬 ${T('오디터 배정 응답')} <span class="en">· Assignment response</span><span class="r">${rej.length?`<span style="color:var(--bad)">${T('거절')} ${rej.length}</span>`:`${T('거절 0')}`}</span></h3>
+    <div class="body tight">
+      ${rej.length?`<div class="banner bad" style="margin-bottom:8px">⛔ ${T('거절된 배정')} ${rej.length}${T('건')} — ${T('사유를 확인하고 다른 오디터로 재배정하세요.')}</div>`:''}
+      ${rejTbl}${awaTbl}</div></div>`;
   return `
   <div class="banner info" style="margin-bottom:16px">🗺️ <b>${T('최고운영자 운영현황')}</b> — ${T('지역별 분포·처리 캐파·신규 업체 승인·오디터 배정을 한 화면에서 운영합니다. 지도 대신 집계표+드릴다운(오프라인/CSP 안전).')}</div>
   ${kpis}
   <div class="grid side" style="margin-bottom:16px">${regPanel}${capPanel}</div>
-  <div class="grid side">${pendPanel}${audPanel}</div>`;
+  <div class="grid side" style="margin-bottom:16px">${pendPanel}${audPanel}</div>
+  ${respPanel}`;
 };
 /* ===== P1-#5 관리자 종합 캘린더 — 전 케이스 현장실사 일정 집약(월그리드+리스트). 백엔드 GET /ops/calendar. ===== */
 let OPS_CAL_YM=null;   // 표시 중인 "YYYY-MM"
