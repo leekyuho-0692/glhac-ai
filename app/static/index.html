@@ -423,7 +423,7 @@ const NAV = [
   ["audit","🏭","현장심사","On-site Audit","현장심사·On-site"],
   ["onsiteCalendar","📅","현장심사 캘린더","On-site Calendar","일정 조율·Schedule"],
   ["mockAudit","🧷","모의 심사","Mock Audit","모의심사·Mock"],
-  ["manualBuilder","📓","할랄매뉴얼","Halal Manual","작성·Manual"],
+  ["manualBuilder","📓","SJPH 매뉴얼","SJPH Manual","작성·Manual"],   // 회의 2026-07-10: 할랄매뉴얼→SJPH 매뉴얼 이름 통일(integration 단계 흡수)
   ["evaluation","✅","SJPH/HPAS 평가","Evaluation","평가·Eval"],
   ["resubmitCenter","♻️","보완·재전송","Resubmit Center","보완·Resubmit"],
   ["invoice","🧾","계약","Contract","계약·Contract"],
@@ -445,7 +445,7 @@ const NAV = [
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
 const NAV_GROUPS=[
   {label:"개요 · Overview", ids:["caseList"]},
-  {label:"신청·서류 · Application", ids:["application","preassess","materials","aiExtractions","integration","resubmitCenter"]},
+  {label:"신청·서류 · Application", ids:["application","preassess","resubmitCenter","materials","aiExtractions"]},   // 회의 2026-07-10: integration 단계 삭제(SJPH 매뉴얼로 흡수) · 보완·재전송 위로
   {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
   {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","regulations","consultation","notifyLog","auditLog","system"]},   // prod notifyLog 유지 + 운영현황·종합캘린더·규정법령·감사로그
@@ -472,7 +472,7 @@ const MENU_ACCESS = {
   materials:["client","consultant","auditor","admin"],
   aiExtractions:["consultant","client","auditor","admin"],   // G14 M08 AI 검수 큐 — 백엔드 review 가드(consultant·penyelia_halal→client·auditor·fatwa_liaison)와 정합. 조회는 케이스 소유자면 가능
 
-  integration:["client","consultant","auditor","admin"],
+  integration:[],   // 회의 2026-07-10: 단계 삭제 — SJPH 매뉴얼(manualBuilder)로 흡수, 메뉴·접근 비노출
   manualBuilder:["client","consultant","admin"],
   documents:["client","consultant","auditor","sharia","ops","admin"],
   vault:["client","consultant","admin"],   // P1-#4 자료함 — 클라이언트 중심(담당 컨설턴트·관리자 열람)
@@ -489,7 +489,7 @@ const MENU_ACCESS = {
   opsCalendar: ["ops","admin"],   // P1-#5 종합 캘린더(전사 현장실사 일정, 전역·케이스무관) — ops·admin 전용
   workflowMonitor: ["ops","admin"],   // 전역 운영 모니터(케이스 무관) — ops·admin 전용
   regulations: ["ops","admin"],   // M06 규정·법령 관리(전역·케이스무관) — operator(ops)·admin 전용
-  fatwa:    ["client","consultant","auditor","sharia","ops","admin"],
+  fatwa:    ["consultant","auditor","sharia","ops","admin"],   // 회의 2026-07-10: 클라이언트는 파트와 화면 불필요(인증서만) — client 제외
   certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
   feedback: ["client","consultant","auditor","sharia","ops","admin"],
@@ -787,7 +787,9 @@ function scopeLabel(){const m={own:"본인 조직 · own",owned:"담당 위주 �
 function buildNav(){
   const nav=document.getElementById("nav");
   const byId=Object.fromEntries(NAV.map(x=>[x[0],x]));
-  const allow=id=>byId[id]&&MENU_ACCESS[id]&&MENU_ACCESS[id].includes(ROLE);
+  /* 회의 2026-07-10: 클라이언트는 '신청' 메뉴 비노출 — 내 케이스 디테일(신청 상세 버튼)·새 신청으로 진입 (접근권한은 유지) */
+  const NAV_HIDDEN=ROLE==="client"?new Set(["application"]):new Set();
+  const allow=id=>byId[id]&&MENU_ACCESS[id]&&MENU_ACCESS[id].includes(ROLE)&&!NAV_HIDDEN.has(id);
   const link=([id,ic,ko,en])=>`<a data-id="${id}" role="link" tabindex="0" onclick="go('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}"><span aria-hidden="true">${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`;
   const grp=(label,ids2,list)=>{const op=ids2.includes(CUR);return `<div class="nav-group${op?' open':''}"><div class="nav-group-label" onclick="toggleNavGroup(this)">${label}<span class="nav-caret">▸</span></div><div class="nav-group-items">${list.join("")}</div></div>`;};
   let html="", shown=0;
@@ -2718,7 +2720,7 @@ SCREEN.application=async()=>{
       </div>
       <div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:6px">
         <button class="btn" onclick="go('materials')">🧪 원재료 화면</button>
-        <button class="btn" onclick="go('integration')">🔗 제품·통합</button>
+        <button class="btn" onclick="go('manualBuilder')">📓 SJPH 매뉴얼</button>
         <button class="btn" onclick="go('documents')">📁 문서 화면</button></div>
     </div></div>
   <div class="card" style="margin-bottom:16px"><div class="body btnrow" style="flex-wrap:wrap;gap:8px;align-items:center">
@@ -3586,6 +3588,27 @@ async function serverPdf(url,name){
     const b=await r.blob();const u=URL.createObjectURL(b);const a=document.createElement("a");
     a.href=u;a.download=name||"document.pdf";a.click();setTimeout(()=>URL.revokeObjectURL(u),60000);}
   catch(e){toast("PDF 실패");}
+}
+/* 회의 2026-07-10: 미리보기 = 다운로드가 아니라 화면 내 인라인 뷰어(양식+실데이터 그대로 표시). 다운로드는 뷰어 안의 보조 버튼 */
+async function pdfPreview(url,title,name){
+  try{
+    const r=await fetch(url,{headers:{Authorization:"Bearer "+token()}});
+    if(!r.ok){toast("PDF 생성 실패");return;}
+    const b=await r.blob();const u=URL.createObjectURL(b);
+    const ov=document.createElement("div");
+    ov.style.cssText="position:fixed;inset:0;background:rgba(12,22,16,.62);z-index:9000;display:flex;align-items:center;justify-content:center;padding:22px";
+    ov.innerHTML=`<div style="background:var(--card,#fff);border-radius:14px;width:min(980px,96vw);height:min(92vh,1200px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 60px rgba(0,0,0,.35)">
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)">
+        <b style="flex:1">👁 ${esc(title||"미리보기")} <span class="en">· Preview</span></b>
+        <button class="btn" data-act="dl">⬇ ${T("다운로드")} · PDF</button>
+        <button class="btn" data-act="close">✕ ${T("닫기")}</button></div>
+      <iframe src="${u}" title="PDF preview" style="flex:1;border:0;width:100%;background:#525659"></iframe></div>`;
+    const close=()=>{try{URL.revokeObjectURL(u)}catch(_){ } ov.remove();};
+    ov.addEventListener("click",e=>{if(e.target===ov)close();});
+    ov.querySelector('[data-act="close"]').onclick=close;
+    ov.querySelector('[data-act="dl"]').onclick=()=>{const a=document.createElement("a");a.href=u;a.download=name||"document.pdf";a.click();};
+    document.body.appendChild(ov);
+  }catch(e){toast("미리보기 실패");}
 }
 async function reviewDoc(docId,st){if(!st)return;try{await API(`/documents/${docId}/review`,{method:"PATCH",body:JSON.stringify({review_status:st})});toast("검수 · "+st);applyView();}catch(e){toast("검수 실패 · "+(e&&e.code?e.code:""));}}
 async function reclassifyDoc(docId){const en=await ENUMS();const r=await dialog("문서 재분류 · Reclassify",[{key:"doc_type",label:"문서 유형 · doc_type",type:"select",options:(en.doc_type||[]).map(o=>({value:o.value,label:o.label}))}]);if(!r)return;try{await API(`/documents/${docId}/reclassify`,{method:"PATCH",body:JSON.stringify({doc_type:r.doc_type})});toast("재분류 · "+r.doc_type);applyView();}catch(e){toast("재분류 실패 · "+(e&&e.code?e.code:""));}}
@@ -4469,11 +4492,14 @@ SCREEN.evaluation=async()=>{
     <div class="card"><h3>HPAS 자동 평가 <span class="en">· HPAS auto</span><span class="r">${okc}/${els.length} 적합후보${failc?` · ${failc} 부적합`:''}</span></h3>
       <div class="body tight"><table><thead><tr><th>평가 항목 · Item</th><th>판정</th><th>증거</th><th>${canVerdict?'오디터 판정':'—'}</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="applyView()">🔄 HPAS 재판정 · Re-evaluate</button></div></div>
-    <div class="card"><h3>파트와 상정 준비 <span class="en">· To Fatwa</span></h3>
+    ${(canVerdict||ROLE==="sharia")?`<div class="card"><h3>파트와 상정 준비 <span class="en">· To Fatwa</span></h3>
       <div class="body">
         <div class="scorebox" style="margin-bottom:14px"><span class="big" style="color:var(--ok)">${okc}</span><span class="muted">/ ${els.length} 요소 적합후보</span></div>
         <div class="banner ${failc?'bad':(okc===els.length&&els.length?'ok':'info')}" style="margin-bottom:12px">${failc?'⛔ 부적합 항목 있음 — 시정조치 필요':(okc===els.length&&els.length?'✓ 상정 기준 충족':'ℹ 보완 항목 확인')}</div>
-        <button class="btn gold" onclick="go('fatwa')">파트와 화면으로 · To Fatwa →</button></div></div>
+        <button class="btn gold" onclick="go('fatwa')">파트와 화면으로 · To Fatwa →</button></div></div>`
+      /* 회의 2026-07-10: 클라이언트 뷰에서 '파트와 상정 준비' 삭제 — 평가 내용은 오디터가 확인 후 상정 */
+      :`<div class="card"><h3>진행 안내 <span class="en">· Next</span></h3>
+      <div class="body"><div class="banner info">ℹ 평가 결과는 담당 오디터가 확인하며, 이상이 없으면 오디터가 파트와 심의로 상정합니다.</div></div></div>`}
   </div>
   <div class="card" style="margin-top:16px"><h3>SJPH 증빙 <span class="en">· Evidence</span><span class="r">${sev.uploaded||0}/${sev.total||0} · ${sev.completion||0}%</span></h3>
     <div class="body">${sevHtml}</div></div>`;
@@ -4644,7 +4670,14 @@ SCREEN.manualBuilder=async()=>{
   const L=await API(`/cases/${id}/sjph-manual/layout`).catch(()=>({sections:[],done:0,total:0,ready:false}));
   const secs=L.sections||[];
   const canEdit=["client","consultant","admin"].includes(ROLE);
-  const cards=secs.map((s,i)=>{
+  /* 회의 2026-07-10: 할랄 기본문구·선언서(꾸란 전문 포함)는 클라이언트가 작성 불가 항목 —
+     입력 카드에서 제거하고 시스템 자동 채움으로 표시. 빌더에는 사용자 입력 필요 섹션만 노출 */
+  const AUTO_KEYS=new Set(["halal_policy","halal_declaration"]);
+  const autoSecs=secs.filter(s=>AUTO_KEYS.has(s.key));
+  const inputSecs=secs.filter(s=>!AUTO_KEYS.has(s.key));
+  const autoCard=autoSecs.length?`<div class="card" style="margin-bottom:16px"><h3>🤖 자동 채움 <span class="en">· Auto-filled</span>${tag('ok','입력 불필요')}</h3>
+    <div class="body"><div class="muted small">${autoSecs.map(s=>`${MB_ICON[s.key]||'📄'} ${esc(s.ko)}`).join(' · ')} — ${T('기준 템플릿 원문(꾸란 전문·보일러플레이트)으로 생성 시 자동 삽입됩니다. 회사명·서명란만 병합.')}</div></div></div>`:'';
+  const cards=inputSecs.map((s,i)=>{
     const dnd=canEdit?`draggable="true" ondragstart="mbDragStart(event,'${s.key}')" ondragend="mbDragEnd()" ondragover="mbDragOver(event)" ondrop="mbReorder(event,'${id}','${s.key}')"`:'';
     const badge=s.has_default?tag('ok','✓ 기본내용 포함'):tag(s.image?'ok':'warn',s.image?'✓ 이미지 삽입됨':'기본내용 확인 필요');
     const imgBlock=s.image
@@ -4668,7 +4701,8 @@ SCREEN.manualBuilder=async()=>{
     : `<button class="btn" disabled style="opacity:.5" title="모든 섹션 완료 필요">📄 SJPH 매뉴얼 생성 (${L.done}/${L.total})</button>`;
   const warn=ready?'':`<div class="banner warn" style="margin-bottom:12px">⚠️ 미완료 섹션 있음 — 이미지 삽입이 필요한 섹션(조직도 등)을 완료하면 매뉴얼 생성이 활성화됩니다.</div>`;
   return `
-  <div class="banner info" style="margin-bottom:16px">ⓘ 섹션 기본내용을 확인하고 ${canEdit?'드래그로 순서를 바꾸며 ':''}빈 공간에 이미지를 드롭하면 문서에 삽입됩니다. 완료 후 <b>SJPH 매뉴얼</b>을 생성합니다. (기존 SJPH Manual 재사용)</div>
+  <div class="banner info" style="margin-bottom:16px">ⓘ ${T('순서: 증빙 업로드')} → <b>SJPH ${T('매뉴얼 생성')}</b> → ${T('담당 오디터 검토·서명')}. ${canEdit?T('입력이 필요한 섹션(조직도·공정도 등)만 채우면 되며, 기본문구·선언서는 자동 채움됩니다.'):''} ${T('미리보기는 다운로드 없이 화면에서 기준 양식(KO·EN)에 실데이터가 채워진 문서를 표시합니다.')}</div>
+  ${autoCard}
   <div class="card" style="margin-bottom:16px"><div class="body" style="display:flex;align-items:center;gap:14px">
     <div style="font-weight:800;white-space:nowrap">진행률 ${L.done} / ${L.total} 섹션</div>
     <div class="bar" style="flex:1"><i style="width:${pct}%"></i></div>
@@ -4677,7 +4711,8 @@ SCREEN.manualBuilder=async()=>{
   <div class="card"><h3>매뉴얼 생성 <span class="en">· Generate</span></h3><div class="body">
     ${warn}
     <div class="btnrow">${genBtn}
-      <button class="btn" onclick="serverPdf('/cases/${id}/sjph-manual.pdf','sjph_manual.pdf')">👁 미리보기 · PDF</button>
+      <button class="btn" onclick="pdfPreview('/cases/${id}/sjph-manual.pdf','SJPH 매뉴얼 (KO·EN 기준양식)','sjph_manual.pdf')">👁 미리보기 · Preview</button>
+      <button class="btn ghost" onclick="serverPdf('/cases/${id}/sjph-manual.pdf','sjph_manual.pdf')">⬇ PDF</button>
       ${canEdit?`<button class="btn" onclick="mbSaveLayout('${id}')">💾 임시저장</button>`:''}
     </div></div></div>`;
 };
@@ -4762,8 +4797,8 @@ async function mbOcrCaption(cid,key){
 async function mbGenerate(cid){
   try{
     const r=await API(`/cases/${cid}/sjph/manual`,{method:"POST",body:"{}"});
-    toast("SJPH 매뉴얼 v"+r.version+" 생성 — 미리보기");
-    serverPdf(`/cases/${cid}/sjph-manual.pdf`,"sjph_manual.pdf");
+    toast("SJPH 매뉴얼 v"+r.version+" 생성 완료 — 담당 오디터 검토·서명으로 전달됩니다");   // 회의 2026-07-10: 생성→오디터 서명 흐름 안내
+    pdfPreview(`/cases/${cid}/sjph-manual.pdf`,"SJPH 매뉴얼 v"+r.version,"sjph_manual.pdf");   // 회의 2026-07-10: 생성 후 다운로드 대신 인라인 뷰어
   }catch(e){toast("생성 실패 · "+((e&&e.code)||(e&&e.detail)||""));}
 }
 async function postDiscussion(id){const el=document.getElementById("discInput");const text=el.value.trim();if(!text)return;try{await API(`/cases/${id}/discussions`,{method:"POST",body:JSON.stringify({kind:"comment",text})});toast("협의 등록");applyView();}catch(e){toast("등록 실패 · "+(e&&e.code?e.code:""));}}
@@ -5147,7 +5182,7 @@ SCREEN.opsDashboard=async()=>{
       <td class="muted small">${p.created_at?esc(String(p.created_at).slice(0,10)):'—'}</td>
       <td><button class="btn xs" onclick="opsApprove('${esc(p.case_id)}')">✅ ${T('승인')}</button> <button class="btn xs ghost" onclick="opsReject('${esc(p.case_id)}')">⛔ ${T('거절')}</button></td></tr>`).join("")}</tbody></table>`:`<div class="muted small">${T('승인 대기 중인 신규 업체가 없습니다.')}</div>`;
   const pendPanel=`<div class="card"><h3>🆕 ${T('신규 업체 승인/거절')} <span class="en">· Onboarding</span><span class="r">${pitems.length}${T('건')}</span></h3>
-    <div class="body tight">${pendTbl}</div></div>`;
+    <div class="body tight"><div class="banner info" style="margin-bottom:10px">ℹ ${T('신규업체는 승인 전까지 오디터에게 노출되지 않습니다. 승인 시 진행업체로 편입됩니다.')}</div>${pendTbl}</div></div>`;   // M6(미구현 내역 2026-07-10): 승인 전 오디터 미노출 안내 배너
   /* ④ 오디터 배정 */
   const unas=aud.unassigned||[];
   const unTbl=unas.length?`<table><thead><tr><th>${T('업체')}</th><th>${T('단계')}</th><th>${T('배정')}</th></tr></thead>
@@ -6194,9 +6229,11 @@ async function renderCaseDetail(id, tab){
           <div class="scorebox" style="margin-bottom:12px"><span class="big" style="color:var(--${rd.band==='ready'?'ok':rd.band==='warn'?'warn':'bad'})">${rd.readiness==null?"—":rd.readiness}</span><span class="muted">% · ${bSpan(rd.band)}</span></div>
           ${rd.breakdown?Object.entries(rd.breakdown).map(([k,vv])=>`<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px"><span>${esc(k)}</span><b>${vv}%</b></div><div class="bar"><i style="width:${vv}%"></i></div></div>`).join(""):""}
           <div class="btnrow" style="margin-top:12px">
+            <button class="btn" onclick="CURCASE='${id}';go('application')">📝 신청 상세 →</button><!-- 회의 2026-07-10: 신청은 별도 메뉴가 아니라 내 케이스 디테일에서 진입 -->
             <button class="btn" onclick="openCaseTab('materials')">🧪 원재료 →</button>
             <button class="btn" onclick="openCaseTab('documents')">📁 문서 →</button>
             <button class="btn" onclick="openCaseTab('audit')">🏭 심사 →</button>
+            <button class="btn" onclick="CURCASE='${id}';go('mockAudit')">🧷 모의심사·사진 →</button><!-- 회의 2026-07-10: 사진심사(모의심사) 내용 케이스에서 바로 진입 -->
             <button class="btn" onclick="exportCaseJson('${id}')">⬇ JSON</button>
             <button class="btn" onclick="exportReport('${id}')">📄 종합 보고서</button></div>
         </div></div>
