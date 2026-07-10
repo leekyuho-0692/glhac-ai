@@ -468,7 +468,7 @@ const MENU_ACCESS = {
   caseList: ["client","consultant","auditor","sharia","ops","admin"],
   dashboard:[], workflow:[],  // 개요 통합: 케이스 디테일(renderCaseDetail)로 흡수 — 메뉴 비노출
   application:["client","consultant","admin"],
-  preassess:["client","consultant","admin"],
+  preassess:["client","consultant","auditor","admin"],   // 오디터 사전심사 뷰(3분할 회신루프)는 기구현 — 메뉴 접근 누락 수정(2026-07-10)
   materials:["client","consultant","auditor","admin"],
   aiExtractions:["consultant","client","auditor","admin"],   // G14 M08 AI 검수 큐 — 백엔드 review 가드(consultant·penyelia_halal→client·auditor·fatwa_liaison)와 정합. 조회는 케이스 소유자면 가능
 

@@ -4027,7 +4027,10 @@ def _render_pdf_rich(title, blocks, subtitle=None, footer=None):
             y += 4
         elif t == "kv":
             label, value = block.get("label", ""), block.get("value", "")
-            val_x = margin + 140
+            # 라벨이 길면 값과 겹침(내장 CJK 폰트가 라틴도 전각폭 취급) — 실폭 상한(글자수×fs)으로 값 시작점 보정
+            label_s = str(label) + ": "
+            lw = max(fitz.get_text_length(label_s, fontname=font, fontsize=fs), len(label_s) * fs * 0.95)
+            val_x = margin + max(140, min(lw + 6, maxw * 0.55))
             val_w = W - margin - val_x
             if val_w < 20:
                 val_w = maxw / 2
@@ -4117,7 +4120,10 @@ def _render_pdf_rich(title, blocks, subtitle=None, footer=None):
                     if idx > 0:
                         y += row_h_sig
                 x = margin + col * (slot_w + 12)
-                pg.insert_text((x, y + 9), str(slot.get("role", "")), fontname=font, fontsize=9, color=(0.3, 0.3, 0.3))
+                # 긴 role은 " · " 기준 줄분리 — 내장 CJK 폰트가 라틴도 전각폭이라 한 줄로 찍으면 옆 슬롯과 겹침(SJPH 표지 Audited/Reviewed by)
+                role_lines = [p for p in str(slot.get("role", "")).split(" · ") if p][:2]
+                for k, rl in enumerate(role_lines):
+                    pg.insert_text((x, y + 9 + k * 11), rl, fontname=font, fontsize=9, color=(0.3, 0.3, 0.3))
                 pg.insert_text((x, y + 38), str(slot.get("name", "")), fontname=font, fontsize=9)
                 pg.draw_line((x, y + 42), (x + slot_w - 8, y + 42), color=(0.5, 0.5, 0.5), width=0.5)
                 if slot.get("signed"):
