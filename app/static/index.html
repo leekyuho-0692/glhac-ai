@@ -336,6 +336,7 @@
     <div class="sub">신청기업 계정 생성 · Applicant sign-up</div>
     <div style="display:flex;gap:6px;margin-bottom:11px"><input id="regUser" placeholder="아이디 · Username" autocomplete="username" style="flex:1;margin-bottom:0"><button type="button" class="btn" onclick="checkUsername()">중복확인</button></div>
     <input id="regPass" type="password" placeholder="비밀번호 · Password" autocomplete="new-password">
+    <input id="regPass2" type="password" placeholder="비밀번호 확인 · Confirm password" autocomplete="new-password">
     <div style="border:1px dashed var(--line2);border-radius:9px;padding:10px;margin-bottom:11px">
       <div style="font-size:12px;color:var(--ink3);margin-bottom:6px">📄 사업자·공장 등록증 → AI 자동추출 (Rizky #1)</div>
       <button type="button" class="btn" style="width:100%;justify-content:center" onclick="regOcrPick()">🤖 등록증 업로드·AI 추출</button>
@@ -594,8 +595,9 @@ async function checkUsername(){
 }
 async function doRegister(e){
   if(e)e.preventDefault();
-  const username=v("regUser"),password=v("regPass"),company_name=v("regCompany");
+  const username=v("regUser"),password=v("regPass"),password2=v("regPass2"),company_name=v("regCompany");
   if(!username||!password){toast("아이디·비밀번호를 입력하세요");return;}
+  if(password!==password2){toast("비밀번호가 일치하지 않습니다");return;}  // P2-3: 비밀번호 확인
   const body={username,password,company_name,nib:v("regNib"),responsible_person:v("regResp"),address:v("regAddr"),factory_address:v("regFactory")};
   try{
     const j=await API("/auth/register",{method:"POST",body:JSON.stringify(body)});
@@ -837,6 +839,21 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n P2-1 현장캘린더 후보일 택1 수락 · P2-2 입금증빙 업로드 · P2-3 비밀번호 확인
+  "이 날짜로 확정 요청":"Minta konfirmasi tanggal ini",
+  "희망 방문 시각 · Time":"Waktu kunjungan yang diinginkan · Time",
+  "후보일 수락·확정":"Terima tanggal usulan · Konfirmasi",
+  "수락 실패":"Gagal menerima",
+  "오디터 재제안 후보일":"Tanggal usulan ulang auditor",
+  "오디터가 아래 후보일을 제안했습니다. 방문 가능한 날짜를 하나 선택해 확정을 요청하세요.":"Auditor mengusulkan tanggal berikut. Pilih satu tanggal yang tersedia lalu minta konfirmasi.",
+  "입금 증빙":"Bukti Setoran",
+  "입금 확인용 증빙(이체 확인증·영수증)을 첨부하세요. 첨부한 파일은 결제 상세에서 다운로드할 수 있습니다.":"Lampirkan bukti setoran (bukti transfer·kuitansi) untuk verifikasi pembayaran. Berkas yang dilampirkan dapat diunduh di detail pembayaran.",
+  "파일명":"Nama Berkas",
+  "첨부된 입금 증빙이 없습니다.":"Belum ada bukti setoran yang dilampirkan.",
+  "입금 증빙 첨부":"Lampirkan Bukti Setoran",
+  "첨부 실패":"Gagal melampirkan",
+  "비밀번호 확인 · Confirm password":"Konfirmasi kata sandi · Confirm password",
+  "비밀번호가 일치하지 않습니다":"Kata sandi tidak cocok",
   // §i18n P1-#1 청구 다항목/프리셋 · P1-#2 견적서 · P1-#7 파트와→오디터 반려
   "기본 심사료":"Biaya audit dasar",
   "청구 항목":"Item Tagihan",
@@ -3655,6 +3672,14 @@ async function ocConfirm(){
   try{await API(`/cases/${OC.cid}/onsite-schedule/confirm`,{method:"POST",body:JSON.stringify({date:dates[0],time:r.time||"",note:r.note||""})});toast(T('일정 확정')+" · "+dates[0]);applyView();}
   catch(e){toast(T('확정 실패')+" · "+((e&&e.code)||""));}
 }
+/* P2-1: 오디터 재제안 후보일을 클라이언트가 택1 수락 → 일정 확정(왕복 종료) */
+async function ocAccept(date){
+  if(!date)return;
+  const r=await dialog(T('이 날짜로 확정 요청'),[{key:"time",label:T('희망 방문 시각 · Time'),type:"text",placeholder:"10:00"},{key:"note",label:T('비고 · Note'),type:"text"}]);
+  if(!r)return;
+  try{await API(`/cases/${OC.cid}/onsite-schedule/accept-proposed`,{method:"POST",body:JSON.stringify({date,time:r.time||"",note:r.note||""})});toast(T('후보일 수락·확정')+" · "+date);applyView();}
+  catch(e){toast(T('수락 실패')+" · "+((e&&e.code)||""));}
+}
 SCREEN.onsiteCalendar=async()=>{
   const id=CURCASE;
   let data;
@@ -3690,6 +3715,16 @@ SCREEN.onsiteCalendar=async()=>{
   const propBtn=ocCanPropose()?`<button class="btn pri" onclick="ocPropose()">📤 ${T('가능일 제시')}</button>`:"";
   const audBtns=ocCanAudit()?`<button class="btn ok" onclick="ocConfirm()">✅ ${T('선택일 확정')}</button><button class="btn" onclick="ocReschedule()">🔁 ${T('후보일 재제안')}</button>`:"";
   const roleHint=ocCanPropose()?T('가능한 날짜를 클릭해 여러 개 선택한 뒤 제시하세요.'):ocCanAudit()?T('클라이언트 제시일을 확인해 1개를 확정하거나, 불가 시 후보일 2~3개를 선택해 재제안하세요.'):T('일정 조율 현황을 열람합니다.');
+  // P2-1: 오디터가 후보일을 재제안(reproposed)한 상태 → 클라이언트가 택1 수락 UI
+  const acceptPanel=(ocCanPropose()&&s==='reproposed'&&(data.auditor_dates||[]).length)?`
+    <div class="card" style="margin-bottom:16px;border-color:var(--accent)">
+      <h3>🔁 ${T('오디터 재제안 후보일')} <span class="en">· Proposed dates</span><span class="r">${(data.auditor_dates||[]).length}</span></h3>
+      <div class="body">
+        <div class="banner info" style="margin-bottom:10px">${T('오디터가 아래 후보일을 제안했습니다. 방문 가능한 날짜를 하나 선택해 확정을 요청하세요.')}</div>
+        <div class="btnrow" style="flex-wrap:wrap;gap:8px">
+          ${(data.auditor_dates||[]).map(d=>`<button class="btn ok" onclick="ocAccept('${esc(d)}')">📅 ${esc(d)} · ${T('이 날짜로 확정 요청')}</button>`).join("")}
+        </div>
+      </div></div>`:"";
   return `
   <style>
   .oc-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
@@ -3710,6 +3745,7 @@ SCREEN.onsiteCalendar=async()=>{
   <div class="banner info" style="margin-bottom:14px">🗓 ${T('현장심사 방문일은 클라이언트가 가능 날짜를 제시하고 오디터가 확정합니다. 불가 시 오디터가 후보일 2~3개를 재제안해 재조율합니다.')}</div>
   ${steps}
   ${kpis}
+  ${acceptPanel}
   <div class="oc-grid2">
     <div class="card"><h3>${T('현장심사 일정 캘린더')} <span class="en">· On-site Calendar</span>
       <span class="r"><button class="btn" style="padding:4px 10px" onclick="ocMonth(-1)">‹</button> <b id="ocMonLbl" style="min-width:96px;display:inline-block;text-align:center"></b> <button class="btn" style="padding:4px 10px" onclick="ocMonth(1)">›</button></span></h3>
@@ -4536,6 +4572,8 @@ SCREEN.consultation = async () => {
 SCREEN.invoice=async()=>{
   const id=CURCASE;const inv=await API(`/cases/${id}/invoices`).catch(()=>[]);
   const pays=await API(`/cases/${id}/payments`).catch(()=>[]);
+  const docs=await API(`/cases/${id}/documents`).catch(()=>[]);
+  const dproofs=(docs||[]).filter(d=>d.doc_type==='deposit_proof');  // P2-2: 입금증빙
   const canMark=["client","consultant"].includes(ROLE);  // pay: applicant·consultant (백엔드 RBAC)
   const ipg=pageSlice("invoice",inv,10);
   const sel=inv.find(i=>i.invoice_id===INV_SEL)||inv[0]||null;
@@ -4580,8 +4618,24 @@ SCREEN.invoice=async()=>{
   ${pays.length?`<div class="card" style="margin-top:16px"><h3>결제 내역 <span class="en">· Payments</span><span class="r">${pays.length}건</span></h3>
     <div class="body tight"><table><thead><tr><th>결제방식</th><th>금액 · IDR</th><th>참조</th><th>상태</th><th>일시</th></tr></thead><tbody>
     ${pays.map(p=>`<tr><td>${bSpan(p.method)}</td><td><b>${fmtIDR(p.amount)}</b></td><td class="muted small">${esc(p.reference||"—")}</td><td>${bTag(p.status==='confirmed'?'ok':'mute',p.status)}</td><td class="muted small">${esc(String(p.paid_at||"").slice(0,16))}</td></tr>`).join("")}
-    </tbody></table></div></div>`:''}`;
+    </tbody></table></div></div>`:''}
+  <div class="card" style="margin-top:16px"><h3>${T('입금 증빙')} <span class="en">· Deposit proof</span><span class="r">${dproofs.length}</span></h3>
+    <div class="body">
+      <div class="banner info" style="margin-bottom:10px">${T('입금 확인용 증빙(이체 확인증·영수증)을 첨부하세요. 첨부한 파일은 결제 상세에서 다운로드할 수 있습니다.')}</div>
+      ${dproofs.length?`<table style="margin-bottom:10px"><thead><tr><th style="text-align:left">${T('파일명')}</th><th>${T('업로드')}</th><th></th></tr></thead><tbody>
+        ${dproofs.map(d=>`<tr><td>${esc(d.filename||'—')}</td><td class="muted small">${esc(String(d.created_at||'').slice(0,16).replace('T',' '))}</td><td style="text-align:right">${d.has_file?`<button class="btn xs" onclick="viewDoc('${esc(d.document_id)}')">⤓ ${T('다운로드')}</button>`:`<span class="muted small">${T('파일 없음')}</span>`}</td></tr>`).join("")}
+      </tbody></table>`:`<div class="muted small" style="margin-bottom:10px">${T('첨부된 입금 증빙이 없습니다.')}</div>`}
+      <button class="btn pri" onclick="uploadDepositProof('${id}')">📎 ${T('입금 증빙 첨부')}</button>
+    </div></div>`;
 };
+/* P2-2: 입금 증빙(deposit_proof) 파일 업로드 — DocumentAsset(doc_type=deposit_proof) 재사용 */
+function uploadDepositProof(cid){
+  const inp=document.createElement("input");inp.type="file";inp.accept="image/*,.pdf";
+  inp.onchange=async()=>{const file=inp.files[0];if(!file)return;const b64=await fileB64(file);
+    try{await API('/cases/'+cid+'/documents',{method:"POST",body:JSON.stringify({filename:file.name,file_b64:b64,doc_type:"deposit_proof"})});toast(T('입금 증빙 첨부'));applyView();}
+    catch(e){toast(T('첨부 실패')+" · "+((e&&e.code)||""));}};
+  inp.click();
+}
 function selectInvoice(iid){INV_SEL=iid;applyView();}
 async function payInvoice(iid){try{await API(`/invoices/${iid}/pay`,{method:"PATCH",body:"{}"});toast("결제 표시");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function recordPayment(iid){

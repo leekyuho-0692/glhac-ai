@@ -4817,6 +4817,41 @@ def onsite_schedule_confirm(case_id: str, body: dict = None,
     return _onsite_sched_state(db, case_id)
 
 
+@app.post("/cases/{case_id}/onsite-schedule/accept-proposed")
+def onsite_schedule_accept_proposed(case_id: str, body: dict = None,
+                                    user=Depends(auth.require_roles(
+                                        "applicant", "consultant", "penyelia_halal", "pendamping_pph")),
+                                    db: Session = Depends(get_db)):
+    """오디터가 재제안한 후보일(2~3개) 중 클라이언트가 택1 수락 → 일정 확정(왕복 종료).
+    스키마 무변경 — onsite_schedule.confirm 이벤트로 접혀 status=confirmed. 선택일은
+    반드시 현재 오디터 재제안 후보일에 포함되어야 함(임의 확정 방지)."""
+    c = _get_case(db, case_id, user)
+    body = body or {}
+    date = str(body.get("date") or "").strip()
+    if not date:
+        raise HTTPException(400, {"code": "NO_DATE"})
+    state = _onsite_sched_state(db, case_id)
+    if state.get("status") != "reproposed" or not state.get("auditor_dates"):
+        raise HTTPException(409, {"code": "NO_PROPOSED_DATES"})
+    if date not in (state.get("auditor_dates") or []):
+        raise HTTPException(400, {"code": "DATE_NOT_PROPOSED",
+                                  "allowed": state.get("auditor_dates")})
+    tm = str(body.get("time") or "").strip()
+    payload = {"date": date, "time": tm, "note": str(body.get("note") or ""),
+               "via": "client_accept"}
+    sm.record_event(db, c, c.status, c.status, "onsite_schedule.confirm",
+                    user["role"], user["uid"], payload)
+    _notify(db, c, "audit_scheduled", "현장심사 후보일 수락·확정",
+            "%s — 클라이언트가 후보일 중 %s%s 를 수락해 현장심사 일정이 확정되었습니다." % (
+                c.company_name or "", date, (" " + tm) if tm else ""),
+            channels=["inapp"], role="auditor")
+    _notify(db, c, "audit_scheduled", "현장심사 후보일 수락·확정",
+            "%s — 클라이언트가 후보일 중 %s 를 수락했습니다." % (c.company_name or "", date),
+            channels=["inapp"], role="operator")
+    db.commit()
+    return _onsite_sched_state(db, case_id)
+
+
 # ---------- CAR 시정조치 라이프사이클 (§P2 CAR advanced) ----------
 @app.post("/findings/{finding_id}/car")
 def submit_car(finding_id: str, body: schemas.CarSubmitReq,
