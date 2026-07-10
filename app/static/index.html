@@ -3690,8 +3690,20 @@ async function reclassifyDoc(docId){const en=await ENUMS();const r=await dialog(
 async function reprocessDoc(docId,dpi){toast((dpi?T('고해상도 재OCR 중… (수초~수십초)'):"재처리 중… (OCR 수초)"));try{const r=await API(`/documents/${docId}/reprocess${dpi?'?dpi='+dpi:''}`,{method:"POST",body:"{}"});toast("재처리 · "+(T(r.doc_type||"")||r.doc_type)+" "+Math.round((r.confidence||0)*100)+"% · "+(r.text_len||0)+"자");applyView();}catch(e){toast("재처리 실패 · "+(e&&e.code?e.code:(e&&e.detail?e.detail:"")));}}
 
 /* 8) Audit */
+/* A08 경로 분기: 자기선언(Self-Declare/SEHATI) 케이스는 현장심사 면제 — 회색 스킵 카드로 대체 (2026-07-10) */
+function sdExemptCard(what){
+  return `<div class="card" style="opacity:.85"><h3 style="color:var(--ink3)">🚫 ${esc(what)} ${T('면제')} <span class="en">· Exempt (Self-Declare)</span></h3>
+    <div class="body">
+      <div class="banner" style="background:var(--bg2,#f0f2f0);border:1px dashed var(--line2);color:var(--ink3);margin-bottom:12px">
+        ⓘ ${T('이 케이스는 자기선언(SEHATI) 경로입니다. 현장심사 단계가 면제되며 문서심사로 대체됩니다.')}</div>
+      <div class="btnrow"><button class="btn" onclick="go('documents')">📁 ${T('문서 심사로 이동')} →</button>
+      <button class="btn" onclick="go('caseList')">${T('케이스 목록')}</button></div>
+    </div></div>`;
+}
+async function sdCase(id){try{const c=await API(`/cases/${id}`);return (c&&c.pathway==='self_declare')?c:null;}catch(_){return null;}}
 SCREEN.audit=async()=>{
   const id=CURCASE;
+  if(await sdCase(id)) return sdExemptCard(T('현장심사'));
   // 역할 분기: 오디터측=작성용 목업(editable=true) + 기존 오디터 기능(findings/CAR/P0-4 보고서루프), 클라이언트/컨설턴트=열람용 목업(editable=false)
   if(!["auditor","sharia","ops","admin"].includes(ROLE)) return await onsiteAuditView(id,false);
   const onsiteMockup=await onsiteAuditView(id,true);
@@ -3926,6 +3938,7 @@ async function ocAccept(date){
 }
 SCREEN.onsiteCalendar=async()=>{
   const id=CURCASE;
+  if(await sdCase(id)) return sdExemptCard(T('현장심사 일정'));
   let data;
   try{data=await API(`/cases/${id}/onsite-schedule`);}
   catch(e){data={status:"none",client_dates:[],auditor_dates:[],confirmed:null,history:[]};}
@@ -6334,6 +6347,7 @@ async function renderCaseDetail(id, tab){
         <div class="fico">${/png|jpg|jpeg|img/i.test(d.filename||"")?'🖼':'📄'}</div>
         <div class="fmeta"><b>${esc(d.filename||"문서")}</b><span class="muted small">${esc(d.doc_type||"")} · ${esc(d.review_status||"미검수")}</span></div></div>`).join(""):'<div class="muted small">문서 없음</div>'}</div></div></div>`;
   } else if(tab==="audit"){
+    if(c.pathway==='self_declare'){ return head+`<div class="detail-panel">${sdExemptCard(T('현장심사'))}</div>`; }
     const find=await API(`/cases/${id}/findings`).catch(()=>[]);
     const rows=find.length?find.map(f=>`<tr><td><b>${esc(f.finding)}</b><div class="muted small">${esc(f.area||"")}</div></td><td>${bTag(statusColor(f.severity),f.severity||"—")}</td><td>${bTag(statusColor(f.status),f.status||"—")}</td></tr>`).join(""):`<tr><td colspan="3" class="muted" style="text-align:center;padding:18px">지적사항 없음</td></tr>`;
     panel=`<div class="card"><h3>지적사항 <span class="en">· Findings</span></h3>
