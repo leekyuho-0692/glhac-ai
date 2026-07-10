@@ -400,6 +400,7 @@ const NAV = [
   ["application","📝","신청","Application","신청·Intake"],
   ["preassess","🔍","사전심사","Pre-assessment","AI 판정·Assess"],
   ["materials","🧪","원재료","Materials","스크리닝·Screen"],
+  ["aiExtractions","🔬","AI 검수 큐","AI Review Queue","데이터 정확성·Review"],
   ["integration","🔗","SJPH/HPAS 통합","Integration","통합·Integration"],
   ["documents","📁","문서","Documents","문서·Docs"],
   ["audit","🏭","현장심사","On-site Audit","현장심사·On-site"],
@@ -420,15 +421,16 @@ const NAV = [
   ["assistant","🤖","AI 어시스턴트","Assistant","AI 보조·Assist"],
   ["feedback","💬","개선 피드백","Feedback","건의·Feedback"],
   ["consultation","☎️","상담","Support","상담·Support"],
+  ["auditLog","🛡️","감사로그","Audit Log","전역 이력·admin"],
   ["system","⚙️","시스템 설정","System","admin"],
 ];
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
 const NAV_GROUPS=[
   {label:"개요 · Overview", ids:["caseList"]},
-  {label:"신청·서류 · Application", ids:["application","preassess","materials","integration","resubmitCenter"]},
+  {label:"신청·서류 · Application", ids:["application","preassess","materials","aiExtractions","integration","resubmitCenter"]},
   {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
-  {label:"지원 · Support", ids:["opsDashboard","workflowMonitor","regulations","consultation","notifyLog","system"]},   // prod notifyLog 유지 + 신규 운영현황·규정법령
+  {label:"지원 · Support", ids:["opsDashboard","workflowMonitor","regulations","consultation","notifyLog","auditLog","system"]},   // prod notifyLog 유지 + 운영현황·규정법령·감사로그
   {label:"기타 · Others", ids:["assistant","feedback"]},   // prod 고유 그룹 유지
   {label:"내 정보 관리 · My Data", ids:["documents"]},   // M6: 문서=내 자료함(맨 뒤 이동)
 ];
@@ -450,6 +452,8 @@ const MENU_ACCESS = {
   application:["client","consultant","admin"],
   preassess:["client","consultant","admin"],
   materials:["client","consultant","auditor","admin"],
+  aiExtractions:["consultant","client","auditor","admin"],   // G14 M08 AI 검수 큐 — 백엔드 review 가드(consultant·penyelia_halal→client·auditor·fatwa_liaison)와 정합. 조회는 케이스 소유자면 가능
+
   integration:["client","consultant","auditor","admin"],
   manualBuilder:["client","consultant","admin"],
   documents:["client","consultant","auditor","sharia","ops","admin"],
@@ -470,9 +474,10 @@ const MENU_ACCESS = {
   assistant:["client","consultant","auditor","sharia","ops","admin"],
   feedback: ["client","consultant","auditor","sharia","ops","admin"],
   consultation: ["client","consultant","ops","admin"],   // 상담: 클라이언트 제출·관리자 응대
+  auditLog: ["admin"],   // G17 전역 감사로그 — admin 전용(백엔드 require_roles() 정합)
   system:   ["admin"],
 };
-const CASE_SCOPED = new Set(["workflow","application","preassess","materials","integration",
+const CASE_SCOPED = new Set(["workflow","application","preassess","materials","aiExtractions","integration",
   "documents","audit","onsiteCalendar","evaluation","invoice","fatwa","certificate","assistant","manualBuilder","resubmitCenter"]);
 
 let ROLE="client", CUR="caseList", FILTERS={}, DETAIL=null;
@@ -631,7 +636,7 @@ const ID_LABEL={
 };
 const NAV_ID={"feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
   integration:"Integrasi",documents:"Dokumen",audit:"Audit",onsiteCalendar:"현장심사 캘린더",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
-  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",opsDashboard:"Operasional",workflowMonitor:"워크플로우 모니터",regulations:"Regulasi & Hukum",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",system:"Sistem"};
+  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",opsDashboard:"Operasional",workflowMonitor:"워크플로우 모니터",regulations:"Regulasi & Hukum",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",aiExtractions:"Antrian Tinjau AI",auditLog:"Log Audit",system:"Sistem"};
 function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
@@ -816,6 +821,40 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n G14 M08 AI 데이터 정확성 검수 큐
+  "AI 데이터 정확성 검수":"Tinjau Akurasi Data AI",
+  "AI가 추출한 값의 신뢰도를 확인하고 승인 또는 수정(재정의) 처리합니다. 저신뢰 항목을 우선 검토하세요.":"Periksa keandalan nilai yang diekstrak AI lalu setujui atau ubah (override). Utamakan item berkeandalan rendah.",
+  "AI 추출 항목":"Item Ekstraksi AI",
+  "저신뢰 항목":"Item Keandalan Rendah",
+  "검수 완료":"Tinjauan Selesai",
+  "AI 추출·검수":"Ekstraksi & Tinjauan AI",
+  "소스·모델":"Sumber·Model",
+  "추출값":"Nilai Ekstraksi",
+  "검수상태":"Status Tinjauan",
+  "검수 노트":"Catatan Tinjauan",
+  "저신뢰":"Keandalan rendah",
+  "승인됨":"Disetujui",
+  "수정됨":"Diubah",
+  "AI 추출 항목이 없습니다.":"Tidak ada item ekstraksi AI.",
+  "수정 사유·정정 내용을 입력하세요":"Masukkan alasan/koreksi perubahan",
+  "검수 반영됨":"Tinjauan diterapkan",
+  "검수 실패":"Tinjauan gagal",
+  // §i18n G17 전역 감사로그 조회(admin)
+  "전역 감사로그":"Log Audit Global",
+  "모든 사용자·시스템의 접근·변경 이력을 조회합니다. 읽기 전용(관리자 전용).":"Menampilkan riwayat akses·perubahan seluruh pengguna·sistem. Hanya-baca (khusus admin).",
+  "필터":"Filter",
+  "행위자(actor)":"Pelaku (actor)",
+  "액션(action)":"Aksi (action)",
+  "리소스 유형":"Jenis Sumber Daya",
+  "조회":"Cari",
+  "초기화":"Reset",
+  "감사로그":"Log Audit",
+  "감사로그가 없습니다.":"Tidak ada log audit.",
+  "행위자":"Pelaku",
+  "액션":"Aksi",
+  "리소스":"Sumber Daya",
+  "이전":"Sebelumnya",
+  "다음":"Berikutnya",
   // §i18n M06 규정·법령 관리(P0-4차)
   "규정·법령":"Regulasi & Hukum",
   "규정·법령 관리":"Manajemen Regulasi & Hukum",
@@ -5301,6 +5340,99 @@ function dlCsv(id){const cfg=_DL_CFG[id],st=_DL_STATE[id],items=(st&&st._items)|
   const head=cols.map(c=>c.label).join(",");
   const lines=items.map(r=>cols.map(c=>{const v=c.csvVal?c.csvVal(r):(r[c.key]==null?'':r[c.key]);return '"'+String(v).replace(/"/g,'""')+'"';}).join(",")).join("\n");
   downloadText((cfg.csvName||id)+".csv",head+"\n"+lines);}
+
+/* ===== G14 M08 AI 데이터 정확성 검수 큐 — SCREEN.aiExtractions (케이스 스코프) =====
+   백엔드: GET /cases/{id}/ai-extractions (id·source·model_name·model_version·confidence·extracted·evidence·reviewer_status·reviewer_id·reviewer_note·created_at)
+   + PATCH /ai-extractions/{ext_id}/review {reviewer_status: accepted|overridden, note}. 신규 스키마 없음. */
+function aiConf(c){const v=(c==null?null:Number(c));if(v==null||isNaN(v))return["mute","—"];const p=Math.round(v*100);if(v>=0.85)return["ok",p+"%"];if(v>=0.6)return["warn",p+"%"];return["bad",p+"%"];}
+function aiRevLabel(s){return {accepted:"승인됨",overridden:"수정됨"}[s]||"미검수";}
+function aiRevColor(s){return {accepted:"ok",overridden:"warn"}[s]||"mute";}
+SCREEN.aiExtractions=async()=>{
+  const id=CURCASE;
+  const rows=await API(`/cases/${id}/ai-extractions`).catch(()=>[]);
+  const canReview=["consultant","client","auditor","admin"].includes(ROLE);
+  const low=rows.filter(r=>r.confidence!=null&&Number(r.confidence)<0.6).length;
+  const pend=rows.filter(r=>!r.reviewer_status).length;
+  const kpi=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:22px;color:var(--${c})">${n}</span><span class="l">${l}</span></div></div>`;
+  const tr=rows.length?rows.map(r=>{
+    const [cc,cl]=aiConf(r.confidence);
+    const isLow=r.confidence!=null&&Number(r.confidence)<0.6;
+    const ex=r.extracted==null?"":(typeof r.extracted==="object"?JSON.stringify(r.extracted):String(r.extracted));
+    return `<tr${isLow?' style="background:color-mix(in srgb,var(--bad) 6%,transparent)"':''}>
+      <td><b>${esc(r.source||r.model_name||"—")}</b>${r.model_version?`<div class="muted small">${esc(r.model_version)}</div>`:""}</td>
+      <td class="small" style="max-width:340px;overflow:hidden;text-overflow:ellipsis"><code>${esc(ex.slice(0,240))}</code></td>
+      <td style="white-space:nowrap"><span class="tag t-${cc}">${cl}</span>${isLow?` <span class="tag t-bad">${T("저신뢰")}</span>`:""}</td>
+      <td><span class="tag t-${aiRevColor(r.reviewer_status)}">${T(aiRevLabel(r.reviewer_status))}</span></td>
+      <td class="muted small" style="max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(r.reviewer_note||"")}</td>
+      <td style="text-align:right;white-space:nowrap">${canReview?`
+        <button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="reviewExtraction('${esc(r.id)}','accepted')">✔ ${T("승인")}</button>
+        <button class="btn warn" style="padding:3px 8px;font-size:11px" onclick="reviewExtraction('${esc(r.id)}','overridden')">✎ ${T("수정")}</button>`:'<span class="muted small">-</span>'}</td></tr>`;}).join("")
+    : `<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">${T("AI 추출 항목이 없습니다.")}</td></tr>`;
+  return `
+  <div class="banner info" style="margin-bottom:16px">🔬 <b>${T("AI 데이터 정확성 검수")}</b> — ${T("AI가 추출한 값의 신뢰도를 확인하고 승인 또는 수정(재정의) 처리합니다. 저신뢰 항목을 우선 검토하세요.")}</div>
+  <div class="grid four" style="margin-bottom:16px">
+    ${kpi(rows.length,T("AI 추출 항목"),"ink")}
+    ${kpi(low,T("저신뢰 항목"),(low?"bad":"ink3"))}
+    ${kpi(pend,T("미검수"),(pend?"warn":"ok"))}
+    ${kpi(rows.length-pend,T("검수 완료"),"ok")}</div>
+  <div class="card"><h3>${T("AI 추출·검수")} <span class="en">· AI Extractions</span><span class="r">${rows.length}${T("건")}</span></h3>
+    <div class="body tight"><table>
+      <thead><tr><th>${T("소스·모델")}</th><th>${T("추출값")}</th><th>${T("신뢰도")}</th><th>${T("검수상태")}</th><th>${T("검수 노트")}</th><th>${T("동작")}</th></tr></thead>
+      <tbody>${tr}</tbody></table></div></div>`;
+};
+async function reviewExtraction(extId,status){
+  let note=null;
+  if(status==="overridden"){note=prompt(T("수정 사유·정정 내용을 입력하세요"));if(note===null)return;}
+  try{await API(`/ai-extractions/${extId}/review`,{method:"PATCH",body:JSON.stringify({reviewer_status:status,note:note})});toast(T("검수 반영됨"));applyView();}
+  catch(e){toast(T("검수 실패")+(e&&e.code?" · "+e.code:""));}
+}
+
+/* ===== G17 전역 감사로그 조회(admin 전용) — SCREEN.auditLog (전역·케이스무관) =====
+   백엔드: GET /admin/audit-logs (필터 actor_id·action·resource_type·resource_id·case_id·org_id + limit/offset).
+   응답 {total,limit,offset,items:[{id,actor_id,actor_role,org_id,action,resource_type,resource_id,case_id,meta,created_at}]}. 신규 스키마 없음. */
+let AUDLOG_F={actor_id:"",action:"",resource_type:"",case_id:""}, AUDLOG_OFF=0; const AUDLOG_LIM=50;
+function audlogSet(k,v){AUDLOG_F[k]=v;}
+function audlogSearch(){AUDLOG_OFF=0;applyView();}
+function audlogReset(){AUDLOG_F={actor_id:"",action:"",resource_type:"",case_id:""};AUDLOG_OFF=0;applyView();}
+function audlogPage(d){AUDLOG_OFF=Math.max(0,AUDLOG_OFF+d);applyView();}
+SCREEN.auditLog=async()=>{
+  const qs=new URLSearchParams();
+  Object.entries(AUDLOG_F).forEach(([k,v])=>{if(v&&String(v).trim())qs.set(k,String(v).trim());});
+  qs.set("limit",AUDLOG_LIM);qs.set("offset",AUDLOG_OFF);
+  const d=await API("/admin/audit-logs?"+qs.toString()).catch(()=>({total:0,items:[],limit:AUDLOG_LIM,offset:0}));
+  const items=d.items||[], total=d.total||0;
+  const tr=items.length?items.map(r=>{
+    const meta=r.meta==null?"":(typeof r.meta==="object"?JSON.stringify(r.meta):String(r.meta));
+    return `<tr>
+      <td class="muted small" style="white-space:nowrap">${esc((r.created_at||"").replace("T"," ").slice(0,19))}</td>
+      <td><b>${esc(r.actor_id||"—")}</b>${r.actor_role?`<div class="muted small">${esc(r.actor_role)}</div>`:""}</td>
+      <td>${esc(r.action||"—")}</td>
+      <td>${esc(r.resource_type||"—")}${r.resource_id?`<div class="muted small">${esc(short(r.resource_id))}</div>`:""}</td>
+      <td class="small">${r.case_id?esc(short(r.case_id)):'<span class="muted">—</span>'}</td>
+      <td class="muted small" style="max-width:260px;overflow:hidden;text-overflow:ellipsis"><code>${esc(meta.slice(0,200))}</code></td></tr>`;}).join("")
+    : `<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">${T("감사로그가 없습니다.")}</td></tr>`;
+  const from=total?AUDLOG_OFF+1:0, to=Math.min(AUDLOG_OFF+AUDLOG_LIM,total);
+  return `
+  <div class="banner info" style="margin-bottom:16px">🛡️ <b>${T("전역 감사로그")}</b> — ${T("모든 사용자·시스템의 접근·변경 이력을 조회합니다. 읽기 전용(관리자 전용).")}</div>
+  <div class="card" style="margin-bottom:16px"><h3>${T("필터")} <span class="en">· Filter</span></h3>
+    <div class="body"><div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px">
+      <div class="field"><label for="audlog_actor">${T("행위자(actor)")}</label><input class="v" id="audlog_actor" value="${esc(AUDLOG_F.actor_id)}" oninput="audlogSet('actor_id',this.value)" placeholder="user id"></div>
+      <div class="field"><label for="audlog_action">${T("액션(action)")}</label><input class="v" id="audlog_action" value="${esc(AUDLOG_F.action)}" oninput="audlogSet('action',this.value)" placeholder="case.read"></div>
+      <div class="field"><label for="audlog_res">${T("리소스 유형")}</label><input class="v" id="audlog_res" value="${esc(AUDLOG_F.resource_type)}" oninput="audlogSet('resource_type',this.value)" placeholder="case"></div>
+      <div class="field"><label for="audlog_case">${T("케이스")}</label><input class="v" id="audlog_case" value="${esc(AUDLOG_F.case_id)}" oninput="audlogSet('case_id',this.value)" placeholder="case id"></div>
+    </div>
+    <div style="margin-top:10px"><button class="btn pri" onclick="audlogSearch()">🔍 ${T("조회")}</button>
+      <button class="btn" onclick="audlogReset()">${T("초기화")}</button></div></div></div>
+  <div class="card"><h3>${T("감사로그")} <span class="en">· Audit Log</span><span class="r">${total}${T("건")}</span></h3>
+    <div class="body tight"><table>
+      <thead><tr><th>${T("시각")}</th><th>${T("행위자")}</th><th>${T("액션")}</th><th>${T("리소스")}</th><th>${T("케이스")}</th><th>meta</th></tr></thead>
+      <tbody>${tr}</tbody></table>
+      <div class="pager" style="margin-top:10px;display:flex;gap:10px;align-items:center;justify-content:center">
+        <button class="btn" ${AUDLOG_OFF<=0?"disabled":""} onclick="audlogPage(-${AUDLOG_LIM})">← ${T("이전")}</button>
+        <span class="muted small">${from}–${to} / ${total}</span>
+        <button class="btn" ${to>=total?"disabled":""} onclick="audlogPage(${AUDLOG_LIM})">${T("다음")} →</button>
+      </div></div></div>`;
+};
 
 SCREEN.system=async()=>{
   const [users,orgs,onto,lphrefs,kma,admCases]=await Promise.all([

@@ -4509,7 +4509,7 @@ def get_onsite_sign(case_id: str, user=Depends(auth.get_current_user),
 #    onsite.sign 패턴 동일. 기존 fatwa 투표/결정(P0-4)과 별개의 위원 개별 캔버스 서명. ──
 @app.post("/cases/{case_id}/fatwa/sign")
 def fatwa_sign(case_id: str, body: dict = None,
-               user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+               user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
     b = body or {}
     member = (b.get("member") or "").strip()
     if not member:

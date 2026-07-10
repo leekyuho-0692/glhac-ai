@@ -369,7 +369,6 @@ class Org(Base):
     address = Column(String)      # 회사 주소(회원가입 최소, 상세는 신청 오피스폼) — Phase 1
     profile_ext = Column(JSON)    # Company Info 상세 — Phase 1
     created_at = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Discussion(Base):
