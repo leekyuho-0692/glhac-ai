@@ -9,6 +9,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 logging.basicConfig(
     level=os.environ.get("GLHAC_LOG_LEVEL", "INFO"),
@@ -23,6 +24,9 @@ from . import observability as obs
 from .ontology_seed import seed
 
 app = FastAPI(title="GL-HAC AI Dual-Pathway API", version="0.2.0")
+
+# GZip 압축 — 451KB index.html 등 정적/JSON 응답 전송 최적화(1KB 이상만 압축).
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS — 기본은 동일 출처만. GLHAC_CORS_ORIGINS(콤마구분)로 SPA 출처 명시 허용.
 _cors_env = os.environ.get("GLHAC_CORS_ORIGINS", "").strip()
