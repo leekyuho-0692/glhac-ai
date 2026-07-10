@@ -80,6 +80,7 @@ class InvoiceReq(BaseModel):
 
 class FatwaReturnReq(BaseModel):     # P1-#7 파트와→오디터 반려 루프
     reason: str                      # 반려 사유(필수)
+    target: Optional[str] = None     # P2(G2): audit_closed(기본·오디터 재작업) | supplementation_required(클라이언트 보완)
 
 
 class FatwaReq(BaseModel):

@@ -4561,6 +4561,7 @@ def audit_report_sign(case_id: str, body: schemas.AuditReportSignReq,
     at = datetime.utcnow().isoformat()
     sm.record_event(db, c, c.status, c.status, "audit_report.sign", user["role"], user["uid"],
                     {"name": name, "gen_doc_id": g.gen_doc_id, "at": at})
+    _auto_advance(db, c, "hpas_evaluation_ready", user, "audit_report.sign.auto")   # P2 훅: 보고서 서명→HPAS 평가 준비
     db.commit()
     return {"ok": True, "name": name, "gen_doc_id": g.gen_doc_id, "at": at}
 
@@ -4722,7 +4723,8 @@ def get_onsite_checklist(case_id: str, user=Depends(auth.get_current_user),
 def update_onsite_checklist(case_id: str, body: schemas.OnsiteChecklistReq,
                             user=Depends(rbac.require_action("onsite.checklist")),
                             db: Session = Depends(get_db)):
-    _get_case(db, case_id, user)
+    c = _get_case(db, case_id, user)
+    _auto_advance(db, c, "onsite_audit_in_progress", user, "onsite.checklist.auto")   # P2 훅: 체크 시작→현장심사 진행
     if body.item_key not in {k for k, _ in ONSITE_ITEMS}:
         raise HTTPException(400, {"code": "INVALID_ITEM_KEY"})
     if body.result not in ("not_checked", "comply", "nonconformity"):
@@ -4836,6 +4838,54 @@ def fatwa_sign(case_id: str, body: dict = None,
                     {"member": member, "image": image, "name": name})
     db.commit()
     return {"ok": True, "member": member}
+
+
+# ── F05 파트와 위원 관리 — 스키마 무변경 sentinel(WorkflowEvent, case_id="fatwa-committee:{org_id}",
+#    action="fatwa.committee" latest-wins). auditor.profile 패턴 동일. 위원장/간사/위원 명단 관리. ──
+FATWA_COMMITTEE_ACTION = "fatwa.committee"
+FATWA_MEMBER_ROLES = ("chair", "secretary", "member")
+
+
+def _committee_shim(org_id):
+    import types
+    return types.SimpleNamespace(case_id="fatwa-committee:" + (org_id or "org_demo"), org_id=org_id)
+
+
+def _fatwa_committee(db, org_id):
+    ev = (db.query(models.WorkflowEvent)
+          .filter_by(case_id="fatwa-committee:" + (org_id or "org_demo"), action=FATWA_COMMITTEE_ACTION)
+          .order_by(models.WorkflowEvent.created_at.desc()).first())
+    return ((ev.payload or {}).get("members") or []) if ev else []
+
+
+@app.get("/fatwa/committee")
+def get_fatwa_committee(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """F05: 파트와 위원 명단 조회 — 서명 슬롯·결정문 위원 목록의 소스."""
+    return {"members": _fatwa_committee(db, user.get("org_id"))}
+
+
+@app.post("/fatwa/committee")
+def set_fatwa_committee(body: dict = None,
+                        user=Depends(auth.require_roles("operator", "fatwa_liaison")),
+                        db: Session = Depends(get_db)):
+    """F05: 위원 명단 저장(전체 교체·latest-wins). 위원장 1인 필수, 총 1~7인."""
+    members = (body or {}).get("members") or []
+    if not isinstance(members, list) or not (1 <= len(members) <= 7):
+        raise HTTPException(422, {"code": "BAD_MEMBERS", "hint": "1~7인 목록 필요"})
+    clean = []
+    for m in members:
+        role = str((m or {}).get("role") or "").strip()
+        name = str((m or {}).get("name") or "").strip()
+        if role not in FATWA_MEMBER_ROLES or not name:
+            raise HTTPException(422, {"code": "BAD_MEMBER_ENTRY", "allowed_roles": list(FATWA_MEMBER_ROLES)})
+        clean.append({"role": role, "name": name[:80], "title": str((m or {}).get("title") or "")[:80]})
+    if sum(1 for m in clean if m["role"] == "chair") != 1:
+        raise HTTPException(422, {"code": "CHAIR_REQUIRED", "hint": "위원장(chair) 정확히 1인"})
+    shim = _committee_shim(user.get("org_id"))
+    sm.record_event(db, shim, "committee", "committee", FATWA_COMMITTEE_ACTION,
+                    user["role"], user["uid"], {"members": clean})
+    db.commit()
+    return {"members": clean}
 
 
 @app.get("/cases/{case_id}/fatwa/sign")
@@ -5112,6 +5162,7 @@ def onsite_schedule_confirm(case_id: str, body: dict = None,
     payload = {"date": date, "time": tm, "note": str(body.get("note") or "")}
     sm.record_event(db, c, c.status, c.status, "onsite_schedule.confirm",
                     user["role"], user["uid"], payload)
+    _auto_advance(db, c, "onsite_audit_scheduled", user, "onsite_schedule.confirm.auto")   # P2 훅: 일정 확정→현장심사 예정
     _notify(db, c, "audit_scheduled", "현장심사 일정 확정",
             "%s — 현장심사 방문일이 %s%s 로 확정되었습니다." % (
                 c.company_name or "", date, (" " + tm) if tm else ""),
@@ -5170,6 +5221,7 @@ def submit_car(finding_id: str, body: schemas.CarSubmitReq,
     db.add(car)
     sm.record_event(db, c, c.status, c.status, "car.submit", user["role"], user["uid"],
                     {"finding_id": finding_id})
+    _auto_advance(db, c, "corrective_action_submitted", user, "car.submit.auto")   # P2 훅: CAR 제출→시정조치 제출 상태
     db.commit()
     return {"id": car.id, "finding_id": finding_id, "status": car.status}
 
@@ -5816,7 +5868,8 @@ def list_integration_events(case_id: str, user=Depends(auth.get_current_user),
 def change_impact(case_id: str, body: schemas.ChangeImpactReq,
                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """변경 영향도 — 설계 8.3 가중식(간이)."""
-    _get_case(db, case_id, user)
+    c = _get_case(db, case_id, user)
+    _auto_advance(db, c, "change_impact", user, "change_impact.auto")   # P2 훅: 사후관리→변경영향 상태
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
     crit = [m.name for m in mats if m.screen_result in ("BLOCK", "NEEDS_EVIDENCE")]
     base = {"supplier_changed": 0.4, "material_added": 0.5, "process_changed": 0.3,
@@ -5954,16 +6007,23 @@ def fatwa_return_to_auditor(case_id: str, body: schemas.FatwaReturnReq,
     reason = (body.reason or "").strip()
     if not reason:
         raise HTTPException(422, {"code": "REASON_REQUIRED"})
-    target = "audit_closed"   # 오디터 심사보고서 단계(현장심사 종료 = 보고서 확정 지점)
+    # P2(G2): 반려 대상 분기 — 기본=오디터 재작업(audit_closed), 선택=클라이언트 보완(supplementation_required,
+    # 상태머신 fatwa_review→supplementation_required 전이 활성화)
+    target = (body.target or "audit_closed").strip()
+    if target not in ("audit_closed", "supplementation_required"):
+        raise HTTPException(422, {"code": "BAD_TARGET", "allowed": ["audit_closed", "supplementation_required"]})
     frm = c.status
     ok, _blk = sm.can_transition(db, c, target)
     if ok:                    # 유효 전이면 가드 경유(side-effects 반영)
         sm.apply_side_effects(c, target)
     c.status = target         # 불가하면 직접 set(ops.reject 패턴 — dead-end 회피)
     sm.record_event(db, c, frm, target, "fatwa.returned_to_auditor", user["role"], user["uid"],
-                    {"reason": reason})
-    _notify(db, c, "fatwa.returned_to_auditor", "파트와 반려 — 현장심사 보고서 보완 요청",
-            body=reason, role="auditor")
+                    {"reason": reason, "target": target})
+    if target == "supplementation_required":
+        _notify(db, c, "fatwa.returned_supplement", "파트와 반려 — 보완자료 제출 요청", body=reason, role="applicant")
+    else:
+        _notify(db, c, "fatwa.returned_to_auditor", "파트와 반려 — 현장심사 보고서 보완 요청",
+                body=reason, role="auditor")
     db.commit()
     return {"ok": True, "from": frm, "to": target, "reason": reason}
 
@@ -7768,6 +7828,18 @@ def evaluation_verdict(case_id: str, body: dict = None,
             db.add(car)
             db.flush()
             car_id = car.id
+    # P2 훅: 5요소 최신 판정이 전부 good이면(가드=미해결 major NC 검사) 최종패키지 준비로 자동 전진
+    if vd == "good":
+        latest = {}
+        for ev in (db.query(models.WorkflowEvent)
+                   .filter_by(case_id=case_id, action="evaluation.verdict")
+                   .order_by(models.WorkflowEvent.created_at.asc()).all()):
+            p = ev.payload or {}
+            if p.get("element"):
+                latest[p["element"]] = p.get("verdict")
+        latest[el] = vd
+        if all(latest.get(k) == "good" for k in HPAS_AUTO_ELEMENTS):
+            _auto_advance(db, c, "final_package_preparation", user, "evaluation.complete.auto")
     db.commit()
     return {"element": el, "verdict": vd, "car_id": car_id}
 
@@ -7984,6 +8056,8 @@ def preassess_review(case_id: str, body: schemas.PreassessReviewReq,
                                   "got": sorted(bad)})
     sm.record_event(db, c, c.status, c.status, "preassess.review", user["role"], user["uid"],
                     {"sections": sections, "verdict": verdict, "note": (body.note or "").strip()})
+    if verdict == "ready":   # P2 훅: 보완 재제출 검토 통과→컨설턴트 검토(supplementation_submitted에서만 발화)
+        _auto_advance(db, c, "consultant_review", user, "preassess.review.auto")
     db.commit()
     return {"ok": True, "verdict": verdict}
 
@@ -8021,6 +8095,7 @@ def preassess_resubmit(case_id: str, body: schemas.PreassessResubmitReq,
     note = (body.note or "").strip()
     sm.record_event(db, c, c.status, c.status, "preassess.resubmit", user["role"], user["uid"],
                     {"round": rnd, "note": note})
+    _auto_advance(db, c, "supplementation_submitted", user, "preassess.resubmit.auto")   # P2 훅: 보완 재제출→제출 상태
     _notify(db, c, "preassess.resubmit", "사전심사 재제출", body=note, role="auditor")
     db.commit()
     return {"ok": True, "round": rnd}
@@ -8207,6 +8282,29 @@ def resubmit_center(case_id: str, user=Depends(auth.get_current_user),
 
 
 # ---------- transition ----------
+def _auto_advance(db, c, to_state, user, action):
+    """서브플로우 완료 훅 — 조건 충족 시 케이스 상태 자동 전진(전수검사 P2: '서브플로우는 끝나는데
+    케이스가 안 넘어감' 7곳 해소). /transition과 동일 규칙(PROTECTED 제외·역할 게이트 admin 우회·
+    가드 통과)일 때만 전진하고, 아니면 조용히 건너뜀(수동 '다음 단계' 폴백 유지)."""
+    try:
+        if to_state in sm.PROTECTED_STATES or not sm.allowed(c.status, to_state):
+            return False
+        if user["role"] != "admin" and user["role"] not in sm.transition_roles(to_state):
+            return False
+        ok, _blk = sm.can_transition(db, c, to_state)
+        if not ok:
+            return False
+        frm = c.status
+        sm.apply_side_effects(c, to_state)
+        c.status = to_state
+        obs.inc("glhac_state_transition_total", {"to": to_state})
+        sm.record_event(db, c, frm, to_state, action, user["role"], user["uid"], {"auto": True})
+        return True
+    except Exception as e:
+        log.warning("auto_advance(%s→%s) 실패 무시: %s", getattr(c, "status", "?"), to_state, e)
+        return False
+
+
 @app.post("/cases/{case_id}/transition")
 def transition(case_id: str, body: schemas.TransitionReq,
                user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -8307,8 +8405,11 @@ def verify_pendamping(case_id: str, body: schemas.PendampingVerify,
         switched = True
         sm.record_event(db, c, c.status, c.status, "pathway.switch", "pendamping", user["uid"],
                         {"reason": "pendamping_rejected"})
+    advanced = False
+    if body.decision == "verified":   # P2 훅: 펜담핑 검증→자기선언 제출(가드 4종 통과 시)
+        advanced = _auto_advance(db, c, "self_declaration_submitted", user, "pendamping.verify.auto")
     db.commit()
-    return {"decision": body.decision, "switched_to_reguler": switched}
+    return {"decision": body.decision, "switched_to_reguler": switched, "auto_advanced": advanced}
 
 
 # ---------- SIHALAL 식별자 ----------

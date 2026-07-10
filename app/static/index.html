@@ -5674,10 +5674,11 @@ SCREEN.fatwa=async()=>{
   const fatwaDashHtml=`<div class="card" style="margin-bottom:16px"><h3>파트와 위원회 대시보드 <span class="en">· Committee dashboard</span><span class="r">${(fdash.items||[]).length}건</span></h3><div class="body">
     <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">${fcard(fc.review,"심의 대기","warn")}${fcard(fc.provisional,"가승인","info")}${fcard(fc.approved,"최종승인","ok")}${fcard((fc.rejected||0)+(fc.conditional||0),"반려/조건부","bad")}</div>
     <div class="body tight"><table><thead><tr><th>회사</th><th>파트와 상태</th><th>결정번호</th></tr></thead><tbody>${frows}</tbody></table></div></div></div>`;
-  if(!CURCASE)return fatwaDashHtml+'<div class="card"><div class="body muted">위 목록에서 케이스를 선택하면 위원회 심의 상세가 표시됩니다.</div></div>';
+  const committeeCard=await fatwaCommitteeCard();   // F05 위원 관리
+  if(!CURCASE)return fatwaDashHtml+committeeCard+'<div class="card"><div class="body muted">위 목록에서 케이스를 선택하면 위원회 심의 상세가 표시됩니다.</div></div>';
   const mock=await fatwaDecisionView(CURCASE,true);
   const advanced=await fatwaCommitteeAdvanced(CURCASE);
-  return fatwaDashHtml + mock + advanced;
+  return fatwaDashHtml + committeeCard + mock + advanced;
 };
 /* 기존 심의 상세(위원 구성·2단계 승인·위원회 투표) — P0-4 fatwa 로직 보존, 접이식 */
 async function fatwaCommitteeAdvanced(id){
@@ -5901,10 +5902,42 @@ async function setFatwaCommittee(id,decision){
 }
 async function fatwaDecide(id,decision){try{await API(`/cases/${id}/fatwa`,{method:"PATCH",body:JSON.stringify({decision})});toast(decision==='approved'?"가승인 완료":"결정 · "+decision);await loadCases(true);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function fatwaReturnAuditor(id){
-  const r=await dialog(T('오디터로 반려'),[{key:"reason",label:T('반려 사유'),type:"textarea",required:true}]);
+  const r=await dialog(T('파트와 반려'),[
+    {key:"reason",label:T('반려 사유'),type:"textarea",required:true},
+    {key:"target",label:T('반려 대상'),type:"select",options:[
+      {value:"audit_closed",label:T('오디터 재작업 (심사보고서 보완)')},
+      {value:"supplementation_required",label:T('클라이언트 보완 (자료 재제출)')}]}]);
   if(!r)return;
-  try{await API(`/cases/${id}/fatwa/return-to-auditor`,{method:"POST",body:JSON.stringify({reason:r.reason})});toast(T('오디터로 반려됨'));await loadCases(true);applyView();}
+  try{await API(`/cases/${id}/fatwa/return-to-auditor`,{method:"POST",body:JSON.stringify({reason:r.reason,target:r.target||"audit_closed"})});
+    toast(r.target==="supplementation_required"?T('클라이언트 보완으로 반려됨'):T('오디터로 반려됨'));await loadCases(true);applyView();}
   catch(e){toast(T('반려 실패')+' · '+((e&&e.code)||''));}
+}
+/* F05 파트와 위원 관리 — org 명단(chair/secretary/member) 조회·저장 */
+async function fatwaCommitteeCard(){
+  const cm=await API('/fatwa/committee').catch(()=>({members:[]}));
+  const canEdit=["sharia","ops","admin"].includes(ROLE);
+  const RKO={chair:T('위원장'),secretary:T('간사'),member:T('위원')};
+  const rows=(cm.members||[]).map(m=>`<tr><td>${bTag(m.role==='chair'?'gold':'info',RKO[m.role]||m.role)}</td><td><b>${esc(m.name)}</b></td><td class="muted small">${esc(m.title||'')}</td></tr>`).join('')
+    ||`<tr><td colspan="3" class="muted" style="text-align:center;padding:14px">${T('등록된 위원 없음 — 위원장 1인 포함 1~7인을 등록하세요')}</td></tr>`;
+  return `<div class="card" style="margin-top:16px"><h3>👥 ${T('위원회 관리')} <span class="en">· Committee (F05)</span><span class="r">${(cm.members||[]).length}${T('명')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('역할')}</th><th>${T('성명')}</th><th>${T('직책')}</th></tr></thead><tbody>${rows}</tbody></table>
+    ${canEdit?`<div class="btnrow" style="padding:10px 0 2px"><button class="btn" onclick="fatwaCommitteeEdit()">✎ ${T('명단 편집')}</button></div>`:''}</div></div>`;
+}
+async function fatwaCommitteeEdit(){
+  const cm=await API('/fatwa/committee').catch(()=>({members:[]}));
+  const cur=(cm.members||[]);
+  const g=k=>{const m=cur.find(x=>x.role===k);return m?m.name+(m.title?' / '+m.title:''):'';};
+  const g2=(k,i)=>{const ms=cur.filter(x=>x.role===k);return ms[i]?ms[i].name+(ms[i].title?' / '+ms[i].title:''):'';};
+  const r=await dialog(T('위원 명단 편집 · 형식: 이름 / 직책'),[
+    {key:"chair",label:T('위원장')+' (Chair) *',required:true,value:g('chair')},
+    {key:"secretary",label:T('간사')+' (Secretary)',value:g('secretary')},
+    {key:"m1",label:T('위원')+' 1 (Member)',value:g2('member',0)},
+    {key:"m2",label:T('위원')+' 2 (Member)',value:g2('member',1)}]);
+  if(!r)return;
+  const parse=(s,role)=>{s=(s||'').trim();if(!s)return null;const p=s.split('/');return {role,name:p[0].trim(),title:(p[1]||'').trim()};};
+  const members=[parse(r.chair,'chair'),parse(r.secretary,'secretary'),parse(r.m1,'member'),parse(r.m2,'member')].filter(Boolean);
+  try{await API('/fatwa/committee',{method:"POST",body:JSON.stringify({members})});toast(T('위원 명단 저장')+' · '+members.length+T('명'));applyView();}
+  catch(e){toast(T('저장 실패')+' · '+((e&&e.code)||''));}
 }
 async function fatwaFinalApprove(id){if(!confirm("최종 승인하시겠습니까? (scope 동결·인증서 발급 가능)"))return;try{await API(`/cases/${id}/fatwa/final-approve`,{method:"POST",body:"{}"});toast("최종 승인 완료");await loadCases(true);applyView();}catch(e){toast("최종승인 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
 async function fatwaDoc(id){try{const r=await API(`/cases/${id}/fatwa/document`,{method:"POST",body:"{}"});downloadText("fatwa_"+short(id)+".txt",r.document||"");toast("결정문 생성·다운로드");}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
