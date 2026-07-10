@@ -2622,7 +2622,11 @@ def _sjph_manual_layout_view(db, case_id):
     inserts = {}
     for k, v in (saved.get("inserts") or {}).items():
         if k in kset and isinstance(v, dict) and v.get("document_id"):
-            inserts[k] = {"document_id": str(v.get("document_id")), "filename": str(v.get("filename") or "")}
+            item = {"document_id": str(v.get("document_id")), "filename": str(v.get("filename") or "")}
+            cap = v.get("caption")   # P1-#6: OCR 자동배치 캡션(선택) — 이미지에 딱 붙는 설명. 스키마 무변경(payload).
+            if cap:
+                item["caption"] = str(cap)[:2000]
+            inserts[k] = item
     sections = []
     for k in order:
         img = inserts.get(k)
@@ -2656,7 +2660,11 @@ def set_sjph_manual_layout(case_id: str, body: dict = None,
     inserts = {}
     for k, v in (b.get("inserts") or {}).items():
         if k in kset and isinstance(v, dict) and v.get("document_id"):
-            inserts[k] = {"document_id": str(v.get("document_id")), "filename": str(v.get("filename") or "")}
+            item = {"document_id": str(v.get("document_id")), "filename": str(v.get("filename") or "")}
+            cap = v.get("caption")   # P1-#6: OCR 자동배치 캡션(선택) — 이미지에 딱 붙는 설명. 스키마 무변경(payload).
+            if cap:
+                item["caption"] = str(cap)[:2000]
+            inserts[k] = item
     sm.record_event(db, c, c.status, c.status, "sjph_manual.layout", user["role"], user["uid"],
                     {"order": order, "inserts": inserts})
     db.commit()
@@ -5223,6 +5231,51 @@ def invoice_tax_pdf(invoice_id: str, user=Depends(auth.get_current_user),
                     headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
 
 
+@app.get("/invoices/{invoice_id}/quotation.pdf")
+def invoice_quotation_pdf(invoice_id: str, user=Depends(auth.get_current_user),
+                          db: Session = Depends(get_db)):
+    """견적서(Penawaran/Quotation) PDF — 결제 前 문서. 라인아이템·소계·PPN·총액·유효기간.
+    스키마 무변경 — 라인아이템은 invoice.line_items 이벤트에서 병합. _render_pdf_rich 재사용."""
+    from fastapi.responses import Response
+    from urllib.parse import quote
+    inv, c, _pay = _invoice_ctx(db, invoice_id, user)
+    items = _invoice_line_items(db, inv.case_id, invoice_id)
+    valid_until = (date.today() + timedelta(days=30)).isoformat()
+    rows = []
+    if items:
+        for i, it in enumerate(items):
+            rows.append([str(i + 1), it.get("name") or "-",
+                         format(float(it.get("qty") or 0), ",g"),
+                         _idr(it.get("unit_price")), _idr(it.get("amount"))])
+    else:
+        rows.append(["1", inv.service_type or "-", "1", _idr(inv.amount), _idr(inv.amount)])
+    blocks = [
+        {"type": "kv", "label": "견적번호 · No", "value": inv.invoice_no or "-"},
+        {"type": "kv", "label": "발행일 · Tanggal", "value": date.today().isoformat()},
+        {"type": "kv", "label": "유효기간 · Berlaku s/d", "value": valid_until},
+        {"type": "heading", "level": 2, "text": "구매자 · Pembeli"},
+        {"type": "kv", "label": "기업 · Company", "value": c.company_name or "-"},
+        {"type": "kv", "label": "NIB", "value": c.nib or "-"},
+        {"type": "kv", "label": "주소 · Alamat", "value": c.address or c.factory_address or "-"},
+        {"type": "heading", "level": 2, "text": "공급자 · Penjual"},
+        {"type": "kv", "label": "Nama", "value": "GL-HAC AI (Lembaga Sertifikasi Halal)"},
+        {"type": "heading", "level": 2, "text": "견적 내역 · Rincian"},
+        {"type": "table",
+         "headers": ["No", "항목 · Item", "수량 · Qty", "단가 · Harga", "금액 · Jumlah"],
+         "rows": rows},
+        {"type": "spacer", "h": 6},
+        {"type": "kv", "label": "소계 · DPP", "value": _idr(inv.amount)},
+        {"type": "kv", "label": "부가세 · PPN 11%", "value": _idr(inv.ppn)},
+        {"type": "kv", "label": "총액 · Total", "value": _idr(inv.total)},
+    ]
+    pdf = _render_pdf_rich("PENAWARAN · 견적서 · Quotation", blocks,
+                           subtitle=inv.invoice_no or "",
+                           footer="유효기간 내 회신 바랍니다 · Berlaku sampai %s" % valid_until)
+    fn = "quotation_%s.pdf" % (inv.invoice_no or invoice_id[:8])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
+
+
 # ---------- 인증서 lifecycle: 정지/철회/재개 (§5.1·§5.2) ----------
 def _cert_status_change(db, case_id, user, action, new_status, from_status, reason,
                         event, title, body):
@@ -5489,6 +5542,31 @@ def patch_fatwa(case_id: str, body: schemas.FatwaReq,
             "fatwa_status": c.fatwa_status, "scope_frozen": c.scope_frozen}
 
 
+@app.post("/cases/{case_id}/fatwa/return-to-auditor")
+def fatwa_return_to_auditor(case_id: str, body: schemas.FatwaReturnReq,
+                            user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+                            db: Session = Depends(get_db)):
+    """P1-#7: 파트와/현장심사에서 문제 발견 시 케이스를 오디터 심사보고서 단계(audit_closed)로
+    되돌려 담당 오디터에게 왕복 전달. fatwaDecide('rejected')(fatwa_status 라벨만)와 별개 —
+    이건 워크플로 전이. 유효 전이면 가드 경유, 아니면 ops.reject 패턴처럼 status 직접 set + 사유."""
+    c = _get_case(db, case_id, user)
+    reason = (body.reason or "").strip()
+    if not reason:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    target = "audit_closed"   # 오디터 심사보고서 단계(현장심사 종료 = 보고서 확정 지점)
+    frm = c.status
+    ok, _blk = sm.can_transition(db, c, target)
+    if ok:                    # 유효 전이면 가드 경유(side-effects 반영)
+        sm.apply_side_effects(c, target)
+    c.status = target         # 불가하면 직접 set(ops.reject 패턴 — dead-end 회피)
+    sm.record_event(db, c, frm, target, "fatwa.returned_to_auditor", user["role"], user["uid"],
+                    {"reason": reason})
+    _notify(db, c, "fatwa.returned_to_auditor", "파트와 반려 — 현장심사 보고서 보완 요청",
+            body=reason, role="auditor")
+    db.commit()
+    return {"ok": True, "from": frm, "to": target, "reason": reason}
+
+
 @app.post("/cases/{case_id}/fatwa/document")
 def fatwa_document(case_id: str, user=Depends(rbac.require_action("fatwa.document.read")),
                    db: Session = Depends(get_db)):
@@ -5507,6 +5585,47 @@ def fatwa_document(case_id: str, user=Depends(rbac.require_action("fatwa.documen
     return {"document": "\n".join(lines)}
 
 
+# P1-#1: 라인아이템은 스키마 무변경으로 WorkflowEvent(action="invoice.line_items") payload에
+# latest-wins 저장. Invoice 테이블에 JSON/notes 컬럼이 없어 이벤트 로그로 부착·조회 병합.
+def _norm_line_items(raw):
+    """입력 라인아이템 정규화 → [{name, qty, unit_price, amount}]. amount 미지정 시 qty*unit_price."""
+    out = []
+    for it in (raw or []):
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "").strip()
+        try:
+            qty = float(it.get("qty") or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
+        try:
+            unit = float(it.get("unit_price") or 0)
+        except (TypeError, ValueError):
+            unit = 0.0
+        amt = it.get("amount")
+        try:
+            amt = float(amt) if amt is not None else round(qty * unit, 2)
+        except (TypeError, ValueError):
+            amt = round(qty * unit, 2)
+        if not name and amt == 0:
+            continue
+        out.append({"name": name, "qty": qty, "unit_price": unit, "amount": round(amt, 2)})
+    return out
+
+
+def _invoice_line_items(db, case_id, invoice_id):
+    """이 인보이스의 최신 라인아이템(invoice.line_items 이벤트 latest-wins). 없으면 []."""
+    evs = (db.query(models.WorkflowEvent)
+           .filter_by(case_id=case_id, action="invoice.line_items")
+           .order_by(models.WorkflowEvent.created_at.desc(),
+                     models.WorkflowEvent.event_id.desc()).all())
+    for e in evs:
+        p = e.payload or {}
+        if p.get("invoice_id") == invoice_id:
+            return p.get("items") or []
+    return []
+
+
 @app.get("/cases/{case_id}/invoices")
 def list_invoices(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
@@ -5514,7 +5633,8 @@ def list_invoices(case_id: str, user=Depends(auth.get_current_user), db: Session
     return [{"invoice_id": i.invoice_id, "invoice_no": i.invoice_no, "service_type": i.service_type,
              "amount": i.amount, "ppn": i.ppn, "total": i.total,
              "status": ("waiting_payment" if i.status == "unpaid" else i.status),
-             "payment_ref": i.payment_ref, "due_date": str(i.due_date) if i.due_date else None}
+             "payment_ref": i.payment_ref, "due_date": str(i.due_date) if i.due_date else None,
+             "line_items": _invoice_line_items(db, case_id, i.invoice_id)}
             for i in rows]
 
 
@@ -5522,15 +5642,21 @@ def list_invoices(case_id: str, user=Depends(auth.get_current_user), db: Session
 def add_invoice(case_id: str, body: schemas.InvoiceReq,
                 user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
-    ppn = round(body.amount * 0.11, 2)
-    total = round(body.amount + ppn, 2)
-    inv = models.Invoice(case_id=case_id, service_type=body.service_type, amount=body.amount,
+    # P1-#1: 라인아이템이 있으면 DPP(amount)는 라인 합계로 산정(특수조항 수동조정 반영).
+    items = _norm_line_items(body.line_items)
+    amount = round(sum(it["amount"] for it in items), 2) if items else body.amount
+    ppn = round(amount * 0.11, 2)
+    total = round(amount + ppn, 2)
+    inv = models.Invoice(case_id=case_id, service_type=body.service_type, amount=amount,
                          ppn=ppn, total=total, status="waiting_payment",
                          due_date=datetime.utcnow() + timedelta(days=14))
     db.add(inv)
     db.flush()
     inv.invoice_no = "INV-" + inv.invoice_id[:8].upper()
     inv.payment_ref = "PAY-" + inv.invoice_id[:8].upper()
+    if items:
+        sm.record_event(db, c, c.status, c.status, "invoice.line_items", user["role"], user["uid"],
+                        {"invoice_id": inv.invoice_id, "items": items, "amount": amount})
     _audit(db, user, "payment.invoice.create", "invoice", inv.invoice_id, case_id,
            {"total": total, "service_type": body.service_type}, commit=False)
     sm.record_event(db, c, c.status, c.status, "invoice.create", user["role"], user["uid"],
@@ -5538,7 +5664,7 @@ def add_invoice(case_id: str, body: schemas.InvoiceReq,
     db.commit()
     return {"invoice_id": inv.invoice_id, "invoice_no": inv.invoice_no, "ppn": ppn, "total": total,
             "status": inv.status, "payment_ref": inv.payment_ref,
-            "due_date": str(inv.due_date)}
+            "due_date": str(inv.due_date), "line_items": items}
 
 
 def _on_invoice_paid(db, c, user):
@@ -6580,6 +6706,57 @@ def ops_pending_companies(user=Depends(auth.require_roles("operator")), db: Sess
 @app.get("/ops/auditors")
 def ops_auditors(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
     return _ops_auditors_data(db, user)
+
+
+@app.get("/ops/calendar")
+def ops_calendar(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """P1-#5 관리자 종합 캘린더 — 전 케이스 현장실사 일정 집약(읽기전용, 스키마 무변경).
+    소스: (a)AuditPlan.scheduled_date(LPH 예정) (b)onsite_schedule.confirm 확정일(WorkflowEvent latest-wins).
+    admin=전체·operator=자기 조직 스코프(_ops_cases 재사용). 프런트 월그리드/리스트 렌더용."""
+    cases = _ops_cases(db, user)
+    cmap = {c.case_id: c for c in cases}
+    case_ids = list(cmap.keys())
+    events = []
+
+    def _push(cid, dstr, kind, status, source, lph="", tm=""):
+        d = str(dstr or "").strip()
+        if not d:
+            return
+        c = cmap.get(cid)
+        events.append({"date": d[:10], "case_id": cid,
+                       "company_name": (c.company_name if c else "") or "",
+                       "status_stage": (c.status if c else "") or "",
+                       "kind": kind, "status": status, "lph_name": lph or "",
+                       "time": tm or "", "source": source})
+
+    # (a) AuditPlan 예정일(취소 제외)
+    if case_ids:
+        plans = (db.query(models.AuditPlan)
+                 .filter(models.AuditPlan.case_id.in_(case_ids),
+                         models.AuditPlan.scheduled_date.isnot(None)).all())
+        for p in plans:
+            if (p.status or "") == "cancelled":
+                continue
+            _push(p.case_id, p.scheduled_date, "onsite_audit", p.status or "scheduled",
+                  "audit_plan", lph=p.lph_name or "")
+    # (b) onsite_schedule.confirm 확정일 — 조율 이벤트 보유 케이스만 fold(정확성·부하 최소화)
+    if case_ids:
+        sched_cids = set(r[0] for r in (
+            db.query(models.WorkflowEvent.case_id)
+            .filter(models.WorkflowEvent.case_id.in_(case_ids),
+                    models.WorkflowEvent.action.in_(_ONSITE_SCHED_ACTIONS)).distinct().all()))
+        for cid in sched_cids:
+            st = _onsite_sched_state(db, cid)
+            conf = st.get("confirmed") or {}
+            if conf.get("date"):
+                _push(cid, conf.get("date"), "onsite_audit", "confirmed",
+                      "onsite_schedule", tm=conf.get("time") or "")
+    events.sort(key=lambda e: (e["date"], e["company_name"]))
+    by_date = {}
+    for e in events:
+        by_date.setdefault(e["date"], []).append(e)
+    return {"events": events, "by_date": by_date, "count": len(events),
+            "case_count": len(set(e["case_id"] for e in events))}
 
 
 @app.post("/ops/companies/{case_id}/approve")

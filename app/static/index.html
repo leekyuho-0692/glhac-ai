@@ -283,6 +283,18 @@
   .stepbar .dot{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px;background:var(--line2);color:var(--ink3)}
   .stepbar .step.done .dot{background:var(--ok);color:#fff} .stepbar .step.cur .dot{background:var(--accent);color:#fff;box-shadow:0 0 0 4px var(--accent-soft)}
   .stepbar .stepline{flex:1;height:3px;background:var(--line2);margin:15px 3px 0;border-radius:2px} .stepbar .stepline.done{background:var(--ok)}
+  /* P1-#5 종합 캘린더 월그리드(순수 CSS·CDN 미사용) */
+  .calgrid-head{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px;font-size:11px;color:var(--ink3);font-weight:600;text-align:center}
+  .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .calcell{min-height:74px;border:1px solid var(--line);border-radius:8px;padding:4px;background:var(--card);display:flex;flex-direction:column;gap:3px;overflow:hidden}
+  .calcell.empty{background:transparent;border-color:transparent}
+  .calcell.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .calcell.has{background:var(--accent-soft)}
+  .calday{font-size:11px;font-weight:700;color:var(--ink2);display:flex;align-items:center;gap:4px}
+  .calbadge{background:var(--accent);color:#fff;border-radius:10px;font-size:9px;padding:0 5px;font-weight:700}
+  .calev{font-size:10.5px;background:var(--card);border:1px solid var(--line2);border-radius:5px;padding:2px 4px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+  .calev:hover{border-color:var(--accent);color:var(--accent)}
+  @media(max-width:640px){.calcell{min-height:54px}.calev{font-size:9px}}
   .rpanel{position:fixed;top:0;right:0;width:330px;height:100%;background:var(--card);border-left:1px solid var(--line);box-shadow:-8px 0 30px rgba(0,0,0,.12);transform:translateX(100%);transition:transform .25s;z-index:60;display:flex;flex-direction:column}
   .rpanel.open{transform:translateX(0)}
   .rphead{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid var(--line);font-weight:700;font-size:13px}
@@ -403,6 +415,7 @@ const NAV = [
   ["aiExtractions","🔬","AI 검수 큐","AI Review Queue","데이터 정확성·Review"],
   ["integration","🔗","SJPH/HPAS 통합","Integration","통합·Integration"],
   ["documents","📁","문서","Documents","문서·Docs"],
+  ["vault","🗄️","자료함","Vault","다운로드·재사용"],
   ["audit","🏭","현장심사","On-site Audit","현장심사·On-site"],
   ["onsiteCalendar","📅","현장심사 캘린더","On-site Calendar","일정 조율·Schedule"],
   ["mockAudit","🧷","모의 심사","Mock Audit","모의심사·Mock"],
@@ -414,6 +427,7 @@ const NAV = [
   ["deposits","🏦","입금 매칭","Deposits","입금·Matching"],
   ["notifyLog","📣","알림 발송","Notifications","발송·Delivery"],
   ["opsDashboard","🗺️","운영 현황","Operations","지역·캐파·승인·배정"],
+  ["opsCalendar","🗓️","종합 캘린더","Master Calendar","전사 일정·Schedule"],
   ["workflowMonitor","🔀","워크플로우 모니터","Workflow Monitor","핸드오프·Handoff"],
   ["regulations","📜","규정·법령","Regulations","법령관리·Registry"],
   ["fatwa","⚖️","파트와","Fatwa","심의·Fatwa"],
@@ -430,9 +444,9 @@ const NAV_GROUPS=[
   {label:"신청·서류 · Application", ids:["application","preassess","materials","aiExtractions","integration","resubmitCenter"]},
   {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
-  {label:"지원 · Support", ids:["opsDashboard","workflowMonitor","regulations","consultation","notifyLog","auditLog","system"]},   // prod notifyLog 유지 + 운영현황·규정법령·감사로그
+  {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","regulations","consultation","notifyLog","auditLog","system"]},   // prod notifyLog 유지 + 운영현황·종합캘린더·규정법령·감사로그
   {label:"기타 · Others", ids:["assistant","feedback"]},   // prod 고유 그룹 유지
-  {label:"내 정보 관리 · My Data", ids:["documents"]},   // M6: 문서=내 자료함(맨 뒤 이동)
+  {label:"내 정보 관리 · My Data", ids:["documents","vault"]},   // M6: 문서=내 자료함 · P1-#4 자료함(Vault)
 ];
 const ROLE_DEF = {
   client:    {ko:"클라이언트", en:"Client",     scope:"own"},
@@ -457,6 +471,7 @@ const MENU_ACCESS = {
   integration:["client","consultant","auditor","admin"],
   manualBuilder:["client","consultant","admin"],
   documents:["client","consultant","auditor","sharia","ops","admin"],
+  vault:["client","consultant","admin"],   // P1-#4 자료함 — 클라이언트 중심(담당 컨설턴트·관리자 열람)
   audit:    ["client","consultant","auditor","sharia","ops","admin"],
   onsiteCalendar:["client","consultant","auditor","ops","admin"],   // A08: 클라 제시 + 오디터 확정
   mockAudit:["client","consultant","auditor","sharia","ops","admin"],
@@ -467,6 +482,7 @@ const MENU_ACCESS = {
   deposits: ["ops","admin"],
   notifyLog: ["ops","admin"],
   opsDashboard: ["ops","admin"],   // M01 최고운영자 운영현황(지역·캐파·승인·배정) — ops·admin 전용
+  opsCalendar: ["ops","admin"],   // P1-#5 종합 캘린더(전사 현장실사 일정, 전역·케이스무관) — ops·admin 전용
   workflowMonitor: ["ops","admin"],   // 전역 운영 모니터(케이스 무관) — ops·admin 전용
   regulations: ["ops","admin"],   // M06 규정·법령 관리(전역·케이스무관) — operator(ops)·admin 전용
   fatwa:    ["client","consultant","auditor","sharia","ops","admin"],
@@ -478,7 +494,7 @@ const MENU_ACCESS = {
   system:   ["admin"],
 };
 const CASE_SCOPED = new Set(["workflow","application","preassess","materials","aiExtractions","integration",
-  "documents","audit","onsiteCalendar","evaluation","invoice","fatwa","certificate","assistant","manualBuilder","resubmitCenter"]);
+  "documents","vault","audit","onsiteCalendar","evaluation","invoice","fatwa","certificate","assistant","manualBuilder","resubmitCenter"]);
 
 let ROLE="client", CUR="caseList", FILTERS={}, DETAIL=null;
 let RBAC_ACTIONS={};                          // /rbac/actions 파생 — API와 동일 action_id
@@ -821,6 +837,61 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  // §i18n P1-#1 청구 다항목/프리셋 · P1-#2 견적서 · P1-#7 파트와→오디터 반려
+  "기본 심사료":"Biaya audit dasar",
+  "청구 항목":"Item Tagihan",
+  "특수조항 시 금액 수동조정":"Sesuaikan nominal manual untuk klausul khusus",
+  "항목명":"Nama Item",
+  "수량":"Jumlah",
+  "단가":"Harga Satuan",
+  "금액":"Nominal",
+  "행 추가":"Tambah Baris",
+  "소계":"Subtotal",
+  "부가세":"PPN",
+  "합계":"Total",
+  "항목을 입력하세요":"Masukkan item",
+  "생성 실패":"Gagal membuat",
+  "견적서":"Penawaran",
+  "오디터로 반려":"Kembalikan ke Auditor",
+  "오디터로 반려됨":"Dikembalikan ke auditor",
+  "반려 사유":"Alasan Pengembalian",
+  "문제 발견 시 담당 오디터에게 반려하여 보고서를 보완합니다.":"Bila ditemukan masalah, kembalikan ke auditor penanggung jawab untuk melengkapi laporan.",
+  // §i18n P1-#3 사전심사 5단계 스텝바 · #4 자료함(Vault) · #5 종합 캘린더 · #6 OCR 자동배치
+  "사전심사 진행":"Progres Pra-asesmen",
+  "사전검토 신청":"Pengajuan Pra-tinjauan",
+  "접수확인":"Konfirmasi Penerimaan",
+  "분석검토 대기":"Menunggu Auditor",
+  "오디터 검사중":"Auditor Memeriksa",
+  "결과리포트":"Laporan Hasil",
+  "현재 단계":"Tahap Saat Ini",
+  "자료함":"Arsip Dokumen",
+  "내 자료함":"Arsip Saya",
+  "자료·결과·인증서·원재료를 모아 내려받아 재사용하세요. BPOM 판매허가 등에 활용할 수 있습니다.":"Kumpulkan dan unduh berkas, hasil, sertifikat, dan bahan baku untuk digunakan kembali. Dapat dipakai untuk izin edar BPOM.",
+  "업로드 문서":"Dokumen Unggahan",
+  "생성 문서":"Dokumen Terbit",
+  "인증서":"Sertifikat",
+  "원재료 증빙":"Bukti Bahan Baku",
+  "다운로드":"Unduh",
+  "원본 열기":"Buka Asli",
+  "항목 없음":"Tidak ada item",
+  "전체":"Semua",
+  "종합 캘린더":"Kalender Terpadu",
+  "전사 현장실사 일정":"Jadwal Audit Lapangan Global",
+  "현장실사 일정을 날짜별로 모아 봅니다. 항목을 누르면 해당 케이스로 이동합니다.":"Lihat jadwal audit lapangan per tanggal. Klik item untuk membuka kasus terkait.",
+  "이전 달":"Bulan Lalu",
+  "다음 달":"Bulan Depan",
+  "이번 달":"Bulan Ini",
+  "예정된 현장실사 일정이 없습니다.":"Tidak ada jadwal audit lapangan.",
+  "현장실사":"Audit Lapangan",
+  "예정":"Terjadwal",
+  "확정":"Dikonfirmasi",
+  "건 예정":"jadwal",
+  "OCR 자동배치":"Tempatkan OCR Otomatis",
+  "OCR 인식 중… (수초)":"Mengenali OCR… (beberapa detik)",
+  "OCR 캡션 삽입 완료":"Keterangan OCR ditambahkan",
+  "OCR 엔진 미설치 — 캡션 없이 이미지만 삽입됩니다":"Mesin OCR tidak tersedia — hanya gambar tanpa keterangan",
+  "OCR 실패":"OCR gagal",
+  "이미지가 없습니다 — 먼저 이미지를 드롭하세요":"Belum ada gambar — jatuhkan gambar dulu",
   // §i18n G14 M08 AI 데이터 정확성 검수 큐
   "AI 데이터 정확성 검수":"Tinjau Akurasi Data AI",
   "AI가 추출한 값의 신뢰도를 확인하고 승인 또는 수정(재정의) 처리합니다. 저신뢰 항목을 우선 검토하세요.":"Periksa keandalan nilai yang diekstrak AI lalu setujui atau ubah (override). Utamakan item berkeandalan rendah.",
@@ -2373,7 +2444,19 @@ SCREEN.preassess=async()=>{
           <div class="btnrow" style="margin-top:10px;gap:6px;flex-wrap:wrap"><button class="btn" onclick="intakeZip('${id}')">🗂 ${T('ZIP 재업로드')}</button><input class="v" id="prResubNote" placeholder="${T('재제출 메모(선택)')}" style="flex:1;min-width:120px"><button class="btn ok" onclick="preResubmit('${id}')">✅ ${T('재제출')}</button></div>
           ${pre.resubmit?`<div class="muted small" style="margin-top:6px">${T('최근 재제출')} · ${esc(String(pre.resubmit.at||'').slice(0,16).replace('T',' '))}${pre.resubmit.round?` (${pre.resubmit.round}${T('회차')})`:''}</div>`:''}
         </div></div>`:'';
+  // P1-#3: 클라이언트 사전심사 5단계 진행 스텝바(신청→접수확인→분석검토대기[오디터승인]→오디터검사중→결과리포트).
+  // 단계는 케이스 status·AI실행(ASSESS_CACHE)·회신루프(pre) 파생 — 신규 API 없이 화면 보유 데이터로 매핑. 현재 단계만 강조(색).
+  const cliSteps=[['사전검토 신청','Ajukan'],['접수확인','Diterima'],['분석검토 대기','Analisis'],['오디터 검사중','Audit'],['결과리포트','Laporan']];
+  let cliStage=1;                                                                     // 1) 신청
+  if(c.status&&!['onboarding','application_draft'].includes(c.status))cliStage=2;      // 2) 접수확인
+  if(as)cliStage=3;                                                                    // 3) AI 분석완료 → 오디터 승인 대기
+  const auditorEngaged=!!(pre.doc_request||(pre.review&&Object.keys((pre.review&&pre.review.sections)||{}).length));
+  if(auditorEngaged)cliStage=4;                                                        // 4) 오디터 검사중
+  if(pre.reviewed)cliStage=5;                                                          // 5) 결과리포트
+  const cliStepbar=isCli?`<div class="card" style="margin-bottom:16px"><h3>${T('사전심사 진행')} <span class="en">· Pre-assessment Progress</span><span class="r">${T('현재 단계')} ${cliStage}/5</span></h3>
+    <div class="body"><div class="stepbar" style="overflow-x:auto">${cliSteps.map((s,i)=>{const n=i+1;const cur=n===cliStage;return `<div class="step ${cur?'cur':''}"><div class="dot">${n<cliStage?'✓':n}</div><span>${T(s[0])}<span class="en">${s[1]}</span></span></div>`+(i<cliSteps.length-1?`<div class="stepline ${n<cliStage?'done':''}"></div>`:'');}).join('')}</div></div></div>`:'';
   return `
+  ${cliStepbar}
   <div class="grid side">
     <div>
       <div class="card"><h3>사전심사 대상 <span class="en">· Pre-assessment · 가심사</span><span class="r">${esc(c.company_name||'')}</span></h3>
@@ -3153,6 +3236,54 @@ SCREEN.documents=async()=>{
   </div>
   <div class="card" style="margin-top:16px"><h3>문서 뷰어 <span class="en">· Viewer</span><span class="r">${sel?esc(sel.filename||""):"선택 없음"}</span></h3>
     <div class="body">${viewer}</div></div>`;
+};
+/* ===== P1-#4 클라이언트 자료함(Vault) — 업로드 문서·생성 문서·인증서·원재료 증빙을 한 화면에서
+   분류 탭 + 다운로드로 집약(재사용, BPOM 판매허가 등). 백엔드는 기존 엔드포인트 재사용(신규 라우트 없음):
+   /documents · /gen-docs · /certificate · /materials. ===== */
+let VAULT_TAB='all';
+function vaultTab(t){VAULT_TAB=t;applyView();}
+const VAULT_GD_LABEL={company_info:'기업정보',contract:'계약서',sjph_manual:'SJPH 매뉴얼',sjph_lite:'SJPH Lite',
+  audit_report:'현장심사 보고서',factory_audit:'현장심사 보고서',facility_info:'공장정보',fatwa_decree:'파트와 판결문',
+  fatwa_document:'파트와 결정문',company_profile:'기업 프로필'};
+SCREEN.vault=async()=>{
+  const id=CURCASE;
+  const [docs,gens,mats,cert]=await Promise.all([
+    API(`/cases/${id}/documents`).catch(()=>[]),
+    API(`/cases/${id}/gen-docs`).catch(()=>[]),
+    API(`/cases/${id}/materials`).catch(()=>[]),
+    API(`/cases/${id}/certificate`).catch(()=>({issued:false}))]);
+  const nCert=(cert&&cert.issued)?1:0;
+  const tabs=[['all',T('전체'),docs.length+gens.length+nCert+mats.length],
+    ['upload',T('업로드 문서'),docs.length],['gen',T('생성 문서'),gens.length],
+    ['cert',T('인증서'),nCert],['material',T('원재료 증빙'),mats.length]];
+  if(!tabs.find(t=>t[0]===VAULT_TAB))VAULT_TAB='all';
+  const show=k=>VAULT_TAB==='all'||VAULT_TAB===k;
+  const tabBar=`<div class="chipbar" style="margin-bottom:14px"><span class="muted small">${T('분류')}</span>${tabs.map(([k,l,n])=>`<span class="fchip" style="cursor:pointer${VAULT_TAB===k?';background:var(--accent);color:#fff;border-color:var(--accent)':''}" onclick="vaultTab('${k}')">${l} <b>${n}</b></span>`).join('')}</div>`;
+  const empty=t=>`<div class="muted small">${t}</div>`;
+  // ① 업로드 문서
+  const upBody=docs.length?`<table><tbody>${docs.map(d=>`<tr>
+      <td>${/png|jpg|jpeg|img|image/i.test((d.filename||'')+(d.doc_type||''))?'🖼':'📄'} <b>${esc(d.filename||T('문서'))}</b><div class="muted small">${esc(T(d.doc_type_ko||d.doc_type||''))}</div></td>
+      <td style="text-align:right;white-space:nowrap">${d.has_file?`<button class="btn xs" onclick="viewDoc('${esc(d.document_id)}')">⤓ ${T('다운로드')}</button>`:`<span class="muted small">${T('파일 없음')}</span>`}</td></tr>`).join('')}</tbody></table>`:empty(T('항목 없음'));
+  const upCard=show('upload')?`<div class="card"><h3>📄 ${T('업로드 문서')} <span class="en">· Uploaded</span><span class="r">${docs.length}</span></h3><div class="body tight">${upBody}</div></div>`:'';
+  // ② 생성 문서(GeneratedDocument) — PDF 다운로드
+  const genBody=gens.length?`<table><tbody>${gens.map(g=>`<tr>
+      <td>📑 <b>${esc(T(VAULT_GD_LABEL[g.doc_type]||g.doc_type))}</b> <span class="muted small">v${esc(g.version)} · ${bTag(statusColor(g.status),g.status)}</span></td>
+      <td style="text-align:right;white-space:nowrap"><button class="btn xs" onclick="serverPdf('/gen-docs/${esc(g.gen_doc_id)}/pdf','${esc((VAULT_GD_LABEL[g.doc_type]||g.doc_type))}_v${esc(g.version)}.pdf')">⤓ PDF</button></td></tr>`).join('')}</tbody></table>`:empty(T('항목 없음'));
+  const genCard=show('gen')?`<div class="card"><h3>📑 ${T('생성 문서')} <span class="en">· Generated</span><span class="r">${gens.length}</span></h3><div class="body tight">${genBody}</div></div>`:'';
+  // ③ 인증서 PDF
+  const certBody=nCert?`<div class="li"><div class="ic t-ok">🏅</div><div class="tx"><b>${esc(cert.certificate_no||T('할랄 인증서'))}</b>
+      <div class="muted small">${esc(cert.issue_date||'')}${cert.expiry_date?` ~ ${esc(cert.expiry_date)}`:''} · ${bTag(statusColor(cert.status),cert.status||'')}</div></div>
+      <button class="btn xs" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(cert.certificate_no||'')}.pdf')">⤓ ${T('다운로드')}</button></div>`:empty(T('발급된 인증서가 없습니다.'));
+  const certCard=show('cert')?`<div class="card"><h3>🏅 ${T('인증서')} <span class="en">· Certificate</span><span class="r">${nCert}</span></h3><div class="body tight">${certBody}</div></div>`:'';
+  // ④ 원재료 증빙(재사용 참조 — 케이스 간 할랄 데이터 재활용)
+  const scol=s=>({halal:'ok',haram:'bad',mushbooh:'warn',pass:'ok'}[String(s||'').toLowerCase()]||'mute');
+  const matBody=mats.length?`<table><tbody>${mats.slice(0,200).map(m=>`<tr><td>🧪 ${esc(m.name||'—')}${m.supplier?` <span class="muted small">${esc(m.supplier)}</span>`:''}</td><td style="text-align:right;white-space:nowrap">${bTag(scol(m.status||m.result),m.status||m.result||'')}</td></tr>`).join('')}</tbody></table>${mats.length>200?`<div class="muted small" style="padding:6px">외 ${mats.length-200}건…</div>`:''}`:empty(T('항목 없음'));
+  const matCard=show('material')?`<div class="card"><h3>🧪 ${T('원재료 증빙')} <span class="en">· Materials</span><span class="r">${mats.length}</span></h3><div class="body tight">${matBody}</div></div>`:'';
+  return `
+  <div class="banner info" style="margin-bottom:16px">🗄️ <b>${T('내 자료함')}</b> — ${T('자료·결과·인증서·원재료를 모아 내려받아 재사용하세요. BPOM 판매허가 등에 활용할 수 있습니다.')}</div>
+  ${tabBar}
+  <div class="grid side">${upCard}${genCard}</div>
+  <div class="grid side" style="margin-top:16px">${certCard}${matCard}</div>`;
 };
 /* ===== 문서 자동생성 UI (6종) — 백엔드 gen-doc/리치PDF 엔드포인트 배선 ===== */
 function docGenBar(id){
@@ -4243,7 +4374,9 @@ SCREEN.manualBuilder=async()=>{
     const dnd=canEdit?`draggable="true" ondragstart="mbDragStart(event,'${s.key}')" ondragend="mbDragEnd()" ondragover="mbDragOver(event)" ondrop="mbReorder(event,'${id}','${s.key}')"`:'';
     const badge=s.has_default?tag('ok','✓ 기본내용 포함'):tag(s.image?'ok':'warn',s.image?'✓ 이미지 삽입됨':'기본내용 확인 필요');
     const imgBlock=s.image
-      ? `<div style="margin-top:10px;height:88px;border-radius:8px;background:linear-gradient(135deg,var(--accent-soft),var(--accent));display:flex;align-items:center;justify-content:center;gap:10px;color:#fff;font-weight:700">🖼 ${esc(s.image.filename||'이미지')} 삽입됨${canEdit?` <span style="color:#fff;text-decoration:underline;cursor:pointer;font-weight:600" onclick="mbRemoveImage('${id}','${s.key}')">✕ 제거</span>`:''}</div>`
+      ? `<div style="margin-top:10px;height:88px;border-radius:8px;background:linear-gradient(135deg,var(--accent-soft),var(--accent));display:flex;align-items:center;justify-content:center;gap:10px;color:#fff;font-weight:700">🖼 ${esc(s.image.filename||'이미지')} 삽입됨${canEdit?` <span style="color:#fff;text-decoration:underline;cursor:pointer;font-weight:600" onclick="mbRemoveImage('${id}','${s.key}')">✕ 제거</span>`:''}</div>
+         ${s.image.caption?`<div class="muted small" style="margin-top:6px;padding:6px 8px;border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:4px;white-space:pre-wrap;max-height:96px;overflow:auto">🔤 ${esc(s.image.caption)}</div>`:''}
+         ${canEdit?`<div class="btnrow" style="margin-top:6px"><button class="btn" style="padding:3px 8px;font-size:11px" onclick="mbOcrCaption('${id}','${s.key}')" title="${T('OCR 자동배치')}">🔍 ${T('OCR 자동배치')}</button></div>`:''}`
       : '';
     const dz=canEdit?`<div class="dropzone" ondragover="dzOver(event)" ondragleave="dzLeave(event)" ondrop="mbDropImage(event,'${id}','${s.key}')" onclick="mbUploadImage('${id}','${s.key}')">⭱ <b>${T('이미지/자료를 드래그 앤 드롭')}</b> · ${T('클릭 업로드')}<br><span class="muted small">PDF · 이미지</span></div>`:'';
     return `<div class="card" ${dnd} style="${canEdit?'cursor:grab;':''}margin-bottom:0">
@@ -4331,6 +4464,27 @@ async function mbSaveLayout(cid){
     toast("임시저장 완료");
   }catch(e){toast("저장 실패 · "+((e&&e.code)||""));}
 }
+/* P1-#6: OCR 자동배치 — 섹션에 삽입된 이미지를 OCR(/auth/ocr-extract, 기존 라우트)로 인식해
+   추출 텍스트를 해당 섹션 캡션으로 자동 배치(문서상 이미지에 딱 붙는 설명). 스키마 무변경(layout payload). */
+async function mbOcrCaption(cid,key){
+  try{
+    const L=await API(`/cases/${cid}/sjph-manual/layout`);
+    const {order,inserts}=mbCurState(L);
+    const img=inserts[key];
+    if(!img||!img.document_id){toast(T('이미지가 없습니다 — 먼저 이미지를 드롭하세요'));return;}
+    toast(T('OCR 인식 중… (수초)'));
+    const r=await fetch(`/documents/${img.document_id}/file`,{headers:{Authorization:"Bearer "+token()}});
+    if(!r.ok){toast(T('OCR 실패'));return;}
+    const blob=await r.blob();
+    const b64=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(String(fr.result).split(",")[1]);fr.onerror=rej;fr.readAsDataURL(blob);});
+    const o=await API('/auth/ocr-extract',{method:"POST",body:JSON.stringify({image_b64:b64})});
+    if(!o||o.ocr_available===false){toast(T('OCR 엔진 미설치 — 캡션 없이 이미지만 삽입됩니다'));return;}
+    const cap=String(o.raw||'').trim().slice(0,600);
+    inserts[key]=Object.assign({},img,{caption:cap});
+    await API(`/cases/${cid}/sjph-manual/layout`,{method:"POST",body:JSON.stringify({order,inserts})});
+    toast(T('OCR 캡션 삽입 완료'));applyView();
+  }catch(e){toast(T('OCR 실패')+' · '+((e&&e.code)||''));}
+}
 async function mbGenerate(cid){
   try{
     const r=await API(`/cases/${cid}/sjph/manual`,{method:"POST",body:"{}"});
@@ -4394,6 +4548,9 @@ SCREEN.invoice=async()=>{
   const detail=sel?`
       <div class="field"><label>청구번호 · No</label><div class="v">${esc(sel.invoice_no||short(sel.invoice_id))}</div></div>
       <div class="field"><label>서비스 · Service</label><div class="v">${bSpan(sel.service_type)}</div></div>
+      ${(sel.line_items&&sel.line_items.length)?`<table style="margin:6px 0"><thead><tr><th style="text-align:left">${T('항목명')}</th><th style="text-align:right">${T('수량')}</th><th style="text-align:right">${T('단가')}</th><th style="text-align:right">${T('금액')}</th></tr></thead><tbody>
+        ${sel.line_items.map(it=>`<tr><td>${esc(it.name||'—')}</td><td style="text-align:right">${esc(it.qty)}</td><td style="text-align:right">${fmtIDR(it.unit_price)}</td><td style="text-align:right">${fmtIDR(it.amount)}</td></tr>`).join("")}
+      </tbody></table>`:''}
       <table style="margin:6px 0"><tbody>
         <tr><td>금액 · DPP</td><td style="text-align:right">${fmtIDR(sel.amount)}</td></tr>
         <tr><td>부가세 · PPN</td><td style="text-align:right">${fmtIDR(sel.ppn)}</td></tr>
@@ -4401,7 +4558,7 @@ SCREEN.invoice=async()=>{
       </tbody></table>
       <div class="field"><label>상태 · Status</label><div>${bTag(payColor(sel.status),payLabel(sel.status))}</div>${payMsg(sel.status)}</div>
       ${(canMark&&sel.status!=='paid')?`<div class="btnrow"><button class="btn pri" onclick="recordPayment('${sel.invoice_id}')">💳 결제 기록 · Record payment</button><button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">간이 결제표시</button></div>`:''}
-      <div class="btnrow" style="margin-top:8px"><button class="btn" onclick="serverPdf('/invoices/${sel.invoice_id}/receipt','receipt_'+(sel.invoice_no||'')+'.pdf')">🧾 영수증 PDF · Receipt</button><button class="btn" onclick="serverPdf('/invoices/${sel.invoice_id}/tax-invoice','faktur_'+(sel.invoice_no||'')+'.pdf')">📄 세금계산서 · Faktur Pajak</button></div>`
+      <div class="btnrow" style="margin-top:8px"><button class="btn" onclick="serverPdf('/invoices/${sel.invoice_id}/quotation.pdf','quotation_'+(sel.invoice_no||'')+'.pdf')">⤓ ${T('견적서')} · Penawaran</button><button class="btn" onclick="serverPdf('/invoices/${sel.invoice_id}/receipt','receipt_'+(sel.invoice_no||'')+'.pdf')">🧾 영수증 PDF · Receipt</button><button class="btn" onclick="serverPdf('/invoices/${sel.invoice_id}/tax-invoice','faktur_'+(sel.invoice_no||'')+'.pdf')">📄 세금계산서 · Faktur Pajak</button></div>`
     :'<div class="muted small">청구서를 선택하세요.</div>';
   const st2=inv.reduce((a,i)=>{const t=(i.total==null?i.amount:i.total)||0;a.total+=t;if(i.status==='paid')a.paid+=t;else a.unpaid+=t;return a;},{total:0,paid:0,unpaid:0});
   return `
@@ -4647,6 +4804,52 @@ SCREEN.opsDashboard=async()=>{
   ${kpis}
   <div class="grid side" style="margin-bottom:16px">${regPanel}${capPanel}</div>
   <div class="grid side">${pendPanel}${audPanel}</div>`;
+};
+/* ===== P1-#5 관리자 종합 캘린더 — 전 케이스 현장실사 일정 집약(월그리드+리스트). 백엔드 GET /ops/calendar. ===== */
+let OPS_CAL_YM=null;   // 표시 중인 "YYYY-MM"
+function opsCalNav(delta){
+  if(!OPS_CAL_YM){const d=new Date();OPS_CAL_YM=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');}
+  let p=OPS_CAL_YM.split('-').map(Number),y=p[0],m=p[1]+delta;
+  if(m<1){m=12;y--;}else if(m>12){m=1;y++;}
+  OPS_CAL_YM=y+'-'+String(m).padStart(2,'0');applyView();
+}
+function opsCalToday(){const d=new Date();OPS_CAL_YM=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');applyView();}
+SCREEN.opsCalendar=async()=>{
+  const cal=await API('/ops/calendar').catch(()=>null);
+  if(!cal)return `<div class="card"><div class="body muted">${T('불러오지 못했습니다.')}</div></div>`;
+  const byDate=cal.by_date||{};
+  const todayStr=new Date().toISOString().slice(0,10);
+  if(!OPS_CAL_YM){   // 최초 진입: 오늘 이후 최초 일정 월(없으면 최근 일정 월, 그것도 없으면 이번 달)
+    const dates=Object.keys(byDate).sort();
+    const pick=dates.find(d=>d>=todayStr)||dates[dates.length-1]||todayStr;
+    OPS_CAL_YM=pick.slice(0,7);
+  }
+  const yp=OPS_CAL_YM.split('-').map(Number),Y=yp[0],M=yp[1];
+  const startDow=new Date(Y,M-1,1).getDay();
+  const daysInMonth=new Date(Y,M,0).getDate();
+  const WD=['일','월','화','수','목','금','토'];
+  let cells='';
+  for(let i=0;i<startDow;i++)cells+='<div class="calcell empty"></div>';
+  for(let day=1;day<=daysInMonth;day++){
+    const ds=Y+'-'+String(M).padStart(2,'0')+'-'+String(day).padStart(2,'0');
+    const evs=byDate[ds]||[];
+    const items=evs.map(e=>`<div class="calev" title="${esc(e.company_name||'')} · ${T('현장실사')}${e.time?' '+esc(e.time):''}" onclick="openCase('${esc(e.case_id)}')">${e.status==='confirmed'?'✅':'📍'} ${esc(e.company_name||T('현장실사'))}</div>`).join('');
+    cells+=`<div class="calcell${ds===todayStr?' today':''}${evs.length?' has':''}"><div class="calday">${day}${evs.length?` <span class="calbadge">${evs.length}</span>`:''}</div>${items}</div>`;
+  }
+  const grid=`<div class="calgrid-head">${WD.map(w=>`<div>${T(w)}</div>`).join('')}</div><div class="calgrid">${cells}</div>`;
+  const all=cal.events||[];
+  const listRows=all.length?all.map(e=>`<tr class="clickable" onclick="openCase('${esc(e.case_id)}')"><td style="white-space:nowrap"><b>${esc(e.date)}</b>${e.time?` ${esc(e.time)}`:''}</td><td><b>${esc(e.company_name||'—')}</b><div class="muted small">${short(e.case_id)}</div></td><td>${e.status==='confirmed'?bTag('ok',T('확정')):bTag('gold',T('예정'))}${e.lph_name?` <span class="muted small">${esc(e.lph_name)}</span>`:''}</td></tr>`).join(''):`<tr><td colspan="3" class="muted small">${T('예정된 현장실사 일정이 없습니다.')}</td></tr>`;
+  return `
+  <div class="banner info" style="margin-bottom:16px">🗓️ <b>${T('전사 현장실사 일정')}</b> — ${T('현장실사 일정을 날짜별로 모아 봅니다. 항목을 누르면 해당 케이스로 이동합니다.')}</div>
+  <div class="card" style="margin-bottom:16px"><div class="body">
+    <div class="btnrow" style="align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div style="font-weight:800;font-size:16px">${Y}${T('년')} ${M}${T('월')}</div>
+      <div class="btnrow"><button class="btn" onclick="opsCalNav(-1)">‹ ${T('이전 달')}</button><button class="btn" onclick="opsCalToday()">${T('이번 달')}</button><button class="btn" onclick="opsCalNav(1)">${T('다음 달')} ›</button></div>
+    </div>
+    ${grid}
+  </div></div>
+  <div class="card"><h3>📋 ${T('전사 현장실사 일정')} <span class="en">· All Schedules</span><span class="r">${all.length}${T('건 예정')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('일자')}</th><th>${T('업체')}</th><th>${T('상태')}</th></tr></thead><tbody>${listRows}</tbody></table></div></div>`;
 };
 let WFMON_STAGE="";
 function wfmonFilter(k){WFMON_STAGE=(WFMON_STAGE===k?"":k);applyView();}
@@ -4895,13 +5098,63 @@ async function decideRefund(rid,decision){
   try{await API(`/refunds/${rid}/decide`,{method:"POST",body:JSON.stringify({decision})});toast(decision==="approved"?"환불 승인·처리":"환불 거절");applyView();}
   catch(e){toast("실패 · "+(e&&e.code?e.code:(e&&e.detail?e.detail:"")));}
 }
+/* P1-#1: 다항목 라인아이템 편집기 + 기본 심사료 프리셋(6,500,000). dialog()는 동적 행
+   추가/삭제를 못 하므로 전용 모달을 구성. 라인아이템은 amount(DPP)=합계로 서버 저장. */
+let INV_ITEMS=[], INV_CASE=null, INV_STYPE="pre_audit";
+const INV_PRESET=6500000;
 async function createInvoice(id){
   const en=await ENUMS();
   const opts=(en.invoice_service_type||[{value:"pre_audit",label:"사전심사"},{value:"onsite",label:"현장심사"}]).map(o=>({value:o.value!=null?o.value:o,label:o.label!=null?o.label:o}));
-  const r=await dialog("청구 생성 · Invoice",[{key:"service_type",label:"서비스 유형",type:"select",options:opts},{key:"amount",label:"금액(IDR)",type:"number",value:"4500000",required:true}]);
-  if(!r)return;
-  try{await API(`/cases/${id}/invoices`,{method:"POST",body:JSON.stringify({service_type:r.service_type,amount:Number(r.amount)||0})});toast("청구 생성");applyView();}
-  catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}
+  INV_CASE=id; INV_STYPE=opts.length?opts[0].value:"pre_audit";
+  INV_ITEMS=[{name:T('기본 심사료'),qty:1,unit_price:INV_PRESET}];   // 프리셋 기본행
+  let ov=document.getElementById("invModalOverlay");
+  if(!ov){ov=document.createElement("div");ov.id="invModalOverlay";
+    ov.style.cssText="position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:90;display:grid;place-items:center;padding:20px";
+    ov.onclick=function(e){if(e.target===ov)invCancel();};document.body.appendChild(ov);}
+  ov.innerHTML=`<div class="modalbox" style="width:min(700px,94vw)">
+    <h3>${T('청구 생성')} <span class="en">· Invoice</span></h3>
+    <div class="field"><label>${T('서비스 유형')}</label><select class="v" id="invStype">${opts.map(o=>`<option value="${esc(o.value)}"${o.value===INV_STYPE?' selected':''}>${esc(o.label)}</option>`).join("")}</select></div>
+    <div style="font-weight:600;margin:12px 0 4px">${T('청구 항목')} <span class="muted small">${T('특수조항 시 금액 수동조정')}</span></div>
+    <table><thead><tr><th style="text-align:left">${T('항목명')}</th><th style="width:64px">${T('수량')}</th><th style="width:120px">${T('단가')}</th><th style="width:120px;text-align:right">${T('금액')}</th><th style="width:32px"></th></tr></thead><tbody id="invRows"></tbody></table>
+    <div class="btnrow" style="margin-top:8px"><button class="btn" onclick="invAddRow()">＋ ${T('행 추가')}</button></div>
+    <table style="margin-top:12px"><tbody>
+      <tr><td>${T('소계')} · DPP</td><td style="text-align:right" id="invDpp">—</td></tr>
+      <tr><td>${T('부가세')} · PPN 11%</td><td style="text-align:right" id="invPpn">—</td></tr>
+      <tr style="background:var(--accent-soft)"><td><b>${T('합계')} · Total</b></td><td style="text-align:right"><b id="invTotal">—</b></td></tr>
+    </tbody></table>
+    <div class="btnrow" style="margin-top:16px;justify-content:flex-end">
+      <button class="btn" onclick="invCancel()">${T('취소')}</button>
+      <button class="btn pri" onclick="invSubmit()">${T('청구 생성')}</button>
+    </div></div>`;
+  ov.style.display="grid";
+  document.getElementById("invStype").onchange=function(){INV_STYPE=this.value;};
+  invRenderRows();
+}
+function invRenderRows(){
+  const tb=document.getElementById("invRows");if(!tb)return;
+  tb.innerHTML=INV_ITEMS.map((it,i)=>`<tr>
+    <td><input class="v" style="width:100%" value="${esc(it.name||'')}" oninput="invEdit(${i},'name',this.value)"></td>
+    <td><input class="v" type="number" min="0" style="width:100%;text-align:right" value="${esc(it.qty)}" oninput="invEdit(${i},'qty',this.value)"></td>
+    <td><input class="v" type="number" min="0" style="width:100%;text-align:right" value="${esc(it.unit_price)}" oninput="invEdit(${i},'unit_price',this.value)"></td>
+    <td style="text-align:right" id="invAmt${i}">${fmtIDR((Number(it.qty)||0)*(Number(it.unit_price)||0))}</td>
+    <td style="text-align:center"><button class="btn" style="padding:2px 7px" onclick="invDelRow(${i})">✕</button></td></tr>`).join("");
+  invRecalc();
+}
+function invEdit(i,k,v){if(!INV_ITEMS[i])return;INV_ITEMS[i][k]=(k==='name')?v:(Number(v)||0);
+  const cell=document.getElementById("invAmt"+i);if(cell)cell.textContent=fmtIDR((Number(INV_ITEMS[i].qty)||0)*(Number(INV_ITEMS[i].unit_price)||0));
+  invRecalc();}
+function invAddRow(){INV_ITEMS.push({name:"",qty:1,unit_price:0});invRenderRows();}
+function invDelRow(i){INV_ITEMS.splice(i,1);if(!INV_ITEMS.length)INV_ITEMS.push({name:"",qty:1,unit_price:0});invRenderRows();}
+function invRecalc(){const dpp=INV_ITEMS.reduce((a,it)=>a+(Number(it.qty)||0)*(Number(it.unit_price)||0),0);const ppn=Math.round(dpp*0.11*100)/100;
+  const d=document.getElementById("invDpp"),p=document.getElementById("invPpn"),t=document.getElementById("invTotal");
+  if(d)d.textContent=fmtIDR(dpp);if(p)p.textContent=fmtIDR(ppn);if(t)t.textContent=fmtIDR(dpp+ppn);}
+function invCancel(){const ov=document.getElementById("invModalOverlay");if(ov)ov.style.display="none";}
+async function invSubmit(){
+  const items=INV_ITEMS.map(it=>({name:it.name||"",qty:Number(it.qty)||0,unit_price:Number(it.unit_price)||0,amount:Math.round((Number(it.qty)||0)*(Number(it.unit_price)||0)*100)/100})).filter(it=>it.name||it.amount);
+  if(!items.length){toast(T('항목을 입력하세요'));return;}
+  const amount=items.reduce((a,it)=>a+it.amount,0);
+  try{await API(`/cases/${INV_CASE}/invoices`,{method:"POST",body:JSON.stringify({service_type:INV_STYPE,amount:amount,line_items:items})});invCancel();toast(T('청구 생성'));applyView();}
+  catch(e){toast(T('생성 실패')+' · '+((e&&e.code)||''));}
 }
 
 /* 12) Fatwa */
@@ -5101,7 +5354,8 @@ async function fatwaDecisionView(id,editable){
     ${editable?`<div class="btnrow" style="margin-top:16px">
       <button class="btn ok" onclick="fatwaDecide('${id}','approved')">✓ ${T('승인 (Approve)')}</button>
       <button class="btn bad" onclick="fatwaDecide('${id}','rejected')">✕ ${T('반려 (Reject)')}</button>
-    </div><div class="muted small" style="margin-top:6px">${T('승인 시 파트와 문서를 생성합니다. 반려 시 재검토가 필요합니다.')}</div>`:''}
+      <button class="btn gold" onclick="fatwaReturnAuditor('${id}')">↩ ${T('오디터로 반려')}</button>
+    </div><div class="muted small" style="margin-top:6px">${T('승인 시 파트와 문서를 생성합니다. 반려 시 재검토가 필요합니다.')} ${T('문제 발견 시 담당 오디터에게 반려하여 보고서를 보완합니다.')}</div>`:''}
     </div></div>
   <div class="card" style="margin-bottom:16px"><h3>${T('AI 파트와 문서 생성')} <span class="en">· AI document</span></h3>
     <div class="body"><div style="display:flex;gap:16px;flex-wrap:wrap;align-items:stretch">
@@ -5159,6 +5413,12 @@ async function setFatwaCommittee(id,decision){
   catch(e){toast("실패 · "+((e&&e.code)||""));}
 }
 async function fatwaDecide(id,decision){try{await API(`/cases/${id}/fatwa`,{method:"PATCH",body:JSON.stringify({decision})});toast(decision==='approved'?"가승인 완료":"결정 · "+decision);await loadCases(true);applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
+async function fatwaReturnAuditor(id){
+  const r=await dialog(T('오디터로 반려'),[{key:"reason",label:T('반려 사유'),type:"textarea",required:true}]);
+  if(!r)return;
+  try{await API(`/cases/${id}/fatwa/return-to-auditor`,{method:"POST",body:JSON.stringify({reason:r.reason})});toast(T('오디터로 반려됨'));await loadCases(true);applyView();}
+  catch(e){toast(T('반려 실패')+' · '+((e&&e.code)||''));}
+}
 async function fatwaFinalApprove(id){if(!confirm("최종 승인하시겠습니까? (scope 동결·인증서 발급 가능)"))return;try{await API(`/cases/${id}/fatwa/final-approve`,{method:"POST",body:"{}"});toast("최종 승인 완료");await loadCases(true);applyView();}catch(e){toast("최종승인 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
 async function fatwaDoc(id){try{const r=await API(`/cases/${id}/fatwa/document`,{method:"POST",body:"{}"});downloadText("fatwa_"+short(id)+".txt",r.document||"");toast("결정문 생성·다운로드");}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
 

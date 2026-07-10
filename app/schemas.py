@@ -73,6 +73,13 @@ class LphAssignReq(BaseModel):
 class InvoiceReq(BaseModel):
     service_type: str            # pre_audit|onsite
     amount: float = Field(ge=0)  # 음수 청구 방지
+    # P1-#1: 다항목 라인아이템(스키마 무변경 — WorkflowEvent payload에 저장). 각 항목
+    # {name, qty, unit_price, amount}. 존재 시 amount(DPP)는 라인 합계로 산정.
+    line_items: Optional[list] = None
+
+
+class FatwaReturnReq(BaseModel):     # P1-#7 파트와→오디터 반려 루프
+    reason: str                      # 반려 사유(필수)
 
 
 class FatwaReq(BaseModel):
