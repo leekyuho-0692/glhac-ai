@@ -1,11 +1,12 @@
 """S13 검증 — Documents 검수 요약(S13-1) · Fatwa 결정문 생성(S13-2) · Certificate 만료경보(S13-3)."""
+import os
 import sys
 import sqlite3
 import httpx
 from datetime import date, timedelta
 
 DB_PATH = "glhac.db"
-B = "http://127.0.0.1:8800"
+B = os.environ.get("GLHAC_E2E_BASE", "http://127.0.0.1:8800")
 P, F = [], []
 
 
@@ -117,8 +118,10 @@ ok("fatwa decision=approved", fw.get("decision") == "approved", fw.get("decision
 ok("committee_head 저장됨", fw.get("committee_head") == "Ust. Ahmad S13", fw.get("committee_head"))
 ok("committee_members 저장됨", isinstance(fw.get("committee_members"), list), fw.get("committee_members"))
 
-# POST /fatwa/document — 결정문 생성
-r_doc = httpx.post(f"{B}/cases/{CID}/fatwa/document", headers=HC)
+# POST /fatwa/document — 결정문 생성 (fatwa_liaison/operator/admin 전용 — consultant 403)
+r_doc403 = httpx.post(f"{B}/cases/{CID}/fatwa/document", headers=HC)
+ok("결정문 consultant → 403", r_doc403.status_code == 403, r_doc403.status_code)
+r_doc = httpx.post(f"{B}/cases/{CID}/fatwa/document", headers=HA)
 ok("결정문 생성 → 200", r_doc.status_code == 200, r_doc.status_code)
 if r_doc.status_code == 200:
     doc_body = r_doc.json()
@@ -159,8 +162,21 @@ if PID:
     httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HA,
                 json={"decision": "approved", "product_scope": [PID]})
 
+# 2단계 파트와: PATCH(approved)=가승인(provisional) → 최종승인(operator/admin) 필요
+r_fa = httpx.post(f"{B}/cases/{CID}/fatwa/final-approve", headers=HA)
+ok("파트와 최종승인 → 200", r_fa.status_code == 200, r_fa.json() if r_fa.status_code != 200 else 200)
+
+# 발급 가드: rejected/rework 문서가 남아있으면 409 DOCUMENTS_NOT_APPROVED
+r_blocked = httpx.post(f"{B}/cases/{CID}/certificate/issue", headers=HA)
+ok("미승인 문서 잔존 → 발급 409", r_blocked.status_code == 409 and
+   "DOCUMENTS_NOT_APPROVED" in str(r_blocked.json()), r_blocked.status_code)
+
+# 잔여 rework/rejected 문서 승인 처리 후 발급
+for did in (doc_ids[0], doc_ids[2]):
+    httpx.patch(f"{B}/documents/{did}/review", headers=HC, json={"review_status": "approved"})
 r_issue = httpx.post(f"{B}/cases/{CID}/certificate/issue", headers=HA)
-ok("인증서 발급 시도 → 200 or 400", r_issue.status_code in (200, 400), r_issue.status_code)
+ok("인증서 발급 → 200", r_issue.status_code == 200, r_issue.json() if r_issue.status_code != 200 else
+   r_issue.json().get("certificate_no"))
 
 # 직접 DB에 cert 레코드 삽입 (발급 가드 우회)
 conn2 = sqlite3.connect(DB_PATH)

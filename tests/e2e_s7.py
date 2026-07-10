@@ -1,8 +1,9 @@
 """S7 검증 — 2뎁스 네비 + 케이스 스위처 (백엔드 데이터 확인)."""
+import os
 import sys
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = os.environ.get("GLHAC_E2E_BASE", "http://127.0.0.1:8800")
 P, F = [], []
 
 
@@ -27,9 +28,12 @@ c2 = httpx.post(f"{B}/cases", headers=HC,
 ok("케이스 A 생성", "case_id" in c1, c1)
 ok("케이스 B 생성", "case_id" in c2, c2)
 
-# /cases 목록 조회 — 케이스 스위처 바 데이터 소스
-cases = httpx.get(f"{B}/cases", headers=HC).json()
-ok("/cases 목록 배열", isinstance(cases, list), type(cases).__name__)
+# /cases 목록 조회 — 케이스 스위처 바 데이터 소스 (봉투 {total,limit,offset,count,items})
+env = httpx.get(f"{B}/cases", headers=HC).json()
+ok("/cases 봉투 응답(total/items)", isinstance(env, dict) and "total" in env and "items" in env,
+   list(env.keys()) if isinstance(env, dict) else type(env).__name__)
+cases = env.get("items", [])
+ok("items 배열", isinstance(cases, list), type(cases).__name__)
 ok("케이스 ≥2건 반환", len(cases) >= 2, len(cases))
 
 # 각 케이스 항목 필드 확인 (스위처 바에서 사용하는 필드)
@@ -71,11 +75,12 @@ ok("B 케이스에 MatA_Only 없음", "MatA_Only" not in names_b, names_b)
 # ── S7-3: 관리자 케이스 목록 (전체 조회) ─────────────────────
 print("\n=== S7-3 관리자 전체 케이스 목록 ===")
 
-all_cases = httpx.get(f"{B}/cases", headers=HA).json()
-ok("관리자 /cases 응답 배열", isinstance(all_cases, list), type(all_cases).__name__)
-# 관리자는 org 구분 없이 전체 케이스 볼 수 있어야 함 (org_demo 포함)
+adm_env = httpx.get(f"{B}/cases", headers=HA, params={"limit": 500}).json()
+all_cases = adm_env.get("items", [])
+ok("관리자 /cases items 배열", isinstance(all_cases, list), type(all_cases).__name__)
+# 관리자는 org 구분 없이 전체 케이스 볼 수 있어야 함 (org_demo 포함) — 최신순 페이지 내 포함 확인
 ids = [c["case_id"] for c in all_cases]
-ok("방금 생성된 A 케이스 포함", cid_a in ids, len(ids))
+ok("방금 생성된 A 케이스 포함", cid_a in ids, f"total={adm_env.get('total')} page={len(ids)}")
 
 # ── S7-4: 케이스 상세 조회 (스위처 탭 클릭 시 사용) ──────────
 print("\n=== S7-4 케이스 상세 /cases/{id} ===")

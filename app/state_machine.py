@@ -255,4 +255,8 @@ def record_event(db, case, frm, to, action, actor_type="system", actor_id=None, 
                        actor_type=actor_type, actor_id=actor_id, payload=payload,
                        prev_hash=prev, row_hash=row_hash, created_at=datetime.utcnow())
     db.add(ev)
+    # 해시체인 단절 수정(전수검사 후속): 세션이 autoflush=False라 flush 없이는 같은 트랜잭션의
+    # 다음 record_event가 이 이벤트를 _last_hash에서 못 보고 동일 prev_hash로 체인됨
+    # (한 요청 다중 이벤트 → audit-verify integrity_ok=false). flush로 체인 연속성 보장.
+    db.flush()
     return ev

@@ -5341,7 +5341,9 @@ def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
     if not c.scope_frozen:
         raise HTTPException(409, {"code": "SCOPE_NOT_FROZEN"})
     # 문서 P0(§4.2): 발급 full guard — 결제 완료·미해결 Major 부적합 없음
-    if db.query(models.Invoice).filter_by(case_id=case_id, status="unpaid").count() > 0:
+    # (전수검사 후속: legacy "unpaid"만 검사하던 누수 → 종결상태 외 전부 미결제로 간주, 전이 게이트와 정합)
+    if db.query(models.Invoice).filter(models.Invoice.case_id == case_id,
+                                       ~models.Invoice.status.in_(sm.INVOICE_SETTLED)).count() > 0:
         raise HTTPException(409, {"code": "PAYMENT_PENDING"})
     if sm.open_major_nc(db, case_id) > 0:
         raise HTTPException(409, {"code": "UNRESOLVED_MAJOR_NC"})

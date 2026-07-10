@@ -1,4 +1,5 @@
 """S8 검증 — 미니토론 섹션필터 · 갱신케이스 파생 · CaseList 필터."""
+import os
 import sys
 import sqlite3
 import httpx
@@ -12,7 +13,7 @@ def force_status(case_id, status):
     conn.commit()
     conn.close()
 
-B = "http://127.0.0.1:8800"
+B = os.environ.get("GLHAC_E2E_BASE", "http://127.0.0.1:8800")
 P, F = [], []
 
 
@@ -25,6 +26,8 @@ HC = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
       json={"username": "consultant1", "password": "pw"}).json()["token"]}
 HA = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
       json={"username": "admin", "password": "admin"}).json()["token"]}
+HO = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
+      json={"username": "operator1", "password": "pw"}).json()["token"]}
 
 # 테스트용 케이스 생성
 c1 = httpx.post(f"{B}/cases", headers=HC,
@@ -58,8 +61,12 @@ ok("전체 조회 ≥7건", len(all_items) >= 7, len(all_items))
 # ── S8-2: 갱신 케이스 파생 (POST /cases/{id}/renew) ──────────
 print("\n=== S8-2 갱신 케이스 파생 ===")
 
+# 갱신 실행(certificate.renew)은 operator 전용 — consultant는 403
+r_role = httpx.post(f"{B}/cases/{CID}/renew", headers=HC)
+ok("consultant 갱신 실행 → 403", r_role.status_code == 403, r_role.status_code)
+
 # certificate_issued 상태가 아니면 400
-r_notissued = httpx.post(f"{B}/cases/{CID}/renew", headers=HC)
+r_notissued = httpx.post(f"{B}/cases/{CID}/renew", headers=HO)
 ok("미발급 케이스 갱신 → 400", r_notissued.status_code == 400, r_notissued.status_code)
 body_err = r_notissued.json()
 ok("에러 코드 NOT_ISSUED", "NOT_ISSUED" in str(body_err), body_err)
@@ -74,8 +81,8 @@ force_status(CID, "certificate_issued")
 detail = httpx.get(f"{B}/cases/{CID}", headers=HC).json()
 ok("케이스 certificate_issued 상태", detail.get("status") == "certificate_issued", detail.get("status"))
 
-# 갱신 케이스 생성
-r_renew = httpx.post(f"{B}/cases/{CID}/renew", headers=HC)
+# 갱신 케이스 생성 (operator)
+r_renew = httpx.post(f"{B}/cases/{CID}/renew", headers=HO)
 ok("갱신 케이스 생성 → 200", r_renew.status_code == 200, r_renew.status_code)
 rn = r_renew.json()
 ok("new_case_id 반환", "new_case_id" in rn, rn)
@@ -101,7 +108,7 @@ r_adm = httpx.post(f"{B}/cases/{CID}/renew", headers=HA)
 ok("admin 갱신 시도 → 200 (B.4.2 admin bypass)", r_adm.status_code == 200, r_adm.status_code)
 
 # 갱신 중복: 다시 renew 호출 → 400 (원본 케이스가 certificate_issued 이므로 다시 성공도 OK — 멱등 확인)
-r_renew2 = httpx.post(f"{B}/cases/{CID}/renew", headers=HC)
+r_renew2 = httpx.post(f"{B}/cases/{CID}/renew", headers=HO)
 ok("갱신 재호출 → 200 or 400", r_renew2.status_code in (200, 400), r_renew2.status_code)
 
 # ── S8-3: CaseList 필터 (백엔드 /cases?pathway=&status= 또는 FE 클라이언트 필터) ──
@@ -122,9 +129,11 @@ if "case_id" in cb:
 _pconn.commit()
 _pconn.close()
 
-# /cases 목록 — FE 필터 기반이므로 전체 목록 필드 확인
-all_c = httpx.get(f"{B}/cases", headers=HC).json()
-ok("/cases 응답 배열", isinstance(all_c, list), type(all_c).__name__)
+# /cases 목록 — 봉투 {total,items}. FE 필터 기반이므로 items 필드 확인
+env = httpx.get(f"{B}/cases", headers=HC, params={"limit": 500}).json()
+ok("/cases 봉투 응답(total/items)", isinstance(env, dict) and "items" in env and "total" in env,
+   list(env.keys()) if isinstance(env, dict) else type(env).__name__)
+all_c = env.get("items", [])
 ok("pathway 필드 있음", all(("pathway" in c) for c in all_c), len(all_c))
 ok("status 필드 있음", all(("status" in c) for c in all_c), len(all_c))
 

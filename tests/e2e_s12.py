@@ -1,10 +1,11 @@
 """S12 검증 — 역할별 대시보드(S12-1) · Readiness 상세(S12-2) · Copilot 히스토리(S12-3)."""
+import os
 import sys
 import sqlite3
 import httpx
 
 DB_PATH = "glhac.db"
-B = "http://127.0.0.1:8800"
+B = os.environ.get("GLHAC_E2E_BASE", "http://127.0.0.1:8800")
 P, F = [], []
 
 
@@ -67,22 +68,27 @@ if r_penyelia.status_code == 200:
             ok("active_count≥1", act_b.get("active_count", 0) >= 1, act_b.get("active_count"))
 
 # Auditor 뷰: GET /cases/{cid}/findings — 역할별 미결 지적 집계
+# severity enum은 major|minor|observation (critical 제거 → 422 BAD_SEVERITY)
+r_bad = httpx.post(f"{B}/cases/{CID}/findings", headers=HC,
+                   json={"finding": "S12 bad severity test", "severity": "critical", "area": "production"})
+ok("severity=critical → 422 BAD_SEVERITY", r_bad.status_code == 422 and "BAD_SEVERITY" in str(r_bad.json()),
+   r_bad.status_code)
 httpx.post(f"{B}/cases/{CID}/findings", headers=HC,
-           json={"finding": "S12 critical test", "severity": "critical", "area": "production"})
+           json={"finding": "S12 major test", "severity": "major", "area": "production"})
 httpx.post(f"{B}/cases/{CID}/findings", headers=HC,
-           json={"finding": "S12 major test", "severity": "major", "area": "hygiene"})
+           json={"finding": "S12 minor test", "severity": "minor", "area": "hygiene"})
 httpx.post(f"{B}/cases/{CID}/findings", headers=HC,
-           json={"finding": "S12 minor test", "severity": "minor", "area": "labeling"})
+           json={"finding": "S12 observation test", "severity": "observation", "area": "labeling"})
 fnds = httpx.get(f"{B}/cases/{CID}/findings", headers=HC).json()
 ok("findings 배열 (auditor 뷰용)", isinstance(fnds, list), type(fnds).__name__)
 open_fnds = [f for f in fnds if f.get("status") == "open"]
 ok("open findings ≥3건", len(open_fnds) >= 3, len(open_fnds))
-crit_cnt = len([f for f in open_fnds if f.get("severity") == "critical"])
 major_cnt = len([f for f in open_fnds if f.get("severity") == "major"])
 minor_cnt = len([f for f in open_fnds if f.get("severity") == "minor"])
-ok("critical ≥1건 집계", crit_cnt >= 1, crit_cnt)
+obs_cnt = len([f for f in open_fnds if f.get("severity") == "observation"])
 ok("major ≥1건 집계", major_cnt >= 1, major_cnt)
 ok("minor ≥1건 집계", minor_cnt >= 1, minor_cnt)
+ok("observation ≥1건 집계", obs_cnt >= 1, obs_cnt)
 
 # Pendamping PPH 뷰: workflow blockers — PENDAMPING_NOT_VERIFIED 확인
 w = httpx.get(f"{B}/cases/{CID}/workflow", headers=HC).json()
