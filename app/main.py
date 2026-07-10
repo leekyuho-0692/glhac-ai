@@ -6844,7 +6844,7 @@ async def pg_webhook(provider: str, request: Request, db: Session = Depends(get_
 
 
 @app.get("/admin/payments")
-def admin_payments(status: str = None, user=Depends(auth.require_roles("operator")),
+def admin_payments(status: str = None, user=Depends(auth.require_roles("fatwa_liaison", "operator")),
                    db: Session = Depends(get_db)):
     """전 조직 청구/결제 목록 — 관리자 결제 대시보드용."""
     q = db.query(models.Invoice)
@@ -6868,7 +6868,7 @@ def admin_payments(status: str = None, user=Depends(auth.require_roles("operator
 
 
 @app.get("/admin/payments/dashboard")
-def admin_payments_dashboard(user=Depends(auth.require_roles("operator")),
+def admin_payments_dashboard(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
                              db: Session = Depends(get_db)):
     invs = db.query(models.Invoice).all()
     by, settle, waiting, needv = {}, 0.0, 0, 0
@@ -6939,7 +6939,7 @@ def decide_refund(refund_id: str, body: schemas.RefundDecideReq,
 
 
 @app.get("/admin/refunds")
-def list_refunds(status: str = None, user=Depends(auth.require_roles("operator")),
+def list_refunds(status: str = None, user=Depends(auth.require_roles("fatwa_liaison", "operator")),
                  db: Session = Depends(get_db)):
     q = db.query(models.Refund)
     if status:
@@ -6979,7 +6979,7 @@ def _settlement(db, org_id=None):
 
 
 @app.get("/admin/settlement")
-def admin_settlement(org_id: str = None, user=Depends(auth.require_roles("operator")),
+def admin_settlement(org_id: str = None, user=Depends(auth.require_roles("fatwa_liaison", "operator")),
                      db: Session = Depends(get_db)):
     """정산 현황 — 청구·결제·환불 netting + IDR 포맷."""
     s = _settlement(db, org_id)
@@ -7138,7 +7138,7 @@ def add_deposit(body: schemas.DepositReq, user=Depends(auth.require_roles("opera
 
 
 @app.get("/admin/deposits")
-def list_deposits(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+def list_deposits(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
     rows = db.query(models.Deposit).order_by(models.Deposit.created_at.desc()).limit(200).all()
     return {"total": len(rows), "items": [{"id": d.id, "bank_name": d.bank_name,
             "account": d.account_no_masked, "depositor_name": d.depositor_name, "amount": d.amount,
@@ -7434,7 +7434,7 @@ _STAGE_OWNER = {
 
 
 @app.get("/admin/workflow-monitor")
-def admin_workflow_monitor(user=Depends(auth.require_roles("operator")),
+def admin_workflow_monitor(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
                            db: Session = Depends(get_db)):
     """관리자·운영자 워크플로우 모니터 — 전 케이스의 현재단계·다음전이·차단·핸드오프(대기 역할)·
     주요 게이트(결제/AI 사전평가/파트와) 통과·대기를 단일 집약(읽기전용). 신규 쓰기·스키마 변경 없음."""
@@ -7719,7 +7719,7 @@ def _ops_auditors_data(db, user, cases=None):
 
 
 @app.get("/ops/dashboard")
-def ops_dashboard(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+def ops_dashboard(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
     """M01 최고운영자 운영현황 — 지역/처리캐파/신규업체승인/오디터배정 단일 집약(읽기전용)."""
     cases = _ops_cases(db, user)
     fac_map = _ops_fac_province(db, user)
@@ -7745,12 +7745,12 @@ def ops_dashboard(user=Depends(auth.require_roles("operator")), db: Session = De
 
 
 @app.get("/ops/regions")
-def ops_regions(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+def ops_regions(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
     return _ops_regions_data(db, user)
 
 
 @app.get("/ops/capacity")
-def ops_capacity(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+def ops_capacity(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
     return _ops_capacity_data(db, user)
 
 
@@ -7759,8 +7759,162 @@ def ops_pending_companies(user=Depends(auth.require_roles("operator")), db: Sess
     return _ops_pending_data(db, user)
 
 
+# ── 청구 기본 요금표(디폴트 금액) — 스키마 무변경 sentinel(WorkflowEvent, case_id="billing-defaults:{org}").
+#    샤리아·최고승인자·관리자가 서비스별 기본 심사료를 설정하면 청구서 생성 시 자동 채움. ──
+BILLING_DEFAULTS_ACTION = "billing.defaults"
+BILLING_SERVICE_TYPES = ("pre_audit", "onsite", "certification", "renewal", "surveillance")
+BILLING_FALLBACK = {"pre_audit": 6500000, "onsite": 12000000, "certification": 5000000,
+                    "renewal": 8000000, "surveillance": 3000000}
+BILLING_SERVICE_KO = {"pre_audit": "사전심사", "onsite": "현장심사", "certification": "인증 심사",
+                      "renewal": "갱신 심사", "surveillance": "사후관리 심사"}
+
+
+def _billing_shim(org_id):
+    import types
+    return types.SimpleNamespace(case_id="billing-defaults:" + (org_id or "org_demo"), org_id=org_id)
+
+
+def _billing_defaults(db, org_id):
+    ev = (db.query(models.WorkflowEvent)
+          .filter_by(case_id="billing-defaults:" + (org_id or "org_demo"),
+                     action=BILLING_DEFAULTS_ACTION)
+          .order_by(models.WorkflowEvent.created_at.desc()).first())
+    saved = ((ev.payload or {}).get("rates") or {}) if ev else {}
+    out = dict(BILLING_FALLBACK)
+    for k, v in saved.items():
+        if k in BILLING_SERVICE_TYPES:
+            try:
+                out[k] = float(v)
+            except (TypeError, ValueError):
+                pass
+    return out, (bool(ev), (ev.created_at.isoformat() if ev and ev.created_at else None))
+
+
+@app.get("/billing/defaults")
+def get_billing_defaults(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """청구서 생성 시 자동 채움될 서비스별 기본 금액(디폴트)."""
+    rates, (customized, at) = _billing_defaults(db, user.get("org_id"))
+    return {"rates": [{"service_type": k, "label": BILLING_SERVICE_KO[k], "amount": rates[k],
+                       "is_default": rates[k] == BILLING_FALLBACK[k]}
+                      for k in BILLING_SERVICE_TYPES],
+            "customized": customized, "updated_at": at, "ppn_rate": 0.11}
+
+
+@app.post("/billing/defaults")
+def set_billing_defaults(body: dict = None,
+                         user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+                         db: Session = Depends(get_db)):
+    """기본 요금표 설정 — 샤리아·최고승인자(및 admin). 0 이상 숫자만 허용."""
+    rates = (body or {}).get("rates") or {}
+    if not isinstance(rates, dict) or not rates:
+        raise HTTPException(422, {"code": "NO_RATES"})
+    clean = {}
+    for k, v in rates.items():
+        if k not in BILLING_SERVICE_TYPES:
+            raise HTTPException(422, {"code": "BAD_SERVICE_TYPE", "allowed": list(BILLING_SERVICE_TYPES)})
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            raise HTTPException(422, {"code": "BAD_AMOUNT", "service_type": k})
+        if f < 0 or f > 1e12:
+            raise HTTPException(422, {"code": "AMOUNT_OUT_OF_RANGE", "service_type": k})
+        clean[k] = f
+    sm.record_event(db, _billing_shim(user.get("org_id")), "billing", "billing",
+                    BILLING_DEFAULTS_ACTION, user["role"], user["uid"], {"rates": clean})
+    db.commit()
+    merged, _ = _billing_defaults(db, user.get("org_id"))
+    return {"rates": merged, "updated_by": user["role"]}
+
+
+# ── 오디터 업무 현황(샤리아·최고승인자 배정 판단용) — 전체 목록 + 개별 상세 ──
+@app.get("/ops/auditors/workload")
+def ops_auditors_workload(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+                          db: Session = Depends(get_db)):
+    """오디터별 업무 현황 요약 — 담당 케이스(수락 기준)·수락대기·거절·이번주 현장실사·미해결 부적합."""
+    cases = _ops_cases(db, user)
+    assign = _ops_latest_assignment(db, [c.case_id for c in cases])
+    cmap = {c.case_id: c for c in cases}
+    today = datetime.utcnow().date()
+    monday = today - timedelta(days=today.weekday())
+    ms, ss = monday.isoformat(), (monday + timedelta(days=6)).isoformat()
+    plans = {}
+    if cases:
+        for p in (db.query(models.AuditPlan)
+                  .filter(models.AuditPlan.case_id.in_(list(cmap)),
+                          models.AuditPlan.scheduled_date.isnot(None)).all()):
+            plans.setdefault(p.case_id, []).append(str(p.scheduled_date)[:10])
+    open_nc = {}
+    if cases:
+        for f in (db.query(models.AuditFinding)
+                  .filter(models.AuditFinding.case_id.in_(list(cmap)),
+                          models.AuditFinding.status == "open").all()):
+            open_nc[f.case_id] = open_nc.get(f.case_id, 0) + 1
+    rows = []
+    for a in _ops_auditor_users(db, user):
+        mine = [(cid, p) for cid, p in assign.items()
+                if p.get("auditor_id") == a.user_id and cid in cmap]
+        acc = [cid for cid, p in mine if p.get("accept_status") == "accepted"]
+        pend = [cid for cid, p in mine if p.get("accept_status") == "pending"]
+        rej = [{"case_id": cid, "company": cmap[cid].company_name, "reason": p.get("reject_reason")}
+               for cid, p in mine if p.get("accept_status") == "rejected"]
+        week = sum(1 for cid in acc for d in plans.get(cid, []) if ms <= d <= ss)
+        prof = _auditor_profile(db, a.user_id) or {}
+        rows.append({"user_id": a.user_id, "username": a.username,
+                     "specialty": prof.get("specialty"), "languages": prof.get("languages", []) or [],
+                     "capacity": AUDITOR_BASE_CAPACITY,
+                     "assigned": len(acc), "pending_accept": len(pend), "rejected": len(rej),
+                     "rejected_items": rej, "week_onsite": week,
+                     "open_findings": sum(open_nc.get(cid, 0) for cid in acc),
+                     "load_pct": _auditor_load_pct(len(acc)),
+                     "cases": [{"case_id": cid, "company": cmap[cid].company_name,
+                                "status": cmap[cid].status,
+                                "status_label": _STATE_KO.get(cmap[cid].status, cmap[cid].status),
+                                "accept_status": p.get("accept_status"),
+                                "next_onsite": sorted(plans.get(cid, []))[0] if plans.get(cid) else None}
+                               for cid, p in mine]})
+    rows.sort(key=lambda r: (-r["assigned"], r["username"]))
+    return {"auditors": rows, "count": len(rows), "week_start": ms, "week_end": ss,
+            "unassigned": sum(1 for c in cases if c.case_id not in assign)}
+
+
+@app.get("/ops/auditors/{user_id}/workload")
+def ops_auditor_workload_detail(user_id: str,
+                                user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+                                db: Session = Depends(get_db)):
+    """오디터 개별 업무 상세 — 담당 케이스별 상태·일정·부적합·최근 활동."""
+    a = db.get(models.User, user_id)
+    if not a or a.role != "auditor":
+        raise HTTPException(404, {"code": "AUDITOR_NOT_FOUND"})
+    cases = _ops_cases(db, user)
+    assign = _ops_latest_assignment(db, [c.case_id for c in cases])
+    cmap = {c.case_id: c for c in cases}
+    mine = [(cid, p) for cid, p in assign.items()
+            if p.get("auditor_id") == user_id and cid in cmap]
+    items = []
+    for cid, p in mine:
+        c = cmap[cid]
+        plans = (db.query(models.AuditPlan).filter_by(case_id=cid)
+                 .order_by(models.AuditPlan.scheduled_date.asc()).all())
+        nc = db.query(models.AuditFinding).filter_by(case_id=cid, status="open").count()
+        last = (db.query(models.WorkflowEvent).filter_by(case_id=cid, actor_id=user_id)
+                .order_by(models.WorkflowEvent.created_at.desc()).first())
+        items.append({"case_id": cid, "company": c.company_name, "status": c.status,
+                      "status_label": _STATE_KO.get(c.status, c.status), "pathway": c.pathway,
+                      "accept_status": p.get("accept_status"), "reject_reason": p.get("reject_reason"),
+                      "schedule": [str(x.scheduled_date)[:10] for x in plans if x.scheduled_date],
+                      "open_findings": nc,
+                      "last_action": (last.action if last else None),
+                      "last_action_at": (last.created_at.isoformat() if last and last.created_at else None)})
+    items.sort(key=lambda x: (x["accept_status"] != "accepted", x["company"] or ""))
+    prof = _auditor_profile(db, user_id) or {}
+    return {"user_id": user_id, "username": a.username, "profile": prof,
+            "capacity": AUDITOR_BASE_CAPACITY,
+            "assigned": sum(1 for i in items if i["accept_status"] == "accepted"),
+            "items": items, "count": len(items)}
+
+
 @app.get("/ops/auditors")
-def ops_auditors(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+def ops_auditors(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
     return _ops_auditors_data(db, user)
 
 
@@ -7784,7 +7938,7 @@ def ops_auditor_profile(user_id: str, body: schemas.AuditorProfileReq,
 
 
 @app.get("/ops/calendar")
-def ops_calendar(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+def ops_calendar(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
     """P1-#5 관리자 종합 캘린더 — 전 케이스 현장실사 일정 집약(읽기전용, 스키마 무변경).
     소스: (a)AuditPlan.scheduled_date(LPH 예정) (b)onsite_schedule.confirm 확정일(WorkflowEvent latest-wins).
     admin=전체·operator=자기 조직 스코프(_ops_cases 재사용). 프런트 월그리드/리스트 렌더용."""

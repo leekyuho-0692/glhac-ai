@@ -417,6 +417,7 @@ const NAV = [
   ["workflow","🧭","워크스페이스","Workspace","진행·In progress"],
   ["application","📝","신청","Application","신청·Intake"],
   ["assignments","📬","배정함","Assignments","수락·거절"],   // 오디터 배정 수락/거절 루프
+  ["auditorWork","🧑‍⚖️","오디터 업무 현황","Auditor Workload","배정 판단·개별 내역"],
   ["notifCenter","🔔","알림 센터","Notifications","내 알림·읽음관리"],   // C13 클라이언트 알림 센터
   ["preassess","🔍","사전심사","Pre-assessment","AI 판정·Assess"],
   ["materials","🧪","원재료","Materials","스크리닝·Screen"],
@@ -452,7 +453,7 @@ const NAV_GROUPS=[
   {label:"신청·서류 · Application", ids:["application","preassess","resubmitCenter","materials","aiExtractions"]},   // 회의 2026-07-10: integration 단계 삭제(SJPH 매뉴얼로 흡수) · 보완·재전송 위로
   {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
-  {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","regulations","consultation","notifyLog","auditLog","system"]},   // prod notifyLog 유지 + 운영현황·종합캘린더·규정법령·감사로그
+  {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","auditorWork","regulations","consultation","notifyLog","auditLog","system"]},   // prod notifyLog 유지 + 오디터 업무 현황
   {label:"기타 · Others", ids:["assistant","feedback"]},   // prod 고유 그룹 유지
   {label:"내 정보 관리 · My Data", ids:["documents","vault","notifCenter"]},   // M6: 문서=내 자료함 · P1-#4 자료함(Vault) · C13 알림 센터
 ];
@@ -481,19 +482,20 @@ const MENU_ACCESS = {
   documents:["client","consultant","auditor","sharia","ops","admin"],
   vault:["client","consultant","admin"],   // P1-#4 자료함 — 클라이언트 중심(담당 컨설턴트·관리자 열람)
   assignments:["auditor","ops","admin"],   // 오디터=본인 배정함 / ops·admin=거절 회신·응답 현황
+  auditorWork:["sharia","ops","admin"],   // 오디터 전체 업무·일정·개별 내역 — 배정 판단용
   notifCenter:["client","consultant","auditor","sharia","ops","admin"],   // C13 알림 센터(수신함) — notifyLog는 발송측
   audit:    ["client","consultant","auditor","sharia","ops","admin"],
-  onsiteCalendar:["client","consultant","auditor","ops","admin"],   // A08: 클라 제시 + 오디터 확정
+  onsiteCalendar:["client","consultant","auditor","sharia","ops","admin"],   // A08 · 샤리아=일정 모니터링(읽기전용)
   mockAudit:["client","consultant","auditor","sharia","ops","admin"],
   evaluation:["client","auditor","sharia","ops","admin"],
   resubmitCenter:["client","consultant","admin","auditor","ops"],   // A09: 클라이언트/컨설턴트/관리자 재제출 + 오디터·ops 상태열람
-  invoice:  ["client","consultant","auditor","ops","admin"],   // C12: 오디터 열람(조회) — 결제상태 확인, 쓰기는 화면 내 canMark/서버 RBAC로 차단
-  payments: ["ops","admin"],
-  deposits: ["ops","admin"],
+  invoice:  ["client","consultant","auditor","sharia","ops","admin"],   // C12 오디터 열람 · 샤리아=계약·청구 모니터링
+  payments: ["sharia","ops","admin"],   // 샤리아=결제 모니터링
+  deposits: ["sharia","ops","admin"],   // 샤리아=입금 모니터링
   notifyLog: ["ops","admin"],
-  opsDashboard: ["ops","admin"],   // M01 최고운영자 운영현황(지역·캐파·승인·배정) — ops·admin 전용
-  opsCalendar: ["ops","admin"],   // P1-#5 종합 캘린더(전사 현장실사 일정, 전역·케이스무관) — ops·admin 전용
-  workflowMonitor: ["ops","admin"],   // 전역 운영 모니터(케이스 무관) — ops·admin 전용
+  opsDashboard: ["sharia","ops","admin"],   // M01 운영현황 — 샤리아도 전 과정 모니터링
+  opsCalendar: ["sharia","ops","admin"],   // P1-#5 종합 캘린더 — 샤리아=현장심사 일정 모니터링
+  workflowMonitor: ["sharia","ops","admin"],   // 신청~인증서 발급 전 과정 모니터링(샤리아 포함)
   regulations: ["ops","admin"],   // M06 규정·법령 관리(전역·케이스무관) — operator(ops)·admin 전용
   fatwa:    ["consultant","auditor","sharia","ops","admin"],   // 회의 2026-07-10: 클라이언트는 파트와 화면 불필요(인증서만) — client 제외
   certificate:["client","sharia","ops","admin"],
@@ -2569,6 +2571,76 @@ async function advance(id,target){
   catch(e){toast("전이 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}
 }
 
+/* 오디터 업무 현황(샤리아·최고승인자·관리자) — 배정 판단 근거.
+   전체 오디터의 담당·수락대기·거절·이번주 일정·미해결 부적합을 보고, 개별 오디터의 케이스별 내역까지 드릴다운. */
+let AW_OPEN=null;
+SCREEN.auditorWork=async()=>{
+  const d=await API('/ops/auditors/workload').catch(()=>null);
+  if(!d)return `<div class="card"><div class="body muted">${T('업무 현황을 불러오지 못했습니다.')}</div></div>`;
+  const auds=d.auditors||[];
+  const tot=(k)=>auds.reduce((a,x)=>a+(x[k]||0),0);
+  const kpi=(n,l,c,ic)=>`<div class="card"><div class="body" style="display:flex;align-items:center;gap:12px"><div style="font-size:22px">${ic}</div><div class="kpi"><span class="l">${l}</span><span class="n" style="font-size:24px;color:var(--${c})">${n}</span></div></div></div>`;
+  const kpis=`<div class="grid four" style="margin-bottom:14px">
+    ${kpi(auds.length,T('오디터'),'ink','🧑‍⚖️')}
+    ${kpi(tot('assigned'),T('진행 중 담당'),'accent','📋')}
+    ${kpi(tot('pending_accept'),T('수락 대기'),(tot('pending_accept')?'gold':'ink3'),'📬')}
+    ${kpi(d.unassigned||0,T('미배정 케이스'),(d.unassigned?'bad':'ink3'),'⚠️')}</div>`;
+  const bar=p=>`<div class="bar" style="width:90px"><i style="width:${Math.min(100,p||0)}%;${(p||0)>=90?'background:var(--bad)':((p||0)>=60?'background:var(--gold)':'')}"></i></div>`;
+  const rows=auds.map(a=>`<tr class="clickable" onclick="awToggle('${a.user_id}')">
+    <td><b>${esc(a.username)}</b><div class="muted small">${esc((a.specialty)||T('전문분야 미설정'))}${(a.languages||[]).length?` · ${a.languages.map(esc).join('/')}`:''}</div></td>
+    <td>${a.assigned} / ${a.capacity} ${bar(a.load_pct)}</td>
+    <td>${a.pending_accept?tag('warn',`${a.pending_accept}`):'<span class="muted">0</span>'}</td>
+    <td>${a.rejected?tag('bad',`${a.rejected}`):'<span class="muted">0</span>'}</td>
+    <td>${a.week_onsite||0}</td>
+    <td>${a.open_findings?tag('bad',`${a.open_findings}`):'<span class="muted">0</span>'}</td>
+    <td class="muted small">${AW_OPEN===a.user_id?'▲':'▼'}</td></tr>
+    <tr id="awRow_${a.user_id}" style="display:${AW_OPEN===a.user_id?'':'none'}"><td colspan="7" style="background:var(--bg);padding:0 12px 12px">
+      <div id="awDet_${a.user_id}" class="small muted" style="padding-top:8px">${T('불러오는 중…')}</div></td></tr>`).join('')
+    ||`<tr><td colspan="7" class="muted" style="text-align:center;padding:18px">${T('오디터 없음')}</td></tr>`;
+  const rejAll=auds.flatMap(a=>(a.rejected_items||[]).map(r=>({...r,auditor:a.username})));
+  const rejCard=rejAll.length?`<div class="card" style="margin-top:16px"><h3>⛔ ${T('거절된 배정')} <span class="r">${rejAll.length}${T('건')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('업체')}</th><th>${T('오디터')}</th><th>${T('사유')}</th><th></th></tr></thead>
+    <tbody>${rejAll.map(r=>`<tr><td><b>${esc(r.company||'—')}</b></td><td>${esc(r.auditor)}</td><td class="small">${esc(r.reason||'—')}</td>
+      <td>${CAN('auditor_pool.add')||ROLE==='ops'||ROLE==='admin'?`<button class="btn xs" onclick="opsAssign('${esc(r.case_id)}')">👤 ${T('재배정')}</button>`:''}</td></tr>`).join('')}</tbody></table></div></div>`:'';
+  if(AW_OPEN){const prev=AFTER_RENDER;AFTER_RENDER=()=>{if(prev)try{prev();}catch(_){}awLoadDetail(AW_OPEN);};}
+  return `
+  <div class="banner info" style="margin-bottom:14px">🧑‍⚖️ <b>${T('오디터 업무 현황')}</b> — ${T('배정 전 업무량·전문분야·일정을 확인하세요. 행을 클릭하면 담당 케이스별 상세가 열립니다.')}</div>
+  ${kpis}
+  <div class="card"><h3>${T('오디터별 현황')} <span class="en">· Workload</span><span class="r">${T('이번 주')} ${esc(d.week_start||'')} ~ ${esc(d.week_end||'')}</span></h3>
+    <div class="body tight" style="overflow-x:auto"><table><thead><tr>
+      <th>${T('오디터')}</th><th>${T('담당/캐파')}</th><th>${T('수락대기')}</th><th>${T('거절')}</th><th>${T('이번주 현장')}</th><th>${T('미해결 부적합')}</th><th></th>
+    </tr></thead><tbody>${rows}</tbody></table></div></div>
+  ${rejCard}`;
+};
+function awToggle(uid){
+  const open=AW_OPEN===uid;
+  const row=document.getElementById("awRow_"+uid);
+  if(AW_OPEN&&AW_OPEN!==uid){const prev=document.getElementById("awRow_"+AW_OPEN);if(prev)prev.style.display="none";}
+  AW_OPEN=open?null:uid;
+  if(!row){applyView();return;}
+  row.style.display=open?"none":"";
+  if(!open){const b=document.getElementById("awDet_"+uid);if(b&&!b.dataset.loaded){b.dataset.loaded="1";awLoadDetail(uid);}}
+}
+async function awLoadDetail(uid){
+  const box=document.getElementById("awDet_"+uid);if(!box)return;
+  try{
+    const d=await API(`/ops/auditors/${uid}/workload`);
+    const st=s=>({accepted:['ok','수락'],pending:['warn','수락 대기'],rejected:['bad','거절']}[s]||['mute',s||'-']);
+    const rows=(d.items||[]).map(i=>{const s=st(i.accept_status);
+      return `<tr class="clickable" onclick="openCase('${i.case_id}')">
+        <td><b>${esc(i.company||'—')}</b><div class="muted small">${short(i.case_id)}</div></td>
+        <td>${bTag('info',i.status_label||i.status)}</td>
+        <td>${tag(s[0],T(s[1]))}${i.reject_reason?`<div class="muted small">${esc(i.reject_reason.slice(0,30))}</div>`:''}</td>
+        <td class="muted small">${(i.schedule||[]).length?esc(i.schedule.join(', ')):'—'}</td>
+        <td>${i.open_findings?tag('bad',i.open_findings):'<span class="muted">0</span>'}</td>
+        <td class="muted small">${esc(i.last_action||'—')}<div>${esc(String(i.last_action_at||'').slice(0,16).replace('T',' '))}</div></td></tr>`;}).join('')
+      ||`<tr><td colspan="6" class="muted" style="text-align:center;padding:12px">${T('담당 케이스 없음')}</td></tr>`;
+    box.classList.remove("muted");
+    box.innerHTML=`<div class="muted small" style="margin-bottom:6px">${esc(d.username)} · ${T('진행 중')} ${d.assigned}/${d.capacity}${d.profile&&d.profile.specialty?` · ${esc(d.profile.specialty)}`:''}</div>
+      <table style="font-size:12px"><thead><tr><th>${T('업체')}</th><th>${T('케이스 상태')}</th><th>${T('배정 응답')}</th><th>${T('현장 일정')}</th><th>${T('부적합')}</th><th>${T('최근 활동')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }catch(e){box.textContent=T('상세 불러오기 실패');}
+}
+
 /* 오디터 배정함 — 관리자 배정 → 오디터 수락/거절(사유) → 수락 시 심사 리스트 편입, 거절은 관리자에게 회신 */
 let ASSIGN_TAB="pending";
 const ASSIGN_TABS=[["pending","수락 대기","📬"],["accepted","수락함","✅"],["rejected","거절함","⛔"],["all","전체","📋"]];
@@ -4280,6 +4352,7 @@ async function ocAccept(date){
 SCREEN.onsiteCalendar=async()=>{
   const id=CURCASE;
   if(await sdCase(id)) return sdExemptCard(T('현장심사 일정'));
+  const ocMonitorBanner=(ROLE==='sharia')?`<div class="banner info" style="margin-bottom:12px">👁 <b>${T('일정 모니터링 전용')}</b> — ${T('현장심사 일정을 조회합니다. 제시·확정·재조율은 오디터·운영자가 수행합니다.')}</div>`:'';
   let data;
   try{data=await API(`/cases/${id}/onsite-schedule`);}
   catch(e){data={status:"none",client_dates:[],auditor_dates:[],confirmed:null,history:[]};}
@@ -4324,6 +4397,7 @@ SCREEN.onsiteCalendar=async()=>{
         </div>
       </div></div>`:"";
   return `
+  ${ocMonitorBanner}
   <style>
   .oc-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
   .oc-h{text-align:center;font-size:11px;font-weight:700;color:var(--ink3);padding:4px}
@@ -6029,10 +6103,11 @@ SCREEN.payments=async()=>{
     <div class="kv"><span>납부기한</span><b>${esc((psel.due_date||'').slice(0,10)||'—')}</b></div>
     <div class="kv"><span>상태</span><b>${bTag(payColor(psel.status),payLabel(psel.status))}</b></div>
     <div class="btnrow" style="margin-top:12px;flex-wrap:wrap;gap:6px">
+      ${(ROLE==='sharia')?`<span class="chip">👁 ${T('모니터링 전용 — 결제 처리 권한 없음')}</span>`:`
       <button class="btn ok" onclick="setInvStatus('${psel.invoice_id}','paid')">✔ 결제확정</button>
       <button class="btn bad" onclick="setInvStatus('${psel.invoice_id}','rejected')">✖ 거절</button>
       ${psel.status==='paid'?`<button class="btn" onclick="requestRefund('${psel.invoice_id}')">↩ 환불 요청</button>`:''}
-      <button class="btn" onclick="setInvStatus('${psel.invoice_id}','expired')">⌛ 기한만료</button></div>
+      <button class="btn" onclick="setInvStatus('${psel.invoice_id}','expired')">⌛ 기한만료</button>`}</div>
     <div class="divide" style="margin:10px 0"></div>
     <div class="small muted" style="margin-bottom:4px">🔔 PG 콜백 시뮬레이션 · Webhook</div>
     <div class="btnrow" style="flex-wrap:wrap;gap:6px">
@@ -6069,20 +6144,58 @@ async function decideRefund(rid,decision){
 }
 /* P1-#1: 다항목 라인아이템 편집기 + 기본 심사료 프리셋(6,500,000). dialog()는 동적 행
    추가/삭제를 못 하므로 전용 모달을 구성. 라인아이템은 amount(DPP)=합계로 서버 저장. */
-let INV_ITEMS=[], INV_CASE=null, INV_STYPE="pre_audit";
-const INV_PRESET=6500000;
+let INV_ITEMS=[], INV_CASE=null, INV_STYPE="pre_audit", INV_RATES={};
+const INV_PRESET=6500000;   // 서버 요금표(GET /billing/defaults) 미응답 시 폴백
+/* 서비스 유형별 기본(디폴트) 금액 — 샤리아·최고승인자가 설정한 요금표에서 자동 채움 */
+function invDefaultAmount(stype){const v=INV_RATES[stype];return (typeof v==="number"&&v>=0)?v:INV_PRESET;}
+function invStypeChange(st){
+  INV_STYPE=st;
+  const base=INV_ITEMS[0];
+  if(base&&(!base.touched)){base.unit_price=invDefaultAmount(st);base.name=T('기본 심사료');}
+  invRenderRows();
+}
+
+/* 기본 요금표 설정 — 샤리아·최고승인자·관리자. 청구서 생성 시 서비스 유형별 기본 금액 자동 채움 */
+async function billingDefaultsPanel(){
+  let bd;try{bd=await API('/billing/defaults');}catch(e){toast(T('요금표 조회 실패'));return;}
+  const canEdit=["sharia","ops","admin"].includes(ROLE);
+  const ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:rgba(12,22,16,.55);z-index:9100;display:flex;align-items:center;justify-content:center;padding:22px";
+  ov.innerHTML=`<div class="modalbox" style="max-width:560px;width:100%">
+    <h3>💰 ${T('기본 요금표')} <span class="en">· Billing defaults</span></h3>
+    <div class="muted small" style="margin-bottom:10px">${T('청구서 생성 시 서비스 유형별로 자동 입력되는 기본 금액입니다. 개별 청구에서 수정할 수 있습니다.')}${bd.customized?` · ${T('최근 수정')} ${esc(String(bd.updated_at||'').slice(0,16).replace('T',' '))}`:` · ${T('시스템 기본값 사용 중')}`}</div>
+    ${(bd.rates||[]).map(r=>`<div class="field"><label>${esc(r.label)} <span class="en">· ${esc(r.service_type)}</span>${r.is_default?` <span class="muted small">(${T('기본값')})</span>`:''}</label>
+      <input class="v" id="bd_${r.service_type}" value="${r.amount}" ${canEdit?'':'readonly'} inputmode="numeric"></div>`).join('')}
+    <div class="muted small">${T('부가세')} PPN ${Math.round((bd.ppn_rate||0.11)*100)}% ${T('는 청구 시 자동 계산됩니다.')}</div>
+    <div class="btnrow" style="margin-top:12px">${canEdit?`<button class="btn pri" data-act="save">${T('저장')}</button>`:''}<button class="btn" data-act="x">${T('닫기')}</button></div></div>`;
+  ov.addEventListener("click",e=>{if(e.target===ov)ov.remove();});
+  ov.querySelector('[data-act="x"]').onclick=()=>ov.remove();
+  const sv=ov.querySelector('[data-act="save"]');
+  if(sv)sv.onclick=async()=>{
+    const rates={};let bad=false;
+    (bd.rates||[]).forEach(r=>{const el=ov.querySelector('#bd_'+r.service_type);const n=Number(String(el.value).replace(/[^0-9.]/g,''));
+      if(!isFinite(n)||n<0){bad=true;return;}rates[r.service_type]=n;});
+    if(bad){toast(T('금액은 0 이상의 숫자여야 합니다'));return;}
+    try{await API('/billing/defaults',{method:"POST",body:JSON.stringify({rates})});toast(T('기본 요금표 저장'));ov.remove();
+      try{const nb=await API('/billing/defaults');INV_RATES={};(nb.rates||[]).forEach(r=>INV_RATES[r.service_type]=r.amount);}catch(_){}}
+    catch(e){toast(T('저장 실패')+' · '+((e&&e.code)||''));}
+  };
+  document.body.appendChild(ov);
+}
 async function createInvoice(id){
   const en=await ENUMS();
   const opts=(en.invoice_service_type||[{value:"pre_audit",label:"사전심사"},{value:"onsite",label:"현장심사"}]).map(o=>({value:o.value!=null?o.value:o,label:o.label!=null?o.label:o}));
+  try{const bd=await API('/billing/defaults');INV_RATES={};(bd.rates||[]).forEach(r=>INV_RATES[r.service_type]=r.amount);}catch(_){INV_RATES={};}
   INV_CASE=id; INV_STYPE=opts.length?opts[0].value:"pre_audit";
-  INV_ITEMS=[{name:T('기본 심사료'),qty:1,unit_price:INV_PRESET}];   // 프리셋 기본행
+  INV_ITEMS=[{name:T('기본 심사료'),qty:1,unit_price:invDefaultAmount(INV_STYPE)}];   // 요금표 기본행
   let ov=document.getElementById("invModalOverlay");
   if(!ov){ov=document.createElement("div");ov.id="invModalOverlay";
     ov.style.cssText="position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:90;display:grid;place-items:center;padding:20px";
     ov.onclick=function(e){if(e.target===ov)invCancel();};document.body.appendChild(ov);}
   ov.innerHTML=`<div class="modalbox" style="width:min(700px,94vw)">
     <h3>${T('청구 생성')} <span class="en">· Invoice</span></h3>
-    <div class="field"><label>${T('서비스 유형')}</label><select class="v" id="invStype">${opts.map(o=>`<option value="${esc(o.value)}"${o.value===INV_STYPE?' selected':''}>${esc(o.label)}</option>`).join("")}</select></div>
+    <div class="field"><label>${T('서비스 유형')}</label><select class="v" id="invStype" onchange="invStypeChange(this.value)">${opts.map(o=>`<option value="${esc(o.value)}"${o.value===INV_STYPE?' selected':''}>${esc(o.label)}${INV_RATES[o.value]!=null?` — ${fmtIDR(INV_RATES[o.value])}`:''}</option>`).join("")}</select>
+      <div class="muted small" style="margin-top:4px">${T('기본 금액이 자동 입력됩니다. 특수조항 시 아래에서 수정하세요.')}${(ROLE==='sharia'||ROLE==='ops'||ROLE==='admin')?` · <a href="#" onclick="billingDefaultsPanel();return false" style="color:var(--accent)">${T('기본 요금표 설정')}</a>`:''}</div></div>
     <div style="font-weight:600;margin:12px 0 4px">${T('청구 항목')} <span class="muted small">${T('특수조항 시 금액 수동조정')}</span></div>
     <table><thead><tr><th style="text-align:left">${T('항목명')}</th><th style="width:64px">${T('수량')}</th><th style="width:120px">${T('단가')}</th><th style="width:120px;text-align:right">${T('금액')}</th><th style="width:32px"></th></tr></thead><tbody id="invRows"></tbody></table>
     <div class="btnrow" style="margin-top:8px"><button class="btn" onclick="invAddRow()">＋ ${T('행 추가')}</button></div>
@@ -6109,7 +6222,7 @@ function invRenderRows(){
     <td style="text-align:center"><button class="btn" style="padding:2px 7px" onclick="invDelRow(${i})">✕</button></td></tr>`).join("");
   invRecalc();
 }
-function invEdit(i,k,v){if(!INV_ITEMS[i])return;INV_ITEMS[i][k]=(k==='name')?v:(Number(v)||0);
+function invEdit(i,k,v){if(!INV_ITEMS[i])return;INV_ITEMS[i][k]=(k==='name')?v:(Number(v)||0);if(i===0)INV_ITEMS[0].touched=true;   // 사용자가 손댄 기본행은 유형 변경 시 자동 갱신하지 않음
   const cell=document.getElementById("invAmt"+i);if(cell)cell.textContent=fmtIDR((Number(INV_ITEMS[i].qty)||0)*(Number(INV_ITEMS[i].unit_price)||0));
   invRecalc();}
 function invAddRow(){INV_ITEMS.push({name:"",qty:1,unit_price:0});invRenderRows();}
