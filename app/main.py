@@ -3418,7 +3418,7 @@ def gen_contract(case_id: str, body: dict = None, user=Depends(auth.get_current_
     invoice = db.query(models.Invoice).filter_by(case_id=case_id).order_by(models.Invoice.created_at.desc()).first()
     _bfee = b.get("fee")  # M4: 특수조항 수동 금액
     fee = _bfee if _bfee not in (None, "") else (invoice.total if invoice else None)
-    categories = list(dict.fromkeys(p.category for p in products if p.category))
+    categories = list(dict.fromkeys(_guess_scope_category(p.name, p.category) for p in products))
     contract = db.query(models.Contract).filter_by(case_id=case_id).first()
     if not contract:
         contract = models.Contract(case_id=case_id, org_id=c.org_id, party_a=c.company_name,
@@ -3473,6 +3473,22 @@ def get_contract_pdf(case_id: str, user=Depends(auth.get_current_user), db: Sess
                     headers={"Content-Disposition": "attachment; filename=contract_%s.pdf" % case_id[:8]})
 
 
+def _guess_scope_category(name, category):
+    """계약서 범위 판정용 카테고리 정규화 — category가 있으면 그대로, 없으면 제품명 키워드로 추정."""
+    c = str(category or "").lower()
+    if any(k in c for k in ("food", "식품", "snack", "스낵")): return "food"
+    if any(k in c for k in ("beverage", "음료", "drink")): return "beverage"
+    if any(k in c for k in ("drug", "pharma", "의약", "약")): return "drug"
+    if any(k in c for k in ("cosmet", "화장")): return "cosmetic"
+    if any(k in c for k in ("good", "생활", "소비재")): return "goods"
+    n = str(name or "").lower()
+    if any(k in n for k in ("음료", "beverage", "drink", "주스", "juice", "차 ", " tea", "워터", "water")): return "beverage"
+    if any(k in n for k in ("샴푸", "로션", "크림", "화장", "cosmet", "soap", "비누", "lotion", "cream", "shampoo")): return "cosmetic"
+    if any(k in n for k in ("의약", "정제", "캡슐", "tablet", "capsule", "pharma")): return "drug"
+    if any(k in n for k in ("스낵", "snack", "과자", "keripik", "칩", "chip", "젤리", "gummy", "구미", "라면", "noodle", "빵", "면", "food", "식품", "소스", "sauce")): return "food"
+    return "food"   # 제조 식품 기본값(가장 흔함)
+
+
 CONTRACT_TEMPLATE_PDF = os.path.join(os.path.dirname(__file__), "assets", "GLHAC_Contract_Form_4.1.pdf")
 CONTRACT_SCOPE_LABELS = [("Foods", "food"), ("Beverages", "beverage"),
                          ("Drugs/Pharmaceuticals", "drug"), ("Cosmetics", "cosmetic"),
@@ -3503,7 +3519,7 @@ def _contract_overlay_pdf(db, c, ct, products):
         p2.insert_text((113, 373), "X", fontname="helv", fontsize=11, color=COL)
     # SECTION 2 범위 체크 — Foods/Beverages/Drugs/Cosmetics/Use Goods 행 좌측 칸(x≈115)
     scope = set(str(x).lower() for x in (ct.scope or []))
-    scope |= {str(p.category).lower() for p in products if p.category}
+    scope |= {_guess_scope_category(p.name, p.category) for p in products}
     rowY = {"food": 468, "beverage": 490, "drug": 510, "cosmetic": 530, "goods": 551}
     for lbl, key in CONTRACT_SCOPE_LABELS:
         if any(key in s or lbl.lower().split("/")[0] in s for s in scope):
