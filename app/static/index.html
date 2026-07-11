@@ -3946,7 +3946,7 @@ async function genContract(id){
     if(f===null)return;
     if(f.fee&&!isNaN(Number(f.fee)))body.fee=Number(f.fee);
   }
-  try{await API(`/cases/${id}/contract/generate`,{method:"POST",body:JSON.stringify(body)});toast("계약서 생성"+(body.fee?" · "+Number(body.fee).toLocaleString()+"원":""));serverPdf(`/cases/${id}/contract/pdf`,"contract.pdf");}
+  try{const r=await API(`/cases/${id}/contract/generate`,{method:"POST",body:JSON.stringify(body)});toast("계약서 생성"+(body.fee?" · "+Number(body.fee).toLocaleString()+"원":""));pdfPreview(`/cases/${id}/contract/pdf`,`${T('계약서')} · Contract${r&&r.contract_no?' · '+esc(r.contract_no):''}`,"contract.pdf");}
   catch(e){toast("생성 실패 · "+((e&&e.code)||""));}
 }
 async function genFatwaDecree(id){
