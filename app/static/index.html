@@ -2118,7 +2118,7 @@ async function renderRightPanel(){
    <div class="rpsec"><div class="rptitle">알림 · Notifications <span class="muted small">${notifs.filter(n=>!n.read).length} unread</span></div>
      ${notifs.slice(0,5).map(n=>`<div class="rpnote ${n.read?"":"unread"}"${n.case_id?` style="cursor:pointer" onclick="openNotif('${n.id}','${esc(n.case_id)}')" title="${T('클릭 → 케이스로 이동')}"`:''}><b>${esc(n.title||n.event_type||"")}</b><div class="muted small">${esc((n.body||"").slice(0,70))}${n.case_id?' <span class="go-arrow">→</span>':''}</div></div>`).join("")||'<div class="muted small">알림 없음</div>'}</div>
    <div class="rpsec" style="border-bottom:none"><div class="rptitle">논의 · Discussion</div>
-     <div class="rpdisc">${disc.slice(-8).map(d=>`<div class="rpmsg"><b class="small">${esc(d.author||d.author_role||"")}</b> <span class="muted small">${esc(String(d.created_at||"").slice(5,16))}</span><div class="small">${esc(d.text||"")}</div></div>`).join("")||'<div class="muted small">아직 논의 없음</div>'}</div>
+     <div class="rpdisc">${disc.slice(-8).map(d=>`<div class="rpmsg"><b class="small">${esc(d.author||d.author_role||"")}</b>${discRole(d.author_role)} <span class="muted small">${esc(String(d.created_at||"").slice(5,16))}</span><div class="small">${esc(d.text||"")}</div></div>`).join("")||'<div class="muted small">아직 논의 없음</div>'}</div>
      <div class="btnrow" style="margin-top:8px"><input class="v" id="rpDiscInput" placeholder="메시지 입력…" style="flex:1;font-size:12px" onkeydown="if(event.key===\'Enter\')postDiscussion(\'${id}\')"><button class="btn pri" style="padding:5px 10px" onclick="postDiscussion(\'${id}\')">전송</button></div></div>`;
 }
 function toggleRPanel(){const p=document.getElementById("rpanel");if(!p)return;p.classList.toggle("open");try{localStorage.setItem("glhac_rp",p.classList.contains("open")?"1":"0")}catch(_){}if(p.classList.contains("open"))renderRightPanel();}
@@ -5710,12 +5710,13 @@ function notifLabel(s){return {unsent:"미발송",sent:"발송됨",failed:"실�
 function notifColor(s){return {sent:"ok",failed:"bad",unsent:"warn",sending:"info"}[s]||"mute";}
 /* ===== 알림봇 채널 상태 바 — 채널별 연결/미설정/스텁 정직 표기 + 최근 발송현황(전역, 관리자/운영자) =====
    데이터소스: GET /admin/notify-channels(크리덴셜 존재여부 bool만) + /admin/notifications 목록(최근 발송 집계). 신규 쓰기 없음. */
+function discRole(r){if(!r)return'';const m={applicant:['업체','mute'],consultant:['컨설턴트','info'],auditor:['오디터','warn'],fatwa_liaison:['샤리아','gold'],sharia:['샤리아','gold'],operator:['운영자','ok'],ops:['운영자','ok'],admin:['관리자','bad']}[r];return m?` <span class="tag t-${m[1]}" style="font-size:9px;padding:0 5px;vertical-align:middle">${T(m[0])}</span>`:'';}
 function notifBotStatus(s){return {connected:["ok","연결됨"],unset:["mute","미설정"],stub:["warn","스텁·준비중"]}[s]||["mute","미설정"];}
 function notifyBotBar(channels,items){
   const meta=[["inapp","인앱","In-app","🔔"],["sms","SMS","SMS","💬"],["kakao","카카오톡","KakaoTalk","🟡"],["whatsapp","WhatsApp","WhatsApp","🟢"]];
   const st={}; (items||[]).forEach(n=>{(n.channels||[]).forEach(c=>{const o=st[c]||(st[c]={total:0,sent:0,wait:0,failed:0});o.total++;if(n.status==="sent")o.sent++;else if(n.status==="failed")o.failed++;else o.wait++;});});
   const chips=meta.map(([k,ko,en,ic])=>{
-    const c=channels[k]||{status:(k==="inapp"?"connected":k==="kakao"?"stub":"unset")};
+    const c=channels[k]||{status:(k==="inapp"?"connected":"unset")};
     const [col,lbl]=notifBotStatus(c.status), o=st[k]||{total:0,sent:0,wait:0,failed:0};
     const recent=o.total?`<span class="muted small">${T("최근")} ${o.sent}/${o.total} ${T("성공")}${o.wait?" · "+o.wait+" "+T("대기"):""}</span>`:`<span class="muted small">${T("발송 없음")}</span>`;
     return `<div class="chip" style="display:inline-flex;align-items:center;gap:7px;padding:6px 10px">
@@ -5724,7 +5725,7 @@ function notifyBotBar(channels,items){
   }).join("");
   return `<div class="card" style="margin-bottom:16px"><h3>${T("알림봇 채널 상태")} <span class="en">· Notification Bot</span></h3>
     <div class="body">
-      <div class="banner info" style="margin-bottom:10px">${T("채널별 연결 상태를 정직하게 표시합니다. 카카오톡은 대행사 연동 미구현(스텁), SMS·WhatsApp은 Twilio 크리덴셜 설정 시 실동작합니다. 크리덴셜 값은 노출하지 않습니다.")}</div>
+      <div class="banner info" style="margin-bottom:10px">${T("채널별 연결 상태를 정직하게 표시합니다. SMS·WhatsApp은 Twilio, 카카오톡은 알림톡 대행사(Solapi·Aligo·NHN 등) 크리덴셜 설정 시 실동작하며, 미설정 시 '미설정'으로 표시됩니다. 크리덴셜 값은 노출하지 않습니다.")}</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap">${chips}</div></div></div>`;
 }
 async function drainNotifications(){try{const r=await API("/admin/notifications/drain",{method:"POST",body:"{}"});toast("발송 "+(r.sent||0)+" · 실패 "+(r.failed||0)+" · 동의제외 "+(r.consent_skipped||0));applyView();}catch(e){toast("발송 실패 · "+(e&&e.code?e.code:""));}}
@@ -7082,7 +7083,7 @@ async function renderCaseDetail(id, tab){
     ${gatesCard}
     <div class="card" style="margin-top:16px"><h3>협의 · Discussion <span class="en">· thread</span><span class="r">${disc.length}건</span></h3>
       <div class="body">
-        <div class="chatlog" style="max-height:240px">${disc.length?disc.map(d=>`<div class="msg a" style="max-width:100%"><b>${esc(d.author||d.author_role||"—")}</b> <span class="muted small">· ${esc(d.kind||"comment")} ${esc((d.created_at||"").slice(0,16))}</span><br>${esc(d.text)}</div>`).join(""):'<div class="muted small">협의 내역 없음</div>'}</div>
+        <div class="chatlog" style="max-height:240px">${disc.length?disc.map(d=>`<div class="msg a" style="max-width:100%"><b>${esc(d.author||d.author_role||"—")}</b>${discRole(d.author_role)} <span class="muted small">· ${esc(d.kind||"comment")} ${esc((d.created_at||"").slice(0,16))}</span><br>${esc(d.text)}</div>`).join(""):'<div class="muted small">협의 내역 없음</div>'}</div>
         <div class="inputbar"><input class="box" id="discInput" placeholder="협의 코멘트 입력…" onkeydown="if(event.key==='Enter')postDiscussion('${id}')">
           <button class="btn pri" onclick="postDiscussion('${id}')">등록</button></div>
       </div></div>`;
