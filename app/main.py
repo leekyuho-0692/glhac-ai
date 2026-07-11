@@ -2160,6 +2160,30 @@ def set_document_geo(document_id: str, body: schemas.GeoReq,
     return {"document_id": document_id, "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source}
 
 
+@app.post("/cases/{case_id}/documents/re-classify")
+def bulk_reclassify_documents(case_id: str,
+                              user=Depends(auth.require_roles("consultant", "auditor", "admin")),
+                              db: Session = Depends(get_db)):
+    """문서 파일명 규칙 일괄 재적용(OCR 없이) — 규칙 강화 이전 저장분의 낡은 분류를 교정.
+    파일명 규칙이 명시적으로 매칭될 때만 doc_type을 바꾸고, 사유를 함께 반환한다."""
+    from .intake import refine_doctype_reason, DOC_KO
+    c = _get_case(db, case_id, user)
+    changed = []
+    for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all():
+        new_dt, why = refine_doctype_reason(d.filename, d.doc_type)
+        if why and new_dt != d.doc_type:
+            prev = d.doc_type
+            d.doc_type = new_dt
+            changed.append({"document_id": d.document_id, "filename": d.filename,
+                            "from": prev, "from_ko": DOC_KO.get(prev, prev),
+                            "to": new_dt, "to_ko": DOC_KO.get(new_dt, new_dt), "reason": why})
+    if changed:
+        sm.record_event(db, c, c.status, c.status, "documents.bulk_reclassify", user["role"], user["uid"],
+                        {"count": len(changed)})
+        db.commit()
+    return {"changed_count": len(changed), "changed": changed}
+
+
 @app.patch("/documents/{document_id}/reclassify")
 def reclassify_document(document_id: str, body: schemas.DocTypeReq,
                         user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
@@ -3431,13 +3455,109 @@ def gen_contract(case_id: str, body: dict = None, user=Depends(auth.get_current_
 
 @app.get("/cases/{case_id}/contract/pdf")
 def get_contract_pdf(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    """Contract 리치 PDF — 정적 법률조항 + 동적 필드 + 양자 서명블록."""
+    """Contract PDF — 기준 양식(FORM 4.1-HCB-GL HAC) 원본에 실데이터 오버레이(SJPH 매뉴얼과 동일 원칙).
+    원본 PDF가 없는 환경에서만 기존 리치 렌더러로 폴백."""
     from fastapi.responses import Response
     c = _get_case(db, case_id, user)
     ct = db.query(models.Contract).filter_by(case_id=case_id).first()
     if not ct:
         raise HTTPException(404, {"code": "CONTRACT_NOT_FOUND"})
-    products = db.query(models.Product).filter(models.Product.product_id.in_(ct.product_ids)).all() if ct.product_ids else []
+    products = (db.query(models.Product).filter(models.Product.product_id.in_(ct.product_ids)).all()
+                if ct.product_ids else db.query(models.Product).filter_by(case_id=case_id).all())
+    try:
+        pdf = _contract_overlay_pdf(db, c, ct, products)
+    except Exception as e:  # noqa: BLE001
+        log.warning("contract 양식 오버레이 실패, 리치 렌더러 폴백: %s", e)
+        pdf = _contract_rich_pdf(db, c, ct, products)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=contract_%s.pdf" % case_id[:8]})
+
+
+CONTRACT_TEMPLATE_PDF = os.path.join(os.path.dirname(__file__), "assets", "GLHAC_Contract_Form_4.1.pdf")
+CONTRACT_SCOPE_LABELS = [("Foods", "food"), ("Beverages", "beverage"),
+                         ("Drugs/Pharmaceuticals", "drug"), ("Cosmetics", "cosmetic"),
+                         ("Use Goods", "goods")]
+
+
+def _contract_overlay_pdf(db, c, ct, products):
+    """기준 양식 원본 PDF의 빈칸 위치에 실데이터를 그려 넣는다(좌표는 FORM 4.1 실측)."""
+    import fitz
+    from datetime import date as _date
+    doc = fitz.open(CONTRACT_TEMPLATE_PDF)
+    FS, COL = 9, (0, 0, 0.55)   # 채워넣는 값은 파란색으로 구분
+    ed = str(ct.effective_date or "")[:10]
+    y, m, dd = (ed.split("-") + ["", "", ""])[:3] if "-" in ed else ("", "", "")
+
+    def put(page, x, y0, text, size=FS):
+        if text:
+            page.insert_text((x, y0), str(text), fontname="helv", fontsize=size, color=COL)
+
+    # ── page 2: NO / 날짜 / Party A / 표준·범위 체크 / 제품 리스트 (좌표=FORM 4.1 실측, baseline 보정) ──
+    p2 = doc[1]
+    put(p2, 234, 172, ct.contract_no or "")                             # NO 밑줄 위
+    put(p2, 124, 215, y); put(p2, 220, 215, m); put(p2, 260, 215, dd)   # 년/월/일 밑줄 위(x116-158/212-249/252-289, baseline 218)
+    put(p2, 135, 254, ct.party_a or c.company_name or "")               # Party A 밑줄
+    # SECTION 1 표준 체크(SJPH) — 'Indonesia...(SJPH)' 행 좌측 칸(x≈115, y≈372)
+    std = (ct.standard or "SJPH")
+    if "SJPH" in std.upper() or "SISTEM" in std.upper():
+        p2.insert_text((113, 373), "X", fontname="helv", fontsize=11, color=COL)
+    # SECTION 2 범위 체크 — Foods/Beverages/Drugs/Cosmetics/Use Goods 행 좌측 칸(x≈115)
+    scope = set(str(x).lower() for x in (ct.scope or []))
+    scope |= {str(p.category).lower() for p in products if p.category}
+    rowY = {"food": 468, "beverage": 490, "drug": 510, "cosmetic": 530, "goods": 551}
+    for lbl, key in CONTRACT_SCOPE_LABELS:
+        if any(key in s or lbl.lower().split("/")[0] in s for s in scope):
+            p2.insert_text((113, rowY[key]), "X", fontname="helv", fontsize=11, color=COL)
+    # SECTION 2 #3 제품 리스트 a~e (밑줄 위, y 596..655)
+    for i, prod in enumerate(products[:5]):
+        put(p2, 150, 596 + int(round(i * 14.7)), prod.name or "")
+
+    # ── page 3: 제품 f~h(6~8번째, y 147..176) + 공장 주소 ──
+    p3 = doc[2]
+    for i, prod in enumerate(products[5:8]):
+        put(p3, 150, 147 + int(round(i * 14.7)), prod.name or "")
+    facs = _case_facilities(db, c)
+    for i, f in enumerate(facs[:2]):
+        addr = " ".join(x for x in [getattr(f, "name", None), f.address, f.city, f.country] if x)
+        put(p3, 150, 219 + int(round(i * 14.5)), addr)
+
+    # ── page 5: 서명 블록(GL HAC 측 · Party B 대표) ──
+    p5 = doc[4]
+    sigs = ct.signatures or []
+    sb = next((s for s in sigs if s.get("party") == "B"), None)
+    sa = next((s for s in sigs if s.get("party") == "A"), None)
+    if sb:
+        put(p5, 290, 305, sb.get("name") or "")           # GL HAC printed name
+        if sb.get("signed_at"):
+            put(p5, 290, 341, str(sb["signed_at"])[:10])
+    put(p5, 250, 379, ct.party_a or c.company_name or "")  # CLIENT company name in "on behalf of"
+    if sa:
+        put(p5, 290, 417, sa.get("name") or "")
+
+    # ── page 8: Annex 2 요금표 — Client Company Name([Full Legal Name...] 자리)만 채움.
+    #    요금표 본문은 원본에 상세 인쇄되어 있으므로 덮지 않는다. 계약 총액은 통화 라벨 옆에 병기.
+    p8 = doc[7]
+    # 원본의 placeholder [Full Legal Name...]를 흰 사각형으로 가리고 실명 기입
+    p8.draw_rect(fitz.Rect(246, 144, 555, 162), color=None, fill=(1, 1, 1))
+    put(p8, 248, 156, ct.party_a or c.company_name or "")
+    cur = ct.currency or "KRW"
+    p8.draw_rect(fitz.Rect(318, 181, 560, 200), color=None, fill=(1, 1, 1))   # [KRW / USD] (Select one...) 전체 가림
+    put(p8, 322, 194, cur + (" (계약총액 %s)" % BILLING_FMT(ct.fee) if ct.fee else ""))
+
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def BILLING_FMT(v):
+    try:
+        return "{:,.0f}".format(float(v))
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _contract_rich_pdf(db, c, ct, products):
+    """폴백 — 원본 양식 PDF 부재 시 코드 렌더. bytes 반환."""
     blocks = [
         {"type": "heading", "text": "HALAL CERTIFICATION AGREEMENT · FORM 4.1-HCB-GL HAC", "level": 1},
         {"type": "kv", "label": "NO", "value": ct.contract_no or ""},
@@ -3464,10 +3584,8 @@ def get_contract_pdf(case_id: str, user=Depends(auth.get_current_user), db: Sess
         slots.append({"role": role, "name": (match.get("name", "") if match else ""),
                       "signed": bool(match and match.get("signed_at"))})
     blocks.append({"type": "signature", "slots": slots})
-    pdf = _render_pdf_rich("Halal Certification Agreement", blocks, subtitle=ct.party_a,
-                           footer="GL-HAC AI · Contract " + (ct.contract_no or ""))
-    return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": "attachment; filename=contract_%s.pdf" % case_id[:8]})
+    return _render_pdf_rich("Halal Certification Agreement", blocks, subtitle=ct.party_a,
+                            footer="GL-HAC AI · Contract " + (ct.contract_no or ""))
 
 
 @app.get("/cases/{case_id}/contract")

@@ -174,19 +174,32 @@ _CLASSIFY_SYS = (
 )
 
 
-def _refine_doctype(name, llm_type):
-    """파일명 명시 키워드로 LLM 오분류 교정.
-    FSSC/HACCP/GMP→품질인증(할랄 아님), 접수양식·소개서→기타, 원산지·수입→공급사선언."""
+# 파일명 규칙 — LLM 오분류 교정. 위에서부터 먼저 매칭되는 규칙이 최종 doc_type을 결정한다.
+# 파일명이 명백한 경우(소개서·제안서·수입서류·품질인증 등)는 LLM 판단을 무시하고 규칙을 신뢰한다.
+_NAME_RULES = [
+    # (정규식, doc_type, 사유) — 순서 중요(구체적인 것 먼저)
+    (r"제조\s*공정\s*도|공정\s*흐름|process\s*flow|flow\s*chart", "process_flow", "공정도"),
+    (r"fssc|haccp|\biso\b|\bgmp\b|22000|식품안전|유기취급|organic|kosher", "quality_cert", "품질/식품안전 인증(HACCP·FSSC·ISO·GMP — 할랄 아님)"),
+    (r"소개서|회사\s*소개|company\s*profile|제안서|proposal|접수\s*양식|고객\s*접수|데이터\s*양식|intake\s*form|application\s*form", "other", "소개서·제안서·양식(등록증 아님)"),
+    (r"원산지|수입\s*서류|country\s*of\s*origin|\bcoo\b|certificate\s*of\s*origin|선언서|declaration|확인서|설명서", "supplier_declaration", "원산지·수입·선언서(공급사 선언)"),
+    (r"성적서|시험\s*성적|\bcoa\b|\bmsds\b|성분\s*명세|성분\s*분석|분석\s*성적", "coa_msds", "성적서·성분명세"),
+    (r"사업자\s*등록|사업자등록증|business\s*(registration|license)|\bnib\b|법인\s*등기|등록증명원", "nib_business_license", "사업자등록"),
+    (r"공장\s*등록|공장등록증|factory\s*registration|manufactur.*licen", "factory_registration", "공장등록"),
+    (r"할랄\s*인증|halal\s*cert", "halal_certificate", "할랄 인증"),
+]
+
+
+def refine_doctype_reason(name, llm_type):
+    """(doc_type, 규칙근거) — 파일명 규칙이 매칭되면 그 규칙을, 아니면 (llm_type, None)."""
     n = (name or "").lower()
-    if re.search(r"fssc|haccp|\biso\b|\bgmp\b|22000|식품안전", n):
-        return "quality_cert"
-    if re.search(r"접수\s*양식|데이터\s*양식|소개서|회사\s*소개|company\s*profile|intake\s*form|제안서|proposal", n):
-        return "other"
-    if re.search(r"원산지|수입\s*서류|country\s*of\s*origin|\bcoo\b|certificate\s*of\s*origin", n):
-        return "supplier_declaration"
-    if llm_type == "halal_certificate" and re.search(r"유기취급|organic|kosher", n):
-        return "quality_cert"  # 유기·코셔 인증은 할랄 아님(FSSC/HACCP는 위에서 이미 처리)
-    return llm_type
+    for pat, dt, why in _NAME_RULES:
+        if re.search(pat, n):
+            return dt, why
+    return llm_type, None
+
+
+def _refine_doctype(name, llm_type):
+    return refine_doctype_reason(name, llm_type)[0]
 
 
 def classify(name, text):
