@@ -2445,15 +2445,43 @@ def _process_doc(db, c, d, applied):
             applied["sjph_manual"] = _cnt
 
 
+def _sha256_b64(content_b64):
+    """base64(dataURL 접두 허용) 콘텐츠의 sha256 hex. 내용 없으면 None — 중복판정·무결성 공용."""
+    if not content_b64:
+        return None
+    import hashlib as _hl
+    try:
+        _raw = base64.b64decode(str(content_b64).split(",")[-1])
+    except Exception:  # noqa: BLE001
+        _raw = str(content_b64).encode("utf-8", "ignore")
+    return _hl.sha256(_raw).hexdigest()
+
+
 def _apply_intake_autofill(db, c, res):
-    """분류 결과 → DocumentAsset 저장 + 신청서 자동채움(회사/NIB/제품/원재료). 임시저장(commit은 호출측)."""
+    """분류 결과 → DocumentAsset 저장 + 신청서 자동채움(회사/NIB/제품/원재료). 임시저장(commit은 호출측).
+    중복 방지: 같은 케이스에 동일 내용(file_hash) 또는 동일 파일명(내용없는 문서)은 재저장하지 않는다."""
+    _ex = (db.query(models.DocumentAsset.file_hash, models.DocumentAsset.filename)
+             .filter(models.DocumentAsset.case_id == c.case_id).all())
+    _seen_h = {h for h, _ in _ex if h}
+    _seen_n = {n for h, n in _ex if not h and n}
+    dup_skipped = 0
     for d in res["classified"]:
-        db.add(models.DocumentAsset(case_id=c.case_id, filename=d["filename"], doc_type=d["doc_type"],
+        _h = _sha256_b64(d.get("content_b64"))
+        _nm = d["filename"]
+        if (_h and _h in _seen_h) or (not _h and _nm in _seen_n):
+            dup_skipped += 1
+            continue
+        if _h:
+            _seen_h.add(_h)
+        else:
+            _seen_n.add(_nm)
+        db.add(models.DocumentAsset(case_id=c.case_id, filename=_nm, doc_type=d["doc_type"],
                                     confidence=float(d.get("confidence") or 0), fields=d.get("fields"),
                                     text_excerpt=d.get("excerpt"), content_b64=d.get("content_b64"),
-                                    content_type=d.get("content_type")))
+                                    content_type=d.get("content_type"), file_hash=_h))
     agg = res.get("extracted", {})
-    applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": []}
+    applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": [],
+               "dup_skipped": dup_skipped}
     if agg.get("company_name") and (not c.company_name or c.company_name in _CO_PLACEHOLDER):
         c.company_name = agg["company_name"]
         applied["company_set"] = True
@@ -4627,7 +4655,8 @@ def upload_case_document(case_id: str, body: dict = None,
     b64 = _validate_upload(b64, fn)
     doc_type = b.get("doc_type") or "other"
     d = models.DocumentAsset(case_id=case_id, filename=fn, doc_type=doc_type,
-                             content_b64=b64, content_type=_ctype(fn))
+                             content_b64=b64, content_type=_ctype(fn),
+                             file_hash=_sha256_b64(b64))
     # A08 증거 귀속 메타 — 모의/현장 증거(사진·영상)에 누가·언제·어디서·무결성 기록
     if doc_type.startswith("mock_evidence_") or doc_type.startswith("onsite_evidence_"):
         import hashlib as _hl
