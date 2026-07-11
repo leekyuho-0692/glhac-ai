@@ -32,6 +32,10 @@ _NONCE = 12
 _TAG = 16
 _KEYS = None               # 지연 로딩 캐시
 
+# 배포 게이트 — 기본 off. 코드는 배포하되 GLHAC_ENCRYPTION=1 설정 전까지 암호화 미적용.
+# off일 때 EncryptedType는 평문 Text와 동일(쓰기 그대로, 읽기 passthrough).
+ENCRYPT_COLUMNS = os.environ.get("GLHAC_ENCRYPTION", "0") == "1"
+
 
 def _parse_key(raw):
     """base64(44자) 또는 hex(64자) 문자열 → 32바이트 키. 임의 길이는 HKDF 정규화."""
@@ -126,9 +130,11 @@ class EncryptedType(TypeDecorator):
     cache_ok = True
 
     def process_bind_param(self, value, dialect):
-        return enc(value)
+        # 배포 게이트 off면 평문 그대로 저장(암호화 미적용). on이면 enc().
+        return enc(value) if ENCRYPT_COLUMNS else value
 
     def process_result_value(self, value, dialect):
+        # 항상 dec — off여도 평문은 passthrough라 안전. on 전환 후 기존 평문+신규 암호문 모두 정상.
         return dec(value)
 
 
