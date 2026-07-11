@@ -6252,6 +6252,236 @@ def _idr(n):
         return "Rp 0"
 
 
+
+def _terbilang(n):
+    """숫자 → 인도네시아어 표기(영수증 금액 문구용)."""
+    n = int(round(float(n or 0)))
+    sat = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh",
+           "delapan", "sembilan", "sepuluh", "sebelas"]
+
+    def h(x):
+        if x < 12:
+            return sat[x]
+        if x < 20:
+            return h(x - 10) + " belas"
+        if x < 100:
+            return h(x // 10) + " puluh" + ((" " + h(x % 10)) if x % 10 else "")
+        if x < 200:
+            return "seratus" + ((" " + h(x - 100)) if x - 100 else "")
+        if x < 1000:
+            return h(x // 100) + " ratus" + ((" " + h(x % 100)) if x % 100 else "")
+        if x < 2000:
+            return "seribu" + ((" " + h(x - 1000)) if x - 1000 else "")
+        if x < 1000000:
+            return h(x // 1000) + " ribu" + ((" " + h(x % 1000)) if x % 1000 else "")
+        if x < 1000000000:
+            return h(x // 1000000) + " juta" + ((" " + h(x % 1000000)) if x % 1000000 else "")
+        return h(x // 1000000000) + " miliar" + ((" " + h(x % 1000000000)) if x % 1000000000 else "")
+
+    if n == 0:
+        return "nol"
+    return " ".join(h(n).split())
+
+
+def _render_finance_pdf(kind, inv, c, pay=None, items=None):
+    """재무문서 전용 렌더러 — 영수증(Kwitansi)·견적서(Penawaran)·세금계산서(Faktur Pajak).
+    브랜드 헤더·공급자/구매자 패널·항목표·합계박스·서명란을 갖춘 A4 1매. PyMuPDF 'korea' 폰트."""
+    import fitz
+    W, H = fitz.paper_size("a4")
+    doc = fitz.open()
+    pg = doc.new_page(width=W, height=H)
+    F = "korea"
+    G = (0.043, 0.443, 0.271)
+    G2 = (0.09, 0.55, 0.35)
+    INK = (0.13, 0.15, 0.14)
+    GREY = (0.42, 0.44, 0.43)
+    LINE = (0.80, 0.82, 0.81)
+    SOFT = (0.93, 0.965, 0.945)
+    ZEBRA = (0.966, 0.978, 0.971)
+    WHITE = (1, 1, 1)
+    LT = (0.86, 0.94, 0.89)
+    margin = 46
+    RIGHT = W - margin
+
+    def txt(x, y, s, size=10, color=INK):
+        pg.insert_text((x, y), str(s), fontname=F, fontsize=size, color=color)
+
+    def rtxt(xr, y, s, size=10, color=INK):
+        w = fitz.get_text_length(str(s), fontname=F, fontsize=size)
+        pg.insert_text((xr - w, y), str(s), fontname=F, fontsize=size, color=color)
+
+    def rect(x0, y0, x1, y1, fill=None, color=None, width=0.6):
+        pg.draw_rect(fitz.Rect(x0, y0, x1, y1), fill=fill, color=color, width=width)
+
+    titles = {
+        "receipt": ("KWITANSI", "결제 영수증 · Payment Receipt"),
+        "tax": ("FAKTUR PAJAK", "세금계산서 · Tax Invoice"),
+        "quotation": ("PENAWARAN", "견적서 · Quotation"),
+    }
+    big, sub = titles.get(kind, ("DOKUMEN", ""))
+
+    # 금액
+    dpp = float(inv.amount or 0)
+    ppn = float(inv.ppn) if getattr(inv, "ppn", None) is not None else round(dpp * 0.11)
+    total = float(inv.total) if getattr(inv, "total", None) is not None else dpp + ppn
+    inv_no = inv.invoice_no or "-"
+    today = date.today().isoformat()
+
+    # ── 헤더 밴드 ──
+    rect(0, 0, W, 92, fill=G, width=0)
+    rect(0, 92, W, 96, fill=G2, width=0)
+    txt(margin, 42, "GL-HAC AI", size=22, color=WHITE)
+    txt(margin, 60, "Global Halal Certification Body", size=8.5, color=LT)
+    txt(margin, 74, "Lembaga Sertifikasi Halal · Jakarta, Indonesia", size=8.5, color=LT)
+    rtxt(RIGHT, 46, big, size=21, color=WHITE)
+    rtxt(RIGHT, 64, sub, size=9.5, color=LT)
+
+    y = 120
+
+    # ── 메타 바 (No · Tanggal · Status/Valid) ──
+    meta = [("No.", inv_no), ("Tanggal · 발행일", today)]
+    if kind == "quotation":
+        vu = (date.today() + timedelta(days=30)).isoformat()
+        meta.append(("Berlaku s/d · 유효기간", vu))
+    elif kind == "receipt":
+        paid = bool(pay) or inv.status in ("paid", "confirmed")
+        meta.append(("Status", "LUNAS · 결제완료" if paid else "BELUM LUNAS · 미결제"))
+    else:
+        meta.append(("PPN", "11%"))
+    cellw = (W - 2 * margin) / len(meta)
+    rect(margin, y, RIGHT, y + 34, fill=SOFT, color=LINE, width=0.6)
+    for i, (k, v) in enumerate(meta):
+        cx = margin + i * cellw + 12
+        if i:
+            pg.draw_line((margin + i * cellw, y + 6), (margin + i * cellw, y + 28),
+                         color=LINE, width=0.5)
+        txt(cx, y + 14, k, size=7.5, color=GREY)
+        txt(cx, y + 27, v, size=10.5, color=G if (kind == "receipt" and i == 2) else INK)
+    y += 34 + 18
+
+    # ── 공급자 / 구매자 패널 ──
+    colw = (W - 2 * margin - 16) / 2
+    lx, rx = margin, margin + colw + 16
+    ph = 82
+    for x, head, lines in [
+        (lx, "PENERBIT · 공급자", [
+            ("GL-HAC AI (LSH)", 10.5, INK),
+            ("Lembaga Sertifikasi Halal", 9, GREY),
+            ("Jakarta, Indonesia", 9, GREY),
+            ("halal@glhac.ai", 9, GREY)]),
+        (rx, "DITAGIHKAN KEPADA · 구매자" if kind != "receipt" else "DITERIMA DARI · 납부자", [
+            (c.company_name or "-", 10.5, INK),
+            ("NIB: %s" % (c.nib or "-"), 9, GREY),
+            (c.address or c.factory_address or "-", 9, GREY)]),
+    ]:
+        rect(x, y, x + colw, y + ph, fill=WHITE, color=LINE, width=0.6)
+        rect(x, y, x + colw, y + 18, fill=SOFT, color=LINE, width=0.6)
+        txt(x + 10, y + 13, head, size=8, color=G)
+        yy = y + 34
+        for s, sz, col in lines:
+            # 주소 등 긴 줄은 잘라서 한 줄
+            s = str(s)
+            while fitz.get_text_length(s, fontname=F, fontsize=sz) > colw - 20 and len(s) > 4:
+                s = s[:-2]
+            txt(x + 10, yy, s, size=sz, color=col)
+            yy += 15
+    y += ph + 20
+
+    # ── 항목 표 ──
+    x0 = margin
+    xNo, xItem, xQty, xPr, xAmt, xEnd = margin, margin + 30, margin + 205, margin + 250, margin + 368, RIGHT
+    rh = 22
+    # 헤더
+    rect(x0, y, xEnd, y + rh, fill=G, width=0)
+    txt(xNo + 6, y + 15, "No", size=8.5, color=WHITE)
+    txt(xItem + 6, y + 15, "Uraian · 항목", size=8.5, color=WHITE)
+    rtxt(xPr - 8, y + 15, "Qty", size=8.5, color=WHITE)
+    rtxt(xAmt - 8, y + 15, "Harga", size=8.5, color=WHITE)
+    rtxt(xEnd - 8, y + 15, "Jumlah", size=8.5, color=WHITE)
+    y += rh
+
+    rows = []
+    if kind == "quotation" and items:
+        for it in items:
+            rows.append((it.get("name") or "-", float(it.get("qty") or 0),
+                         float(it.get("unit_price") or 0), float(it.get("amount") or 0)))
+    else:
+        rows.append((inv.service_type or "Layanan Sertifikasi Halal", 1.0, dpp, dpp))
+
+    for i, (name, qty, price, amt) in enumerate(rows):
+        if i % 2:
+            rect(x0, y, xEnd, y + rh, fill=ZEBRA, width=0)
+        nm = str(name)
+        while fitz.get_text_length(nm, fontname=F, fontsize=9.5) > (xQty - xItem - 12) and len(nm) > 4:
+            nm = nm[:-2]
+        txt(xNo + 6, y + 15, str(i + 1), size=9.5)
+        txt(xItem + 6, y + 15, nm, size=9.5)
+        rtxt(xPr - 8, y + 15, format(qty, ",g"), size=9.5)
+        rtxt(xAmt - 8, y + 15, _idr(price), size=9.5)
+        rtxt(xEnd - 8, y + 15, _idr(amt), size=9.5)
+        pg.draw_line((x0, y + rh), (xEnd, y + rh), color=LINE, width=0.5)
+        y += rh
+    # 표 외곽선 + 세로선
+    rect(x0, y - rh * len(rows) - rh, xEnd, y, color=LINE, width=0.6)
+    y += 14
+
+    # ── 합계 박스(우측) ──
+    bx = xQty
+    for k, v, bold in [("DPP · 과세표준", dpp, False), ("PPN 11%", ppn, False), ("TOTAL", total, True)]:
+        if bold:
+            rect(bx, y, xEnd, y + 26, fill=SOFT, color=G, width=0.8)
+            txt(bx + 10, y + 17, k, size=11, color=G)
+            rtxt(xEnd - 10, y + 17, _idr(v), size=12, color=G)
+            y += 26
+        else:
+            txt(bx + 10, y + 13, k, size=9.5, color=GREY)
+            rtxt(xEnd - 10, y + 13, _idr(v), size=10, color=INK)
+            y += 18
+    y += 16
+
+    # ── 문서별 추가 영역 ──
+    if kind == "receipt":
+        rect(margin, y, RIGHT, y + 40, fill=SOFT, color=LINE, width=0.6)
+        txt(margin + 10, y + 15, "Terbilang · 금액(문자)", size=7.5, color=GREY)
+        words = "# %s Rupiah #" % _terbilang(total).capitalize()
+        while fitz.get_text_length(words, fontname=F, fontsize=10) > (RIGHT - margin - 20) and len(words) > 6:
+            words = words[:-2]
+        txt(margin + 10, y + 31, words, size=10, color=INK)
+        y += 40 + 12
+        paid = bool(pay) or inv.status in ("paid", "confirmed")
+        if paid:
+            # LUNAS 스탬프
+            sx, sy = margin, y
+            rect(sx, sy, sx + 96, sy + 34, color=G, width=1.4)
+            txt(sx + 20, sy + 23, "LUNAS", size=15, color=G)
+            txt(sx + 112, sy + 14, "Metode · 방식 : %s" % ((pay.method if pay else None) or "Transfer"), size=9, color=GREY)
+            txt(sx + 112, sy + 28, "Tgl · 결제일 : %s" % ((str(pay.paid_at)[:16] if pay else today)), size=9, color=GREY)
+    elif kind == "tax":
+        txt(margin, y + 12, "Faktur Pajak sesuai peraturan perpajakan Indonesia (PPN 11%).", size=8.5, color=GREY)
+        txt(margin, y + 26, "NPWP Penjual · 공급자 등록번호 : 00.000.000.0-000.000", size=8.5, color=GREY)
+    else:
+        txt(margin, y + 12, "Penawaran ini berlaku 30 hari sejak tanggal terbit.", size=8.5, color=GREY)
+        txt(margin, y + 26, "유효기간 내 회신 부탁드립니다.", size=8.5, color=GREY)
+
+    # ── 서명란(우측 하단) ──
+    sigy = H - 150
+    sigx = W - margin - 200
+    label = {"receipt": "Penerima Pembayaran · 수령", "tax": "Penjual · 공급자",
+             "quotation": "Hormat kami · GL-HAC AI"}.get(kind, "GL-HAC AI")
+    txt(sigx, sigy, "Jakarta, %s" % today, size=9, color=GREY)
+    txt(sigx, sigy + 16, label, size=9.5, color=INK)
+    pg.draw_line((sigx, sigy + 62), (sigx + 190, sigy + 62), color=LINE, width=0.6)
+    txt(sigx, sigy + 76, "Tanda Tangan · Signature", size=8, color=GREY)
+
+    # ── 푸터 ──
+    pg.draw_line((margin, H - 44), (RIGHT, H - 44), color=LINE, width=0.5)
+    foot = "Dokumen ini diterbitkan secara elektronik · 본 문서는 전자적으로 발행되었습니다 · GL-HAC AI"
+    w = fitz.get_text_length(foot, fontname=F, fontsize=7.5)
+    pg.insert_text(((W - w) / 2, H - 30), foot, fontname=F, fontsize=7.5, color=GREY)
+
+    return doc.tobytes()
+
+
 def _invoice_ctx(db, invoice_id, user):
     inv = db.get(models.Invoice, invoice_id)
     if not inv:
@@ -6269,33 +6499,7 @@ def invoice_receipt_pdf(invoice_id: str, user=Depends(auth.get_current_user),
     from fastapi.responses import Response
     from urllib.parse import quote
     inv, c, pay = _invoice_ctx(db, invoice_id, user)
-    status = "waiting_payment" if inv.status == "unpaid" else inv.status
-    lines = [
-        "발행일 · Date        : %s" % date.today().isoformat(),
-        "청구번호 · Invoice No : %s" % (inv.invoice_no or "-"),
-        "결제참조 · Pay Ref    : %s" % (inv.payment_ref or "-"),
-        "",
-        "── 기업 · Company ──",
-        "기업명 · Company : %s" % (c.company_name or "-"),
-        "NIB              : %s" % (c.nib or "-"),
-        "주소 · Address    : %s" % (c.address or c.factory_address or "-"),
-        "",
-        "── 청구 내역 · Details ──",
-        "서비스 · Service : %s" % (inv.service_type or "-"),
-        "금액 · DPP        : %s" % _idr(inv.amount),
-        "부가세 · PPN 11%%  : %s" % _idr(inv.ppn),
-        "────────────────────",
-        "합계 · Total      : %s" % _idr(inv.total),
-        "",
-        "── 결제 · Payment ──",
-        "상태 · Status     : %s" % status,
-        "결제방식 · Method  : %s" % (pay.method if pay else "-"),
-        "결제일 · Paid at   : %s" % (str(pay.paid_at)[:16] if pay else "-"),
-        "참조 · Reference   : %s" % (pay.reference if (pay and pay.reference) else "-"),
-    ]
-    pdf = _render_pdf("GL-HAC AI · 결제 영수증 · Payment Receipt", "\n".join(lines),
-                      subtitle=inv.invoice_no or "",
-                      footer="본 영수증은 전자적으로 발행되었습니다 · Issued electronically")
+    pdf = _render_finance_pdf("receipt", inv, c, pay)
     fn = "receipt_%s.pdf" % (inv.invoice_no or invoice_id[:8])
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
@@ -6308,30 +6512,7 @@ def invoice_tax_pdf(invoice_id: str, user=Depends(auth.get_current_user),
     from fastapi.responses import Response
     from urllib.parse import quote
     inv, c, pay = _invoice_ctx(db, invoice_id, user)
-    lines = [
-        "FAKTUR PAJAK · 세금계산서",
-        "",
-        "Nomor · 번호        : %s" % (inv.invoice_no or "-"),
-        "Tanggal · 발행일     : %s" % date.today().isoformat(),
-        "",
-        "── Penjual · 공급자 ──",
-        "Nama : GL-HAC AI (Lembaga Sertifikasi Halal)",
-        "",
-        "── Pembeli · 구매자 ──",
-        "Nama · 기업 : %s" % (c.company_name or "-"),
-        "NPWP/NIB    : %s" % (c.nib or "-"),
-        "Alamat · 주소: %s" % (c.address or c.factory_address or "-"),
-        "",
-        "── Rincian · 내역 ──",
-        "Jasa · 서비스        : %s" % (inv.service_type or "-"),
-        "DPP · 과세표준       : %s" % _idr(inv.amount),
-        "PPN 11%%             : %s" % _idr(inv.ppn),
-        "────────────────────",
-        "Total · 합계         : %s" % _idr(inv.total),
-    ]
-    pdf = _render_pdf("FAKTUR PAJAK · 세금계산서", "\n".join(lines),
-                      subtitle=inv.invoice_no or "",
-                      footer="PPN 11% sesuai peraturan perpajakan Indonesia")
+    pdf = _render_finance_pdf("tax", inv, c, pay)
     fn = "faktur_%s.pdf" % (inv.invoice_no or invoice_id[:8])
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
@@ -6346,37 +6527,7 @@ def invoice_quotation_pdf(invoice_id: str, user=Depends(auth.get_current_user),
     from urllib.parse import quote
     inv, c, _pay = _invoice_ctx(db, invoice_id, user)
     items = _invoice_line_items(db, inv.case_id, invoice_id)
-    valid_until = (date.today() + timedelta(days=30)).isoformat()
-    rows = []
-    if items:
-        for i, it in enumerate(items):
-            rows.append([str(i + 1), it.get("name") or "-",
-                         format(float(it.get("qty") or 0), ",g"),
-                         _idr(it.get("unit_price")), _idr(it.get("amount"))])
-    else:
-        rows.append(["1", inv.service_type or "-", "1", _idr(inv.amount), _idr(inv.amount)])
-    blocks = [
-        {"type": "kv", "label": "견적번호 · No", "value": inv.invoice_no or "-"},
-        {"type": "kv", "label": "발행일 · Tanggal", "value": date.today().isoformat()},
-        {"type": "kv", "label": "유효기간 · Berlaku s/d", "value": valid_until},
-        {"type": "heading", "level": 2, "text": "구매자 · Pembeli"},
-        {"type": "kv", "label": "기업 · Company", "value": c.company_name or "-"},
-        {"type": "kv", "label": "NIB", "value": c.nib or "-"},
-        {"type": "kv", "label": "주소 · Alamat", "value": c.address or c.factory_address or "-"},
-        {"type": "heading", "level": 2, "text": "공급자 · Penjual"},
-        {"type": "kv", "label": "Nama", "value": "GL-HAC AI (Lembaga Sertifikasi Halal)"},
-        {"type": "heading", "level": 2, "text": "견적 내역 · Rincian"},
-        {"type": "table",
-         "headers": ["No", "항목 · Item", "수량 · Qty", "단가 · Harga", "금액 · Jumlah"],
-         "rows": rows},
-        {"type": "spacer", "h": 6},
-        {"type": "kv", "label": "소계 · DPP", "value": _idr(inv.amount)},
-        {"type": "kv", "label": "부가세 · PPN 11%", "value": _idr(inv.ppn)},
-        {"type": "kv", "label": "총액 · Total", "value": _idr(inv.total)},
-    ]
-    pdf = _render_pdf_rich("PENAWARAN · 견적서 · Quotation", blocks,
-                           subtitle=inv.invoice_no or "",
-                           footer="유효기간 내 회신 바랍니다 · Berlaku sampai %s" % valid_until)
+    pdf = _render_finance_pdf("quotation", inv, c, None, items)
     fn = "quotation_%s.pdf" % (inv.invoice_no or invoice_id[:8])
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(fn)})
