@@ -4919,6 +4919,20 @@ def get_gendoc_pdf(gen_doc_id: str, user=Depends(auth.get_current_user), db: Ses
     if not g:
         raise HTTPException(404, {"code": "GENDOC_NOT_FOUND"})
     c = _get_case(db, g.case_id, user)
+    # 계약서 gen-doc은 텍스트 요약이 아니라 실제 10p FORM 4.1 원본 양식으로 서빙(로고 포함)
+    if g.doc_type == "contract":
+        ct = db.query(models.Contract).filter_by(case_id=g.case_id).first()
+        if ct:
+            _prods = (db.query(models.Product).filter(models.Product.product_id.in_(ct.product_ids)).all()
+                      if ct.product_ids else db.query(models.Product).filter_by(case_id=g.case_id).all())
+            try:
+                _pdf = _contract_overlay_pdf(db, c, ct, _prods)
+            except Exception as _e:  # noqa: BLE001
+                log.warning("gen-doc contract 오버레이 실패, 폴백: %s", _e)
+                _pdf = _contract_rich_pdf(db, c, ct, _prods)
+            _fn = "contract_%s.pdf" % (ct.contract_no or g.case_id[:8])
+            return Response(content=_pdf, media_type="application/pdf",
+                            headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(_fn)})
     labels = {"sjph_manual": "SJPH Manual", "audit_report": "현장심사 보고서 · Audit Report",
               "company_info": "기업정보 · Company Info (Form.1)",
               "facility_info": "시설정보 · Facility Info (Form.2)",
