@@ -3574,7 +3574,15 @@ def BILLING_FMT(v):
 
 def _contract_rich_pdf(db, c, ct, products):
     """폴백 — 원본 양식 PDF 부재 시 코드 렌더. bytes 반환."""
-    blocks = [
+    blocks = []
+    _logo = os.path.join(os.path.dirname(__file__), "assets", "glhac_logo.png")
+    if os.path.exists(_logo):
+        try:
+            with open(_logo, "rb") as _lf:
+                blocks.append({"type": "image", "data": _lf.read(), "width": 150})
+        except Exception:  # noqa: BLE001
+            pass
+    blocks += [
         {"type": "heading", "text": "HALAL CERTIFICATION AGREEMENT · FORM 4.1-HCB-GL HAC", "level": 1},
         {"type": "kv", "label": "NO", "value": ct.contract_no or ""},
         {"type": "kv", "label": "Effective Date", "value": ct.effective_date or ""},
