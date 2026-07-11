@@ -5547,7 +5547,17 @@ SCREEN.invoice=async()=>{
       </tbody></table>
       <div class="field"><label>상태 · Status</label><div>${bTag(payColor(sel.status),payLabel(sel.status))}</div>${payMsg(sel.status)}</div>
       ${(canMark&&sel.status!=='paid')?`<div class="btnrow"><button class="btn pri" onclick="recordPayment('${sel.invoice_id}')">💳 결제 기록 · Record payment</button><button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">간이 결제표시</button></div>`:''}
-      <div class="btnrow" style="margin-top:8px"><button class="btn" onclick="serverPdf('/invoices/${sel.invoice_id}/quotation.pdf','quotation_'+(sel.invoice_no||'')+'.pdf')">⤓ ${T('견적서')} · Penawaran</button><button class="btn" onclick="serverPdf('/invoices/${sel.invoice_id}/receipt','receipt_'+(sel.invoice_no||'')+'.pdf')">🧾 영수증 PDF · Receipt</button><button class="btn" onclick="serverPdf('/invoices/${sel.invoice_id}/tax-invoice','faktur_'+(sel.invoice_no||'')+'.pdf')">📄 세금계산서 · Faktur Pajak</button></div>`
+      <div style="font-weight:600;font-size:12.5px;margin:12px 0 4px">📑 ${T('문서 미리보기·다운로드')} <span class="en">· Documents</span></div>
+      <div class="btnrow" style="gap:6px;flex-wrap:wrap">
+        <button class="btn" onclick="pdfPreview('/invoices/${sel.invoice_id}/quotation.pdf','${T('견적서')} · '+(sel.invoice_no||''),'quotation_'+(sel.invoice_no||'')+'.pdf')">👁 ${T('견적서')} · Penawaran</button>
+        <button class="btn pri" onclick="pdfPreview('/invoices/${sel.invoice_id}/receipt','${T('결제 영수증')} · '+(sel.invoice_no||''),'receipt_'+(sel.invoice_no||'')+'.pdf')">👁 ${T('영수증 미리보기')} · Receipt</button>
+        <button class="btn" onclick="pdfPreview('/invoices/${sel.invoice_id}/tax-invoice','${T('세금계산서')} · '+(sel.invoice_no||''),'faktur_'+(sel.invoice_no||'')+'.pdf')">👁 ${T('세금계산서')} · Faktur</button>
+      </div>
+      <div class="btnrow" style="gap:6px;flex-wrap:wrap;margin-top:5px">
+        <button class="btn ghost" onclick="serverPdf('/invoices/${sel.invoice_id}/quotation.pdf','quotation_'+(sel.invoice_no||'')+'.pdf')">⬇ ${T('견적서')}</button>
+        <button class="btn ghost" onclick="serverPdf('/invoices/${sel.invoice_id}/receipt','receipt_'+(sel.invoice_no||'')+'.pdf')">⬇ ${T('영수증')}</button>
+        <button class="btn ghost" onclick="serverPdf('/invoices/${sel.invoice_id}/tax-invoice','faktur_'+(sel.invoice_no||'')+'.pdf')">⬇ ${T('세금계산서')}</button>
+      </div>`
     :'<div class="muted small">청구서를 선택하세요.</div>';
   const st2=inv.reduce((a,i)=>{const t=(i.total==null?i.amount:i.total)||0;a.total+=t;if(i.status==='paid')a.paid+=t;else a.unpaid+=t;return a;},{total:0,paid:0,unpaid:0});
   return `
