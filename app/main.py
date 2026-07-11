@@ -6327,16 +6327,21 @@ def _render_finance_pdf(kind, inv, c, pay=None, items=None):
     inv_no = inv.invoice_no or "-"
     today = date.today().isoformat()
 
-    # ── 헤더 밴드 ──
-    rect(0, 0, W, 92, fill=G, width=0)
-    rect(0, 92, W, 96, fill=G2, width=0)
-    txt(margin, 42, "GL-HAC AI", size=22, color=WHITE)
-    txt(margin, 60, "Global Halal Certification Body", size=8.5, color=LT)
-    txt(margin, 74, "Lembaga Sertifikasi Halal · Jakarta, Indonesia", size=8.5, color=LT)
-    rtxt(RIGHT, 46, big, size=21, color=WHITE)
-    rtxt(RIGHT, 64, sub, size=9.5, color=LT)
+    # ── 헤더(로고 + 문서명 + 그린 액센트 바) ──
+    _logo = os.path.join(os.path.dirname(__file__), "assets", "glhac_logo.png")
+    if os.path.exists(_logo):
+        try:
+            pg.insert_image(fitz.Rect(margin, 30, margin + 152, 88), filename=_logo, keep_proportion=True)
+        except Exception:
+            txt(margin, 60, "GL-HAC AI", size=21, color=G)
+    else:
+        txt(margin, 56, "GL-HAC AI", size=21, color=G)
+        txt(margin, 72, "GL Halal Center", size=9, color=GREY)
+    rtxt(RIGHT, 52, big, size=21, color=G)
+    rtxt(RIGHT, 70, sub, size=9.5, color=GREY)
+    rect(0, 100, W, 104, fill=G, width=0)
 
-    y = 120
+    y = 128
 
     # ── 메타 바 (No · Tanggal · Status/Valid) ──
     meta = [("No.", inv_no), ("Tanggal · 발행일", today)]
