@@ -16,6 +16,11 @@ if DB_URL.startswith("sqlite"):
     def _sqlite_fk_pragma(dbapi_conn, _rec):  # noqa: ANN001
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA foreign_keys=ON")
+        # 동시성: WAL = 읽기-쓰기 비차단(다중 심사자 동시작업 시 'database is locked' 완화).
+        # busy_timeout으로 순간 경합은 대기, synchronous=NORMAL은 WAL에서 안전·고성능 기본값.
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=5000")
+        cur.execute("PRAGMA synchronous=NORMAL")
         cur.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

@@ -1028,7 +1028,7 @@ def audit_verify(case_id: str, user=Depends(auth.get_current_user), db: Session 
         body = _json.dumps({"case": e.case_id, "from": e.from_status, "to": e.to_status,
                             "action": e.action, "payload": e.payload or {}},
                            sort_keys=True, ensure_ascii=False)
-        rh = hashlib.sha256((prev + body).encode("utf-8")).hexdigest()
+        rh = sm.chain_row_hash(prev, body)
         if rh != e.row_hash:
             broken = e.event_id
             break

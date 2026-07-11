@@ -246,11 +246,21 @@ def _last_hash(db, case_id):
     return ev.row_hash if ev else ""
 
 
+def chain_row_hash(prev, body):
+    """감사체인 행 해시 — HMAC(앱 SECRET) 키잉.
+    키 없는 SHA-256은 DB 쓰기 권한만 있으면 전체 체인 재계산 위조 가능(tamper-evident).
+    HMAC 키잉으로 SECRET 없이는 유효 해시를 만들 수 없게 함(tamper-resistant).
+    auth는 순환 임포트 회피 위해 지연 임포트."""
+    import hmac
+    from . import auth
+    return hmac.new(auth.SECRET, (prev + body).encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def record_event(db, case, frm, to, action, actor_type="system", actor_id=None, payload=None):
     prev = _last_hash(db, case.case_id)
     body = json.dumps({"case": case.case_id, "from": frm, "to": to, "action": action,
                        "payload": payload or {}}, sort_keys=True, ensure_ascii=False)
-    row_hash = hashlib.sha256((prev + body).encode("utf-8")).hexdigest()
+    row_hash = chain_row_hash(prev, body)
     ev = WorkflowEvent(case_id=case.case_id, from_status=frm, to_status=to, action=action,
                        actor_type=actor_type, actor_id=actor_id, payload=payload,
                        prev_hash=prev, row_hash=row_hash, created_at=datetime.utcnow())
