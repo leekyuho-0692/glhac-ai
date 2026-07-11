@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Boolean, DateTime, Date, JSON, Text, Float, Integer
 from .db import Base
+from .crypto import EncryptedType
 
 
 def uid() -> str:
@@ -15,14 +16,14 @@ class CaseApplication(Base):
     org_id = Column(String, nullable=False)
     company_name = Column(String)
     # 사업자 프로필 (v1 상속 — 파일 파싱 자동채움 대상)
-    nib = Column(String)
-    responsible_person = Column(String)
-    halal_supervisor = Column(String)
-    email = Column(String)
-    phone = Column(String)
-    address = Column(String)
-    factory_reg_no = Column(String)
-    factory_address = Column(String)
+    nib = Column(EncryptedType)
+    responsible_person = Column(EncryptedType)
+    halal_supervisor = Column(EncryptedType)
+    email = Column(EncryptedType)
+    phone = Column(EncryptedType)
+    address = Column(EncryptedType)
+    factory_reg_no = Column(EncryptedType)
+    factory_address = Column(EncryptedType)
     due_date = Column(String)  # 처리 목표 기한(ISO date) — 기한 경보용
     notify_consent = Column(Boolean, default=False)  # 알림 수신 동의(WhatsApp opt-in 등)
     status = Column(String, nullable=False, default="onboarding")
@@ -201,7 +202,7 @@ class ExternalIdentity(Base):
     org_id = Column(String, nullable=False)
     provider = Column(String, default="SIHALAL")
     external_username = Column(String)
-    external_email = Column(String)
+    external_email = Column(EncryptedType)
     external_application_no = Column(String)
     verification_status = Column(String, default="submitted_by_applicant")
     identifier_match = Column(Boolean)
@@ -304,7 +305,7 @@ class DocumentAsset(Base):
     text_excerpt = Column(Text)
     review_status = Column(String, default="pending")  # pending|approved|rejected|rework
     translations = Column(JSON)   # {lang: 번역문} 온디맨드 캐시(예: {"id": "..."}) — 조회시점 번역
-    content_b64 = Column(Text)    # 원본 파일 base64 (조회/다운로드용, <3MB만)
+    content_b64 = Column(EncryptedType)    # 원본 파일 base64(암호화 저장) — 조회/다운로드용
     content_type = Column(String)  # MIME
     material_id = Column(String)   # 원재료별 증빙 연결(nullable) — 설계 G1/C1
     product_id = Column(String)    # 제품 사진 연결(nullable) — 설계 G2
@@ -366,7 +367,7 @@ class Org(Base):
     __tablename__ = "org"
     org_id = Column(String, primary_key=True)
     name = Column(String)
-    address = Column(String)      # 회사 주소(회원가입 최소, 상세는 신청 오피스폼) — Phase 1
+    address = Column(EncryptedType)      # 회사 주소(암호화) — Phase 1
     profile_ext = Column(JSON)    # Company Info 상세 — Phase 1
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -402,7 +403,7 @@ class Facility(Base):
     facility_id = Column(String, primary_key=True, default=uid)
     org_id = Column(String, index=True, nullable=False)   # 소속 회사(org)
     name = Column(String)               # 제조업체/공장명
-    address = Column(String)
+    address = Column(EncryptedType)
     city = Column(String)
     country = Column(String)
     zip = Column(String)
@@ -640,7 +641,7 @@ class FeedbackImage(Base):
     image_id = Column(String, primary_key=True, default=uid)
     feedback_id = Column(String, nullable=False, index=True)
     filename = Column(String)
-    content_b64 = Column(Text)          # <4MB만 저장
+    content_b64 = Column(EncryptedType)          # <4MB만 저장(암호화)
     content_type = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
