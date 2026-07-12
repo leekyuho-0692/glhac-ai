@@ -8326,6 +8326,80 @@ SCREEN.auditLog=async()=>{
       </div></div></div>`;
 };
 
+/* ===== 메뉴 배정 관리(P2) — 설계서 §6.1 ===== */
+let MA_ROLE="auditor", MA_MASTER=[], MA_ASSIGN=[], MA_SEARCH="";
+const MA_ROLES=[["client","클라이언트"],["consultant","컨설턴트"],["auditor","오디터"],["sharia","샤리아"],["ops","최고운영자"],["admin","관리자"]];
+SCREEN.menuAssign=async()=>{
+  const lang=LANG===2?"id":"ko";
+  MA_MASTER=await API("/admin/menus?lang="+lang).catch(()=>[]);
+  const asg=await API("/admin/assign/role/"+MA_ROLE+"/menus?lang="+lang).catch(()=>[]);
+  MA_ASSIGN=(asg||[]).map(g=>({menuId:g.menuId,menuName:g.menuName,icon:g.icon,
+    children:(g.children||[]).map(c=>({menuId:c.menuId,menuName:c.menuName,icon:c.icon}))}));
+  return `<div class="card"><h3>🗂 메뉴 배정 관리 <span class="en">· Menu Assignment</span></h3>
+    <div class="body">
+      <div class="btnrow" style="gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">${T('배정 대상 역할')}
+        <select class="v" style="width:auto" onchange="maChangeRole(this.value)">${MA_ROLES.map(([r,n])=>`<option value="${r}"${r===MA_ROLE?" selected":""}>${esc(n)}</option>`).join("")}</select>
+        <input class="box" placeholder="🔍 메뉴명·코드 검색" style="flex:1;min-width:160px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
+        <button class="btn pri" onclick="maSave()">💾 ${T('저장')}</button></div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">
+        <div><div class="muted small" style="margin-bottom:4px">${T('전체 메뉴')} — 드래그/더블클릭 → 배정</div>
+          <div id="maLeft" style="max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">${maLeftHTML()}</div></div>
+        <div><div class="muted small" style="margin-bottom:4px"><b>${esc(MA_ROLE)}</b> 배정 메뉴 — ↑↓ 순서, × 제거</div>
+          <div id="maRight" style="max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px" ondragover="event.preventDefault()" ondrop="maDrop(event)">${maRightHTML()}</div></div>
+      </div>
+    </div></div>`;
+};
+function maLeftHTML(){
+  const q=MA_SEARCH.trim().toLowerCase();
+  const asg=new Set(MA_ASSIGN.flatMap(g=>[g.menuId,...g.children.map(c=>c.menuId)]));
+  return (MA_MASTER||[]).map(g=>{
+    const kids=(g.children||[]).filter(c=>!q||(c.menuName||"").toLowerCase().includes(q)||(c.menuCode||"").toLowerCase().includes(q));
+    const gmatch=!q||(g.menuName||"").toLowerCase().includes(q);
+    if(q&&!gmatch&&!kids.length)return "";
+    const show=q?kids:(g.children||[]);
+    return `<div style="margin-bottom:8px"><div style="font-weight:700;font-size:12px;padding:2px 0">${g.icon||"📂"} ${esc(g.menuName)} <span class="muted small">${esc(g.menuCode||"")}</span>
+        <button class="btn" style="padding:0 6px;font-size:11px" onclick="maAdd('${g.menuId}')" title="그룹 통째 배정">＋그룹</button></div>
+      ${show.map(c=>`<div draggable="true" ondragstart="maDrag(event,'${c.menuId}')" ondblclick="maAdd('${c.menuId}')" title="더블클릭/드래그로 배정"
+        style="padding:4px 8px;margin:2px 0 2px 14px;border:1px solid var(--line);border-radius:6px;cursor:grab;font-size:12px;background:${asg.has(c.menuId)?"#eef7f0":"#fff"}">
+        ⠿ ${c.icon||""} ${esc(c.menuName)}${c.useYn===false?' <span class="tag t-bad">중지</span>':""}${c.requiredYn?' <span class="tag">필수</span>':""}${c.systemAdminYn?' <span class="tag">관리자</span>':""}</div>`).join("")}</div>`;
+  }).join("")||'<div class="muted small">메뉴 없음</div>';
+}
+function maRightHTML(){
+  return MA_ASSIGN.map((g,gi)=>`<div style="border:1px solid var(--line2);border-radius:8px;padding:8px;margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:12.5px">${gi+1}. ${g.icon||"📂"} ${esc(g.menuName)}</b>
+      <span style="display:flex;gap:2px"><button class="btn" style="padding:1px 6px" onclick="maMoveGroup(${gi},-1)">↑</button><button class="btn" style="padding:1px 6px" onclick="maMoveGroup(${gi},1)">↓</button><button class="btn bad" style="padding:1px 6px" onclick="maRemoveGroup('${g.menuId}')">×</button></span></div>
+    ${g.children.map((c,ci)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 8px;margin:2px 0 2px 14px;font-size:12px;background:#fafafa;border-radius:5px">
+      <span>⠿ ${c.icon||""} ${esc(c.menuName)}</span>
+      <span style="display:flex;gap:2px"><button class="btn" style="padding:0 5px" onclick="maMoveChild('${g.menuId}',${ci},-1)">↑</button><button class="btn" style="padding:0 5px" onclick="maMoveChild('${g.menuId}',${ci},1)">↓</button><button class="btn bad" style="padding:0 5px" onclick="maRemoveChild('${g.menuId}','${c.menuId}')">×</button></span></div>`).join("")||'<div class="muted small" style="margin-left:14px">항목 없음</div>'}</div>`).join("")||'<div class="muted" style="padding:20px;text-align:center">배정된 메뉴 없음 — 좌측에서 드래그/더블클릭하세요</div>';
+}
+function maRerender(){const l=document.getElementById("maLeft"),r=document.getElementById("maRight");if(l)l.innerHTML=maLeftHTML();if(r)r.innerHTML=maRightHTML();}
+function maFind(mid){for(const g of MA_MASTER){if(g.menuId===mid)return{group:g,child:null};const c=(g.children||[]).find(x=>x.menuId===mid);if(c)return{group:g,child:c};}return null;}
+function maAdd(mid){
+  const f=maFind(mid);if(!f)return;
+  if(!f.child){ // 그룹 통째
+    if(MA_ASSIGN.find(x=>x.menuId===f.group.menuId))return;
+    MA_ASSIGN.push({menuId:f.group.menuId,menuName:f.group.menuName,icon:f.group.icon,
+      children:(f.group.children||[]).filter(c=>c.useYn!==false).map(c=>({menuId:c.menuId,menuName:c.menuName,icon:c.icon}))});
+  }else{ // 자식 → 부모 자동
+    if(f.child.useYn===false)return toast("사용중지 메뉴는 배정할 수 없습니다");
+    let ag=MA_ASSIGN.find(x=>x.menuId===f.group.menuId);
+    if(!ag){ag={menuId:f.group.menuId,menuName:f.group.menuName,icon:f.group.icon,children:[]};MA_ASSIGN.push(ag);}
+    if(!ag.children.find(x=>x.menuId===mid))ag.children.push({menuId:f.child.menuId,menuName:f.child.menuName,icon:f.child.icon});
+  }
+  maRerender();
+}
+function maDrag(ev,mid){ev.dataTransfer.setData("text/plain",mid);}
+function maDrop(ev){ev.preventDefault();const mid=ev.dataTransfer.getData("text/plain");if(mid)maAdd(mid);}
+function maRemoveChild(gid,cid){const g=MA_ASSIGN.find(x=>x.menuId===gid);if(!g)return;g.children=g.children.filter(c=>c.menuId!==cid);if(!g.children.length)MA_ASSIGN=MA_ASSIGN.filter(x=>x.menuId!==gid);maRerender();}
+function maRemoveGroup(gid){const g=MA_ASSIGN.find(x=>x.menuId===gid);if(g&&g.children.length&&!confirm(esc(g.menuName)+" 메뉴를 제거하면 하위 "+g.children.length+"개도 함께 제거됩니다."))return;MA_ASSIGN=MA_ASSIGN.filter(x=>x.menuId!==gid);maRerender();}
+function maMoveGroup(gi,d){const j=gi+d;if(j<0||j>=MA_ASSIGN.length)return;[MA_ASSIGN[gi],MA_ASSIGN[j]]=[MA_ASSIGN[j],MA_ASSIGN[gi]];maRerender();}
+function maMoveChild(gid,ci,d){const g=MA_ASSIGN.find(x=>x.menuId===gid);if(!g)return;const j=ci+d;if(j<0||j>=g.children.length)return;[g.children[ci],g.children[j]]=[g.children[j],g.children[ci]];maRerender();}
+function maChangeRole(r){MA_ROLE=r;MA_SEARCH="";go("menuAssign");}
+async function maSave(){
+  const body={menus:MA_ASSIGN.map(g=>({menuId:g.menuId,children:g.children.map(c=>({menuId:c.menuId}))}))};
+  try{const r=await API("/admin/assign/role/"+MA_ROLE+"/menus",{method:"PUT",body:JSON.stringify(body)});toast("💾 저장 완료 · "+r.saved+"개 배정");}
+  catch(e){toast("저장 실패 · "+(e&&e.code?e.code:""));}
+}
 SCREEN.system=async()=>{
   const [users,orgs,onto,lphrefs,kma,admCases]=await Promise.all([
     API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({})),API("/admin/lph-references").catch(()=>[]),
@@ -8339,6 +8413,9 @@ SCREEN.system=async()=>{
   const oRows=(orgs||[]).map(o=>`<tr><td><b>${esc(o.name||o.org_id)}</b></td><td class="muted small">${esc(o.org_id)}</td><td>${o.case_count==null?(o.cases==null?"—":o.cases):o.case_count}</td><td style="white-space:nowrap"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="tenantPanel('${esc(o.org_id)}')">🌐 ${T('도메인·브랜딩')}</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
   return `
   <div class="grid three">
+    <div class="card"><h3>🗂 메뉴 배정 관리 <span class="en">· Menu Assignment</span></h3>
+      <div class="body btnrow" style="align-items:center;gap:10px"><button class="btn pri" onclick="go('menuAssign')">🗂 메뉴 배정 관리 열기</button>
+        <span class="muted small">역할별 메뉴 노출·순서를 드래그로 관리 (설계서 §6.1)</span></div></div>
     <div class="card"><h3>사용자 <span class="en">· Users</span><span class="r">${users.length}</span></h3>
       <div class="body tight"><table><thead><tr><th>이름</th><th>역할</th><th>조직</th><th></th></tr></thead><tbody>${uRows}</tbody></table></div>
       ${pager("users",upg)}
