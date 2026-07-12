@@ -8327,24 +8327,35 @@ SCREEN.auditLog=async()=>{
 };
 
 /* ===== 메뉴 배정 관리(P2) — 설계서 §6.1 ===== */
-let MA_ROLE="auditor", MA_MASTER=[], MA_ASSIGN=[], MA_SEARCH="";
+let MA_ROLE="auditor", MA_MODE="role", MA_USER="", MA_USERS=[], MA_MASTER=[], MA_ASSIGN=[], MA_SEARCH="";
 const MA_ROLES=[["client","클라이언트"],["consultant","컨설턴트"],["auditor","오디터"],["sharia","샤리아"],["ops","최고운영자"],["admin","관리자"]];
 SCREEN.menuAssign=async()=>{
   const lang=LANG===2?"id":"ko";
   MA_MASTER=await API("/admin/menus?lang="+lang).catch(()=>[]);
-  const asg=await API("/admin/assign/role/"+MA_ROLE+"/menus?lang="+lang).catch(()=>[]);
+  let asg=[];
+  if(MA_MODE==="user"){
+    if(!MA_USERS.length)MA_USERS=await API("/admin/users").catch(()=>[]);
+    if(!MA_USER&&MA_USERS.length)MA_USER=MA_USERS[0].user_id;
+    if(MA_USER)asg=await API("/admin/assign/user/"+MA_USER+"/menus?lang="+lang).catch(()=>[]);
+  }else{
+    asg=await API("/admin/assign/role/"+MA_ROLE+"/menus?lang="+lang).catch(()=>[]);
+  }
   MA_ASSIGN=(asg||[]).map(g=>({menuId:g.menuId,menuName:g.menuName,icon:g.icon,
     children:(g.children||[]).map(c=>({menuId:c.menuId,menuName:c.menuName,icon:c.icon}))}));
+  const modeSel=`<select class="v" style="width:auto" onchange="maChangeMode(this.value)"><option value="role"${MA_MODE==="role"?" selected":""}>${T('역할별')}</option><option value="user"${MA_MODE==="user"?" selected":""}>${T('사용자별')}</option></select>`;
+  const targetSel=MA_MODE==="user"
+    ? `<select class="v" style="width:auto" onchange="maChangeTarget(this.value)">${(MA_USERS||[]).map(u=>`<option value="${u.user_id}"${u.user_id===MA_USER?" selected":""}>${esc(u.username||u.user_id)} · ${esc(u.role||"")}</option>`).join("")}</select><button class="btn" onclick="maReset()" title="역할 기본값으로 복사">↺ ${T('역할 기본값')}</button>`
+    : `<select class="v" style="width:auto" onchange="maChangeTarget(this.value)">${MA_ROLES.map(([r,n])=>`<option value="${r}"${r===MA_ROLE?" selected":""}>${esc(n)}</option>`).join("")}</select>`;
+  const tLabel=MA_MODE==="user"?((MA_USERS.find(u=>u.user_id===MA_USER)||{}).username||MA_USER||"사용자"):MA_ROLE;
   return `<div class="card"><h3>🗂 메뉴 배정 관리 <span class="en">· Menu Assignment</span></h3>
     <div class="body">
-      <div class="btnrow" style="gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">${T('배정 대상 역할')}
-        <select class="v" style="width:auto" onchange="maChangeRole(this.value)">${MA_ROLES.map(([r,n])=>`<option value="${r}"${r===MA_ROLE?" selected":""}>${esc(n)}</option>`).join("")}</select>
-        <input class="box" placeholder="🔍 메뉴명·코드 검색" style="flex:1;min-width:160px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
+      <div class="btnrow" style="gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">${T('배정 기준')} ${modeSel} ${targetSel}
+        <input class="box" placeholder="🔍 메뉴명·코드 검색" style="flex:1;min-width:150px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
         <button class="btn pri" onclick="maSave()">💾 ${T('저장')}</button></div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">
         <div><div class="muted small" style="margin-bottom:4px">${T('전체 메뉴')} — 드래그/더블클릭 → 배정</div>
           <div id="maLeft" style="max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">${maLeftHTML()}</div></div>
-        <div><div class="muted small" style="margin-bottom:4px"><b>${esc(MA_ROLE)}</b> 배정 메뉴 — ↑↓ 순서, × 제거</div>
+        <div><div class="muted small" style="margin-bottom:4px"><b>${esc(tLabel)}</b> 배정 메뉴 — ↑↓ 순서, × 제거</div>
           <div id="maRight" style="max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px" ondragover="event.preventDefault()" ondrop="maDrop(event)">${maRightHTML()}</div></div>
       </div>
     </div></div>`;
@@ -8394,10 +8405,19 @@ function maRemoveChild(gid,cid){const g=MA_ASSIGN.find(x=>x.menuId===gid);if(!g)
 function maRemoveGroup(gid){const g=MA_ASSIGN.find(x=>x.menuId===gid);if(g&&g.children.length&&!confirm(esc(g.menuName)+" 메뉴를 제거하면 하위 "+g.children.length+"개도 함께 제거됩니다."))return;MA_ASSIGN=MA_ASSIGN.filter(x=>x.menuId!==gid);maRerender();}
 function maMoveGroup(gi,d){const j=gi+d;if(j<0||j>=MA_ASSIGN.length)return;[MA_ASSIGN[gi],MA_ASSIGN[j]]=[MA_ASSIGN[j],MA_ASSIGN[gi]];maRerender();}
 function maMoveChild(gid,ci,d){const g=MA_ASSIGN.find(x=>x.menuId===gid);if(!g)return;const j=ci+d;if(j<0||j>=g.children.length)return;[g.children[ci],g.children[j]]=[g.children[j],g.children[ci]];maRerender();}
-function maChangeRole(r){MA_ROLE=r;MA_SEARCH="";go("menuAssign");}
+function maChangeMode(m){MA_MODE=m;MA_SEARCH="";go("menuAssign");}
+function maChangeTarget(v){if(MA_MODE==="user")MA_USER=v;else MA_ROLE=v;MA_SEARCH="";go("menuAssign");}
+async function maReset(){
+  if(!MA_USER)return;
+  if(!confirm("이 사용자의 배정을 역할 기본값으로 되돌립니다. 진행할까요?"))return;
+  try{const r=await API("/admin/assign/user/"+MA_USER+"/reset-to-role",{method:"POST",body:"{}"});toast("↺ 역할 기본값 "+r.copied+"개 적용");go("menuAssign");}
+  catch(e){toast("적용 실패 · "+(e&&e.code?e.code:""));}
+}
 async function maSave(){
+  if(MA_MODE==="user"&&!MA_USER)return toast("사용자를 선택하세요");
   const body={menus:MA_ASSIGN.map(g=>({menuId:g.menuId,children:g.children.map(c=>({menuId:c.menuId}))}))};
-  try{const r=await API("/admin/assign/role/"+MA_ROLE+"/menus",{method:"PUT",body:JSON.stringify(body)});toast("💾 저장 완료 · "+r.saved+"개 배정");}
+  const path=MA_MODE==="user"?"/admin/assign/user/"+MA_USER+"/menus":"/admin/assign/role/"+MA_ROLE+"/menus";
+  try{const r=await API(path,{method:"PUT",body:JSON.stringify(body)});toast("💾 저장 완료 · "+r.saved+"개 배정");}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:""));}
 }
 SCREEN.system=async()=>{
