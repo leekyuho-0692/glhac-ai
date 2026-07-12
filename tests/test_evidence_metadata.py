@@ -122,7 +122,7 @@ def test_non_evidence_upload_skips_attribution():
                headers=_h(adm))
         docs = c.get(f"/cases/{cid}/documents", headers=_h(adm)).json()
         d = next(x for x in docs if x["doc_type"] == "other")
-        assert d["uploaded_by"] is None and d["file_hash"] is None
+        assert d["uploaded_by"] is None  # A08 귀속(촬영자)은 증거 전용 · file_hash는 이제 전 문서 기록(무결성·중복방지)
 
 
 if __name__ == "__main__":
