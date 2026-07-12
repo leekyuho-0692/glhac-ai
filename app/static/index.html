@@ -449,8 +449,8 @@ const NAV = [
 ];
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
 const NAV_GROUPS=[
-  {label:"개요 · Overview", ids:["caseList","assignments","resubmitCenter"]},   // assignments=오디터 배정함 · 보완·재전송을 배정함 아래로
-  {label:"신청·서류 · Application", ids:["application","preassess","materials","aiExtractions"]},   // 회의 2026-07-10: integration 단계 삭제(SJPH 매뉴얼로 흡수)
+  {label:"개요 · Overview", ids:["caseList","assignments","resubmitCenter","materials","aiExtractions"]},   // 배정함→보완재전송→원재료→AI큐
+  {label:"신청·서류 · Application", ids:["application","preassess"]},   // 회의 2026-07-10: integration 삭제 · 원재료·AI큐는 개요 그룹으로
   {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
   {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","auditorWork","regulations","consultation","notifyLog","auditLog","system"]},   // prod notifyLog 유지 + 오디터 업무 현황
