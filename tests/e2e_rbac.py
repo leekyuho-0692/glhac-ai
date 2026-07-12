@@ -1,12 +1,14 @@
 """v3 백엔드 RBAC 강제 검증 — 역할 × 엔드포인트 403/허용 매트릭스 (회의 6역할 + operator).
 
 v3 변경: LPH배정·인증서발급·파트와결정 = fatwa_liaison·operator (consultant 아님) · operator(최고운영자) 신설 · mockAudit.
-실행: 서버 기동(:8800) 후 <venv>/bin/python tests/e2e_rbac.py
+실행: 테스트 서버 기동(:8801) 후 <venv>/bin/python tests/e2e_rbac.py
+      대상은 GLHAC_TEST_URL 로 지정(기본 8801). ⚠️ 정본(8800)에는 실행 금지 — 테스트 케이스가 정본 DB를 오염시킴.
 """
+import os
 import sys
 import httpx
 
-B = "http://127.0.0.1:8800"
+B = os.environ.get("GLHAC_TEST_URL", "http://127.0.0.1:8801")
 ROLES = {"consultant1": "pw", "applicant1": "pw", "penyelia1": "pw", "pendamping1": "pw",
          "auditor1": "pw", "fatwa1": "pw", "operator1": "pw", "admin": "admin"}
 RN = {"consultant1": "consultant", "applicant1": "applicant", "penyelia1": "penyelia_halal",
