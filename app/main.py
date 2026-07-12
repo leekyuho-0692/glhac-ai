@@ -10385,34 +10385,18 @@ _BR2ROLE_MENU = {"applicant": "client", "consultant": "consultant", "auditor": "
 
 @app.get("/me/menus")
 def my_menus(lang: str = "ko", user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    """로그인 사용자 동적 메뉴 트리(역할 기본 배정 병합) — 사이드바 렌더. 설계서 §4·§5."""
-    role = _BR2ROLE_MENU.get(user["role"], user["role"])
-    rms = {rm.menu_id: rm.sort_order for rm in
-           db.query(models.SysRoleMenu).filter_by(role_id=role, visible_yn=True).all()}
+    """로그인 사용자 동적 메뉴 트리 — 사용자별 배정(있으면) > 역할 기본. 설계서 §4·§5·§3.4."""
+    ums = {um.menu_id: um.sort_order for um in
+           db.query(models.SysUserMenu).filter_by(user_id=user["uid"], visible_yn=True).all()}
+    if ums:                                  # P4: 사용자별 배정이 있으면 우선(역할 기본 override)
+        rms = ums
+    else:
+        role = _BR2ROLE_MENU.get(user["role"], user["role"])
+        rms = {rm.menu_id: rm.sort_order for rm in
+               db.query(models.SysRoleMenu).filter_by(role_id=role, visible_yn=True).all()}
     if not rms:
         return []
-    menus = {m.menu_id: m for m in db.query(models.SysMenu).filter_by(use_yn=True).all()}
-    i18n = {x.menu_id: x.menu_name for x in
-            db.query(models.SysMenuI18n).filter_by(language_code=lang).all()}
-    groups = {}   # parent_id → [배정된 자식 메뉴]
-    for mid in rms:
-        m = menus.get(mid)
-        if m and m.parent_menu_id:
-            groups.setdefault(m.parent_menu_id, []).append(m)
-    out = []
-    for pid in sorted(groups, key=lambda p: menus[p].default_sort_order if p in menus else 99):
-        g = menus.get(pid)
-        if not g:
-            continue
-        children = sorted(groups[pid], key=lambda c: rms.get(c.menu_id, c.default_sort_order))
-        out.append({"menuId": g.menu_id, "menuCode": g.menu_code,
-                    "menuName": i18n.get(g.menu_id, g.menu_code), "icon": g.icon_name,
-                    "sortOrder": g.default_sort_order,
-                    "children": [{"menuId": c.menu_id, "menuCode": c.menu_code,
-                                  "menuName": i18n.get(c.menu_id, c.menu_code),
-                                  "routePath": c.route_path, "icon": c.icon_name,
-                                  "sortOrder": rms.get(c.menu_id)} for c in children]})
-    return out
+    return _menu_tree(db, rms, lang)
 
 
 def _menu_tree(db, rms, lang):
@@ -10510,6 +10494,73 @@ def put_role_assign(role_id: str, body: schemas.MenuAssignReq,
         db.add(models.SysRoleMenu(role_id=role_id, menu_id=mid, sort_order=so))
     db.commit()
     return {"role_id": role_id, "saved": len(rows)}
+
+
+def _save_assign_rows(db, menus, body, target_role):
+    """배정 검증 공통(설계서 §8) → [(menu_id, sort_order)]. target_role은 관리자메뉴 제한 판정용."""
+    seen = set()
+    rows = []
+    for gi, g in enumerate(body.menus, 1):
+        gm = menus.get(g.get("menuId"))
+        if not gm:
+            continue
+        valid = []
+        for c in (g.get("children") or []):
+            cm = menus.get(c.get("menuId"))
+            if not cm or cm.menu_id in seen or not cm.use_yn:
+                continue
+            if cm.system_admin_yn and target_role not in ("admin", "ops"):
+                continue
+            seen.add(cm.menu_id)
+            valid.append(cm)
+        if not valid:
+            continue
+        if gm.menu_id not in seen:
+            seen.add(gm.menu_id)
+            rows.append((gm.menu_id, gi))
+        for ci, cm in enumerate(valid, 1):
+            rows.append((cm.menu_id, ci))
+    return rows
+
+
+@app.get("/admin/assign/user/{user_id}/menus")
+def get_user_assign(user_id: str, lang: str = "ko", user=Depends(auth.require_roles("admin")),
+                    db: Session = Depends(get_db)):
+    """사용자별 배정 메뉴 트리 — 설계서 §3.4·§6.3. 빈 배정이면 [](reset로 역할 복사)."""
+    ums = {um.menu_id: um.sort_order for um in
+           db.query(models.SysUserMenu).filter_by(user_id=user_id).all()}
+    return _menu_tree(db, ums, lang)
+
+
+@app.put("/admin/assign/user/{user_id}/menus")
+def put_user_assign(user_id: str, body: schemas.MenuAssignReq,
+                    user=Depends(auth.require_roles("admin")), db: Session = Depends(get_db)):
+    """사용자별 배정 저장 — 설계서 §3.4·§8. 관리자메뉴 제한은 대상 사용자 역할 기준."""
+    menus = {m.menu_id: m for m in db.query(models.SysMenu).all()}
+    u = db.get(models.User, user_id)
+    urole = _BR2ROLE_MENU.get(u.role, u.role) if u else ""
+    rows = _save_assign_rows(db, menus, body, urole)
+    db.query(models.SysUserMenu).filter_by(user_id=user_id).delete()
+    for mid, so in rows:
+        db.add(models.SysUserMenu(user_id=user_id, menu_id=mid, sort_order=so))
+    db.commit()
+    return {"user_id": user_id, "saved": len(rows)}
+
+
+@app.post("/admin/assign/user/{user_id}/reset-to-role")
+def reset_user_to_role(user_id: str, user=Depends(auth.require_roles("admin")),
+                       db: Session = Depends(get_db)):
+    """사용자 배정을 역할 기본값으로 재설정(복사) — 설계서 §6.3."""
+    u = db.get(models.User, user_id)
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    role = _BR2ROLE_MENU.get(u.role, u.role)
+    rms = db.query(models.SysRoleMenu).filter_by(role_id=role).all()
+    db.query(models.SysUserMenu).filter_by(user_id=user_id).delete()
+    for rm in rms:
+        db.add(models.SysUserMenu(user_id=user_id, menu_id=rm.menu_id, sort_order=rm.sort_order))
+    db.commit()
+    return {"user_id": user_id, "copied": len(rms), "role": role}
 
 
 _static = os.path.join(os.path.dirname(__file__), "static")
