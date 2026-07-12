@@ -802,8 +802,25 @@ function onCaseChange(id){CURCASE=id;try{localStorage.setItem("glhac_case",id)}c
 
 /* ---- nav / router ---- */
 function scopeLabel(){const m={own:"본인 조직 · own",owned:"담당 위주 · owned",assigned:"배정건 · assigned",all:"전체 · all"};return m[ROLE_DEF[ROLE].scope];}
+let MENU_TREE=null;   // GET /me/menus 결과(DB 동적). null이면 하드코딩 폴백
+async function loadMenus(){
+  try{const r=await API('/me/menus?lang='+(LANG===2?'id':'ko'));MENU_TREE=(Array.isArray(r)&&r.length)?r:null;}
+  catch(_){MENU_TREE=null;}
+}
+function buildNavDynamic(nav){
+  let html="",shown=0;
+  (MENU_TREE||[]).forEach(g=>{
+    const items=g.children||[];if(!items.length)return;shown+=items.length;
+    const list=items.map(c=>`<a data-id="${c.routePath}" role="link" tabindex="0" onclick="go('${c.routePath}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${c.routePath}')}"><span aria-hidden="true">${c.icon||''}</span><span>${esc(c.menuName)}</span></a>`);
+    const op=items.some(c=>c.routePath===CUR);
+    html+=`<div class="nav-group${op?' open':''}"><div class="nav-group-label" onclick="toggleNavGroup(this)">${esc(g.menuName)}<span class="nav-caret">▸</span></div><div class="nav-group-items">${list.join("")}</div></div>`;
+  });
+  nav.innerHTML=html;
+  document.getElementById("navfoot").innerHTML=`${T('표시중')} ${shown}<br><span style="color:#64748B">scope · ${T(scopeLabel())}</span>`;
+}
 function buildNav(){
   const nav=document.getElementById("nav");
+  if(MENU_TREE&&MENU_TREE.length){buildNavDynamic(nav);return;}   // DB 동적 메뉴 우선, 없으면 하드코딩
   const byId=Object.fromEntries(NAV.map(x=>[x[0],x]));
   /* 신청 메뉴 노출 — 사전심사 위(NAV_GROUPS '신청·서류' 그룹 첫 항목). 클라이언트도 좌측 메뉴에서 바로 진입.
      (2026-07-10 비노출 결정 → 재노출) */
@@ -3469,7 +3486,7 @@ function filterChips(){
 
 /* ---- lang / theme ---- */
 function applyLang(){const root=document.documentElement;if(LANG===1)root.setAttribute("data-lang","ko");else root.removeAttribute("data-lang");document.getElementById("langPill").textContent=LANGS[LANG];}
-function cycleLang(){LANG=(LANG+1)%LANGS.length;try{localStorage.setItem("glhac_lang",String(LANG))}catch(_){}applyLang();buildNav();applyView();}
+function cycleLang(){LANG=(LANG+1)%LANGS.length;try{localStorage.setItem("glhac_lang",String(LANG))}catch(_){}applyLang();loadMenus().then(buildNav);applyView();}
 function toggleTheme(){
   const h=document.documentElement,d=h.getAttribute("data-theme")==="dark";
   h.setAttribute("data-theme",d?"light":"dark");
@@ -8554,6 +8571,7 @@ async function boot(){
   document.getElementById("loginView").style.display="none";
   document.getElementById("appView").style.display="flex";
   CASES_CACHE=[];await loadCases(true);
+  await loadMenus();   // DB 동적 메뉴(GET /me/menus) — 실패 시 하드코딩 폴백
   buildNav();
   const init=parseHash();
   navigate(init,true);
