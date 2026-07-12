@@ -4749,6 +4749,14 @@ def _render_pdf(title, body, subtitle=None, footer=None):
     return doc.tobytes()
 
 
+_ARABIC_FONT = os.path.join(os.path.dirname(__file__), "assets", "arabic_naskh.ttf")
+
+
+def _has_arabic(s):
+    """아랍어 문자(U+0600~06FF) 포함 여부 — bismillah 등 RTL 렌더 판별."""
+    return any("\u0600" <= ch <= "\u06ff" for ch in str(s or ""))
+
+
 def _render_pdf_rich(title, blocks, subtitle=None, footer=None):
     """리치 문서 렌더러(§7 확장) — heading/para/kv/table/image/signature/static_pdf 블록 지원.
     기존 _render_pdf(텍스트 전용)는 그대로 유지하고, 사진·표·서명·정적PDF가 필요한 문서에 사용."""
@@ -4808,6 +4816,18 @@ def _render_pdf_rich(title, blocks, subtitle=None, footer=None):
             text = block.get("text", "")
             if not text:
                 continue
+            if _has_arabic(text) and os.path.exists(_ARABIC_FONT):
+                # 아랍어(bismillah 등) — insert_htmlbox로 shaping+RTL(내장 korea 폰트는 아랍어 미지원)
+                need(28)
+                _css = ("@font-face{font-family:ar;src:url('%s')} "
+                        "*{font-family:ar;font-size:%dpx;direction:rtl;text-align:center}"
+                        % (_ARABIC_FONT, int(fs + 5)))
+                try:
+                    pg.insert_htmlbox(fitz.Rect(margin, y, W - margin, y + 30), text, css=_css)
+                    y += 28
+                    continue
+                except Exception:  # noqa: BLE001 — 폰트/버전 문제 시 아래 일반 렌더로 폴백
+                    pass
             for line in wrap(text, fs, maxw):
                 need(lh)
                 pg.insert_text((margin, y + fs), line, fontname=font, fontsize=fs)
