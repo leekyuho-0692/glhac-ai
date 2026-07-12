@@ -805,8 +805,9 @@ function scopeLabel(){const m={own:"본인 조직 · own",owned:"담당 위주 �
 function buildNav(){
   const nav=document.getElementById("nav");
   const byId=Object.fromEntries(NAV.map(x=>[x[0],x]));
-  /* 회의 2026-07-10: 클라이언트는 '신청' 메뉴 비노출 — 내 케이스 디테일(신청 상세 버튼)·새 신청으로 진입 (접근권한은 유지) */
-  const NAV_HIDDEN=ROLE==="client"?new Set(["application"]):new Set();
+  /* 신청 메뉴 노출 — 사전심사 위(NAV_GROUPS '신청·서류' 그룹 첫 항목). 클라이언트도 좌측 메뉴에서 바로 진입.
+     (2026-07-10 비노출 결정 → 재노출) */
+  const NAV_HIDDEN=new Set();
   const allow=id=>byId[id]&&MENU_ACCESS[id]&&MENU_ACCESS[id].includes(ROLE)&&!NAV_HIDDEN.has(id);
   const link=([id,ic,ko,en])=>`<a data-id="${id}" role="link" tabindex="0" onclick="go('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}"><span aria-hidden="true">${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`;
   const grp=(label,ids2,list)=>{const op=ids2.includes(CUR);return `<div class="nav-group${op?' open':''}"><div class="nav-group-label" onclick="toggleNavGroup(this)">${label}<span class="nav-caret">▸</span></div><div class="nav-group-items">${list.join("")}</div></div>`;};
