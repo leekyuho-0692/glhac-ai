@@ -1,0 +1,1173 @@
+{
+ "menus": [
+  {
+   "menu_code": "GRP_1",
+   "parent": null,
+   "type": "folder",
+   "route": null,
+   "icon": "📂",
+   "depth": 1,
+   "sort": 1,
+   "i18n": {
+    "ko": "개요",
+    "en": "Overview",
+    "id": "Overview"
+   }
+  },
+  {
+   "menu_code": "CASELIST",
+   "parent": "GRP_1",
+   "type": "screen",
+   "route": "caseList",
+   "icon": "📋",
+   "depth": 2,
+   "sort": 1,
+   "i18n": {
+    "ko": "내 케이스",
+    "en": "My Cases",
+    "id": "Kasus Saya"
+   }
+  },
+  {
+   "menu_code": "ASSIGNMENTS",
+   "parent": "GRP_1",
+   "type": "screen",
+   "route": "assignments",
+   "icon": "📬",
+   "depth": 2,
+   "sort": 2,
+   "i18n": {
+    "ko": "배정함",
+    "en": "Assignments",
+    "id": "배정함"
+   }
+  },
+  {
+   "menu_code": "RESUBMITCENTER",
+   "parent": "GRP_1",
+   "type": "screen",
+   "route": "resubmitCenter",
+   "icon": "♻️",
+   "depth": 2,
+   "sort": 3,
+   "i18n": {
+    "ko": "보완·재전송",
+    "en": "Resubmit Center",
+    "id": "Pusat Pelengkapan"
+   }
+  },
+  {
+   "menu_code": "MATERIALS",
+   "parent": "GRP_1",
+   "type": "screen",
+   "route": "materials",
+   "icon": "🧪",
+   "depth": 2,
+   "sort": 4,
+   "i18n": {
+    "ko": "원재료",
+    "en": "Materials",
+    "id": "Bahan AI"
+   }
+  },
+  {
+   "menu_code": "AIEXTRACTIONS",
+   "parent": "GRP_1",
+   "type": "screen",
+   "route": "aiExtractions",
+   "icon": "🔬",
+   "depth": 2,
+   "sort": 5,
+   "i18n": {
+    "ko": "AI 검수 큐",
+    "en": "AI Review Queue",
+    "id": "Antrian Tinjau AI"
+   }
+  },
+  {
+   "menu_code": "GRP_2",
+   "parent": null,
+   "type": "folder",
+   "route": null,
+   "icon": "📂",
+   "depth": 1,
+   "sort": 2,
+   "i18n": {
+    "ko": "신청",
+    "en": "서류",
+    "id": "서류"
+   }
+  },
+  {
+   "menu_code": "APPLICATION",
+   "parent": "GRP_2",
+   "type": "screen",
+   "route": "application",
+   "icon": "📝",
+   "depth": 2,
+   "sort": 1,
+   "i18n": {
+    "ko": "신청",
+    "en": "Application",
+    "id": "Aplikasi"
+   }
+  },
+  {
+   "menu_code": "PREASSESS",
+   "parent": "GRP_2",
+   "type": "screen",
+   "route": "preassess",
+   "icon": "🔍",
+   "depth": 2,
+   "sort": 2,
+   "i18n": {
+    "ko": "사전심사",
+    "en": "Pre-assessment",
+    "id": "Pra-audit"
+   }
+  },
+  {
+   "menu_code": "GRP_3",
+   "parent": null,
+   "type": "folder",
+   "route": null,
+   "icon": "📂",
+   "depth": 1,
+   "sort": 3,
+   "i18n": {
+    "ko": "계약",
+    "en": "결제",
+    "id": "결제"
+   }
+  },
+  {
+   "menu_code": "INVOICE",
+   "parent": "GRP_3",
+   "type": "screen",
+   "route": "invoice",
+   "icon": "🧾",
+   "depth": 2,
+   "sort": 1,
+   "i18n": {
+    "ko": "계약",
+    "en": "Contract",
+    "id": "Tagihan"
+   }
+  },
+  {
+   "menu_code": "PAYMENTS",
+   "parent": "GRP_3",
+   "type": "screen",
+   "route": "payments",
+   "icon": "💰",
+   "depth": 2,
+   "sort": 2,
+   "i18n": {
+    "ko": "결제 관리",
+    "en": "Payments",
+    "id": "Pembayaran"
+   }
+  },
+  {
+   "menu_code": "DEPOSITS",
+   "parent": "GRP_3",
+   "type": "screen",
+   "route": "deposits",
+   "icon": "🏦",
+   "depth": 2,
+   "sort": 3,
+   "i18n": {
+    "ko": "입금 매칭",
+    "en": "Deposits",
+    "id": "Pencocokan Setoran"
+   }
+  },
+  {
+   "menu_code": "GRP_4",
+   "parent": null,
+   "type": "folder",
+   "route": null,
+   "icon": "📂",
+   "depth": 1,
+   "sort": 4,
+   "i18n": {
+    "ko": "심사",
+    "en": "판정",
+    "id": "판정"
+   }
+  },
+  {
+   "menu_code": "MANUALBUILDER",
+   "parent": "GRP_4",
+   "type": "screen",
+   "route": "manualBuilder",
+   "icon": "📓",
+   "depth": 2,
+   "sort": 1,
+   "i18n": {
+    "ko": "SJPH 매뉴얼",
+    "en": "SJPH Manual",
+    "id": "Manual Halal"
+   }
+  },
+  {
+   "menu_code": "EVALUATION",
+   "parent": "GRP_4",
+   "type": "screen",
+   "route": "evaluation",
+   "icon": "✅",
+   "depth": 2,
+   "sort": 2,
+   "i18n": {
+    "ko": "SJPH/HPAS 평가",
+    "en": "Evaluation",
+    "id": "Evaluasi"
+   }
+  },
+  {
+   "menu_code": "MOCKAUDIT",
+   "parent": "GRP_4",
+   "type": "screen",
+   "route": "mockAudit",
+   "icon": "🧷",
+   "depth": 2,
+   "sort": 3,
+   "i18n": {
+    "ko": "모의 심사",
+    "en": "Mock Audit",
+    "id": "Audit Simulasi"
+   }
+  },
+  {
+   "menu_code": "ONSITECALENDAR",
+   "parent": "GRP_4",
+   "type": "screen",
+   "route": "onsiteCalendar",
+   "icon": "📅",
+   "depth": 2,
+   "sort": 4,
+   "i18n": {
+    "ko": "현장심사 캘린더",
+    "en": "On-site Calendar",
+    "id": "현장심사 캘린더"
+   }
+  },
+  {
+   "menu_code": "AUDIT",
+   "parent": "GRP_4",
+   "type": "screen",
+   "route": "audit",
+   "icon": "🏭",
+   "depth": 2,
+   "sort": 5,
+   "i18n": {
+    "ko": "현장심사",
+    "en": "On-site Audit",
+    "id": "Audit"
+   }
+  },
+  {
+   "menu_code": "FATWA",
+   "parent": "GRP_4",
+   "type": "screen",
+   "route": "fatwa",
+   "icon": "⚖️",
+   "depth": 2,
+   "sort": 6,
+   "i18n": {
+    "ko": "파트와",
+    "en": "Fatwa",
+    "id": "Fatwa"
+   }
+  },
+  {
+   "menu_code": "CERTIFICATE",
+   "parent": "GRP_4",
+   "type": "screen",
+   "route": "certificate",
+   "icon": "🏅",
+   "depth": 2,
+   "sort": 7,
+   "i18n": {
+    "ko": "인증서",
+    "en": "Certificate",
+    "id": "Sertifikat"
+   }
+  },
+  {
+   "menu_code": "GRP_5",
+   "parent": null,
+   "type": "folder",
+   "route": null,
+   "icon": "📂",
+   "depth": 1,
+   "sort": 5,
+   "i18n": {
+    "ko": "지원",
+    "en": "Support",
+    "id": "Support"
+   }
+  },
+  {
+   "menu_code": "OPSDASHBOARD",
+   "parent": "GRP_5",
+   "type": "screen",
+   "route": "opsDashboard",
+   "icon": "🗺️",
+   "depth": 2,
+   "sort": 1,
+   "i18n": {
+    "ko": "운영 현황",
+    "en": "Operations",
+    "id": "Operasional"
+   }
+  },
+  {
+   "menu_code": "OPSCALENDAR",
+   "parent": "GRP_5",
+   "type": "screen",
+   "route": "opsCalendar",
+   "icon": "🗓️",
+   "depth": 2,
+   "sort": 2,
+   "i18n": {
+    "ko": "종합 캘린더",
+    "en": "Master Calendar",
+    "id": "종합 캘린더"
+   }
+  },
+  {
+   "menu_code": "WORKFLOWMONITOR",
+   "parent": "GRP_5",
+   "type": "screen",
+   "route": "workflowMonitor",
+   "icon": "🔀",
+   "depth": 2,
+   "sort": 3,
+   "i18n": {
+    "ko": "워크플로우 모니터",
+    "en": "Workflow Monitor",
+    "id": "워크플로우 모니터"
+   }
+  },
+  {
+   "menu_code": "AUDITORWORK",
+   "parent": "GRP_5",
+   "type": "screen",
+   "route": "auditorWork",
+   "icon": "🧑‍⚖️",
+   "depth": 2,
+   "sort": 4,
+   "i18n": {
+    "ko": "오디터 업무 현황",
+    "en": "Auditor Workload",
+    "id": "오디터 업무 현황"
+   }
+  },
+  {
+   "menu_code": "REGULATIONS",
+   "parent": "GRP_5",
+   "type": "screen",
+   "route": "regulations",
+   "icon": "📜",
+   "depth": 2,
+   "sort": 5,
+   "i18n": {
+    "ko": "규정·법령",
+    "en": "Regulations",
+    "id": "Regulasi & Hukum"
+   }
+  },
+  {
+   "menu_code": "CONSULTATION",
+   "parent": "GRP_5",
+   "type": "screen",
+   "route": "consultation",
+   "icon": "☎️",
+   "depth": 2,
+   "sort": 6,
+   "i18n": {
+    "ko": "상담",
+    "en": "Support",
+    "id": "상담"
+   }
+  },
+  {
+   "menu_code": "NOTIFYLOG",
+   "parent": "GRP_5",
+   "type": "screen",
+   "route": "notifyLog",
+   "icon": "📣",
+   "depth": 2,
+   "sort": 7,
+   "i18n": {
+    "ko": "알림 발송",
+    "en": "Notifications",
+    "id": "Pengiriman Notifikasi"
+   }
+  },
+  {
+   "menu_code": "AUDITLOG",
+   "parent": "GRP_5",
+   "type": "screen",
+   "route": "auditLog",
+   "icon": "🛡️",
+   "depth": 2,
+   "sort": 8,
+   "i18n": {
+    "ko": "감사로그",
+    "en": "Audit Log",
+    "id": "Log Audit"
+   }
+  },
+  {
+   "menu_code": "SYSTEM",
+   "parent": "GRP_5",
+   "type": "screen",
+   "route": "system",
+   "icon": "⚙️",
+   "depth": 2,
+   "sort": 9,
+   "i18n": {
+    "ko": "시스템 설정",
+    "en": "System",
+    "id": "Sistem"
+   }
+  },
+  {
+   "menu_code": "GRP_6",
+   "parent": null,
+   "type": "folder",
+   "route": null,
+   "icon": "📂",
+   "depth": 1,
+   "sort": 6,
+   "i18n": {
+    "ko": "기타",
+    "en": "Others",
+    "id": "Others"
+   }
+  },
+  {
+   "menu_code": "ASSISTANT",
+   "parent": "GRP_6",
+   "type": "screen",
+   "route": "assistant",
+   "icon": "🤖",
+   "depth": 2,
+   "sort": 1,
+   "i18n": {
+    "ko": "AI 어시스턴트",
+    "en": "Assistant",
+    "id": "Asisten AI"
+   }
+  },
+  {
+   "menu_code": "FEEDBACK",
+   "parent": "GRP_6",
+   "type": "screen",
+   "route": "feedback",
+   "icon": "💬",
+   "depth": 2,
+   "sort": 2,
+   "i18n": {
+    "ko": "개선 피드백",
+    "en": "Feedback",
+    "id": "Umpan Balik"
+   }
+  },
+  {
+   "menu_code": "GRP_7",
+   "parent": null,
+   "type": "folder",
+   "route": null,
+   "icon": "📂",
+   "depth": 1,
+   "sort": 7,
+   "i18n": {
+    "ko": "내 정보 관리",
+    "en": "My Data",
+    "id": "My Data"
+   }
+  },
+  {
+   "menu_code": "DOCUMENTS",
+   "parent": "GRP_7",
+   "type": "screen",
+   "route": "documents",
+   "icon": "📁",
+   "depth": 2,
+   "sort": 1,
+   "i18n": {
+    "ko": "문서",
+    "en": "Documents",
+    "id": "Dokumen"
+   }
+  },
+  {
+   "menu_code": "VAULT",
+   "parent": "GRP_7",
+   "type": "screen",
+   "route": "vault",
+   "icon": "🗄️",
+   "depth": 2,
+   "sort": 2,
+   "i18n": {
+    "ko": "자료함",
+    "en": "Vault",
+    "id": "자료함"
+   }
+  },
+  {
+   "menu_code": "NOTIFCENTER",
+   "parent": "GRP_7",
+   "type": "screen",
+   "route": "notifCenter",
+   "icon": "🔔",
+   "depth": 2,
+   "sort": 3,
+   "i18n": {
+    "ko": "알림 센터",
+    "en": "Notifications",
+    "id": "알림 센터"
+   }
+  }
+ ],
+ "role_menu": [
+  {
+   "role": "client",
+   "menu_code": "CASELIST",
+   "sort": 1
+  },
+  {
+   "role": "consultant",
+   "menu_code": "CASELIST",
+   "sort": 1
+  },
+  {
+   "role": "auditor",
+   "menu_code": "CASELIST",
+   "sort": 1
+  },
+  {
+   "role": "sharia",
+   "menu_code": "CASELIST",
+   "sort": 1
+  },
+  {
+   "role": "ops",
+   "menu_code": "CASELIST",
+   "sort": 1
+  },
+  {
+   "role": "admin",
+   "menu_code": "CASELIST",
+   "sort": 1
+  },
+  {
+   "role": "auditor",
+   "menu_code": "ASSIGNMENTS",
+   "sort": 2
+  },
+  {
+   "role": "ops",
+   "menu_code": "ASSIGNMENTS",
+   "sort": 2
+  },
+  {
+   "role": "admin",
+   "menu_code": "ASSIGNMENTS",
+   "sort": 2
+  },
+  {
+   "role": "client",
+   "menu_code": "RESUBMITCENTER",
+   "sort": 3
+  },
+  {
+   "role": "consultant",
+   "menu_code": "RESUBMITCENTER",
+   "sort": 3
+  },
+  {
+   "role": "admin",
+   "menu_code": "RESUBMITCENTER",
+   "sort": 3
+  },
+  {
+   "role": "auditor",
+   "menu_code": "RESUBMITCENTER",
+   "sort": 3
+  },
+  {
+   "role": "ops",
+   "menu_code": "RESUBMITCENTER",
+   "sort": 3
+  },
+  {
+   "role": "client",
+   "menu_code": "MATERIALS",
+   "sort": 4
+  },
+  {
+   "role": "consultant",
+   "menu_code": "MATERIALS",
+   "sort": 4
+  },
+  {
+   "role": "auditor",
+   "menu_code": "MATERIALS",
+   "sort": 4
+  },
+  {
+   "role": "admin",
+   "menu_code": "MATERIALS",
+   "sort": 4
+  },
+  {
+   "role": "consultant",
+   "menu_code": "AIEXTRACTIONS",
+   "sort": 5
+  },
+  {
+   "role": "client",
+   "menu_code": "AIEXTRACTIONS",
+   "sort": 5
+  },
+  {
+   "role": "auditor",
+   "menu_code": "AIEXTRACTIONS",
+   "sort": 5
+  },
+  {
+   "role": "admin",
+   "menu_code": "AIEXTRACTIONS",
+   "sort": 5
+  },
+  {
+   "role": "client",
+   "menu_code": "APPLICATION",
+   "sort": 1
+  },
+  {
+   "role": "consultant",
+   "menu_code": "APPLICATION",
+   "sort": 1
+  },
+  {
+   "role": "admin",
+   "menu_code": "APPLICATION",
+   "sort": 1
+  },
+  {
+   "role": "client",
+   "menu_code": "PREASSESS",
+   "sort": 2
+  },
+  {
+   "role": "consultant",
+   "menu_code": "PREASSESS",
+   "sort": 2
+  },
+  {
+   "role": "auditor",
+   "menu_code": "PREASSESS",
+   "sort": 2
+  },
+  {
+   "role": "sharia",
+   "menu_code": "PREASSESS",
+   "sort": 2
+  },
+  {
+   "role": "ops",
+   "menu_code": "PREASSESS",
+   "sort": 2
+  },
+  {
+   "role": "admin",
+   "menu_code": "PREASSESS",
+   "sort": 2
+  },
+  {
+   "role": "client",
+   "menu_code": "INVOICE",
+   "sort": 1
+  },
+  {
+   "role": "consultant",
+   "menu_code": "INVOICE",
+   "sort": 1
+  },
+  {
+   "role": "auditor",
+   "menu_code": "INVOICE",
+   "sort": 1
+  },
+  {
+   "role": "sharia",
+   "menu_code": "INVOICE",
+   "sort": 1
+  },
+  {
+   "role": "ops",
+   "menu_code": "INVOICE",
+   "sort": 1
+  },
+  {
+   "role": "admin",
+   "menu_code": "INVOICE",
+   "sort": 1
+  },
+  {
+   "role": "sharia",
+   "menu_code": "PAYMENTS",
+   "sort": 2
+  },
+  {
+   "role": "ops",
+   "menu_code": "PAYMENTS",
+   "sort": 2
+  },
+  {
+   "role": "admin",
+   "menu_code": "PAYMENTS",
+   "sort": 2
+  },
+  {
+   "role": "sharia",
+   "menu_code": "DEPOSITS",
+   "sort": 3
+  },
+  {
+   "role": "ops",
+   "menu_code": "DEPOSITS",
+   "sort": 3
+  },
+  {
+   "role": "admin",
+   "menu_code": "DEPOSITS",
+   "sort": 3
+  },
+  {
+   "role": "client",
+   "menu_code": "MANUALBUILDER",
+   "sort": 1
+  },
+  {
+   "role": "consultant",
+   "menu_code": "MANUALBUILDER",
+   "sort": 1
+  },
+  {
+   "role": "admin",
+   "menu_code": "MANUALBUILDER",
+   "sort": 1
+  },
+  {
+   "role": "client",
+   "menu_code": "EVALUATION",
+   "sort": 2
+  },
+  {
+   "role": "auditor",
+   "menu_code": "EVALUATION",
+   "sort": 2
+  },
+  {
+   "role": "sharia",
+   "menu_code": "EVALUATION",
+   "sort": 2
+  },
+  {
+   "role": "ops",
+   "menu_code": "EVALUATION",
+   "sort": 2
+  },
+  {
+   "role": "admin",
+   "menu_code": "EVALUATION",
+   "sort": 2
+  },
+  {
+   "role": "client",
+   "menu_code": "MOCKAUDIT",
+   "sort": 3
+  },
+  {
+   "role": "consultant",
+   "menu_code": "MOCKAUDIT",
+   "sort": 3
+  },
+  {
+   "role": "auditor",
+   "menu_code": "MOCKAUDIT",
+   "sort": 3
+  },
+  {
+   "role": "sharia",
+   "menu_code": "MOCKAUDIT",
+   "sort": 3
+  },
+  {
+   "role": "ops",
+   "menu_code": "MOCKAUDIT",
+   "sort": 3
+  },
+  {
+   "role": "admin",
+   "menu_code": "MOCKAUDIT",
+   "sort": 3
+  },
+  {
+   "role": "client",
+   "menu_code": "ONSITECALENDAR",
+   "sort": 4
+  },
+  {
+   "role": "consultant",
+   "menu_code": "ONSITECALENDAR",
+   "sort": 4
+  },
+  {
+   "role": "auditor",
+   "menu_code": "ONSITECALENDAR",
+   "sort": 4
+  },
+  {
+   "role": "sharia",
+   "menu_code": "ONSITECALENDAR",
+   "sort": 4
+  },
+  {
+   "role": "ops",
+   "menu_code": "ONSITECALENDAR",
+   "sort": 4
+  },
+  {
+   "role": "admin",
+   "menu_code": "ONSITECALENDAR",
+   "sort": 4
+  },
+  {
+   "role": "client",
+   "menu_code": "AUDIT",
+   "sort": 5
+  },
+  {
+   "role": "consultant",
+   "menu_code": "AUDIT",
+   "sort": 5
+  },
+  {
+   "role": "auditor",
+   "menu_code": "AUDIT",
+   "sort": 5
+  },
+  {
+   "role": "sharia",
+   "menu_code": "AUDIT",
+   "sort": 5
+  },
+  {
+   "role": "ops",
+   "menu_code": "AUDIT",
+   "sort": 5
+  },
+  {
+   "role": "admin",
+   "menu_code": "AUDIT",
+   "sort": 5
+  },
+  {
+   "role": "consultant",
+   "menu_code": "FATWA",
+   "sort": 6
+  },
+  {
+   "role": "auditor",
+   "menu_code": "FATWA",
+   "sort": 6
+  },
+  {
+   "role": "sharia",
+   "menu_code": "FATWA",
+   "sort": 6
+  },
+  {
+   "role": "ops",
+   "menu_code": "FATWA",
+   "sort": 6
+  },
+  {
+   "role": "admin",
+   "menu_code": "FATWA",
+   "sort": 6
+  },
+  {
+   "role": "client",
+   "menu_code": "CERTIFICATE",
+   "sort": 7
+  },
+  {
+   "role": "sharia",
+   "menu_code": "CERTIFICATE",
+   "sort": 7
+  },
+  {
+   "role": "ops",
+   "menu_code": "CERTIFICATE",
+   "sort": 7
+  },
+  {
+   "role": "admin",
+   "menu_code": "CERTIFICATE",
+   "sort": 7
+  },
+  {
+   "role": "sharia",
+   "menu_code": "OPSDASHBOARD",
+   "sort": 1
+  },
+  {
+   "role": "ops",
+   "menu_code": "OPSDASHBOARD",
+   "sort": 1
+  },
+  {
+   "role": "admin",
+   "menu_code": "OPSDASHBOARD",
+   "sort": 1
+  },
+  {
+   "role": "sharia",
+   "menu_code": "OPSCALENDAR",
+   "sort": 2
+  },
+  {
+   "role": "ops",
+   "menu_code": "OPSCALENDAR",
+   "sort": 2
+  },
+  {
+   "role": "admin",
+   "menu_code": "OPSCALENDAR",
+   "sort": 2
+  },
+  {
+   "role": "sharia",
+   "menu_code": "WORKFLOWMONITOR",
+   "sort": 3
+  },
+  {
+   "role": "ops",
+   "menu_code": "WORKFLOWMONITOR",
+   "sort": 3
+  },
+  {
+   "role": "admin",
+   "menu_code": "WORKFLOWMONITOR",
+   "sort": 3
+  },
+  {
+   "role": "sharia",
+   "menu_code": "AUDITORWORK",
+   "sort": 4
+  },
+  {
+   "role": "ops",
+   "menu_code": "AUDITORWORK",
+   "sort": 4
+  },
+  {
+   "role": "admin",
+   "menu_code": "AUDITORWORK",
+   "sort": 4
+  },
+  {
+   "role": "ops",
+   "menu_code": "REGULATIONS",
+   "sort": 5
+  },
+  {
+   "role": "admin",
+   "menu_code": "REGULATIONS",
+   "sort": 5
+  },
+  {
+   "role": "client",
+   "menu_code": "CONSULTATION",
+   "sort": 6
+  },
+  {
+   "role": "consultant",
+   "menu_code": "CONSULTATION",
+   "sort": 6
+  },
+  {
+   "role": "ops",
+   "menu_code": "CONSULTATION",
+   "sort": 6
+  },
+  {
+   "role": "admin",
+   "menu_code": "CONSULTATION",
+   "sort": 6
+  },
+  {
+   "role": "ops",
+   "menu_code": "NOTIFYLOG",
+   "sort": 7
+  },
+  {
+   "role": "admin",
+   "menu_code": "NOTIFYLOG",
+   "sort": 7
+  },
+  {
+   "role": "admin",
+   "menu_code": "AUDITLOG",
+   "sort": 8
+  },
+  {
+   "role": "admin",
+   "menu_code": "SYSTEM",
+   "sort": 9
+  },
+  {
+   "role": "client",
+   "menu_code": "ASSISTANT",
+   "sort": 1
+  },
+  {
+   "role": "consultant",
+   "menu_code": "ASSISTANT",
+   "sort": 1
+  },
+  {
+   "role": "auditor",
+   "menu_code": "ASSISTANT",
+   "sort": 1
+  },
+  {
+   "role": "sharia",
+   "menu_code": "ASSISTANT",
+   "sort": 1
+  },
+  {
+   "role": "ops",
+   "menu_code": "ASSISTANT",
+   "sort": 1
+  },
+  {
+   "role": "admin",
+   "menu_code": "ASSISTANT",
+   "sort": 1
+  },
+  {
+   "role": "client",
+   "menu_code": "FEEDBACK",
+   "sort": 2
+  },
+  {
+   "role": "consultant",
+   "menu_code": "FEEDBACK",
+   "sort": 2
+  },
+  {
+   "role": "auditor",
+   "menu_code": "FEEDBACK",
+   "sort": 2
+  },
+  {
+   "role": "sharia",
+   "menu_code": "FEEDBACK",
+   "sort": 2
+  },
+  {
+   "role": "ops",
+   "menu_code": "FEEDBACK",
+   "sort": 2
+  },
+  {
+   "role": "admin",
+   "menu_code": "FEEDBACK",
+   "sort": 2
+  },
+  {
+   "role": "client",
+   "menu_code": "DOCUMENTS",
+   "sort": 1
+  },
+  {
+   "role": "consultant",
+   "menu_code": "DOCUMENTS",
+   "sort": 1
+  },
+  {
+   "role": "auditor",
+   "menu_code": "DOCUMENTS",
+   "sort": 1
+  },
+  {
+   "role": "sharia",
+   "menu_code": "DOCUMENTS",
+   "sort": 1
+  },
+  {
+   "role": "ops",
+   "menu_code": "DOCUMENTS",
+   "sort": 1
+  },
+  {
+   "role": "admin",
+   "menu_code": "DOCUMENTS",
+   "sort": 1
+  },
+  {
+   "role": "client",
+   "menu_code": "VAULT",
+   "sort": 2
+  },
+  {
+   "role": "consultant",
+   "menu_code": "VAULT",
+   "sort": 2
+  },
+  {
+   "role": "admin",
+   "menu_code": "VAULT",
+   "sort": 2
+  },
+  {
+   "role": "client",
+   "menu_code": "NOTIFCENTER",
+   "sort": 3
+  },
+  {
+   "role": "consultant",
+   "menu_code": "NOTIFCENTER",
+   "sort": 3
+  },
+  {
+   "role": "auditor",
+   "menu_code": "NOTIFCENTER",
+   "sort": 3
+  },
+  {
+   "role": "sharia",
+   "menu_code": "NOTIFCENTER",
+   "sort": 3
+  },
+  {
+   "role": "ops",
+   "menu_code": "NOTIFCENTER",
+   "sort": 3
+  },
+  {
+   "role": "admin",
+   "menu_code": "NOTIFCENTER",
+   "sort": 3
+  }
+ ]
+}

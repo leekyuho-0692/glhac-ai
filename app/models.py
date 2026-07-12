@@ -677,3 +677,55 @@ class MaterialMeasurement(Base):
     note = Column(Text)
     recorded_by = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ===== 동적 메뉴 시스템 (설계서 §3) — DB 기반 메뉴/배정 =====
+class SysMenu(Base):
+    """메뉴 마스터 — parent_menu_id 재귀 트리(N뎁스 DB, 2뎁스 운영). 설계서 §3.1."""
+    __tablename__ = "sys_menu"
+    menu_id = Column(String, primary_key=True, default=uid)
+    parent_menu_id = Column(String, index=True)        # NULL = 1뎁스
+    menu_code = Column(String, unique=True, index=True)  # AUDIT·MOCK_AUDIT (route 연결 키)
+    menu_depth = Column(Integer, default=1)            # 파생 캐시값
+    menu_type = Column(String, default="screen")       # screen | folder | link
+    route_path = Column(String)                        # 화면 경로(folder는 NULL)
+    icon_name = Column(String)
+    permission_code = Column(String)
+    default_sort_order = Column(Integer, default=0)
+    use_yn = Column(Boolean, default=True)             # 사용 중지 = 신규 배정 금지
+    required_yn = Column(Boolean, default=False)       # 필수 메뉴 = 제거 금지
+    system_admin_yn = Column(Boolean, default=False)   # 관리자 전용 = 일반 역할 배정 제한
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SysMenuI18n(Base):
+    """메뉴명 다국어 — ko/id/en. 설계서 §3.2."""
+    __tablename__ = "sys_menu_i18n"
+    id = Column(String, primary_key=True, default=uid)
+    menu_id = Column(String, index=True, nullable=False)
+    language_code = Column(String, nullable=False)     # ko | id | en
+    menu_name = Column(String)
+    description = Column(String)
+
+
+class SysRoleMenu(Base):
+    """역할 기본 메뉴 배정 — 설계서 §3.3. sort_order=같은 부모 내 순서."""
+    __tablename__ = "sys_role_menu"
+    id = Column(String, primary_key=True, default=uid)
+    role_id = Column(String, index=True, nullable=False)  # ROLE_AUDITOR 등
+    menu_id = Column(String, nullable=False)
+    sort_order = Column(Integer, default=0)
+    visible_yn = Column(Boolean, default=True)
+
+
+class SysUserMenu(Base):
+    """사용자별 메뉴 배정/예외 — 설계서 §3.4. override_type=ADD|REMOVE|ORDER."""
+    __tablename__ = "sys_user_menu"
+    id = Column(String, primary_key=True, default=uid)
+    user_id = Column(String, index=True, nullable=False)
+    menu_id = Column(String, nullable=False)
+    sort_order = Column(Integer, default=0)
+    visible_yn = Column(Boolean, default=True)
+    override_type = Column(String)                     # ADD | REMOVE | ORDER
+    created_at = Column(DateTime, default=datetime.utcnow)
