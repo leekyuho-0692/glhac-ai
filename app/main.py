@@ -3351,15 +3351,16 @@ def _factory_profile_form(db, c, f):
     }
 
 
-def _profile_form_to_blocks(form):
-    """폼 dict → _render_pdf_rich 블록. EN/KO 병기 라벨을 표(table) 블록으로 렌더."""
+def _profile_form_to_blocks(form, include_form_title=True):
+    """폼 dict → _render_pdf_rich 블록. EN/KO 병기 라벨을 표(table) 블록으로 렌더.
+    include_form_title=False: form_title을 PDF 상단 title로 뽑아 쓸 때 중복 방지."""
     blocks = []
     h = form.get("header") or {}
     if h.get("bismillah"):
         blocks.append({"type": "para", "text": h["bismillah"]})
     if h.get("bismillah_ko"):
         blocks.append({"type": "para", "text": h["bismillah_ko"]})
-    if h.get("form_title"):
+    if include_form_title and h.get("form_title"):
         blocks.append({"type": "heading", "text": h["form_title"], "level": 1})
     for s in form.get("sections") or []:
         blocks.append({"type": "heading", "text": s["name"], "level": 2})
@@ -3389,7 +3390,8 @@ def company_info_pdf(case_id: str, user=Depends(auth.get_current_user), db: Sess
     from fastapi.responses import Response
     c = _get_case(db, case_id, user)
     form = _company_info_form(db, c)
-    pdf = _render_pdf_rich(form["title"], _profile_form_to_blocks(form),
+    _ttl = (form.get("header") or {}).get("form_title") or form.get("title", "")
+    pdf = _render_pdf_rich(_ttl, _profile_form_to_blocks(form, include_form_title=False),
                            subtitle=(c.company_name or ""),
                            footer="GL-HAC AI · Company Info " + case_id[:8])
     return Response(content=pdf, media_type="application/pdf",
@@ -3417,7 +3419,8 @@ def factory_profile_pdf(case_id: str, facility_id: str,
     if not f or f.org_id != c.org_id:
         raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
     form = _factory_profile_form(db, c, f)
-    pdf = _render_pdf_rich(form["title"], _profile_form_to_blocks(form),
+    _ttl = (form.get("header") or {}).get("form_title") or form.get("title", "")
+    pdf = _render_pdf_rich(_ttl, _profile_form_to_blocks(form, include_form_title=False),
                            subtitle=(f.name or c.company_name or ""),
                            footer="GL-HAC AI · Factory Profile " + facility_id[:8])
     return Response(content=pdf, media_type="application/pdf",
