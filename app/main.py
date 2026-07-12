@@ -245,6 +245,7 @@ def _startup():
     try:
         seed(db)
         auth.seed_users(db)
+        seed_menus(db)   # 동적 메뉴 시드(idempotent) — 설계서 §10
         if os.environ.get("GLHAC_DEV") == "1":
             _seed_auditor_profiles(db)   # 데모 시드 계정에만 프로필 부여
         # load_ontology는 ORM 인스턴스를 모듈 캐시에 담으므로 반드시 마지막 —
@@ -10345,6 +10346,74 @@ def del_facility(facility_id: str, user=Depends(auth.get_current_user), db: Sess
     db.delete(f)
     db.commit()
     return {"deleted": facility_id}
+
+
+# ===== 동적 메뉴 시스템 (설계서 §3~§5) =====
+def seed_menus(db):
+    """현행 메뉴 구조(menu_seed.json)를 DB에 시드 — idempotent. 설계서 §10 마이그레이션."""
+    import json as _json
+    if db.query(models.SysMenu).first():
+        return
+    path = os.path.join(os.path.dirname(__file__), "menu_seed.json")
+    if not os.path.exists(path):
+        return
+    data = _json.load(open(path, encoding="utf-8"))
+    code2id = {}
+    for m in data["menus"]:
+        mid = models.uid()
+        code2id[m["menu_code"]] = mid
+        db.add(models.SysMenu(menu_id=mid, menu_code=m["menu_code"], menu_depth=m["depth"],
+                              menu_type=m["type"], route_path=m.get("route"), icon_name=m.get("icon"),
+                              default_sort_order=m["sort"]))
+        for lang, name in (m.get("i18n") or {}).items():
+            db.add(models.SysMenuI18n(menu_id=mid, language_code=lang, menu_name=name))
+    db.flush()
+    for m in data["menus"]:
+        if m.get("parent"):
+            row = db.get(models.SysMenu, code2id[m["menu_code"]])
+            row.parent_menu_id = code2id.get(m["parent"])
+    for rm in data["role_menu"]:
+        mid = code2id.get(rm["menu_code"])
+        if mid:
+            db.add(models.SysRoleMenu(role_id=rm["role"], menu_id=mid, sort_order=rm["sort"]))
+    db.commit()
+
+
+_BR2ROLE_MENU = {"applicant": "client", "consultant": "consultant", "auditor": "auditor",
+                 "fatwa_liaison": "sharia", "operator": "ops", "admin": "admin",
+                 "penyelia_halal": "client", "pendamping_pph": "client"}
+
+
+@app.get("/me/menus")
+def my_menus(lang: str = "ko", user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """로그인 사용자 동적 메뉴 트리(역할 기본 배정 병합) — 사이드바 렌더. 설계서 §4·§5."""
+    role = _BR2ROLE_MENU.get(user["role"], user["role"])
+    rms = {rm.menu_id: rm.sort_order for rm in
+           db.query(models.SysRoleMenu).filter_by(role_id=role, visible_yn=True).all()}
+    if not rms:
+        return []
+    menus = {m.menu_id: m for m in db.query(models.SysMenu).filter_by(use_yn=True).all()}
+    i18n = {x.menu_id: x.menu_name for x in
+            db.query(models.SysMenuI18n).filter_by(language_code=lang).all()}
+    groups = {}   # parent_id → [배정된 자식 메뉴]
+    for mid in rms:
+        m = menus.get(mid)
+        if m and m.parent_menu_id:
+            groups.setdefault(m.parent_menu_id, []).append(m)
+    out = []
+    for pid in sorted(groups, key=lambda p: menus[p].default_sort_order if p in menus else 99):
+        g = menus.get(pid)
+        if not g:
+            continue
+        children = sorted(groups[pid], key=lambda c: rms.get(c.menu_id, c.default_sort_order))
+        out.append({"menuId": g.menu_id, "menuCode": g.menu_code,
+                    "menuName": i18n.get(g.menu_id, g.menu_code), "icon": g.icon_name,
+                    "sortOrder": g.default_sort_order,
+                    "children": [{"menuId": c.menu_id, "menuCode": c.menu_code,
+                                  "menuName": i18n.get(c.menu_id, c.menu_code),
+                                  "routePath": c.route_path, "icon": c.icon_name,
+                                  "sortOrder": rms.get(c.menu_id)} for c in children]})
+    return out
 
 
 _static = os.path.join(os.path.dirname(__file__), "static")
