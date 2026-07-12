@@ -8799,6 +8799,24 @@ def preassess_report_docx(case_id: str,
                     headers={"Content-Disposition": "attachment; filename=preassess_%s.docx" % case_id[:8]})
 
 
+@app.get("/cases/{case_id}/preassess-report.pdf")
+def preassess_report_pdf(case_id: str,
+                         user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
+                                                         "consultant")),
+                         db: Session = Depends(get_db)):
+    """사전심사 보고서 PDF — docx를 LibreOffice로 변환(인라인 미리보기용, docx와 동일 양식).
+    soffice 부재 시 docx 그대로 반환(다운로드 폴백)."""
+    from fastapi.responses import Response
+    resp = preassess_report_docx(case_id, user, db)   # 동일 로직 재사용 → docx bytes
+    try:
+        pdf = _docx_to_pdf_bytes(resp.body)
+    except Exception as e:  # noqa: BLE001
+        log.warning("preassess docx->pdf 변환 실패, docx 반환: %s", e)
+        return resp
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "inline; filename=preassess_%s.pdf" % case_id[:8]})
+
+
 @app.post("/cases/{case_id}/material-report/snapshot")
 def save_material_report_snapshot(case_id, body: dict = None, user=Depends(auth.get_current_user), db=Depends(get_db)):
     """M2: 오디터 체크 + 성분 리포트 스냅샷을 gen-doc(material_report)로 저장(이력 보존·클라이언트 전달)."""

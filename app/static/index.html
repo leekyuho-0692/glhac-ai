@@ -2864,6 +2864,7 @@ SCREEN.preassess=async()=>{
       <div class="body">
         <div class="muted small" style="margin-bottom:8px">${T('기업·공장·문서분석·성분분석(부정 우선)·검토 판정을 담은 편집 가능한 Word 문서로 출력합니다.')}</div>
         <div class="btnrow">
+          <button class="btn" onclick="pdfPreview('/cases/${id}/preassess-report.pdf','${T('사전심사 보고서')} · '+short(id),'preassess_${short(id)}.pdf')">👁 ${T('미리보기')}</button>
           <button class="btn pri" onclick="serverPdf('/cases/${id}/preassess-report.docx','preassess_${short(id)}.docx')">📝 ${T('워드(.docx) 다운로드')}</button>
           <button class="btn" onclick="materialReport('${id}')">🔬 ${T('성분 리포트')}</button>
           <button class="btn" onclick="serverPdf('/cases/${id}/material-report.pdf','material_report.pdf')">⬇ ${T('성분 PDF')}</button>
