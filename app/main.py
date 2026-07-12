@@ -3345,7 +3345,8 @@ def _factory_profile_form(db, c, f):
     ]
     return {
         "title": "Factory Audit · Company Information 기업정보",
-        "header": {"form_title": "Factory Audit Template — Company Information 기업정보 (%s)" % label},
+        "header": {"bismillah": BISMILLAH_AR, "bismillah_ko": BISMILLAH_KO,
+                   "form_title": "Factory Audit Template — Company Information 기업정보 (%s)" % label},
         "sections": sections,
         "facility_label": label,
     }
