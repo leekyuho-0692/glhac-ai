@@ -3533,6 +3533,14 @@ def _contract_overlay_pdf(db, c, ct, products):
     import fitz
     from datetime import date as _date
     doc = fitz.open(CONTRACT_TEMPLATE_PDF)
+    # 표지(1p) 상단에 bismillah 오버레이 — 원본 양식엔 아랍어가 없어 추가(insert_htmlbox shaping+RTL)
+    try:
+        _css = ("@font-face{font-family:ar;src:url('%s')} "
+                "*{font-family:ar;font-size:15px;direction:rtl;text-align:center;color:#0a3d20}"
+                % _ARABIC_FONT)
+        doc[0].insert_htmlbox(fitz.Rect(106, 16, 506, 44), BISMILLAH_AR, css=_css)
+    except Exception:  # noqa: BLE001
+        pass
     FS, COL = 9, (0, 0, 0.55)   # 채워넣는 값은 파란색으로 구분
     ed = str(ct.effective_date or "")[:10]
     y, m, dd = (ed.split("-") + ["", "", ""])[:3] if "-" in ed else ("", "", "")
