@@ -81,7 +81,7 @@ def test_a_prev_new_split_and_diff():
         aud = _tok(c, "auditor1", "pw")
 
         # 경계 이전(이전 제출본)
-        _upload(c, cli, cid, "manual_v1", "sjph_manual", "AAAA")            # 재제출(해시無)
+        _upload(c, cli, cid, "manual_v1", "sjph_manual", "AAAA")            # 변경(해시 상이)
         _upload(c, cli, cid, "old_doc", "old_only", "OLD")                  # 미재제출 예정
         _upload(c, cli, cid, "kitchen1", "mock_evidence_kitchen", "IMGSAME")  # 동일(해시)
         _upload(c, cli, cid, "line1", "mock_evidence_line", "IMG_A")        # 변경(해시)
@@ -95,7 +95,7 @@ def test_a_prev_new_split_and_diff():
         time.sleep(0.03)
 
         # 경계 이후(새 제출본)
-        _upload(c, cli, cid, "manual_v2", "sjph_manual", "BBBB")            # 재제출(해시無)
+        _upload(c, cli, cid, "manual_v2", "sjph_manual", "BBBB")            # 변경(해시 상이)
         _upload(c, cli, cid, "new_doc", "new_only", "NEW")                  # 신규
         _upload(c, cli, cid, "kitchen2", "mock_evidence_kitchen", "IMGSAME")  # 동일(같은 내용)
         _upload(c, cli, cid, "line2", "mock_evidence_line", "IMG_B")        # 변경(다른 내용)
@@ -106,12 +106,12 @@ def test_a_prev_new_split_and_diff():
         by = {d["doc_type"]: d["status"] for d in cmp["diff"]}
         assert by.get("new_only") == "added", by
         assert by.get("old_only") == "missing", by
-        assert by.get("sjph_manual") == "resubmitted", by            # 해시 미기록 → 재제출
+        assert by.get("sjph_manual") == "changed", by                # 내용 상이(AAAA→BBBB) · 전 업로드 해시기록 후
         assert by.get("mock_evidence_kitchen") == "unchanged", by    # 동일 해시
         assert by.get("mock_evidence_line") == "changed", by         # 상이 해시
         cnt = cmp["counts"]
         assert cnt["added"] == 1 and cnt["missing"] == 1, cnt
-        assert cnt["resubmitted"] == 1 and cnt["unchanged"] == 1 and cnt["changed"] == 1, cnt
+        assert cnt["resubmitted"] == 0 and cnt["unchanged"] == 1 and cnt["changed"] == 2, cnt
         # prev/new 최신본 파일명 확인(latest-wins)
         new_types = {d["doc_type"]: d["filename"] for d in cmp["new_docs"]}
         assert new_types.get("sjph_manual") == "manual_v2", new_types
