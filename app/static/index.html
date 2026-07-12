@@ -2222,11 +2222,7 @@ function sjphStage(id,ko,en,desc,types,chk){
   const canUp=["client","consultant","admin"].includes(ROLE);
   return `<div style="border:1px solid var(--line2);border-radius:10px;padding:12px">
     <div style="font-weight:700;font-size:12.5px">${ko} <span class="en">· ${en}</span></div>
-    <div class="muted small" style="margin-bottom:6px">${desc}</div>${rows}
-    ${canUp?`<div class="btnrow" style="margin-top:6px;gap:6px"><button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 업로드</button><button class="btn" onclick="labelOcr('${id}')">📷 OCR</button></div>
-    <div id="intakeOut_${id}" class="small" style="margin-top:6px">${INTAKE_OUT[id]||''}</div>
-    <div class="dropzone" ondrop="handleDrop(event,'${id}')" ondragover="dzOver(event)" ondragleave="dzLeave(event)" onclick="document.getElementById('dzFile_${id}').click()">📎 ZIP 파일을 여기에 드래그 · 또는 클릭하여 선택</div>
-    <input type="file" id="dzFile_${id}" accept=".zip" style="display:none" onchange="handleDropInput(this,'${id}')">`:''}</div>`;
+    <div class="muted small" style="margin-bottom:6px">${desc}</div>${rows}</div>`;
 }
 async function toggleNotif(){
   const p=document.getElementById("notifPanel");
@@ -3064,9 +3060,14 @@ SCREEN.application=async()=>{
   <div class="card" style="margin-bottom:16px"><h3>② 파일 인테이크 <span class="en">· Intake (단계별) · AI 자동추출</span></h3>
     <div class="body">
       <div class="banner info" style="margin-bottom:10px">ZIP으로 올리면 자동 분류 → 프로필·제품·원재료·문서에 채워집니다. 아래 단계별 필요서류를 확인하세요.</div>
-      <div class="banner info" style="margin-bottom:8px">아래 <b>사전심사·현장심사 단계 영역</b>에 ZIP 파일을 드래그하거나 버튼으로 업로드하세요.</div>
-      ${canApp?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:6px">
-        <button class="btn" onclick="screenText('${id}')">🔤 성분 텍스트 스크리닝</button></div>`:''}
+      <div class="banner info" style="margin-bottom:8px">상단 버튼으로 <b>ZIP 업로드·OCR·성분 스크리닝</b>을 하거나 드래그로 올리세요. 단계별 필요서류는 아래에서 확인합니다.</div>
+      ${canApp?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center">
+        <button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 업로드</button>
+        <button class="btn" onclick="labelOcr('${id}')">📷 OCR</button>
+        <button class="btn" onclick="screenText('${id}')">🔤 성분 텍스트 스크리닝</button>
+        <div class="dropzone" style="flex:1;min-width:220px;margin:0" ondrop="handleDrop(event,'${id}')" ondragover="dzOver(event)" ondragleave="dzLeave(event)" onclick="document.getElementById('dzFile_${id}').click()">📎 ZIP 파일을 여기에 드래그 · 또는 클릭하여 선택</div>
+        <input type="file" id="dzFile_${id}" accept=".zip" style="display:none" onchange="handleDropInput(this,'${id}')"></div>
+      <div id="intakeOut_${id}" class="small" style="margin-bottom:6px">${INTAKE_OUT[id]||''}</div>`:''}
       <div id="intakeOut" class="small" style="margin-bottom:10px">${INTAKE_OUT[id]||'<span class="muted">아직 인테이크 없음</span>'}</div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
         ${sjphStage(id,"사전심사 단계","Pre-Audit","사업자·성분·제품공정 서류",["nib_business_license","factory_registration","product_list","material_list","process_flow"],chk)}
