@@ -7144,7 +7144,14 @@ async def pg_webhook(provider: str, request: Request, db: Session = Depends(get_
     raw = await request.body()
     headers = {k.lower(): v for k, v in request.headers.items()}
     verified = _verify_pg_sig(provider, raw, headers)
-    if verified is False:
+    if verified is None:
+        # [A2] 시크릿 미설정 — 프로덕션에선 미검증 콜백 처리 금지(위조 결제 방지). dev만 허용.
+        if not auth.dev_mode():
+            log.warning("[pg-webhook] %s 시크릿 미설정 — 프로덕션 미검증 콜백 거부", provider)
+            raise HTTPException(501, {"code": "PG_SECRET_UNSET",
+                                      "hint": "GLHAC_PG_WEBHOOK_SECRET 또는 GLHAC_PG_SECRET_<PROVIDER> 설정 필요"})
+        log.info("[pg-webhook] %s 서명 미검증 처리(dev 모드)", provider)
+    elif verified is False:
         raise HTTPException(401, {"code": "BAD_SIGNATURE"})
     try:
         payload = _json.loads(raw or b"{}")
