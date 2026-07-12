@@ -511,3 +511,7 @@ class RegulationTransitionReq(BaseModel):
 class AuditorProfileReq(BaseModel):
     specialty: Optional[str] = None                            # 전문분야(예: 식품 전문)
     languages: List[str] = Field(default_factory=list)         # 지원언어 키 다중(id|en|ar 등)
+
+
+class MenuAssignReq(BaseModel):     # 메뉴 배정 저장 — 설계서 §5·§8
+    menus: List[Dict[str, Any]] = Field(default_factory=list)  # [{menuId, sortOrder, children:[{menuId, sortOrder}]}]

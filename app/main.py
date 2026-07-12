@@ -10415,5 +10415,102 @@ def my_menus(lang: str = "ko", user=Depends(auth.get_current_user), db: Session 
     return out
 
 
+def _menu_tree(db, rms, lang):
+    """배정 {menu_id: sort} → 2뎁스 트리(그룹+children) + 다국어. 설계서 §5."""
+    menus = {m.menu_id: m for m in db.query(models.SysMenu).filter_by(use_yn=True).all()}
+    i18n = {x.menu_id: x.menu_name for x in
+            db.query(models.SysMenuI18n).filter_by(language_code=lang).all()}
+    groups = {}
+    for mid in rms:
+        m = menus.get(mid)
+        if m and m.parent_menu_id:
+            groups.setdefault(m.parent_menu_id, []).append(m)
+    out = []
+    for pid in sorted(groups, key=lambda p: menus[p].default_sort_order if p in menus else 99):
+        g = menus.get(pid)
+        if not g:
+            continue
+        children = sorted(groups[pid], key=lambda c: rms.get(c.menu_id, c.default_sort_order))
+        out.append({"menuId": g.menu_id, "menuCode": g.menu_code,
+                    "menuName": i18n.get(g.menu_id, g.menu_code), "icon": g.icon_name,
+                    "sortOrder": g.default_sort_order,
+                    "children": [{"menuId": c.menu_id, "menuCode": c.menu_code,
+                                  "menuName": i18n.get(c.menu_id, c.menu_code),
+                                  "routePath": c.route_path, "icon": c.icon_name,
+                                  "sortOrder": rms.get(c.menu_id)} for c in children]})
+    return out
+
+
+@app.get("/admin/menus")
+def admin_menus(lang: str = "ko", user=Depends(auth.require_roles("admin")),
+                db: Session = Depends(get_db)):
+    """전체 메뉴 마스터 트리(배정화면 좌측). 설계서 §6.1."""
+    menus = db.query(models.SysMenu).all()
+    i18n = {x.menu_id: x.menu_name for x in
+            db.query(models.SysMenuI18n).filter_by(language_code=lang).all()}
+
+    def node(m):
+        return {"menuId": m.menu_id, "menuCode": m.menu_code,
+                "menuName": i18n.get(m.menu_id, m.menu_code), "menuType": m.menu_type,
+                "routePath": m.route_path, "icon": m.icon_name, "useYn": m.use_yn,
+                "requiredYn": m.required_yn, "systemAdminYn": m.system_admin_yn,
+                "sortOrder": m.default_sort_order}
+    kids = {}
+    for m in menus:
+        if m.parent_menu_id:
+            kids.setdefault(m.parent_menu_id, []).append(m)
+    out = []
+    for r in sorted([m for m in menus if not m.parent_menu_id], key=lambda x: x.default_sort_order):
+        n = node(r)
+        n["children"] = [node(c) for c in sorted(kids.get(r.menu_id, []), key=lambda x: x.default_sort_order)]
+        out.append(n)
+    return out
+
+
+@app.get("/admin/assign/role/{role_id}/menus")
+def get_role_assign(role_id: str, lang: str = "ko", user=Depends(auth.require_roles("admin")),
+                    db: Session = Depends(get_db)):
+    """역할 배정 메뉴 트리(배정화면 우측). 설계서 §6.1."""
+    rms = {rm.menu_id: rm.sort_order for rm in
+           db.query(models.SysRoleMenu).filter_by(role_id=role_id).all()}
+    return _menu_tree(db, rms, lang)
+
+
+@app.put("/admin/assign/role/{role_id}/menus")
+def put_role_assign(role_id: str, body: schemas.MenuAssignReq,
+                    user=Depends(auth.require_roles("admin")), db: Session = Depends(get_db)):
+    """역할 배정 저장 + 검증(설계서 §8): 부모자동·빈그룹제외·중복금지·중지금지·관리자메뉴제한·순서재정렬."""
+    menus = {m.menu_id: m for m in db.query(models.SysMenu).all()}
+    seen = set()
+    rows = []
+    for gi, g in enumerate(body.menus, 1):
+        gm = menus.get(g.get("menuId"))
+        if not gm:
+            continue
+        valid = []
+        for c in (g.get("children") or []):
+            cm = menus.get(c.get("menuId"))
+            if not cm or cm.menu_id in seen:      # §8-3 중복 금지
+                continue
+            if not cm.use_yn:                      # §8-6 사용중지 메뉴 배정 금지
+                continue
+            if cm.system_admin_yn and role_id not in ("admin", "ops"):  # §8-5 관리자 메뉴 제한
+                continue
+            seen.add(cm.menu_id)                   # 즉시 추가 → 그룹 내·간 중복 모두 차단
+            valid.append(cm)
+        if not valid:                              # §8-2 빈 1뎁스 제외
+            continue
+        if gm.menu_id not in seen:                 # §8-1 부모 자동 추가
+            seen.add(gm.menu_id)
+            rows.append((gm.menu_id, gi))
+        for ci, cm in enumerate(valid, 1):
+            rows.append((cm.menu_id, ci))          # §8-7 순서 자동 재정렬
+    db.query(models.SysRoleMenu).filter_by(role_id=role_id).delete()
+    for mid, so in rows:
+        db.add(models.SysRoleMenu(role_id=role_id, menu_id=mid, sort_order=so))
+    db.commit()
+    return {"role_id": role_id, "saved": len(rows)}
+
+
 _static = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/ui", NoCacheStaticFiles(directory=_static, html=True), name="ui")
