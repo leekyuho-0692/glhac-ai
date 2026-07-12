@@ -3097,7 +3097,7 @@ SCREEN.application=async()=>{
   <div class="grid two">
     <div class="card"><h3>① 기업 프로필 · Company Info <span class="en">· 고객 접수 양식(Form.1)</span></h3>
       <div class="body">
-        <div class="btnrow" style="margin-bottom:10px"><button class="btn" onclick="previewCompanyInfo('${id}')">👁 ${T('미리보기')} <span class="en">· Preview</span></button></div>
+        <div class="btnrow" style="margin-bottom:10px;gap:8px"><button class="btn" onclick="previewCompanyInfo('${id}')">👁 ${T('미리보기')} <span class="en">· Preview</span></button>${(facs&&facs.length)?`<button class="btn" onclick="previewFactoryProfile('${id}','${esc((c.facility_ids&&c.facility_ids[0])||facs[0].facility_id)}')">🏭 ${T('공장 미리보기')} <span class="en">· Factory</span></button>`:''}</div>
         <div class="field"><label>기업명 · Company Name</label><input class="v" id="apCompany" value="${esc(c.company_name||"")}">
           <div class="btnrow" style="margin-top:4px"><button class="btn" style="padding:3px 8px;font-size:11px" onclick="sihalalLookup(v('apCompany'))">🔎 ${T('SIHALAL 등록조회')}</button></div>
           <div id="sihalalOut" class="small" style="margin-top:4px"></div></div>
