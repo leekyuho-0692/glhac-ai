@@ -180,9 +180,53 @@ def guard_payment(db, case):
     return g
 
 
+# ---- §5.2 증빙기반 전이 가드 (전면화) ----
+def guard_intake_complete(db, case):
+    """신청 완비(§5.2 submitted→intake_review) — 회사명·NIB·제품 최소 1개."""
+    from .models import Product
+    g = []
+    if not (case.company_name and str(case.company_name).strip()):
+        g.append({"code": "COMPANY_NAME_MISSING"})
+    if not (case.nib and str(case.nib).strip()):
+        g.append({"code": "NIB_MISSING"})
+    if db.query(Product).filter_by(case_id=case.case_id).count() == 0:
+        g.append({"code": "NO_PRODUCT"})
+    return g
+
+
+def guard_documents_approved(db, case):
+    """필수문서 승인(§5.2 document_review→document_approved) — 반려/재작업 문서 없음."""
+    from .models import DocumentAsset
+    g = []
+    bad = db.query(DocumentAsset).filter(
+        DocumentAsset.case_id == case.case_id,
+        DocumentAsset.review_status.in_(("rejected", "rework"))).count()
+    if bad > 0:
+        g.append({"code": "DOCUMENTS_NOT_APPROVED", "unresolved": bad})
+    return g
+
+
+def guard_car_closed(db, case):
+    """시정조치 종결(§5.2 finding_open→car_closed) — 미해결 finding·미종결 CAR 없음."""
+    from .models import AuditFinding, CorrectiveAction
+    g = []
+    open_find = db.query(AuditFinding).filter_by(case_id=case.case_id, status="open").count()
+    if open_find > 0:
+        g.append({"code": "OPEN_FINDINGS", "count": open_find})
+    open_car = db.query(CorrectiveAction).filter(
+        CorrectiveAction.case_id == case.case_id,
+        ~CorrectiveAction.status.in_(("closed", "accepted"))).count()
+    if open_car > 0:
+        g.append({"code": "UNRESOLVED_CAR", "count": open_car})
+    return g
+
+
 GUARDS = {
+    "ai_pre_assessment_ready": guard_intake_complete,        # §5.2 신청 완비
     "final_package_preparation": guard_final_package,
     "document_pre_audit_in_review": guard_payment,
+    "document_pre_audit_approved": guard_documents_approved,  # §5.2 문서 all-approved
+    "audit_closed": guard_car_closed,                        # §5.2 CAR 종결
     "self_declare_eligible": guard_pathway_selfdeclare,
     "self_declaration_submitted": guard_selfdeclare_submit,
     "lph_assignment": guard_reguler_submit,
