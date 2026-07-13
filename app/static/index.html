@@ -418,6 +418,7 @@ const NAV = [
   ["application","📝","신청","Application","신청·Intake"],
   ["assignments","📬","배정함","Assignments","수락·거절"],   // 오디터 배정 수락/거절 루프
   ["auditorWork","🧑‍⚖️","오디터 업무 현황","Auditor Workload","배정 판단·개별 내역"],
+  ["pendamping","🤝","동반자 워크스페이스","Pendamping Workspace","SEHATI 배정·검증"],   // Layer A: PPH 동반자 전용 인박스
   ["notifCenter","🔔","알림 센터","Notifications","내 알림·읽음관리"],   // C13 클라이언트 알림 센터
   ["preassess","🔍","사전심사","Pre-assessment","AI 판정·Assess"],
   ["materials","🧪","원재료","Materials","스크리닝·Screen"],
@@ -449,7 +450,7 @@ const NAV = [
 ];
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
 const NAV_GROUPS=[
-  {label:"개요 · Overview", ids:["caseList","assignments","resubmitCenter","materials","aiExtractions"]},   // 배정함→보완재전송→원재료→AI큐
+  {label:"개요 · Overview", ids:["caseList","pendamping","assignments","resubmitCenter","materials","aiExtractions"]},   // 배정함→보완재전송→원재료→AI큐 (pendamping=동반자 인박스)
   {label:"신청·서류 · Application", ids:["application","preassess"]},   // 회의 2026-07-10: integration 삭제 · 원재료·AI큐는 개요 그룹으로
   {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
@@ -483,6 +484,7 @@ const MENU_ACCESS = {
   vault:["client","consultant","admin"],   // P1-#4 자료함 — 클라이언트 중심(담당 컨설턴트·관리자 열람)
   assignments:["auditor","ops","admin"],   // 오디터=본인 배정함 / ops·admin=거절 회신·응답 현황
   auditorWork:["sharia","ops","admin"],   // 오디터 전체 업무·일정·개별 내역 — 배정 판단용
+  pendamping:["ops","admin"],   // 동반자 워크스페이스 — ops·admin(모니터링) + pendamping_pph(BROLE 예외로 menuAllowed 통과)
   notifCenter:["client","consultant","auditor","sharia","ops","admin"],   // C13 알림 센터(수신함) — notifyLog는 발송측
   audit:    ["client","consultant","auditor","sharia","ops","admin"],
   onsiteCalendar:["client","consultant","auditor","sharia","ops","admin"],   // A08 · 샤리아=일정 모니터링(읽기전용)
@@ -509,6 +511,7 @@ const CASE_SCOPED = new Set(["workflow","application","preassess","materials","a
   "documents","vault","audit","onsiteCalendar","evaluation","invoice","fatwa","certificate","assistant","manualBuilder","resubmitCenter"]);
 
 let ROLE="client", CUR="caseList", FILTERS={}, DETAIL=null;
+let BROLE="applicant";   // 원본 백엔드 역할(BR2ROLE 흡수 전) — pendamping_pph 등 전용 메뉴 판정용
 let RBAC_ACTIONS={};                          // /rbac/actions 파생 — API와 동일 action_id
 function CAN(a){return !!RBAC_ACTIONS[a];}     // UI 버튼 노출은 단일 매트릭스에서 판단
 let CURCASE=null, CASES_CACHE=[];
@@ -823,6 +826,11 @@ function buildNavDynamic(nav){
   nav.innerHTML=html;
   document.getElementById("navfoot").innerHTML=`${T('표시중')} ${shown}<br><span style="color:#64748B">scope · ${T(scopeLabel())}</span>`;
 }
+/* 정적 메뉴 접근 판정 — 기본은 MENU_ACCESS[id]∋ROLE. 단, pendamping 워크스페이스는
+   BR2ROLE이 pendamping_pph→client로 흡수하므로 원본역할(BROLE)로 예외 허용(다른 메뉴 영향 없음). */
+function menuAllowed(id){
+  return !!(MENU_ACCESS[id]&&MENU_ACCESS[id].includes(ROLE)) || (id==="pendamping"&&BROLE==="pendamping_pph");
+}
 function buildNav(){
   const nav=document.getElementById("nav");
   if(MENU_TREE&&MENU_TREE.length){buildNavDynamic(nav);return;}   // DB 동적 메뉴 우선, 없으면 하드코딩
@@ -830,7 +838,7 @@ function buildNav(){
   /* 신청 메뉴 노출 — 사전심사 위(NAV_GROUPS '신청·서류' 그룹 첫 항목). 클라이언트도 좌측 메뉴에서 바로 진입.
      (2026-07-10 비노출 결정 → 재노출) */
   const NAV_HIDDEN=new Set();
-  const allow=id=>byId[id]&&MENU_ACCESS[id]&&MENU_ACCESS[id].includes(ROLE)&&!NAV_HIDDEN.has(id);
+  const allow=id=>byId[id]&&menuAllowed(id)&&!NAV_HIDDEN.has(id);
   const link=([id,ic,ko,en])=>`<a data-id="${id}" role="link" tabindex="0" onclick="go('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}"><span aria-hidden="true">${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`;
   const grp=(label,ids2,list)=>{const op=ids2.includes(CUR);return `<div class="nav-group${op?' open':''}"><div class="nav-group-label" onclick="toggleNavGroup(this)">${label}<span class="nav-caret">▸</span></div><div class="nav-group-items">${list.join("")}</div></div>`;};
   let html="", shown=0;
@@ -858,7 +866,7 @@ function toggleNav(on){
 function go(id){navigate({screen:id});toggleNav(false);}
 function navigate(state, replace){
   if(state.screen){
-    const okStatic=MENU_ACCESS[state.screen]&&MENU_ACCESS[state.screen].includes(ROLE);
+    const okStatic=menuAllowed(state.screen);
     if(!okStatic && !dynAllowed(state.screen))
       state.screen=dynFirstScreen()||NAV.find(([x])=>MENU_ACCESS[x].includes(ROLE))[0];
     DETAIL=null; CUR=state.screen; FILTERS=state.filters||{}; PAGES={};
@@ -3430,6 +3438,27 @@ const UI_STRINGS={
   "리포트 실패":"Laporan Gagal",
   "파일을 드롭하여 업로드":"Seret file untuk mengunggah",
   "드롭 업로드":"Unggah Seret",
+  "SEHATI 자기선언 간이경로":"Jalur Ringkas Self-Declare SEHATI",
+  "소규모 사업자(UMK) 자기선언(SEHATI) 간이경로 — 무료·보조 쿼터, 현장심사 면제 안내":"Jalur ringkas self-declare (SEHATI) untuk pelaku UMK — kuota gratis/subsidi, dikecualikan dari audit lapangan",
+  "적격 셀프체크":"Cek Mandiri Kelayakan",
+  "자기선언서 미리보기/생성":"Pratinjau/Buat Surat Pernyataan",
+  "자기선언서 미리보기 · Self-Declaration":"Pratinjau Surat Pernyataan · Self-Declaration",
+  "셀프체크 중…":"Memeriksa…",
+  "셀프체크 실패":"Cek mandiri gagal",
+  "배정 목록을 불러오지 못했습니다":"Gagal memuat daftar penugasan",
+  "자기선언 검증 체크리스트":"Daftar Periksa Verifikasi Self-Declare",
+  "원재료 · Bahan":"Bahan",
+  "공정 · Proses":"Proses",
+  "서류 · Dokumen":"Dokumen",
+  "진실성 · Kebenaran":"Kebenaran",
+  "케이스 열기":"Buka Kasus",
+  "자기선언서":"Surat Pernyataan",
+  "검증 완료":"Verifikasi Selesai",
+  "배정된 UMK 자기선언 케이스를 검증합니다. 4개 항목을 확인한 뒤 검증 완료하세요.":"Verifikasi kasus self-declare UMK yang ditugaskan. Periksa 4 item lalu selesaikan verifikasi.",
+  "배정 건수":"Jumlah Penugasan",
+  "배정된 케이스가 없습니다":"Tidak ada kasus yang ditugaskan",
+  "4개 항목을 모두 확인하세요":"Centang keempat item terlebih dahulu",
+  "미검증":"Belum diverifikasi",
 };
 function localizeUI(root){
   if(LANG!==2)return;
@@ -4169,6 +4198,46 @@ async function assignRespond(cid,decision){
   catch(e){toast(T('처리 실패')+' · '+((e&&e.code)||''));}
 }
 
+/* ===== SEHATI Layer A(A2) — 동반자(Pendamping/PPH) 전용 워크스페이스 =====
+   GET /pendamping/assignments(배정 인박스) 재사용. 케이스별 자기선언 검증 체크리스트(원재료·공정·서류·진실성)
+   + 검증/반려(기존 verifyPendamping 재사용) + 자기선언서 미리보기(A1). 화면 래퍼(pageHead·warnBanner)는 applyView가 부여. */
+SCREEN.pendamping=async()=>{
+  let data={items:[],count:0};
+  try{data=await API('/pendamping/assignments');}
+  catch(e){return `<div class="card"><div class="body"><div class="banner bad">⛔ ${T('배정 목록을 불러오지 못했습니다')} · ${(e&&e.code)?esc(e.code):''}</div></div></div>`;}
+  const items=data.items||[];
+  const CHK=['원재료 · Bahan','공정 · Proses','서류 · Dokumen','진실성 · Kebenaran'];
+  const rows=items.map(it=>{
+    const id=it.case_id, dec=it.decision, isSD=it.pathway==='self_declare';
+    const decTag=dec?bTag(dec==='verified'?'ok':(dec==='rejected'?'bad':'warn'),dec):tag('mute',T('미검증'));
+    return `<div class="card" style="margin-bottom:12px"><div class="body">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div><b style="font-size:13.5px">${esc(it.company_name||'—')}</b> <span class="muted small">· ${short(id)}</span></div>
+        <div class="btnrow" style="gap:6px">${bTag(isSD?'info':'mute',it.pathway||'—')} ${bTag(statusColor(it.status),it.status||'—')} ${decTag}</div>
+      </div>
+      <div class="muted small" style="margin:10px 0 4px;font-weight:600">${T('자기선언 검증 체크리스트')} <span class="en">· Verifikasi</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;margin-bottom:8px">
+        ${CHK.map(lbl=>`<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px"><input type="checkbox" class="pdchk_${id}" style="width:auto"> ${T(lbl)}</label>`).join('')}
+      </div>
+      <div class="btnrow" style="flex-wrap:wrap;gap:6px">
+        <button class="btn" onclick="openCase('${id}')">📂 ${T('케이스 열기')}</button>
+        ${isSD?`<button class="btn" onclick="previewSelfDeclaration('${id}')">📄 ${T('자기선언서')}</button>`:''}
+        <button class="btn ok" onclick="pendampingVerifyChecked('${id}')">✅ ${T('검증 완료')}</button>
+        <button class="btn bad" onclick="verifyPendamping('${id}','rejected')">↩ ${T('반려')}</button>
+      </div>
+    </div></div>`;
+  }).join('');
+  return `<div class="card" style="margin-bottom:12px"><div class="body">
+      <div class="banner info">${T('배정된 UMK 자기선언 케이스를 검증합니다. 4개 항목을 확인한 뒤 검증 완료하세요.')}</div>
+      <div class="muted small" style="margin-top:6px">${T('배정 건수')} · <b>${items.length}</b></div>
+    </div></div>`+(items.length?rows:`<div class="card"><div class="body"><div class="muted small">${T('배정된 케이스가 없습니다')}</div></div></div>`);
+};
+/* 4개 항목 전체 확인 시에만 검증(verified) — 기존 verifyPendamping 재사용(applyView로 목록 갱신) */
+function pendampingVerifyChecked(id){
+  const boxes=[...document.querySelectorAll('.pdchk_'+id)];
+  if(boxes.length&&!boxes.every(b=>b.checked)){toast(T('4개 항목을 모두 확인하세요'));return;}
+  verifyPendamping(id,'verified');
+}
 /* C13 알림 센터 — 수신 알림 타임라인·타입 필터·읽음 관리(전용 화면). 벨 드롭다운의 전체 뷰 */
 let NOTIF_FILTER="all";
 const NC_ICON={"certificate_issued":["ok","🏅"],"audit_scheduled":["info","📅"],"payment_confirmed":["ok","💰"],
@@ -4547,7 +4616,22 @@ SCREEN.application=async()=>{
   const pens=penyeliaResp.items||[];
   let facs=[];try{facs=await API(`/orgs/${org}/facilities`);}catch(_){}
   const canApp=["client","consultant","admin"].includes(ROLE);
+  const isSD=c.pathway==="self_declare";                                   // A1/A3: 자기선언(SEHATI) 경로
+  const sdPromote=isSD||!c.pathway||c.pathway==="undetermined";            // A3: 경로 미확정이면 SD-first 안내 노출
   return `
+  ${sdPromote?`<div class="card" style="margin-bottom:16px;border-left:3px solid var(--ok)"><div class="body">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+      <b style="font-size:13.5px">🕌 ${T('SEHATI 자기선언 간이경로')} <span class="en">· Self-Declare</span></b>
+      ${bTag(isSD?'info':'mute',c.pathway||'undetermined')}
+    </div>
+    <div class="banner info" style="margin-bottom:10px">${T('소규모 사업자(UMK) 자기선언(SEHATI) 간이경로 — 무료·보조 쿼터, 현장심사 면제 안내')}</div>
+    <div class="btnrow" style="flex-wrap:wrap;gap:8px">
+      <button class="btn" onclick="sehatiSelfCheck('${id}')">✅ ${T('적격 셀프체크')} <span class="en">· Self-check</span></button>
+      ${isSD?`<button class="btn pri" onclick="previewSelfDeclaration('${id}')">📄 ${T('자기선언서 미리보기/생성')} <span class="en">· Self-Declaration</span></button>
+      <button class="btn" onclick="serverPdf('/cases/${id}/self-declaration.pdf','self_declaration.pdf')">⬇ PDF</button>`:''}
+    </div>
+    <div id="sehatiAssessOut_${id}" style="margin-top:10px">${assessRender(id)}</div>
+  </div></div>`:''}
   <div class="card" style="margin-bottom:16px"><h3>② 파일 인테이크 <span class="en">· Intake (단계별) · AI 자동추출</span></h3>
     <div class="body">
       <div class="banner info" style="margin-bottom:10px">ZIP으로 올리면 자동 분류 → 프로필·제품·원재료·문서에 채워집니다. 아래 단계별 필요서류를 확인하세요.</div>
@@ -4931,6 +5015,31 @@ async function previewFactoryProfile(id,fid){
     document.getElementById("reportPdfBtn").onclick=()=>serverPdf(`/cases/${id}/facilities/${fid}/docs/factory-profile.pdf`,"factory_profile.pdf");
     document.getElementById("reportOverlay").style.display="grid";
   }catch(e){toast("미리보기 실패 · "+((e&&e.code)||""));}
+}
+/* ===== SEHATI Layer A — 자기선언서 미리보기(A1) · 적격 셀프체크(A3) ===== */
+/* preview 라우트는 HTML 조각(HTMLResponse)을 반환 → API()(json 파서) 대신 fetch+text 사용, reportOverlay 재사용. */
+async function previewSelfDeclaration(id){
+  try{
+    const r=await fetch(`/cases/${id}/self-declaration/preview`,{headers:{Authorization:"Bearer "+token()}});
+    if(!r.ok){toast(T('미리보기 실패'));return;}
+    const frag=await r.text();
+    document.getElementById("reportTitle").textContent=T('자기선언서 미리보기 · Self-Declaration');
+    document.getElementById("reportBody").innerHTML=frag;   // 서버가 html.escape로 이스케이프한 조각
+    const pb=document.getElementById("reportPdfBtn");
+    pb.style.display="";pb.textContent="📄 "+T('PDF 저장');
+    pb.onclick=()=>serverPdf(`/cases/${id}/self-declaration.pdf`,"self_declaration.pdf");
+    document.getElementById("reportOverlay").style.display="grid";
+  }catch(e){toast(T('미리보기 실패'));}
+}
+/* 적격 셀프체크 — 기존 /pathway/assess + assessRender 재사용. 배너 내 인라인 표시(전체 재렌더 회피). */
+async function sehatiSelfCheck(id){
+  const out=document.getElementById('sehatiAssessOut_'+id);
+  if(out)out.innerHTML='<span class="muted small">'+T('셀프체크 중…')+'</span>';
+  try{
+    const r=await API(`/cases/${id}/pathway/assess`,{method:"POST",body:"{}"});
+    ASSESS_CACHE[id]=r;
+    if(out)out.innerHTML=assessRender(id);else applyView();
+  }catch(e){toast(T('셀프체크 실패')+' · '+((e&&e.code)||''));}
 }
 async function saveMatSnapshot(id){
   const checked=[...document.querySelectorAll('.matChk:checked')].map(el=>el.getAttribute('data-mid')).filter(Boolean);
@@ -8835,6 +8944,7 @@ async function boot(){
   try{LANG=parseInt(localStorage.getItem("glhac_lang")||"0",10)||0;applyLang();}catch(_){}
   let me;try{me=await API("/auth/me");}catch(_){logout();return;}
   const br=me.role||localStorage.getItem("glhac_role")||"applicant";
+  BROLE=br;   // 원본 백엔드 역할 보존(전용 메뉴 판정)
   ROLE=BR2ROLE[br]||"client";
   try{const rb=await API("/rbac/actions");RBAC_ACTIONS=rb.actions||{};}catch(_){RBAC_ACTIONS={};}  // 단일 매트릭스 파생
   document.getElementById("userPill").innerHTML=`👤 <b>${esc(me.username||localStorage.getItem("glhac_user")||"")}</b> · ${esc(ROLE_DEF[ROLE].ko)}`;

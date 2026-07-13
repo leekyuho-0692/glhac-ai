@@ -10111,6 +10111,160 @@ def verify_pendamping(case_id: str, body: schemas.PendampingVerify,
     return {"decision": body.decision, "switched_to_reguler": switched, "auto_advanced": advanced}
 
 
+# ---------- 동반자(PPH) 배정 인박스 ----------
+@app.get("/pendamping/assignments")
+def pendamping_assignments(user=Depends(auth.require_roles("pendamping_pph", "operator", "admin")),
+                           db: Session = Depends(get_db)):
+    """동반자(PPH) 전용 인박스 — pendamping_assignment(케이스별)에서 로그인 동반자 배정건 집약(스키마 무변경).
+    pendamping_pph: 본인(uid) 배정건만 / operator·admin: 전체(모니터링). 케이스별 최신 배정 1건(assignment_id desc)."""
+    q = db.query(models.PendampingAssignment)
+    if user["role"] == "pendamping_pph":
+        q = q.filter(models.PendampingAssignment.pendamping_id == user["uid"])
+    rows = q.order_by(models.PendampingAssignment.assignment_id.desc()).all()
+    seen, items = set(), []
+    for pa in rows:
+        if pa.case_id in seen:
+            continue
+        seen.add(pa.case_id)
+        c = db.get(models.CaseApplication, pa.case_id)
+        if not c:
+            continue
+        try:
+            auth.check_org(user, c)
+        except HTTPException:
+            continue   # org 격리 — 타 조직 배정건은 노출하지 않음
+        items.append({
+            "case_id": c.case_id, "company_name": c.company_name,
+            "status": c.status, "pathway": c.pathway,
+            "pendamping_id": pa.pendamping_id, "decision": pa.decision,   # None|verified|rejected|rework
+            "note": pa.note,
+            "verified_at": pa.verified_at.isoformat() if pa.verified_at else None,
+        })
+    return {"items": items, "count": len(items)}
+
+
+# ---------- 자기선언서 (Surat Pernyataan Pelaku Usaha · SEHATI) ----------
+# SEHATI self-declare 필수 산출물(사업자 자기선언서). 스키마 무변경 — _render_pdf_rich 재사용 +
+# GeneratedDocument(doc_type=self_declaration)로 1건 등록. 서명은 내부 무결성 서명(공인 전자서명 아님).
+_SD_STATEMENTS = [
+    ("당사 제품은 할랄 원재료만을 사용하며 하람(haram)·나지스(najis) 성분을 포함하지 않습니다.",
+     "Produk kami hanya menggunakan bahan halal dan tidak mengandung bahan haram/najis."),
+    ("제조공정은 간이·저위험(low-risk) 공정이며, 비할랄과의 교차오염 방지를 준수합니다.",
+     "Proses produksi bersifat sederhana/berisiko rendah dan menjaga pencegahan kontaminasi dengan bahan non-halal."),
+    ("당사는 할랄제품보증시스템(SJPH)을 수립·이행·유지합니다.",
+     "Kami menyusun, menerapkan, dan memelihara Sistem Jaminan Produk Halal (SJPH)."),
+    ("본 자기선언 및 제출한 모든 정보는 진실하며, 허위가 있을 경우 관련 법령에 따른 책임을 부담합니다.",
+     "Seluruh informasi dalam pernyataan ini benar, dan kami bersedia bertanggung jawab secara hukum apabila terdapat ketidakbenaran."),
+]
+
+
+def _self_declaration_guard(c):
+    if c.pathway != "self_declare":
+        raise HTTPException(400, {"code": "NOT_SELF_DECLARE", "pathway": c.pathway,
+                                  "hint": "자기선언서는 self_declare(SEHATI) 경로 케이스에만 발급됩니다."})
+
+
+def _pendamping_name(db, c):
+    """최신 배정 동반자 이름(assignment_id desc, verify와 동일 정렬). 없으면 빈값."""
+    pa = (db.query(models.PendampingAssignment).filter_by(case_id=c.case_id)
+          .order_by(models.PendampingAssignment.assignment_id.desc()).first())
+    if not pa:
+        return ""
+    u = db.query(models.User).filter_by(user_id=pa.pendamping_id).first()
+    return (u.username if u else pa.pendamping_id) or ""
+
+
+def _self_declaration_blocks(db, c):
+    rep = c.responsible_person or (c.profile_ext or {}).get("pic_name") or ""
+    pd_name = _pendamping_name(db, c)
+    blocks = [
+        {"type": "heading", "text": "SURAT PERNYATAAN PELAKU USAHA · 사업자 자기선언서", "level": 1},
+        {"type": "para", "text": "SEHATI Self-Declare — 자기선언(간이·저위험) 할랄 경로 · Jalur sertifikasi halal self-declare"},
+        {"type": "heading", "text": "사업자 정보 · Data Pelaku Usaha", "level": 2},
+        {"type": "kv", "label": "회사명 · Nama Usaha", "value": c.company_name or "-"},
+        {"type": "kv", "label": "NIB · Nomor Induk Berusaha", "value": c.nib or "-"},
+        {"type": "kv", "label": "주소 · Alamat", "value": c.address or "-"},
+        {"type": "kv", "label": "대표/책임자 · Penanggung Jawab", "value": rep or "-"},
+        {"type": "heading", "text": "자기선언 내용 · Isi Pernyataan", "level": 2},
+        {"type": "para", "text": "본인은 위 사업자의 책임자로서 다음을 자기선언합니다 · "
+                                 "Saya, sebagai penanggung jawab usaha di atas, dengan ini menyatakan:"},
+    ]
+    for i, (ko, idn) in enumerate(_SD_STATEMENTS, 1):
+        blocks.append({"type": "para", "text": "%d. %s" % (i, ko)})
+        blocks.append({"type": "para", "text": "    %s" % idn})
+    blocks.append({"type": "spacer", "h": 10})
+    blocks.append({"type": "signature", "slots": [
+        {"role": "사업자 대표 · Pelaku Usaha", "name": rep or "", "signed": False},
+        {"role": "동반자 · Pendamping (PPH)", "name": pd_name or "", "signed": False},
+    ]})
+    blocks.append({"type": "spacer", "h": 8})
+    # Phase 0 내부서명 고지 — 자기선언서에도 disclaimer 표기(공인 전자서명 아님)
+    blocks.append({"type": "para", "text": "서명 성격 · Sifat tanda tangan : " + _SIG_NATURE})
+    blocks.append({"type": "para", "text": _SIG_VALID_MEANING})
+    blocks.append({"type": "para", "text": _LEGAL_DISCLAIMER_PDF})
+    return blocks
+
+
+@app.get("/cases/{case_id}/self-declaration/preview")
+def self_declaration_preview(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """자기선언서 미리보기(HTML 조각) — self_declare 경로 전용. read-only·org격리."""
+    import html
+    from fastapi.responses import HTMLResponse
+    c = _get_case(db, case_id, user)
+    _self_declaration_guard(c)
+    rep = c.responsible_person or (c.profile_ext or {}).get("pic_name") or "-"
+    pd_name = _pendamping_name(db, c) or "-"
+
+    def e(x):
+        return html.escape(str(x if x is not None else "-"))
+
+    info = [("회사명 · Nama Usaha", c.company_name), ("NIB · Nomor Induk Berusaha", c.nib),
+            ("주소 · Alamat", c.address), ("대표/책임자 · Penanggung Jawab", rep)]
+    info_rows = "".join(
+        "<tr><th style='text-align:left;padding:5px 12px;color:#475569;white-space:nowrap'>%s</th>"
+        "<td style='padding:5px 12px'>%s</td></tr>" % (e(k), e(v)) for k, v in info)
+    stmts = "".join(
+        "<li style='margin:6px 0'><div>%s</div><div style='color:#64748b'>%s</div></li>" % (e(ko), e(idn))
+        for ko, idn in _SD_STATEMENTS)
+    frag = (
+        "<div style='font-size:13.5px;line-height:1.7'>"
+        "<h2 style='margin:0 0 4px'>SURAT PERNYATAAN PELAKU USAHA · 사업자 자기선언서</h2>"
+        "<div style='color:#64748b;margin-bottom:10px'>SEHATI Self-Declare — 자기선언(간이·저위험) 할랄 경로</div>"
+        "<table style='border-collapse:collapse;margin-bottom:12px'>%s</table>"
+        "<div style='font-weight:600;margin:8px 0'>자기선언 내용 · Isi Pernyataan</div>"
+        "<div style='margin-bottom:4px'>본인은 위 사업자의 책임자로서 다음을 자기선언합니다 · "
+        "Saya, sebagai penanggung jawab usaha di atas, dengan ini menyatakan:</div>"
+        "<ol style='margin:0 0 12px 18px;padding:0'>%s</ol>"
+        "<div style='display:flex;gap:24px;margin:14px 0'>"
+        "<div>사업자 대표 · Pelaku Usaha<br><b>%s</b></div>"
+        "<div>동반자 · Pendamping (PPH)<br><b>%s</b></div></div>"
+        "<div style='border-top:1px dashed #cbd5e1;padding-top:8px;color:#64748b;font-size:12px'>"
+        "⚠ %s<br>%s<br>%s</div></div>"
+        % (info_rows, stmts, e(rep), e(pd_name),
+           e(_SIG_NATURE), e(_SIG_VALID_MEANING), e(_LEGAL_DISCLAIMER_PDF)))
+    return HTMLResponse(content=frag)
+
+
+@app.get("/cases/{case_id}/self-declaration.pdf")
+def self_declaration_pdf(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """자기선언서 PDF — self_declare 경로 전용. _render_pdf_rich 재사용 + GeneratedDocument 1건 등록(내부서명 고지 포함)."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    _self_declaration_guard(c)
+    blocks = _self_declaration_blocks(db, c)
+    # GeneratedDocument 등록(최초 1회) — 반복 다운로드로 버전 폭증하지 않도록 존재 시 재사용.
+    exists = db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type="self_declaration").first()
+    if not exists:
+        content = "\n".join("%d. %s / %s" % (i, ko, idn) for i, (ko, idn) in enumerate(_SD_STATEMENTS, 1))
+        _save_gendoc(db, c, "self_declaration", content, user, status="draft")
+        db.commit()
+    pdf = _render_pdf_rich("SURAT PERNYATAAN PELAKU USAHA · 자기선언서", blocks,
+                           subtitle=(c.company_name or ""),
+                           footer="GL-HAC AI · Self-Declaration " + case_id[:8])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=self_declaration_%s.pdf" % case_id[:8]})
+
+
 # ---------- SIHALAL 식별자 ----------
 @app.post("/cases/{case_id}/sihalal/identity/link")
 def sihalal_link(case_id: str, body: schemas.SihalalLink,
