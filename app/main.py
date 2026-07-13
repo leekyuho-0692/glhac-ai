@@ -10348,10 +10348,74 @@ def del_facility(facility_id: str, user=Depends(auth.get_current_user), db: Sess
 
 
 # ===== 동적 메뉴 시스템 (설계서 §3~§5) =====
+def _ensure_menu_assign(db):
+    """'메뉴 배정 관리'(관리자 통합 배정) — admin 역할만 노출.
+    개인화는 '내 메뉴 설정'(_ensure_my_menu, 전체 역할)으로 분리."""
+    existing = db.query(models.SysMenu).filter_by(menu_code="MENU_ASSIGN").first()
+    if existing:   # admin 외 역할 배정 제거(통합 배정은 관리자 전용) + admin 보장
+        db.query(models.SysRoleMenu).filter(
+            models.SysRoleMenu.menu_id == existing.menu_id,
+            models.SysRoleMenu.role_id != "admin").delete(synchronize_session=False)
+        if not db.query(models.SysRoleMenu).filter_by(
+                menu_id=existing.menu_id, role_id="admin").first():
+            db.add(models.SysRoleMenu(role_id="admin", menu_id=existing.menu_id, sort_order=1))
+        db.commit()
+        return
+    grp = db.query(models.SysMenu).filter_by(menu_code="GRP_ADMIN").first()
+    if not grp:
+        gid = models.uid()
+        grp = models.SysMenu(menu_id=gid, menu_code="GRP_ADMIN", menu_depth=1,
+                             menu_type="folder", icon_name="⚙️", default_sort_order=99)
+        db.add(grp)
+        for lang, name in [("ko", "시스템 관리"), ("en", "Administration"), ("id", "Administrasi")]:
+            db.add(models.SysMenuI18n(menu_id=gid, language_code=lang, menu_name=name))
+        db.flush()
+    mid = models.uid()
+    db.add(models.SysMenu(menu_id=mid, menu_code="MENU_ASSIGN", parent_menu_id=grp.menu_id,
+                          menu_depth=2, menu_type="screen", route_path="menuAssign",
+                          icon_name="🗂", default_sort_order=1, system_admin_yn=True))
+    for lang, name in [("ko", "메뉴 배정 관리"), ("en", "Menu Assignment"), ("id", "Penetapan Menu")]:
+        db.add(models.SysMenuI18n(menu_id=mid, language_code=lang, menu_name=name))
+    db.add(models.SysRoleMenu(role_id="admin", menu_id=mid, sort_order=1))   # 관리자 전용
+    db.commit()
+
+
+def _ensure_my_menu(db):
+    """'내 메뉴 설정'(개인화) 사이드바 노출 + 전체 역할 배정(idempotent).
+    각 사용자가 자기 좌측 메뉴 구성·순서를 본인 계정에서 개별 관리 → sys_user_menu(본인 id)."""
+    _ALL = ("client", "consultant", "auditor", "sharia", "ops", "admin")
+    existing = db.query(models.SysMenu).filter_by(menu_code="MY_MENU").first()
+    if existing:
+        have = {rm.role_id for rm in
+                db.query(models.SysRoleMenu).filter_by(menu_id=existing.menu_id).all()}
+        added = False
+        for role in _ALL:
+            if role not in have:
+                db.add(models.SysRoleMenu(role_id=role, menu_id=existing.menu_id, sort_order=9))
+                added = True
+        if added:
+            db.commit()
+        return
+    grp = db.query(models.SysMenu).filter_by(menu_code="GRP_7").first()   # 내 정보 관리
+    if not grp:
+        return
+    mid = models.uid()
+    db.add(models.SysMenu(menu_id=mid, menu_code="MY_MENU", parent_menu_id=grp.menu_id,
+                          menu_depth=2, menu_type="screen", route_path="myMenu",
+                          icon_name="⚙", default_sort_order=9))
+    for lang, name in [("ko", "내 메뉴 설정"), ("en", "My Menu"), ("id", "Menu Saya")]:
+        db.add(models.SysMenuI18n(menu_id=mid, language_code=lang, menu_name=name))
+    for role in _ALL:
+        db.add(models.SysRoleMenu(role_id=role, menu_id=mid, sort_order=9))
+    db.commit()
+
+
 def seed_menus(db):
     """현행 메뉴 구조(menu_seed.json)를 DB에 시드 — idempotent. 설계서 §10 마이그레이션."""
     import json as _json
     if db.query(models.SysMenu).first():
+        _ensure_menu_assign(db)   # 이미 시드됨 — 관리 메뉴만 보강(사이드바 노출)
+        _ensure_my_menu(db)       # '내 메뉴 설정'(개인화) 보강
         return
     path = os.path.join(os.path.dirname(__file__), "menu_seed.json")
     if not os.path.exists(path):
@@ -10376,6 +10440,8 @@ def seed_menus(db):
         if mid:
             db.add(models.SysRoleMenu(role_id=rm["role"], menu_id=mid, sort_order=rm["sort"]))
     db.commit()
+    _ensure_menu_assign(db)   # 신규 시드에도 '메뉴 배정 관리' 사이드바 노출
+    _ensure_my_menu(db)       # '내 메뉴 설정'(개인화) 사이드바 노출
 
 
 _BR2ROLE_MENU = {"applicant": "client", "consultant": "consultant", "auditor": "auditor",
@@ -10388,12 +10454,18 @@ def my_menus(lang: str = "ko", user=Depends(auth.get_current_user), db: Session 
     """로그인 사용자 동적 메뉴 트리 — 사용자별 배정(있으면) > 역할 기본. 설계서 §4·§5·§3.4."""
     ums = {um.menu_id: um.sort_order for um in
            db.query(models.SysUserMenu).filter_by(user_id=user["uid"], visible_yn=True).all()}
-    if ums:                                  # P4: 사용자별 배정이 있으면 우선(역할 기본 override)
+    if ums:                                  # P4: 사용자별 배정 우선
         rms = ums
     else:
-        role = _BR2ROLE_MENU.get(user["role"], user["role"])
-        rms = {rm.menu_id: rm.sort_order for rm in
-               db.query(models.SysRoleMenu).filter_by(role_id=role, visible_yn=True).all()}
+        oms = ({om.menu_id: om.sort_order for om in
+                db.query(models.SysOrgMenu).filter_by(org_id=user.get("org_id"), visible_yn=True).all()}
+               if user.get("org_id") else {})
+        if oms:                              # P5: 기관별 배정(역할 override)
+            rms = oms
+        else:                                # 역할 기본
+            role = _BR2ROLE_MENU.get(user["role"], user["role"])
+            rms = {rm.menu_id: rm.sort_order for rm in
+                   db.query(models.SysRoleMenu).filter_by(role_id=role, visible_yn=True).all()}
     if not rms:
         return []
     return _menu_tree(db, rms, lang)
@@ -10423,6 +10495,51 @@ def _menu_tree(db, rms, lang):
                                   "routePath": c.route_path, "icon": c.icon_name,
                                   "sortOrder": rms.get(c.menu_id)} for c in children]})
     return out
+
+
+def _my_allowed_menus(db, user):
+    """내가 개인화할 수 있는 범위 = 내 역할(role) 배정 메뉴. 권한 밖 메뉴 노출 방지."""
+    role = _BR2ROLE_MENU.get(user["role"], user["role"])
+    return {rm.menu_id: rm.sort_order for rm in
+            db.query(models.SysRoleMenu).filter_by(role_id=role, visible_yn=True).all()}
+
+
+@app.get("/me/menu-config")
+def my_menu_config(lang: str = "ko", user=Depends(auth.get_current_user),
+                   db: Session = Depends(get_db)):
+    """내 메뉴 개인화 데이터 — master(내 역할 허용 메뉴) + assigned(내 현재 구성).
+    각 사용자가 본인 계정에서 자기 좌측 메뉴 구성·순서를 개별 관리."""
+    role_rms = _my_allowed_menus(db, user)
+    master = _menu_tree(db, role_rms, lang)
+    ums = {um.menu_id: um.sort_order for um in
+           db.query(models.SysUserMenu).filter_by(user_id=user["uid"], visible_yn=True).all()}
+    assigned = _menu_tree(db, ums, lang) if ums else master   # 미설정이면 역할 기본이 시작점
+    return {"master": master, "assigned": assigned}
+
+
+@app.put("/me/menu-config")
+def save_my_menu_config(body: schemas.MenuAssignReq, user=Depends(auth.get_current_user),
+                        db: Session = Depends(get_db)):
+    """내 메뉴 개인화 저장 — 내 역할 허용 메뉴로 범위 제한(권한 상승 방지). sys_user_menu(본인 id)."""
+    allowed = set(_my_allowed_menus(db, user))
+    for g in body.menus:                       # 역할 허용 밖 항목 제거
+        g["children"] = [c for c in (g.get("children") or []) if c.get("menuId") in allowed]
+    menus = {m.menu_id: m for m in db.query(models.SysMenu).all()}
+    role = _BR2ROLE_MENU.get(user["role"], user["role"])
+    rows = _save_assign_rows(db, menus, body, role)   # 빈그룹·중복·중지 검증(§8)
+    db.query(models.SysUserMenu).filter_by(user_id=user["uid"]).delete()
+    for mid, so in rows:
+        db.add(models.SysUserMenu(user_id=user["uid"], menu_id=mid, sort_order=so))
+    db.commit()
+    return {"saved": len(rows)}
+
+
+@app.post("/me/menu-config/reset")
+def reset_my_menu_config(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """내 메뉴를 역할 기본값으로 초기화 — 내 sys_user_menu 삭제(역할 기본으로 폴백)."""
+    n = db.query(models.SysUserMenu).filter_by(user_id=user["uid"]).delete()
+    db.commit()
+    return {"reset": n}
 
 
 @app.get("/admin/menus")
@@ -10561,6 +10678,58 @@ def reset_user_to_role(user_id: str, user=Depends(auth.require_roles("admin")),
         db.add(models.SysUserMenu(user_id=user_id, menu_id=rm.menu_id, sort_order=rm.sort_order))
     db.commit()
     return {"user_id": user_id, "copied": len(rms), "role": role}
+
+
+# ===== P5: 기관별 배정 =====
+@app.get("/admin/assign/org/{org_id}/menus")
+def get_org_assign(org_id: str, lang: str = "ko", user=Depends(auth.require_roles("admin")),
+                   db: Session = Depends(get_db)):
+    """기관별 배정 메뉴 트리 — 설계서 §3.5."""
+    oms = {om.menu_id: om.sort_order for om in
+           db.query(models.SysOrgMenu).filter_by(org_id=org_id).all()}
+    return _menu_tree(db, oms, lang)
+
+
+@app.put("/admin/assign/org/{org_id}/menus")
+def put_org_assign(org_id: str, body: schemas.MenuAssignReq,
+                   user=Depends(auth.require_roles("admin")), db: Session = Depends(get_db)):
+    """기관별 배정 저장 — 설계서 §3.5·§8. 기관은 다양한 역할 포함 → 관리자메뉴 허용."""
+    menus = {m.menu_id: m for m in db.query(models.SysMenu).all()}
+    rows = _save_assign_rows(db, menus, body, "admin")
+    db.query(models.SysOrgMenu).filter_by(org_id=org_id).delete()
+    for mid, so in rows:
+        db.add(models.SysOrgMenu(org_id=org_id, menu_id=mid, sort_order=so))
+    db.commit()
+    return {"org_id": org_id, "saved": len(rows)}
+
+
+# ===== P6: 기능 권한 (메뉴 노출과 분리) =====
+_PERM_FIELDS = ["view", "create", "update", "delete", "submit", "approve", "sign", "download"]
+
+
+@app.get("/admin/assign/{atype}/{target_id}/permissions")
+def get_permissions(atype: str, target_id: str, user=Depends(auth.require_roles("admin")),
+                    db: Session = Depends(get_db)):
+    """메뉴 기능 권한 조회(atype=role|org|user) — 설계서 §3.6·§9."""
+    out = {}
+    for p in db.query(models.SysMenuPermission).filter_by(
+            assignment_type=atype.upper(), target_id=target_id).all():
+        out[p.menu_id] = {f: bool(getattr(p, "can_" + f)) for f in _PERM_FIELDS}
+    return out
+
+
+@app.put("/admin/assign/{atype}/{target_id}/permissions")
+def put_permissions(atype: str, target_id: str, body: schemas.MenuPermissionReq,
+                    user=Depends(auth.require_roles("admin")), db: Session = Depends(get_db)):
+    """메뉴 기능 권한 저장 — 설계서 §3.6·§9. {menu_id: {view,create,...}}."""
+    db.query(models.SysMenuPermission).filter_by(
+        assignment_type=atype.upper(), target_id=target_id).delete()
+    for mid, perm in (body.permissions or {}).items():
+        kw = {"can_" + f: bool((perm or {}).get(f, False)) for f in _PERM_FIELDS}
+        db.add(models.SysMenuPermission(assignment_type=atype.upper(), target_id=target_id,
+                                        menu_id=mid, **kw))
+    db.commit()
+    return {"saved": len(body.permissions or {})}
 
 
 _static = os.path.join(os.path.dirname(__file__), "static")

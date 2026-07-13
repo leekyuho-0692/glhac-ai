@@ -807,6 +807,11 @@ async function loadMenus(){
   try{const r=await API('/me/menus?lang='+(LANG===2?'id':'ko'));MENU_TREE=(Array.isArray(r)&&r.length)?r:null;}
   catch(_){MENU_TREE=null;}
 }
+/* 동적 메뉴(GET /me/menus)에 노출된 routePath면 접근 허용. 하드코딩 MENU_ACCESS 미등록 화면(menuAssign 등) 폴백 방지. */
+function dynAllowed(id){return !!(MENU_TREE&&MENU_TREE.some(g=>(g.children||[]).some(c=>c.routePath===id)));}
+function dynFirstScreen(){if(MENU_TREE)for(const g of MENU_TREE)for(const c of (g.children||[]))if(c.routePath)return c.routePath;return null;}
+/* NAV(하드코딩)에 없는 동적 전용 화면의 아이콘/이름 — pageHead·crumb 폴백용 */
+function dynMenuInfo(id){if(MENU_TREE)for(const g of MENU_TREE)for(const c of (g.children||[]))if(c.routePath===id)return {icon:c.icon||'📄',name:c.menuName||id};return {icon:'📄',name:id};}
 function buildNavDynamic(nav){
   let html="",shown=0;
   (MENU_TREE||[]).forEach(g=>{
@@ -853,8 +858,9 @@ function toggleNav(on){
 function go(id){navigate({screen:id});toggleNav(false);}
 function navigate(state, replace){
   if(state.screen){
-    if(!MENU_ACCESS[state.screen] || !MENU_ACCESS[state.screen].includes(ROLE))
-      state.screen=NAV.find(([x])=>MENU_ACCESS[x].includes(ROLE))[0];
+    const okStatic=MENU_ACCESS[state.screen]&&MENU_ACCESS[state.screen].includes(ROLE);
+    if(!okStatic && !dynAllowed(state.screen))
+      state.screen=dynFirstScreen()||NAV.find(([x])=>MENU_ACCESS[x].includes(ROLE))[0];
     DETAIL=null; CUR=state.screen; FILTERS=state.filters||{}; PAGES={};
   }
   if(state.detail){DETAIL={id:state.detail, tab:state.tab||"overview"};}
@@ -877,7 +883,9 @@ window.addEventListener("popstate",e=>{
 });
 function pageHead(id){
   const n=NAV.find(x=>x[0]===id);
-  const roleNames=MENU_ACCESS[id].map(r=>T(ROLE_DEF[r].ko)).join(" · ");
+  if(!n){const d=dynMenuInfo(id);return `<div class="page-h"><span style="font-size:22px">${d.icon}</span>
+    <h1>${esc(d.name)}</h1><span class="scope-pill">👁 ${T(scopeLabel())}</span></div>`;}
+  const roleNames=(MENU_ACCESS[id]||[]).map(r=>T(ROLE_DEF[r].ko)).join(" · ");
   return `<div class="page-h"><span style="font-size:22px">${n[1]}</span>
     <h1>${n[2]}</h1><span class="en">· ${n[3]}</span>
     <span class="scope-pill">👁 ${T(scopeLabel())}</span></div>
@@ -887,6 +895,16 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "역할별":"Per Peran",
+  "기관별":"Per Lembaga",
+  "사용자별":"Per Pengguna",
+  "기관":"Lembaga",
+  "기관을 선택하세요":"Silakan pilih lembaga",
+  "내 메뉴 설정":"Pengaturan Menu Saya",
+  "내 메뉴":"Menu Saya",
+  "기본값":"Bawaan",
+  "내가 쓰는 좌측 메뉴의 구성과 순서를 직접 정합니다. 저장하면 내 화면에 바로 반영됩니다.":"Atur sendiri susunan dan urutan menu kiri Anda. Perubahan langsung diterapkan setelah disimpan.",
+  "내 메뉴를 역할 기본값으로 되돌립니다. 진행할까요?":"Kembalikan menu saya ke nilai bawaan peran. Lanjutkan?",
   "' 관련 등록":"' Daftar Terkait",
   "' 신규 (등록 없음)":"' Baru (Tidak Ada Daftar)",
   "'이 사업자등록증 '":"' Bukti Pendaftaran Usaha'",
@@ -3415,7 +3433,7 @@ async function applyView(){
   }
   document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("active",a.dataset.id===CUR));
   const n=NAV.find(x=>x[0]===CUR);
-  document.getElementById("crumb").innerHTML=`<b>${n[2]}</b> · ${n[3]}`;
+  document.getElementById("crumb").innerHTML=n?`<b>${n[2]}</b> · ${n[3]}`:`<b>${esc(dynMenuInfo(CUR).name)}</b>`;
   pages.innerHTML=`<div class="content show" id="pgHost">${pageHead(CUR)}<div class="card"><div class="body muted">불러오는 중… · loading</div></div></div>`;
   const host=document.getElementById("pgHost");
   try{
@@ -8328,6 +8346,7 @@ SCREEN.auditLog=async()=>{
 
 /* ===== 메뉴 배정 관리(P2) — 설계서 §6.1 ===== */
 let MA_ROLE="auditor", MA_MODE="role", MA_USER="", MA_USERS=[], MA_MASTER=[], MA_ASSIGN=[], MA_SEARCH="";
+let MA_ORG="", MA_ORGS=[];   // P5-b: 기관별 배정
 const MA_ROLES=[["client","클라이언트"],["consultant","컨설턴트"],["auditor","오디터"],["sharia","샤리아"],["ops","최고운영자"],["admin","관리자"]];
 SCREEN.menuAssign=async()=>{
   const lang=LANG===2?"id":"ko";
@@ -8337,16 +8356,23 @@ SCREEN.menuAssign=async()=>{
     if(!MA_USERS.length)MA_USERS=await API("/admin/users").catch(()=>[]);
     if(!MA_USER&&MA_USERS.length)MA_USER=MA_USERS[0].user_id;
     if(MA_USER)asg=await API("/admin/assign/user/"+MA_USER+"/menus?lang="+lang).catch(()=>[]);
+  }else if(MA_MODE==="org"){
+    if(!MA_ORGS.length)MA_ORGS=(await API("/admin/orgs").catch(()=>[])).filter(o=>o.org_id&&o.org_id!=="*");
+    if(!MA_ORG&&MA_ORGS.length)MA_ORG=MA_ORGS[0].org_id;
+    if(MA_ORG)asg=await API("/admin/assign/org/"+MA_ORG+"/menus?lang="+lang).catch(()=>[]);
   }else{
     asg=await API("/admin/assign/role/"+MA_ROLE+"/menus?lang="+lang).catch(()=>[]);
   }
   MA_ASSIGN=(asg||[]).map(g=>({menuId:g.menuId,menuName:g.menuName,icon:g.icon,
     children:(g.children||[]).map(c=>({menuId:c.menuId,menuName:c.menuName,icon:c.icon}))}));
-  const modeSel=`<select class="v" style="width:auto" onchange="maChangeMode(this.value)"><option value="role"${MA_MODE==="role"?" selected":""}>${T('역할별')}</option><option value="user"${MA_MODE==="user"?" selected":""}>${T('사용자별')}</option></select>`;
+  const modeSel=`<select class="v" style="width:auto" onchange="maChangeMode(this.value)"><option value="role"${MA_MODE==="role"?" selected":""}>${T('역할별')}</option><option value="org"${MA_MODE==="org"?" selected":""}>${T('기관별')}</option><option value="user"${MA_MODE==="user"?" selected":""}>${T('사용자별')}</option></select>`;
   const targetSel=MA_MODE==="user"
     ? `<select class="v" style="width:auto" onchange="maChangeTarget(this.value)">${(MA_USERS||[]).map(u=>`<option value="${u.user_id}"${u.user_id===MA_USER?" selected":""}>${esc(u.username||u.user_id)} · ${esc(u.role||"")}</option>`).join("")}</select><button class="btn" onclick="maReset()" title="역할 기본값으로 복사">↺ ${T('역할 기본값')}</button>`
+    : MA_MODE==="org"
+    ? `<select class="v" style="width:auto" onchange="maChangeTarget(this.value)">${(MA_ORGS||[]).map(o=>`<option value="${o.org_id}"${o.org_id===MA_ORG?" selected":""}>${esc(o.name||o.org_id)}</option>`).join("")}</select>`
     : `<select class="v" style="width:auto" onchange="maChangeTarget(this.value)">${MA_ROLES.map(([r,n])=>`<option value="${r}"${r===MA_ROLE?" selected":""}>${esc(n)}</option>`).join("")}</select>`;
-  const tLabel=MA_MODE==="user"?((MA_USERS.find(u=>u.user_id===MA_USER)||{}).username||MA_USER||"사용자"):MA_ROLE;
+  const tLabel=MA_MODE==="user"?((MA_USERS.find(u=>u.user_id===MA_USER)||{}).username||MA_USER||"사용자")
+    :MA_MODE==="org"?((MA_ORGS.find(o=>o.org_id===MA_ORG)||{}).name||MA_ORG||"기관"):MA_ROLE;
   return `<div class="card"><h3>🗂 메뉴 배정 관리 <span class="en">· Menu Assignment</span></h3>
     <div class="body">
       <div class="btnrow" style="gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">${T('배정 기준')} ${modeSel} ${targetSel}
@@ -8360,6 +8386,34 @@ SCREEN.menuAssign=async()=>{
       </div>
     </div></div>`;
 };
+/* 내 메뉴 설정(개인화) — 각 사용자가 자기 좌측 메뉴 구성·순서를 직접 관리. maLeft/maRight 드래그 UI 재활용(MA_MODE="me"). */
+SCREEN.myMenu=async()=>{
+  const lang=LANG===2?"id":"ko";
+  MA_MODE="me"; MA_SEARCH="";
+  const cfg=await API("/me/menu-config?lang="+lang).catch(()=>({master:[],assigned:[]}));
+  MA_MASTER=cfg.master||[];
+  MA_ASSIGN=(cfg.assigned||[]).map(g=>({menuId:g.menuId,menuName:g.menuName,icon:g.icon,
+    children:(g.children||[]).map(c=>({menuId:c.menuId,menuName:c.menuName,icon:c.icon}))}));
+  return `<div class="card"><h3>⚙ 내 메뉴 설정 <span class="en">· My Menu</span></h3>
+    <div class="body">
+      <div class="muted small" style="margin-bottom:10px">${T('내가 쓰는 좌측 메뉴의 구성과 순서를 직접 정합니다. 저장하면 내 화면에 바로 반영됩니다.')}</div>
+      <div class="btnrow" style="gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <input class="box" placeholder="🔍 메뉴명·코드 검색" style="flex:1;min-width:150px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
+        <button class="btn" onclick="myMenuReset()" title="역할 기본값으로 초기화">↺ ${T('기본값')}</button>
+        <button class="btn pri" onclick="maSave()">💾 ${T('저장')}</button></div>
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">
+        <div><div class="muted small" style="margin-bottom:4px">${T('전체 메뉴')} — 드래그/더블클릭 → 추가</div>
+          <div id="maLeft" style="max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">${maLeftHTML()}</div></div>
+        <div><div class="muted small" style="margin-bottom:4px"><b>${T('내 메뉴')}</b> — ↑↓ 순서, × 제거</div>
+          <div id="maRight" style="max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px" ondragover="event.preventDefault()" ondrop="maDrop(event)">${maRightHTML()}</div></div>
+      </div>
+    </div></div>`;
+};
+async function myMenuReset(){
+  if(!confirm(T('내 메뉴를 역할 기본값으로 되돌립니다. 진행할까요?')))return;
+  try{await API("/me/menu-config/reset",{method:"POST",body:"{}"});toast("↺ "+T('기본값')+" 적용");await loadMenus();buildNav();go("myMenu");}
+  catch(e){toast("실패 · "+(e&&e.code?e.code:""));}
+}
 function maLeftHTML(){
   const q=MA_SEARCH.trim().toLowerCase();
   const asg=new Set(MA_ASSIGN.flatMap(g=>[g.menuId,...g.children.map(c=>c.menuId)]));
@@ -8406,7 +8460,7 @@ function maRemoveGroup(gid){const g=MA_ASSIGN.find(x=>x.menuId===gid);if(g&&g.ch
 function maMoveGroup(gi,d){const j=gi+d;if(j<0||j>=MA_ASSIGN.length)return;[MA_ASSIGN[gi],MA_ASSIGN[j]]=[MA_ASSIGN[j],MA_ASSIGN[gi]];maRerender();}
 function maMoveChild(gid,ci,d){const g=MA_ASSIGN.find(x=>x.menuId===gid);if(!g)return;const j=ci+d;if(j<0||j>=g.children.length)return;[g.children[ci],g.children[j]]=[g.children[j],g.children[ci]];maRerender();}
 function maChangeMode(m){MA_MODE=m;MA_SEARCH="";go("menuAssign");}
-function maChangeTarget(v){if(MA_MODE==="user")MA_USER=v;else MA_ROLE=v;MA_SEARCH="";go("menuAssign");}
+function maChangeTarget(v){if(MA_MODE==="user")MA_USER=v;else if(MA_MODE==="org")MA_ORG=v;else MA_ROLE=v;MA_SEARCH="";go("menuAssign");}
 async function maReset(){
   if(!MA_USER)return;
   if(!confirm("이 사용자의 배정을 역할 기본값으로 되돌립니다. 진행할까요?"))return;
@@ -8415,10 +8469,15 @@ async function maReset(){
 }
 async function maSave(){
   if(MA_MODE==="user"&&!MA_USER)return toast("사용자를 선택하세요");
+  if(MA_MODE==="org"&&!MA_ORG)return toast("기관을 선택하세요");
   const body={menus:MA_ASSIGN.map(g=>({menuId:g.menuId,children:g.children.map(c=>({menuId:c.menuId}))}))};
-  const path=MA_MODE==="user"?"/admin/assign/user/"+MA_USER+"/menus":"/admin/assign/role/"+MA_ROLE+"/menus";
-  try{const r=await API(path,{method:"PUT",body:JSON.stringify(body)});toast("💾 저장 완료 · "+r.saved+"개 배정");}
-  catch(e){toast("저장 실패 · "+(e&&e.code?e.code:""));}
+  const path=MA_MODE==="user"?"/admin/assign/user/"+MA_USER+"/menus"
+    :MA_MODE==="org"?"/admin/assign/org/"+MA_ORG+"/menus"
+    :MA_MODE==="me"?"/me/menu-config"
+    :"/admin/assign/role/"+MA_ROLE+"/menus";
+  try{const r=await API(path,{method:"PUT",body:JSON.stringify(body)});toast("💾 저장 완료 · "+r.saved+"개");
+    if(MA_MODE==="me"){await loadMenus();buildNav();}   // 내 좌측 메뉴 즉시 반영
+  }catch(e){toast("저장 실패 · "+(e&&e.code?e.code:""));}
 }
 SCREEN.system=async()=>{
   const [users,orgs,onto,lphrefs,kma,admCases]=await Promise.all([
