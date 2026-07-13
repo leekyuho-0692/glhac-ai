@@ -926,6 +926,17 @@ const UI_STRINGS={
   "발급 승인 요청 접수 — 승인자(샤리아) 확인 후 발급됩니다":"Permohonan persetujuan penerbitan diterima — sertifikat terbit setelah disetujui (Syariah)",
   "인증서 발급 완료":"Sertifikat berhasil diterbitkan",
   "자기선언 자격 · Self-Declare (BPJPH)":"Kelayakan Self-Declare (BPJPH)",
+  "자기선언 위원회 검증":"Verifikasi Komite Self-Declare",
+  "SEHATI 자기선언 — 위원회(샤리아) 검증 후 인증서 발급이 가능합니다.":"SEHATI Self-Declare — sertifikat dapat diterbitkan setelah verifikasi komite (Syariah).",
+  "위원회 승인됨":"Disetujui Komite",
+  "위원회 반려됨":"Ditolak Komite",
+  "결정 근거":"Alasan Keputusan",
+  "승인/반려 근거를 입력하세요":"Masukkan alasan persetujuan/penolakan",
+  "위원회 승인":"Setujui Komite",
+  "위원회(샤리아) 검증 대기 중":"Menunggu verifikasi komite (Syariah)",
+  "반려 근거를 입력하세요":"Masukkan alasan penolakan",
+  "위원회 승인 완료":"Persetujuan komite selesai",
+  "반려 완료":"Penolakan selesai",
   "연매출(IDR) · Annual Revenue":"Pendapatan Tahunan (IDR)",
   "매장 수 · Outlets":"Jumlah Gerai",
   "' 관련 등록":"' Daftar Terkait",
@@ -7814,8 +7825,33 @@ SCREEN.fatwa=async()=>{
   if(!CURCASE)return fatwaDashHtml+committeeCard+'<div class="card"><div class="body muted">위 목록에서 케이스를 선택하면 위원회 심의 상세가 표시됩니다.</div></div>';
   const mock=await fatwaDecisionView(CURCASE,true);
   const advanced=await fatwaCommitteeAdvanced(CURCASE);
-  return fatwaDashHtml + committeeCard + mock + advanced;
+  const committeeDecision=await committeeDecisionCard(CURCASE);   // SEHATI 자기선언 위원회
+  return fatwaDashHtml + committeeDecision + committeeCard + mock + advanced;
 };
+/* 자기선언 위원회 검증(SEHATI) — committee_verification 상태일 때만 샤리아 승인/반려 카드 */
+async function committeeDecisionCard(id){
+  const st=await API(`/cases/${id}/committee/status`).catch(()=>null);
+  if(!st||!st.in_committee||st.pathway!=='self_declare')return '';
+  const canDecide=["sharia","ops","admin"].includes(ROLE);
+  const done=st.decision;   // approve | reject | null
+  return `<div class="card" style="margin-bottom:16px;border:2px solid var(--warn)"><h3>🕌 ${T('자기선언 위원회 검증')} <span class="en">· Self-Declare Committee</span></h3>
+    <div class="body">
+      <div class="banner info" style="margin-bottom:10px">${T('SEHATI 자기선언 — 위원회(샤리아) 검증 후 인증서 발급이 가능합니다.')}</div>
+      ${done?`<div class="banner ${done==='approve'?'ok':'bad'}" style="margin-bottom:10px">${done==='approve'?'✓ '+T('위원회 승인됨'):'⛔ '+T('위원회 반려됨')}${st.reason?' · '+esc(st.reason):''}${st.decided_at?' · '+esc(String(st.decided_at).slice(0,16)):''}</div>`:''}
+      ${(canDecide&&done!=='approve')?`
+        <div class="field"><label>${T('결정 근거')} · Reason</label><textarea class="v" id="cmtReason" rows="2" placeholder="${T('승인/반려 근거를 입력하세요')}"></textarea></div>
+        <div class="btnrow"><button class="btn pri" onclick="committeeDecide('${id}','approve')">✔ ${T('위원회 승인')}</button>
+          <button class="btn bad" onclick="committeeDecide('${id}','reject')">✖ ${T('반려')}</button></div>`
+        :(canDecide?'':`<div class="muted small">${T('위원회(샤리아) 검증 대기 중')}</div>`)}
+    </div></div>`;
+}
+async function committeeDecide(id,decision){
+  const reason=((document.getElementById('cmtReason')||{}).value||"").trim();
+  if(decision==='reject'&&!reason)return toast(T('반려 근거를 입력하세요'));
+  try{await API(`/cases/${id}/committee/decide`,{method:"POST",body:JSON.stringify({decision,reason})});
+    toast(decision==='approve'?"✔ "+T('위원회 승인 완료'):"✖ "+T('반려 완료'));await loadCases(true);applyView();}
+  catch(e){toast(T('실패')+" · "+(e&&e.code?e.code:JSON.stringify(e)));}
+}
 /* 기존 심의 상세(위원 구성·2단계 승인·위원회 투표) — P0-4 fatwa 로직 보존, 접이식 */
 async function fatwaCommitteeAdvanced(id){
   const fd=await API(`/cases/${id}/fatwa`).catch(()=>({decision:"pending"}));

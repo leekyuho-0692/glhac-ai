@@ -523,3 +523,8 @@ class MenuPermissionReq(BaseModel):   # 메뉴 기능 권한 — 설계서 §3.6
 
 class ApprovalDecisionReq(BaseModel):   # 2인 승인 결정 — 설계서 보강안 §4.3
     reason: Optional[str] = None            # 승인/거절 사유(거절 시 권장)
+
+
+class CommitteeDecisionReq(BaseModel):   # 자기선언 위원회 검증 결정(SEHATI)
+    decision: str                           # approve | reject
+    reason: Optional[str] = None            # 결정 근거(반려 시 필수)
