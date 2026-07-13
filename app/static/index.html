@@ -3040,6 +3040,11 @@ const UI_STRINGS={
   "Menunggu No. BPJPH":"Menunggu No. Ketetapan Halal dari BPJPH",
   "본 문서는 준비/내부 산출물이며, 공식 할랄 인증 발급은 BPJPH/SIHALAL 절차로 확정됩니다.":"Dokumen ini bersifat persiapan/internal; penerbitan halal resmi ditentukan oleh proses BPJPH/SIHALAL.",
   "내부 무결성 서명(공인 전자서명 아님)":"Tanda tangan integritas internal (bukan e-signature tersertifikasi PSrE)",
+  /* 법적효력 Phase 1 — PSrE 공인 전자서명 커넥터(정직표기) i18n */
+  "PSrE 공인 전자서명":"Tanda tangan elektronik tersertifikasi PSrE",
+  "UU ITE 법적효력":"berkekuatan hukum sesuai UU ITE",
+  "내부 무결성 서명":"Tanda tangan integritas internal",
+  "PSrE 미연동 — 벤더 계약·자격증명 설정 시 공인 전자서명 적용":"PSrE belum terhubung — tanda tangan tersertifikasi diterapkan setelah kontrak vendor·kredensial dikonfigurasi",
   "⤓ 전체 ZIP":"⤓ Unduh ZIP",
   "적합후보":"Kandidat Sesuai","적합":"Sesuai","부적합":"Tidak Sesuai",
   "판정":"Putusan","증거":"Bukti","오디터 판정":"Putusan Auditor",
@@ -6269,7 +6274,7 @@ async function contractStageCard(id){
     if(s)return `<div class="kv"><span>${label}</span><b class="t-ok">✓ ${T('서명완료')} · ${esc(s.name||'')}${s.signed_at?` <span class="muted small">${esc(String(s.signed_at).slice(0,16))}</span>`:''}</b></div>`;
     if(canSign)return `<div class="kv"><span>${label}</span><button class="btn ok" style="padding:3px 10px;font-size:12px" onclick="signContract('${ct.contract_id}','${pt}')">✍ ${label}</button></div>`;
     return `<div class="kv"><span>${label}</span><span class="muted small">${T('서명 대기')}</span></div>`;};
-  const signBox = ct.exists?`<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">${sigCell('A','고객 서명', ROLE==='client')}${sigCell('B','GL HAC 서명', ROLE==='ops'||ROLE==='admin')}</div>`:'';
+  const signBox = ct.exists?`<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">${sigCell('A','고객 서명', ROLE==='client')}${sigCell('B','GL HAC 서명', ROLE==='ops'||ROLE==='admin')}${psreSigNote()}</div>`:'';
   return `<div class="card" style="margin-bottom:16px"><h3>계약 단계 진행 <span class="en">· Contract stage</span>${ct.contract_no?`<span class="r">${esc(ct.contract_no)}</span>`:''}</h3><div class="body"><div class="flow" style="overflow-x:auto">${stepbar}</div><div style="margin-top:10px">${statusBanner}</div>${signBox}${ct.fee?`<div class="kv" style="margin-top:6px"><span>계약금액</span><b>${Number(ct.fee).toLocaleString()} ${esc(ct.currency||'KRW')}</b></div>`:''}</div></div>`;
 }
 async function signContract(contractId, party){
@@ -6472,6 +6477,16 @@ async function mockAiReport(id){
    전자서명=WorkflowEvent(onsite.sign) 신규 라우트, 종합의견=localStorage, AI보고서=기존 genAuditReport. 스키마 무변경. */
 var ONSITE_SIGN_CACHE={auditor:null,supervisor:null};
 var ONSITE_HPAS_REASONS=[];
+/* 법적효력 Phase 1 — PSrE 공인 전자서명 상태(정직표기). 미설정(기본)이면 내부 무결성 서명 + 미연동 안내를 노출.
+   /admin/psre-status는 operator 전용이므로 비권한/미설정이면 기본값(미설정) 유지 → 절대 공인서명을 과장하지 않는다. */
+var PSRE_ST={configured:false,provider:null};
+async function loadPsreStatus(){try{const r=await API('/admin/psre-status');if(r&&r.psre)PSRE_ST=r.psre;}catch(_){/* 비권한/미설정 → 내부 서명 유지 */}}
+function psreSigNote(){
+  if(PSRE_ST&&PSRE_ST.configured){
+    return `<div class="muted small" style="margin-top:8px">🔏 <b>${T('PSrE 공인 전자서명')}</b>${PSRE_ST.provider?' · '+esc(PSRE_ST.provider):''} <span class="muted">${T('UU ITE 법적효력')}</span></div>`;
+  }
+  return `<div class="muted small" style="margin-top:8px">🔒 ${T('내부 무결성 서명')} · <span style="color:#b45309">⚠ ${T('PSrE 미연동 — 벤더 계약·자격증명 설정 시 공인 전자서명 적용')}</span></div>`;
+}
 /* 현장심사 — 샤리아·최고승인자 전용 뷰(읽기 전용).
    오디터가 현장에서 수집한 증거(사진·영상)를 확인하고, 항목별 적합/부적합 의견 + 코멘트만 남긴다.
    체크리스트 원본·HPAS 판정·서명은 수정할 수 없다(서버 RBAC와 이중 방어). */
@@ -6708,7 +6723,7 @@ async function onsiteAuditView(id,editable){
         <canvas id="sigcanvas_supervisor" width="360" height="140" style="width:100%;max-width:360px;border:1px solid var(--line);border-radius:8px;background:var(--card);touch-action:none;display:block;cursor:${editable?'crosshair':'default'}"></canvas>
         ${editable?`<button class="btn" style="margin-top:8px" onclick="onsiteClearSig('${id}','supervisor')">↺ ${T('지우기')}</button>`:''}
       </div>
-    </div><div class="muted small" style="margin-top:8px">${editable?T('캔버스에 마우스 또는 손가락으로 서명하면 자동 저장됩니다.'):T('저장된 서명입니다. (열람용)')}</div></div></div>
+    </div><div class="muted small" style="margin-top:8px">${editable?T('캔버스에 마우스 또는 손가락으로 서명하면 자동 저장됩니다.'):T('저장된 서명입니다. (열람용)')}</div>${psreSigNote()}</div></div>
   ${editable?`<div class="card" style="margin-bottom:16px"><h3>${T('AI 현장 감사 보고서 생성')} <span class="en">· AI report</span></h3>
     <div class="body">
       <div class="muted small">${T('입력된 감사 결과를 기반으로 AI가 현장 감사 보고서를 자동으로 생성합니다.')}</div>
@@ -7975,6 +7990,7 @@ async function fatwaClientStatus(id){
       <div class="kv"><span>위원 서명 진행 · Signatures</span><b>${s.votes_approve||0} / ${s.committee_size||s.votes_total||0}</b></div>
       <div class="kv"><span>가승인 · Provisional</span><b>${esc(s.decided_at||'—')}</b></div>
       <div class="kv"><span>최종승인 · Final</span><b>${esc(s.final_approved_at||'—')}</b></div>
+      ${psreSigNote()}
     </div></div>`;
 }
 /* 파트와 결정 — 목업 재구현(SCREEN.fatwa). 작성용=sharia·ops·admin, 열람용=client·consultant·auditor.
@@ -8379,7 +8395,7 @@ SCREEN.certificate=async()=>{
       <div class="body">${certCard}
         <div class="banner info" style="margin-top:10px;font-size:12px;line-height:1.5">ℹ️ ${T('본 문서는 준비/내부 산출물이며, 공식 할랄 인증 발급은 BPJPH/SIHALAL 절차로 확정됩니다.')}</div>
         ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(c.certificate_no||"")}.pdf')">📄 인증서 PDF 다운로드</button><button class="btn" onclick="serverPdf('/cases/${id}/certificate/bundle.zip','halal_bundle_${esc(c.certificate_no||"")}.zip')">⤓ 전체 ZIP</button><button class="btn" onclick="printCert('${id}')">🖨 인쇄</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
-        ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span><div class="muted small" style="margin-top:4px">${T('내부 무결성 서명(공인 전자서명 아님)')}</div></div>`:''}
+        ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span><div class="muted small" style="margin-top:4px">${T('내부 무결성 서명(공인 전자서명 아님)')}</div>${psreSigNote()}</div>`:''}
         ${c.issued&&c.status&&c.status!=='active'?`<div class="banner ${c.status==='withdrawn'?'bad':'warn'}" style="margin-top:10px">${c.status==='withdrawn'?'⛔ 철회됨 · Withdrawn':'⏸ 정지됨 · Suspended'}</div>`:''}
         ${c.issued&&CAN("certificate.suspend")?`<div class="btnrow" style="margin-top:10px">
           ${c.status==='active'?`<button class="btn warn" onclick="certLifecycle('${id}','suspend')">⏸ 정지 · Suspend</button>`:''}
@@ -9059,6 +9075,7 @@ async function boot(){
   document.getElementById("appView").style.display="flex";
   CASES_CACHE=[];await loadCases(true);
   await loadMenus();   // DB 동적 메뉴(GET /me/menus) — 실패 시 하드코딩 폴백
+  loadPsreStatus();    // 법적효력 Phase 1 — PSrE 커넥터 상태(정직표기, 비권한/미설정이면 내부서명 유지)
   buildNav();
   const init=parseHash();
   navigate(init,true);

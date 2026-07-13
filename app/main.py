@@ -667,7 +667,7 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
            # 법적효력 Phase 0 — 공식성·서명 성격 고지(오인 차단)
            "halal_no_is_official": bool(official),
            "official_bpjph_no": official,
-           "signature_nature": (_SIG_NATURE if sig else None),
+           "signature_nature": (_sig_nature_for(db, cert.case_id, "certificate") if sig else None),
            "signature_valid_meaning": _SIG_VALID_MEANING,
            "disclaimer": _LEGAL_DISCLAIMER_VERIFY}
     if product_scope:   # 제품별 인증서 검증 — 해당 제품으로 범위 축소 응답
@@ -3697,6 +3697,12 @@ def sign_contract(contract_id: str, party: str = "A", name: str = "",
     ct.signatures = sigs
     if any(s.get("party") == "A" for s in sigs) and any(s.get("party") == "B" for s in sigs):
         ct.status = "signed"
+    # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op·기존 서명/응답 완전 불변). 내부 서명은 위에서 병행.
+    if _psre_config()["configured"]:
+        import types as _t, hashlib as _h, json as _j
+        _psre_certify(db, _t.SimpleNamespace(case_id=ct.case_id, status=ct.status),
+                      "contract", name or party, contract_id,
+                      _h.sha256(_j.dumps(sigs, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest())
     db.commit()
     return {"contract_id": contract_id, "status": ct.status, "signatures": ct.signatures}
 
@@ -3873,8 +3879,9 @@ def _kfph_ketetapan_blocks(db, c, ev):
          "signed": bool(ev)},
     ]})
     blocks.append({"type": "spacer", "h": 8})
-    # Phase 0 고지 — 내부 참조·비공식 + 내부 무결성 서명(공인 전자서명 아님)
-    blocks.append({"type": "para", "text": "서명 성격 · Sifat tanda tangan : " + _SIG_NATURE})
+    # Phase 0 고지 — 내부 참조·비공식 + 내부 무결성 서명(공인 전자서명 아님). Phase 1: PSrE 공인 시 동적 표기.
+    blocks.append({"type": "para", "text": "서명 성격 · Sifat tanda tangan : "
+                   + _sig_nature_for(db, c.case_id, "kfph_ketetapan")})
     blocks.append({"type": "para", "text": _SIG_VALID_MEANING})
     blocks.append({"type": "para", "text": _LEGAL_DISCLAIMER_PDF})
     return blocks
@@ -3929,7 +3936,7 @@ def kfph_ketetapan_preview(case_id: str, user=Depends(auth.get_current_user), db
         "⚠ %s<br>%s<br>%s</div></div>"
         % (info_rows, prod_rows,
            ("<div style='margin-bottom:6px;color:#475569'>판정 근거 · Dasar : %s</div>" % e(reason)) if reason else "",
-           e(_SIG_NATURE), e(_SIG_VALID_MEANING), e(_LEGAL_DISCLAIMER_PDF)))
+           e(_sig_nature_for(db, c.case_id, "kfph_ketetapan")), e(_SIG_VALID_MEANING), e(_LEGAL_DISCLAIMER_PDF)))
     return HTMLResponse(content=frag)
 
 
@@ -5386,6 +5393,11 @@ def audit_report_sign(case_id: str, body: schemas.AuditReportSignReq,
     at = datetime.utcnow().isoformat()
     sm.record_event(db, c, c.status, c.status, "audit_report.sign", user["role"], user["uid"],
                     {"name": name, "gen_doc_id": g.gen_doc_id, "at": at})
+    # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op). 내부 서명 이벤트는 위에서 그대로 병행.
+    if _psre_config()["configured"]:
+        import hashlib as _h
+        _psre_certify(db, c, "audit_report", name, g.gen_doc_id,
+                      _h.sha256(("%s|%s|%s" % (g.gen_doc_id, name, at)).encode()).hexdigest())
     _auto_advance(db, c, "hpas_evaluation_ready", user, "audit_report.sign.auto")   # P2 훅: 보고서 서명→HPAS 평가 준비
     db.commit()
     return {"ok": True, "name": name, "gen_doc_id": g.gen_doc_id, "at": at}
@@ -5592,6 +5604,10 @@ def onsite_sign(case_id: str, body: dict = None,
     c = _get_case(db, case_id, user)
     sm.record_event(db, c, c.status, c.status, "onsite.sign", user["role"], user["uid"],
                     {"party": party, "image": image, "name": name})
+    # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op). 내부 서명 이벤트는 위에서 그대로 병행.
+    if _psre_config()["configured"]:
+        import hashlib as _h
+        _psre_certify(db, c, "onsite", name or party, party, _h.sha256(image.encode()).hexdigest())
     db.commit()
     return {"ok": True, "party": party}
 
@@ -5714,6 +5730,10 @@ def fatwa_sign(case_id: str, body: dict = None,
     c = _get_case(db, case_id, user)
     sm.record_event(db, c, c.status, c.status, "fatwa.sign", user["role"], user["uid"],
                     {"member": member, "image": image, "name": name})
+    # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op). 내부 서명 이벤트는 위에서 그대로 병행.
+    if _psre_config()["configured"]:
+        import hashlib as _h
+        _psre_certify(db, c, "fatwa", name or member, member, _h.sha256(image.encode()).hexdigest())
     db.commit()
     return {"ok": True, "member": member}
 
@@ -6534,6 +6554,100 @@ _LEGAL_DISCLAIMER_VERIFY = ("본 검증은 내부 산출물의 무결성 확인�
                             "internal, bukan sertifikat halal resmi. Penerbitan resmi oleh BPJPH/SIHALAL.")
 
 
+# ── 법적효력 Phase 1 — PSrE 공인 전자서명 커넥터 (스키마 무변경·순수 추가) ──────────────────────
+# 정직성(중요): 실제 PSrE(Penyelenggara Sertifikasi Elektronik) 공인 전자서명은 벤더 계약·API
+# 자격증명이 있어야 가능하다. 자격증명 미설정 시 서명하는 '척' 위조하지 않고 기존 내부 HMAC 서명으로
+# 정직 폴백한다(Phase 0의 "내부 무결성 서명, 공인 아님" 표기 유지) — SIHALAL Layer B(_sihalal_submit_config)
+# · notify.py 채널(channel_status의 kakao_ok) 크리덴셜 게이트와 완전히 동일한 패턴.
+# 실 PSrE API 요청/응답 필드는 벤더(PrivyID/VIDA/Peruri/Tilaka)마다 다르므로 범용/설정형으로 구현하고,
+# 벤더 선정·자격증명 확보 후 필드 매핑을 최종화한다. 미설정(기본값)일 때 기존 서명/PDF/응답은 100% 불변.
+_PSRE_CERTIFIED_EVENT = "signature.certified"   # WorkflowEvent action (케이스 스코프·스키마 무변경)
+
+
+def _psre_config():
+    """PSrE 공인 전자서명 자격증명 게이트 — 값은 노출하지 않고 configured(bool)+provider만 판정.
+    GLHAC_PSRE_PROVIDER + GLHAC_PSRE_API_URL + (GLHAC_PSRE_TOKEN 또는 GLHAC_PSRE_API_KEY) 완비 시에만 configured.
+    (_sihalal_submit_config / notify.channel_status의 kakao_ok 크리덴셜 게이트와 완전 동일 패턴.)"""
+    e = os.environ.get
+    provider = e("GLHAC_PSRE_PROVIDER")
+    url = e("GLHAC_PSRE_API_URL")
+    token = e("GLHAC_PSRE_TOKEN") or e("GLHAC_PSRE_API_KEY")
+    return {"configured": bool(provider and url and token),
+            "provider": provider, "url": url, "token": token}
+
+
+def _psre_sign(payload_hash, signer, doc_ref):
+    """PSrE 공인 전자서명 어댑터 — configured면 PSrE API에 공인서명을 요청(범용/설정형 payload, 예외 graceful).
+    성공 시 {provider, signer_identity, tsa_timestamp, signature_ref, certificate_serial} 반환.
+    미설정/실패 시 None(→ 호출부는 기존 내부 HMAC 서명을 그대로 유지 = 회귀 0).
+    ⚠ 실 PSrE(PrivyID/VIDA/Peruri/Tilaka) 요청/응답 필드는 벤더마다 다르므로 아래 매핑은 범용 설정형이며
+    벤더 계약·자격증명 확보 후 최종화한다. 미설정 시 항상 None을 반환해 '서명하는 척' 위조를 금지한다."""
+    cfg = _psre_config()
+    if not cfg["configured"]:
+        return None
+    try:
+        import httpx
+        r = httpx.post(cfg["url"], timeout=15,
+                       headers={"Authorization": "Bearer " + cfg["token"],
+                                "Content-Type": "application/json"},
+                       json={"provider": cfg["provider"], "payload_hash": payload_hash,
+                             "signer": signer, "document_ref": doc_ref})
+        if not (200 <= r.status_code < 300):
+            return None
+        try:
+            body = r.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+    except Exception:  # noqa: BLE001
+        return None
+    # 벤더별 응답 키가 상이하므로 관용적 후보들로 매핑(설정형) — 확보 스펙에 맞춰 최종화.
+    return {"provider": cfg["provider"],
+            "signer_identity": body.get("signer_identity") or body.get("signer") or signer,
+            "tsa_timestamp": (body.get("tsa_timestamp") or body.get("timestamp")
+                              or datetime.utcnow().isoformat()),
+            "signature_ref": (body.get("signature_ref") or body.get("id")
+                              or body.get("document_id")),
+            "certificate_serial": (body.get("certificate_serial") or body.get("serial"))}
+
+
+def _psre_certify(db, case, subject, signer, doc_ref, payload_hash):
+    """서명 엔드포인트 훅 — PSrE 공인서명 성공 시 signature.certified 이벤트(케이스 스코프)를 기록한다.
+    기존 내부 HMAC 서명/서명 이벤트는 호출부에서 그대로 병행(무결성 이중). 미설정/실패 시 None(회귀 0)."""
+    res = _psre_sign(payload_hash, signer, doc_ref)
+    if not res:
+        return None
+    st = getattr(case, "status", "") or ""
+    sm.record_event(db, case, st, st, _PSRE_CERTIFIED_EVENT, "system", signer,
+                    {"subject": subject, "provider": res["provider"],
+                     "signer": res["signer_identity"], "tsa_timestamp": res["tsa_timestamp"],
+                     "signature_ref": res["signature_ref"], "doc_ref": doc_ref})
+    return res
+
+
+def _sig_nature_for(db, case_id, subject=None):
+    """동적 서명 성격 표기 — 해당 케이스(옵션: subject 문서)에 PSrE 공인서명(signature.certified) 이벤트가
+    있으면 'PSrE 공인 전자서명 · UU ITE 법적효력' 표기를 반환하고, 없으면 기존 내부 _SIG_NATURE를 반환한다.
+    ⚠ PSrE 미설정(기본값)이면 certified 이벤트가 없으므로 항상 _SIG_NATURE를 반환 → 출력 완전 불변(회귀 0)."""
+    try:
+        rows = (db.query(models.WorkflowEvent)
+                .filter(models.WorkflowEvent.case_id == case_id,
+                        models.WorkflowEvent.action == _PSRE_CERTIFIED_EVENT)
+                .order_by(models.WorkflowEvent.created_at.desc()).all())
+    except Exception:  # noqa: BLE001
+        rows = []
+    if not rows:
+        return _SIG_NATURE
+    ev = None
+    if subject:
+        ev = next((r for r in rows if (r.payload or {}).get("subject") == subject), None)
+    ev = ev or rows[0]
+    p = ev.payload or {}
+    provider = p.get("provider") or "PSrE"
+    tsa = str(p.get("tsa_timestamp") or "")[:19]
+    return ("PSrE 공인 전자서명 · Tanda tangan tersertifikasi PSrE (%s%s) — UU ITE 법적효력"
+            % (provider, (", TSA " + tsa) if tsa else ""))
+
+
 def _official_bpjph_no(db, case_id):
     """공식 BPJPH 할랄번호(No. Ketetapan Halal) 조회 — 스키마 무변경.
     SIHALAL에서 'certificate_number_imported' 이벤트로 import된 경우에만 존재.
@@ -6601,7 +6715,7 @@ def _cert_pdf_bytes(db, c, cert):
                                        (" (" + (sig.provider or "") + ")") if sig else ""),
     ]
     if sig:
-        lines.append("서명 성격 · Nature : " + _SIG_NATURE)
+        lines.append("서명 성격 · Nature : " + _sig_nature_for(db, cert.case_id, "certificate"))
     lines += ["", _LEGAL_DISCLAIMER_PDF]
     return _render_pdf("GL-HAC AI · Halal Certificate", "\n".join(lines),
                        subtitle=cert.certificate_no or "",
@@ -6690,7 +6804,7 @@ def product_certificate_pdf(case_id: str, product_id: str,
         "전자서명 · Signed  : %s" % ("예 · Yes" if sig else "아니오 · No"),
     ]
     if sig:
-        lines.append("서명 성격 · Nature : " + _SIG_NATURE)
+        lines.append("서명 성격 · Nature : " + _sig_nature_for(db, cert.case_id, "certificate"))
     lines += ["", _LEGAL_DISCLAIMER_PDF]
     _audit(db, user, "certificate.product_pdf", "certificate", product_id, case_id)
     db.commit()
@@ -7178,6 +7292,9 @@ def sign_certificate(case_id: str, user=Depends(rbac.require_action("certificate
     db.add(row)
     sm.record_event(db, c, c.status, c.status, "certificate.sign", user["role"], user["uid"],
                     {"signature_id": row.id})
+    # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op). 내부 HMAC 서명(row)은 위에서 그대로 병행.
+    if _psre_config()["configured"]:
+        _psre_certify(db, c, "certificate", user["uid"], cert.certificate_no or str(cert.id), ph)
     db.commit()
     return {"signature_id": row.id, "signer": user["uid"], "provider": row.provider,
             "payload_hash": ph, "signed_at": str(row.signed_at)}
@@ -7431,6 +7548,18 @@ def admin_sihalal_status(user=Depends(auth.require_roles("operator"))):
     return {"sihalal": {"configured": cfg["configured"], "implemented": True,
                         "status": "connected" if cfg["configured"] else "unset",
                         "note": "LP3H 등록·자격증명(GLHAC_SIHALAL_API_URL/TOKEN) 필요"}}
+
+
+@app.get("/admin/psre-status")
+def admin_psre_status(user=Depends(auth.require_roles("operator"))):
+    """PSrE 공인 전자서명 커넥터 설정 상태(읽기전용·스키마 무변경) — 시크릿 미노출·configured(bool)+provider만.
+    admin/sihalal-status·notify channel_status와 동일한 정직표기. 미설정 시 기존 내부 HMAC 서명으로 폴백."""
+    cfg = _psre_config()
+    return {"psre": {"configured": cfg["configured"], "provider": cfg["provider"],
+                     "implemented": True,
+                     "status": "connected" if cfg["configured"] else "unset",
+                     "note": ("벤더(PrivyID/VIDA/Peruri/Tilaka) 계약·자격증명"
+                              "(GLHAC_PSRE_PROVIDER/API_URL/TOKEN) 필요 — 미설정 시 내부 무결성 서명 폴백")}}
 
 
 @app.post("/cases/{case_id}/certificate/change-impact")
@@ -10580,8 +10709,9 @@ def _self_declaration_blocks(db, c):
         {"role": "동반자 · Pendamping (PPH)", "name": pd_name or "", "signed": False},
     ]})
     blocks.append({"type": "spacer", "h": 8})
-    # Phase 0 내부서명 고지 — 자기선언서에도 disclaimer 표기(공인 전자서명 아님)
-    blocks.append({"type": "para", "text": "서명 성격 · Sifat tanda tangan : " + _SIG_NATURE})
+    # Phase 0 내부서명 고지 — 자기선언서에도 disclaimer 표기(공인 전자서명 아님). Phase 1: PSrE 공인 시 동적 표기.
+    blocks.append({"type": "para", "text": "서명 성격 · Sifat tanda tangan : "
+                   + _sig_nature_for(db, c.case_id, "self_declaration")})
     blocks.append({"type": "para", "text": _SIG_VALID_MEANING})
     blocks.append({"type": "para", "text": _LEGAL_DISCLAIMER_PDF})
     return blocks
@@ -10623,7 +10753,7 @@ def self_declaration_preview(case_id: str, user=Depends(auth.get_current_user), 
         "<div style='border-top:1px dashed #cbd5e1;padding-top:8px;color:#64748b;font-size:12px'>"
         "⚠ %s<br>%s<br>%s</div></div>"
         % (info_rows, stmts, e(rep), e(pd_name),
-           e(_SIG_NATURE), e(_SIG_VALID_MEANING), e(_LEGAL_DISCLAIMER_PDF)))
+           e(_sig_nature_for(db, c.case_id, "self_declaration")), e(_SIG_VALID_MEANING), e(_LEGAL_DISCLAIMER_PDF)))
     return HTMLResponse(content=frag)
 
 
