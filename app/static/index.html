@@ -909,6 +909,22 @@ const UI_STRINGS={
   "미사용":"Nonaktif",
   "사용불가":"Tidak tersedia",
   "사용 권한이 없는 메뉴입니다":"Anda tidak memiliki izin untuk menu ini",
+  "승인함":"Persetujuan",
+  "승인 대기":"Menunggu Persetujuan",
+  "승인됨":"Disetujui",
+  "거절됨":"Ditolak",
+  "대기":"Menunggu",
+  "요청":"Permohonan",
+  "승인 역할":"Peran Penyetuju",
+  "결정":"Keputusan",
+  "승인":"Setujui",
+  "거절":"Tolak",
+  "승인 완료":"Disetujui",
+  "거절 완료":"Ditolak",
+  "거절 사유를 입력하세요":"Masukkan alasan penolakan",
+  "2인 승인 — 인증서 발급/철회 요청을 검토·승인합니다. 요청자와 승인자는 서로 달라야 합니다.":"Persetujuan dua orang — tinjau & setujui permohonan penerbitan/pencabutan sertifikat. Pemohon dan penyetuju harus berbeda.",
+  "발급 승인 요청 접수 — 승인자(샤리아) 확인 후 발급됩니다":"Permohonan persetujuan penerbitan diterima — sertifikat terbit setelah disetujui (Syariah)",
+  "인증서 발급 완료":"Sertifikat berhasil diterbitkan",
   "' 관련 등록":"' Daftar Terkait",
   "' 신규 (등록 없음)":"' Baru (Tidak Ada Daftar)",
   "'이 사업자등록증 '":"' Bukti Pendaftaran Usaha'",
@@ -8131,7 +8147,10 @@ SCREEN.certificate=async()=>{
         <td class="muted small">${esc((x.affected_products||[]).join(", ")||"—")}</td>
         <td class="muted small">${esc((x.required_actions||[]).slice(0,2).join(" · ")||"—")}</td></tr>`).join(""):'<tr><td colspan="6" class="muted" style="text-align:center;padding:16px">변경영향 분석 이력 없음 — "변경영향 분석" 실행 시 기록됩니다</td></tr>'}</tbody></table></div></div>`;
 };
-async function issueCert(id){try{await API(`/cases/${id}/certificate/issue`,{method:"POST",body:"{}"});toast("인증서 발급");await loadCases(true);applyView();}catch(e){toast("발급 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
+async function issueCert(id){try{const r=await API(`/cases/${id}/certificate/issue`,{method:"POST",body:"{}"});
+  if(r&&r.status==="pending"){toast("📋 "+T("발급 승인 요청 접수 — 승인자(샤리아) 확인 후 발급됩니다"));}
+  else{toast(T("인증서 발급 완료"));}
+  await loadCases(true);applyView();}catch(e){toast("발급 실패 · "+(e&&e.code?e.code:JSON.stringify(e)));}}
 async function signCert(id){if(!confirm("발급된 인증서에 전자서명할까요?"))return;try{await API(`/cases/${id}/certificate/sign`,{method:"POST",body:"{}"});toast("전자서명 완료");applyView();}catch(e){toast("서명 실패 · "+(e&&e.code?e.code:""));}}
 async function certLifecycle(id,action){
   const label={suspend:"정지",reactivate:"재개",revoke:"철회"}[action];
@@ -8417,6 +8436,37 @@ async function myMenuReset(){
   if(!confirm(T('내 메뉴를 역할 기본값으로 되돌립니다. 진행할까요?')))return;
   try{await API("/me/menu-config/reset",{method:"POST",body:"{}"});toast("↺ "+T('기본값')+" 적용");await loadMenus();buildNav();go("myMenu");}
   catch(e){toast("실패 · "+(e&&e.code?e.code:""));}
+}
+/* 승인함 — 2인 승인(maker-checker). 인증서 발급/철회 요청을 승인자가 검토·승인. 설계서 보강안 §4.3 */
+SCREEN.approvals=async()=>{
+  const [pend,appr,rej]=await Promise.all([
+    API("/approvals?status=pending").catch(()=>[]),
+    API("/approvals?status=approved").catch(()=>[]),
+    API("/approvals?status=rejected").catch(()=>[])]);
+  const badge=s=>s==="pending"?`<span class="tag" style="background:#fef9c3;color:#854d0e">${T('대기')}</span>`
+    :s==="approved"?`<span class="tag" style="background:#dcfce7;color:#166534">${T('승인됨')}</span>`
+    :`<span class="tag t-bad">${T('거절됨')}</span>`;
+  const card=a=>`<div style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:13px">${esc(a.label||a.action_type)}</b> ${badge(a.status)}</div>
+      <div class="muted small" style="margin-top:4px">${T('케이스')} ${esc((a.case_id||"").slice(0,8))}${a.company_name?" · "+esc(a.company_name):""}<br>
+        ${T('요청')} ${esc(a.requester_name||a.requester_role||"")}${a.reason?" · "+T('사유')+": "+esc(a.reason):""}<br>
+        ${T('승인 역할')}: ${(a.checker_roles||[]).join(", ")}${a.decider_name?" · "+T('결정')+" "+esc(a.decider_name):""}${a.decision_reason?" ("+esc(a.decision_reason)+")":""}</div>
+      ${a.can_decide?`<div class="btnrow" style="margin-top:8px">
+        <button class="btn pri" style="padding:2px 12px" onclick="approvalDecide('${a.approval_id}','approve')">✔ ${T('승인')}</button>
+        <button class="btn bad" style="padding:2px 12px" onclick="approvalDecide('${a.approval_id}','reject')">✖ ${T('거절')}</button></div>`:""}</div>`;
+  const sec=(t,arr)=>`<h4 style="margin:14px 0 6px">${t} <span class="muted small">${arr.length}</span></h4>${arr.length?arr.map(card).join(""):`<div class="muted small">${T('없음')}</div>`}`;
+  return `<div class="card"><h3>✅ ${T('승인함')} <span class="en">· Approvals</span></h3>
+    <div class="body">
+      <div class="muted small" style="margin-bottom:8px">${T('2인 승인 — 인증서 발급/철회 요청을 검토·승인합니다. 요청자와 승인자는 서로 달라야 합니다.')}</div>
+      ${sec(T('승인 대기'),pend)}${sec(T('승인됨'),appr)}${sec(T('거절됨'),rej)}
+    </div></div>`;
+};
+async function approvalDecide(id,action){
+  let reason="";
+  if(action==="reject"){reason=prompt(T('거절 사유를 입력하세요'))||"";if(!reason)return;}
+  try{await API(`/approvals/${id}/${action}`,{method:"POST",body:JSON.stringify({reason})});
+    toast(action==="approve"?"✔ "+T('승인 완료'):"✖ "+T('거절 완료'));await loadCases(true);go("approvals");}
+  catch(e){toast(T('실패')+" · "+(e&&e.code?e.code:JSON.stringify(e)));}
 }
 function maLeftHTML(){
   const q=MA_SEARCH.trim().toLowerCase();

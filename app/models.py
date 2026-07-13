@@ -756,3 +756,26 @@ class SysMenuPermission(Base):
     can_approve = Column(Boolean, default=False)
     can_sign = Column(Boolean, default=False)
     can_download = Column(Boolean, default=False)
+
+
+class ApprovalRequest(Base):
+    """2인 승인(maker-checker) — 인증서 발급/철회 등 민감 행위. 설계서 보강안 §4.3.
+    maker가 요청(pending) → checker(다른 사람)가 승인 시 실제 실행. self-approval 금지."""
+    __tablename__ = "approval_request"
+    id = Column(String, primary_key=True, default=uid)
+    action_type = Column(String, nullable=False, index=True)   # certificate.issue | certificate.revoke ...
+    case_id = Column(String, index=True)
+    org_id = Column(String, index=True)
+    payload = Column(JSON, default=dict)          # 실행 파라미터(reason 등)
+    reason = Column(String)                        # maker 요청 사유
+    status = Column(String, default="pending", index=True)   # pending | approved | rejected
+    requested_by = Column(String, nullable=False)  # maker uid
+    requester_role = Column(String)
+    requester_name = Column(String)
+    decided_by = Column(String)                    # checker uid
+    decider_role = Column(String)
+    decider_name = Column(String)
+    decision_reason = Column(String)
+    result = Column(JSON)                          # 실행 결과(certificate_no 등)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    decided_at = Column(DateTime)
