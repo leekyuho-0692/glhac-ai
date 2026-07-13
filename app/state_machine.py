@@ -108,12 +108,29 @@ def pendamping_decision(db, case_id):
 
 
 # ---- 24.11 가드 ----
+# BPJPH 자기선언 정량 기준 (Decision 146/2025)
+SELF_DECLARE_REVENUE_LIMIT = 15_000_000_000   # 연매출 Rp 15 billion
+SELF_DECLARE_MAX_FACILITIES = 1               # 공장 최대 1개
+SELF_DECLARE_MAX_OUTLETS = 1                  # 매장(영업장) 최대 1개
+
+
 def guard_pathway_selfdeclare(db, case):
     g = []
     if case.risk_category != "low":
         g.append({"code": "RISK_NOT_LOW"})
     if not case.is_msme:
         g.append({"code": "NOT_MSME"})
+    # BPJPH: 연매출 ≤ Rp15B (미입력 시 판정 보류 — 하위호환)
+    if case.annual_revenue is not None and case.annual_revenue > SELF_DECLARE_REVENUE_LIMIT:
+        g.append({"code": "REVENUE_EXCEEDS_LIMIT",
+                  "limit": SELF_DECLARE_REVENUE_LIMIT, "have": case.annual_revenue})
+    # BPJPH: 공장 최대 1개 (이 신청 대상 공장 수)
+    fac = len(case.facility_ids or [])
+    if fac > SELF_DECLARE_MAX_FACILITIES:
+        g.append({"code": "TOO_MANY_FACILITIES", "max": SELF_DECLARE_MAX_FACILITIES, "have": fac})
+    # BPJPH: 매장 최대 1개 (미입력 시 판정 보류)
+    if case.outlet_count is not None and case.outlet_count > SELF_DECLARE_MAX_OUTLETS:
+        g.append({"code": "TOO_MANY_OUTLETS", "max": SELF_DECLARE_MAX_OUTLETS, "have": case.outlet_count})
     if len(critical_materials(db, case.case_id)) > 0:
         g.append({"code": "HAS_CRITICAL_MATERIAL"})
     if not evidence_complete(db, case.case_id):

@@ -925,6 +925,9 @@ const UI_STRINGS={
   "2인 승인 — 인증서 발급/철회 요청을 검토·승인합니다. 요청자와 승인자는 서로 달라야 합니다.":"Persetujuan dua orang — tinjau & setujui permohonan penerbitan/pencabutan sertifikat. Pemohon dan penyetuju harus berbeda.",
   "발급 승인 요청 접수 — 승인자(샤리아) 확인 후 발급됩니다":"Permohonan persetujuan penerbitan diterima — sertifikat terbit setelah disetujui (Syariah)",
   "인증서 발급 완료":"Sertifikat berhasil diterbitkan",
+  "자기선언 자격 · Self-Declare (BPJPH)":"Kelayakan Self-Declare (BPJPH)",
+  "연매출(IDR) · Annual Revenue":"Pendapatan Tahunan (IDR)",
+  "매장 수 · Outlets":"Jumlah Gerai",
   "' 관련 등록":"' Daftar Terkait",
   "' 신규 (등록 없음)":"' Baru (Tidak Ada Daftar)",
   "'이 사업자등록증 '":"' Bukti Pendaftaran Usaha'",
@@ -4590,6 +4593,10 @@ SCREEN.application=async()=>{
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>총 직원수 · Employees</label><input class="v" id="peEmp" value="${esc(pe.total_employee||"")}"></div>
           <div class="field"><label>생산능력 · Capacity</label><input class="v" id="peCap" value="${esc(pe.production_capacity||"")}"></div></div>
+        <div class="muted small" style="margin:10px 0 4px;font-weight:600">${T('자기선언 자격 · Self-Declare (BPJPH)')}</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>${T('연매출(IDR) · Annual Revenue')} <span class="muted">(≤ 15,000,000,000)</span></label><input class="v" id="peRevenue" type="number" min="0" value="${esc(pe.annual_revenue||"")}" placeholder="예: 10000000000"></div>
+          <div class="field"><label>${T('매장 수 · Outlets')} <span class="muted">(≤ 1)</span></label><input class="v" id="peOutlet" type="number" min="0" value="${esc(pe.outlet_count||"")}" placeholder="예: 1"></div></div>
         <div class="field"><label>주소 · Address</label><input class="v" id="peAddress" value="${esc(c.address||"")}"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
           <div class="field"><label>도시 · City</label><input class="v" id="peCity" value="${esc(pe.city||"")}"></div>
@@ -4675,7 +4682,7 @@ async function autofillProfile(id){
 async function saveProfile(id,silent){
   const cel=document.getElementById("apConsent");
   const pe={};
-  [["peTaxId","tax_id"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
+  [["peTaxId","tax_id"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peRevenue","annual_revenue"],["peOutlet","outlet_count"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
   const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),address:v("peAddress"),email:v("peEmail"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined,profile_ext:pe};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];await loadCases(true);applyView();if(!silent)alert("✅ 저장이 완료되었습니다 · Saved");}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
