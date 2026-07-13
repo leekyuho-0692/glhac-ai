@@ -330,6 +330,8 @@
         <button type="button" class="btn" onclick="quickLogin('consultant1','pw')">💼 컨설턴트<span>consultant1</span></button>
         <button type="button" class="btn" onclick="quickLogin('auditor1','pw')">🏭 오디터<span>auditor1</span></button>
         <button type="button" class="btn" onclick="quickLogin('fatwa1','pw')">⚖️ 샤리아<span>fatwa1</span></button>
+        <button type="button" class="btn" onclick="quickLogin('pendamping1','pw')">🤝 동반자(PPH)<span>pendamping1</span></button>
+        <button type="button" class="btn" onclick="quickLogin('penyelia1','pw')">🕌 할랄감독자<span>penyelia1</span></button>
         <button type="button" class="btn" onclick="quickLogin('operator1','pw')">👑 최고운영자<span>operator1</span></button>
         <button type="button" class="btn" onclick="quickLogin('admin','admin')">⚙️ ITO 관리자<span>admin</span></button>
       </div>
@@ -953,6 +955,19 @@ const UI_STRINGS={
   "KFPH 판정 대기 중":"Menunggu penetapan KFPH",
   "KFPH 결정문(Ketetapan)":"Ketetapan (KFPH)",
   "KFPH 결정문 · Ketetapan Halal":"Ketetapan Halal (KFPH)",
+  "SIHALAL 제출":"Kirim ke SIHALAL",
+  "SIHALAL 제출됨":"Terkirim ke SIHALAL",
+  "SIHALAL 자기선언 제출 · SEHATI":"Pengajuan Self-Declare SIHALAL · SEHATI",
+  "SIHALAL 미연동 — LP3H 등록·자격증명 설정 필요":"SIHALAL belum terhubung — perlu registrasi LP3H & kredensial",
+  "SIHALAL 자격증명이 설정되면 자기선언 패키지가 실제 제출됩니다. 미설정 시 제출 의도만 기록됩니다(정직).":"Bila kredensial SIHALAL dikonfigurasi, paket self-declare akan benar-benar dikirim. Bila belum, hanya niat pengiriman yang dicatat (jujur).",
+  "제출 ID":"ID Pengajuan",
+  "공식 할랄번호 수신됨":"No. Halal resmi diterima",
+  "공식 번호 import":"Impor No. Resmi",
+  "공식 할랄번호(No. Ketetapan Halal)를 입력하세요":"Masukkan No. Halal resmi (No. Ketetapan Halal)",
+  "공식 번호를 import하면 인증서가 공식 BPJPH 번호로 전환됩니다.":"Setelah No. resmi diimpor, sertifikat beralih ke No. BPJPH resmi.",
+  "SIHALAL 제출 완료":"Pengajuan SIHALAL selesai",
+  "공식 번호 import 완료":"Impor No. resmi selesai",
+  "KFPH 승인 후 제출 가능":"Dapat dikirim setelah persetujuan KFPH",
   "반려 완료":"Penolakan selesai",
   "연매출(IDR) · Annual Revenue":"Pendapatan Tahunan (IDR)",
   "매장 수 · Outlets":"Jumlah Gerai",
@@ -7994,6 +8009,7 @@ async function committeeDecisionCard(id){
   const sdBtn=`<button class="btn" onclick="previewSelfDeclaration('${id}')">📄 ${T('자기선언서')}</button>`;
   const ketBtn=(done==='approve')?`<button class="btn pri" onclick="previewKetetapan('${id}')">📄 ${T('KFPH 결정문(Ketetapan)')} <span class="en">· Ketetapan Halal</span></button>
         <button class="btn" onclick="serverPdf('/cases/${id}/committee/ketetapan.pdf','kfph_ketetapan.pdf')">⬇ PDF</button>`:'';
+  const sihBlock=(done==='approve')?await sihalalSubmitBlock(id):'';   // Layer B: KFPH 승인 후 SIHALAL 제출
   return `<div class="card" style="margin-bottom:16px;border:2px solid var(--warn)"><h3>🕌 ${T('KFPH 자기선언 할랄판정')} <span class="en">· Komite Fatwa Produk Halal (KFPH)</span></h3>
     <div class="body">
       <div class="banner info" style="margin-bottom:10px">${T('SEHATI 자기선언 — KFPH(Komite Fatwa Produk Halal) 판정 후 인증서 발급이 가능합니다. 정규 MUI 파트와와 별개 트랙입니다.')}</div>
@@ -8005,13 +8021,53 @@ async function committeeDecisionCard(id){
         <div class="btnrow"><button class="btn pri" onclick="committeeDecide('${id}','approve')">✔ ${T('KFPH 승인')}</button>
           <button class="btn bad" onclick="committeeDecide('${id}','reject')">✖ ${T('반려')}</button></div>`
         :(canDecide?'':`<div class="muted small">${T('KFPH 판정 대기 중')}</div>`)}
-    </div></div>`;
+    </div></div>${sihBlock}`;
 }
 async function committeeDecide(id,decision){
   const reason=((document.getElementById('cmtReason')||{}).value||"").trim();
   if(decision==='reject'&&!reason)return toast(T('반려 근거를 입력하세요'));
   try{await API(`/cases/${id}/committee/decide`,{method:"POST",body:JSON.stringify({decision,reason})});
     toast(decision==='approve'?"✔ "+T('위원회 승인 완료'):"✖ "+T('반려 완료'));await loadCases(true);applyView();}
+  catch(e){toast(T('실패')+" · "+(e&&e.code?e.code:JSON.stringify(e)));}
+}
+/* SEHATI Layer B — SIHALAL 제출 커넥터 UI(정직). KFPH 승인 self_declare 케이스에서 노출.
+   자격증명 미설정 시 '미연동' 정직 배너 표기, 실제 제출 대신 제출 의도만 기록됨. operator용 공식번호 import. */
+async function sihalalSubmitBlock(id){
+  const st=await API(`/cases/${id}/sihalal/status`).catch(()=>null);
+  if(!st)return '';
+  const canOp=["ops","admin"].includes(ROLE);   // operator·admin(=백엔드 operator/admin) SIHALAL 커넥터 운영
+  const submitted=st.submitted, official=st.official_no;
+  const statusBadge=official?`<span class="tag t-ok">✓ ${T('공식 할랄번호 수신됨')} · ${esc(official)}</span>`
+    :submitted?`<span class="tag t-info">${T('SIHALAL 제출됨')}${st.submission_id?' · '+esc(st.submission_id):''}</span>`
+    :`<span class="tag t-mute">—</span>`;
+  const cfgBanner=!st.configured
+    ?`<div class="banner warn" style="margin-bottom:8px">⚠ ${T('SIHALAL 미연동 — LP3H 등록·자격증명 설정 필요')}</div>`
+    :`<div class="muted small" style="margin-bottom:8px">${T('SIHALAL 자격증명이 설정되면 자기선언 패키지가 실제 제출됩니다. 미설정 시 제출 의도만 기록됩니다(정직).')}</div>`;
+  const submitBtn=(canOp&&!submitted&&!official)?`<button class="btn pri" onclick="sihalalSubmit('${id}')">📤 ${T('SIHALAL 제출')}</button>`:'';
+  const submittedInfo=(submitted&&st.submission_id)?`<div class="muted small" style="margin-bottom:6px">${T('제출 ID')}: <b>${esc(st.submission_id)}</b></div>`:'';
+  const importUI=canOp?`<div class="field" style="margin-top:8px"><label>${T('공식 번호 import')} <span class="en">· No. Ketetapan Halal (BPJPH)</span></label>
+    <div style="display:flex;gap:6px"><input class="v" id="sihNo_${id}" placeholder="${T('공식 할랄번호(No. Ketetapan Halal)를 입력하세요')}" style="flex:1">
+      <button class="btn" onclick="sihalalImportNo('${id}')">⤓ ${T('공식 번호 import')}</button></div>
+    <div class="muted small" style="margin-top:4px">${T('공식 번호를 import하면 인증서가 공식 BPJPH 번호로 전환됩니다.')}</div></div>`:'';
+  return `<div class="card" style="margin-top:12px"><h3>📤 ${T('SIHALAL 자기선언 제출 · SEHATI')} <span class="r">${statusBadge}</span></h3>
+    <div class="body">${cfgBanner}${submittedInfo}
+      ${submitBtn?`<div class="btnrow">${submitBtn}</div>`:''}
+      ${importUI}
+    </div></div>`;
+}
+async function sihalalSubmit(id){
+  try{const r=await API(`/cases/${id}/sihalal/submit`,{method:"POST",body:"{}"});
+    toast("📤 "+T('SIHALAL 제출 완료')+(r&&r.submission_id?" · "+r.submission_id:""));applyView();}
+  catch(e){
+    if(e&&e.code==="SIHALAL_NOT_CONFIGURED"){toast("⚠ "+T('SIHALAL 미연동 — LP3H 등록·자격증명 설정 필요'));}
+    else{toast(T('실패')+" · "+(e&&e.code?e.code:JSON.stringify(e)));}
+  }
+}
+async function sihalalImportNo(id){
+  const el=document.getElementById('sihNo_'+id);const no=((el&&el.value)||"").trim();
+  if(!no)return toast(T('공식 할랄번호(No. Ketetapan Halal)를 입력하세요'));
+  try{await API(`/cases/${id}/sihalal/import-number`,{method:"POST",body:JSON.stringify({official_no:no})});
+    toast("⤓ "+T('공식 번호 import 완료'));applyView();}
   catch(e){toast(T('실패')+" · "+(e&&e.code?e.code:JSON.stringify(e)));}
 }
 /* 기존 심의 상세(위원 구성·2단계 승인·위원회 투표) — P0-4 fatwa 로직 보존, 접이식 */
@@ -8300,6 +8356,8 @@ SCREEN.certificate=async()=>{
   const [c,ciHist,pc]=await Promise.all([API(`/cases/${id}/certificate`).catch(()=>({issued:false})),API(`/cases/${id}/certificate/change-impact-history`).catch(()=>[]),API(`/cases/${id}/certificate/products`).catch(()=>({issued:false,items:[]}))]);
   const co=curCaseObj();
   const canIssue=CAN("certificate.issue");  // 단일 매트릭스 파생(API와 동일 action_id)
+  // Layer B: self_declare(SEHATI) 케이스는 SIHALAL 제출·공식번호 import 커넥터 노출(정직 미연동 배너 포함)
+  const sihBlock=(co&&co.pathway==='self_declare')?await sihalalSubmitBlock(id):'';
   const certCard=c.issued?`<div class="cert">
       <div class="seal">☪</div>
       <div class="small" style="letter-spacing:2px;color:var(--gold)">SERTIFIKAT HALAL</div>
@@ -8344,6 +8402,7 @@ SCREEN.certificate=async()=>{
           ${c.issued&&CAN("certificate.unlock")?`<button class="btn" onclick="unlockCert('${id}')">잠금해제 · Unlock</button>`:''}
           ${!canIssue?'<span class="chip">🔒 발급 — 최고운영자(최종 결제자)</span>':''}</div></div></div>
   </div>
+  ${sihBlock}
   ${productCertCard(id,pc)}
   <div class="card" style="margin-top:16px"><h3>변경영향 분석 이력 <span class="en">· Change-impact history</span><span class="r">${(ciHist||[]).length}건</span></h3>
     <div class="body tight"><table><thead><tr><th>일시</th><th>변경 유형</th><th>위험도</th><th>점수</th><th>영향 제품</th><th>조치</th></tr></thead>

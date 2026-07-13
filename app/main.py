@@ -7224,6 +7224,215 @@ def list_integration_events(case_id: str, user=Depends(auth.get_current_user),
              "created_at": str(e.created_at)} for e in rows]
 
 
+# ---------- SEHATI Layer B — SIHALAL 제출 커넥터 (스키마 무변경) ----------
+# 정직성(중요): 실제 SIHALAL 라이브 제출은 LP3H 등록·API 자격증명(GLHAC_SIHALAL_*)이 있어야 가능하다.
+# 자격증명 미설정 시 제출하는 '척' 위조하지 않고 no_credentials로 정직 폴백한다 — notify.py 채널
+# 크리덴셜 게이트와 완전 동일 패턴(_send_kakao / channel_status의 kakao_ok = URL+KEY 참조).
+# 실 대행 API 필드 매핑은 공식 스펙(lph-api.halal.go.id) 확보 전이므로 범용/설정형 payload로 제출한다
+# (Kakao 커넥터가 senderKey·templateCode를 설정형으로 둔 것과 동일). 스펙·자격증명 확보 후 최종화.
+_SIHALAL_SUBMIT_EVENT = "document_package_submitted"   # §10.1 IntegrationEvent 표준 이벤트 재사용
+
+
+def _sihalal_submit_config():
+    """SIHALAL 제출 자격증명 게이트 — 값은 노출하지 않고 configured(bool)만 판정.
+    GLHAC_SIHALAL_API_URL + (GLHAC_SIHALAL_TOKEN 또는 GLHAC_SIHALAL_API_KEY) 완비 시에만 실제 제출.
+    (notify.channel_status의 kakao_ok = GLHAC_KAKAO_API_URL+KEY 게이트와 동일 패턴.)"""
+    e = os.environ.get
+    url = e("GLHAC_SIHALAL_API_URL")
+    token = e("GLHAC_SIHALAL_TOKEN") or e("GLHAC_SIHALAL_API_KEY")
+    return {"configured": bool(url and token), "url": url, "token": token}
+
+
+def _sihalal_submit_key(case_id):
+    return "%s:sihalal_submit" % case_id
+
+
+def _sihalal_existing_submission(db, case_id):
+    """이미 제출된 IntegrationEvent(document_package_submitted·status=submitted) — 멱등 조회."""
+    return (db.query(models.IntegrationEvent)
+            .filter_by(case_id=case_id, event_type=_SIHALAL_SUBMIT_EVENT, status="submitted")
+            .order_by(models.IntegrationEvent.created_at.desc()).first())
+
+
+def _build_selfdeclare_submission(db, case):
+    """SEHATI self-declare 제출 패키지 조립(스키마 무변경 조인) — SIHALAL 제출 payload.
+    사업자/NIB · 제품 · 원재료(positive-list 상태 포함) · 자기선언서 참조(self_declaration) ·
+    pendamping 검증 · KFPH ketetapan(할랄 판정) 참조. dict 반환."""
+    rep = case.responsible_person or (case.profile_ext or {}).get("pic_name") or ""
+    prods = db.query(models.Product).filter_by(case_id=case.case_id).all()
+    mats = db.query(models.Material).filter_by(case_id=case.case_id).all()
+    sd_doc = (db.query(models.GeneratedDocument)
+              .filter_by(case_id=case.case_id, doc_type="self_declaration")
+              .order_by(models.GeneratedDocument.version.desc()).first())
+    pa = (db.query(models.PendampingAssignment).filter_by(case_id=case.case_id)
+          .order_by(models.PendampingAssignment.assignment_id.desc()).first())
+    kfph_ev = _kfph_approve_event(db, case.case_id)
+    return {
+        "scheme": "self_declare",
+        "business": {"company_name": case.company_name, "nib": case.nib,
+                     "address": case.address, "responsible_person": rep},
+        "products": [{"product_id": p.product_id, "name": p.name, "category": p.category}
+                     for p in prods],
+        "materials": [{"name": m.name, "screen_status": m.screen_status,
+                       "matched_uid": m.matched_uid,
+                       "positive_listed": sm.positive_listed(m)} for m in mats],
+        "self_declaration": ({"gen_doc_id": sd_doc.gen_doc_id, "version": sd_doc.version,
+                              "status": sd_doc.status} if sd_doc else None),
+        "pendamping": ({"name": _pendamping_name(db, case), "decision": pa.decision,
+                        "note": pa.note,
+                        "verified_at": pa.verified_at.isoformat() if pa.verified_at else None}
+                       if pa else None),
+        "kfph_ketetapan": {"ref_no": _kfph_ref_no(case.case_id), "approved": bool(kfph_ev),
+                           "decided_by": (kfph_ev.actor_id if kfph_ev else None),
+                           "decided_at": (kfph_ev.created_at.isoformat()
+                                          if kfph_ev and kfph_ev.created_at else None)},
+    }
+
+
+@app.post("/cases/{case_id}/sihalal/submit")
+def sihalal_submit(case_id: str,
+                   user=Depends(auth.require_roles("pendamping_pph", "operator", "admin")),
+                   db: Session = Depends(get_db)):
+    """SEHATI self-declare 제출 — SIHALAL 커넥터. self_declare + KFPH 승인(committee.approve) 전용.
+    자격증명(GLHAC_SIHALAL_*) 설정 시 실제 제출, 미설정 시 424 no_credentials 정직 폴백(제출의도 기록).
+    멱등: 이미 제출된 경우 기존 결과 반환(재제출 금지)."""
+    from fastapi.responses import JSONResponse
+    c = _get_case(db, case_id, user)
+    # self_declare 아니면 409 NOT_SELF_DECLARE, KFPH 미승인이면 409 NOT_APPROVED (KFPH 결정문 가드 재사용)
+    _kfph_ketetapan_guard(db, c)
+
+    # 멱등 — 이미 제출됨
+    dup = _sihalal_existing_submission(db, case_id)
+    if dup:
+        return {"ok": True, "submitted": True, "idempotent": True,
+                "submission_id": dup.external_id, "status": dup.status}
+
+    cfg = _sihalal_submit_config()
+    submission = _build_selfdeclare_submission(db, c)
+
+    # 미설정 → 정직: 제출하지 않되 '제출 의도'는 감사 기록(WorkflowEvent)하고 424 반환
+    if not cfg["configured"]:
+        sm.record_event(db, c, c.status, c.status, "sihalal.submit_intent",
+                        user["role"], user["uid"],
+                        {"reason": "no_credentials", "scheme": "self_declare"})
+        db.commit()
+        obs.inc("glhac_sihalal_submit_total", {"result": "no_credentials"})
+        return JSONResponse(status_code=424, content={
+            "ok": False, "reason": "no_credentials", "code": "SIHALAL_NOT_CONFIGURED",
+            "hint": "SIHALAL 미연동 — LP3H 등록·자격증명(GLHAC_SIHALAL_API_URL/TOKEN) 설정 후 제출 가능"})
+
+    # 설정됨 → 실제 제출(범용 payload, 예외 graceful)
+    submission_id = None
+    try:
+        import httpx
+        r = httpx.post(cfg["url"], timeout=15,
+                       headers={"Authorization": "Bearer " + cfg["token"],
+                                "Content-Type": "application/json"},
+                       json={"case_id": case_id, "scheme": "self_declare", "package": submission})
+        if not (200 <= r.status_code < 300):
+            sm.record_event(db, c, c.status, c.status, "sihalal.submit_intent",
+                            user["role"], user["uid"],
+                            {"reason": "http_%d" % r.status_code, "scheme": "self_declare"})
+            db.commit()
+            obs.inc("glhac_sihalal_submit_total", {"result": "http_error"})
+            return JSONResponse(status_code=502, content={
+                "ok": False, "reason": "sihalal_http_%d" % r.status_code,
+                "code": "SIHALAL_SUBMIT_FAILED"})
+        try:
+            body = r.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        submission_id = (body.get("submission_id") or body.get("id")
+                         or body.get("registration_no") or None)
+    except Exception as e:  # noqa: BLE001
+        sm.record_event(db, c, c.status, c.status, "sihalal.submit_intent",
+                        user["role"], user["uid"],
+                        {"reason": "error:%s" % str(e)[:60], "scheme": "self_declare"})
+        db.commit()
+        obs.inc("glhac_sihalal_submit_total", {"result": "error"})
+        return JSONResponse(status_code=502, content={
+            "ok": False, "reason": "sihalal_error", "code": "SIHALAL_SUBMIT_FAILED"})
+
+    # 성공 → WorkflowEvent(sihalal.submitted) + IntegrationEvent(멱등키=case_id:sihalal_submit)
+    import json as _json
+    import hashlib as _hl
+    req_hash = _hl.sha256(_json.dumps(submission, sort_keys=True, ensure_ascii=False)
+                          .encode()).hexdigest()
+    sm.record_event(db, c, c.status, c.status, "sihalal.submitted", user["role"], user["uid"],
+                    {"submission_id": submission_id, "scheme": "self_declare"})
+    ev = models.IntegrationEvent(provider="sihalal", event_type=_SIHALAL_SUBMIT_EVENT,
+                                 external_id=submission_id,
+                                 idempotency_key=_sihalal_submit_key(case_id), case_id=case_id,
+                                 payload={"submission_id": submission_id, "package": submission},
+                                 request_hash=req_hash, status="submitted")
+    db.add(ev)
+    db.commit()
+    obs.inc("glhac_sihalal_submit_total", {"result": "submitted"})
+    return {"ok": True, "submitted": True, "idempotent": False,
+            "submission_id": submission_id, "status": "submitted"}
+
+
+@app.post("/cases/{case_id}/sihalal/import-number")
+def sihalal_import_number(case_id: str, body: schemas.SihalalImportNumberReq,
+                          user=Depends(auth.require_roles("operator", "admin")),
+                          db: Session = Depends(get_db)):
+    """공식 BPJPH 할랄번호(No. Ketetapan Halal) 수동/콜백 import — Phase0↔Layer B 브릿지.
+    certificate_number_imported 이벤트를 기록하면 _official_bpjph_no가 이를 읽어 인증서 표기가
+    자동으로 '공식 라벨'(halal_no_is_official=true)로 전환된다. 번호 형식검증은 최소(비어있지 않음)."""
+    c = _get_case(db, case_id, user)
+    official = (body.official_no or "").strip()
+    if len(official) < 4:
+        raise HTTPException(422, {"code": "BAD_OFFICIAL_NO",
+                                  "hint": "공식 할랄번호(No. Ketetapan Halal)를 확인하세요."})
+    key = "%s:certno:%s" % (case_id, official)
+    dup = db.query(models.IntegrationEvent).filter_by(idempotency_key=key).first()
+    if dup:
+        return {"ok": True, "idempotent": True, "official_no": official,
+                "halal_no_is_official": bool(_official_bpjph_no(db, case_id))}
+    import json as _json
+    import hashlib as _hl
+    payload = {"certificate_number": official, "official_no": official,
+               "source": (body.source or "manual")}
+    req_hash = _hl.sha256(_json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    ev = models.IntegrationEvent(provider="sihalal", event_type="certificate_number_imported",
+                                 external_id=official, idempotency_key=key, case_id=case_id,
+                                 payload=payload, request_hash=req_hash, status="received")
+    db.add(ev)
+    _audit(db, user, "sihalal.import_number", "case", case_id, case_id,
+           meta={"official_no": official}, commit=False)
+    db.commit()
+    obs.inc("glhac_integration_event_total", {"type": "certificate_number_imported"})
+    return {"ok": True, "idempotent": False, "official_no": official,
+            "halal_no_is_official": bool(_official_bpjph_no(db, case_id))}
+
+
+@app.get("/cases/{case_id}/sihalal/status")
+def sihalal_status(case_id: str, user=Depends(auth.get_current_user),
+                   db: Session = Depends(get_db)):
+    """SIHALAL 제출/공식번호 상태 — configured·submitted·submission_id·official_no·status(정직표기)."""
+    _get_case(db, case_id, user)
+    cfg = _sihalal_submit_config()
+    sub = _sihalal_existing_submission(db, case_id)
+    official = _official_bpjph_no(db, case_id)
+    status = ("official_received" if official
+              else ("submitted" if sub
+                    else ("ready" if cfg["configured"] else "not_configured")))
+    return {"configured": cfg["configured"], "submitted": bool(sub),
+            "submission_id": (sub.external_id if sub else None),
+            "official_no": official, "halal_no_is_official": bool(official),
+            "status": status}
+
+
+@app.get("/admin/sihalal-status")
+def admin_sihalal_status(user=Depends(auth.require_roles("operator"))):
+    """SIHALAL 커넥터 설정 상태(읽기전용·스키마 무변경) — 시크릿 값 미노출·bool만.
+    notify /admin/notify-channels(channel_status)와 동일한 정직표기 방식."""
+    cfg = _sihalal_submit_config()
+    return {"sihalal": {"configured": cfg["configured"], "implemented": True,
+                        "status": "connected" if cfg["configured"] else "unset",
+                        "note": "LP3H 등록·자격증명(GLHAC_SIHALAL_API_URL/TOKEN) 필요"}}
+
+
 @app.post("/cases/{case_id}/certificate/change-impact")
 def change_impact(case_id: str, body: schemas.ChangeImpactReq,
                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):

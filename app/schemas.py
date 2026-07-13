@@ -416,6 +416,11 @@ class IntegrationEventReq(BaseModel):
     payload: Optional[dict] = None
 
 
+class SihalalImportNumberReq(BaseModel):
+    official_no: str                          # 공식 BPJPH 할랄번호(No. Ketetapan Halal)
+    source: Optional[str] = None              # manual|callback (기본 manual)
+
+
 class InvoiceStatusReq(BaseModel):
     status: str
     reason: Optional[str] = None
