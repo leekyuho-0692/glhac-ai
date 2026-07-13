@@ -285,6 +285,19 @@ def apply_side_effects(case, to_state):
     # NOTE(P0-1): fatwa_approved 자동 approved 제거 — 최종승인은 /fatwa/final-approve(operator)만 수행
 
 
+def positive_listed(m):
+    """SEHATI self-declare 긍정목록(known-halal) 판정.
+    온톨로지에 매칭(matched_uid)되고 default_status가 halal인 원재료만 '긍정목록 확인'으로 본다.
+    NOTE(정직): 여기서 '긍정목록'은 온톨로지 halal 매칭을 대체 기준으로 사용한 것이며,
+    공식 BPJPH의 전체 bahan(할랄 긍정목록) 데이터셋 그 자체는 아니다.
+    미매칭(matched_uid=None)·비-halal(mushbooh/unknown/haram)은 긍정목록 미확인으로 간주."""
+    return (m.matched_uid is not None) and (m.screen_status == "halal")
+
+
+def _non_positive_reason(m):
+    return "unmatched" if m.matched_uid is None else "not_halal"
+
+
 def assess_pathway(db, case):
     mats = materials(db, case.case_id)
     crit = critical_materials(db, case.case_id)
@@ -294,10 +307,23 @@ def assess_pathway(db, case):
     has_mush_med = any(m.screen_status == "mushbooh" and m.screen_severity == "medium" for m in mats)
     risk = "high" if (has_haram or has_mush_high) else ("medium" if has_mush_med else "low")
     ev = evidence_complete(db, case.case_id)
-    suggested = "self_declare" if (risk == "low" and case.is_msme and not crit and ev) else "reguler"
+    # SEHATI 긍정목록 게이트: self-declare는 전 원재료가 긍정목록(known-halal) 확인돼야 한다.
+    # 미매칭/불명 원재료는 screen_status=None이라 haram이 아니어서 low risk로 통과하므로,
+    # 기존 risk/msme/crit/evidence 로직은 보존하고 positive-list를 '추가 게이트'로 얹는다.
+    non_positive = [m for m in mats if not positive_listed(m)]
+    base_eligible = (risk == "low" and case.is_msme and not crit and ev)
+    suggested = "self_declare" if (base_eligible and not non_positive) else "reguler"
+    blockers = [{"code": "HAS_CRITICAL_MATERIAL", "target": m.name} for m in crit]
+    blockers += [{"code": "NOT_ON_POSITIVE_LIST", "target": m.name, "reason": _non_positive_reason(m)}
+                 for m in non_positive]
     return {"suggested_pathway": suggested, "risk_category": risk, "is_msme": bool(case.is_msme),
             "critical_ingredient_count": len(crit), "evidence_complete": ev,
-            "blockers": [{"code": "HAS_CRITICAL_MATERIAL", "target": m.name} for m in crit]}
+            "positive_listed_count": sum(1 for m in mats if positive_listed(m)),
+            "non_positive_count": len(non_positive),
+            "materials": [{"name": m.name, "positive_listed": positive_listed(m),
+                           "reason": "ok" if positive_listed(m) else _non_positive_reason(m)}
+                          for m in mats],
+            "blockers": blockers}
 
 
 # ---- 감사 이벤트 (해시 체인, B.5) ----

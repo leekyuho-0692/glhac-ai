@@ -3468,6 +3468,14 @@ const UI_STRINGS={
   "배정된 케이스가 없습니다":"Tidak ada kasus yang ditugaskan",
   "4개 항목을 모두 확인하세요":"Centang keempat item terlebih dahulu",
   "미검증":"Belum diverifikasi",
+  "긍정목록":"Daftar positif",
+  "긍정목록 점검":"Pemeriksaan daftar positif",
+  "미매칭 원재료":"Bahan tidak cocok",
+  "할랄 미확인":"Halal belum dikonfirmasi",
+  "미확인 원재료":"Bahan belum dikonfirmasi",
+  "건 — 정규경로 필요":" item — perlu jalur reguler",
+  "전 원재료 긍정목록 확인":"Semua bahan terkonfirmasi di daftar positif",
+  "※ 온톨로지 매칭 기반 판정 — 공식 BPJPH bahan(할랄 긍정목록) 자체는 아님.":"※ Penilaian berbasis pencocokan ontologi — bukan daftar bahan (positif halal) resmi BPJPH.",
 };
 function localizeUI(root){
   if(LANG!==2)return;
@@ -4839,9 +4847,17 @@ function assessRender(id){
   const crit=(r.critical_ingredient_count!=null)?r.critical_ingredient_count:'—';
   const ev=r.evidence_complete;
   const bl=r.blockers||[];
+  // SEHATI 긍정목록(known-halal) — 전 원재료가 온톨로지 halal 매칭돼야 self-declare 적격.
+  const mm=r.materials||[];
+  const plc=(r.positive_listed_count!=null)?r.positive_listed_count:mm.filter(m=>m.positive_listed).length;
+  const npc=(r.non_positive_count!=null)?r.non_positive_count:mm.filter(m=>!m.positive_listed).length;
+  const npReason=x=>x==='unmatched'?T('미매칭 원재료'):(x==='not_halal'?T('할랄 미확인'):x);
+  const posBadges=mm.length?`<div class="small" style="margin-top:8px"><b>${T('긍정목록 점검')} <span class="en">· Positive-list</span></b>
+    <div class="btnrow" style="flex-wrap:wrap;gap:5px;margin-top:4px">${mm.map(m=>`<span class="tag t-${m.positive_listed?'ok':'warn'}" title="${esc(npReason(m.reason))}">${m.positive_listed?'✅':'⚠️'} ${esc(m.name)}</span>`).join("")}</div>
+    ${npc>0?`<div class="small" style="margin-top:5px;color:var(--bad)">${T('미확인 원재료')} ${npc}${T('건 — 정규경로 필요')} · ${mm.filter(m=>!m.positive_listed).map(m=>esc(m.name)+'('+esc(npReason(m.reason))+')').join(', ')}</div>`:`<div class="small" style="margin-top:5px"><span class="ok">${T('전 원재료 긍정목록 확인')}</span></div>`}</div>`:'';
   return `<div class="btnrow" style="flex-wrap:wrap;gap:6px">
-    ${tag(spC,T('추천')+' · '+sp)} ${tag(rkC,T('위험')+' · '+rk)} ${tag((crit&&crit!=='—')?'bad':'ok',T('임계원재료')+' '+crit)} ${tag(ev?'ok':'warn',T('증빙')+' '+(ev?T('완료'):T('미완')))}
-  </div>${bl.length?`<div class="small" style="margin-top:8px"><b>차단 사유 · Blockers</b><ul style="margin:4px 0 0 16px;padding:0">${bl.map(b=>`<li>${esc(b.code||JSON.stringify(b))}${b.target?' · '+esc(b.target):''}</li>`).join("")}</ul></div>`:'<div class="small" style="margin-top:8px"><span class="ok">차단 사유 없음 · 진행 가능</span></div>'}`;
+    ${tag(spC,T('추천')+' · '+sp)} ${tag(rkC,T('위험')+' · '+rk)} ${tag((crit&&crit!=='—')?'bad':'ok',T('임계원재료')+' '+crit)} ${tag(ev?'ok':'warn',T('증빙')+' '+(ev?T('완료'):T('미완')))} ${tag(npc>0?'warn':'ok',T('긍정목록')+' '+plc+'/'+mm.length)}
+  </div>${posBadges}${bl.length?`<div class="small" style="margin-top:8px"><b>차단 사유 · Blockers</b><ul style="margin:4px 0 0 16px;padding:0">${bl.map(b=>`<li>${esc(b.code||JSON.stringify(b))}${b.target?' · '+esc(b.target):''}${b.reason?' ('+esc(npReason(b.reason))+')':''}</li>`).join("")}</ul></div>`:'<div class="small" style="margin-top:8px"><span class="ok">차단 사유 없음 · 진행 가능</span></div>'}<div class="muted small" style="margin-top:6px">${T('※ 온톨로지 매칭 기반 판정 — 공식 BPJPH bahan(할랄 긍정목록) 자체는 아님.')}</div>`;
 }
 async function confirmPathway(id,pathway){
   if(!pathway)return;
