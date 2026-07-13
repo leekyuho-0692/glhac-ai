@@ -905,6 +905,10 @@ const UI_STRINGS={
   "기본값":"Bawaan",
   "내가 쓰는 좌측 메뉴의 구성과 순서를 직접 정합니다. 저장하면 내 화면에 바로 반영됩니다.":"Atur sendiri susunan dan urutan menu kiri Anda. Perubahan langsung diterapkan setelah disimpan.",
   "내 메뉴를 역할 기본값으로 되돌립니다. 진행할까요?":"Kembalikan menu saya ke nilai bawaan peran. Lanjutkan?",
+  "사용중":"Aktif",
+  "미사용":"Nonaktif",
+  "사용불가":"Tidak tersedia",
+  "사용 권한이 없는 메뉴입니다":"Anda tidak memiliki izin untuk menu ini",
   "' 관련 등록":"' Daftar Terkait",
   "' 신규 (등록 없음)":"' Baru (Tidak Ada Daftar)",
   "'이 사업자등록증 '":"' Bukti Pendaftaran Usaha'",
@@ -8424,9 +8428,17 @@ function maLeftHTML(){
     const show=q?kids:(g.children||[]);
     return `<div style="margin-bottom:8px"><div style="font-weight:700;font-size:12px;padding:2px 0">${g.icon||"📂"} ${esc(g.menuName)} <span class="muted small">${esc(g.menuCode||"")}</span>
         <button class="btn" style="padding:0 6px;font-size:11px" onclick="maAdd('${g.menuId}')" title="그룹 통째 배정">＋그룹</button></div>
-      ${show.map(c=>`<div draggable="true" ondragstart="maDrag(event,'${c.menuId}')" ondblclick="maAdd('${c.menuId}')" title="더블클릭/드래그로 배정"
-        style="padding:4px 8px;margin:2px 0 2px 14px;border:1px solid var(--line);border-radius:6px;cursor:grab;font-size:12px;background:${asg.has(c.menuId)?"#eef7f0":"#fff"}">
-        ⠿ ${c.icon||""} ${esc(c.menuName)}${c.useYn===false?' <span class="tag t-bad">중지</span>':""}${c.requiredYn?' <span class="tag">필수</span>':""}${c.systemAdminYn?' <span class="tag">관리자</span>':""}</div>`).join("")}</div>`;
+      ${show.map(c=>{
+        const me=MA_MODE==="me", dis=me&&c.allowed===false;   // 개인화: 역할 밖 = 사용불가(비활성)
+        const badge=me
+          ? (c.allowed===false?` <span class="tag t-bad">${T('사용불가')}</span>`
+             : asg.has(c.menuId)?` <span class="tag" style="background:#dcfce7;color:#166534">${T('사용중')}</span>`
+             : ` <span class="tag" style="background:#f1f5f9;color:#64748b">${T('미사용')}</span>`)
+          : `${c.useYn===false?' <span class="tag t-bad">중지</span>':""}${c.requiredYn?' <span class="tag">필수</span>':""}${c.systemAdminYn?' <span class="tag">관리자</span>':""}`;
+        return `<div ${dis?"":'draggable="true"'} ${dis?"":`ondragstart="maDrag(event,'${c.menuId}')" ondblclick="maAdd('${c.menuId}')"`} title="${dis?T('사용 권한이 없는 메뉴입니다'):'더블클릭/드래그로 배정'}"
+        style="padding:4px 8px;margin:2px 0 2px 14px;border:1px solid var(--line);border-radius:6px;cursor:${dis?"not-allowed":"grab"};font-size:12px;opacity:${dis?"0.55":"1"};background:${dis?"#f5f5f5":(asg.has(c.menuId)?"#eef7f0":"#fff")}">
+        ⠿ ${c.icon||""} ${esc(c.menuName)}${badge}</div>`;
+      }).join("")}</div>`;
   }).join("")||'<div class="muted small">메뉴 없음</div>';
 }
 function maRightHTML(){
@@ -8444,9 +8456,10 @@ function maAdd(mid){
   if(!f.child){ // 그룹 통째
     if(MA_ASSIGN.find(x=>x.menuId===f.group.menuId))return;
     MA_ASSIGN.push({menuId:f.group.menuId,menuName:f.group.menuName,icon:f.group.icon,
-      children:(f.group.children||[]).filter(c=>c.useYn!==false).map(c=>({menuId:c.menuId,menuName:c.menuName,icon:c.icon}))});
+      children:(f.group.children||[]).filter(c=>c.useYn!==false&&c.allowed!==false).map(c=>({menuId:c.menuId,menuName:c.menuName,icon:c.icon}))});
   }else{ // 자식 → 부모 자동
     if(f.child.useYn===false)return toast("사용중지 메뉴는 배정할 수 없습니다");
+    if(f.child.allowed===false)return toast(T('사용 권한이 없는 메뉴입니다'));
     let ag=MA_ASSIGN.find(x=>x.menuId===f.group.menuId);
     if(!ag){ag={menuId:f.group.menuId,menuName:f.group.menuName,icon:f.group.icon,children:[]};MA_ASSIGN.push(ag);}
     if(!ag.children.find(x=>x.menuId===mid))ag.children.push({menuId:f.child.menuId,menuName:f.child.menuName,icon:f.child.icon});
