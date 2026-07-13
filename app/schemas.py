@@ -519,3 +519,7 @@ class MenuAssignReq(BaseModel):     # 메뉴 배정 저장 — 설계서 §5·§
 
 class MenuPermissionReq(BaseModel):   # 메뉴 기능 권한 — 설계서 §3.6·§9
     permissions: Dict[str, Dict[str, bool]] = Field(default_factory=dict)  # {menu_id: {view,create,update,delete,submit,approve,sign,download}}
+
+
+class ApprovalDecisionReq(BaseModel):   # 2인 승인 결정 — 설계서 보강안 §4.3
+    reason: Optional[str] = None            # 승인/거절 사유(거절 시 권장)

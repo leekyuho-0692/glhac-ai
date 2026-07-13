@@ -5966,28 +5966,149 @@ def get_fatwa_status(case_id: str, user=Depends(auth.get_current_user), db: Sess
             "committee_size": total or None}
 
 
-@app.post("/cases/{case_id}/certificate/issue")
-def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
-                      user=Depends(rbac.require_action("certificate.issue")),
-                      db: Session = Depends(get_db)):
-    c = _get_case(db, case_id, user)
+# ========== 2인 승인(maker-checker) 프레임워크 — 설계서 보강안 §4.3 ==========
+MAKER_CHECKER = {
+    "certificate.issue":  {"maker": {"operator"}, "checker": {"fatwa_liaison"}, "label": "인증서 발급"},
+    "certificate.revoke": {"maker": {"operator"}, "checker": {"admin"}, "label": "인증서 철회"},
+}
+
+
+def _create_approval(db, action_type, c, user, reason):
+    """maker의 승인요청 생성(pending). 동일 케이스·액션의 중복 pending 방지."""
+    dup = db.query(models.ApprovalRequest).filter_by(
+        action_type=action_type, case_id=c.case_id, status="pending").first()
+    if dup:
+        raise HTTPException(409, {"code": "APPROVAL_PENDING", "approval_id": dup.id})
+    ar = models.ApprovalRequest(
+        action_type=action_type, case_id=c.case_id, org_id=c.org_id,
+        reason=reason or None, payload={"reason": reason or None},
+        requested_by=user["uid"], requester_role=user["role"],
+        requester_name=user.get("username"))
+    db.add(ar)
+    sm.record_event(db, c, c.status, c.status, action_type + ".requested",
+                    user["role"], user["uid"], {"approval_id": ar.id, "reason": reason or None})
+    db.commit()
+    rule = MAKER_CHECKER.get(action_type, {})
+    return {"approval_id": ar.id, "status": "pending", "action_type": action_type,
+            "checker_roles": sorted(rule.get("checker", set())),
+            "message": "2인 승인 대기 — 승인자 확인 후 %s이(가) 실행됩니다." % (rule.get("label") or action_type)}
+
+
+def _check_checker(ar, user):
+    """checker 자격 검증 — 역할 매핑 + self-approval 금지(설계서 §4.3)."""
+    rule = MAKER_CHECKER.get(ar.action_type)
+    if not rule:
+        raise HTTPException(400, {"code": "UNKNOWN_ACTION"})
+    if user["role"] != "admin" and user["role"] not in rule["checker"]:
+        raise HTTPException(403, {"code": "NOT_A_CHECKER", "required": sorted(rule["checker"])})
+    if user["uid"] == ar.requested_by:
+        raise HTTPException(403, {"code": "SELF_APPROVAL_FORBIDDEN"})
+
+
+def _exec_approved(db, ar, user):
+    """승인된 요청의 실제 액션 실행 — 액션별 본체 함수로 디스패치. checker는 인증기관 역할이라 org 무관 접근."""
+    c = db.get(models.CaseApplication, ar.case_id)
+    if not c:
+        raise HTTPException(404, {"code": "CASE_NOT_FOUND", "case_id": ar.case_id})
+    reason = (ar.payload or {}).get("reason")
+    if ar.action_type == "certificate.issue":
+        _issue_guards(db, c, ar.case_id)   # 발급 재검증(요청 후 상태 변동 대비)
+        return _do_issue_certificate(db, c, user, reason)
+    if ar.action_type == "certificate.revoke":
+        return _do_revoke_certificate(db, c, user, reason)
+    raise HTTPException(400, {"code": "UNKNOWN_ACTION", "action": ar.action_type})
+
+
+@app.get("/approvals")
+def list_approvals(status: str = "pending", user=Depends(auth.get_current_user),
+                   db: Session = Depends(get_db)):
+    """승인 요청 목록(기본 pending) — 각 항목에 내가 결정 가능한지(can_decide) 표시."""
+    q = db.query(models.ApprovalRequest)
+    if status:
+        q = q.filter_by(status=status)
+    rows = q.order_by(models.ApprovalRequest.created_at.desc()).limit(200).all()
+    out = []
+    for ar in rows:
+        rule = MAKER_CHECKER.get(ar.action_type, {})
+        is_checker = (user["role"] == "admin" or user["role"] in rule.get("checker", set()))
+        can_decide = is_checker and user["uid"] != ar.requested_by and ar.status == "pending"
+        c = db.get(models.CaseApplication, ar.case_id) if ar.case_id else None
+        out.append({
+            "approval_id": ar.id, "action_type": ar.action_type, "label": rule.get("label"),
+            "case_id": ar.case_id, "company_name": (c.company_name if c else None),
+            "reason": ar.reason, "status": ar.status,
+            "requested_by": ar.requested_by, "requester_role": ar.requester_role,
+            "requester_name": ar.requester_name,
+            "created_at": ar.created_at.isoformat() if ar.created_at else None,
+            "decided_by": ar.decided_by, "decider_name": ar.decider_name,
+            "decision_reason": ar.decision_reason,
+            "decided_at": ar.decided_at.isoformat() if ar.decided_at else None,
+            "checker_roles": sorted(rule.get("checker", set())), "can_decide": can_decide})
+    return out
+
+
+@app.post("/approvals/{approval_id}/approve")
+def approve_request(approval_id: str, body: schemas.ApprovalDecisionReq = schemas.ApprovalDecisionReq(),
+                    user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """승인(checker) — 자격 검증(역할+self-approval 금지) 후 실제 액션 실행."""
+    ar = db.get(models.ApprovalRequest, approval_id)
+    if not ar:
+        raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
+    if ar.status != "pending":
+        raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
+    _check_checker(ar, user)
+    result = _exec_approved(db, ar, user)   # 액션 본체 실행(내부 commit)
+    ar.status = "approved"
+    ar.decided_by = user["uid"]; ar.decider_role = user["role"]; ar.decider_name = user.get("username")
+    ar.decided_at = datetime.utcnow(); ar.result = result
+    ar.decision_reason = (body.reason or "").strip() or None
+    db.commit()
+    return {"approval_id": ar.id, "status": "approved", "result": result}
+
+
+@app.post("/approvals/{approval_id}/reject")
+def reject_request(approval_id: str, body: schemas.ApprovalDecisionReq = schemas.ApprovalDecisionReq(),
+                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """거절(checker) — 자격 검증 후 요청 기각(실행 안 됨)."""
+    ar = db.get(models.ApprovalRequest, approval_id)
+    if not ar:
+        raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
+    if ar.status != "pending":
+        raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
+    _check_checker(ar, user)
+    ar.status = "rejected"
+    ar.decided_by = user["uid"]; ar.decider_role = user["role"]; ar.decider_name = user.get("username")
+    ar.decided_at = datetime.utcnow()
+    ar.decision_reason = (body.reason or "").strip() or None
+    c = db.get(models.CaseApplication, ar.case_id) if ar.case_id else None
+    if c:
+        sm.record_event(db, c, c.status, c.status, ar.action_type + ".rejected",
+                        user["role"], user["uid"], {"approval_id": ar.id, "reason": ar.decision_reason})
+    db.commit()
+    return {"approval_id": ar.id, "status": "rejected", "reason": ar.decision_reason}
+
+
+def _issue_guards(db, c, case_id):
+    """인증서 발급 사전조건(§4.2) — fatwa 승인·스코프 동결·결제완료·미해결 Major NC 없음·문서 all-approved. 위반 시 409."""
     if c.fatwa_status != "approved":
         raise HTTPException(409, {"code": "FATWA_NOT_APPROVED"})
     if not c.scope_frozen:
         raise HTTPException(409, {"code": "SCOPE_NOT_FROZEN"})
-    # 문서 P0(§4.2): 발급 full guard — 결제 완료·미해결 Major 부적합 없음
-    # (전수검사 후속: legacy "unpaid"만 검사하던 누수 → 종결상태 외 전부 미결제로 간주, 전이 게이트와 정합)
     if db.query(models.Invoice).filter(models.Invoice.case_id == case_id,
                                        ~models.Invoice.status.in_(sm.INVOICE_SETTLED)).count() > 0:
         raise HTTPException(409, {"code": "PAYMENT_PENDING"})
     if sm.open_major_nc(db, case_id) > 0:
         raise HTTPException(409, {"code": "UNRESOLVED_MAJOR_NC"})
-    # 문서 P0(§4.2): 필수문서 all-approved — 반려/재작업 상태 문서가 남아있으면 발급 불가
     bad_docs = (db.query(models.DocumentAsset)
                 .filter(models.DocumentAsset.case_id == case_id,
                         models.DocumentAsset.review_status.in_(("rejected", "rework"))).count())
     if bad_docs > 0:
         raise HTTPException(409, {"code": "DOCUMENTS_NOT_APPROVED", "unresolved": bad_docs})
+
+
+def _do_issue_certificate(db, c, user, reason=None):
+    """실제 인증서 발급 실행(가드 통과 후). user=실행자(2인승인 시 승인자). 설계서 §6·§S3-3."""
+    case_id = c.case_id
     ex = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
     if ex:
         return {"certificate_no": ex.certificate_no, "issue_date": ex.issue_date,
@@ -6005,12 +6126,12 @@ def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
     cert.certificate_no = "HC-" + cert.id[:8].upper()
     import secrets as _secrets
     cert.qr_token = _secrets.token_urlsafe(24)   # §6.4 공개 검증 토큰
-    # 상태 전이 — certificate_issued는 보호상태(raw transition 금지). 이 전용 엔드포인트가 소유.
+    # 상태 전이 — certificate_issued는 보호상태(raw transition 금지). 이 전용 함수가 소유.
     frm = c.status
     if "certificate_issued" in sm.TRANSITIONS.get(c.status, set()):
         c.status = "certificate_issued"
     sm.record_event(db, c, frm, c.status, "certificate.issue", "system", user["uid"],
-                    {"certificate_no": cert.certificate_no, "reason": (body.reason or "").strip() or None})
+                    {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None})
     # S3-3: freeze snapshot — 발급 시 제품/원재료 ID 동결
     prod_ids = [p.product_id for p in db.query(models.Product).filter_by(case_id=case_id)]
     mat_ids = [m.material_id for m in db.query(models.Material).filter_by(case_id=case_id)]
@@ -6033,6 +6154,21 @@ def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
             "expiry_date": str(expiry), "scope": prods,
             "frozen_product_ids": prod_ids, "frozen_material_ids": mat_ids,
             "qr_token": cert.qr_token, "verify_url": "/verify/" + cert.qr_token}
+
+
+@app.post("/cases/{case_id}/certificate/issue")
+def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
+                      user=Depends(rbac.require_action("certificate.issue")),
+                      db: Session = Depends(get_db)):
+    """인증서 발급 요청(maker=operator) — 2인 승인(§4.3). 가드 프리체크 후 승인요청 생성.
+    실제 발급은 승인자(sharia)가 /approvals/{id}/approve 로 실행."""
+    c = _get_case(db, case_id, user)
+    ex = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
+    if ex:   # 이미 발급됨 — 승인 불필요, 그대로 반환(하위호환)
+        return {"certificate_no": ex.certificate_no, "issue_date": ex.issue_date,
+                "expiry_date": ex.expiry_date, "scope": ex.scope, "existing": True}
+    _issue_guards(db, c, case_id)   # 발급 가능 상태인지 사전 검증(부적합 시 즉시 409)
+    return _create_approval(db, "certificate.issue", c, user, (body.reason or "").strip())
 
 
 @app.post("/cases/{case_id}/renew/request")
@@ -6662,25 +6798,42 @@ def reactivate_certificate(case_id: str, body: schemas.CertStatusReq,
                                "할랄 인증서 정지가 해제되었습니다.")
 
 
-@app.post("/cases/{case_id}/certificate/revoke")
-def revoke_certificate(case_id: str, body: schemas.CertStatusReq,
-                       user=Depends(rbac.require_action("certificate.revoke")),
-                       db: Session = Depends(get_db)):
-    """인증서 철회(active/suspended → withdrawn). 되돌릴 수 없음·통지."""
-    c = _get_case(db, case_id, user)
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+def _revoke_guards(db, case_id):
+    """철회 사전조건 — 활성/정지 인증서 존재. 재발급으로 다중 cert 가능 → active/suspended 우선 선택."""
+    cert = (db.query(models.HalalCertificate)
+            .filter(models.HalalCertificate.case_id == case_id,
+                    models.HalalCertificate.status.in_(("active", "suspended")))
+            .first())
     if not cert:
-        raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
-    if cert.status not in ("active", "suspended"):
-        raise HTTPException(409, {"code": "BAD_CERT_STATE", "have": cert.status})
+        exists = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+        if not exists:
+            raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
+        raise HTTPException(409, {"code": "BAD_CERT_STATE", "have": exists.status})
+    return cert
+
+
+def _do_revoke_certificate(db, c, user, reason=None):
+    """실제 인증서 철회 실행(가드 통과 후). user=실행자(2인승인 시 승인자=admin). 되돌릴 수 없음·통지."""
+    cert = _revoke_guards(db, c.case_id)
     cert.status = "withdrawn"
     sm.record_event(db, c, c.status, c.status, "certificate.revoke", user["role"], user["uid"],
-                    {"certificate_no": cert.certificate_no, "reason": body.reason.strip()})
+                    {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None})
     _notify(db, c, "certificate_revoked", "인증서 철회",
             "%s — 할랄 인증서가 철회되었습니다." % (c.company_name or ""),
             channels=["inapp", "sms"], role="applicant")
     db.commit()
-    return {"certificate_no": cert.certificate_no, "status": "withdrawn", "reason": body.reason.strip()}
+    return {"certificate_no": cert.certificate_no, "status": "withdrawn", "reason": (reason or "").strip() or None}
+
+
+@app.post("/cases/{case_id}/certificate/revoke")
+def revoke_certificate(case_id: str, body: schemas.CertStatusReq,
+                       user=Depends(rbac.require_action("certificate.revoke")),
+                       db: Session = Depends(get_db)):
+    """인증서 철회 요청(maker=operator) — 2인 승인(§4.3). 가드 프리체크 후 승인요청 생성.
+    실제 철회는 승인자(admin)가 /approvals/{id}/approve 로 실행."""
+    c = _get_case(db, case_id, user)
+    _revoke_guards(db, case_id)   # 철회 가능 상태 사전 검증
+    return _create_approval(db, "certificate.revoke", c, user, (body.reason or "").strip())
 
 
 # ---------- 전자서명 (§6.4 e-signature, 내부 HMAC MVP) ----------
@@ -10419,12 +10572,42 @@ def _ensure_my_menu(db):
     db.commit()
 
 
+def _ensure_approvals_menu(db):
+    """'승인함'(2인 승인) 사이드바 — maker/checker 역할(ops=operator, sharia=fatwa_liaison, admin). idempotent."""
+    _ROLES = ("ops", "sharia", "admin")   # sys_role_menu는 매핑된 role_id 사용
+    existing = db.query(models.SysMenu).filter_by(menu_code="APPROVALS").first()
+    if existing:
+        have = {rm.role_id for rm in
+                db.query(models.SysRoleMenu).filter_by(menu_id=existing.menu_id).all()}
+        added = False
+        for r in _ROLES:
+            if r not in have:
+                db.add(models.SysRoleMenu(role_id=r, menu_id=existing.menu_id, sort_order=6))
+                added = True
+        if added:
+            db.commit()
+        return
+    grp = db.query(models.SysMenu).filter_by(menu_code="GRP_1").first()   # 개요
+    if not grp:
+        return
+    mid = models.uid()
+    db.add(models.SysMenu(menu_id=mid, menu_code="APPROVALS", parent_menu_id=grp.menu_id,
+                          menu_depth=2, menu_type="screen", route_path="approvals",
+                          icon_name="✅", default_sort_order=6))
+    for lang, name in [("ko", "승인함"), ("en", "Approvals"), ("id", "Persetujuan")]:
+        db.add(models.SysMenuI18n(menu_id=mid, language_code=lang, menu_name=name))
+    for r in _ROLES:
+        db.add(models.SysRoleMenu(role_id=r, menu_id=mid, sort_order=6))
+    db.commit()
+
+
 def seed_menus(db):
     """현행 메뉴 구조(menu_seed.json)를 DB에 시드 — idempotent. 설계서 §10 마이그레이션."""
     import json as _json
     if db.query(models.SysMenu).first():
         _ensure_menu_assign(db)   # 이미 시드됨 — 관리 메뉴만 보강(사이드바 노출)
         _ensure_my_menu(db)       # '내 메뉴 설정'(개인화) 보강
+        _ensure_approvals_menu(db)  # '승인함'(2인 승인) 보강
         return
     path = os.path.join(os.path.dirname(__file__), "menu_seed.json")
     if not os.path.exists(path):
@@ -10451,6 +10634,7 @@ def seed_menus(db):
     db.commit()
     _ensure_menu_assign(db)   # 신규 시드에도 '메뉴 배정 관리' 사이드바 노출
     _ensure_my_menu(db)       # '내 메뉴 설정'(개인화) 사이드바 노출
+    _ensure_approvals_menu(db)  # '승인함'(2인 승인) 사이드바 노출
 
 
 _BR2ROLE_MENU = {"applicant": "client", "consultant": "consultant", "auditor": "auditor",
