@@ -277,9 +277,9 @@ def apply_side_effects(case, to_state):
     # P1: reguler 전용 상태로의 전이는 pathway를 reguler로 확정(self_declare→reguler 전환 포함)
     if to_state in ("supplementation_required", "consultant_review") and case.pathway in ("undetermined", "self_declare"):
         case.pathway = "reguler"
-    if to_state == "committee_verification":            # 자기선언 ketetapan (operator 전용 전이)
-        case.fatwa_status = "approved"
-        case.scope_frozen = True
+    if to_state == "committee_verification":            # 자기선언 위원회 검토 진입
+        case.scope_frozen = True                        # 검토 대상 범위 동결
+        # NOTE(SEHATI): 자동 approved 제거 — 위원회 검증은 /committee/decide(샤리아 승인+근거)로만.
     if to_state == "final_package_preparation":
         case.scope_frozen = True
     # NOTE(P0-1): fatwa_approved 자동 approved 제거 — 최종승인은 /fatwa/final-approve(operator)만 수행

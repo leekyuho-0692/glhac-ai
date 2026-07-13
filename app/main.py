@@ -3721,6 +3721,60 @@ def _fatwa_quorum_ok(db, case_id):
     return ok, missing, {"chairman_signed": has_chairman, "signer_count": len(valid), "signers": valid}
 
 
+@app.get("/cases/{case_id}/committee/status")
+def committee_status(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """자기선언 위원회 검증 상태 — committee.approve/reject 최신 결정 조회(SEHATI)."""
+    c = _get_case(db, case_id, user)
+    ev = (db.query(models.WorkflowEvent)
+          .filter(models.WorkflowEvent.case_id == case_id,
+                  models.WorkflowEvent.action.in_(("committee.approve", "committee.reject")))
+          .order_by(models.WorkflowEvent.created_at.desc()).first())
+    return {"case_id": case_id, "status": c.status, "pathway": c.pathway,
+            "fatwa_status": c.fatwa_status,
+            "in_committee": c.status == "committee_verification",
+            "decision": (ev.action.split(".")[1] if ev else None),
+            "decided_by": (ev.actor_id if ev else None),
+            "reason": ((ev.payload or {}).get("reason") if ev else None),
+            "decided_at": (ev.created_at.isoformat() if ev and ev.created_at else None)}
+
+
+@app.post("/cases/{case_id}/committee/decide")
+def committee_decide(case_id: str, body: schemas.CommitteeDecisionReq,
+                     user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+                     db: Session = Depends(get_db)):
+    """자기선언 위원회 검증(SEHATI) — 샤리아(fatwa_liaison)가 승인/반려 + 근거.
+    committee_verification 자동승인 대체: 승인 시 fatwa_status=approved(발급 가능), 반려 시 차단."""
+    c = _get_case(db, case_id, user)
+    if c.status != "committee_verification":
+        raise HTTPException(409, {"code": "NOT_IN_COMMITTEE_VERIFICATION", "status": c.status})
+    if c.pathway != "self_declare":
+        raise HTTPException(409, {"code": "NOT_SELF_DECLARE", "pathway": c.pathway})
+    reason = (body.reason or "").strip()
+    if body.decision not in ("approve", "reject"):
+        raise HTTPException(422, {"code": "BAD_DECISION"})
+    if body.decision == "reject" and not reason:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    if body.decision == "approve":
+        c.fatwa_status = "approved"
+        c.scope_frozen = True
+        sm.record_event(db, c, c.status, c.status, "committee.approve", user["role"], user["uid"],
+                        {"reason": reason or None})
+        _notify(db, c, "committee_approved", "위원회 승인",
+                "%s — 자기선언 위원회 검증 승인. 인증서 발급이 가능합니다." % (c.company_name or ""),
+                channels=["inapp", "sms"], role="applicant")
+        db.commit()
+        return {"case_id": case_id, "decision": "approved", "fatwa_status": "approved"}
+    # reject
+    c.fatwa_status = "rejected"
+    sm.record_event(db, c, c.status, c.status, "committee.reject", user["role"], user["uid"],
+                    {"reason": reason})
+    _notify(db, c, "committee_rejected", "위원회 반려",
+            "%s — 자기선언 위원회 검증 반려: %s" % (c.company_name or "", reason),
+            channels=["inapp", "sms"], role="applicant")
+    db.commit()
+    return {"case_id": case_id, "decision": "rejected", "reason": reason}
+
+
 @app.post("/cases/{case_id}/fatwa/decree")
 def gen_fatwa_decree(case_id, user=Depends(rbac.require_action("fatwa.document.read")), db=Depends(get_db)):
     """Fatwa Decision(HALAL DECREE) 생성 — 위원회 결정·제품·서명 병합. gen-doc 저장.
