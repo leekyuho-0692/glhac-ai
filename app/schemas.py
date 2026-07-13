@@ -515,3 +515,7 @@ class AuditorProfileReq(BaseModel):
 
 class MenuAssignReq(BaseModel):     # 메뉴 배정 저장 — 설계서 §5·§8
     menus: List[Dict[str, Any]] = Field(default_factory=list)  # [{menuId, sortOrder, children:[{menuId, sortOrder}]}]
+
+
+class MenuPermissionReq(BaseModel):   # 메뉴 기능 권한 — 설계서 §3.6·§9
+    permissions: Dict[str, Dict[str, bool]] = Field(default_factory=dict)  # {menu_id: {view,create,update,delete,submit,approve,sign,download}}
