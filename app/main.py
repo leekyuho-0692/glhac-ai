@@ -658,11 +658,18 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
     if sig:
         _, expected = _sign_payload(_cert_canonical(cert))
         sig_valid = (expected == sig.signature_value)
+    official = _official_bpjph_no(db, cert.case_id)
     out = {"valid": valid, "certificate_no": cert.certificate_no,
            "company_name": (c.company_name if c else None),
            "status": cert.status, "issue_date": cert.issue_date,
            "expiry_date": cert.expiry_date, "scope": cert.scope,
-           "signed": bool(sig), "signature_valid": sig_valid}
+           "signed": bool(sig), "signature_valid": sig_valid,
+           # 법적효력 Phase 0 — 공식성·서명 성격 고지(오인 차단)
+           "halal_no_is_official": bool(official),
+           "official_bpjph_no": official,
+           "signature_nature": (_SIG_NATURE if sig else None),
+           "signature_valid_meaning": _SIG_VALID_MEANING,
+           "disclaimer": _LEGAL_DISCLAIMER_VERIFY}
     if product_scope:   # 제품별 인증서 검증 — 해당 제품으로 범위 축소 응답
         out.update({"certificate_no": product_scope["certificate_no"],
                     "parent_certificate_no": cert.certificate_no,
@@ -6318,8 +6325,9 @@ def unlock_certificate(case_id: str, body: schemas.UnlockReq,
 
 # ---------- P2-4: 할랄마크번호·파트와참조번호·전체 ZIP (스키마 무변경) ----------
 def _halal_mark_no(cert):
-    """할랄마크번호(No. Ketetapan Halal) — 스키마 무변경: 인증서 id 기반 결정적 파생값.
-    신규 컬럼 없이 발급마다 안정적으로 동일값. BPJPH 'ID+14자리' 형식 모사."""
+    """내부 참조번호(비공식) — 스키마 무변경: 인증서 id 기반 결정적 파생값.
+    ⚠ 공식 할랄번호(No. Ketetapan Halal)가 아니다. 공식번호는 BPJPH만 발급하며 SIHALAL import로만 확정.
+    값 생성 로직은 유지(발급마다 안정적으로 동일값)하되, 표기는 항상 '내부 참조번호(비공식)'로 한다."""
     if not cert or not cert.id:
         return None
     try:
@@ -6338,6 +6346,64 @@ def _case_fatwa_no(db, case_id):
     return (fd.decision_no if fd else None) or None
 
 
+# ── 법적효력 Phase 0(법적 포지셔닝·고지) — 스키마 무변경 ──────────────────────────
+#    이 플랫폼은 LPH/PPH 촉진 도구이며 인증 발급기관이 아니다. 공식 할랄인증서는 BPJPH만 발급한다.
+#    자체 파생값(_halal_mark_no)을 공식형식으로 오인시키지 않도록 라벨·고지를 부착한다.
+_LEGAL_DISCLAIMER_PDF = ("고지 · Disclaimer : 본 문서는 준비/내부 산출물이며, 공식 할랄 인증 발급은 "
+                         "BPJPH/SIHALAL 절차로 확정됩니다. · Penerbitan resmi ditentukan oleh proses "
+                         "BPJPH/SIHALAL.")
+_SIG_NATURE = ("내부 무결성 서명(공인 전자서명 아님) · Internal integrity signature "
+               "(not a PSrE qualified e-signature)")
+_SIG_VALID_MEANING = ("무결성 확인일 뿐 서명자 신원·법적 부인방지를 보장하지 않습니다. · Hanya memastikan "
+                      "integritas dokumen, bukan identitas penanda tangan atau non-repudiasi hukum.")
+_LEGAL_DISCLAIMER_VERIFY = ("본 검증은 내부 산출물의 무결성 확인이며 공식 할랄 인증서가 아닙니다. 공식 발급·번호는 "
+                            "BPJPH/SIHALAL이 확정합니다. · Verifikasi ini memastikan integritas dokumen "
+                            "internal, bukan sertifikat halal resmi. Penerbitan resmi oleh BPJPH/SIHALAL.")
+
+
+def _official_bpjph_no(db, case_id):
+    """공식 BPJPH 할랄번호(No. Ketetapan Halal) 조회 — 스키마 무변경.
+    SIHALAL에서 'certificate_number_imported' 이벤트로 import된 경우에만 존재.
+    IntegrationEvent/WorkflowEvent payload에서 공식번호를 찾고, 없으면 None(→ 자체값은 비공식 표기)."""
+    keys = ("certificate_number", "no_ketetapan_halal", "ketetapan_halal_no",
+            "official_no", "certificate_no", "number")
+
+    def _pick(payload):
+        if isinstance(payload, dict):
+            for k in keys:
+                val = payload.get(k)
+                if val and str(val).strip():
+                    return str(val).strip()
+        return None
+
+    rows = (db.query(models.IntegrationEvent)
+            .filter_by(case_id=case_id, event_type="certificate_number_imported")
+            .order_by(models.IntegrationEvent.created_at.desc()).all())
+    for e in rows:
+        got = _pick(e.payload)
+        if got:
+            return got
+    wrows = (db.query(models.WorkflowEvent)
+             .filter_by(case_id=case_id, action="certificate_number_imported")
+             .order_by(models.WorkflowEvent.created_at.desc()).all())
+    for e in wrows:
+        got = _pick(e.payload)
+        if got:
+            return got
+    return None
+
+
+def _halal_no_line(db, cert):
+    """PDF용 할랄번호 표기 — 공식 BPJPH번호 있으면 공식 라벨, 없으면 '내부 참조번호(비공식)'.
+    공식번호 부재 시 'No. Ketetapan Halal' 라벨을 자체값에 붙이지 않는다(법적 오인 차단)."""
+    official = _official_bpjph_no(db, cert.case_id)
+    if official:
+        return "No. Ketetapan Halal (BPJPH) : %s" % official
+    # 비공식: 자체값에 'No. Ketetapan Halal' 라벨 금지. 대기 안내는 짧은 별행(줄바꿈 분절 방지).
+    return ("내부 참조번호 · Internal Ref (비공식) : %s\nMenunggu No. Ketetapan Halal (BPJPH)"
+            % (_halal_mark_no(cert) or "-"))
+
+
 def _cert_pdf_bytes(db, c, cert):
     """인증서 PDF 렌더 — 할랄마크번호·파트와결정번호 포함(certificate_pdf·bundle 재사용)."""
     sig = (db.query(models.Signature).filter_by(subject_type="certificate", subject_id=cert.id)
@@ -6347,7 +6413,7 @@ def _cert_pdf_bytes(db, c, cert):
         "",
         "기업 · Perusahaan : %s" % (c.company_name or "-"),
         "인증번호 · No     : %s" % (cert.certificate_no or "-"),
-        "할랄마크번호 · No. Ketetapan Halal : %s" % (_halal_mark_no(cert) or "-"),
+        _halal_no_line(db, cert),
         "파트와 결정번호 · No. Fatwa        : %s" % (_case_fatwa_no(db, cert.case_id) or "-"),
         "상태 · Status     : %s" % cert.status,
         "발급 · Issued     : %s" % (cert.issue_date or "-"),
@@ -6361,6 +6427,9 @@ def _cert_pdf_bytes(db, c, cert):
         "전자서명 · Signed  : %s%s" % ("예 · Yes" if sig else "아니오 · No",
                                        (" (" + (sig.provider or "") + ")") if sig else ""),
     ]
+    if sig:
+        lines.append("서명 성격 · Nature : " + _SIG_NATURE)
+    lines += ["", _LEGAL_DISCLAIMER_PDF]
     return _render_pdf("GL-HAC AI · Halal Certificate", "\n".join(lines),
                        subtitle=cert.certificate_no or "",
                        footer="공개 검증 페이지에서 진위를 확인하세요 · Verify authenticity at /verify")
@@ -6386,11 +6455,14 @@ def _product_cert_meta(db, cert, product):
     idx = next((i for i, p in enumerate(prods) if p.product_id == product.product_id), None)
     if idx is None:
         return None
+    official = _official_bpjph_no(db, cert.case_id)
     return {"product_id": product.product_id, "product_name": product.name,
             "category": product.category,
             "certificate_no": "%s-P%d" % (cert.certificate_no or "HC", idx + 1),
             "parent_certificate_no": cert.certificate_no,
-            "halal_mark_no": _halal_mark_no(cert),
+            "halal_mark_no": _halal_mark_no(cert),          # 내부 참조번호(비공식)
+            "official_bpjph_no": official,                  # 공식 BPJPH 번호(import된 경우만)
+            "halal_no_is_official": bool(official),
             "issue_date": cert.issue_date, "expiry_date": cert.expiry_date,
             "status": cert.status,
             # 모 인증서에 검증토큰이 없는 구(舊) 발급분은 제품 토큰도 없음(공개검증 불가) — "."만 남는 깨진 토큰 방지
@@ -6434,7 +6506,7 @@ def product_certificate_pdf(case_id: str, product_id: str,
         "제품 · Produk      : %s%s" % (p.name or "-", (" (" + p.category + ")") if p.category else ""),
         "제품 인증번호 · No : %s" % meta["certificate_no"],
         "모 인증번호 · Parent : %s" % (cert.certificate_no or "-"),
-        "할랄마크번호 · No. Ketetapan Halal : %s" % (meta["halal_mark_no"] or "-"),
+        _halal_no_line(db, cert),
         "파트와 결정번호 · No. Fatwa        : %s" % (_case_fatwa_no(db, case_id) or "-"),
         "상태 · Status      : %s" % cert.status,
         "발급 · Issued      : %s" % (cert.issue_date or "-"),
@@ -6444,6 +6516,9 @@ def product_certificate_pdf(case_id: str, product_id: str,
         "공개 검증 · Verify : %s" % ("/verify/%s" % meta["qr_token"] if meta["qr_token"] else "-"),
         "전자서명 · Signed  : %s" % ("예 · Yes" if sig else "아니오 · No"),
     ]
+    if sig:
+        lines.append("서명 성격 · Nature : " + _SIG_NATURE)
+    lines += ["", _LEGAL_DISCLAIMER_PDF]
     _audit(db, user, "certificate.product_pdf", "certificate", product_id, case_id)
     db.commit()
     pdf = _render_pdf("GL-HAC AI · Halal Certificate (Product)", "\n".join(lines),
@@ -6467,10 +6542,13 @@ def get_certificate(case_id: str, user=Depends(auth.get_current_user), db: Sessi
         pass
     sig = (db.query(models.Signature).filter_by(subject_type="certificate", subject_id=cert.id)
            .order_by(models.Signature.signed_at.desc()).first())
+    official = _official_bpjph_no(db, case_id)   # 공식 BPJPH 번호(SIHALAL import 시에만 존재)
     return {"issued": True, "certificate_no": cert.certificate_no, "scope": cert.scope,
             "issue_date": cert.issue_date, "expiry_date": cert.expiry_date, "status": cert.status,
             "days_to_expiry": days,
-            "halal_mark_no": _halal_mark_no(cert),          # P2-4 할랄마크번호(No. Ketetapan Halal)
+            "halal_mark_no": _halal_mark_no(cert),          # 내부 참조번호(비공식, 자체 파생값)
+            "official_bpjph_no": official,                  # 공식 No. Ketetapan Halal(있으면)
+            "halal_no_is_official": bool(official),          # 프런트 라벨 분기용
             "fatwa_decision_no": _case_fatwa_no(db, case_id),  # P2-4 파트와 결정번호(No. Fatwa) 조인
             "frozen_product_ids": cert.frozen_product_ids,
             "frozen_material_ids": cert.frozen_material_ids,

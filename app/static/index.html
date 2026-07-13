@@ -3003,6 +3003,11 @@ const UI_STRINGS={
   /* P2-4 인증서(할랄마크·파트와참조·ZIP) + P2-5 평가(3-state·판정·증거) i18n */
   "할랄마크번호 · No. Ketetapan Halal:":"Nomor Ketetapan Halal · No. Ketetapan Halal:",
   "파트와 결정번호 · No. Fatwa:":"Nomor Fatwa · No. Fatwa:",
+  /* 법적효력 Phase 0 — 법적 포지셔닝·고지 i18n */
+  "내부 참조번호 · Internal Ref (비공식)":"Ref. Internal (tidak resmi)",
+  "Menunggu No. BPJPH":"Menunggu No. Ketetapan Halal dari BPJPH",
+  "본 문서는 준비/내부 산출물이며, 공식 할랄 인증 발급은 BPJPH/SIHALAL 절차로 확정됩니다.":"Dokumen ini bersifat persiapan/internal; penerbitan halal resmi ditentukan oleh proses BPJPH/SIHALAL.",
+  "내부 무결성 서명(공인 전자서명 아님)":"Tanda tangan integritas internal (bukan e-signature tersertifikasi PSrE)",
   "⤓ 전체 ZIP":"⤓ Unduh ZIP",
   "적합후보":"Kandidat Sesuai","적합":"Sesuai","부적합":"Tidak Sesuai",
   "판정":"Putusan","증거":"Bukti","오디터 판정":"Putusan Auditor",
@@ -8146,7 +8151,9 @@ SCREEN.certificate=async()=>{
       <div class="divide"></div>
       <div class="small">본 제품은 SJPH 및 샤리아 기준에 따라 <b>할랄(HALAL)</b> 인증되었음을 증명합니다.</div>
       <div class="no">No. ${esc(c.certificate_no||"—")} · Issued ${esc(c.issue_date||"—")} · Valid until ${esc(c.expiry_date||"—")}</div>
-      <div class="small" style="margin-top:6px">할랄마크번호 · No. Ketetapan Halal: <b>${esc(c.halal_mark_no||"—")}</b></div>
+      <div class="small" style="margin-top:6px">${c.halal_no_is_official
+        ?`No. Ketetapan Halal (BPJPH): <b>${esc(c.official_bpjph_no||"—")}</b>`
+        :`${T('내부 참조번호 · Internal Ref (비공식)')}: <b>${esc(c.halal_mark_no||"—")}</b> <span class="muted">· ${T('Menunggu No. BPJPH')}</span>`}</div>
       <div class="small">파트와 결정번호 · No. Fatwa: <b>${esc(c.fatwa_decision_no||"—")}</b></div>
       ${c.qr_token?`<div class="small" style="margin-top:8px;word-break:break-all">🔗 공개검증 · Verify: <a href="/ui/verify.html?token=${encodeURIComponent(c.qr_token)}" target="_blank" style="color:var(--gold)">/ui/verify.html?token=${esc((c.qr_token||"").slice(0,10))}…</a></div>`:''}
     </div>`
@@ -8155,8 +8162,9 @@ SCREEN.certificate=async()=>{
   <div class="grid side">
     <div class="card"><h3>할랄 인증서 <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
       <div class="body">${certCard}
+        <div class="banner info" style="margin-top:10px;font-size:12px;line-height:1.5">ℹ️ ${T('본 문서는 준비/내부 산출물이며, 공식 할랄 인증 발급은 BPJPH/SIHALAL 절차로 확정됩니다.')}</div>
         ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(c.certificate_no||"")}.pdf')">📄 인증서 PDF 다운로드</button><button class="btn" onclick="serverPdf('/cases/${id}/certificate/bundle.zip','halal_bundle_${esc(c.certificate_no||"")}.zip')">⤓ 전체 ZIP</button><button class="btn" onclick="printCert('${id}')">🖨 인쇄</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
-        ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span></div>`:''}
+        ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span><div class="muted small" style="margin-top:4px">${T('내부 무결성 서명(공인 전자서명 아님)')}</div></div>`:''}
         ${c.issued&&c.status&&c.status!=='active'?`<div class="banner ${c.status==='withdrawn'?'bad':'warn'}" style="margin-top:10px">${c.status==='withdrawn'?'⛔ 철회됨 · Withdrawn':'⏸ 정지됨 · Suspended'}</div>`:''}
         ${c.issued&&CAN("certificate.suspend")?`<div class="btnrow" style="margin-top:10px">
           ${c.status==='active'?`<button class="btn warn" onclick="certLifecycle('${id}','suspend')">⏸ 정지 · Suspend</button>`:''}

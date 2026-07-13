@@ -46,6 +46,11 @@ function row(k,v){return `<div class="row"><span class="k">${k}</span><span clas
       row("Terbit · 발급",d.issue_date)+
       row("Berlaku s/d · 만료",d.expiry_date)+
       row("Cakupan · 범위",(d.scope||[]).join(", "))+
+      row("No. Ketetapan Halal (BPJPH)",d.halal_no_is_official?d.official_bpjph_no:"Belum ada · 미발급 (menunggu BPJPH)")+
+      row("Tanda tangan · 서명",d.signed?("Ya · 예"+(d.signature_valid?" · integritas OK":"")):"Tidak · 아니오")+
+      (d.signature_nature?`<div class="muted">${esc(d.signature_nature)}</div>`:"")+
+      (d.signature_valid_meaning?`<div class="muted">${esc(d.signature_valid_meaning)}</div>`:"")+
+      (d.disclaimer?`<div class="muted"><b>⚠ Disclaimer · 고지</b><br>${esc(d.disclaimer)}</div>`:"")+
       `<div class="muted">Halaman verifikasi publik. Data sensitif tidak ditampilkan. · 공개 검증 페이지 — 민감정보는 표시되지 않습니다.</div>`;
   }catch(e){out.innerHTML='<div class="badge bad">✕ Error</div>';}
 })();
