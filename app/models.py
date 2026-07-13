@@ -729,3 +729,30 @@ class SysUserMenu(Base):
     visible_yn = Column(Boolean, default=True)
     override_type = Column(String)                     # ADD | REMOVE | ORDER
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SysOrgMenu(Base):
+    """기관별 메뉴 배정 — 설계서 §3.5. 병합 순서: 역할 < 기관 < 사용자."""
+    __tablename__ = "sys_org_menu"
+    id = Column(String, primary_key=True, default=uid)
+    org_id = Column(String, index=True, nullable=False)
+    menu_id = Column(String, nullable=False)
+    sort_order = Column(Integer, default=0)
+    visible_yn = Column(Boolean, default=True)
+
+
+class SysMenuPermission(Base):
+    """메뉴 기능 권한(메뉴 노출과 분리) — 설계서 §3.6·§9."""
+    __tablename__ = "sys_menu_permission"
+    id = Column(String, primary_key=True, default=uid)
+    assignment_type = Column(String, nullable=False)   # ROLE | ORG | USER
+    target_id = Column(String, index=True, nullable=False)
+    menu_id = Column(String, nullable=False)
+    can_view = Column(Boolean, default=True)
+    can_create = Column(Boolean, default=False)
+    can_update = Column(Boolean, default=False)
+    can_delete = Column(Boolean, default=False)
+    can_submit = Column(Boolean, default=False)
+    can_approve = Column(Boolean, default=False)
+    can_sign = Column(Boolean, default=False)
+    can_download = Column(Boolean, default=False)
