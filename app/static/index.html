@@ -944,6 +944,15 @@ const UI_STRINGS={
   "위원회(샤리아) 검증 대기 중":"Menunggu verifikasi komite (Syariah)",
   "반려 근거를 입력하세요":"Masukkan alasan penolakan",
   "위원회 승인 완료":"Persetujuan komite selesai",
+  "KFPH 자기선언 할랄판정":"Penetapan Halal Self-Declare (KFPH)",
+  "SEHATI 자기선언 — KFPH(Komite Fatwa Produk Halal) 판정 후 인증서 발급이 가능합니다. 정규 MUI 파트와와 별개 트랙입니다.":"SEHATI Self-Declare — sertifikat dapat diterbitkan setelah penetapan KFPH (Komite Fatwa Produk Halal). Jalur ini terpisah dari Fatwa MUI reguler.",
+  "KFPH 승인됨":"Disetujui KFPH",
+  "KFPH 반려됨":"Ditolak KFPH",
+  "KFPH 판정 근거":"Dasar Penetapan KFPH",
+  "KFPH 승인":"Setujui KFPH",
+  "KFPH 판정 대기 중":"Menunggu penetapan KFPH",
+  "KFPH 결정문(Ketetapan)":"Ketetapan (KFPH)",
+  "KFPH 결정문 · Ketetapan Halal":"Ketetapan Halal (KFPH)",
   "반려 완료":"Penolakan selesai",
   "연매출(IDR) · Annual Revenue":"Pendapatan Tahunan (IDR)",
   "매장 수 · Outlets":"Jumlah Gerai",
@@ -5031,6 +5040,20 @@ async function previewSelfDeclaration(id){
     document.getElementById("reportOverlay").style.display="grid";
   }catch(e){toast(T('미리보기 실패'));}
 }
+/* A5b: KFPH 결정문(Ketetapan Halal) 미리보기 — HTMLResponse 조각 → reportOverlay 재사용(previewSelfDeclaration 패턴). */
+async function previewKetetapan(id){
+  try{
+    const r=await fetch(`/cases/${id}/committee/ketetapan/preview`,{headers:{Authorization:"Bearer "+token()}});
+    if(!r.ok){toast(T('미리보기 실패'));return;}
+    const frag=await r.text();
+    document.getElementById("reportTitle").textContent=T('KFPH 결정문 · Ketetapan Halal');
+    document.getElementById("reportBody").innerHTML=frag;   // 서버가 html.escape로 이스케이프한 조각
+    const pb=document.getElementById("reportPdfBtn");
+    pb.style.display="";pb.textContent="📄 "+T('PDF 저장');
+    pb.onclick=()=>serverPdf(`/cases/${id}/committee/ketetapan.pdf`,"kfph_ketetapan.pdf");
+    document.getElementById("reportOverlay").style.display="grid";
+  }catch(e){toast(T('미리보기 실패'));}
+}
 /* 적격 셀프체크 — 기존 /pathway/assess + assessRender 재사용. 배너 내 인라인 표시(전체 재렌더 회피). */
 async function sehatiSelfCheck(id){
   const out=document.getElementById('sehatiAssessOut_'+id);
@@ -7942,21 +7965,30 @@ SCREEN.fatwa=async()=>{
   const committeeDecision=await committeeDecisionCard(CURCASE);   // SEHATI 자기선언 위원회
   return fatwaDashHtml + committeeDecision + committeeCard + mock + advanced;
 };
-/* 자기선언 위원회 검증(SEHATI) — committee_verification 상태일 때만 샤리아 승인/반려 카드 */
+/* KFPH(Komite Fatwa Produk Halal) 자기선언 할랄 판정(SEHATI) — committee_verification 상태 전용 심의 카드.
+   ⚠ 정규 MUI 파트와와 별개 트랙. A5c: 자기선언서·동반자 검증 요약 + 판정 근거 입력, 승인 후 KFPH 결정문 노출. */
 async function committeeDecisionCard(id){
   const st=await API(`/cases/${id}/committee/status`).catch(()=>null);
   if(!st||!st.in_committee||st.pathway!=='self_declare')return '';
   const canDecide=["sharia","ops","admin"].includes(ROLE);
   const done=st.decision;   // approve | reject | null
-  return `<div class="card" style="margin-bottom:16px;border:2px solid var(--warn)"><h3>🕌 ${T('자기선언 위원회 검증')} <span class="en">· Self-Declare Committee</span></h3>
+  const pd=st.pendamping;
+  const pdMap={verified:['ok','검증'],rejected:['bad','반려'],rework:['warn','재작업']};
+  const pdInfo=pd?`<div class="muted small" style="margin-bottom:8px">${T('동반자 검증')} · Pendamping (PPH) : ${pd.name?esc(pd.name):'-'} ${pd.decision?bTag(pdMap[pd.decision]?pdMap[pd.decision][0]:'mute',pdMap[pd.decision]?pdMap[pd.decision][1]:esc(pd.decision)):bTag('mute',T('미검증'))}${pd.note?' · '+esc(pd.note):''}</div>`:'';
+  const sdBtn=`<button class="btn" onclick="previewSelfDeclaration('${id}')">📄 ${T('자기선언서')}</button>`;
+  const ketBtn=(done==='approve')?`<button class="btn pri" onclick="previewKetetapan('${id}')">📄 ${T('KFPH 결정문(Ketetapan)')} <span class="en">· Ketetapan Halal</span></button>
+        <button class="btn" onclick="serverPdf('/cases/${id}/committee/ketetapan.pdf','kfph_ketetapan.pdf')">⬇ PDF</button>`:'';
+  return `<div class="card" style="margin-bottom:16px;border:2px solid var(--warn)"><h3>🕌 ${T('KFPH 자기선언 할랄판정')} <span class="en">· Komite Fatwa Produk Halal (KFPH)</span></h3>
     <div class="body">
-      <div class="banner info" style="margin-bottom:10px">${T('SEHATI 자기선언 — 위원회(샤리아) 검증 후 인증서 발급이 가능합니다.')}</div>
-      ${done?`<div class="banner ${done==='approve'?'ok':'bad'}" style="margin-bottom:10px">${done==='approve'?'✓ '+T('위원회 승인됨'):'⛔ '+T('위원회 반려됨')}${st.reason?' · '+esc(st.reason):''}${st.decided_at?' · '+esc(String(st.decided_at).slice(0,16)):''}</div>`:''}
+      <div class="banner info" style="margin-bottom:10px">${T('SEHATI 자기선언 — KFPH(Komite Fatwa Produk Halal) 판정 후 인증서 발급이 가능합니다. 정규 MUI 파트와와 별개 트랙입니다.')}</div>
+      ${pdInfo}
+      <div class="btnrow" style="margin-bottom:10px">${sdBtn}${ketBtn}</div>
+      ${done?`<div class="banner ${done==='approve'?'ok':'bad'}" style="margin-bottom:10px">${done==='approve'?'✓ '+T('KFPH 승인됨'):'⛔ '+T('KFPH 반려됨')}${st.reason?' · '+esc(st.reason):''}${st.decided_at?' · '+esc(String(st.decided_at).slice(0,16)):''}</div>`:''}
       ${(canDecide&&done!=='approve')?`
-        <div class="field"><label>${T('결정 근거')} · Reason</label><textarea class="v" id="cmtReason" rows="2" placeholder="${T('승인/반려 근거를 입력하세요')}"></textarea></div>
-        <div class="btnrow"><button class="btn pri" onclick="committeeDecide('${id}','approve')">✔ ${T('위원회 승인')}</button>
+        <div class="field"><label>${T('KFPH 판정 근거')} · Dasar Penetapan</label><textarea class="v" id="cmtReason" rows="2" placeholder="${T('승인/반려 근거를 입력하세요')}"></textarea></div>
+        <div class="btnrow"><button class="btn pri" onclick="committeeDecide('${id}','approve')">✔ ${T('KFPH 승인')}</button>
           <button class="btn bad" onclick="committeeDecide('${id}','reject')">✖ ${T('반려')}</button></div>`
-        :(canDecide?'':`<div class="muted small">${T('위원회(샤리아) 검증 대기 중')}</div>`)}
+        :(canDecide?'':`<div class="muted small">${T('KFPH 판정 대기 중')}</div>`)}
     </div></div>`;
 }
 async function committeeDecide(id,decision){

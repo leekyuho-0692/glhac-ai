@@ -3730,26 +3730,41 @@ def _fatwa_quorum_ok(db, case_id):
 
 @app.get("/cases/{case_id}/committee/status")
 def committee_status(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    """자기선언 위원회 검증 상태 — committee.approve/reject 최신 결정 조회(SEHATI)."""
+    """KFPH(Komite Fatwa Produk Halal) 자기선언 판정 상태 — committee.approve/reject 최신 결정 조회(SEHATI).
+    ⚠ self-declare(UMK) 전용 트랙 — 정규 MUI 파트와(fatwa_review)와 별개(PP 42/2024).
+    A5c: KFPH 심의 근거자료(동반자 검증 요약·자기선언서 존재)를 함께 반환(스키마 무변경 조인)."""
     c = _get_case(db, case_id, user)
     ev = (db.query(models.WorkflowEvent)
           .filter(models.WorkflowEvent.case_id == case_id,
                   models.WorkflowEvent.action.in_(("committee.approve", "committee.reject")))
           .order_by(models.WorkflowEvent.created_at.desc()).first())
+    decision = (ev.action.split(".")[1] if ev else None)
+    pa = ((db.query(models.PendampingAssignment).filter_by(case_id=case_id)
+           .order_by(models.PendampingAssignment.assignment_id.desc()).first())
+          if c.pathway == "self_declare" else None)
+    sd_doc = (db.query(models.GeneratedDocument)
+              .filter_by(case_id=case_id, doc_type="self_declaration").first())
     return {"case_id": case_id, "status": c.status, "pathway": c.pathway,
             "fatwa_status": c.fatwa_status,
             "in_committee": c.status == "committee_verification",
-            "decision": (ev.action.split(".")[1] if ev else None),
+            "decision": decision,
+            "approved": decision == "approve",
             "decided_by": (ev.actor_id if ev else None),
             "reason": ((ev.payload or {}).get("reason") if ev else None),
-            "decided_at": (ev.created_at.isoformat() if ev and ev.created_at else None)}
+            "decided_at": (ev.created_at.isoformat() if ev and ev.created_at else None),
+            "self_declaration_ready": bool(sd_doc) or c.pathway == "self_declare",
+            "pendamping": ({"name": _pendamping_name(db, c),
+                            "decision": pa.decision, "note": pa.note,
+                            "verified_at": pa.verified_at.isoformat() if pa.verified_at else None}
+                           if pa else None)}
 
 
 @app.post("/cases/{case_id}/committee/decide")
 def committee_decide(case_id: str, body: schemas.CommitteeDecisionReq,
                      user=Depends(auth.require_roles("fatwa_liaison", "operator")),
                      db: Session = Depends(get_db)):
-    """자기선언 위원회 검증(SEHATI) — 샤리아(fatwa_liaison)가 승인/반려 + 근거.
+    """KFPH(Komite Fatwa Produk Halal) 자기선언 할랄 판정 — 파트와연락(fatwa_liaison)이 승인/반려 + 근거.
+    ⚠ self-declare(UMK) 전용 — 정규 MUI 파트와와 별개(PP 42/2024).
     committee_verification 자동승인 대체: 승인 시 fatwa_status=approved(발급 가능), 반려 시 차단."""
     c = _get_case(db, case_id, user)
     if c.status != "committee_verification":
@@ -3766,8 +3781,8 @@ def committee_decide(case_id: str, body: schemas.CommitteeDecisionReq,
         c.scope_frozen = True
         sm.record_event(db, c, c.status, c.status, "committee.approve", user["role"], user["uid"],
                         {"reason": reason or None})
-        _notify(db, c, "committee_approved", "위원회 승인",
-                "%s — 자기선언 위원회 검증 승인. 인증서 발급이 가능합니다." % (c.company_name or ""),
+        _notify(db, c, "committee_approved", "KFPH 승인",
+                "%s — 자기선언 KFPH(Komite Fatwa Produk Halal) 판정 승인. 인증서 발급이 가능합니다." % (c.company_name or ""),
                 channels=["inapp", "sms"], role="applicant")
         db.commit()
         return {"case_id": case_id, "decision": "approved", "fatwa_status": "approved"}
@@ -3775,11 +3790,169 @@ def committee_decide(case_id: str, body: schemas.CommitteeDecisionReq,
     c.fatwa_status = "rejected"
     sm.record_event(db, c, c.status, c.status, "committee.reject", user["role"], user["uid"],
                     {"reason": reason})
-    _notify(db, c, "committee_rejected", "위원회 반려",
-            "%s — 자기선언 위원회 검증 반려: %s" % (c.company_name or "", reason),
+    _notify(db, c, "committee_rejected", "KFPH 반려",
+            "%s — 자기선언 KFPH(Komite Fatwa Produk Halal) 판정 반려: %s" % (c.company_name or "", reason),
             channels=["inapp", "sms"], role="applicant")
     db.commit()
     return {"case_id": case_id, "decision": "rejected", "reason": reason}
+
+
+# ── A5b: KFPH(Komite Fatwa Produk Halal) 할랄 판정서(Ketetapan Halal) — self-declare(UMK) 전용 ──
+#    정규 MUI 파트와 결정문(/fatwa/decree.pdf)과 별개 트랙. PP 42/2024상 self-declare 할랄 판정은 KFPH 소관.
+#    스키마 무변경 — _render_pdf_rich 재사용 + GeneratedDocument(doc_type=kfph_ketetapan) 1건 등록.
+def _kfph_approve_event(db, case_id):
+    """KFPH 승인(committee.approve) 최신 이벤트 — 없으면 None(미승인)."""
+    return (db.query(models.WorkflowEvent)
+            .filter(models.WorkflowEvent.case_id == case_id,
+                    models.WorkflowEvent.action == "committee.approve")
+            .order_by(models.WorkflowEvent.created_at.desc()).first())
+
+
+def _kfph_ref_no(case_id):
+    """KFPH 내부 참조번호(비공식) — case_id 기반 결정적 파생값. 공식 BPJPH 번호 아님(Phase0)."""
+    return "KFPH/INT/" + (case_id or "")[:8].upper()
+
+
+def _kfph_ketetapan_guard(db, c):
+    """self-declare + KFPH 승인 필수. reguler는 409 NOT_SELF_DECLARE, 미승인은 409 NOT_APPROVED."""
+    if c.pathway != "self_declare":
+        raise HTTPException(409, {"code": "NOT_SELF_DECLARE", "pathway": c.pathway,
+                                  "hint": "KFPH 결정문은 self_declare(SEHATI) 경로 전용입니다."})
+    ev = _kfph_approve_event(db, c.case_id)
+    if not ev:
+        raise HTTPException(409, {"code": "NOT_APPROVED",
+                                  "hint": "KFPH 승인(committee.approve) 후에만 결정문을 발급할 수 있습니다."})
+    return ev
+
+
+def _kfph_ketetapan_blocks(db, c, ev):
+    """KFPH Ketetapan Halal 리치 PDF 블록 — 사업자·제품·자기선언 참조·KFPH 판정·결정번호·판정일·심의자."""
+    rep = c.responsible_person or (c.profile_ext or {}).get("pic_name") or ""
+    pd_name = _pendamping_name(db, c)
+    prods = db.query(models.Product).filter_by(case_id=c.case_id).all()
+    sd_doc = (db.query(models.GeneratedDocument)
+              .filter_by(case_id=c.case_id, doc_type="self_declaration").first())
+    decided_at = str(ev.created_at)[:10] if ev and ev.created_at else "-"
+    reason = (ev.payload or {}).get("reason") if ev else None
+    blocks = [
+        {"type": "heading", "text": "KETETAPAN HALAL · KFPH — 할랄 판정서", "level": 1},
+        {"type": "para", "text": "Komite Fatwa Produk Halal (KFPH) · 자기선언(SEHATI/UMK) 할랄 판정 — "
+                                 "정규 MUI 파트와(Komisi Fatwa MUI)와 별개 트랙(PP 42/2024)."},
+        {"type": "heading", "text": "사업자 정보 · Data Pelaku Usaha", "level": 2},
+        {"type": "kv", "label": "회사명 · Nama Usaha", "value": c.company_name or "-"},
+        {"type": "kv", "label": "NIB · Nomor Induk Berusaha", "value": c.nib or "-"},
+        {"type": "kv", "label": "주소 · Alamat", "value": c.address or "-"},
+        {"type": "kv", "label": "대표/책임자 · Penanggung Jawab", "value": rep or "-"},
+        {"type": "heading", "text": "대상 제품 · Produk", "level": 2},
+    ]
+    if prods:
+        rows = [[str(i + 1), p.name, p.category or ""] for i, p in enumerate(prods)]
+        blocks.append({"type": "table", "headers": ["No", "Produk · 제품", "Kategori · 분류"],
+                       "rows": rows, "widths": [0.12, 0.55, 0.33]})
+    else:
+        blocks.append({"type": "para", "text": "- 등록 제품 없음 · Tidak ada produk terdaftar -"})
+    blocks.append({"type": "heading", "text": "자기선언 참조 · Referensi Surat Pernyataan", "level": 2})
+    blocks.append({"type": "para", "text": ("자기선언서(Surat Pernyataan Pelaku Usaha) 등록됨 · v%d"
+                                            % sd_doc.version) if sd_doc
+                                    else "자기선언서 미등록(제출 후 참조) · Surat Pernyataan belum terdaftar"})
+    blocks.append({"type": "kv", "label": "동반자 검증 · Verifikasi Pendamping (PPH)", "value": pd_name or "-"})
+    blocks.append({"type": "heading", "text": "KFPH 할랄 판정 · Ketetapan Halal (KFPH)", "level": 2})
+    blocks.append({"type": "para", "text": "Komite Fatwa Produk Halal (KFPH) menetapkan bahwa produk "
+                                           "tersebut di atas HALAL berdasarkan pernyataan mandiri pelaku "
+                                           "usaha (self-declare) dan verifikasi pendamping. · KFPH는 상기 제품을 "
+                                           "사업자 자기선언 및 동반자 검증에 근거하여 할랄(HALAL)로 판정합니다."})
+    if reason:
+        blocks.append({"type": "kv", "label": "판정 근거 · Dasar Penetapan", "value": reason})
+    blocks.append({"type": "kv", "label": "결정번호 · No (내부 참조·비공식)", "value": _kfph_ref_no(c.case_id)})
+    blocks.append({"type": "kv", "label": "판정일 · Tanggal Penetapan", "value": decided_at})
+    blocks.append({"type": "kv", "label": "심의자 · Diputuskan oleh (KFPH)",
+                   "value": (ev.actor_id if ev else None) or "-"})
+    blocks.append({"type": "spacer", "h": 10})
+    blocks.append({"type": "signature", "slots": [
+        {"role": "KFPH 심의자 · Komite Fatwa Produk Halal", "name": (ev.actor_id if ev else "") or "",
+         "signed": bool(ev)},
+    ]})
+    blocks.append({"type": "spacer", "h": 8})
+    # Phase 0 고지 — 내부 참조·비공식 + 내부 무결성 서명(공인 전자서명 아님)
+    blocks.append({"type": "para", "text": "서명 성격 · Sifat tanda tangan : " + _SIG_NATURE})
+    blocks.append({"type": "para", "text": _SIG_VALID_MEANING})
+    blocks.append({"type": "para", "text": _LEGAL_DISCLAIMER_PDF})
+    return blocks
+
+
+@app.get("/cases/{case_id}/committee/ketetapan/preview")
+def kfph_ketetapan_preview(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """KFPH 결정문(Ketetapan Halal) 미리보기(HTML 조각) — self_declare + KFPH 승인 전용. read-only·org격리."""
+    import html
+    from fastapi.responses import HTMLResponse
+    c = _get_case(db, case_id, user)
+    ev = _kfph_ketetapan_guard(db, c)
+    rep = c.responsible_person or (c.profile_ext or {}).get("pic_name") or "-"
+    pd_name = _pendamping_name(db, c) or "-"
+    prods = db.query(models.Product).filter_by(case_id=case_id).all()
+    reason = (ev.payload or {}).get("reason") if ev else None
+    decided_at = str(ev.created_at)[:10] if ev and ev.created_at else "-"
+
+    def e(x):
+        return html.escape(str(x if x is not None else "-"))
+
+    info = [("회사명 · Nama Usaha", c.company_name), ("NIB · Nomor Induk Berusaha", c.nib),
+            ("주소 · Alamat", c.address), ("대표/책임자 · Penanggung Jawab", rep),
+            ("동반자 검증 · Pendamping (PPH)", pd_name),
+            ("결정번호 · No (내부 참조·비공식)", _kfph_ref_no(case_id)),
+            ("판정일 · Tanggal", decided_at),
+            ("심의자 · KFPH", (ev.actor_id if ev else None))]
+    info_rows = "".join(
+        "<tr><th style='text-align:left;padding:5px 12px;color:#475569;white-space:nowrap'>%s</th>"
+        "<td style='padding:5px 12px'>%s</td></tr>" % (e(k), e(v)) for k, v in info)
+    prod_rows = "".join(
+        "<tr><td style='padding:3px 10px'>%d</td><td style='padding:3px 10px'>%s</td>"
+        "<td style='padding:3px 10px;color:#64748b'>%s</td></tr>" % (i + 1, e(p.name), e(p.category))
+        for i, p in enumerate(prods)) or \
+        "<tr><td colspan='3' style='padding:6px 10px;color:#94a3b8'>- 제품 없음 · Tidak ada produk -</td></tr>"
+    frag = (
+        "<div style='font-size:13.5px;line-height:1.7'>"
+        "<h2 style='margin:0 0 4px'>KETETAPAN HALAL · KFPH — 할랄 판정서</h2>"
+        "<div style='color:#64748b;margin-bottom:10px'>Komite Fatwa Produk Halal (KFPH) · "
+        "자기선언(SEHATI/UMK) — 정규 MUI 파트와와 별개 트랙</div>"
+        "<table style='border-collapse:collapse;margin-bottom:12px'>%s</table>"
+        "<div style='font-weight:600;margin:8px 0'>대상 제품 · Produk</div>"
+        "<table style='border-collapse:collapse;margin-bottom:12px;width:100%%'><thead>"
+        "<tr style='color:#475569'><th style='text-align:left;padding:3px 10px'>No</th>"
+        "<th style='text-align:left;padding:3px 10px'>Produk · 제품</th>"
+        "<th style='text-align:left;padding:3px 10px'>Kategori · 분류</th></tr></thead><tbody>%s</tbody></table>"
+        "<div style='font-weight:600;margin:8px 0'>KFPH 할랄 판정 · Ketetapan Halal (KFPH)</div>"
+        "<div style='margin-bottom:6px'>Komite Fatwa Produk Halal (KFPH)는 상기 제품을 사업자 자기선언(self-declare) 및 "
+        "동반자 검증에 근거하여 <b>할랄(HALAL)</b>로 판정합니다.</div>"
+        "%s"
+        "<div style='border-top:1px dashed #cbd5e1;padding-top:8px;color:#64748b;font-size:12px;margin-top:8px'>"
+        "⚠ %s<br>%s<br>%s</div></div>"
+        % (info_rows, prod_rows,
+           ("<div style='margin-bottom:6px;color:#475569'>판정 근거 · Dasar : %s</div>" % e(reason)) if reason else "",
+           e(_SIG_NATURE), e(_SIG_VALID_MEANING), e(_LEGAL_DISCLAIMER_PDF)))
+    return HTMLResponse(content=frag)
+
+
+@app.get("/cases/{case_id}/committee/ketetapan.pdf")
+def kfph_ketetapan_pdf(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """KFPH 결정문(Ketetapan Halal) PDF — self_declare + KFPH 승인 전용. _render_pdf_rich 재사용 +
+    GeneratedDocument(doc_type=kfph_ketetapan) 1건 등록(존재 시 재사용). 내부 참조·비공식(Phase0)."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    ev = _kfph_ketetapan_guard(db, c)
+    blocks = _kfph_ketetapan_blocks(db, c, ev)
+    exists = db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type="kfph_ketetapan").first()
+    if not exists:
+        content = "KFPH Ketetapan Halal · %s · No(내부참조·비공식) %s · %s" % (
+            c.company_name or "-", _kfph_ref_no(case_id),
+            str(ev.created_at)[:10] if ev and ev.created_at else "-")
+        _save_gendoc(db, c, "kfph_ketetapan", content, user, status="draft")
+        db.commit()
+    pdf = _render_pdf_rich("KETETAPAN HALAL · KFPH — 할랄 판정서", blocks,
+                           subtitle=(c.company_name or ""),
+                           footer="GL-HAC AI · KFPH " + _kfph_ref_no(case_id))
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=kfph_ketetapan_%s.pdf" % case_id[:8]})
 
 
 @app.post("/cases/{case_id}/fatwa/decree")
