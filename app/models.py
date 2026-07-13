@@ -32,6 +32,8 @@ class CaseApplication(Base):
     pathway = Column(String, nullable=False, default="undetermined")  # 24.9
     risk_category = Column(String)
     is_msme = Column(Boolean)
+    annual_revenue = Column(Integer)   # 연매출(IDR) — BPJPH 자기선언 ≤Rp15B 판정(Decision 146/2025)
+    outlet_count = Column(Integer)     # 매장(영업장) 수 — 자기선언 최대 1개
     sehati_eligible = Column(String)
     fatwa_status = Column(String, default="none")
     scope_frozen = Column(Boolean, default=False)

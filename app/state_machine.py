@@ -108,12 +108,29 @@ def pendamping_decision(db, case_id):
 
 
 # ---- 24.11 가드 ----
+# BPJPH 자기선언 정량 기준 (Decision 146/2025)
+SELF_DECLARE_REVENUE_LIMIT = 15_000_000_000   # 연매출 Rp 15 billion
+SELF_DECLARE_MAX_FACILITIES = 1               # 공장 최대 1개
+SELF_DECLARE_MAX_OUTLETS = 1                  # 매장(영업장) 최대 1개
+
+
 def guard_pathway_selfdeclare(db, case):
     g = []
     if case.risk_category != "low":
         g.append({"code": "RISK_NOT_LOW"})
     if not case.is_msme:
         g.append({"code": "NOT_MSME"})
+    # BPJPH: 연매출 ≤ Rp15B (미입력 시 판정 보류 — 하위호환)
+    if case.annual_revenue is not None and case.annual_revenue > SELF_DECLARE_REVENUE_LIMIT:
+        g.append({"code": "REVENUE_EXCEEDS_LIMIT",
+                  "limit": SELF_DECLARE_REVENUE_LIMIT, "have": case.annual_revenue})
+    # BPJPH: 공장 최대 1개 (이 신청 대상 공장 수)
+    fac = len(case.facility_ids or [])
+    if fac > SELF_DECLARE_MAX_FACILITIES:
+        g.append({"code": "TOO_MANY_FACILITIES", "max": SELF_DECLARE_MAX_FACILITIES, "have": fac})
+    # BPJPH: 매장 최대 1개 (미입력 시 판정 보류)
+    if case.outlet_count is not None and case.outlet_count > SELF_DECLARE_MAX_OUTLETS:
+        g.append({"code": "TOO_MANY_OUTLETS", "max": SELF_DECLARE_MAX_OUTLETS, "have": case.outlet_count})
     if len(critical_materials(db, case.case_id)) > 0:
         g.append({"code": "HAS_CRITICAL_MATERIAL"})
     if not evidence_complete(db, case.case_id):
@@ -180,9 +197,53 @@ def guard_payment(db, case):
     return g
 
 
+# ---- §5.2 증빙기반 전이 가드 (전면화) ----
+def guard_intake_complete(db, case):
+    """신청 완비(§5.2 submitted→intake_review) — 회사명·NIB·제품 최소 1개."""
+    from .models import Product
+    g = []
+    if not (case.company_name and str(case.company_name).strip()):
+        g.append({"code": "COMPANY_NAME_MISSING"})
+    if not (case.nib and str(case.nib).strip()):
+        g.append({"code": "NIB_MISSING"})
+    if db.query(Product).filter_by(case_id=case.case_id).count() == 0:
+        g.append({"code": "NO_PRODUCT"})
+    return g
+
+
+def guard_documents_approved(db, case):
+    """필수문서 승인(§5.2 document_review→document_approved) — 반려/재작업 문서 없음."""
+    from .models import DocumentAsset
+    g = []
+    bad = db.query(DocumentAsset).filter(
+        DocumentAsset.case_id == case.case_id,
+        DocumentAsset.review_status.in_(("rejected", "rework"))).count()
+    if bad > 0:
+        g.append({"code": "DOCUMENTS_NOT_APPROVED", "unresolved": bad})
+    return g
+
+
+def guard_car_closed(db, case):
+    """시정조치 종결(§5.2 finding_open→car_closed) — 미해결 finding·미종결 CAR 없음."""
+    from .models import AuditFinding, CorrectiveAction
+    g = []
+    open_find = db.query(AuditFinding).filter_by(case_id=case.case_id, status="open").count()
+    if open_find > 0:
+        g.append({"code": "OPEN_FINDINGS", "count": open_find})
+    open_car = db.query(CorrectiveAction).filter(
+        CorrectiveAction.case_id == case.case_id,
+        ~CorrectiveAction.status.in_(("closed", "accepted"))).count()
+    if open_car > 0:
+        g.append({"code": "UNRESOLVED_CAR", "count": open_car})
+    return g
+
+
 GUARDS = {
+    "ai_pre_assessment_ready": guard_intake_complete,        # §5.2 신청 완비
     "final_package_preparation": guard_final_package,
     "document_pre_audit_in_review": guard_payment,
+    "document_pre_audit_approved": guard_documents_approved,  # §5.2 문서 all-approved
+    "audit_closed": guard_car_closed,                        # §5.2 CAR 종결
     "self_declare_eligible": guard_pathway_selfdeclare,
     "self_declaration_submitted": guard_selfdeclare_submit,
     "lph_assignment": guard_reguler_submit,

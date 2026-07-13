@@ -2621,6 +2621,15 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
         c.phone = _normalize_phone(body.phone)   # 국가코드 정규화
     if body.profile_ext is not None:
         c.profile_ext = {**(c.profile_ext or {}), **body.profile_ext}  # 확장 양식 병합 저장
+        # BPJPH 자기선언 정량 필드 → 컬럼 미러(가드 판정용)
+        _ext = c.profile_ext or {}
+        for _k, _col in (("annual_revenue", "annual_revenue"), ("outlet_count", "outlet_count")):
+            if _k in _ext:
+                _v = _ext[_k]
+                try:
+                    setattr(c, _col, int(_v) if _v not in (None, "") else None)
+                except (ValueError, TypeError):
+                    pass
     if not c.draft_state or c.draft_state == "returned":
         c.draft_state = "in_progress"  # 편집 시작 → 작성중(반려분 재편집 포함)
     # 회사 프로필 → org 미러(회사 자산 정본) — 다음 신청이 최신 회사정보를 상속
