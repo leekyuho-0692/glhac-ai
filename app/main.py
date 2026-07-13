@@ -10516,13 +10516,30 @@ def _my_allowed_menus(db, user):
 @app.get("/me/menu-config")
 def my_menu_config(lang: str = "ko", user=Depends(auth.get_current_user),
                    db: Session = Depends(get_db)):
-    """내 메뉴 개인화 데이터 — master(내 역할 허용 메뉴) + assigned(내 현재 구성).
-    각 사용자가 본인 계정에서 자기 좌측 메뉴 구성·순서를 개별 관리."""
-    role_rms = _my_allowed_menus(db, user)
-    master = _menu_tree(db, role_rms, lang)
+    """내 메뉴 개인화 데이터 — master(등록된 전체 메뉴 + allowed 플래그) + assigned(내 현재 구성).
+    좌측엔 전체 메뉴를 다 보여주고 각 항목에 사용 여부(사용가능/불가) 표시. 저장은 역할 허용 범위로 제한."""
+    allowed = set(_my_allowed_menus(db, user))
+    menus = db.query(models.SysMenu).filter_by(use_yn=True).all()
+    i18n = {x.menu_id: x.menu_name for x in
+            db.query(models.SysMenuI18n).filter_by(language_code=lang).all()}
+    kids = {}
+    for m in menus:
+        if m.parent_menu_id:
+            kids.setdefault(m.parent_menu_id, []).append(m)
+    master = []
+    for r in sorted([m for m in menus if not m.parent_menu_id], key=lambda x: x.default_sort_order):
+        ch = [{"menuId": c.menu_id, "menuCode": c.menu_code,
+               "menuName": i18n.get(c.menu_id, c.menu_code), "routePath": c.route_path,
+               "icon": c.icon_name, "allowed": c.menu_id in allowed}   # 내 역할 사용가능 여부
+              for c in sorted(kids.get(r.menu_id, []), key=lambda x: x.default_sort_order)]
+        if not ch:
+            continue
+        master.append({"menuId": r.menu_id, "menuCode": r.menu_code,
+                       "menuName": i18n.get(r.menu_id, r.menu_code), "icon": r.icon_name,
+                       "children": ch})
     ums = {um.menu_id: um.sort_order for um in
            db.query(models.SysUserMenu).filter_by(user_id=user["uid"], visible_yn=True).all()}
-    assigned = _menu_tree(db, ums, lang) if ums else master   # 미설정이면 역할 기본이 시작점
+    assigned = _menu_tree(db, ums if ums else _my_allowed_menus(db, user), lang)  # 미설정이면 역할 기본
     return {"master": master, "assigned": assigned}
 
 
