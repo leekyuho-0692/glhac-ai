@@ -1243,6 +1243,15 @@ const UI_STRINGS={
   "감사자 (Auditor)":"Pengauditor",
   "감사자 (Auditor) 서명":"Tanda tangan Penyidik",
   "감사체인 무결성":"Keutuhan Rantai Audit",
+  "📦 증거 번들 다운로드":"📦 Unduh berkas bukti (evidence bundle)",
+  "감사로그 무결성":"Keutuhan Log Audit",
+  "✓ 감사로그 검증 통과":"✓ Lulus verifikasi log audit",
+  "⛔ 감사로그 손상 감지":"⛔ Kerusakan log audit terdeteksi",
+  "신뢰 타임스탬프":"Stempel waktu tepercaya (TSA)",
+  "TSA 미연동 — 내부 시각만 사용":"TSA belum terhubung — hanya waktu internal",
+  "TSA 연동됨 · 신뢰 타임스탬프 적용":"TSA terhubung · stempel waktu tepercaya berlaku",
+  "장기 법적 증거보존용 아카이브 (전이·감사로그·문서목록·체인검증 리포트)":"Arsip penyimpanan bukti hukum jangka panjang (transisi·log audit·daftar dokumen·laporan verifikasi rantai)",
+  "검사":"Diperiksa",
   "개":"Anjing",
   "개 공장":"Pabrik Anjing",
   "개 영상 업로드됨":"Video yang diunggah: {count}",
@@ -4028,7 +4037,7 @@ SCREEN.caseList=async()=>{
     const counts={};AUDITOR_TABS.forEach(t=>counts[t[0]]=cases.filter(c=>t[3](c.status)).length);
     const activeTab=AUDITOR_TABS.find(t=>t[0]===AUDITOR_TAB)||AUDITOR_TABS[0];
     cases=cases.filter(c=>activeTab[3](c.status));
-    let ad=null;try{ad=await API('/auditor/dashboard');}catch(_){}
+    let ad=null;if(["auditor","operator","admin"].includes(ROLE)){try{ad=await API('/auditor/dashboard');}catch(_){}}
     const kpi=(n,l,c,ic)=>`<div class="card"><div class="body" style="display:flex;align-items:center;gap:12px"><div style="font-size:22px">${ic}</div><div class="kpi"><span class="l">${l}</span><span class="n" style="font-size:24px;color:var(--${c})">${n}</span></div></div></div>`;
     const kcards=ad?`<div class="grid four" style="margin-bottom:14px">
       ${kpi(ad.assigned_count||0,T('담당 케이스'),'ink','📋')}
@@ -4084,7 +4093,7 @@ function exportCasesCsv(){
 /* 3) Workspace */
 SCREEN.workflow=async()=>{
   const id=CURCASE;
-  const [w,verify,tl]=await Promise.all([API(`/cases/${id}/workflow`),API(`/cases/${id}/audit-verify`).catch(()=>null),API(`/cases/${id}/timeline`).catch(()=>({events:[]}))]);
+  const [w,verify,tl,alverify,tsa]=await Promise.all([API(`/cases/${id}/workflow`),API(`/cases/${id}/audit-verify`).catch(()=>null),API(`/cases/${id}/timeline`).catch(()=>({events:[]})),API(`/admin/audit-log-verify?case=${encodeURIComponent(id)}`).catch(()=>null),API(`/admin/tsa-status`).catch(()=>null)]);
   const phases=w.phases||[];
   const flow=phases.length?phases.map((p,i)=>{
     const cl=p.status==="done"?"done":p.status==="current"?"now":(p.done?"done":p.current?"now":"");
@@ -4115,6 +4124,10 @@ SCREEN.workflow=async()=>{
       <div class="body">
         ${(verify&&verify.integrity_ok!==undefined)?`<div class="banner ${verify.integrity_ok?'ok':'bad'}" style="margin-bottom:12px">${verify.integrity_ok?'✓ 무결성 검증 통과':'⛔ 체인 손상 감지'} · 이벤트 ${verify.count||0}건${verify.broken_at?` · 손상지점 ${esc(String(verify.broken_at))}`:''}</div>
           <div class="small muted">append-only 해시체인으로 감사 이벤트의 위·변조를 탐지합니다.</div>`:'<div class="banner" style="margin-bottom:12px">· 감사체인 검증 정보 없음 · verify unavailable</div><div class="small muted">감사 이벤트 검증 응답을 불러오지 못했습니다.</div>'}
+        ${alverify?`<div class="banner ${alverify.integrity_ok?'ok':'bad'}" style="margin:12px 0 6px">${alverify.integrity_ok?T('✓ 감사로그 검증 통과'):T('⛔ 감사로그 손상 감지')} · ${T('감사로그 무결성')} · ${T('검사')} ${alverify.checked||0}${alverify.break_at?` · ${esc(String(alverify.break_at))}`:''}</div>`:''}
+        ${tsa&&tsa.tsa?`<div class="small muted" style="margin-top:6px">🕘 ${T('신뢰 타임스탬프')} · ${tsa.tsa.configured?('<span style="color:var(--ok,#15803d)">'+T('TSA 연동됨 · 신뢰 타임스탬프 적용')+'</span>'):('<span style="color:#b45309">⚠ '+T('TSA 미연동 — 내부 시각만 사용')+'</span>')}</div>`:''}
+        ${(ROLE==='ops'||ROLE==='admin')?`<div class="btnrow" style="margin-top:12px"><button class="btn" onclick="serverPdf('/cases/${id}/evidence-bundle.zip','evidence-bundle_${esc(id)}.zip')">${T('📦 증거 번들 다운로드')}</button></div>
+          <div class="small muted" style="margin-top:4px">${T('장기 법적 증거보존용 아카이브 (전이·감사로그·문서목록·체인검증 리포트)')}</div>`:''}
       </div></div>
   </div>`;
 };
@@ -8394,7 +8407,7 @@ SCREEN.certificate=async()=>{
     <div class="card"><h3>할랄 인증서 <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
       <div class="body">${certCard}
         <div class="banner info" style="margin-top:10px;font-size:12px;line-height:1.5">ℹ️ ${T('본 문서는 준비/내부 산출물이며, 공식 할랄 인증 발급은 BPJPH/SIHALAL 절차로 확정됩니다.')}</div>
-        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(c.certificate_no||"")}.pdf')">📄 인증서 PDF 다운로드</button><button class="btn" onclick="serverPdf('/cases/${id}/certificate/bundle.zip','halal_bundle_${esc(c.certificate_no||"")}.zip')">⤓ 전체 ZIP</button><button class="btn" onclick="printCert('${id}')">🖨 인쇄</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
+        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(c.certificate_no||"")}.pdf')">📄 인증서 PDF 다운로드</button><button class="btn" onclick="serverPdf('/cases/${id}/certificate/bundle.zip','halal_bundle_${esc(c.certificate_no||"")}.zip')">⤓ 전체 ZIP</button>${(ROLE==='ops'||ROLE==='admin')?`<button class="btn" onclick="serverPdf('/cases/${id}/evidence-bundle.zip','evidence-bundle_${esc(id)}.zip')">${T('📦 증거 번들 다운로드')}</button>`:''}<button class="btn" onclick="printCert('${id}')">🖨 인쇄</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
         ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span><div class="muted small" style="margin-top:4px">${T('내부 무결성 서명(공인 전자서명 아님)')}</div>${psreSigNote()}</div>`:''}
         ${c.issued&&c.status&&c.status!=='active'?`<div class="banner ${c.status==='withdrawn'?'bad':'warn'}" style="margin-top:10px">${c.status==='withdrawn'?'⛔ 철회됨 · Withdrawn':'⏸ 정지됨 · Suspended'}</div>`:''}
         ${c.issued&&CAN("certificate.suspend")?`<div class="btnrow" style="margin-top:10px">

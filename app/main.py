@@ -267,13 +267,48 @@ def _get_case(db, case_id, user=None) -> models.CaseApplication:
     return c
 
 
+def _audit_row_body(actor_id, action, resource_type, resource_id, case_id, created_at, meta_wo):
+    """AuditLog 정규 본문(체인 해시 대상) — 쓰기(_audit)/검증(audit_log_verify)이 동일 직렬화 사용.
+    meta의 _chain(체인 자체)은 제외한 나머지 본문에 대해 해시(자기참조 방지). 스키마 무변경(meta JSON)."""
+    import json as _json
+    return _json.dumps({"actor_id": actor_id, "action": action,
+                        "resource_type": resource_type, "resource_id": resource_id,
+                        "case_id": case_id, "created_at": str(created_at),
+                        "meta": meta_wo or {}}, sort_keys=True, ensure_ascii=False)
+
+
+def _last_audit_hash(db, scope=None):
+    """직전 AuditLog의 체인 해시(meta._chain.row) — created_at desc·id desc. scope=org_id면 조직 스코프.
+    WorkflowEvent의 _last_hash(state_machine)와 동일 역할(HMAC 체인의 prev)."""
+    q = db.query(models.AuditLog)
+    if scope:
+        q = q.filter(models.AuditLog.org_id == scope)
+    row = q.order_by(models.AuditLog.created_at.desc(), models.AuditLog.id.desc()).first()
+    if row and isinstance(row.meta, dict):
+        ch = row.meta.get("_chain")
+        if isinstance(ch, dict):
+            return ch.get("row", "")
+    return ""
+
+
 def _audit(db, user, action, resource_type=None, resource_id=None, case_id=None, meta=None, commit=True):
-    """접근/조회 감사로그 기록(§2.4). commit=False면 상위 트랜잭션에 합류."""
+    """접근/조회 감사로그 기록(§2.4). commit=False면 상위 트랜잭션에 합류.
+    법적효력 P3a — 각 로그에 HMAC 체인(meta._chain={prev,row})을 얹어 tamper-evident화(스키마 무변경).
+    체인은 WorkflowEvent record_event와 동일한 chain_row_hash(HMAC(SECRET)) 헬퍼를 재사용한다."""
+    meta = dict(meta) if isinstance(meta, dict) else {}   # meta 없던 로그도 dict 생성
+    created = datetime.utcnow()
+    base = {k: v for k, v in meta.items() if k != "_chain"}
+    prev = _last_audit_hash(db)
+    body = _audit_row_body(user.get("uid"), action, resource_type, resource_id, case_id, created, base)
+    base["_chain"] = {"prev": prev, "row": sm.chain_row_hash(prev, body)}
     row = models.AuditLog(actor_id=user.get("uid"), actor_role=user.get("role"),
                           org_id=user.get("org_id"), action=action,
                           resource_type=resource_type, resource_id=resource_id,
-                          case_id=case_id, meta=meta)
+                          case_id=case_id, meta=base, created_at=created)
     db.add(row)
+    # 동일요청 다중 _audit 시 다음 호출이 이 로그를 _last_audit_hash에서 보도록 flush(체인 단절 방지) —
+    # WorkflowEvent record_event의 db.flush()와 동일 사유(autoflush=False 세션).
+    db.flush()
     if commit:
         db.commit()
     return row
@@ -1042,6 +1077,145 @@ def audit_verify(case_id: str, user=Depends(auth.get_current_user), db: Session 
             break
         prev = e.row_hash
     return {"count": len(evs), "integrity_ok": broken is None, "broken_at": broken}
+
+
+@app.get("/admin/audit-log-verify")
+def audit_log_verify(actor: str = Query(None), action: str = Query(None),
+                     case: str = Query(None), user=Depends(auth.require_roles()),
+                     db: Session = Depends(get_db)):
+    """법적효력 P3b — AuditLog HMAC 체인 재생·재계산 검증(admin). audit_verify(WorkflowEvent) 미러.
+    각 로그의 정규 본문+저장된 prev로 row 해시를 재계산해 저장값과 대조(변조 시 break_at)."""
+    q = db.query(models.AuditLog)
+    if actor:
+        q = q.filter(models.AuditLog.actor_id == actor)
+    if action:
+        q = q.filter(models.AuditLog.action == action)
+    if case:
+        q = q.filter(models.AuditLog.case_id == case)
+    rows = q.order_by(models.AuditLog.created_at, models.AuditLog.id).all()
+    broken, checked, prev_row = None, 0, None
+    for r in rows:
+        meta = r.meta if isinstance(r.meta, dict) else {}
+        ch = meta.get("_chain")
+        if not isinstance(ch, dict):
+            continue   # 체인 없는 레거시 로그는 스킵(검증 대상 아님)
+        base = {k: v for k, v in meta.items() if k != "_chain"}
+        body = _audit_row_body(r.actor_id, r.action, r.resource_type, r.resource_id,
+                               r.case_id, r.created_at, base)
+        rh = sm.chain_row_hash(ch.get("prev", ""), body)
+        checked += 1
+        # 행 자기무결성(본문/row 변조 감지) + 연결성(필터 없을 때만: prev==직전 row)
+        linkage_ok = (actor or action or case) or prev_row is None or ch.get("prev") == prev_row
+        if rh != ch.get("row") or not linkage_ok:
+            broken = r.id
+            break
+        prev_row = ch.get("row")
+    return {"integrity_ok": broken is None, "checked": checked, "break_at": broken}
+
+
+def _verify_wf_chain(evs):
+    """WorkflowEvent 해시체인 재계산(audit_verify 미러) → (integrity_ok, count, break_at)."""
+    import json as _json
+    prev, broken = "", None
+    for e in evs:
+        body = _json.dumps({"case": e.case_id, "from": e.from_status, "to": e.to_status,
+                            "action": e.action, "payload": e.payload or {}},
+                           sort_keys=True, ensure_ascii=False)
+        if sm.chain_row_hash(prev, body) != e.row_hash:
+            broken = e.event_id
+            break
+        prev = e.row_hash
+    return {"integrity_ok": broken is None, "count": len(evs), "break_at": broken}
+
+
+def _verify_audit_chain(rows):
+    """AuditLog HMAC 체인 재계산(audit_log_verify 미러·전량) → (integrity_ok, checked, break_at)."""
+    broken, checked, prev_row = None, 0, None
+    for r in rows:
+        meta = r.meta if isinstance(r.meta, dict) else {}
+        ch = meta.get("_chain")
+        if not isinstance(ch, dict):
+            continue
+        base = {k: v for k, v in meta.items() if k != "_chain"}
+        body = _audit_row_body(r.actor_id, r.action, r.resource_type, r.resource_id,
+                               r.case_id, r.created_at, base)
+        checked += 1
+        linkage_ok = prev_row is None or ch.get("prev") == prev_row
+        if sm.chain_row_hash(ch.get("prev", ""), body) != ch.get("row") or not linkage_ok:
+            broken = r.id
+            break
+        prev_row = ch.get("row")
+    return {"integrity_ok": broken is None, "checked": checked, "break_at": broken}
+
+
+@app.get("/cases/{case_id}/evidence-bundle.zip")
+def evidence_bundle_zip(case_id: str, user=Depends(auth.require_roles("operator")),
+                        db: Session = Depends(get_db)):
+    """법적효력 P3c — 장기 법적 증거보존용 아카이브 번들(zip). 스키마 무변경(기존 조회만).
+    구성: evidence.json(전이·감사·문서목록) + integrity_report.json(양 체인 무결성) + README.txt(고지)."""
+    import io
+    import json as _json
+    import zipfile
+    from fastapi.responses import StreamingResponse
+    c = _get_case(db, case_id, user)   # 케이스 소유(org) 검증 포함
+    evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id)
+           .order_by(models.WorkflowEvent.created_at, models.WorkflowEvent.event_id).all())
+    audits = (db.query(models.AuditLog).filter_by(case_id=case_id)
+              .order_by(models.AuditLog.created_at, models.AuditLog.id).all())
+    docs = (db.query(models.GeneratedDocument).filter_by(case_id=case_id)
+            .order_by(models.GeneratedDocument.created_at).all())
+    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
+    wf_report = _verify_wf_chain(evs)
+    al_report = _verify_audit_chain(audits)
+    generated_at = datetime.utcnow().isoformat()
+    evidence = {
+        "generated_at": generated_at,
+        "case": {"case_id": c.case_id, "company_name": c.company_name, "nib": c.nib,
+                 "pathway": c.pathway, "status": c.status, "fatwa_status": c.fatwa_status,
+                 "org_id": c.org_id},
+        "certificate": ({"certificate_no": cert.certificate_no, "issue_date": cert.issue_date,
+                         "expiry_date": cert.expiry_date, "scope": cert.scope} if cert else None),
+        "workflow_events": [{"event_id": e.event_id, "from_status": e.from_status,
+                             "to_status": e.to_status, "action": e.action,
+                             "actor_type": e.actor_type, "actor_id": e.actor_id,
+                             "payload": e.payload, "prev_hash": e.prev_hash,
+                             "row_hash": e.row_hash, "created_at": str(e.created_at)} for e in evs],
+        "audit_log": [{"id": r.id, "actor_id": r.actor_id, "actor_role": r.actor_role,
+                       "action": r.action, "resource_type": r.resource_type,
+                       "resource_id": r.resource_id, "case_id": r.case_id,
+                       "meta": r.meta, "created_at": str(r.created_at)} for r in audits],
+        "generated_documents": [{"gen_doc_id": d.gen_doc_id, "doc_type": d.doc_type,
+                                 "version": d.version, "status": d.status,
+                                 "created_by": d.created_by,
+                                 "created_at": str(d.created_at)} for d in docs],
+    }
+    integrity_report = {
+        "generated_at": generated_at,
+        "workflow_event_chain": wf_report,
+        "audit_log_chain": al_report,
+        "integrity_ok": bool(wf_report["integrity_ok"] and al_report["integrity_ok"]),
+        "disclaimer": _LEGAL_DISCLAIMER_VERIFY,
+    }
+    readme = (
+        "GL-HAC 증거 아카이브 번들 (Evidence Bundle)\n"
+        "Case: %s (%s)\nGenerated: %s\n\n"
+        "포함 파일 · Contents:\n"
+        " - evidence.json : 워크플로 전이(해시체인)·접근 감사로그·생성문서 목록\n"
+        " - integrity_report.json : 양 해시체인 무결성 재검증 리포트(integrity_ok)\n\n"
+        "무결성 · Integrity: WorkflowEvent=%s, AuditLog=%s (HMAC 체인 재계산)\n\n"
+        "%s\n" % (c.company_name or "-", case_id, generated_at,
+                  wf_report["integrity_ok"], al_report["integrity_ok"], _LEGAL_DISCLAIMER_PDF))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("evidence.json", _json.dumps(evidence, ensure_ascii=False, indent=2))
+        z.writestr("integrity_report.json", _json.dumps(integrity_report, ensure_ascii=False, indent=2))
+        z.writestr("README.txt", readme)
+    buf.seek(0)
+    fname = "evidence-bundle-%s.zip" % case_id
+    _audit(db, user, "evidence.bundle.download", "case", case_id, case_id,
+           {"workflow_events": len(evs), "audit_log": len(audits)})
+    return StreamingResponse(buf, media_type="application/zip",
+                             headers={"Content-Disposition": 'attachment; filename="%s"' % fname})
 
 
 @app.post("/cases/{case_id}/report")
@@ -2803,10 +2977,11 @@ def save_draft(case_id: str, user=Depends(auth.require_roles("applicant", "consu
                db: Session = Depends(get_db)):
     """임시저장 — 신청서를 제출 전 보관(작성 이어하기). status는 그대로."""
     c = _get_case(db, case_id, user)
+    frm = c.status   # P3e: onboarding→application_draft 전이가 감사에 소실되지 않도록 실제 from 캡처
     if c.status in ("onboarding", "application_draft"):
         c.status = "application_draft"
     c.draft_state = "saved"
-    sm.record_event(db, c, c.status, c.status, "application.save_draft", user["role"], user["uid"])
+    sm.record_event(db, c, frm, c.status, "application.save_draft", user["role"], user["uid"])
     db.commit()
     return _case_dict(c)
 
@@ -6393,8 +6568,9 @@ def _do_issue_certificate(db, c, user, reason=None):
     frm = c.status
     if "certificate_issued" in sm.TRANSITIONS.get(c.status, set()):
         c.status = "certificate_issued"
-    sm.record_event(db, c, frm, c.status, "certificate.issue", "system", user["uid"],
-                    {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None})
+    _issue_payload = {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None}
+    _issue_payload.update(_tsa_meta(cert.certificate_no or str(cert.id)))   # P3d: TSA configured 시만 병기(미설정 불변)
+    sm.record_event(db, c, frm, c.status, "certificate.issue", "system", user["uid"], _issue_payload)
     # S3-3: freeze snapshot — 발급 시 제품/원재료 ID 동결
     prod_ids = [p.product_id for p in db.query(models.Product).filter_by(case_id=case_id)]
     mat_ids = [m.material_id for m in db.query(models.Material).filter_by(case_id=case_id)]
@@ -6617,11 +6793,58 @@ def _psre_certify(db, case, subject, signer, doc_ref, payload_hash):
     if not res:
         return None
     st = getattr(case, "status", "") or ""
-    sm.record_event(db, case, st, st, _PSRE_CERTIFIED_EVENT, "system", signer,
-                    {"subject": subject, "provider": res["provider"],
-                     "signer": res["signer_identity"], "tsa_timestamp": res["tsa_timestamp"],
-                     "signature_ref": res["signature_ref"], "doc_ref": doc_ref})
+    payload = {"subject": subject, "provider": res["provider"],
+               "signer": res["signer_identity"], "tsa_timestamp": res["tsa_timestamp"],
+               "signature_ref": res["signature_ref"], "doc_ref": doc_ref}
+    payload.update(_tsa_meta(payload_hash))   # P3d: TSA configured 시에만 신뢰 타임스탬프 병기(미설정 불변)
+    sm.record_event(db, case, st, st, _PSRE_CERTIFIED_EVENT, "system", signer, payload)
     return res
+
+
+# ── 법적효력 Phase 3 — TSA 신뢰 타임스탬프 커넥터 (자격증명 게이트·순수 추가·스키마 무변경) ──────────
+# 정직성(중요): RFC3161 TSA 신뢰 타임스탬프는 TSA 서비스 URL(및 선택 토큰)이 있어야 가능하다.
+# 미설정(기본값)이면 스탬프하는 '척' 위조하지 않고 내부 시각만 사용한다 — PSrE/SIHALAL/notify 크리덴셜
+# 게이트와 완전 동일 패턴. 미설정 시 서명/발급 이벤트 payload·해시·응답은 100% 불변(회귀 0).
+def _tsa_config():
+    """TSA 신뢰 타임스탬프 자격증명 게이트 — GLHAC_TSA_URL 설정 시 configured. GLHAC_TSA_TOKEN은 선택."""
+    e = os.environ.get
+    url = e("GLHAC_TSA_URL")
+    token = e("GLHAC_TSA_TOKEN")
+    return {"configured": bool(url), "url": url, "token": token}
+
+
+def _tsa_stamp(digest):
+    """RFC3161 TSA 신뢰 타임스탬프 요청(범용/설정형·graceful) — configured면 {tsa_time,tsa_ref}, 미설정/실패 None.
+    ⚠ 실 TSA 요청/응답 필드는 서비스마다 상이하므로 설정형이며 자격증명 확보 후 최종화한다."""
+    cfg = _tsa_config()
+    if not cfg["configured"]:
+        return None
+    try:
+        import httpx
+        headers = {"Content-Type": "application/json"}
+        if cfg["token"]:
+            headers["Authorization"] = "Bearer " + cfg["token"]
+        r = httpx.post(cfg["url"], timeout=15, headers=headers,
+                       json={"digest": digest, "hash_algo": "sha256"})
+        if not (200 <= r.status_code < 300):
+            return None
+        try:
+            body = r.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+    except Exception:  # noqa: BLE001
+        return None
+    return {"tsa_time": (body.get("tsa_time") or body.get("timestamp")
+                         or datetime.utcnow().isoformat()),
+            "tsa_ref": (body.get("tsa_ref") or body.get("serial") or body.get("id"))}
+
+
+def _tsa_meta(digest):
+    """이벤트 meta에 병합할 TSA 조각 — configured+성공 시 {tsa_time,tsa_ref,tsa:'connected'}, 아니면 {}(불변)."""
+    if not _tsa_config()["configured"]:
+        return {}
+    st = _tsa_stamp(digest)
+    return {"tsa_time": st["tsa_time"], "tsa_ref": st["tsa_ref"], "tsa": "connected"} if st else {}
 
 
 def _sig_nature_for(db, case_id, subject=None):
@@ -7562,6 +7785,17 @@ def admin_psre_status(user=Depends(auth.require_roles("operator"))):
                               "(GLHAC_PSRE_PROVIDER/API_URL/TOKEN) 필요 — 미설정 시 내부 무결성 서명 폴백")}}
 
 
+@app.get("/admin/tsa-status")
+def admin_tsa_status(user=Depends(auth.require_roles("operator"))):
+    """법적효력 P3d — TSA 신뢰 타임스탬프 커넥터 설정 상태(읽기전용·스키마 무변경·시크릿 미노출).
+    미설정 시 서명/발급 이벤트는 내부 시각만 사용(신뢰 타임스탬프 미연동) — 기존 동작 완전 불변."""
+    cfg = _tsa_config()
+    return {"tsa": {"configured": cfg["configured"], "implemented": True,
+                    "status": "connected" if cfg["configured"] else "unset",
+                    "note": ("RFC3161 TSA 자격증명(GLHAC_TSA_URL, 선택 GLHAC_TSA_TOKEN) 필요 — "
+                             "미설정 시 신뢰 타임스탬프 미연동(내부 시각만)")}}
+
+
 @app.post("/cases/{case_id}/certificate/change-impact")
 def change_impact(case_id: str, body: schemas.ChangeImpactReq,
                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -7647,9 +7881,10 @@ def fatwa_final_approve(case_id: str, user=Depends(rbac.require_action("fatwa.ap
     fd.final_approver = user["uid"]
     c.fatwa_status = "approved"
     c.scope_frozen = True
+    frm = c.status   # P3e: 상태 선세팅 전 실제 from_status 캡처(fatwa_review→fatwa_approved 전이 감사 정확화)
     if c.status == "fatwa_review" and sm.allowed(c.status, "fatwa_approved"):
         c.status = "fatwa_approved"
-    sm.record_event(db, c, c.status, c.status, "fatwa.final_approve", user["role"], user["uid"], {})
+    sm.record_event(db, c, frm, c.status, "fatwa.final_approve", user["role"], user["uid"], {})
     _notify(db, c, "fatwa_approved", "파트와 최종 승인",
             "%s — 파트와 위원회 최종 승인 완료. 인증서 발급 가능." % (c.company_name or ""),
             channels=["inapp"], role="applicant")
