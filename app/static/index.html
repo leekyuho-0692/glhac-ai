@@ -336,6 +336,7 @@
         <button type="button" class="btn" onclick="quickLogin('admin','admin')">⚙️ ITO 관리자<span>admin</span></button>
       </div>
     </div>
+    <div style="margin-top:14px;font-size:11.5px;text-align:center;color:var(--ink3)"><a onclick="showPrivacyNotice()" style="color:var(--accent);cursor:pointer">개인정보 처리방침 · 데이터 거주 고지 · Kebijakan Privasi</a></div>
   </form>
   <form class="loginbox" id="registerForm" style="display:none" onsubmit="doRegister(event)">
     <h1>회원가입 · Register</h1>
@@ -448,6 +449,7 @@ const NAV = [
   ["feedback","💬","개선 피드백","Feedback","건의·Feedback"],
   ["consultation","☎️","상담","Support","상담·Support"],
   ["auditLog","🛡️","감사로그","Audit Log","전역 이력·admin"],
+  ["compliance","🔐","컴플라이언스","Compliance","플랫폼 준수·admin"],
   ["system","⚙️","시스템 설정","System","admin"],
 ];
 /* 좌측 메뉴 2뎁스 그룹 (역할 필터는 MENU_ACCESS로 유지) */
@@ -456,7 +458,7 @@ const NAV_GROUPS=[
   {label:"신청·서류 · Application", ids:["application","preassess"]},   // 회의 2026-07-10: integration 삭제 · 원재료·AI큐는 개요 그룹으로
   {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
-  {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","auditorWork","regulations","consultation","notifyLog","auditLog","system"]},   // prod notifyLog 유지 + 오디터 업무 현황
+  {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","auditorWork","regulations","consultation","notifyLog","auditLog","compliance","system"]},   // prod notifyLog 유지 + 오디터 업무 현황 + 컴플라이언스
   {label:"기타 · Others", ids:["assistant","feedback"]},   // prod 고유 그룹 유지
   {label:"내 정보 관리 · My Data", ids:["documents","vault","notifCenter"]},   // M6: 문서=내 자료함 · P1-#4 자료함(Vault) · C13 알림 센터
 ];
@@ -507,6 +509,7 @@ const MENU_ACCESS = {
   feedback: ["client","consultant","auditor","sharia","ops","admin"],
   consultation: ["client","consultant","ops","admin"],   // 상담: 클라이언트 제출·관리자 응대
   auditLog: ["admin"],   // G17 전역 감사로그 — admin 전용(백엔드 require_roles() 정합)
+  compliance: ["admin"],   // P4c 플랫폼 컴플라이언스 대시보드 — admin 전용(백엔드 require_roles() 정합)
   system:   ["admin"],
 };
 const CASE_SCOPED = new Set(["workflow","application","preassess","materials","aiExtractions","integration",
@@ -677,7 +680,7 @@ const ID_LABEL={
 };
 const NAV_ID={"feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
   integration:"Integrasi",documents:"Dokumen",audit:"Audit",onsiteCalendar:"현장심사 캘린더",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
-  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",opsDashboard:"Operasional",workflowMonitor:"워크플로우 모니터",regulations:"Regulasi & Hukum",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",aiExtractions:"Antrian Tinjau AI",auditLog:"Log Audit",system:"Sistem"};
+  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",opsDashboard:"Operasional",workflowMonitor:"워크플로우 모니터",regulations:"Regulasi & Hukum",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",aiExtractions:"Antrian Tinjau AI",auditLog:"Log Audit",compliance:"Kepatuhan",system:"Sistem"};
 function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
@@ -3049,6 +3052,21 @@ const UI_STRINGS={
   "Menunggu No. BPJPH":"Menunggu No. Ketetapan Halal dari BPJPH",
   "본 문서는 준비/내부 산출물이며, 공식 할랄 인증 발급은 BPJPH/SIHALAL 절차로 확정됩니다.":"Dokumen ini bersifat persiapan/internal; penerbitan halal resmi ditentukan oleh proses BPJPH/SIHALAL.",
   "내부 무결성 서명(공인 전자서명 아님)":"Tanda tangan integritas internal (bukan e-signature tersertifikasi PSrE)",
+  /* 법적효력 Phase 4 — 플랫폼 컴플라이언스·개인정보 처리방침 i18n */
+  "컴플라이언스 상태를 불러오지 못했습니다":"Gagal memuat status kepatuhan",
+  "플랫폼 준수 상태를 정직하게 집약합니다 — 시크릿 값은 노출하지 않고 상태만 표시합니다.":"Rangkuman jujur status kepatuhan platform — hanya status yang ditampilkan, nilai rahasia tidak diungkap.",
+  "개인정보 처리방침 · 데이터 거주 고지":"Kebijakan Privasi · Pemberitahuan Residensi Data",
+  "본 고지는 인도네시아 개인정보보호법(UU PDP No.27/2022)에 따른 요약 안내입니다.":"Pemberitahuan ini adalah ringkasan sesuai UU Pelindungan Data Pribadi (UU PDP No.27/2022).",
+  "수집 항목":"Data yang Dikumpulkan",
+  "사업자 정보(NIB·기업명·주소), 담당자 연락처, 제품·원재료·문서, 심사·인증 이력. 필요한 범위에서만 수집합니다.":"Informasi usaha (NIB·nama·alamat), kontak PIC, produk·bahan·dokumen, riwayat audit·sertifikasi. Dikumpulkan hanya seperlunya.",
+  "PII 암호화":"Enkripsi PII",
+  "민감 개인정보 컬럼은 AES-256-GCM 봉투암호화로 보호할 수 있습니다(GLHAC_ENCRYPTION 설정 시 적용). 실제 적용 상태는 컴플라이언스 대시보드에서 확인하세요.":"Kolom data pribadi sensitif dapat dilindungi dengan enkripsi amplop AES-256-GCM (aktif bila GLHAC_ENCRYPTION diatur). Cek status aktual di dasbor kepatuhan.",
+  "데이터 거주":"Residensi Data",
+  "데이터는 인도네시아 데이터 거주(data residency) 요건에 부합하도록 운영합니다. 국외 이전이 필요한 경우 UU PDP에 따른 근거를 확보합니다.":"Data dikelola sesuai persyaratan residensi data Indonesia. Transfer ke luar negeri dilakukan dengan dasar hukum sesuai UU PDP.",
+  "보관·파기":"Penyimpanan & Pemusnahan",
+  "법정 보존기간 동안 보관 후 안전하게 파기합니다. 감사 이력은 무결성 보장을 위해 별도 보관됩니다.":"Disimpan selama periode retensi hukum lalu dimusnahkan secara aman. Riwayat audit disimpan terpisah untuk menjamin integritas.",
+  "정보주체 권리·문의":"Hak Subjek Data & Kontak",
+  "열람·정정·삭제 등 권리 행사 및 개인정보 관련 문의는 플랫폼 운영자(관리자)에게 요청할 수 있습니다.":"Permintaan hak akses·koreksi·penghapusan dan pertanyaan terkait data pribadi dapat diajukan ke operator (admin) platform.",
   /* 법적효력 Phase 1 — PSrE 공인 전자서명 커넥터(정직표기) i18n */
   "PSrE 공인 전자서명":"Tanda tangan elektronik tersertifikasi PSrE",
   "UU ITE 법적효력":"berkekuatan hukum sesuai UU ITE",
@@ -8955,6 +8973,60 @@ async function tenantPanel(orgId){
 }
 async function reseedOntology(){if(!confirm("온톨로지를 재시드할까요?"))return;try{const r=await API("/admin/ontology/reseed",{method:"POST",body:"{}"});toast("재시드 · "+(r.ontology_count==null?"완료":r.ontology_count));applyView();}catch(e){toast("실패");}}
 async function seedReset(){if(!confirm("seed를 초기화할까요? (데모 데이터 재생성)"))return;try{await API("/admin/seed-reset",{method:"POST",body:"{}"});toast("seed 초기화");await loadCases(true);applyView();}catch(e){toast("실패");}}
+
+/* ===== 법적효력 Phase 4c — 플랫폼 컴플라이언스 대시보드(admin) — GET /admin/compliance ===== */
+const COMPLIANCE_ST={
+  met:['ok','✅','충족','Terpenuhi'],
+  action_required:['warn','🟠','조치 필요','Perlu Tindakan'],
+  pending:['warn','⏳','진행 중','Sedang Berjalan'],
+  not_configured:['mute','⚪','미연동','Belum Terhubung']};
+SCREEN.compliance=async()=>{
+  let d={items:[],summary:{}};
+  try{d=await API('/admin/compliance');}catch(e){return `<div class="card"><div class="body"><div class="banner bad">⛔ ${T('컴플라이언스 상태를 불러오지 못했습니다')} · ${(e&&e.code)||''}</div></div></div>`;}
+  const sm=d.summary||{};
+  const kpi=(n,ko,id2)=>`<div class="kpi"><span class="n" style="font-size:22px">${n||0}</span><span class="l">${LANG===2?id2:ko}</span></div>`;
+  const cards=(d.items||[]).map(it=>{
+    const st=COMPLIANCE_ST[it.status]||COMPLIANCE_ST.pending;
+    const label=LANG===2?(it.label_id||it.label):it.label;
+    const detail=LANG===2?(it.detail_id||it.detail):it.detail;
+    const bar=st[0]==='ok'?'#16a34a':(st[0]==='warn'?'#d97706':'var(--line2)');
+    return `<div class="card" style="border-left:4px solid ${bar}"><div class="body">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:18px" aria-hidden="true">${st[1]}</span>
+        <b style="font-size:14px">${esc(label)}</b>
+        <span class="tag t-${st[0]}">${LANG===2?st[3]:st[2]}</span></div>
+      <div class="muted small" style="margin-top:8px;line-height:1.5">${esc(detail)}</div>
+    </div></div>`;}).join('');
+  return `<div class="card"><div class="body">
+      <div class="muted small" style="margin-bottom:10px">${T('플랫폼 준수 상태를 정직하게 집약합니다 — 시크릿 값은 노출하지 않고 상태만 표시합니다.')}</div>
+      <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr));gap:10px">
+        ${kpi(sm.met,'충족','Terpenuhi')}
+        ${kpi(sm.action_required,'조치 필요','Perlu Tindakan')}
+        ${kpi(sm.not_configured,'미연동','Belum Terhubung')}
+        ${kpi(sm.pending,'진행 중','Sedang Berjalan')}</div>
+      <div class="btnrow" style="margin-top:12px"><button class="btn" onclick="showPrivacyNotice()">📄 ${T('개인정보 처리방침 · 데이터 거주 고지')}</button></div>
+    </div></div>
+    <div class="grid two" style="margin-top:14px;gap:12px">${cards}</div>`;
+};
+
+/* ===== 법적효력 Phase 4d — 개인정보 처리방침·데이터 거주 고지(UU PDP) — 정적 모달(KO/ID) ===== */
+function showPrivacyNotice(){
+  const row=(t,body)=>`<div style="margin-bottom:12px"><div style="font-weight:700;margin-bottom:4px">${esc(t)}</div><div class="muted small" style="line-height:1.55">${esc(body)}</div></div>`;
+  const ov=document.createElement("div");
+  ov.style.cssText="position:fixed;inset:0;background:rgba(12,22,16,.55);z-index:9500;display:flex;align-items:center;justify-content:center;padding:22px";
+  ov.innerHTML=`<div class="modalbox" style="max-width:640px;width:100%;max-height:86vh;overflow:auto">
+    <h3>📄 ${T('개인정보 처리방침 · 데이터 거주 고지')}</h3>
+    <div class="banner info" style="margin-bottom:12px">${T('본 고지는 인도네시아 개인정보보호법(UU PDP No.27/2022)에 따른 요약 안내입니다.')}</div>
+    ${row(T('수집 항목'),T('사업자 정보(NIB·기업명·주소), 담당자 연락처, 제품·원재료·문서, 심사·인증 이력. 필요한 범위에서만 수집합니다.'))}
+    ${row(T('PII 암호화'),T('민감 개인정보 컬럼은 AES-256-GCM 봉투암호화로 보호할 수 있습니다(GLHAC_ENCRYPTION 설정 시 적용). 실제 적용 상태는 컴플라이언스 대시보드에서 확인하세요.'))}
+    ${row(T('데이터 거주'),T('데이터는 인도네시아 데이터 거주(data residency) 요건에 부합하도록 운영합니다. 국외 이전이 필요한 경우 UU PDP에 따른 근거를 확보합니다.'))}
+    ${row(T('보관·파기'),T('법정 보존기간 동안 보관 후 안전하게 파기합니다. 감사 이력은 무결성 보장을 위해 별도 보관됩니다.'))}
+    ${row(T('정보주체 권리·문의'),T('열람·정정·삭제 등 권리 행사 및 개인정보 관련 문의는 플랫폼 운영자(관리자)에게 요청할 수 있습니다.'))}
+    <div class="btnrow" style="margin-top:10px"><button class="btn" data-act="x">${T('닫기')}</button></div></div>`;
+  ov.addEventListener("click",e=>{if(e.target===ov)ov.remove();});
+  ov.querySelector('[data-act="x"]').onclick=()=>ov.remove();
+  document.body.appendChild(ov);
+}
 
 /* ---- case detail (tabbed, live) ---- */
 /* 워크플로우 게이트(단일 케이스) 시각화 — 조회 전용. 기존 GET 재사용:

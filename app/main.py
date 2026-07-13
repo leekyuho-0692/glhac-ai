@@ -72,6 +72,81 @@ async def _observability_mw(request: Request, call_next):
     return resp
 
 
+# ── 법적효력 Phase 4b — 민감/쓰기 엔드포인트 레이트리밋 (per-actor 슬라이딩 카운터·인메모리) ──────────
+# 로그인 전용 제한(auth._LOGIN_ATTEMPTS)은 그대로 유지하고, write(POST/PUT/PATCH/DELETE) 요청에
+# per-actor(토큰 uid 우선, 없으면 클라이언트 IP) 분당 완만한 한도를 추가한다 — 정상 데모 흐름 무영향
+# (기본 넉넉). 초과 시 429 RATE_LIMITED. 한도는 GLHAC_RATE_LIMIT_PER_MIN(기본 120)으로 조정.
+# ⚠ 단일 프로세스 인메모리 카운터 — 멀티워커/수평확장 시 외부 store(Redis 등) 필요(정직 표기).
+_RL_WRITE_WINDOW = 60
+_RL_WRITE_MAX = int(os.environ.get("GLHAC_RATE_LIMIT_PER_MIN", "120"))
+_RL_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_RL_WRITE_HITS = {}   # actor_key -> [timestamps] (인메모리·단일프로세스)
+
+
+def _rl_actor_key(request: Request) -> str:
+    """레이트리밋 액터 식별 — 인증 토큰의 uid 우선, 없으면 클라이언트 IP."""
+    authz = request.headers.get("Authorization") or ""
+    if authz.startswith("Bearer "):
+        p = auth.verify_token(authz[7:])
+        if p and p.get("uid"):
+            return "uid:" + str(p["uid"])
+    client = request.client
+    return "ip:" + (client.host if client else "unknown")
+
+
+@app.middleware("http")
+async def _rate_limit_write_mw(request: Request, call_next):
+    """P4b — write 요청 per-actor 분당 레이트리밋. 로그인(/auth/*)은 전용 제한(auth._LOGIN_ATTEMPTS)
+    으로 별도 관리하므로 여기서는 제외(중복 방지). GET/HEAD/OPTIONS는 미적용."""
+    if (_RL_WRITE_MAX > 0 and request.method in _RL_WRITE_METHODS
+            and not request.url.path.startswith("/auth/")):
+        now = time.time()
+        key = _rl_actor_key(request)
+        arr = [t for t in _RL_WRITE_HITS.get(key, []) if now - t < _RL_WRITE_WINDOW]
+        if len(arr) >= _RL_WRITE_MAX:
+            _RL_WRITE_HITS[key] = arr
+            return JSONResponse(status_code=429,
+                                content={"code": "RATE_LIMITED",
+                                         "detail": "분당 요청 한도 초과 · rate limit exceeded",
+                                         "limit_per_min": _RL_WRITE_MAX})
+        arr.append(now)
+        _RL_WRITE_HITS[key] = arr
+    return await call_next(request)
+
+
+# ── 법적효력 Phase 4a — 보안 응답 헤더 미들웨어 (플랫폼 컴플라이언스·순수 추가) ─────────────────────
+# 완성도평가 HIGH 지적 반영: clickjacking·MIME 스니핑·정보노출 방어 + CSP. 단일 vanilla JS SPA가
+# 인라인 스크립트/스타일·QR(data:)·이미지(blob:)를 서빙하므로 앱을 깨지 않는 합리적 정책을 기본값으로.
+# 값은 모두 env로 완화 가능(GLHAC_CSP 등). HSTS는 HTTPS 요청에만 부여 → 로컬 http 개발 무손상.
+# (마지막 등록 미들웨어 = 최외곽 → 모든 응답(429 포함)에 헤더 부여.)
+_DEFAULT_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                "connect-src 'self'; frame-ancestors 'none'")
+_SECURITY_HEADERS = {
+    "X-Frame-Options": os.environ.get("GLHAC_X_FRAME_OPTIONS", "DENY"),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": os.environ.get("GLHAC_REFERRER_POLICY", "strict-origin-when-cross-origin"),
+    "Content-Security-Policy": os.environ.get("GLHAC_CSP", _DEFAULT_CSP),
+}
+_HSTS_VALUE = os.environ.get("GLHAC_HSTS", "max-age=31536000; includeSubDomains")
+_SECURITY_HEADERS_ACTIVE = True   # P4c 컴플라이언스 대시보드가 참조(미들웨어 등록됨=met)
+
+
+@app.middleware("http")
+async def _security_headers_mw(request: Request, call_next):
+    """보안 응답 헤더(P4a) — 모든 응답에 부여. 값은 env로 완화 가능. HSTS는 HTTPS 요청
+    (url.scheme=='https' 또는 X-Forwarded-Proto=='https')에만 → 로컬 http 개발 무손상."""
+    resp = await call_next(request)
+    for k, v in _SECURITY_HEADERS.items():
+        if v:
+            resp.headers.setdefault(k, v)
+    xfproto = request.headers.get("X-Forwarded-Proto", "")
+    is_https = request.url.scheme == "https" or xfproto == "https"
+    if is_https and _HSTS_VALUE:
+        resp.headers.setdefault("Strict-Transport-Security", _HSTS_VALUE)
+    return resp
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exc(request: Request, exc: Exception):
     """미처리 예외 — 스택 유출 없이 일반화된 500 반환, 서버에는 상세 로깅."""
@@ -7794,6 +7869,122 @@ def admin_tsa_status(user=Depends(auth.require_roles("operator"))):
                     "status": "connected" if cfg["configured"] else "unset",
                     "note": ("RFC3161 TSA 자격증명(GLHAC_TSA_URL, 선택 GLHAC_TSA_TOKEN) 필요 — "
                              "미설정 시 신뢰 타임스탬프 미연동(내부 시각만)")}}
+
+
+# ── 법적효력 Phase 4c — 플랫폼 컴플라이언스 상태 대시보드 (admin·읽기전용·스키마 무변경·시크릿 미노출) ──
+@app.get("/admin/compliance")
+def admin_compliance(user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    """플랫폼 컴플라이언스 포스처를 정직 집약한다(값이 아닌 '상태'만 — 시크릿 미노출).
+    각 항목 {key, label, label_id, status(met|pending|not_configured|action_required), detail, detail_id}.
+    설정형 커넥터(PSrE/SIHALAL/TSA)는 자격증명 미설정 시 not_configured로 표기(위조하지 않음)."""
+    e = os.environ.get
+    items = []
+
+    def add(key, label, label_id, status, detail, detail_id):
+        items.append({"key": key, "label": label, "label_id": label_id,
+                      "status": status, "detail": detail, "detail_id": detail_id})
+
+    # PSE 등록(Kominfo 전자시스템 사업자 등록) — 등록번호 보유 시 met
+    pse = bool(e("GLHAC_PSE_REG_NO"))
+    add("pse_registration", "PSE 등록(Kominfo)", "Pendaftaran PSE (Kominfo)",
+        "met" if pse else "action_required",
+        ("전자시스템 사업자(PSE) 등록번호 보유" if pse
+         else "PSE 등록번호(GLHAC_PSE_REG_NO) 미설정 — Kominfo PSE 등록 필요"),
+        ("Nomor registrasi PSE tersedia" if pse
+         else "GLHAC_PSE_REG_NO belum diatur — perlu registrasi PSE Kominfo"))
+
+    # UU PDP — PII 필드 암호화(AES-256-GCM 봉투암호화)
+    enc = e("GLHAC_ENCRYPTION", "0") == "1"
+    add("pii_encryption", "UU PDP · PII 암호화", "UU PDP · Enkripsi PII",
+        "met" if enc else "action_required",
+        ("PII 컬럼 AES-256-GCM 봉투암호화 적용(GLHAC_ENCRYPTION=1)" if enc
+         else "PII 암호화 미적용 — 프로덕션은 GLHAC_ENCRYPTION=1 + 전용 키(GLHAC_ENC_KEY) 권장"),
+        ("Enkripsi kolom PII AES-256-GCM aktif" if enc
+         else "Enkripsi PII nonaktif — sarankan GLHAC_ENCRYPTION=1 di produksi"))
+
+    # 보안 응답 헤더(P4a) — 미들웨어 등록됨 = met
+    add("security_headers", "보안 응답 헤더", "Header Keamanan HTTP",
+        "met" if _SECURITY_HEADERS_ACTIVE else "action_required",
+        "X-Frame-Options·X-Content-Type-Options·Referrer-Policy·CSP 전 응답 적용(HSTS는 HTTPS)",
+        "X-Frame-Options·X-Content-Type-Options·Referrer-Policy·CSP diterapkan (HSTS via HTTPS)")
+
+    # 레이트리밋(P4b) — write 엔드포인트 per-actor 분당 한도
+    add("rate_limiting", "레이트리밋", "Pembatasan Laju (Rate Limit)",
+        "met" if _RL_WRITE_MAX > 0 else "action_required",
+        "로그인 전용 제한 + write 엔드포인트 per-actor 분당 %d회(인메모리·단일프로세스)" % _RL_WRITE_MAX,
+        "Batas login + %d/menit per-aktor pada endpoint write (in-memory, single-process)" % _RL_WRITE_MAX)
+
+    # PSrE 공인 전자서명 연동(설정형 커넥터)
+    psre = _psre_config()
+    add("psre_esign", "PSrE 공인 전자서명 연동", "Integrasi Tanda Tangan Elektronik PSrE",
+        "met" if psre["configured"] else "not_configured",
+        ("PSrE 연동 설정됨" + (" · " + str(psre["provider"]) if psre.get("provider") else "")
+         if psre["configured"]
+         else "미설정 — 벤더(PrivyID/VIDA/Peruri/Tilaka) 자격증명 확보 시 연동(미설정 시 내부 무결성 서명 폴백)"),
+        ("Integrasi PSrE dikonfigurasi" if psre["configured"]
+         else "Belum dikonfigurasi — fallback tanda tangan integritas internal"))
+
+    # SIHALAL 제출 연동(설정형 커넥터)
+    sih = _sihalal_submit_config()
+    add("sihalal_integration", "SIHALAL 제출 연동", "Integrasi Pengajuan SIHALAL",
+        "met" if sih["configured"] else "not_configured",
+        ("SIHALAL 제출 자격증명 설정됨" if sih["configured"]
+         else "미설정 — LP3H 등록·자격증명(GLHAC_SIHALAL_API_URL/TOKEN) 확보 시 실제 제출"),
+        ("Kredensial pengajuan SIHALAL dikonfigurasi" if sih["configured"]
+         else "Belum dikonfigurasi — perlu registrasi LP3H & kredensial"))
+
+    # TSA 신뢰 타임스탬프 연동(설정형 커넥터)
+    tsa = _tsa_config()
+    add("tsa_timestamp", "TSA 신뢰 타임스탬프", "Stempel Waktu Tepercaya (TSA)",
+        "met" if tsa["configured"] else "not_configured",
+        ("RFC3161 TSA 연동 설정됨" if tsa["configured"]
+         else "미설정 — GLHAC_TSA_URL 확보 시 연동(미설정 시 내부 시각만 사용)"),
+        ("Integrasi TSA RFC3161 dikonfigurasi" if tsa["configured"]
+         else "Belum dikonfigurasi — memakai waktu internal saja"))
+
+    # 감사 체인(WorkflowEvent + AuditLog) — 항상 met, 실제 건수 병기(정직)
+    try:
+        wf_n = db.query(models.WorkflowEvent).count()
+    except Exception:  # noqa: BLE001
+        wf_n = None
+    try:
+        al_n = db.query(models.AuditLog).count()
+    except Exception:  # noqa: BLE001
+        al_n = None
+    add("audit_chain", "감사 체인", "Rantai Audit (Audit Trail)", "met",
+        "WorkflowEvent(%s)·AuditLog(%s) 불변 이력 기록" % (
+            "?" if wf_n is None else wf_n, "?" if al_n is None else al_n),
+        "Riwayat WorkflowEvent(%s) & AuditLog(%s)" % (
+            "?" if wf_n is None else wf_n, "?" if al_n is None else al_n))
+
+    # 백업 — 현재 수동 .bak 스냅샷만(자동 백업 파이프라인 미구성)
+    add("backup", "백업·복구", "Cadangan & Pemulihan", "action_required",
+        "현재 수동 .bak 스냅샷만 — 자동 백업·복구 파이프라인 구성 필요",
+        "Hanya snapshot .bak manual — perlu pipeline pencadangan otomatis")
+
+    # LPH 인정(LPH 인정번호 보유 시 met)
+    lph = bool(e("GLHAC_LPH_ACCRED"))
+    add("lph_accreditation", "LPH 인정", "Akreditasi LPH",
+        "met" if lph else "action_required",
+        ("LPH 인정번호 보유(GLHAC_LPH_ACCRED)" if lph
+         else "LPH 인정번호(GLHAC_LPH_ACCRED) 미설정 — BPJPH/KAN 인정 필요"),
+        ("Nomor akreditasi LPH tersedia" if lph
+         else "GLHAC_LPH_ACCRED belum diatur — perlu akreditasi BPJPH/KAN"))
+
+    # 기본 시크릿 강제(enforce_secret) — 커스텀 시크릿이면 met, 기본값이면 action_required
+    default_secret = auth.secret_is_default()
+    add("app_secret", "앱 시크릿", "Rahasia Aplikasi (App Secret)",
+        "met" if not default_secret else "action_required",
+        ("커스텀 GLHAC_SECRET 설정됨 — 프로덕션 부팅 허용" if not default_secret
+         else "기본 시크릿 사용 중 — 프로덕션 부팅은 차단됨(enforce_secret). GLHAC_SECRET 설정 필요"),
+        ("GLHAC_SECRET kustom telah diatur" if not default_secret
+         else "Memakai rahasia bawaan — boot produksi diblokir; atur GLHAC_SECRET"))
+
+    order = ["met", "pending", "not_configured", "action_required"]
+    summary = {s: sum(1 for it in items if it["status"] == s) for s in order}
+    return {"generated_at": datetime.utcnow().isoformat(),
+            "dev_mode": auth.dev_mode(),
+            "summary": summary, "total": len(items), "items": items}
 
 
 @app.post("/cases/{case_id}/certificate/change-impact")
