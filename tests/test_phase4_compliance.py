@@ -13,14 +13,32 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ["GLHAC_DB_URL"] = "sqlite:///./glhac_p4_test.db"   # 격리 강제
 os.environ["GLHAC_DEV"] = "1"                                  # 데모 계정 시드
 os.environ["GLHAC_SECRET"] = "p4-" + "x" * 40                  # 기본시크릿 부팅차단 회피
-os.environ["GLHAC_RATE_LIMIT_PER_MIN"] = "5"                   # (c) 낮은 한도로 429 유도
+# ⚠ 낮은 레이트리밋 한도(5)는 import-time 전역대입이 아니라 fixture로만 설정하고 teardown에서 원복.
+# 앱이 요청 시점에 env를 재조회하므로(app.main._rl_write_max) fixture 설정으로 충분하며, 원복까지
+# 하여 같은 프로세스의 다른 테스트 파일(조합 실행) write 요청을 429로 오염시키지 않는다(하네스 멱등).
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _rate_limit_env():
+    """(c) 낮은 한도로 429 유도 — 이 파일 테스트 동안만 GLHAC_RATE_LIMIT_PER_MIN=5, 종료 시 원복."""
+    prev = os.environ.get("GLHAC_RATE_LIMIT_PER_MIN")
+    os.environ["GLHAC_RATE_LIMIT_PER_MIN"] = "5"
+    try:
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("GLHAC_RATE_LIMIT_PER_MIN", None)
+        else:
+            os.environ["GLHAC_RATE_LIMIT_PER_MIN"] = prev
 
 
 def _tok(c, u, p):
@@ -96,7 +114,7 @@ def test_b2_compliance_forbidden_for_non_admin():
 def test_c_rate_limit_write_429():
     """(c) write 요청이 활성 한도 초과 시 429 RATE_LIMITED. (import 순서 무관 — 실제 한도를 읽어 초과)."""
     import app.main as m
-    limit = m._RL_WRITE_MAX
+    limit = m._rl_write_max()
     m._RL_WRITE_HITS.clear()   # 이전 테스트 잔존 카운터 제거(멱등)
     try:
         with TestClient(app) as c:

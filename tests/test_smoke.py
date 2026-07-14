@@ -27,6 +27,13 @@ def _walk(client, cid, states):
         assert r.status_code == 200, (s, r.json())
 
 
+def _intake_complete(client, cid, company="ABC"):
+    """§5.2 신청완비 가드(ai_pre_assessment_ready 진입) 충족 — 회사명·NIB·제품 최소 1개.
+    가드가 전면화(하드닝)되어 raw 전이 전에 이 최소 신청정보가 필요하다."""
+    client.patch(f"/cases/{cid}/profile", json={"company_name": company, "nib": "1234567890"})
+    client.post(f"/cases/{cid}/products", json={"name": "Sample Product", "category": "Food"})
+
+
 def test_self_declare_happy_path():
     with TestClient(app) as client:
         _auth(client)
@@ -40,6 +47,7 @@ def test_self_declare_happy_path():
         v = client.post(f"/sihalal/identity/{ei['external_identity_id']}/verify",
                         json={"expected_identifier": "abc@x.com"}).json()
         assert v["identifier_match"] is True, v
+        _intake_complete(client, cid, company="ABC")
         _walk(client, cid, ["application_draft", "ai_pre_assessment_ready",
                             "ai_pre_assessment_running", "pathway_determination"])
         a = client.post(f"/cases/{cid}/pathway/assess").json()
@@ -48,12 +56,25 @@ def test_self_declare_happy_path():
         _walk(client, cid, ["sjph_lite_prepared", "pendamping_verification"])
         client.post(f"/cases/{cid}/pendamping/assign", json={"pendamping_id": "pp_1"})
         client.post(f"/cases/{cid}/pendamping/verify", json={"decision": "verified"})
-        _walk(client, cid, ["self_declaration_submitted", "committee_verification"])
+        # 펜담핑 검증(verified)은 가드 통과 시 self_declaration_submitted로 자동전이(app: pendamping.verify.auto)
+        assert client.get(f"/cases/{cid}").json()["status"] == "self_declaration_submitted"
+        _walk(client, cid, ["committee_verification"])
+        # KFPH(자기선언 위원회) 승인 → fatwa_status=approved (certificate/issue 하드게이트 통과 선행)
+        cd = client.post(f"/cases/{cid}/committee/decide", json={"decision": "approve", "reason": "ok"})
+        assert cd.status_code == 200 and cd.json()["fatwa_status"] == "approved", cd.text
         # certificate_issued는 보호상태 — raw transition 금지, 전용 발급 엔드포인트만 허용
         blocked = client.post(f"/cases/{cid}/transition", json={"to_state": "certificate_issued"})
         assert blocked.status_code == 403 and blocked.json()["detail"]["code"] == "USE_DEDICATED_ENDPOINT", blocked.text
         iss = client.post(f"/cases/{cid}/certificate/issue")
-        assert iss.status_code == 200 and iss.json().get("certificate_no"), iss.text
+        assert iss.status_code == 200, iss.text
+        # 인증서 발급은 2인 승인(maker=운영자/admin, checker=fatwa_liaison) — checker가 승인해야 실제 발급
+        appr_id = iss.json().get("approval_id")
+        assert appr_id, iss.text
+        ftok = client.post("/auth/login", json={"username": "fatwa1", "password": "pw"}).json()["token"]
+        ap = client.post(f"/approvals/{appr_id}/approve",
+                         headers={"Authorization": "Bearer " + ftok})
+        assert ap.status_code == 200, ap.text
+        assert ap.json()["result"].get("certificate_no"), ap.text
         assert client.get(f"/cases/{cid}").json()["status"] == "certificate_issued"
         # 발급이 상태를 진행시키므로 갱신(certificate_issued 필요)이 동작해야 — 회귀 방지
         rn = client.post(f"/cases/{cid}/renew")
@@ -66,6 +87,7 @@ def test_haram_blocks_selfdeclare():
         client.post(f"/orgs/{ORG}/penyelia", json={"name": "Budi"})
         cid = client.post("/cases", json={"org_id": ORG, "is_msme": True}).json()["case_id"]
         client.post(f"/cases/{cid}/materials", json={"name": "lard"})  # haram → BLOCK
+        _intake_complete(client, cid, company="Haram Co")
         _walk(client, cid, ["application_draft", "ai_pre_assessment_ready",
                             "ai_pre_assessment_running", "pathway_determination"])
         a = client.post(f"/cases/{cid}/pathway/assess").json()
@@ -82,6 +104,7 @@ def test_selfdeclare_submit_blocked_without_sihalal():
         client.post(f"/orgs/{ORG}/penyelia", json={"name": "Budi"})
         cid = client.post("/cases", json={"org_id": ORG, "is_msme": True}).json()["case_id"]
         client.post(f"/cases/{cid}/materials", json={"name": "sugar"})  # unknown→비임계
+        _intake_complete(client, cid, company="NoSihalal Co")
         _walk(client, cid, ["application_draft", "ai_pre_assessment_ready",
                             "ai_pre_assessment_running", "pathway_determination"])
         client.post(f"/cases/{cid}/pathway/confirm", json={"pathway": "self_declare"})

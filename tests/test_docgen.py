@@ -100,6 +100,12 @@ def test_contract_pdf_404_when_absent(tmp_path):
         pass
 
 
+# 정족수 하드게이트(_fatwa_quorum_ok)는 fatwa.sign WorkflowEvent(payload.member + data:image)를
+# 위원장 포함 ≥2인 요구한다(§5.2 하드닝). 결정문 생성 테스트는 이 서명 이벤트를 시딩해야 통과.
+_SIG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+        "AAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC")
+
+
 def test_fatwa_decree_generate_and_pdf(tmp_path):
     db = _seed_db(tmp_path)
     db.add(models.FatwaDecision(
@@ -107,6 +113,11 @@ def test_fatwa_decree_generate_and_pdf(tmp_path):
         committee_head="Dr. Ahmad", committee_secretary="Ust. Farhan",
         committee_members=["Dr. Siti"], decided_at=datetime.utcnow()))
     db.add(models.FatwaVote(case_id="case1", member="Dr. Ahmad", vote="approve"))
+    # 정족수 충족: 위원장 + 위원 1인 서명(fatwa.sign 이벤트)
+    db.add(models.WorkflowEvent(case_id="case1", action="fatwa.sign", actor_type="user",
+                                payload={"member": "chairman", "image": _SIG}))
+    db.add(models.WorkflowEvent(case_id="case1", action="fatwa.sign", actor_type="user",
+                                payload={"member": "member1", "image": _SIG}))
     db.commit()
     r = m.gen_fatwa_decree("case1", user=USER, db=db)
     assert r["decision"] == "approved"

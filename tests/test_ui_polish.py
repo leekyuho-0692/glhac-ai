@@ -89,7 +89,7 @@ def test_e2_m2_cases_expose_auditor_after_assignment():
 def test_m2_m3_auditor_dashboard_aggregates():
     """오디터 대시보드 — 담당·이번주현장·처리대기·미해결부적합 집계."""
     cid = _mk_case("onsite_audit_scheduled", "PT Aud Dash")
-    aid, _ = _auditor_id()
+    aid, aname = _auditor_id()
     # 이번 주 월요일 현장실사 예정 + 오픈 부적합 1건
     monday = (datetime.utcnow().date() - timedelta(days=datetime.utcnow().date().weekday()))
     db = SessionLocal()
@@ -105,7 +105,11 @@ def test_m2_m3_auditor_dashboard_aggregates():
         top = _tok(c, "operator1", "pw")
         assert c.post("/ops/cases/%s/assign-auditor" % cid,
                       json={"auditor_id": aid}, headers=_h(top)).status_code == 200
-        atok = _tok(c, "auditor1", "pw")
+        # 배정 수락 워크플로우(app): 대시보드 '담당'은 수락된 배정만 집계 → 배정 오디터가 수락
+        atok = _tok(c, aname, "pw")
+        acc = c.post("/cases/%s/assignment/respond" % cid,
+                     json={"decision": "accepted"}, headers=_h(atok))
+        assert acc.status_code == 200, acc.text
         d = c.get("/auditor/dashboard", headers=_h(atok)).json()
         for k in ("assigned_count", "week_onsite", "pending_review",
                   "open_findings", "week_start", "week_end"):

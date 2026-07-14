@@ -78,9 +78,19 @@ async def _observability_mw(request: Request, call_next):
 # (기본 넉넉). 초과 시 429 RATE_LIMITED. 한도는 GLHAC_RATE_LIMIT_PER_MIN(기본 120)으로 조정.
 # ⚠ 단일 프로세스 인메모리 카운터 — 멀티워커/수평확장 시 외부 store(Redis 등) 필요(정직 표기).
 _RL_WRITE_WINDOW = 60
-_RL_WRITE_MAX = int(os.environ.get("GLHAC_RATE_LIMIT_PER_MIN", "120"))
 _RL_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _RL_WRITE_HITS = {}   # actor_key -> [timestamps] (인메모리·단일프로세스)
+
+
+def _rl_write_max() -> int:
+    """레이트리밋 분당 한도 — 요청 시점에 env(GLHAC_RATE_LIMIT_PER_MIN)를 재조회한다.
+    import-time 캐싱을 제거해 같은 프로세스 내에서 한도가 바뀌어도(테스트 하네스 등) 즉시 반영
+    → 조합 실행 시 한 파일의 낮은 한도가 다른 파일 쓰기를 429로 오염시키던 비멱등 제거.
+    기본 120. 0이면 비활성(레이트리밋 미적용). 429 동작·표기는 불변."""
+    try:
+        return int(os.environ.get("GLHAC_RATE_LIMIT_PER_MIN", "120"))
+    except (TypeError, ValueError):
+        return 120
 
 
 def _rl_actor_key(request: Request) -> str:
@@ -98,17 +108,18 @@ def _rl_actor_key(request: Request) -> str:
 async def _rate_limit_write_mw(request: Request, call_next):
     """P4b — write 요청 per-actor 분당 레이트리밋. 로그인(/auth/*)은 전용 제한(auth._LOGIN_ATTEMPTS)
     으로 별도 관리하므로 여기서는 제외(중복 방지). GET/HEAD/OPTIONS는 미적용."""
-    if (_RL_WRITE_MAX > 0 and request.method in _RL_WRITE_METHODS
+    _max = _rl_write_max()   # 요청 시점 env 재조회(캐싱 제거)
+    if (_max > 0 and request.method in _RL_WRITE_METHODS
             and not request.url.path.startswith("/auth/")):
         now = time.time()
         key = _rl_actor_key(request)
         arr = [t for t in _RL_WRITE_HITS.get(key, []) if now - t < _RL_WRITE_WINDOW]
-        if len(arr) >= _RL_WRITE_MAX:
+        if len(arr) >= _max:
             _RL_WRITE_HITS[key] = arr
             return JSONResponse(status_code=429,
                                 content={"code": "RATE_LIMITED",
                                          "detail": "분당 요청 한도 초과 · rate limit exceeded",
-                                         "limit_per_min": _RL_WRITE_MAX})
+                                         "limit_per_min": _max})
         arr.append(now)
         _RL_WRITE_HITS[key] = arr
     return await call_next(request)
@@ -7909,10 +7920,11 @@ def admin_compliance(user=Depends(auth.require_roles()), db: Session = Depends(g
         "X-Frame-Options·X-Content-Type-Options·Referrer-Policy·CSP diterapkan (HSTS via HTTPS)")
 
     # 레이트리밋(P4b) — write 엔드포인트 per-actor 분당 한도
+    _rlm = _rl_write_max()
     add("rate_limiting", "레이트리밋", "Pembatasan Laju (Rate Limit)",
-        "met" if _RL_WRITE_MAX > 0 else "action_required",
-        "로그인 전용 제한 + write 엔드포인트 per-actor 분당 %d회(인메모리·단일프로세스)" % _RL_WRITE_MAX,
-        "Batas login + %d/menit per-aktor pada endpoint write (in-memory, single-process)" % _RL_WRITE_MAX)
+        "met" if _rlm > 0 else "action_required",
+        "로그인 전용 제한 + write 엔드포인트 per-actor 분당 %d회(인메모리·단일프로세스)" % _rlm,
+        "Batas login + %d/menit per-aktor pada endpoint write (in-memory, single-process)" % _rlm)
 
     # PSrE 공인 전자서명 연동(설정형 커넥터)
     psre = _psre_config()

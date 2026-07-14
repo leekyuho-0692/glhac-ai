@@ -2,7 +2,16 @@
 __pycache__/
 *.pyc
 *.db
+*.db-wal
+*.db-shm
+glhac_*_test.db
 data/
 /data
 demo_shots/
 *.log
+# 테스트/커버리지 산출물
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
