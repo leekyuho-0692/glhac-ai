@@ -42,6 +42,17 @@ def _set_status(case_id, status):
         db.close()
 
 
+def _confirm_contract(case_id):
+    """청구서 생성 게이트(CONTRACT_NOT_CONFIRMED) 충족용 confirmed 계약 삽입(픽스처).
+    add_invoice가 계약 최종확인 후에만 청구서를 허용하므로 인보이스 POST 전에 필요."""
+    db = SessionLocal()
+    try:
+        db.add(models.Contract(case_id=case_id, status="confirmed"))
+        db.commit()
+    finally:
+        db.close()
+
+
 def _count(case_id, model, **filt):
     db = SessionLocal()
     try:
@@ -55,6 +66,7 @@ def test_a_multi_line_invoice_saves_items_and_sums():
     with TestClient(app) as c:
         con = _tok(c, "consultant1", "pw")
         cid = _mkcase(c, _tok(c, "admin", "admin"))
+        _confirm_contract(cid)   # 청구서 생성 선행조건(계약 게이트) 충족
         items = [{"name": "심사료", "qty": 1, "unit_price": 6500000, "amount": 6500000},
                  {"name": "특수조항 가산", "qty": 2, "unit_price": 500000, "amount": 1000000}]
         r = c.post(f"/cases/{cid}/invoices",
@@ -77,6 +89,7 @@ def test_b_quotation_pdf_signature():
     with TestClient(app) as c:
         con = _tok(c, "consultant1", "pw")
         cid = _mkcase(c, _tok(c, "admin", "admin"))
+        _confirm_contract(cid)   # 청구서 생성 선행조건(계약 게이트) 충족
         inv = c.post(f"/cases/{cid}/invoices",
                      json={"service_type": "pre_audit", "amount": 0,
                            "line_items": [{"name": "심사료", "qty": 1, "unit_price": 6500000}]},

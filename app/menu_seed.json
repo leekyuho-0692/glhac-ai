@@ -531,6 +531,48 @@
     "en": "Notifications",
     "id": "알림 센터"
    }
+  },
+  {
+   "menu_code": "PENDAMPING",
+   "parent": "GRP_1",
+   "type": "screen",
+   "route": "pendamping",
+   "icon": "🤝",
+   "depth": 2,
+   "sort": 3,
+   "i18n": {
+    "ko": "동반자 워크스페이스",
+    "en": "Pendamping Workspace",
+    "id": "Ruang Kerja Pendamping"
+   }
+  },
+  {
+   "menu_code": "COMPLIANCE",
+   "parent": "GRP_5",
+   "type": "screen",
+   "route": "compliance",
+   "icon": "🔐",
+   "depth": 2,
+   "sort": 10,
+   "i18n": {
+    "ko": "컴플라이언스",
+    "en": "Compliance",
+    "id": "Kepatuhan"
+   }
+  },
+  {
+   "menu_code": "REPORT",
+   "parent": "GRP_4",
+   "type": "screen",
+   "route": "fatwa",
+   "icon": "📄",
+   "depth": 2,
+   "sort": 6,
+   "i18n": {
+    "ko": "보고서",
+    "en": "Report",
+    "id": "Laporan"
+   }
   }
  ],
  "role_menu": [
@@ -580,11 +622,6 @@
    "sort": 2
   },
   {
-   "role": "client",
-   "menu_code": "RESUBMITCENTER",
-   "sort": 3
-  },
-  {
    "role": "consultant",
    "menu_code": "RESUBMITCENTER",
    "sort": 3
@@ -626,11 +663,6 @@
   },
   {
    "role": "consultant",
-   "menu_code": "AIEXTRACTIONS",
-   "sort": 5
-  },
-  {
-   "role": "client",
    "menu_code": "AIEXTRACTIONS",
    "sort": 5
   },
@@ -700,16 +732,6 @@
    "sort": 1
   },
   {
-   "role": "auditor",
-   "menu_code": "INVOICE",
-   "sort": 1
-  },
-  {
-   "role": "sharia",
-   "menu_code": "INVOICE",
-   "sort": 1
-  },
-  {
    "role": "ops",
    "menu_code": "INVOICE",
    "sort": 1
@@ -720,11 +742,6 @@
    "sort": 1
   },
   {
-   "role": "sharia",
-   "menu_code": "PAYMENTS",
-   "sort": 2
-  },
-  {
    "role": "ops",
    "menu_code": "PAYMENTS",
    "sort": 2
@@ -733,11 +750,6 @@
    "role": "admin",
    "menu_code": "PAYMENTS",
    "sort": 2
-  },
-  {
-   "role": "sharia",
-   "menu_code": "DEPOSITS",
-   "sort": 3
   },
   {
    "role": "ops",
@@ -765,11 +777,6 @@
    "sort": 1
   },
   {
-   "role": "client",
-   "menu_code": "EVALUATION",
-   "sort": 2
-  },
-  {
    "role": "auditor",
    "menu_code": "EVALUATION",
    "sort": 2
@@ -805,11 +812,6 @@
    "sort": 3
   },
   {
-   "role": "sharia",
-   "menu_code": "MOCKAUDIT",
-   "sort": 3
-  },
-  {
    "role": "ops",
    "menu_code": "MOCKAUDIT",
    "sort": 3
@@ -831,11 +833,6 @@
   },
   {
    "role": "auditor",
-   "menu_code": "ONSITECALENDAR",
-   "sort": 4
-  },
-  {
-   "role": "sharia",
    "menu_code": "ONSITECALENDAR",
    "sort": 4
   },
@@ -865,11 +862,6 @@
    "sort": 5
   },
   {
-   "role": "sharia",
-   "menu_code": "AUDIT",
-   "sort": 5
-  },
-  {
    "role": "ops",
    "menu_code": "AUDIT",
    "sort": 5
@@ -878,16 +870,6 @@
    "role": "admin",
    "menu_code": "AUDIT",
    "sort": 5
-  },
-  {
-   "role": "consultant",
-   "menu_code": "FATWA",
-   "sort": 6
-  },
-  {
-   "role": "auditor",
-   "menu_code": "FATWA",
-   "sort": 6
   },
   {
    "role": "sharia",
@@ -923,11 +905,6 @@
    "role": "admin",
    "menu_code": "CERTIFICATE",
    "sort": 7
-  },
-  {
-   "role": "sharia",
-   "menu_code": "OPSDASHBOARD",
-   "sort": 1
   },
   {
    "role": "ops",
@@ -953,11 +930,6 @@
    "role": "admin",
    "menu_code": "OPSCALENDAR",
    "sort": 2
-  },
-  {
-   "role": "sharia",
-   "menu_code": "WORKFLOWMONITOR",
-   "sort": 3
   },
   {
    "role": "ops",
@@ -1168,6 +1140,36 @@
    "role": "admin",
    "menu_code": "NOTIFCENTER",
    "sort": 3
+  },
+  {
+   "role": "ops",
+   "menu_code": "PENDAMPING",
+   "sort": 3
+  },
+  {
+   "role": "admin",
+   "menu_code": "PENDAMPING",
+   "sort": 3
+  },
+  {
+   "role": "pendamping_pph",
+   "menu_code": "PENDAMPING",
+   "sort": 3
+  },
+  {
+   "role": "admin",
+   "menu_code": "COMPLIANCE",
+   "sort": 10
+  },
+  {
+   "role": "auditor",
+   "menu_code": "REPORT",
+   "sort": 6
+  },
+  {
+   "role": "consultant",
+   "menu_code": "REPORT",
+   "sort": 6
   }
  ]
 }

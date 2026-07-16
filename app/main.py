@@ -132,6 +132,9 @@ async def _rate_limit_write_mw(request: Request, call_next):
 # (마지막 등록 미들웨어 = 최외곽 → 모든 응답(429 포함)에 헤더 부여.)
 _DEFAULT_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                # PDF 미리보기(영수증·견적서 등)는 blob: URL을 <iframe>/<embed>로 렌더 →
+                # frame-src/object-src에 blob: 없으면 Chrome이 CSP로 차단("콘텐츠가 차단됨").
+                "frame-src 'self' blob:; object-src 'self' blob:; "
                 "connect-src 'self'; frame-ancestors 'none'")
 _SECURITY_HEADERS = {
     "X-Frame-Options": os.environ.get("GLHAC_X_FRAME_OPTIONS", "DENY"),
@@ -1345,10 +1348,15 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     rows = (q.order_by(models.CaseApplication.created_at.desc())
             .offset(offset).limit(limit).all())
     # E2/M2: 배정 오디터(ops.auditor_assigned latest-wins) — 목록에 담당자 노출·오디터 KPI 집계용
-    assign = _ops_latest_assignment(db, [c.case_id for c in rows])
+    _cids = [c.case_id for c in rows]
+    assign = _ops_latest_assignment(db, _cids)
+    # 수정요청 001 P3 — 계약 큐 처리대기 배지용: 케이스별 계약 상태 배치 조회
+    _cts = {ct.case_id: ct.status for ct in
+            db.query(models.Contract).filter(models.Contract.case_id.in_(_cids)).all()} if _cids else {}
     items = [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
               "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
               "province": _province_of(c.factory_address or c.address),
+              "contract_status": _cts.get(c.case_id),
               "auditor_id": (assign.get(c.case_id) or {}).get("auditor_id"),
               "auditor_name": (assign.get(c.case_id) or {}).get("auditor_name")}
              for c in rows]
@@ -2220,7 +2228,9 @@ def get_product(case_id: str, product_id: str, user=Depends(auth.get_current_use
             "expiry_date": cert.expiry_date if cert else None,
             "materials": [{"material_id": m.material_id, "name": m.name,
                            "screen_status": m.screen_status, "screen_severity": m.screen_severity,
-                           "cert": m.cert, "supplier": m.supplier,
+                           "result": m.screen_result, "matched_uid": m.matched_uid, "v1_risk": m.v1_risk,
+                           "e_number": m.e_number, "cert": m.cert, "supplier": m.supplier,
+                           "evidence_count": (1 if m.evidence_provided else 0),
                            "evidence_provided": bool(m.evidence_provided)} for m in mats]}
 
 
@@ -2240,6 +2250,21 @@ def update_product(case_id: str, product_id: str, body: schemas.ProductUpdate,
         p.status = body.status
     db.commit()
     return {"product_id": p.product_id, "status": p.status, "registration_type": p.registration_type}
+
+
+@app.delete("/cases/{case_id}/products/{product_id}")
+def delete_product(case_id: str, product_id: str,
+                   user=Depends(auth.require_roles("applicant", "consultant", "operator", "admin")),
+                   db: Session = Depends(get_db)):
+    """제품 삭제(오분류·중복 정리) — 제품 + 원재료 연결(ProductMaterial) 제거. 조직격리."""
+    _get_case(db, case_id, user)
+    p = db.get(models.Product, product_id)
+    if not p or p.case_id != case_id:
+        raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
+    db.query(models.ProductMaterial).filter_by(product_id=product_id).delete()
+    db.delete(p)
+    db.commit()
+    return {"deleted": product_id}
 
 
 def _exif_gps(b64_or_bytes):
@@ -2472,10 +2497,10 @@ def _apply_profile_extras(c, agg, force=False):
     """추출된 주소·책임자·공장등록번호를 케이스 프로필에 반영. 기본은 빈값만, force=True면 덮어씀.
     반환: 채운 필드명 리스트."""
     filled = []
-    addr = agg.get("address")   # NIB(사업자등록증) 주소 → 회사 주소
+    addr = _clean_ocr_address(agg.get("address"))   # NIB(사업자등록증) 주소 → 회사 주소(OCR 교정)
     if addr and (force or not c.address):
         c.address = addr; filled.append("address")
-    faddr = agg.get("factory_address")   # 공장등록증 주소 → 공장 주소
+    faddr = _clean_ocr_address(agg.get("factory_address"))   # 공장등록증 주소 → 공장 주소(OCR 교정)
     if faddr and (force or not c.factory_address):
         c.factory_address = faddr; filled.append("factory_address")
     if agg.get("responsible_person") and (force or not c.responsible_person):
@@ -2488,15 +2513,17 @@ def _apply_profile_extras(c, agg, force=False):
 def _apply_agg_to_case(db, c, agg):
     """추출 필드(회사/NIB/주소/책임자/제품/원재료)를 케이스에 반영 — DocumentAsset 생성은 하지 않음(재처리용)."""
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": []}
-    if agg.get("company_name") and (not c.company_name or c.company_name in _CO_PLACEHOLDER):
+    if agg.get("company_name") and _is_co_placeholder(c.company_name):
         c.company_name = agg["company_name"]; applied["company_set"] = True
     if agg.get("nib") and c.nib != agg["nib"]:
         c.nib = agg["nib"]; applied["nib_set"] = True   # 문서 파싱 NIB가 상속/기존값보다 우선
     applied["profile"] += _apply_profile_extras(c, agg)
-    have_p = {p.name for p in db.query(models.Product).filter_by(case_id=c.case_id)}
+    have_p = {_norm_material(p.name) for p in db.query(models.Product).filter_by(case_id=c.case_id)}
+    _mat_norms = {_norm_material(m) for m in (agg.get("materials") or []) if m}
     for pn in agg.get("products", []):
-        if pn and pn not in have_p:
-            db.add(models.Product(case_id=c.case_id, name=pn)); applied["products"] += 1; have_p.add(pn)
+        pk = _norm_material(pn)
+        if pn and pk and pk not in have_p and pk not in _mat_norms:
+            db.add(models.Product(case_id=c.case_id, name=pn)); applied["products"] += 1; have_p.add(pk)
     have_m = {_norm_material(m.name) for m in db.query(models.Material).filter_by(case_id=c.case_id)}
     for mn in agg.get("materials", []):
         nk = _norm_material(mn)
@@ -2511,11 +2538,12 @@ def _apply_agg_to_case(db, c, agg):
 
 
 @app.post("/documents/{document_id}/reprocess")
-def reprocess_document(document_id: str, dpi: int = None,
+def reprocess_document(document_id: str, dpi: int = None, apply: bool = True,
                        user=Depends(auth.require_roles("consultant", "operator")),
                        db: Session = Depends(get_db)):
     """저장된 원본을 재추출·재분류 — OCR/의존성 개선 후 구업로드 문서 치유(설계 B).
-    dpi 지정 시 스캔 문서를 고해상도로 재OCR(예: dpi=300, confident-misread 완화 시도)."""
+    dpi 지정 시 스캔 문서를 고해상도로 재OCR(예: dpi=300, confident-misread 완화 시도).
+    apply=false면 문서 doc_type·fields만 갱신하고 케이스 제품/원재료 자동채움은 건너뜀(정리된 목록 보존)."""
     from .intake import parse_file, classify, aggregate_fields
     d = db.get(models.DocumentAsset, document_id)
     if not d:
@@ -2532,7 +2560,8 @@ def reprocess_document(document_id: str, dpi: int = None,
     d.fields = r.get("fields") or {}
     d.text_excerpt = (text or "")[:300]
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
-    applied = _apply_agg_to_case(db, c, aggregate_fields([{"fields": d.fields}]))
+    applied = (_apply_agg_to_case(db, c, aggregate_fields([{"doc_type": d.doc_type, "fields": d.fields}]))
+               if apply else {"skipped": True})
     sm.record_event(db, c, c.status, c.status, "documents.reprocess", user["role"], user["uid"],
                     {"document_id": document_id, "from": prev, "to": d.doc_type,
                      "text_len": len(text or ""), "applied": applied})
@@ -2667,6 +2696,43 @@ def _auto_link_pm(db, case_id, max_pairs=2000):
 
 
 _CO_PLACEHOLDER = ("", "My Company", "scan", "ABC", "T", "UI", "Demo Co", "Demo Co FE")
+# 플레이스홀더/테스트 상호 패턴 — 공식 문서 추출 회사명이 덮어써야 하는 대상
+_CO_PLACEHOLDER_PAT = (
+    r"(?i)(test|demo|sample|dummy|example|placeholder|미정|샘플|테스트|데모|예시|심사\s*패스|\bn/?a\b)")
+
+
+def _is_co_placeholder(name):
+    """빈값·테스트/데모/샘플 등 placeholder 성격의 상호면 True → 공식 추출값으로 덮어쓰기 허용."""
+    import re
+    if not name or not str(name).strip():
+        return True
+    n = str(name).strip()
+    return n in _CO_PLACEHOLDER or bool(re.search(_CO_PLACEHOLDER_PAT, n))
+
+
+# 스캔 OCR 주소의 흔한 오인식 사전(도시·주 오탈자)
+_OCR_ADDR_FIX = {
+    r"\bJaka[ir]ta\b": "Jakarta", r"\bJakatta\b": "Jakarta", r"\bJakara\b": "Jakarta",
+    r"\bSurabaia\b": "Surabaya", r"\bBandimg\b": "Bandung", r"\bSemarrang\b": "Semarang",
+    r"\bBekas[il]\b": "Bekasi", r"\bTangerrang\b": "Tangerang",
+}
+
+
+def _clean_ocr_address(s):
+    """스캔 OCR 주소 교정 — 'N0 24'→'No. 24', 도시/주 오탈자, 로마숫자 lll→III, 쉼표 간격."""
+    import re
+    if not s or not isinstance(s, str):
+        return s
+    out = s
+    out = re.sub(r"\bN0(?=[\s.]*\d)", "No.", out)          # 문자 N+숫자 0 → No.
+    for pat, rep in _OCR_ADDR_FIX.items():                 # 도시·주 오탈자
+        out = re.sub(pat, rep, out, flags=re.I)
+    out = re.sub(r"\bDK[lI]?\s+Jakarta\b", "DKI Jakarta", out, flags=re.I)   # DK/DKl Jakarta → DKI
+    out = re.sub(r"(?<=\s)[lI]{2,4}(?=[\s,])", lambda m: "I" * len(m.group()), out)  # lll → III
+    out = re.sub(r"\s+,", ",", out)                        # 쉼표 앞 공백 제거
+    out = re.sub(r",(?=\S)", ", ", out)                    # 쉼표 뒤 공백 보정
+    out = re.sub(r"\s{2,}", " ", out)
+    return out.strip()
 
 
 def _set_hpas(db, case_id, element, status, note=None):
@@ -2750,19 +2816,26 @@ def _apply_intake_autofill(db, c, res):
     agg = res.get("extracted", {})
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": [],
                "dup_skipped": dup_skipped}
-    if agg.get("company_name") and (not c.company_name or c.company_name in _CO_PLACEHOLDER):
+    if agg.get("company_name") and _is_co_placeholder(c.company_name):
         c.company_name = agg["company_name"]
         applied["company_set"] = True
     if agg.get("nib") and c.nib != agg["nib"]:
         c.nib = agg["nib"]   # 문서 파싱 NIB가 상속/기존값보다 우선(공식 문서 기준)
         applied["nib_set"] = True
     applied["profile"] += _apply_profile_extras(c, agg)
-    have_p = {p.name for p in db.query(models.Product).filter_by(case_id=c.case_id)}
+    # 주소 최종 재정리(OCR 글리치 — 경로 무관 보장)
+    if c.address:
+        c.address = _clean_ocr_address(c.address)
+    if c.factory_address:
+        c.factory_address = _clean_ocr_address(c.factory_address)
+    have_p = {_norm_material(p.name) for p in db.query(models.Product).filter_by(case_id=c.case_id)}
+    _mat_norms = {_norm_material(m) for m in (agg.get("materials") or []) if m}  # 원재료명과 겹치는 제품 오추출 제외
     for pn in agg.get("products", []):
-        if pn and pn not in have_p:
+        pk = _norm_material(pn)
+        if pn and pk and pk not in have_p and pk not in _mat_norms:
             db.add(models.Product(case_id=c.case_id, name=pn))
             applied["products"] += 1
-            have_p.add(pn)
+            have_p.add(pk)
     have_m = {_norm_material(m.name) for m in db.query(models.Material).filter_by(case_id=c.case_id)}
     for mn in agg.get("materials", []):
         nk = _norm_material(mn)
@@ -2985,7 +3058,7 @@ def autofill_profile(case_id: str, force: bool = False,
         classified.append({"fields": fields, "doc_type": d.doc_type})
     agg = aggregate_fields(classified)
     applied = []
-    if agg.get("company_name") and (force or not c.company_name or c.company_name in _CO_PLACEHOLDER):
+    if agg.get("company_name") and (force or _is_co_placeholder(c.company_name)):
         c.company_name = agg["company_name"]; applied.append("company_name")
     if agg.get("nib") and (force or not c.nib):
         c.nib = agg["nib"]; applied.append("nib")
@@ -3715,12 +3788,10 @@ CONTRACT_STATIC_SECTIONS = [
 ]
 
 
-@app.post("/cases/{case_id}/contract/generate")
-def gen_contract(case_id: str, body: dict = None, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    """Contract (FORM 4.1) 생성 — 정적 법률조항 + 동적(회사·제품·수수료) 병합. Contract 레코드 + gen-doc 저장.
-    M4: body.fee(특수조항 계약금액 수동 override)·body.currency 지원."""
-    c = _get_case(db, case_id, user)
-    b = body or {}
+def _gen_contract_core(db, c, b, user, status="issued"):
+    """Contract(FORM 4.1) 레코드 생성/갱신 + gen-doc 저장. status는 호출자가 지정(queue: sent 등).
+    커밋은 호출자 책임. (contract, gendoc) 반환."""
+    case_id = c.case_id
     if c.product_ids:
         products = db.query(models.Product).filter(models.Product.product_id.in_(c.product_ids)).all()
     else:
@@ -3733,7 +3804,7 @@ def gen_contract(case_id: str, body: dict = None, user=Depends(auth.get_current_
     if not contract:
         contract = models.Contract(case_id=case_id, org_id=c.org_id, party_a=c.company_name,
                                    effective_date=str(datetime.utcnow().date()), scope=categories,
-                                   product_ids=[p.product_id for p in products], fee=fee, status="issued")
+                                   product_ids=[p.product_id for p in products], fee=fee, status=status)
         db.add(contract)
         db.flush()
         contract.contract_no = "HAC-" + contract.contract_id[:8].upper()
@@ -3743,7 +3814,7 @@ def gen_contract(case_id: str, body: dict = None, user=Depends(auth.get_current_
         contract.scope = categories
         contract.product_ids = [p.product_id for p in products]
         contract.fee = fee
-        contract.status = "issued"
+        contract.status = status
         if not contract.contract_no:
             contract.contract_no = "HAC-" + contract.contract_id[:8].upper()
     products_str = ", ".join(p.name for p in products) or "-"
@@ -3758,9 +3829,120 @@ def gen_contract(case_id: str, body: dict = None, user=Depends(auth.get_current_
         "수수료: %s" % (("%s %s" % (fee, contract.currency)) if fee else "별도 청구서"),
         "상태: %s" % contract.status])
     gendoc = _save_gendoc(db, c, "contract", content, user)
+    return contract, gendoc
+
+
+@app.post("/cases/{case_id}/contract/generate")
+def gen_contract(case_id: str, body: dict = None, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """Contract (FORM 4.1) 생성 — 정적 법률조항 + 동적(회사·제품·수수료) 병합. Contract 레코드 + gen-doc 저장.
+    M4: body.fee(특수조항 계약금액 수동 override)·body.currency 지원."""
+    c = _get_case(db, case_id, user)
+    contract, gendoc = _gen_contract_core(db, c, body or {}, user, status="issued")
     db.commit()
     return {"contract_id": contract.contract_id, "contract_no": contract.contract_no,
             "gen_doc_id": gendoc.gen_doc_id, "status": contract.status}
+
+
+# ── 계약 큐(승인 이관) 워크플로 — 수정요청 001 P2. 역할별 상태 전이. ──
+_CONTRACT_QUEUE_PREV = {"requested": "none", "sent": "requested", "received": "sent", "signing": "received"}
+
+
+@app.post("/cases/{case_id}/contract/request")
+def contract_request(case_id: str, user=Depends(auth.require_roles("applicant", "client", "consultant")), db: Session = Depends(get_db)):
+    """① 계약 신청(클라이언트) — Contract(status=requested) 생성. 관리자 승인 큐로 이관."""
+    c = _get_case(db, case_id, user)
+    ct = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if not ct:
+        ct = models.Contract(case_id=case_id, org_id=c.org_id, party_a=c.company_name,
+                             effective_date=str(datetime.utcnow().date()), status="requested")
+        db.add(ct)
+    elif ct.status in ("draft", "none", None):
+        ct.status = "requested"
+    _audit(db, user, "contract.request", "contract", ct.contract_id, case_id, {}, commit=False)
+    sm.record_event(db, c, c.status, c.status, "contract.request", user["role"], user["uid"], {})
+    _notify(db, c, "contract.request", "새 계약 신청 · " + (c.company_name or case_id[:8]),
+            "관리자 승인·계약서 발송이 필요합니다.", role="operator")
+    db.commit()
+    return {"status": ct.status}
+
+
+@app.post("/cases/{case_id}/contract/approve")
+def contract_approve(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """② 승인·계약서 발송(관리자) — 계약서 생성 + status=sent. 클라이언트 접수 큐로 이관."""
+    c = _get_case(db, case_id, user)
+    contract, gendoc = _gen_contract_core(db, c, body or {}, user, status="sent")
+    _audit(db, user, "contract.approve", "contract", contract.contract_id, case_id, {}, commit=False)
+    sm.record_event(db, c, c.status, c.status, "contract.approve", user["role"], user["uid"],
+                    {"contract_no": contract.contract_no})
+    _notify(db, c, "contract.approve", "계약서 도착 · " + (contract.contract_no or ""),
+            "계약서를 접수·확인해 주세요.", role="client")
+    db.commit()
+    return {"contract_id": contract.contract_id, "contract_no": contract.contract_no, "status": contract.status}
+
+
+@app.post("/cases/{case_id}/contract/receive")
+def contract_receive(case_id: str, user=Depends(auth.require_roles("applicant", "client", "consultant")), db: Session = Depends(get_db)):
+    """③ 계약서 접수·확인(클라이언트) — sent→received. 오디터 서명요청 큐로 이관."""
+    c = _get_case(db, case_id, user)
+    ct = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if not ct or ct.status not in ("sent", "issued"):
+        raise HTTPException(409, {"code": "CONTRACT_NOT_SENT", "detail": "관리자 승인·발송 후 접수할 수 있습니다."})
+    ct.status = "received"
+    _audit(db, user, "contract.receive", "contract", ct.contract_id, case_id, {}, commit=False)
+    sm.record_event(db, c, c.status, c.status, "contract.receive", user["role"], user["uid"], {})
+    _notify(db, c, "contract.receive", "계약 서명 요청 대기 · " + (c.company_name or ""),
+            "클라이언트 접수 완료 — 서명 요청이 가능합니다.", role="auditor")
+    db.commit()
+    return {"status": ct.status}
+
+
+@app.post("/cases/{case_id}/contract/request-signature")
+def contract_request_signature(case_id: str, user=Depends(auth.require_roles("auditor")), db: Session = Depends(get_db)):
+    """④ 서명 요청(오디터) — received→signing. 이후 양자(A 고객/B GLHAC) 전자서명 진행."""
+    c = _get_case(db, case_id, user)
+    ct = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if not ct or ct.status not in ("received",):
+        raise HTTPException(409, {"code": "CONTRACT_NOT_RECEIVED", "detail": "클라이언트 접수·확인 후 서명 요청이 가능합니다."})
+    ct.status = "signing"
+    _audit(db, user, "contract.request_signature", "contract", ct.contract_id, case_id, {}, commit=False)
+    sm.record_event(db, c, c.status, c.status, "contract.request_signature", user["role"], user["uid"], {})
+    _notify(db, c, "contract.sign_request", "계약 서명 요청 · " + (c.company_name or ""),
+            "계약서에 전자 서명해 주세요.", role="client")
+    db.commit()
+    return {"status": ct.status}
+
+
+# 계약 큐 반려(되돌리기) — 수정요청 001 P4. 현재 단계를 이전 단계로 되돌리고 사유 기록.
+_CONTRACT_RETURN_PREV = {"requested": "draft", "sent": "requested", "received": "sent",
+                         "signing": "received", "signed": "signing", "confirmed": "signed"}
+_CONTRACT_QUEUE_OWNER = {"requested": "operator", "draft": "client", "sent": "client", "issued": "client",
+                         "received": "auditor", "signing": "client", "signed": "operator"}
+
+
+@app.post("/cases/{case_id}/contract/return")
+def contract_return(case_id: str, body: dict = None,
+                    user=Depends(auth.require_roles("applicant", "client", "consultant", "auditor", "operator")),
+                    db: Session = Depends(get_db)):
+    """계약 큐 반려 — 현재 단계를 이전 단계로 되돌림 + 사유 기록. 이전 담당 역할에 알림."""
+    c = _get_case(db, case_id, user)
+    ct = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if not ct:
+        raise HTTPException(404, {"code": "CONTRACT_NOT_FOUND"})
+    prev = _CONTRACT_RETURN_PREV.get(ct.status)
+    if not prev:
+        raise HTTPException(409, {"code": "CANNOT_RETURN", "detail": "현재 단계에서는 반려할 수 없습니다."})
+    reason = ((body or {}).get("reason") or "").strip()
+    frm = ct.status
+    ct.status = prev
+    _audit(db, user, "contract.return", "contract", ct.contract_id, case_id,
+           {"from": frm, "to": prev, "reason": reason}, commit=False)
+    sm.record_event(db, c, c.status, c.status, "contract.return", user["role"], user["uid"],
+                    {"from": frm, "to": prev, "reason": reason})
+    _notify(db, c, "contract.return", "계약 반려 · " + (c.company_name or ""),
+            ("반려 사유: " + reason) if reason else "계약이 이전 단계로 반려되었습니다.",
+            role=_CONTRACT_QUEUE_OWNER.get(prev, "operator"))
+    db.commit()
+    return {"status": ct.status, "from": frm, "reason": reason}
 
 
 @app.get("/cases/{case_id}/contract/pdf")
@@ -3958,6 +4140,10 @@ def sign_contract(contract_id: str, party: str = "A", name: str = "",
     ct.signatures = sigs
     if any(s.get("party") == "A" for s in sigs) and any(s.get("party") == "B" for s in sigs):
         ct.status = "signed"
+        _sc = db.query(models.CaseApplication).filter_by(case_id=ct.case_id).first()
+        if _sc:
+            _notify(db, _sc, "contract.signed", "양자 서명 완료 · " + (ct.contract_no or ""),
+                    "관리자 최종 확인이 필요합니다.", role="operator")
     # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op·기존 서명/응답 완전 불변). 내부 서명은 위에서 병행.
     if _psre_config()["configured"]:
         import types as _t, hashlib as _h, json as _j
@@ -3966,6 +4152,28 @@ def sign_contract(contract_id: str, party: str = "A", name: str = "",
                       _h.sha256(_j.dumps(sigs, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest())
     db.commit()
     return {"contract_id": contract_id, "status": ct.status, "signatures": ct.signatures}
+
+
+@app.post("/cases/{case_id}/contract/confirm")
+def confirm_contract(case_id: str, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """최종 계약서 확인(관리자) — 양자 서명(signed) 완료 후 status=confirmed 전이.
+    이후에만 청구서(Invoice) 생성이 허용된다(수정요청 001 · 계약 큐 P1 데이터 게이트)."""
+    c = _get_case(db, case_id, user)
+    ct = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if not ct:
+        raise HTTPException(404, {"code": "CONTRACT_NOT_FOUND"})
+    sigs = ct.signatures or []
+    if not (any(s.get("party") == "A" for s in sigs) and any(s.get("party") == "B" for s in sigs)):
+        raise HTTPException(409, {"code": "CONTRACT_NOT_SIGNED",
+                                  "detail": "양자 서명 완료 후 최종 확인할 수 있습니다."})
+    ct.status = "confirmed"
+    _audit(db, user, "contract.confirm", "contract", ct.contract_id, case_id, {}, commit=False)
+    sm.record_event(db, c, c.status, c.status, "contract.confirm", user["role"], user["uid"],
+                    {"contract_id": ct.contract_id})
+    _notify(db, c, "contract.confirm", "계약 최종 확인 완료 · " + (ct.contract_no or ""),
+            "청구서가 곧 생성됩니다.", role="client")
+    db.commit()
+    return {"contract_id": ct.contract_id, "status": ct.status}
 
 
 def _fatwa_quorum_ok(db, case_id):
@@ -4834,33 +5042,51 @@ def _sjph_manual_docx_bytes(db, c):
                 if v:
                     _sjph_docx_cell_set(cells[ci], v)
     # Appendix 5 원재료×제품 매트릭스 — 제품명 헤더 치환 + 사용여부 ✔
+    # 템플릿 매트릭스는 제품 컬럼이 6개 고정 → 6개 초과 제품은 매트릭스 표를 블록으로 반복 생성(전체 제품 수용).
     prods = db.query(models.Product).filter_by(case_id=c.case_id).all()
     links = db.query(models.ProductMaterial).all()
     used = {(l.product_id, l.material_id) for l in links}
     ap5 = next((t for t in doc.tables
                 if t.rows and "Appendix 5" in t.rows[0].cells[0].text), None)
-    if ap5 is not None and mats:
-        hdr_ri = 3   # 'product name A 제품명 A' 행
-        if len(ap5.rows) > hdr_ri:
-            hcells = ap5.rows[hdr_ri].cells
-            for pi, pr in enumerate(prods[:6]):
-                ci = 3 + pi
-                if ci < len(hcells):
-                    _sjph_docx_cell_set(hcells[ci], pr.name or "")
-        start = hdr_ri + 1
-        for i, m in enumerate(mats):
-            while start + i >= len(ap5.rows):
-                ap5.add_row()
-            cells = ap5.rows[start + i].cells
-            _sjph_docx_cell_set(cells[0], str(i + 1))
-            if len(cells) > 1:
-                _sjph_docx_cell_set(cells[1], m.name or "")
-            if len(cells) > 2:
-                _sjph_docx_cell_set(cells[2], m.name or "")
-            for pi, pr in enumerate(prods[:6]):
-                ci = 3 + pi
-                if ci < len(cells):
-                    _sjph_docx_cell_set(cells[ci], "V" if (pr.product_id, m.material_id) in used else "-")
+    if ap5 is not None and mats and prods:
+        import copy as _copy
+        from docx.table import Table as _DocxTable
+        # 템플릿 구조: 제품명 헤더=row3·4(병합, product name A~E=col 3~7, 5개), 원재료 데이터=row5부터.
+        HDR_RIS, DATA_START, PCOLS, PC0 = (3, 4), 5, 5, 3
+        groups = [prods[i:i + PCOLS] for i in range(0, len(prods), PCOLS)][:30]  # 안전상한 30블록
+
+        def _fill_matrix(tbl, group):
+            for hri in HDR_RIS:
+                if hri < len(tbl.rows):
+                    hcells = tbl.rows[hri].cells
+                    for pi, pr in enumerate(group):
+                        ci = PC0 + pi
+                        if ci <= PC0 + PCOLS - 1 and ci < len(hcells):
+                            _sjph_docx_cell_set(hcells[ci], pr.name or "")
+            for i, m in enumerate(mats):
+                ri = DATA_START + i
+                while ri >= len(tbl.rows):
+                    tbl.add_row()
+                cells = tbl.rows[ri].cells
+                _sjph_docx_cell_set(cells[0], str(i + 1))
+                if len(cells) > 1:
+                    _sjph_docx_cell_set(cells[1], m.name or "")
+                if len(cells) > 2:
+                    _sjph_docx_cell_set(cells[2], m.name or "")
+                for pi, pr in enumerate(group):
+                    ci = PC0 + pi
+                    if ci <= PC0 + PCOLS - 1 and ci < len(cells):
+                        _sjph_docx_cell_set(cells[ci], "V" if (pr.product_id, m.material_id) in used else "-")
+
+        blueprint = _copy.deepcopy(ap5._tbl)      # 빈 원본 구조 보존(추가 블록 복제용)
+        _fill_matrix(ap5, groups[0])
+        last = ap5
+        for g in groups[1:]:
+            clone = _copy.deepcopy(blueprint)
+            last._tbl.addnext(clone)
+            tobj = _DocxTable(clone, ap5._parent)
+            _fill_matrix(tobj, g)
+            last = tobj
     # 빌더 드롭 이미지(조직도·공정도·서명) 임베드
     _sjph_insert_layout_images(doc, db, c.case_id)
     buf = _io.BytesIO()
@@ -7000,35 +7226,127 @@ def _halal_no_line(db, cert):
             % (_halal_mark_no(cert) or "-"))
 
 
-def _cert_pdf_bytes(db, c, cert):
-    """인증서 PDF 렌더 — 할랄마크번호·파트와결정번호 포함(certificate_pdf·bundle 재사용)."""
+def _render_certificate_pdf(db, c, cert):
+    """디자인 할랄 인증서 PDF — 미리보기(골드 이중테두리·엠블럼·중앙정렬 카드)와 동일 룩앤필."""
+    import fitz
+    W, H = fitz.paper_size("a4")
+    doc = fitz.open()
+    pg = doc.new_page(width=W, height=H)
+    F = "korea"
+    GOLD = (0.706, 0.325, 0.035)      # #B45309
+    GOLD2 = (0.79, 0.55, 0.18)
+    BROWN = (0.486, 0.247, 0.024)     # #7c3f06
+    INK = (0.20, 0.16, 0.10)
+    GREY = (0.42, 0.40, 0.36)
+    CREAM = (0.996, 0.976, 0.906)     # 옅은 앰버 배경
+    LINE = (0.85, 0.74, 0.50)
+    cx = W / 2
+
+    def ctxt(y, s, size, color, font=F):
+        s = str(s)
+        w = fitz.get_text_length(s, fontname=font, fontsize=size)
+        pg.insert_text((cx - w / 2, y), s, fontname=font, fontsize=size, color=color)
+
+    def wrap(s, width, size):
+        out, cur = [], ""
+        for word in str(s).split():
+            t = (cur + " " + word).strip()
+            if fitz.get_text_length(t, fontname=F, fontsize=size) > width and cur:
+                out.append(cur); cur = word
+            else:
+                cur = t
+        if cur:
+            out.append(cur)
+        return out or ["-"]
+
+    def cfit(y, s, size, color, maxw=W - 130, font=F):
+        """중앙정렬 + 폭 초과 시 폰트 축소(프레임 밖 넘침 방지)."""
+        s = str(s)
+        while size > 5 and fitz.get_text_length(s, fontname=font, fontsize=size) > maxw:
+            size -= 0.5
+        ctxt(y, s, size, color, font)
+
+    # 배경 + 골드 이중 테두리(미리보기 3px #B45309 + 그라디언트 배경 재현)
+    pg.draw_rect(fitz.Rect(40, 40, W - 40, H - 40), fill=CREAM, color=GOLD, width=2.4)
+    pg.draw_rect(fitz.Rect(48, 48, W - 48, H - 48), color=GOLD2, width=0.8)
+
+    # 엠블럼(GLHAC 로고 — 할랄마크 포함)
+    _logo = os.path.join(os.path.dirname(__file__), "assets", "glhac_logo.png")
+    if os.path.exists(_logo):
+        try:
+            pg.insert_image(fitz.Rect(cx - 80, 74, cx + 80, 142), filename=_logo, keep_proportion=True)
+        except Exception:
+            ctxt(122, "GL-HAC AI", 22, GOLD)
+    else:
+        ctxt(122, "GL-HAC AI", 22, GOLD)
+
+    ctxt(174, "S E R T I F I K A T   H A L A L", 14, GOLD)
+    ctxt(192, "할랄 인증서 · Halal Certificate", 10, GREY)
+    pg.draw_line((cx - 96, 204), (cx + 96, 204), color=GOLD, width=0.8)
+
+    # 회사명
+    y = 252
+    for ln in wrap(c.company_name or "-", W - 210, 25)[:2]:
+        ctxt(y, ln, 25, BROWN); y += 30
+    y += 4
+
+    # 범위(제품)
+    ctxt(y, "범위 · Scope", 8, GOLD); y += 16
+    for ln in wrap(", ".join(cert.scope or []) or "-", W - 180, 10)[:3]:
+        ctxt(y, ln, 10, GREY); y += 14
+    y += 12
+    pg.draw_line((cx - 150, y), (cx + 150, y), color=LINE, width=0.6); y += 26
+
+    # 인증 문구(KO + EN)
+    cfit(y, "본 제품은 SJPH 및 샤리아 기준에 따라 할랄(HALAL) 인증되었음을 증명합니다.", 10.5, INK); y += 18
+    cfit(y, "This product is certified HALAL in accordance with SJPH and Sharia standards.", 9, GREY); y += 28
+
+    # 인증번호 박스
+    bw = 380
+    pg.draw_rect(fitz.Rect(cx - bw / 2, y, cx + bw / 2, y + 60), fill=(0.998, 0.992, 0.965), color=LINE, width=0.7)
+    ctxt(y + 22, "No. %s" % (cert.certificate_no or "-"), 13, BROWN)
+    cfit(y + 43, "발급 · Issued  %s      만료 · Valid until  %s" % (cert.issue_date or "-", cert.expiry_date or "-"), 9.5, INK, maxw=bw - 28)
+    y += 60 + 22
+
+    # 참조번호 / 파트와
+    official = _official_bpjph_no(db, cert.case_id)
+    if official:
+        cfit(y, "No. Ketetapan Halal (BPJPH) : %s" % official, 9.5, INK); y += 16
+    else:
+        cfit(y, "내부 참조 · Internal Ref (비공식) : %s" % (_halal_mark_no(cert) or "-"), 9, GREY); y += 14
+        ctxt(y, "· Menunggu No. Ketetapan Halal (BPJPH)", 8, GREY); y += 16
+    cfit(y, "파트와 결정번호 · No. Fatwa : %s" % (_case_fatwa_no(db, cert.case_id) or "-"), 9.5, INK); y += 16
+    if cert.qr_token:
+        cfit(y, "공개검증 · Verify : /verify/%s" % cert.qr_token, 8.5, GOLD); y += 18
+
+    # 상태 스탬프(active 외 — 정지/철회)
+    if cert.status and cert.status != "active":
+        pg.draw_rect(fitz.Rect(cx - 78, y + 4, cx + 78, y + 40), color=(0.70, 0.12, 0.12), width=1.8)
+        ctxt(y + 30, cert.status.upper(), 15, (0.70, 0.12, 0.12)); y += 46
+
+    # 전자서명 + 도장(하단)
     sig = (db.query(models.Signature).filter_by(subject_type="certificate", subject_id=cert.id)
            .order_by(models.Signature.signed_at.desc()).first())
-    lines = [
-        "SERTIFIKAT HALAL · 할랄 인증서",
-        "",
-        "기업 · Perusahaan : %s" % (c.company_name or "-"),
-        "인증번호 · No     : %s" % (cert.certificate_no or "-"),
-        _halal_no_line(db, cert),
-        "파트와 결정번호 · No. Fatwa        : %s" % (_case_fatwa_no(db, cert.case_id) or "-"),
-        "상태 · Status     : %s" % cert.status,
-        "발급 · Issued     : %s" % (cert.issue_date or "-"),
-        "만료 · Valid until : %s" % (cert.expiry_date or "-"),
-        "범위 · Scope      : %s" % (", ".join(cert.scope or []) or "-"),
-        "",
-        "본 제품은 SJPH 및 샤리아 기준에 따라 할랄(HALAL) 인증되었음을 증명합니다.",
-        "Produk ini disertifikasi HALAL sesuai SJPH dan kriteria Syariah.",
-        "",
-        "공개 검증 · Verify : /verify/%s" % (cert.qr_token or "-"),
-        "전자서명 · Signed  : %s%s" % ("예 · Yes" if sig else "아니오 · No",
-                                       (" (" + (sig.provider or "") + ")") if sig else ""),
-    ]
+    sy = H - 158
+    pg.draw_circle(fitz.Point(cx, sy + 8), 30, color=GOLD, width=1.2)
+    ctxt(sy + 4, "GL-HAC", 7.5, GOLD)
+    ctxt(sy + 15, "HALAL", 7.5, GOLD)
+    ctxt(sy + 56, "전자서명 · %s" % ("Digitally Signed" if sig else "Not signed"), 9, INK)
     if sig:
-        lines.append("서명 성격 · Nature : " + _sig_nature_for(db, cert.case_id, "certificate"))
-    lines += ["", _LEGAL_DISCLAIMER_PDF]
-    return _render_pdf("GL-HAC AI · Halal Certificate", "\n".join(lines),
-                       subtitle=cert.certificate_no or "",
-                       footer="공개 검증 페이지에서 진위를 확인하세요 · Verify authenticity at /verify")
+        ctxt(sy + 70, "(%s · %s)" % ((sig.provider or "internal"), str(sig.signed_at)[:16]), 7.5, GREY)
+        ctxt(sy + 82, "서명 성격 · " + _sig_nature_for(db, cert.case_id, "certificate"), 7, GREY)
+
+    # 법적 고지 푸터
+    ctxt(H - 70, "GL-HAC AI · Halal Certification Platform · 공개 검증 페이지에서 진위를 확인하세요.", 7.5, GREY)
+    for i, ln in enumerate(wrap(_LEGAL_DISCLAIMER_PDF.replace("\n", " "), W - 130, 6.5)[:2]):
+        ctxt(H - 58 + i * 9, ln, 6.5, GREY)
+
+    return doc.tobytes()
+
+
+def _cert_pdf_bytes(db, c, cert):
+    """인증서 PDF — 디자인 렌더(certificate_pdf·bundle 공용). 미리보기와 동일 룩."""
+    return _render_certificate_pdf(db, c, cert)
 
 
 # ── 제품별 개별 인증서 (범위 확장) — 스키마 무변경.
@@ -7240,6 +7558,37 @@ def _terbilang(n):
     return " ".join(h(n).split())
 
 
+# 서비스 코드 → 재무문서 표시명(이중언어). 미등록 snake_case 코드는 제목화 폴백.
+_SERVICE_LABELS = {
+    "pre_audit": "Pra-Audit Sertifikasi Halal · 사전심사",
+    "onsite": "Audit Lapangan · 현장심사",
+    "onsite_audit": "Audit Lapangan · 현장심사",
+    "certification": "Sertifikasi Halal · 인증심사",
+    "supervision": "Pengawasan / Surveilans · 감독심사",
+    "surveillance": "Pengawasan / Surveilans · 감독심사",
+    "registration": "Pendaftaran · 등록",
+    "registration_fee": "Biaya Pendaftaran · 등록비",
+}
+
+
+def _service_label(code, prettify=True, short=False):
+    """서비스 코드('pre_audit')를 사람이 읽는 서비스명으로. 자유텍스트(공백 포함)는 그대로.
+    short=True면 이중언어 라벨의 인도네시아어 부분만(좁은 표 셀용)."""
+    if not code:
+        lbl = "Layanan Sertifikasi Halal"
+    else:
+        s = str(code).strip()
+        if s.lower() in _SERVICE_LABELS:
+            lbl = _SERVICE_LABELS[s.lower()]
+        elif prettify and " " not in s and s.replace("_", "").isalnum():
+            lbl = s.replace("_", " ").title()   # pre_audit → Pre Audit
+        else:
+            lbl = s
+    if short:
+        lbl = lbl.split(" · ")[0].strip()
+    return lbl
+
+
 def _render_finance_pdf(kind, inv, c, pay=None, items=None):
     """재무문서 전용 렌더러 — 영수증(Kwitansi)·견적서(Penawaran)·세금계산서(Faktur Pajak).
     브랜드 헤더·공급자/구매자 패널·항목표·합계박스·서명란을 갖춘 A4 1매. PyMuPDF 'korea' 폰트."""
@@ -7248,15 +7597,28 @@ def _render_finance_pdf(kind, inv, c, pay=None, items=None):
     doc = fitz.open()
     pg = doc.new_page(width=W, height=H)
     F = "korea"
-    G = (0.043, 0.443, 0.271)
-    G2 = (0.09, 0.55, 0.35)
+    # 문서 종류별 액센트 테마 — 견적서=블루·영수증=그린·세금계산서=앰버(한눈에 구분).
+    _FIN_THEME = {
+        "quotation": {"g": (0.11, 0.36, 0.62), "g2": (0.20, 0.46, 0.72),
+                      "soft": (0.92, 0.95, 0.99), "zebra": (0.965, 0.975, 0.99),
+                      "lt": (0.82, 0.88, 0.97), "wm": "PENAWARAN", "badge": "DRAFT · 견적"},
+        "receipt":   {"g": (0.043, 0.443, 0.271), "g2": (0.09, 0.55, 0.35),
+                      "soft": (0.93, 0.965, 0.945), "zebra": (0.966, 0.978, 0.971),
+                      "lt": (0.86, 0.94, 0.89), "wm": "KWITANSI", "badge": "LUNAS · 결제완료"},
+        "tax":       {"g": (0.70, 0.46, 0.05), "g2": (0.80, 0.55, 0.12),
+                      "soft": (0.985, 0.955, 0.90), "zebra": (0.99, 0.975, 0.955),
+                      "lt": (0.96, 0.88, 0.72), "wm": "FAKTUR PAJAK", "badge": "PPN 11% · 과세"},
+    }
+    _th = _FIN_THEME.get(kind, _FIN_THEME["receipt"])
+    G = _th["g"]
+    G2 = _th["g2"]
     INK = (0.13, 0.15, 0.14)
     GREY = (0.42, 0.44, 0.43)
     LINE = (0.80, 0.82, 0.81)
-    SOFT = (0.93, 0.965, 0.945)
-    ZEBRA = (0.966, 0.978, 0.971)
+    SOFT = _th["soft"]
+    ZEBRA = _th["zebra"]
     WHITE = (1, 1, 1)
-    LT = (0.86, 0.94, 0.89)
+    LT = _th["lt"]
     margin = 46
     RIGHT = W - margin
 
@@ -7270,12 +7632,13 @@ def _render_finance_pdf(kind, inv, c, pay=None, items=None):
     def rect(x0, y0, x1, y1, fill=None, color=None, width=0.6):
         pg.draw_rect(fitz.Rect(x0, y0, x1, y1), fill=fill, color=color, width=width)
 
-    titles = {
-        "receipt": ("KWITANSI", "결제 영수증 · Payment Receipt"),
-        "tax": ("FAKTUR PAJAK", "세금계산서 · Tax Invoice"),
-        "quotation": ("PENAWARAN", "견적서 · Quotation"),
+    meta_by_kind = {
+        "quotation": {"big": "PENAWARAN", "sub": "견적서 · Quotation", "form": "FORM 5.1-FIN-GL-HAC"},
+        "receipt":   {"big": "KWITANSI", "sub": "영수증 · Official Receipt", "form": "FORM 5.2-FIN-GL-HAC"},
+        "tax":       {"big": "FAKTUR PAJAK", "sub": "세금계산서 · Tax Invoice", "form": "FORM 5.3-FIN-GL-HAC"},
     }
-    big, sub = titles.get(kind, ("DOKUMEN", ""))
+    dm = meta_by_kind.get(kind, meta_by_kind["receipt"])
+    big, sub, form_no = dm["big"], dm["sub"], dm["form"]
 
     # 금액
     dpp = float(inv.amount or 0)
@@ -7283,163 +7646,216 @@ def _render_finance_pdf(kind, inv, c, pay=None, items=None):
     total = float(inv.total) if getattr(inv, "total", None) is not None else dpp + ppn
     inv_no = inv.invoice_no or "-"
     today = date.today().isoformat()
+    paid = bool(pay) or inv.status in ("paid", "confirmed")
 
-    # ── 헤더(로고 + 문서명 + 그린 액센트 바) ──
+    def clip(s, w, sz):
+        s = str(s)
+        while fitz.get_text_length(s, fontname=F, fontsize=sz) > w and len(s) > 2:
+            s = s[:-2]
+        return s
+
+    def section(yy, label):
+        rect(margin, yy, RIGHT, yy + 20, fill=G, width=0)
+        txt(margin + 10, yy + 14, label, size=9.5, color=WHITE)
+        return yy + 30
+
+    def kv(yy, label, value, lw=178, sz=9.5, vcolor=INK):
+        txt(margin + 8, yy + 11, label, size=sz, color=GREY)
+        vx = margin + 8 + max(lw, fitz.get_text_length(label, fontname=F, fontsize=sz) + 12)
+        txt(vx, yy + 11, ": " + str(value), size=sz, color=vcolor)
+        return yy + 18
+
+    # ── 헤더(로고 + 문서명 + FORM 번호 + 액센트 바) ──
     _logo = os.path.join(os.path.dirname(__file__), "assets", "glhac_logo.png")
     if os.path.exists(_logo):
         try:
-            pg.insert_image(fitz.Rect(margin, 30, margin + 152, 88), filename=_logo, keep_proportion=True)
+            pg.insert_image(fitz.Rect(margin, 30, margin + 150, 84), filename=_logo, keep_proportion=True)
         except Exception:
-            txt(margin, 60, "GL-HAC AI", size=21, color=G)
+            txt(margin, 58, "GL-HAC AI", size=20, color=G)
     else:
-        txt(margin, 56, "GL-HAC AI", size=21, color=G)
-        txt(margin, 72, "GL Halal Center", size=9, color=GREY)
-    rtxt(RIGHT, 52, big, size=21, color=G)
-    rtxt(RIGHT, 70, sub, size=9.5, color=GREY)
-    rect(0, 100, W, 104, fill=G, width=0)
+        txt(margin, 56, "GL-HAC AI", size=20, color=G)
+        txt(margin, 71, "GL Halal Center", size=8.5, color=GREY)
+    rtxt(RIGHT, 50, big, size=22, color=G)
+    rtxt(RIGHT, 68, sub, size=9.5, color=GREY)
+    rtxt(RIGHT, 82, form_no, size=7.5, color=GREY)
+    # 종류 배지(좌측, 액센트색 필)
+    _bl = {"quotation": "DRAFT · 견적", "tax": "PPN 11% · 과세",
+           "receipt": ("LUNAS · 결제완료" if paid else "BELUM LUNAS · 미결제")}.get(kind, "")
+    _bw = fitz.get_text_length(_bl, fontname=F, fontsize=8) + 18
+    rect(margin, 92, margin + _bw, 109, fill=G, width=0)
+    txt(margin + 9, 104, _bl, size=8, color=WHITE)
+    rect(0, 116, W, 120, fill=G, width=0)
+    # ── 대각선 워터마크(문서 종류) — 아주 옅게 ──
+    try:
+        _wf = fitz.Font("helv")
+        _wtw = fitz.TextWriter(pg.rect)
+        _wlen = _wf.text_length(_th["wm"], fontsize=66)
+        _wtw.append(fitz.Point((W - _wlen) / 2, H / 2 + 18), _th["wm"], font=_wf, fontsize=66)
+        _wtw.write_text(pg, morph=(fitz.Point(W / 2, H / 2), fitz.Matrix(-32)), color=G, opacity=0.06)
+    except Exception:
+        pass
 
-    y = 128
+    y = 140
 
-    # ── 메타 바 (No · Tanggal · Status/Valid) ──
-    meta = [("No.", inv_no), ("Tanggal · 발행일", today)]
-    if kind == "quotation":
-        vu = (date.today() + timedelta(days=30)).isoformat()
-        meta.append(("Berlaku s/d · 유효기간", vu))
-    elif kind == "receipt":
-        paid = bool(pay) or inv.status in ("paid", "confirmed")
-        meta.append(("Status", "LUNAS · 결제완료" if paid else "BELUM LUNAS · 미결제"))
-    else:
-        meta.append(("PPN", "11%"))
-    cellw = (W - 2 * margin) / len(meta)
-    rect(margin, y, RIGHT, y + 34, fill=SOFT, color=LINE, width=0.6)
-    for i, (k, v) in enumerate(meta):
-        cx = margin + i * cellw + 12
-        if i:
-            pg.draw_line((margin + i * cellw, y + 6), (margin + i * cellw, y + 28),
-                         color=LINE, width=0.5)
-        txt(cx, y + 14, k, size=7.5, color=GREY)
-        txt(cx, y + 27, v, size=10.5, color=G if (kind == "receipt" and i == 2) else INK)
-    y += 34 + 18
-
-    # ── 공급자 / 구매자 패널 ──
-    colw = (W - 2 * margin - 16) / 2
-    lx, rx = margin, margin + colw + 16
-    ph = 82
-    for x, head, lines in [
-        (lx, "PENERBIT · 공급자", [
-            ("GL-HAC AI (LSH)", 10.5, INK),
-            ("Lembaga Sertifikasi Halal", 9, GREY),
-            ("Jakarta, Indonesia", 9, GREY),
-            ("halal@glhac.ai", 9, GREY)]),
-        (rx, "DITAGIHKAN KEPADA · 구매자" if kind != "receipt" else "DITERIMA DARI · 납부자", [
-            (c.company_name or "-", 10.5, INK),
-            ("NIB: %s" % (c.nib or "-"), 9, GREY),
-            (c.address or c.factory_address or "-", 9, GREY)]),
-    ]:
-        rect(x, y, x + colw, y + ph, fill=WHITE, color=LINE, width=0.6)
-        rect(x, y, x + colw, y + 18, fill=SOFT, color=LINE, width=0.6)
-        txt(x + 10, y + 13, head, size=8, color=G)
-        yy = y + 34
-        for s, sz, col in lines:
-            # 주소 등 긴 줄은 잘라서 한 줄
-            s = str(s)
-            while fitz.get_text_length(s, fontname=F, fontsize=sz) > colw - 20 and len(s) > 4:
-                s = s[:-2]
-            txt(x + 10, yy, s, size=sz, color=col)
-            yy += 15
-    y += ph + 20
-
-    # ── 항목 표 ──
-    x0 = margin
-    xNo, xItem, xQty, xPr, xAmt, xEnd = margin, margin + 30, margin + 205, margin + 250, margin + 368, RIGHT
-    rh = 22
-    # 헤더
-    rect(x0, y, xEnd, y + rh, fill=G, width=0)
-    txt(xNo + 6, y + 15, "No", size=8.5, color=WHITE)
-    txt(xItem + 6, y + 15, "Uraian · 항목", size=8.5, color=WHITE)
-    rtxt(xPr - 8, y + 15, "Qty", size=8.5, color=WHITE)
-    rtxt(xAmt - 8, y + 15, "Harga", size=8.5, color=WHITE)
-    rtxt(xEnd - 8, y + 15, "Jumlah", size=8.5, color=WHITE)
-    y += rh
-
-    rows = []
-    if kind == "quotation" and items:
-        for it in items:
-            rows.append((it.get("name") or "-", float(it.get("qty") or 0),
-                         float(it.get("unit_price") or 0), float(it.get("amount") or 0)))
-    else:
-        rows.append((inv.service_type or "Layanan Sertifikasi Halal", 1.0, dpp, dpp))
-
-    for i, (name, qty, price, amt) in enumerate(rows):
-        if i % 2:
-            rect(x0, y, xEnd, y + rh, fill=ZEBRA, width=0)
-        nm = str(name)
-        while fitz.get_text_length(nm, fontname=F, fontsize=9.5) > (xQty - xItem - 12) and len(nm) > 4:
-            nm = nm[:-2]
-        txt(xNo + 6, y + 15, str(i + 1), size=9.5)
-        txt(xItem + 6, y + 15, nm, size=9.5)
-        rtxt(xPr - 8, y + 15, format(qty, ",g"), size=9.5)
-        rtxt(xAmt - 8, y + 15, _idr(price), size=9.5)
-        rtxt(xEnd - 8, y + 15, _idr(amt), size=9.5)
-        pg.draw_line((x0, y + rh), (xEnd, y + rh), color=LINE, width=0.5)
-        y += rh
-    # 표 외곽선 + 세로선
-    rect(x0, y - rh * len(rows) - rh, xEnd, y, color=LINE, width=0.6)
-    y += 14
-
-    # ── 합계 박스(우측) ──
-    bx = xQty
-    for k, v, bold in [("DPP · 과세표준", dpp, False), ("PPN 11%", ppn, False), ("TOTAL", total, True)]:
-        if bold:
-            rect(bx, y, xEnd, y + 26, fill=SOFT, color=G, width=0.8)
-            txt(bx + 10, y + 17, k, size=11, color=G)
-            rtxt(xEnd - 10, y + 17, _idr(v), size=12, color=G)
-            y += 26
-        else:
-            txt(bx + 10, y + 13, k, size=9.5, color=GREY)
-            rtxt(xEnd - 10, y + 13, _idr(v), size=10, color=INK)
-            y += 18
-    y += 16
-
-    # ── 문서별 추가 영역 ──
+    # =========================================================
+    #  문서별 본문 — 양식·내용이 실제로 다름(공유 스켈레톤 아님)
+    # =========================================================
     if kind == "receipt":
-        rect(margin, y, RIGHT, y + 40, fill=SOFT, color=LINE, width=0.6)
-        txt(margin + 10, y + 15, "Terbilang · 금액(문자)", size=7.5, color=GREY)
+        # ── 영수증(KWITANSI): 단순 수령확인 서식(항목표·세금분해 없음) ──
+        y = kv(y, "No. Kwitansi · 영수증번호", inv_no)
+        y = kv(y, "Tanggal · 발행일", (str(pay.paid_at)[:10] if pay else today))
+        y += 8
+        rect(margin, y, RIGHT, y + 96, fill=WHITE, color=LINE, width=0.8)
+        txt(margin + 12, y + 20, "Telah terima dari · ~로부터 수령", size=8.5, color=GREY)
+        txt(margin + 12, y + 38, clip(c.company_name or "-", RIGHT - margin - 24, 13), size=13, color=INK)
+        pg.draw_line((margin + 12, y + 52), (RIGHT - 12, y + 52), color=LINE, width=0.4)
+        txt(margin + 12, y + 68, "Untuk pembayaran · 지급 사유", size=8.5, color=GREY)
+        txt(margin + 12, y + 85, clip("%s (Ref: %s)" % (_service_label(inv.service_type), inv_no),
+                                       RIGHT - margin - 24, 10.5), size=10.5, color=INK)
+        y += 96 + 18
+        # 금액 강조 박스 + Terbilang(금액 문자표기)
+        rect(margin, y, RIGHT, y + 58, fill=SOFT, color=G, width=1.0)
+        txt(margin + 12, y + 18, "Uang sejumlah · 금액", size=8.5, color=GREY)
+        _amt = _idr(total)
+        _amt_w = fitz.get_text_length(_amt, fontname=F, fontsize=21)
+        rtxt(RIGHT - 14, y + 37, _amt, size=21, color=G)
         words = "# %s Rupiah #" % _terbilang(total).capitalize()
-        while fitz.get_text_length(words, fontname=F, fontsize=10) > (RIGHT - margin - 20) and len(words) > 6:
-            words = words[:-2]
-        txt(margin + 10, y + 31, words, size=10, color=INK)
-        y += 40 + 12
-        paid = bool(pay) or inv.status in ("paid", "confirmed")
+        txt(margin + 12, y + 40, clip(words, (RIGHT - 14 - _amt_w - 24) - (margin + 12), 10), size=10, color=INK)
+        y += 58 + 22
+        txt(margin + 4, y, "Metode Pembayaran · 결제방식  :  %s" % ((pay.method if pay else None) or "Transfer"),
+            size=9.5, color=INK)
+        txt(margin + 4, y + 17, "Tgl Pembayaran · 결제일  :  %s" % (str(pay.paid_at)[:16] if pay else today),
+            size=9.5, color=INK)
         if paid:
-            # LUNAS 스탬프
-            sx, sy = margin, y
-            rect(sx, sy, sx + 96, sy + 34, color=G, width=1.4)
-            txt(sx + 20, sy + 23, "LUNAS", size=15, color=G)
-            txt(sx + 112, sy + 14, "Metode · 방식 : %s" % ((pay.method if pay else None) or "Transfer"), size=9, color=GREY)
-            txt(sx + 112, sy + 28, "Tgl · 결제일 : %s" % ((str(pay.paid_at)[:16] if pay else today)), size=9, color=GREY)
+            sx = RIGHT - 154
+            rect(sx, y - 8, sx + 154, y + 44, color=G, width=1.8)
+            _lc = fitz.get_text_length("LUNAS", fontname=F, fontsize=23)
+            txt(sx + (154 - _lc) / 2, y + 26, "LUNAS", size=23, color=G)
+
     elif kind == "tax":
-        txt(margin, y + 12, "Faktur Pajak sesuai peraturan perpajakan Indonesia (PPN 11%).", size=8.5, color=GREY)
-        txt(margin, y + 26, "NPWP Penjual · 공급자 등록번호 : 00.000.000.0-000.000", size=8.5, color=GREY)
+        # ── 세금계산서(FAKTUR PAJAK): 판매자/구매자 NPWP + 과세표준·PPN ──
+        y = kv(y, "Kode & No. Seri Faktur · 코드/일련번호",
+               "010.000-%s" % ((inv_no.replace("INV-", "") or "00000000")))
+        y = kv(y, "Tanggal · 발행일", today)
+        y += 6
+        y = section(y, "Pengusaha Kena Pajak / Penjual · 판매자(과세사업자)")
+        y = kv(y, "Nama · 상호", "GL-HAC AI (Lembaga Sertifikasi Halal)")
+        y = kv(y, "Alamat · 주소", "Jakarta, Indonesia")
+        y = kv(y, "NPWP", "00.000.000.0-000.000")
+        y += 8
+        y = section(y, "Pembeli Jasa Kena Pajak · 구매자")
+        y = kv(y, "Nama · 상호", clip(c.company_name or "-", 320, 9.5))
+        y = kv(y, "Alamat · 주소", clip(c.address or c.factory_address or "-", 320, 9.5))
+        y = kv(y, "NPWP / NIB", getattr(c, "npwp", None) or c.nib or "-")
+        y += 8
+        y = section(y, "Rincian Pajak · 과세 내역")
+        for lab, val, bold in [
+            ("Harga Jual / Penggantian · 공급가액", dpp, False),
+            ("Dikurangi Potongan Harga · 할인", 0, False),
+            ("Dasar Pengenaan Pajak (DPP) · 과세표준", dpp, False),
+            ("PPN = 11% × DPP · 부가가치세", ppn, False),
+            ("Jumlah · 합계", total, True)]:
+            if bold:
+                rect(margin, y, RIGHT, y + 24, fill=SOFT, color=G, width=0.8)
+                txt(margin + 8, y + 16, lab, size=10.5, color=G)
+                rtxt(RIGHT - 10, y + 16, _idr(val), size=12, color=G)
+                y += 28
+            else:
+                txt(margin + 8, y + 13, lab, size=9.5, color=INK)
+                rtxt(RIGHT - 10, y + 13, _idr(val), size=10, color=INK)
+                pg.draw_line((margin, y + 19), (RIGHT, y + 19), color=LINE, width=0.4)
+                y += 22
+        y += 12
+        txt(margin, y, clip("Faktur Pajak ini sesuai ketentuan Undang-Undang PPN Republik Indonesia.", RIGHT - margin, 8), size=8, color=GREY)
+        txt(margin, y + 13, "본 세금계산서는 인도네시아 부가가치세법에 따라 발행되었습니다.", size=8, color=GREY)
+
     else:
-        txt(margin, y + 12, "Penawaran ini berlaku 30 hari sejak tanggal terbit.", size=8.5, color=GREY)
-        txt(margin, y + 26, "유효기간 내 회신 부탁드립니다.", size=8.5, color=GREY)
+        # ── 견적서(PENAWARAN): 서비스 항목표 + 약관 + 입금계좌 ──
+        y = kv(y, "No. Penawaran · 견적번호", inv_no)
+        y = kv(y, "Tanggal · 발행일", today)
+        y = kv(y, "Berlaku s/d · 유효기간", (date.today() + timedelta(days=30)).isoformat(), vcolor=G)
+        y += 6
+        colw = (W - 2 * margin - 16) / 2
+        for x, head, lines in [
+            (margin, "Kepada · 수신 (구매자)",
+             [(c.company_name or "-", 9.5, INK), ("NIB: %s" % (c.nib or "-"), 8.5, GREY),
+              (c.address or c.factory_address or "-", 8.5, GREY)]),
+            (margin + colw + 16, "Dari · 발신 (공급자)",
+             [("GL-HAC AI (LSH)", 9.5, INK), ("Lembaga Sertifikasi Halal", 8.5, GREY),
+              ("Jakarta · halal@glhac.ai", 8.5, GREY)])]:
+            rect(x, y, x + colw, y + 66, fill=WHITE, color=LINE, width=0.6)
+            rect(x, y, x + colw, y + 17, fill=SOFT, color=LINE, width=0.6)
+            txt(x + 9, y + 12, head, size=8, color=G)
+            yy = y + 32
+            for s, sz, col in lines:
+                txt(x + 9, yy, clip(s, colw - 18, sz), size=sz, color=col)
+                yy += 14
+        y += 66 + 16
+        y = section(y, "Rincian Layanan · 서비스 내역")
+        xItem, xQty, xPr = margin, margin + 300, margin + 362
+        rh = 20
+        rect(margin, y, RIGHT, y + rh, fill=G2, width=0)
+        txt(xItem + 6, y + 14, "Uraian · 항목", size=8.5, color=WHITE)
+        rtxt(xPr - 8, y + 14, "Qty", size=8.5, color=WHITE)
+        rtxt(RIGHT - 8, y + 14, "Jumlah", size=8.5, color=WHITE)
+        y += rh
+        rows = []
+        for it in (items or []):
+            rows.append((_service_label(it.get("name"), short=True), float(it.get("qty") or 0), float(it.get("amount") or 0)))
+        if not rows:
+            rows = [(_service_label(inv.service_type, short=True), 1.0, dpp)]
+        for i2, (nm, qty, amt) in enumerate(rows):
+            if i2 % 2:
+                rect(margin, y, RIGHT, y + rh, fill=ZEBRA, width=0)
+            txt(xItem + 6, y + 14, clip(nm, xQty - xItem - 12, 9.5), size=9.5)
+            rtxt(xPr - 8, y + 14, format(qty, ",g"), size=9.5)
+            rtxt(RIGHT - 8, y + 14, _idr(amt), size=9.5)
+            pg.draw_line((margin, y + rh), (RIGHT, y + rh), color=LINE, width=0.4)
+            y += rh
+        rect(margin, y - rh * (len(rows) + 1), RIGHT, y, color=LINE, width=0.6)
+        y += 12
+        bx = xQty - 60
+        for lab, val, bold in [("Subtotal", dpp, False), ("PPN 11%", ppn, False), ("TOTAL", total, True)]:
+            if bold:
+                rect(bx, y, RIGHT, y + 24, fill=SOFT, color=G, width=0.8)
+                txt(bx + 10, y + 16, lab, size=11, color=G)
+                rtxt(RIGHT - 10, y + 16, _idr(val), size=12, color=G)
+                y += 28
+            else:
+                txt(bx + 10, y + 12, lab, size=9.5, color=GREY)
+                rtxt(RIGHT - 10, y + 12, _idr(val), size=10, color=INK)
+                y += 17
+        y += 12
+        y = section(y, "Syarat & Ketentuan · 약관")
+        for ln in ["1. Penawaran berlaku 30 hari sejak tanggal terbit · 발행일로부터 30일간 유효.",
+                   "2. Harga sudah termasuk PPN 11% · 가격은 부가세 11% 포함.",
+                   "3. Pembayaran via transfer ke rekening di bawah · 아래 계좌로 이체."]:
+            txt(margin + 4, y + 10, clip(ln, RIGHT - margin - 8, 8.5), size=8.5, color=INK)
+            y += 15
+        y += 4
+        rect(margin, y, RIGHT, y + 36, fill=SOFT, color=LINE, width=0.6)
+        txt(margin + 10, y + 14, "Rekening Pembayaran · 입금계좌", size=8, color=G)
+        txt(margin + 10, y + 29, "Bank BCA  ·  a/c 123-456-7890  ·  a/n GL-HAC AI (LSH)", size=9.5, color=INK)
+        y += 36
 
-    # ── 서명란(우측 하단) ──
-    sigy = H - 150
+    # ── 서명란(문서별 라벨) ──
+    sigy = H - 142
     sigx = W - margin - 200
-    label = {"receipt": "Penerima Pembayaran · 수령", "tax": "Penjual · 공급자",
-             "quotation": "Hormat kami · GL-HAC AI"}.get(kind, "GL-HAC AI")
+    siglabel = {"receipt": "Penerima Pembayaran · 수령인",
+                "tax": "Penjual · 판매자 (PKP)",
+                "quotation": "Hormat kami · GL-HAC AI"}.get(kind, "GL-HAC AI")
     txt(sigx, sigy, "Jakarta, %s" % today, size=9, color=GREY)
-    txt(sigx, sigy + 16, label, size=9.5, color=INK)
-    pg.draw_line((sigx, sigy + 62), (sigx + 190, sigy + 62), color=LINE, width=0.6)
-    txt(sigx, sigy + 76, "Tanda Tangan · Signature", size=8, color=GREY)
+    txt(sigx, sigy + 15, siglabel, size=9.5, color=INK)
+    pg.draw_line((sigx, sigy + 56), (sigx + 190, sigy + 56), color=LINE, width=0.6)
+    txt(sigx, sigy + 70, "Tanda Tangan & Cap · 서명·직인", size=7.5, color=GREY)
+    if kind == "tax":
+        txt(sigx, sigy + 83, "NPWP: 00.000.000.0-000.000", size=7.5, color=GREY)
 
-    # ── 푸터 ──
-    pg.draw_line((margin, H - 44), (RIGHT, H - 44), color=LINE, width=0.5)
-    foot = "Dokumen ini diterbitkan secara elektronik · 본 문서는 전자적으로 발행되었습니다 · GL-HAC AI"
-    w = fitz.get_text_length(foot, fontname=F, fontsize=7.5)
-    pg.insert_text(((W - w) / 2, H - 30), foot, fontname=F, fontsize=7.5, color=GREY)
+    # ── 공식 푸터(GL HAC 문서관리 밴드 — Contract.pdf 표준) ──
+    fy = H - 38
+    pg.draw_line((margin, fy), (RIGHT, fy), color=G, width=0.8)
+    txt(margin, fy + 13, "GL Halal Center · www.glhac.com", size=7, color=GREY)
+    rtxt(RIGHT, fy + 13, "%s · Page 1/1" % form_no, size=7, color=GREY)
 
     return doc.tobytes()
 
@@ -8239,6 +8655,11 @@ def list_invoices(case_id: str, user=Depends(auth.get_current_user), db: Session
 def add_invoice(case_id: str, body: schemas.InvoiceReq,
                 user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    # 수정요청 001 · 계약 큐 P1 데이터 게이트 — 계약 최종 확인(confirmed) 후에만 청구서 생성.
+    _ct = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if not _ct or _ct.status not in ("confirmed", "invoiced", "paid"):
+        raise HTTPException(409, {"code": "CONTRACT_NOT_CONFIRMED",
+                                  "detail": "계약 최종 확인(관리자) 후에만 청구서를 생성할 수 있습니다."})
     # P1-#1: 라인아이템이 있으면 DPP(amount)는 라인 합계로 산정(특수조항 수동조정 반영).
     items = _norm_line_items(body.line_items)
     amount = round(sum(it["amount"] for it in items), 2) if items else body.amount
@@ -10495,16 +10916,36 @@ def evaluation_verdict(case_id: str, body: dict = None,
 @app.get("/cases/{case_id}/doc-checklist")
 def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
-    from .intake import REQUIRED_DOCS, DOC_KO
+    from .intake import REQUIRED_DOCS, DOC_KO, DOC_REQUIREMENT
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     by_type = {}
     for d in docs:
         by_type.setdefault(d.doc_type, []).append(
             {"document_id": d.document_id, "filename": d.filename, "review_status": d.review_status})
-    checklist = [{"doc_type": dt, "doc_type_ko": DOC_KO[dt],
-                  "satisfied": dt in by_type and any(x["review_status"] != "rejected" for x in by_type[dt]),
-                  "files": by_type.get(dt, [])} for dt in REQUIRED_DOCS]
-    missing = [c["doc_type_ko"] for c in checklist if not c["satisfied"]]
+    checklist = []
+    for dt in REQUIRED_DOCS:
+        files = by_type.get(dt, [])
+        non_rejected = [x for x in files if x["review_status"] != "rejected"]
+        satisfied = bool(non_rejected)
+        # 미제출(파일 없음) vs 반려(제출됐으나 전부 반려=내용 부족) 구분
+        status = "ok" if satisfied else ("rejected" if files else "missing")
+        checklist.append({"doc_type": dt, "doc_type_ko": DOC_KO[dt], "satisfied": satisfied,
+                          "files": files, "file_count": len(files), "status": status,
+                          "requirement": DOC_REQUIREMENT.get(dt, ""), "required": True})
+    # 필수 외 실제 업로드된 문서 유형(기타·공급사선언·성적서 등)도 포함 — 전체 파일 표출
+    for dt, files in by_type.items():
+        if dt in REQUIRED_DOCS:
+            continue
+        checklist.append({"doc_type": dt, "doc_type_ko": DOC_KO.get(dt, dt), "satisfied": True,
+                          "files": files, "file_count": len(files), "status": "ok",
+                          "requirement": DOC_REQUIREMENT.get(dt, ""), "required": False})
+    missing = [{
+        "doc_type": c["doc_type"], "doc_type_ko": c["doc_type_ko"], "status": c["status"],
+        "file_count": c["file_count"], "requirement": c["requirement"],
+        "reason": ("서류가 제출되지 않았습니다 (파일 없음) · Belum diunggah"
+                   if c["status"] == "missing"
+                   else "제출됐으나 반려됨 — 내용 보완이 필요합니다 · Ditolak, perlu perbaikan"),
+    } for c in checklist if c.get("required") and not c["satisfied"]]
     return {"checklist": checklist, "missing": missing, "complete": len(missing) == 0}
 
 
@@ -11904,6 +12345,10 @@ def my_menus(lang: str = "ko", user=Depends(auth.get_current_user), db: Session 
             role = _BR2ROLE_MENU.get(user["role"], user["role"])
             rms = {rm.menu_id: rm.sort_order for rm in
                    db.query(models.SysRoleMenu).filter_by(role_id=role, visible_yn=True).all()}
+            # 흡수 역할(pendamping_pph→client 등)의 전용 메뉴(예: 동반자 워크스페이스)는 원본 역할로 추가 배정.
+            if user["role"] != role:
+                for rm in db.query(models.SysRoleMenu).filter_by(role_id=user["role"], visible_yn=True).all():
+                    rms.setdefault(rm.menu_id, rm.sort_order)
     if not rms:
         return []
     return _menu_tree(db, rms, lang)

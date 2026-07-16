@@ -67,9 +67,23 @@ def _case_status(case_id):
         db.close()
 
 
+def _confirm_contract(case_id):
+    """청구서 생성 게이트(CONTRACT_NOT_CONFIRMED) 충족용 — confirmed 계약 삽입(픽스처).
+    add_invoice가 계약 최종확인 후에만 청구서를 허용하므로, 인보이스 POST 전에 필요."""
+    from app import models
+    from app.db import SessionLocal
+    db = SessionLocal()
+    try:
+        db.add(models.Contract(case_id=case_id, status="confirmed"))
+        db.commit()
+    finally:
+        db.close()
+
+
 def _mk_case_with_invoice(c, tok, status="consultant_review"):
     cid = c.post("/cases", json={"company_name": "PG게이트테스트", "is_msme": True},
                  headers=_h(tok)).json()["case_id"]
+    _confirm_contract(cid)   # 청구서 생성 선행조건(계약 게이트) 충족
     _set_status(cid, status)
     iid = c.post("/cases/%s/invoices" % cid, json={"service_type": "pre_audit", "amount": 1000000},
                  headers=_h(tok)).json()["invoice_id"]

@@ -45,6 +45,17 @@ DOC_KO = {
 REQUIRED_DOCS = ["nib_business_license", "factory_registration", "product_list",
                  "process_flow", "material_list", "halal_certificate", "sjph_manual"]
 
+# 필수 서류별 요구 내용(보완 안내용) — 무엇이 담겨야 하는지 상세 설명
+DOC_REQUIREMENT = {
+    "nib_business_license": "사업자등록증(NIB) 스캔본 — 회사명·NIB 번호·사업장 주소가 판독 가능해야 함",
+    "factory_registration": "공장등록증 — 공장 등록번호와 공장 소재지 주소 포함",
+    "product_list": "인증 대상 전(全) 제품 목록 — 제품명·분류·등록유형(신규/기존 등)",
+    "process_flow": "제조 공정 흐름도 — 원료입고→배합→가열→충전→포장 등 단계 순서",
+    "material_list": "전(全) 원재료 목록 — 원재료명·공급사·할랄 상태(인증/선언)",
+    "halal_certificate": "임계 원재료 공급사의 할랄 인증서(해당 원재료가 있는 경우)",
+    "sjph_manual": "SJPH 매뉴얼 — 5요소(경영약속·원재료·공정·제품·모니터링) 포함",
+}
+
 _IMG = ("png", "jpg", "jpeg", "bmp", "tiff", "tif", "webp")
 
 
@@ -178,6 +189,16 @@ _CLASSIFY_SYS = (
 # 파일명이 명백한 경우(소개서·제안서·수입서류·품질인증 등)는 LLM 판단을 무시하고 규칙을 신뢰한다.
 _NAME_RULES = [
     # (정규식, doc_type, 사유) — 순서 중요(구체적인 것 먼저)
+    (r"bahan\s*vs\s*produk|produk\s*matriks|matriks\s*produk|product.{0,3}matri|matri.{0,3}produk",
+     "product_list", "제품×원재료 매트릭스(제품 카탈로그 — 제품명 컬럼이 정본 제품 목록)"),
+    (r"\bcatatan\b|기록부|생산\s*일지|작업\s*일지|monitoring\s*record|rekaman",
+     "other", "운영·모니터링 기록(구매·생산·재고·검사 기록 — 제품/원재료 카탈로그 아님)"),
+    (r"management[\s_]*review|tinjauan[\s_]*manajemen|관리\s*검토|경영\s*검토|"
+     r"halal[\s_]*policy|kebijakan[\s_]*halal|할랄\s*정책|"
+     r"internal[\s_]*audit|audit[\s_]*internal|내부\s*심사|"
+     r"halal[\s_]*team|tim[\s_]*halal|할랄\s*팀|"
+     r"halal[\s_]*manual|manual[\s_]*halal|\bsjph\b",
+     "sjph_manual", "SJPH 구성문서(할랄정책·할랄팀·내부심사·경영검토·매뉴얼 — 사업자/공급사 아님)"),
     (r"제조\s*공정\s*도|공정\s*흐름|process\s*flow|flow\s*chart", "process_flow", "공정도"),
     (r"fssc|haccp|\biso\b|\bgmp\b|22000|식품안전|유기취급|organic|kosher", "quality_cert", "품질/식품안전 인증(HACCP·FSSC·ISO·GMP — 할랄 아님)"),
     (r"소개서|회사\s*소개|company\s*profile|제안서|proposal|접수\s*양식|고객\s*접수|데이터\s*양식|intake\s*form|application\s*form", "other", "소개서·제안서·양식(등록증 아님)"),
@@ -202,6 +223,55 @@ def _refine_doctype(name, llm_type):
     return refine_doctype_reason(name, llm_type)[0]
 
 
+# 리스트형 문서(원재료·제품·공정·성분)는 전체 본문에서 항목을 빠짐없이 추출한다.
+# classify(2000자)·parse_typed(2500자) 절단으로 목록 뒤쪽이 통째로 누락되던 문제
+# (예: Daftar bahan.xlsx 원재료 136개 → 18개만 추출)를 해결한다.
+_LIST_FIELDS = {
+    "material_list": ("material_names", "원재료명"),
+    # product_list(제품×원재료 매트릭스)는 헤더행이 정식 제품목록이므로 기본 분류값을 신뢰한다.
+    # 전체본문 list-completion을 돌리면 매트릭스의 원재료 셀까지 제품명으로 과다추출됨 → 제외.
+    "process_flow": ("process_steps", "공정 단계"),
+    "product_label": ("ingredients", "성분명"),
+}
+
+
+def _norm_key(s):
+    """제품/원재료 중복 판정 키 — 대소문자·구두점·공백 무시."""
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _chunk_text(text, size=4500):
+    """줄 단위로 ~size자 청크 분할(항목이 중간에서 잘리지 않게)."""
+    chunks, buf, n = [], [], 0
+    for line in text.splitlines():
+        ln = len(line) + 1
+        if n + ln > size and buf:
+            chunks.append("\n".join(buf)); buf, n = [], 0
+        buf.append(line); n += ln
+    if buf:
+        chunks.append("\n".join(buf))
+    return chunks or [text]
+
+
+def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000):
+    """전체 본문을 청크로 나눠 목록 항목을 완전 추출·합집합(대소문자 무시 dedup)."""
+    sys = ('문서에서 %s 목록을 빠짐없이 추출하세요. 표·번호목록의 모든 행을 포함하고 '
+           '헤더/합계/빈칸은 제외. 반드시 JSON으로만: {"names":[]}' % label)
+    seen, out = set(), []
+    for ch in _chunk_text(text)[:max_chunks]:
+        r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, ch))
+        for nm in (r.get("names") if isinstance(r, dict) else None) or []:
+            if not isinstance(nm, str):
+                continue
+            nm = nm.strip()
+            k = _norm_key(nm)
+            if nm and k and k not in seen:
+                seen.add(k); out.append(nm)
+                if len(out) >= cap:
+                    return out
+    return out
+
+
 def classify(name, text):
     if not text.strip():
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
@@ -213,6 +283,13 @@ def classify(name, text):
         r["doc_type"] = "other"
     r.setdefault("confidence", 0.0)
     r.setdefault("fields", {})
+    # 리스트형 문서는 전체 본문에서 목록을 완전 추출(절단 2000자로는 뒤쪽 누락).
+    lf = _LIST_FIELDS.get(r["doc_type"])
+    if lf and len(text) > 2000:
+        fk, label = lf
+        complete = _extract_list_complete(name, text, label)
+        if len(complete) > len(r["fields"].get(fk) or []):
+            r["fields"][fk] = complete
     return r
 
 
@@ -249,14 +326,23 @@ def parse_typed(doc_type, filename, data):
         cl["text_len"] = len(text)
         return cl
     desc, fmt = spec
-    sys = "문서에서 다음 필드만 추출하세요(없으면 null). 반드시 JSON으로만: " + fmt + " (대상: " + desc + ")"
-    r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, text[:2500]))
-    fields = r if isinstance(r, dict) else {}
+    lf = _LIST_FIELDS.get(doc_type)
+    if lf and len(text) > 2500:
+        # 리스트형: 전체 본문에서 완전 추출(절단 방지)
+        fk, label = lf
+        fields = {fk: _extract_list_complete(filename, text, label)}
+    else:
+        sys = "문서에서 다음 필드만 추출하세요(없으면 null). 반드시 JSON으로만: " + fmt + " (대상: " + desc + ")"
+        r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, text[:2500]))
+        fields = r if isinstance(r, dict) else {}
     return {"doc_type": doc_type, "fields": fields, "confidence": 0.85,
             "text_len": len(text), "excerpt": text[:300]}
 
 
 _APPLICANT_DOCS = ("nib_business_license", "factory_registration")
+# 제품/원재료명을 신뢰할 카탈로그 문서 유형(기록·타목록의 오염 방지)
+_PRODUCT_SRC = {"product_list", "sjph_manual"}
+_MATERIAL_SRC = {"material_list", "coa_msds", "product_label"}
 
 
 def aggregate_fields(docs):
@@ -267,6 +353,8 @@ def aggregate_fields(docs):
            "factory_city": None, "factory_country": None, "factory_zip": None,
            "responsible_person": None,
            "factory_reg_no": None, "products": [], "materials": [], "certificates": []}
+    _pk = set()   # 제품 중복 판정 키(대소문자 무시)
+    _mk = set()   # 원재료 중복 판정 키
     for d in docs:
         f = d.get("fields") or {}
         applicant = d.get("doc_type") in _APPLICANT_DOCS or d.get("doc_type") is None
@@ -292,12 +380,16 @@ def aggregate_fields(docs):
                 agg["responsible_person"] = f["responsible_person"]
             if not agg["factory_reg_no"] and f.get("factory_reg_no"):
                 agg["factory_reg_no"] = f["factory_reg_no"]
-        for p in (f.get("product_names") or []):
-            if p and p not in agg["products"]:
-                agg["products"].append(p)
-        for m in (f.get("material_names") or []):
-            if m and m not in agg["materials"]:
-                agg["materials"].append(m)
+        # 제품/원재료명은 해당 카탈로그 문서에서만 수집(기록·타목록의 오염 방지).
+        _dt = d.get("doc_type")
+        if _dt in _PRODUCT_SRC or _dt is None:
+            for p in (f.get("product_names") or []):
+                if p and _norm_key(p) and _norm_key(p) not in _pk:
+                    _pk.add(_norm_key(p)); agg["products"].append(p)
+        if _dt in _MATERIAL_SRC or _dt is None:
+            for m in (f.get("material_names") or []):
+                if m and _norm_key(m) and _norm_key(m) not in _mk:
+                    _mk.add(_norm_key(m)); agg["materials"].append(m)
         if f.get("cert_no"):
             agg["certificates"].append({"cert_no": f.get("cert_no"), "issuer": f.get("issuer"),
                                         "expiry": f.get("expiry_date")})
