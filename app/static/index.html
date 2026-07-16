@@ -313,6 +313,7 @@
 
 <!-- ===================== LOGIN ===================== -->
 <div id="loginView">
+  <div style="position:fixed;top:14px;right:16px;z-index:5"><span class="pill" role="button" tabindex="0" aria-label="언어 전환 · Change language" onclick="loginCycleLang()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();loginCycleLang()}" id="loginLangPill">🌐 KO · EN · ID</span></div>
   <form class="loginbox" id="loginForm" onsubmit="doLogin(event)">
     <div id="tenantLogo" style="display:none;margin-bottom:10px"></div>
     <h1 id="loginBrand">GL-HAC AI</h1>
@@ -327,12 +328,9 @@
       <b>데모 계정 · demo — 클릭하여 로그인</b>
       <div class="demogrid">
         <button type="button" class="btn" onclick="quickLogin('applicant1','pw')">🏢 클라이언트<span>applicant1</span></button>
-        <button type="button" class="btn" onclick="quickLogin('consultant1','pw')">💼 컨설턴트<span>consultant1</span></button>
         <button type="button" class="btn" onclick="quickLogin('auditor1','pw')">🏭 오디터<span>auditor1</span></button>
         <button type="button" class="btn" onclick="quickLogin('fatwa1','pw')">⚖️ 샤리아<span>fatwa1</span></button>
         <button type="button" class="btn" onclick="quickLogin('pendamping1','pw')">🤝 동반자(PPH)<span>pendamping1</span></button>
-        <button type="button" class="btn" onclick="quickLogin('penyelia1','pw')">🕌 할랄감독자<span>penyelia1</span></button>
-        <button type="button" class="btn" onclick="quickLogin('operator1','pw')">👑 최고운영자<span>operator1</span></button>
         <button type="button" class="btn" onclick="quickLogin('admin','admin')">⚙️ ITO 관리자<span>admin</span></button>
       </div>
     </div>
@@ -374,6 +372,7 @@
       <div class="spacer"></div>
       <span class="pill live" id="livePill" role="status" aria-live="polite" title="실시간 연결 상태 · Live status"><span class="live-dot" id="liveDot" aria-hidden="true"></span><span id="liveLabel">Live · 실시간</span></span>
       <span class="pill" id="casePill" style="display:none">📁 <select id="caseSel" onchange="onCaseChange(this.value)"></select>
+        <button onclick="clearCase()" title="선택 해제 · Clear" aria-label="선택 케이스 해제" style="border:none;background:transparent;cursor:pointer;color:var(--ink3);font-size:13px;line-height:1;padding:0 4px;margin-left:2px">✕</button>
         <code id="caseIdChip" onclick="copyCaseId()" title="클릭하여 복사" style="display:none;cursor:pointer;margin-left:6px;font-size:10.5px;color:var(--ink3);font-family:ui-monospace,monospace;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle"></code></span>
       <span style="position:relative"><span class="pill" id="notifBell" role="button" tabindex="0" aria-label="알림 · Notifications" onclick="toggleNotif()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleNotif()}">🔔 <b id="notifCount" style="display:none;color:var(--bad)">0</b></span>
         <div id="notifPanel" class="notif-panel"></div></span>
@@ -480,7 +479,7 @@ const MENU_ACCESS = {
   application:["client","consultant","admin"],
   preassess:["client","consultant","auditor","sharia","ops","admin"],   // 심사자 뷰: 오디터·샤리아(열람)·최고운영자   // 오디터 사전심사 뷰(3분할 회신루프)는 기구현 — 메뉴 접근 누락 수정(2026-07-10)
   materials:["client","consultant","auditor","admin"],
-  aiExtractions:["consultant","client","auditor","admin"],   // G14 M08 AI 검수 큐 — 백엔드 review 가드(consultant·penyelia_halal→client·auditor·fatwa_liaison)와 정합. 조회는 케이스 소유자면 가능
+  aiExtractions:["consultant","auditor","admin"],   // G14 M08 AI 검수 큐 — 내부(오디터/컨설턴트/관리자) 전용. 2026-07-14 클라이언트 비노출(수정요청 009)
 
   integration:[],   // 회의 2026-07-10: 단계 삭제 — SJPH 매뉴얼(manualBuilder)로 흡수, 메뉴·접근 비노출
   manualBuilder:["client","consultant","admin"],
@@ -490,18 +489,18 @@ const MENU_ACCESS = {
   auditorWork:["sharia","ops","admin"],   // 오디터 전체 업무·일정·개별 내역 — 배정 판단용
   pendamping:["ops","admin"],   // 동반자 워크스페이스 — ops·admin(모니터링) + pendamping_pph(BROLE 예외로 menuAllowed 통과)
   notifCenter:["client","consultant","auditor","sharia","ops","admin"],   // C13 알림 센터(수신함) — notifyLog는 발송측
-  audit:    ["client","consultant","auditor","sharia","ops","admin"],
-  onsiteCalendar:["client","consultant","auditor","sharia","ops","admin"],   // A08 · 샤리아=일정 모니터링(읽기전용)
-  mockAudit:["client","consultant","auditor","sharia","ops","admin"],
-  evaluation:["client","auditor","sharia","ops","admin"],
-  resubmitCenter:["client","consultant","admin","auditor","ops"],   // A09: 클라이언트/컨설턴트/관리자 재제출 + 오디터·ops 상태열람
-  invoice:  ["client","consultant","auditor","sharia","ops","admin"],   // C12 오디터 열람 · 샤리아=계약·청구 모니터링
-  payments: ["sharia","ops","admin"],   // 샤리아=결제 모니터링
-  deposits: ["sharia","ops","admin"],   // 샤리아=입금 모니터링
+  audit:    ["client","consultant","auditor","ops","admin"],
+  onsiteCalendar:["client","consultant","auditor","ops","admin"],   // A08 · 샤리아=일정 모니터링(읽기전용)
+  mockAudit:["client","consultant","auditor","ops","admin"],
+  evaluation:["auditor","sharia","ops","admin"],
+  resubmitCenter:["consultant","admin","auditor","ops"],   // A09: 컨설턴트/관리자 재제출 + 오디터·ops 상태열람 (2026-07-15 클라이언트 비노출)
+  invoice:  ["client","consultant","ops","admin"],   // 2026-07-14 오디터·샤리아 계약 메뉴 제거
+  payments: ["ops","admin"],   // 샤리아=결제 모니터링
+  deposits: ["ops","admin"],   // 샤리아=입금 모니터링
   notifyLog: ["ops","admin"],
-  opsDashboard: ["sharia","ops","admin"],   // M01 운영현황 — 샤리아도 전 과정 모니터링
+  opsDashboard: ["ops","admin"],   // M01 운영현황 — 샤리아도 전 과정 모니터링
   opsCalendar: ["sharia","ops","admin"],   // P1-#5 종합 캘린더 — 샤리아=현장심사 일정 모니터링
-  workflowMonitor: ["sharia","ops","admin"],   // 신청~인증서 발급 전 과정 모니터링(샤리아 포함)
+  workflowMonitor: ["ops","admin"],   // 신청~인증서 발급 전 과정 모니터링(샤리아 포함)
   regulations: ["ops","admin"],   // M06 규정·법령 관리(전역·케이스무관) — operator(ops)·admin 전용
   fatwa:    ["consultant","auditor","sharia","ops","admin"],   // 회의 2026-07-10: 클라이언트는 파트와 화면 불필요(인증서만) — client 제외
   certificate:["client","sharia","ops","admin"],
@@ -519,7 +518,7 @@ let ROLE="client", CUR="caseList", FILTERS={}, DETAIL=null;
 let BROLE="applicant";   // 원본 백엔드 역할(BR2ROLE 흡수 전) — pendamping_pph 등 전용 메뉴 판정용
 let RBAC_ACTIONS={};                          // /rbac/actions 파생 — API와 동일 action_id
 function CAN(a){return !!RBAC_ACTIONS[a];}     // UI 버튼 노출은 단일 매트릭스에서 판단
-let CURCASE=null, CASES_CACHE=[];
+let CURCASE=null, CASES_CACHE=[], CASE_PIN=true;   // CASE_PIN=false면 상단 케이스 미선택(해제) 상태
 let INV_SEL=null, DOC_SEL=null, SIHALAL_EID={};
 /* M1: 오디터 업무함 유형별 탭 — status 기반 클라이언트 분류(신규 필드 불필요) */
 const AUDITOR_TABS=[
@@ -597,7 +596,7 @@ function regOcrPick(){
       if(!r.ocr_available){st.innerHTML='<span style="color:var(--warn)">⚠ OCR 엔진 미설치 — 아래 필드를 수동 입력하세요</span>';return;}
       const f=r.fields||{},set=(id,val)=>{if(val){const el=document.getElementById(id);if(el)el.value=val;}};
       set("regCompany",f.company_name);set("regNib",f.nib);set("regResp",f.responsible_person);set("regAddr",f.address);set("regFactory",f.factory_address);
-      st.innerHTML='<span style="color:var(--ok)">✓ '+Object.keys(f).length+'개 필드 자동추출됨 — 확인 후 가입</span>';
+      st.innerHTML='<span style="color:var(--ok)">✓ '+Object.keys(f).length+T('개')+' 필드 자동추출됨 — 확인 후 가입</span>';
     }catch(e){st.textContent="추출 실패";}};
   inp.click();
 }
@@ -684,6 +683,8 @@ const NAV_ID={"feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",
 function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
+/* 전역 상태→색상(원재료 판정) — 렌더 함수 밖(아코디언 등 전역 함수)에서도 사용. */
+function scol(s){return ({halal:'ok',haram:'bad',mushbooh:'warn',pass:'ok',needs_evidence:'warn',block:'bad',najis:'bad'}[String(s||'').toLowerCase()]||'mute');}
 function toast(m){const t=document.getElementById("toast");t.textContent=(LANG===2&&typeof UI_STRINGS!=="undefined"&&UI_STRINGS[String(m).trim()])||m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2600);}
 function T(s){s=String(s);return (LANG===2&&typeof UI_STRINGS!=="undefined"&&UI_STRINGS[s])?UI_STRINGS[s]:s;}
 /* 재사용 모달 폼 — prompt() 대체. fields:[{key,label,type:text|number|textarea|select,options,value,placeholder,required}] */
@@ -786,8 +787,9 @@ async function refreshCaseSel(){
   const sel=document.getElementById("caseSel");
   const cidChip=document.getElementById("caseIdChip");
   const cases=await loadCases();
-  // 현재 케이스는 전 화면 상단에 상시 노출(케이스 스코프 화면이 아니어도) — 화면 이동해도 컨텍스트 유지
-  if(cases.length){
+  // 현재 케이스는 전 화면 상단에 상시 노출(케이스 스코프 화면이 아니어도) — 화면 이동해도 컨텍스트 유지.
+  // 단, 사용자가 [해제](clearCase)로 CASE_PIN=false면 미선택 상태 유지(자동 선택 안 함).
+  if(cases.length && CASE_PIN){
     if(!CURCASE || !cases.find(c=>c.case_id===CURCASE)){
       const saved=(()=>{try{return localStorage.getItem("glhac_case")}catch(_){return null}})();
       CURCASE=(saved&&cases.find(c=>c.case_id===saved))?saved:cases[0].case_id;
@@ -798,6 +800,7 @@ async function refreshCaseSel(){
   }else{
     pill.style.display="none";
     if(cidChip)cidChip.style.display="none";
+    if(!CASE_PIN)CURCASE=null;
   }
 }
 function copyCaseId(){
@@ -806,7 +809,9 @@ function copyCaseId(){
   try{navigator.clipboard.writeText(CURCASE).then(done,done);}
   catch(_){const ta=document.createElement("textarea");ta.value=CURCASE;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");}catch(__){}ta.remove();done();}
 }
-function onCaseChange(id){CURCASE=id;try{localStorage.setItem("glhac_case",id)}catch(_){}applyView();}
+function onCaseChange(id){CASE_PIN=true;CURCASE=id;try{localStorage.setItem("glhac_case",id)}catch(_){}applyView();}
+/* 상단 선택 케이스 해제 — 미선택 상태로 내 케이스 리스트 랜딩(케이스 클릭 시 다시 선택). */
+function clearCase(){CASE_PIN=false;CURCASE=null;try{localStorage.removeItem("glhac_case")}catch(_){}navigate({screen:"caseList"});}
 
 /* ---- nav / router ---- */
 function scopeLabel(){const m={own:"본인 조직 · own",owned:"담당 위주 · owned",assigned:"배정건 · assigned",all:"전체 · all"};return m[ROLE_DEF[ROLE].scope];}
@@ -1013,13 +1018,13 @@ const UI_STRINGS={
   "AI 리포트 3섹션(문서·재료·제조)을 검토하고 판단하세요.":"Laporkan AI 3 Bagian (Dokumen, Bahan, Produksi) untuk Diperiksa dan Diajukan.",
   "AI 리포트 생성 완료":"Pembuatan Laporan AI Selesai",
   "AI 리포트 생성 중":"Pembuatan Laporan AI Berlangsung",
-  "AI 모의심사":"AI 모의 심사",
-  "AI 모의심사 리포트 생성":"AI 모의 심사 리포트 생성",
-  "AI 사전심사 먼저 실행":"AI 사전 심사를 먼저 실행",
+  "AI 모의심사":"Audit Simulasi AI",
+  "AI 모의심사 리포트 생성":"Buat Laporan Audit Simulasi AI",
+  "AI 사전심사 먼저 실행":"Jalankan Pra-audit AI Dulu",
   "AI 사전심사 미실행 — 버튼을 눌러 리스크·추천경로·차단사유를 확인하세요.":"AI 사전 심사 미실행 — 버튼을 누르면 리스크·추천 경로·차단 사유를 확인하세요.",
-  "AI 사전평가 리포트":"AI 사전 평가 리포트",
-  "AI 사전평가 준비":"AI 사전 평가 준비",
-  "AI 사전평가 진행":"AI 사전 평가 진행",
+  "AI 사전평가 리포트":"Laporan Pra-evaluasi AI",
+  "AI 사전평가 준비":"Persiapan Pra-evaluasi AI",
+  "AI 사전평가 진행":"Jalankan Pra-evaluasi AI",
   "AI평가":"AI Penilaian",
   "AR 분석중":"AR Analisis Berlangsung",
   "BPJPH 공개조회 불가(일시적)":"BPJPH Pencarian Publik Tidak Dapat (Sementara)",
@@ -1119,7 +1124,6 @@ const UI_STRINGS={
   "seed 초기화":"Seed Initialization",
   "seed를 초기화할까요? (데모 데이터 재생성)":"Initialize seed? (Re-generate demo data)",
   "showGuide(T('모의 감사 가이드'),GUIDE_MOCK_AUDIT())":"showGuide(T('Mock Audit Guide'),GUIDE_MOCK_AUDIT())",
-  "showGuide(T('파트와 심의 가이드'),GUIDE_FATWA())":"tunjukPetunjuk(T('파르트와 심의 가이드'),GUIDE_FATWA())",
   "· Analysis → 오디터":"· Analisis → Auditor",
   "· Client Journey (11단계)":"· Perjalanan Pelanggan (11 tahap)",
   "· Intake (단계별) · AI 자동추출":"· Penerimaan (tahap demi tahap) · AI Otomatis Ekstraksi",
@@ -1255,12 +1259,10 @@ const UI_STRINGS={
   "TSA 연동됨 · 신뢰 타임스탬프 적용":"TSA terhubung · stempel waktu tepercaya berlaku",
   "장기 법적 증거보존용 아카이브 (전이·감사로그·문서목록·체인검증 리포트)":"Arsip penyimpanan bukti hukum jangka panjang (transisi·log audit·daftar dokumen·laporan verifikasi rantai)",
   "검사":"Diperiksa",
-  "개":"Anjing",
-  "개 공장":"Pabrik Anjing",
+  "개":" buah",
   "개 영상 업로드됨":"Video yang diunggah: {count}",
   "개 파일 업로드됨":"File yang diunggah: {count}",
   "개 필드 자동추출됨 — 확인 후 가입</span>":"Field yang ditarik otomatis: {count} — Silakan periksa sebelum mendaftar</span>",
-  "개 후보일":"Cuti Calon Karyawan",
   "개요 · Overview":"Ringkasan · Overview",
   "갱신":"Perbarui",
   "갱신 신청 · Request renewal":"Permintaan Perbaruan · Request renewal",
@@ -1341,7 +1343,6 @@ const UI_STRINGS={
   "국가":"Negara",
   "근거 문서":"Dokumen Basis",
   "근거 인용":"Referensi Dokumen",
-  "금":"Emas",
   "금액 · DPP":"Nilai Uang · DPP",
   "금액 · IDR":"Nilai Uang · IDR",
   "금액은 0 이상의 숫자여야 합니다":"Jumlah Uang Harus Berupa Angka 0 atau Lebih",
@@ -1454,13 +1455,12 @@ const UI_STRINGS={
   "모든 알림을 확인했습니다.":"Sudah memeriksa semua notifikasi",
   "모든 위원이 서명해야 문서를 생성할 수 있습니다.":"Semua anggota harus menandatangani dokumen sebelum dapat dibuat.",
   "모든 체크리스트 항목과 평가 결과를 저장한 후 보고서를 생성할 수 있습니다.":"Setelah semua item checklist dan hasil evaluasi disimpan, laporan dapat dibuat.",
-  "모의 감사 가이드":"Pedoman Pemeriksaan Fiktif",
-  "모의 감사 안내":"Panduan Pemeriksaan Fiktif",
-  "모의감사 완료":"Pemeriksaan Fiktif Selesai",
-  "모의실사":"Pemeriksaan Fiktif",
-  "모의심사 대상 없음":"Tidak Ada Objek Pemeriksaan Fiktif",
-  "모의심사 큐":"Antrian Pemeriksaan Fiktif",
-  "목":"Tujuan",
+  "모의 감사 가이드":"Pedoman Audit Simulasi",
+  "모의 감사 안내":"Panduan Audit Simulasi",
+  "모의감사 완료":"Audit Simulasi Selesai",
+  "모의실사":"Audit Simulasi",
+  "모의심사 대상 없음":"Tidak Ada Objek Audit Simulasi",
+  "모의심사 큐":"Antrian Audit Simulasi",
   "문맥·도구":"Konteks · Alat",
   "문서 미리보기 (예시)":"Pratinjau Dokumen (Contoh)",
   "문서 미리보기·다운로드":"Pratinjau dan Unduh Dokumen",
@@ -1622,7 +1622,6 @@ const UI_STRINGS={
   "세척제·포장재·윤활제":"Pembersih·Kemasan·Minyak Pelumas",
   "섹션 순서 변경":"Ubah Urutan Bagian",
   "섹션 없음":"Bagian Tidak Ada",
-  "수":"Bilangan",
   "수동":"Manual",
   "수동 활성":"Aktifkan Manual",
   "수동 활성 완료":"Aktivasi Manual Selesai",
@@ -1668,21 +1667,21 @@ const UI_STRINGS={
   "신청·서류":"Permohonan · Dokumen",
   "신청·서류 · Application":"Permohonan · Aplikasi",
   "신청기업 계정 생성 · Applicant sign-up":"계정 생성 · Pendaftaran Applicant",
-  "신청서 반려":"신청서 거부",
+  "신청서 반려":"Kembalikan Aplikasi",
   "신청유형":"신청 유형 · Application Type",
   "신청유형 · Application":"신청 유형 · Aplikasi",
   "신청중":"대기 중 · Pending",
   "실시간":" 실시간 · Real-time",
   "실시간 연결 상태 · Live status":"실시간 연결 상태 · Status Live",
-  "심사 데이터를 불러오지 못했습니다.":"데이터를 불러올 수 없습니다.",
+  "심사 데이터를 불러오지 못했습니다.":"Gagal memuat data pemeriksaan.",
   "심의 상세 (위원 구성·2단계 승인·투표)":"심의 세부사항 (위원회 구성 · 2단계 승인 · 투표)",
   "심의 요지 · Note":"심의 주요 사항 · Catatan",
   "심의 진행 체크리스트 · Review":"심의 진행 체크리스트 · Tinjauan",
-  "아래 문서를 다운로드하여 검토하세요.":"다음 문서를 다운로드하여 확인해 주세요.",
-  "아직 발급되지 않았습니다 · not issued":"아직 발행되지 않았습니다",
-  "안읽음":"읽지 않음",
+  "아래 문서를 다운로드하여 검토하세요.":"Unduh dokumen di bawah untuk ditinjau.",
+  "아직 발급되지 않았습니다 · not issued":"Belum diterbitkan · not issued",
+  "안읽음":"Belum dibaca",
   "알림":"Pemberitahuan",
-  "알림 센터":"센터 알림",
+  "알림 센터":"Pusat Notifikasi",
   "알림·공지":"Pemberitahuan & Berita",
   "알림봇 채널 상태":"Status Saluran Pemberitahuan Bot",
   "알림이 없습니다.":"Tidak ada pemberitahuan.",
@@ -1751,6 +1750,27 @@ const UI_STRINGS={
   "원본 문서":"Dokumen Asli",
   "원자재 (Material)":"Bahan Baku (Material)",
   "원자재 보관 구역":"Area Penyimpanan Bahan Baku",
+  /* ── Bahasa 언어검수(Website language check) 반영 — 미번역 보완 2026-07-16 ── */
+  "원료":"Bahan Baku","첨가물":"Aditif","가공보조제":"Bahan Penolong","포장재":"Kemasan","윤활제":"Pelumas","세정/살균제":"Pembersih/Disinfektan",
+  "책임과 약속":"Tanggung Jawab & Komitmen","할랄제품공정":"Proses Produk Halal","모니터링·평가":"Monitoring & Evaluasi",
+  "할랄 정책 문서":"Dokumen Kebijakan Halal","조직 구조":"Struktur Organisasi","교육 기록":"Rekaman Pelatihan","원재료 관리":"Pengelolaan Bahan Baku","공급업체 평가":"Evaluasi Pemasok","보관 시설":"Fasilitas Penyimpanan","생산 설비":"Peralatan Produksi","세척·위생":"Pembersihan & Sanitasi",
+  "상태 확인":"Konfirmasi Status",
+  "현장심사 방문일은 클라이언트가 가능 날짜를 제시하고 오디터가 확정합니다. 불가 시 오디터가 후보일 2~3개를 재제안해 재조율합니다.":"Tanggal kunjungan audit lapangan diusulkan oleh klien dan dikonfirmasi oleh auditor. Jika tidak memungkinkan, auditor mengusulkan ulang 2~3 tanggal kandidat untuk penjadwalan ulang.",
+  "실제 현장 상황을 정확히 보여줄 수 있는 최신 사진 및 영상을 업로드해 주세요. 감사자는 현장 감사에 앞서 해당 자료를 검토하게 됩니다.":"Mohon unggah foto dan video terbaru yang secara akurat menampilkan kondisi lapangan sebenarnya. Auditor akan meninjau materi tersebut sebelum audit lapangan.",
+  "원자재 보관 구역의 사진을 업로드해 주세요. 라벨링, 구분 보관, 보관 상태가 잘 보이도록 촬영해 주세요.":"Mohon unggah foto area penyimpanan bahan baku. Ambil gambar agar pelabelan, penyimpanan terpisah, dan kondisi penyimpanan terlihat jelas.",
+  "완제품 보관 구역의 사진을 업로드해 주세요. 라벨링, 구분 보관, 보관 상태가 잘 보이도록 촬영해 주세요.":"Mohon unggah foto area penyimpanan produk jadi. Ambil gambar agar pelabelan, penyimpanan terpisah, dan kondisi penyimpanan terlihat jelas.",
+  "생산 시설의 전체 전경, 설비, 위생 상태 등을 사진으로 업로드해 주세요.":"Mohon unggah foto keseluruhan fasilitas produksi, peralatan, dan kondisi kebersihan.",
+  "청소 도구 보관 장소, 세척 소독 시설, 해충 방제 상태 등 위생 관리 상태를 사진으로 업로드해 주세요.":"Mohon unggah foto kondisi pengelolaan kebersihan seperti tempat penyimpanan alat kebersihan, fasilitas pencucian & disinfeksi, dan pengendalian hama.",
+  "생산 공정 (영상)":"Proses Produksi (Video)","완제품 보관 구역":"Area Penyimpanan Produk Jadi","생산 시설 및 설비":"Fasilitas & Peralatan Produksi","위생 및 청소 관리":"Pengelolaan Kebersihan & Sanitasi",
+  /* ── 로그인/회원가입 화면 언어 스위칭 2026-07-16 ── */
+  "아이디 · Username":"Nama Pengguna · Username","비밀번호 · Password":"Kata Sandi · Password","로그인 · Sign in":"Masuk · Sign in",
+  "🏢 클라이언트":"🏢 Klien","🏭 오디터":"🏭 Auditor","⚖️ 샤리아":"⚖️ Syariah","🤝 동반자(PPH)":"🤝 Pendamping (PPH)","⚙️ ITO 관리자":"⚙️ Admin ITO",
+  "비밀번호 확인 · Confirm password":"Konfirmasi Kata Sandi · Confirm password",
+  "📄 사업자·공장 등록증 → AI 자동추출 (Rizky #1)":"📄 Izin Usaha·Pabrik → Ekstraksi Otomatis AI (Rizky #1)","🤖 등록증 업로드·AI 추출":"🤖 Unggah Sertifikat · Ekstraksi AI",
+  "기업명 · Company":"Nama Perusahaan · Company","사업자등록번호 · NIB":"Nomor Izin Usaha · NIB","담당자 · Responsible person":"Penanggung Jawab · Responsible person","회사 주소 · Company address":"Alamat Perusahaan · Company address","공장 주소 · Factory address":"Alamat Pabrik · Factory address",
+  "가입 · Sign up":"Daftar · Sign up","← 로그인으로 · Back to login":"← Kembali ke Masuk · Back to login",
+  "검증됨":"Terverifikasi","검증상태":"Status Verifikasi","공급":"Pemasok","선택됨":"Dipilih","후보일":"Tanggal Kandidat","외":"Lainnya",
+  "제품 클릭 시 사용 원재료":"Klik produk untuk melihat bahan","근거 · 분석":"Dasar · Analisis","위험 · 증빙":"Risiko · Bukti",
   "원재료 · Materials":"Bahan Baku · Materials",
   "원재료 목록·제조 공정도. 신청 단계 데이터 자동 연동 + 공정도 이미지 첨부.":"Daftar Bahan Baku · Diagram Proses Produksi. Integrasi Otomatis Data Pendaftaran + Tambahkan Gambar Diagram Proses",
   "원재료 스크리닝 요약 · Screening":"Ringkasan Penyaringan Bahan Baku · Screening",
@@ -1844,8 +1864,8 @@ const UI_STRINGS={
   "재전송 이력":"Sejarah Pengiriman Lagi",
   "재제안 실패":"Gagal Menyaranakan Ulang",
   "재제출됨":"Diajukan Ulang",
-  "재조율":"Penyesuaian Lagi",
-  "재조율 중":"Sedang Dilakukan Penyesuaian",
+  "재조율":"Penjadwalan Ulang",
+  "재조율 중":"Sedang Penjadwalan Ulang",
   "저장 · Save (기업+공장)":"Simpan · Save (Perusahaan+Pabrik)",
   "저장된 서명입니다. (열람용)":"Tanda Tangan yang Disimpan. (Hanya Untuk Dilihat)",
   "적음":"Kurang",
@@ -1909,31 +1929,31 @@ const UI_STRINGS={
   "주소가 입력된 케이스가 없습니다.":"Tidak ada kasus yang memiliki alamat yang terisi.",
   "준비도":"Persiapan",
   "준수":"Patuhan",
-  "준수 (Comply)":" 준수 (Comply)",
-  "준수 여부":" 상태 확인",
-  "중대(critical) 원재료 존재":" 중대한 원재료 존재",
-  "중복 제외":" 중복 제외",
-  "중복 파일명":" 중복된 파일 이름",
-  "중복확인":" 중복 확인",
-  "중요 안내":" 주의 사항",
-  "증거 미제출 섹션":" 증거 미제출 섹션",
-  "증거 사진 · 열람용":" 증거 사진 (열람 용)",
-  "증거 사진 최소 2매 · 동영상 업로드 (드래그 앤 드롭 가능)":" 증거 사진 최소 2장 · 동영상 업로드 (드래그 앤 드롭 가능)",
-  "증거 업로드":" 증거 업로드",
-  "증거 없음":" 증거 없음",
+  "준수 (Comply)":"Patuh (Comply)",
+  "준수 여부":"Status Kepatuhan",
+  "중대(critical) 원재료 존재":"Terdapat bahan kritis (critical)",
+  "중복 제외":"Kecualikan Duplikat",
+  "중복 파일명":"Nama file duplikat",
+  "중복확인":"Cek Duplikat",
+  "중요 안내":"Pemberitahuan Penting",
+  "증거 미제출 섹션":"Bagian Bukti Belum Diserahkan",
+  "증거 사진 · 열람용":"Foto Bukti · Untuk Dilihat",
+  "증거 사진 최소 2매 · 동영상 업로드 (드래그 앤 드롭 가능)":"Foto bukti minimal 2 lembar · Unggah video (bisa seret & lepas)",
+  "증거 업로드":"Unggah Bukti",
+  "증거 없음":"Tidak Ada Bukti",
   "증빙 드롭 업로드 ·":" 증빙 드롭 업로드 ·",
-  "증빙 보유":" 증빙 보유",
-  "증빙 항목 없음":" 증빙 항목 없음",
-  "증빙이 필요한 항목이 있습니다.":" 증빙이 필요한 항목이 있습니다.",
+  "증빙 보유":"Memiliki Bukti",
+  "증빙 항목 없음":"Tidak Ada Item Bukti",
+  "증빙이 필요한 항목이 있습니다.":"Ada item yang memerlukan bukti.",
   "지역·캐파·승인·배정":" 지역 · 캐파 · 승인 · 배정",
-  "지우기":" 삭제",
+  "지우기":"Hapus",
   "지원 · Support":" 지원 · Support",
-  "지원 이메일":" 지원 이메일",
+  "지원 이메일":"Email Dukungan",
   "지적 내용 · Finding":" 지적 내용 · Finding",
-  "지적사항":" 지적사항",
-  "지적사항 Findings":" 지적사항 Findings",
-  "지적사항 없음":" 지적사항 없음",
-  "직책":" 직위",
+  "지적사항":"Temuan",
+  "지적사항 Findings":"Temuan · Findings",
+  "지적사항 없음":"Tidak Ada Temuan",
+  "직책":"Jabatan",
   "진행 안내":"Panduan Pemrosesan",
   "진행 정보 없음":"Informasi Pemrosesan Tidak Ada",
   "진행 중":"Sedang Berlangsung",
@@ -2006,7 +2026,6 @@ const UI_STRINGS={
   "클릭하여 복사":"Salin dengan Klik",
   "클릭하여 원본 보기":"Lihat Asli dengan Klik",
   "테넌트":"Tenant",
-  "토":"Tu",
   "통과":"Lulus",
   "통과 · Pass":"Lulus · Lulus",
   "투표 상세·행사는 샤리아 위원 전용입니다.":"Detail dan acara pemungutan suara adalah khusus untuk komite syariah.",
@@ -3637,6 +3656,16 @@ function filterChips(){
 /* ---- lang / theme ---- */
 function applyLang(){const root=document.documentElement;if(LANG===1)root.setAttribute("data-lang","ko");else root.removeAttribute("data-lang");document.getElementById("langPill").textContent=LANGS[LANG];}
 function cycleLang(){LANG=(LANG+1)%LANGS.length;try{localStorage.setItem("glhac_lang",String(LANG))}catch(_){}applyLang();loadMenus().then(buildNav);applyView();}
+/* 로그인/회원가입 화면 언어 스위칭 — 정적 HTML이라 원본 스냅샷 후 복원→localize(왕복 대응) */
+let LOGIN_HTML0=null;
+function loginLocalize(){
+  const lf=document.getElementById("loginForm"),rf=document.getElementById("registerForm");
+  if(LOGIN_HTML0==null)LOGIN_HTML0={login:lf?lf.innerHTML:"",reg:rf?rf.innerHTML:""};
+  else{if(lf)lf.innerHTML=LOGIN_HTML0.login;if(rf)rf.innerHTML=LOGIN_HTML0.reg;}
+  if(LANG===2){if(lf)localizeUI(lf);if(rf)localizeUI(rf);}
+  const p=document.getElementById("loginLangPill");if(p)p.textContent=LANGS[LANG];
+}
+function loginCycleLang(){LANG=(LANG+1)%LANGS.length;try{localStorage.setItem("glhac_lang",String(LANG))}catch(_){}applyLang();loginLocalize();}
 function toggleTheme(){
   const h=document.documentElement,d=h.getAttribute("data-theme")==="dark";
   h.setAttribute("data-theme",d?"light":"dark");
@@ -3766,7 +3795,7 @@ async function facDel(fid,name,org,caseId){
 async function toggleFacSelect(caseId,org){
   const box=document.getElementById("facListBox");if(!box)return;
   const ids=[...box.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.dataset.fid);
-  try{await API(`/cases/${caseId}/facilities-select`,{method:"PATCH",body:JSON.stringify({facility_ids:ids})});toast(`🏭 이 신청 대상 공장 ${ids.length}개 선택됨`);}
+  try{await API(`/cases/${caseId}/facilities-select`,{method:"PATCH",body:JSON.stringify({facility_ids:ids})});toast(`🏭 이 신청 대상 ${T('공장')} ${ids.length}${T('개')} ${T('선택됨')}`);}
   catch(e){toast("공장 선택 저장 실패 · "+(e&&e.code?e.code:""));}
 }
 /* 필수 원재료 카테고리 체크리스트 + 누락 경고(MAT-011/012/013) — 세척제·포장재·윤활제 누락 방지 */
@@ -3800,12 +3829,151 @@ function prodAccordion(id,prods,mats,matrix){
 }
 function sjphStage(id,ko,en,desc,types,chk){
   const cl=(chk&&chk.checklist)||[];
+  const fileLine=f=>`<div class="muted" style="font-size:11px;padding:1px 0 1px 24px;word-break:break-all">📄 ${esc(f.filename||f.document_id||'')}${f.review_status==='rejected'?' <span style="color:var(--bad)">· 반려</span>':''}</div>`;
   const rows=types.map(dt=>{const it=cl.find(x=>x.doc_type===dt);const okv=it&&it.satisfied;
-    return `<div class="check" style="padding:4px 0"><div class="cbox ${okv?"on":""}">${okv?"✓":""}</div><b style="flex:1;font-size:12px">${esc(T(it?(it.doc_type_ko||it.doc_type):dt))}</b>${okv?tag("ok","제출"):tag("bad","미제출")}</div>`;}).join("");
-  const canUp=["client","consultant","admin"].includes(ROLE);
+    const files=(it&&it.files)||[];
+    const flist=files.map(fileLine).join("");
+    return `<div class="check" style="padding:4px 0"><div class="cbox ${okv?"on":""}">${okv?"✓":""}</div><b style="flex:1;font-size:12px">${esc(T(it?(it.doc_type_ko||it.doc_type):dt))}</b>${okv?tag("ok",files.length+"건"):tag("bad","미제출")}</div>${flist}`;}).join("");
+  // 요구 타입 외 업로드된 기타 파일(전체 업로드 리스트 완성)
+  const extra=cl.filter(x=>!types.includes(x.doc_type)&&(x.files||[]).length);
+  const extraRows=extra.length?`<div class="divide" style="margin:8px 0"></div><div class="muted small" style="margin-bottom:2px">기타 업로드 · Other files</div>`+
+    extra.map(x=>`<div class="check" style="padding:3px 0"><div class="cbox on">✓</div><b style="flex:1;font-size:12px">${esc(T(x.doc_type_ko||x.doc_type))}</b>${tag("ok",(x.files||[]).length+"건")}</div>`+(x.files||[]).map(fileLine).join("")).join(""):"";
+  const totalFiles=cl.reduce((n,x)=>n+((x.files||[]).length),0);
   return `<div style="border:1px solid var(--line2);border-radius:10px;padding:12px">
-    <div style="font-weight:700;font-size:12.5px">${ko} <span class="en">· ${en}</span></div>
-    <div class="muted small" style="margin-bottom:6px">${desc}</div>${rows}</div>`;
+    <div style="font-weight:700;font-size:12.5px">${ko} <span class="en">· ${en}</span>${totalFiles?`<span class="r">${totalFiles}${T('건')}</span>`:''}</div>
+    <div class="muted small" style="margin-bottom:6px">${desc}</div>${rows}${extraRows}
+    ${totalFiles?'':'<div class="muted small" style="padding:6px 0">업로드된 파일이 없습니다 · No files uploaded</div>'}</div>`;
+}
+/* 원재료 판정 근거·분석 — 스크리닝 필드로 사람이 읽는 설명 생성(오디터 평가·사용자 이해용) */
+function matBasis(m){
+  const st=(m.status||m.screen_status||m.result||'').toString().toLowerCase();
+  const parts=[];
+  if(/halal|pass|clear|cleared/.test(st)){
+    parts.push(m.matched_uid?('할랄 기준목록 대조 통과 (참조: '+esc(m.matched_uid)+')')
+                            :'임계(위험) 성분 아님 — 기본 통과');
+  }else if(/mushbooh|syubhat|의심|warn|needs|doubt/.test(st)){
+    parts.push('⚠ 의심(Mushbooh) — 원산지·성분·공정 증빙 확인 필요');
+  }else if(/haram|차단|block|reject|prohibit/.test(st)){
+    parts.push('⛔ 하람(Haram) 성분 — 사용 불가(대체 필요)');
+  }else if(/najis/.test(st)){
+    parts.push('⛔ 나지스(Najis) — 세척·대체 필요');
+  }else{ parts.push('미판정 — 스크리닝 필요'); }
+  if(m.cert==='certified') parts.push('공급사 할랄 인증 보유');
+  else if(m.cert&&m.cert!=='unknown') parts.push('인증: '+esc(m.cert));
+  if(m.e_number) parts.push('E번호 '+esc(m.e_number));
+  if(m.mat_type) parts.push('유형: '+esc(m.mat_type));
+  if(m.note) parts.push(esc(m.note));
+  return parts.join(' · ')||'—';
+}
+function matRiskCell(m){
+  const r=(m.v1_risk||m.severity||'—').toString();
+  const rc=/high|하람|haram/i.test(r)?'bad':/med/i.test(r)?'warn':'ok';
+  const ev=(m.evidence_count||0);
+  return tag(rc,'위험 '+r)+' '+(ev?tag('ok','증빙 '+ev):tag('mute','증빙 0'));
+}
+/* 검증 상태 — 판정의 '근거'가 실제로 있는지: 기준목록 매칭·공급사인증·증빙 중 하나라도 있으면 검증됨,
+   아무 근거 없이 '하람 아님'으로만 통과했으면 미검증(증빙필요). */
+function matVerified(m){
+  return !!(m.matched_uid || m.cert==='certified' || (m.evidence_count||0)>0);
+}
+function matVerifyTag(m){
+  const st=(m.status||m.screen_status||m.result||'').toString().toLowerCase();
+  if(/haram|najis|차단|block|reject/.test(st)) return tag('bad','⛔ 부적합');
+  return matVerified(m)?tag('ok','✓ 검증됨'):tag('warn','⚠ 미검증 · 증빙필요');
+}
+/* 제품→원재료 아코디언 — 제품 클릭 시 소속 원재료 펼침(오디터·심사자 공용). */
+function productAccordion(id,prods){
+  if(!prods||!prods.length) return '<div class="muted small">제품 없음</div>';
+  // 원재료 연결 있는 제품 먼저, 없는(0개) 제품은 맨 아래로 — 안정 정렬(그룹 내 원래 순서 유지)
+  prods=prods.map((p,i)=>[p,i]).sort((a,b)=>(((a[0].material_count||0)>0?0:1)-((b[0].material_count||0)>0?0:1))||(a[1]-b[1])).map(x=>x[0]);
+  return '<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">'+prods.map(p=>{
+    const has=(p.material_count||0)>0;const rc=p.risk_count>0?'bad':(has?'ok':'mute');
+    return `<div class="pacc" data-pid="${p.product_id}">
+      <div onclick="toggleProdAcc('${id}','${p.product_id}',this)" style="display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;border-top:1px solid var(--line);user-select:none">
+        <span class="pacc-ar" style="color:var(--ink3);font-size:10px;width:11px;display:inline-block">▶</span>
+        <b style="flex:1;font-size:12.5px">${esc(p.name)}</b>
+        ${tag(rc,'원재료 '+(p.material_count||0))}${p.risk_count>0?tag('bad','⚠ 위험 '+p.risk_count):''}
+      </div>
+      <div class="pacc-b" style="display:none;padding:2px 11px 10px 32px;background:var(--panel2,#f7f9fc)"></div>
+    </div>`;
+  }).join('')+'</div>';
+}
+async function toggleProdAcc(id,pid,h){
+  const it=h.closest('.pacc'),b=it.querySelector('.pacc-b'),ar=it.querySelector('.pacc-ar');
+  if(b.style.display!=='none'){b.style.display='none';ar.textContent='▶';return;}
+  ar.textContent='▼';b.style.display='block';
+  if(b.dataset.loaded)return;
+  b.innerHTML='<div class="muted small" style="padding:6px">불러오는 중…</div>';
+  try{const d=await API(`/cases/${id}/products/${pid}`);const ms=d.materials||[];
+    b.innerHTML=ms.length?`<table style="font-size:11px;width:100%"><tbody>${ms.map(m=>`<tr style="vertical-align:top">
+      <td style="padding:3px 4px 3px 0"><b>${esc(m.name)}</b></td>
+      <td style="white-space:nowrap;padding:3px 6px">${bTag(scol(m.screen_status||m.result),m.screen_status||m.result||'—')}</td>
+      <td style="white-space:nowrap;padding:3px 6px">${matVerifyTag(m)}</td>
+      <td class="small" style="line-height:1.4;color:var(--ink3)">${matBasis(m)}</td></tr>`).join('')}</tbody></table>`
+      :'<div class="muted small" style="padding:6px">연결된 원재료 없음</div>';
+    b.dataset.loaded='1';
+  }catch(e){b.innerHTML='<div class="muted small" style="padding:6px">불러오기 실패</div>';}
+}
+/* AI 추출 필드 메타 — 라벨·출처서류·기대형식(미검출 사유 안내용) */
+const EXTRACT_FIELD_META={
+  company_name:{ko:'회사명 · 상호',src:'사업자등록증(NIB)',fmt:'법인/상호명'},
+  nib:{ko:'NIB · 사업자등록번호',src:'사업자등록증',fmt:'13자리 숫자'},
+  address:{ko:'회사 주소',src:'사업자등록증(NIB)',fmt:'전체 주소'},
+  city:{ko:'회사 소재 도시',src:'사업자등록증',fmt:'도시명'},
+  country:{ko:'국가',src:'사업자등록증',fmt:'국가명'},
+  zip:{ko:'우편번호',src:'사업자등록증',fmt:'우편번호'},
+  factory_address:{ko:'공장 주소',src:'공장등록증',fmt:'공장 소재지'},
+  factory_city:{ko:'공장 도시',src:'공장등록증',fmt:'도시명'},
+  factory_country:{ko:'공장 국가',src:'공장등록증',fmt:'국가명'},
+  factory_zip:{ko:'공장 우편번호',src:'공장등록증',fmt:'우편번호'},
+  responsible_person:{ko:'대표자 · 책임자',src:'사업자등록증',fmt:'성명'},
+  factory_reg_no:{ko:'공장등록번호',src:'공장등록증',fmt:'등록번호'},
+  product_names:{ko:'제품명 목록',src:'제품 목록·매트릭스',fmt:'제품명 배열'},
+  material_names:{ko:'원재료명 목록',src:'원재료 목록',fmt:'원재료명 배열'},
+  cert_no:{ko:'인증번호',src:'할랄/품질 인증서',fmt:'인증번호'},
+  issuer:{ko:'발급기관',src:'인증서',fmt:'기관명'},
+  expiry_date:{ko:'만료일',src:'인증서',fmt:'YYYY-MM-DD'},
+  process_steps:{ko:'공정 단계',src:'공정 흐름도',fmt:'단계 순서 배열'},
+};
+const DOC_KO_LABEL={nib_business_license:'사업자등록증',factory_registration:'공장등록증',product_list:'제품 목록',material_list:'원재료 목록',process_flow:'공정 흐름도',halal_certificate:'할랄 인증서',quality_cert:'품질 인증',coa_msds:'CoA/MSDS',supplier_declaration:'공급사 선언서',sjph_manual:'SJPH 매뉴얼',product_label:'제품 라벨',other:'기타'};
+/* 문서 종류별 '기대 필드' — 이 문서 타입에서 실제로 나와야 하는 필드만 검사(만능 스키마 도배 방지). */
+const DOC_FIELDS={
+  nib_business_license:['company_name','nib','address','city','country','zip','responsible_person'],
+  factory_registration:['factory_reg_no','factory_address','factory_city','factory_country','factory_zip'],
+  product_list:['product_names'],
+  material_list:['material_names'],
+  process_flow:['process_steps'],
+  halal_certificate:['cert_no','issuer','expiry_date'],
+  quality_cert:['cert_no','issuer','expiry_date'],
+  coa_msds:['material_names','cert_no'],
+  supplier_declaration:['material_names','cert_no','issuer'],
+  sjph_manual:['company_name','responsible_person','material_names','product_names','process_steps'],
+  product_label:['material_names'],
+};
+function extractFieldsTable(fields,docType){
+  const isEmpty=v=>(v==null||v===''||v==='null'||(Array.isArray(v)&&!v.length));
+  let ent=Object.entries(fields||{}).filter(([k])=>!/^has_/.test(k));  // SJPH boolean 플래그 제외
+  const rel=DOC_FIELDS[docType]||null;
+  // 문서 종류의 기대 필드 + 값이 있는 필드만(관련 없는 사업자 필드 도배 제거). 스키마 없으면(기타) 검출된 것만.
+  ent = rel ? ent.filter(([k,v])=>rel.includes(k)||!isEmpty(v))
+            : ent.filter(([k,v])=>!isEmpty(v));
+  // 검출된 필드 먼저, 미검출(빈값)은 맨 아래로 — 안정 정렬
+  ent=ent.map((e,i)=>[e,i]).sort((a,b)=>(isEmpty(a[0][1])-isEmpty(b[0][1]))||(a[1]-b[1])).map(x=>x[0]);
+  if(!ent.length) return '<div class="muted small" style="margin:4px 0">이 문서 유형에서 추출할 필드가 없습니다.</div>';
+  const rows=ent.slice(0,18).map(([k,v])=>{
+    const meta=EXTRACT_FIELD_META[k]||{ko:k,src:'',fmt:''};
+    const empty=(v==null||v===''||v==='null'||(Array.isArray(v)&&!v.length));
+    const val=Array.isArray(v)?(v.length+'건: '+v.slice(0,6).map(esc).join(', ')+(v.length>6?' 외 '+(v.length-6):'')):esc(String(v));
+    return `<tr style="vertical-align:top">
+      <td style="white-space:nowrap;padding:3px 8px 3px 0"><b style="color:var(--ink2)">${esc(meta.ko)}</b><div class="muted" style="font-size:9.5px">${esc(k)}</div></td>
+      <td style="padding:3px 0">${empty
+        ?`<span class="t-warn" style="font-weight:600">⚠ 미검출</span> <span class="muted small">— 이 문서에서 찾지 못함.${meta.src?' <b>'+esc(meta.src)+'</b>에서 제공됩니다':''}${meta.fmt?' · 기대형식: '+esc(meta.fmt):''}</span>`
+        :`<b>${val}</b>${meta.fmt&&!Array.isArray(v)?` <span class="muted" style="font-size:9.5px">(${esc(meta.fmt)})</span>`:''}`}</td></tr>`;
+  }).join('');
+  const filled=ent.filter(([k,v])=>!(v==null||v===''||v==='null'||(Array.isArray(v)&&!v.length))).length;
+  const scopeNote=rel?`이 문서 유형(${esc(DOC_KO_LABEL[docType]||docType||'')}) 관련 필드만`:'검출된 필드만';
+  return `<div style="margin-bottom:6px"><b>${T('AI 추출 필드')}</b> <span class="muted small">— ${scopeNote} · 검출 ${filled}/${ent.length}</span>
+    <table style="font-size:11.5px;width:100%;margin-top:4px"><tbody>${rows}</tbody></table></div>`;
 }
 async function toggleNotif(){
   const p=document.getElementById("notifPanel");
@@ -3829,7 +3997,7 @@ document.addEventListener("click",e=>{const b=document.getElementById("notifBell
   if(p&&p.classList.contains("open")&&!b.contains(e.target)&&!p.contains(e.target))p.classList.remove("open");});
 
 /* ---- case open ---- */
-function openCase(id){CURCASE=id;try{localStorage.setItem("glhac_case",id)}catch(_){}navigate({detail:id,tab:"overview"});}
+function openCase(id){CASE_PIN=true;CURCASE=id;try{localStorage.setItem("glhac_case",id)}catch(_){}navigate({detail:id,tab:"overview"});}
 function openCaseTab(tab){if(DETAIL)navigate({detail:DETAIL.id,tab});}
 
 /* ======================= SCREEN RENDERERS (live) ======================= */
@@ -3994,7 +4162,7 @@ SCREEN.dashboard=async()=>{
   </div>
   ${workCard}
   <div class="grid side" style="margin-bottom:16px">
-    <div class="card"><h3>🗺 지역별 등록현황 <span class="en">· By region</span><span class="r">서버 집계 · ${regions.length}개 지역</span></h3>
+    <div class="card"><h3>🗺 지역별 등록현황 <span class="en">· By region</span><span class="r">서버 집계 · ${regions.length}${T('개')} ${T('지역')}</span></h3>
       <div class="body">
         <div class="mapwrap">${bubbles||'<div style="display:grid;place-items:center;height:100%;color:var(--ink3);text-align:center;padding:20px">주소가 입력된 케이스가 없습니다.<br>신청 화면에서 <b>공장 주소</b>를 입력하면 지역별로 집계됩니다.</div>'}
           <div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--ink3)">🇮🇩 Indonesia · ${mapped}건 매핑 · 미지정 ${unassigned}건</div></div>
@@ -4068,17 +4236,17 @@ SCREEN.caseList=async()=>{
   const pg=pageSlice("caseList",cases,10);
   const rows=pg.items.length?pg.items.map(c=>`<tr class="clickable" onclick="openCase('${c.case_id}')">
       <td style="font-family:ui-monospace,monospace;font-size:12px">${short(c.case_id)} <span class="go-arrow">→</span></td>
-      <td><b>${esc(c.company_name||"—")}</b></td>
+      <td><b>${esc(c.company_name||"—")}</b>${contractTurnRole(c.contract_status)===ROLE?' <span class="fchip" style="background:var(--bad);color:#fff;font-size:10px">🔔 계약 처리 대기</span>':''}</td>
       <td>${bTag(c.pathway==="self_declare"?"info":"mute",c.pathway||"—")}</td>
       <td>${bTag(statusColor(c.status),c.status||"—")} ${draftBadge(c.draft_state)}</td>
       <td>${c.auditor_name?esc(c.auditor_name):'<span class="muted">—</span>'}</td>
       <td>${c.due_date?dueBadge(c.due_date):'<span class="muted">—</span>'}</td></tr>`).join("")
     : `<tr><td colspan="6" class="muted" style="text-align:center;padding:24px">조건에 맞는 케이스 없음 · No cases</td></tr>`;
-  const canNew=["client","consultant","admin"].includes(ROLE);
+  const canNew=["consultant","admin"].includes(ROLE);   // 2026-07-14 클라이언트 새 신청 버튼 제거(수정요청 007/008)
   // 인증 워크스페이스는 케이스 디테일 overview(renderCaseDetail)로 이전됨 — 리스트 화면에서는 미노출
   return `${filterChips()}${auditorHead}
   <div class="chipbar" style="margin-bottom:12px">
-    <input class="v" style="width:auto;flex:1;max-width:280px" placeholder="🔍 검색 (기업·번호) — Enter" value="${esc(FILTERS.q||'')}" onkeydown="if(event.key==='Enter'){FILTERS.q=this.value;PAGES={};applyView();}">
+    ${ROLE!=='client'?`<input class="v" style="width:auto;flex:1;max-width:280px" placeholder="🔍 검색 (기업·번호) — Enter" value="${esc(FILTERS.q||'')}" onkeydown="if(event.key==='Enter'){FILTERS.q=this.value;PAGES={};applyView();}">`:''}
     <select class="v" style="width:auto" onchange="CASE_SORT=this.value;applyView()">
       <option value="recent"${CASE_SORT==='recent'?' selected':''}>정렬: 최근순</option>
       <option value="due"${CASE_SORT==='due'?' selected':''}>정렬: 기한 우선</option></select>
@@ -4091,7 +4259,7 @@ SCREEN.caseList=async()=>{
     ${pager("caseList",pg)}
     <div class="body btnrow" style="border-top:1px solid var(--line)">
       ${canNew?'<button class="btn pri" onclick="newCase()">＋ 새 신청 · New</button>':''}
-      <button class="btn" onclick="exportCasesCsv()">⬇ CSV</button>
+      ${ROLE!=='client'?'<button class="btn" onclick="exportCasesCsv()">⬇ CSV</button>':''}
       <span class="chip" style="margin-left:auto">${T('노출')} ${cases.length}${T('건')} · scope: ${T(scopeLabel())}</span>
     </div></div>`;
 };
@@ -4360,7 +4528,7 @@ SCREEN.preassess=async()=>{
   const screened=mc.haram+mc.mushbooh+mc.halal;
   const scol=s=>({halal:'ok',haram:'bad',mushbooh:'warn',pass:'ok',needs_evidence:'warn',block:'bad'}[String(s||'').toLowerCase()]||'mute');
   const stage=!as?1:(pre.reviewed?3:2);   // P0-3: stage3 근거를 회신루프 review.reviewed로
-  const stageBar=[[1,'AI 판독','Analysis'],[2,'오디터 검토','Auditor'],[3,'완료','Done']].map(([n,ko,en])=>`<div class="step ${stage>n?'done':stage===n?'now':''}" style="min-width:88px">${n}. ${ko}<span class="en"> · ${en}</span></div>`).join('<span class="arrow">→</span>');
+  const stageBar=[[1,'분석','Analysis'],[2,'오디터 검토','Auditor'],[3,'완료','Done']].map(([n,ko,en])=>`<div class="step ${stage>n?'done':stage===n?'now':''}" style="min-width:88px">${n}. ${ko}<span class="en"> · ${en}</span></div>`).join('<span class="arrow">→</span>');
   const verdict= !as ? '<div class="banner info">🤖 아직 사전심사 미실행 — [AI 사전심사 실행]을 누르세요.</div>'
     : (missN===0&&blkN===0) ? '<div class="banner ok">✅ 심사 진행 가능 · Ready</div>'
     : `<div class="banner warn">⚠ ${T('보완 필요')} · ${T('필요서류')} ${missN}${blkN?` · ${T('차단')} ${blkN}`:''}</div>`;
@@ -4522,10 +4690,12 @@ SCREEN.preassess=async()=>{
         ${d.confidence!=null?`<span class="muted small">${T('AI 신뢰도')} ${Math.round(d.confidence*100)}%${lowConf?' ⚠':''}</span>`:''}
         <span style="margin-left:auto"></span></summary>
       <div style="padding:9px 12px;border-top:1px solid var(--line);font-size:12.5px">
-        ${Object.keys(d.fields||{}).length?`<div style="margin-bottom:6px"><b>${T('AI 추출 필드')}</b><table style="font-size:11.5px;width:100%;margin-top:4px"><tbody>${Object.entries(d.fields).slice(0,12).map(([k,v])=>`<tr><td style="color:var(--ink3)">${esc(k)}</td><td>${esc(String(v))}</td></tr>`).join('')}</tbody></table></div>`:''}
+        ${extractFieldsTable(d.fields,d.doc_type)}
         ${d.excerpt?`<div><b>${T('원문 발췌')}</b><div class="muted small" style="white-space:pre-wrap;max-height:160px;overflow:auto;border-left:2px solid var(--line);padding-left:8px;margin-top:4px">${esc(d.excerpt)}</div></div>`:''}
         <div class="btnrow" style="margin-top:8px">
-          ${d.has_file?`<button class="btn xs" onclick="docViewer('${d.document_id}')">👁 ${T('원문 보기')}</button>`:''}
+          ${d.has_file?`<button class="btn xs" onclick="docViewer('${d.document_id}')">👁 ${T('원문 보기')}</button>
+          <button class="btn xs" onclick="reprocessDoc('${d.document_id}')" title="원본을 최신 AI로 재추출·재분류(OCR)">🔄 ${T('재추출')}</button>
+          <button class="btn xs" onclick="reprocessDoc('${d.document_id}',300)" title="스캔을 고해상도(300dpi)로 재OCR — 오독 완화">🔬 ${T('고해상도')}</button>`:''}
           ${CAN('document.review')?`<button class="btn xs ok" onclick="reviewDoc('${d.document_id}','approved')">✅ ${T('승인')}</button>
           <button class="btn xs bad" onclick="reviewDoc('${d.document_id}','rejected')">⛔ ${T('반려')}</button>
           <button class="btn xs" onclick="reviewDoc('${d.document_id}','rework')">♻️ ${T('재요청')}</button>`:''}
@@ -4566,10 +4736,23 @@ SCREEN.preassess=async()=>{
         </tbody></table>`:''}
       </div></div>`;
 
+    const audItemsCard = `
+      <div class="card" style="margin-top:16px"><h3>${T('대상 품목')} <span class="en">· Items</span><span class="r">${prods.length+mats.length}</span></h3>
+        <div class="body tight" style="max-height:360px;overflow:auto">
+          ${prods.length?`<div class="muted small" style="padding:4px 0 5px;font-weight:600">${T('제품')} · Products <span class="muted" style="font-weight:400">— ${T('제품 클릭 시 사용 원재료 펼침')} ▶</span></div>`+productAccordion(id,prods):''}
+          ${(()=>{const vN=mats.filter(matVerified).length;const uN=mats.length-vN;return `<div class="muted small" style="padding:8px 0 4px;font-weight:600">${T('원재료')} · Materials (${mats.length}) ${tag('ok','✓ '+T('검증됨')+' '+vN)} ${tag('warn','⚠ '+T('미검증')+' '+uN)}</div>`;})()}
+          <table style="font-size:11.5px"><thead><tr style="color:var(--ink3)"><th style="text-align:left">${T('원재료')} · Material</th><th>${T('판정')}</th><th>${T('검증상태')}</th><th style="text-align:left">${T('근거 · 분석')}</th><th style="white-space:nowrap">${T('위험 · 증빙')}</th></tr></thead>
+          <tbody>${mats.slice(0,80).map(m=>`<tr style="vertical-align:top"><td><b>${esc(m.name)}</b>${m.supplier?`<div class="muted small">${T('공급')}: ${esc(m.supplier)}</div>`:''}</td>
+            <td style="white-space:nowrap">${bTag(scol(m.status||m.result),m.status||m.result)}</td>
+            <td style="white-space:nowrap">${matVerifyTag(m)}</td>
+            <td class="small" style="line-height:1.5">${matBasis(m)}</td>
+            <td style="white-space:nowrap;text-align:right">${matRiskCell(m)}</td></tr>`).join('')||`<tr><td class="muted">${T('원재료 없음')}</td></tr>`}</tbody></table>
+          ${mats.length>80?`<div class="muted small" style="padding:6px">${T('외')} ${mats.length-80}${T('개')}…</div>`:''}
+        </div></div>`;
     return `
     ${audStepbar}
     <div class="grid side">
-      <div>${compCard}${facCard}${docListCard}</div>
+      <div>${compCard}${facCard}${docListCard}${audItemsCard}</div>
       <div>${reviewCard}${reqCard}${loopCard}${outCard}</div>
     </div>
     ${aiReport}`;
@@ -4584,18 +4767,25 @@ SCREEN.preassess=async()=>{
           <div class="kv"><span>경로 · Pathway</span><b>${esc(c.pathway||'미확정')}</b></div>
           <div class="kv"><span>제품 · Products</span><b>${prods.length}건</b></div>
           <div class="kv"><span>원재료 · Materials</span><b>${mats.length}건</b></div>
-          <div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="assessPathway('${id}')">🤖 AI 사전심사 실행 · Run</button></div>
+          <div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="assessPathway('${id}')">🔍 사전심사 실행 · Run</button></div>
         </div></div>
       <div class="card" style="margin-top:16px"><h3>대상 품목 <span class="en">· Items</span><span class="r">${prods.length+mats.length}</span></h3>
         <div class="body tight" style="max-height:360px;overflow:auto">
-          ${prods.length?'<div class="muted small" style="padding:4px 0 2px;font-weight:600">제품 · Products</div>'+prods.map(p=>`<div class="li"><div class="tx"><b>${esc(p.name||'—')}</b> <span class="muted small">${esc(p.category||'')}</span></div></div>`).join(''):''}
-          <div class="muted small" style="padding:8px 0 2px;font-weight:600">원재료 · Materials (${mats.length})</div>
-          <table><tbody>${mats.slice(0,60).map(m=>`<tr><td>${esc(m.name)}</td><td style="text-align:right;white-space:nowrap">${bTag(scol(m.status||m.result),m.status||m.result)}</td></tr>`).join('')||'<tr><td class="muted">원재료 없음</td></tr>'}</tbody></table>
-          ${mats.length>60?`<div class="muted small" style="padding:6px">외 ${mats.length-60}건…</div>`:''}
+          ${prods.length?'<div class="muted small" style="padding:4px 0 5px;font-weight:600">제품 · Products <span class="muted" style="font-weight:400">— 제품 클릭 시 사용 원재료 펼침 ▶</span></div>'+productAccordion(id,prods):''}
+          ${(()=>{const vN=mats.filter(matVerified).length;const uN=mats.length-vN;return `<div class="muted small" style="padding:8px 0 4px;font-weight:600">원재료 · Materials (${mats.length}) ${tag('ok','✓ 검증됨 '+vN)} ${tag('warn','⚠ 미검증 '+uN)}</div>`;})()}
+          ${(()=>{const un=mats.filter(m=>!matVerified(m)&&!/haram|najis|block|reject/i.test((m.status||m.result||'')));const cE=["client","consultant","operator","admin"].includes(ROLE);return un.length?`<div class="banner warn" style="margin-bottom:8px;line-height:1.6">📎 <b>미검증 ${un.length}건 — 공급사 증빙 확보 필요</b><br>공급사에 <b>할랄 인증서 · COA(성분분석성적서) · MSDS · 공급사 할랄 선언서</b> 중 하나를 요청해 첨부하세요. 첨부 문서는 내장 OCR(PaddleOCR)+AI(gemma3)로 자동 파싱되어 해당 원재료가 <b class="t-ok">검증됨</b>으로 전환됩니다. <span class="muted">아래 표에서 항목별 <b>📎 증빙 첨부</b>로 등록하세요.</span></div>`:'';})()}
+          <table style="font-size:11.5px"><thead><tr style="color:var(--ink3)"><th style="text-align:left">원재료 · Material</th><th>판정</th><th>검증상태</th><th style="text-align:left">근거 · 분석 · 증빙안내</th><th style="white-space:nowrap">위험 · 증빙</th></tr></thead>
+          <tbody>${mats.slice(0,80).map(m=>{const un=!matVerified(m)&&!/haram|najis|block|reject/i.test((m.status||m.result||''));const cE=["client","consultant","operator","admin"].includes(ROLE);return `<tr style="vertical-align:top"><td><b>${esc(m.name)}</b>${m.supplier?`<div class="muted small">공급: ${esc(m.supplier)}</div>`:''}</td>
+            <td style="white-space:nowrap">${bTag(scol(m.status||m.result),m.status||m.result)}</td>
+            <td style="white-space:nowrap">${matVerifyTag(m)}</td>
+            <td class="small" style="line-height:1.5">${matBasis(m)}${un?`<div style="margin-top:4px;color:var(--warn,#b45309)">↳ 공급사 증빙 필요(할랄인증서·COA·MSDS·선언서 中 1) ${cE?`<button class="btn" style="padding:1px 7px;font-size:10.5px" onclick="attachEvidence('${id}','${m.material_id}')">📎 증빙 첨부</button>`:''}</div>`:''}</td>
+            <td style="white-space:nowrap;text-align:right">${matRiskCell(m)}</td></tr>`;}).join('')||'<tr><td class="muted">원재료 없음</td></tr>'}</tbody></table>
+          ${mats.length>80?`<div class="muted small" style="padding:6px">외 ${mats.length-80}건…</div>`:''}
+          <div class="muted small" style="padding:8px 4px 2px;line-height:1.6">📋 <b>판정</b>: 할랄=위험성분 아님 · 의심=증빙확인 · 하람/나지스=사용불가.<br>🔎 <b>검증상태</b>: <b class="t-ok">✓ 검증됨</b>=기준목록 매칭·공급사인증·증빙 中 근거 있음 · <b class="t-warn">⚠ 미검증</b>=하람은 아니나 적극 검증 안 됨. 미검증 항목은 <b>공급사 증빙 첨부</b>로 검증 전환하세요.</div>
         </div></div>
     </div>
     <div>
-      <div class="card"><h3>AI 판독 결과 <span class="en">· Analysis → 오디터</span></h3>
+      <div class="card"><h3>분석 결과 <span class="en">· Analysis</span><span class="r"><button class="btn" style="padding:3px 10px;font-size:11px" onclick="openCase('${id}')">🔎 분석 세부보기</button></span></h3>
         <div class="body">
           <div class="flow" style="margin-bottom:12px">${stageBar}</div>
           ${verdict}
@@ -4609,7 +4799,15 @@ SCREEN.preassess=async()=>{
         </div></div>
       <div class="card" style="margin-top:16px"><h3>부족 서류 <span class="en">· Missing</span><span class="r">${missN}</span></h3>
         <div class="body">
-          ${missN?`<div class="banner warn" style="margin-bottom:8px">보완 필요 서류 ${missN}건</div>`+(chk.missing||[]).map(x=>`<div class="li"><div class="ic t-warn">📄</div><div class="tx">${esc((x&&(x.doc_type_ko||x.doc_type))||x)}</div></div>`).join(''):'<div class="banner ok">✅ 필수 서류 완비</div>'}
+          ${missN?`<div class="banner warn" style="margin-bottom:8px">보완 필요 서류 ${missN}건 · 각 서류의 상태와 필요 내용을 확인하세요</div>`+(chk.missing||[]).map(x=>{
+            const o=(x&&typeof x==='object')?x:{doc_type_ko:x};
+            const dtko=o.doc_type_ko||o.doc_type||x;
+            const st=o.status||'';
+            const stTag=st==='missing'?tag('bad','미제출 · 파일 없음'):(st==='rejected'?tag('warn','반려 · 내용 보완 필요'):'');
+            return `<div class="li" style="align-items:flex-start;padding:8px 0"><div class="ic t-${st==='missing'?'bad':'warn'}">📄</div><div class="tx"><div><b>${esc(dtko)}</b> ${stTag}${o.file_count?` <span class="muted small">(제출 ${o.file_count}건)</span>`:''}</div>
+              ${o.reason?`<div class="muted small" style="margin-top:3px">↳ ${esc(o.reason)}</div>`:''}
+              ${o.requirement?`<div class="small" style="margin-top:3px;color:var(--ink2,#475569)">📋 필요 내용 · Requirement: ${esc(o.requirement)}</div>`:''}</div></div>`;
+          }).join(''):'<div class="banner ok">✅ 필수 서류 완비 · Semua dokumen lengkap</div>'}
           ${canApp?`<div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:6px"><button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 업로드</button><button class="btn" onclick="labelOcr('${id}')">📷 라벨 OCR</button></div><div id="intakeOut" class="small" style="margin-top:8px">${INTAKE_OUT[id]||''}</div>`:''}
         </div></div>
       ${auditorCard}
@@ -4692,7 +4890,8 @@ SCREEN.application=async()=>{
       <b style="font-size:13.5px">🕌 ${T('SEHATI 자기선언 간이경로')} <span class="en">· Self-Declare</span></b>
       ${bTag(isSD?'info':'mute',c.pathway||'undetermined')}
     </div>
-    <div class="banner info" style="margin-bottom:10px">${T('소규모 사업자(UMK) 자기선언(SEHATI) 간이경로 — 무료·보조 쿼터, 현장심사 면제 안내')}</div>
+    <div class="banner info" style="margin-bottom:6px">${T('소규모 사업자(UMK) 자기선언(SEHATI) 간이경로 — 무료·보조 쿼터, 현장심사 면제 안내')}</div>
+    <div class="muted small" style="margin-bottom:10px">💡 <b>${T('적격 셀프체크')}</b> — 자기선언(SEHATI) 자격(연매출·매장 수 기준)을 즉시 자가진단합니다. 정식 심사 전 무료.</div>
     <div class="btnrow" style="flex-wrap:wrap;gap:8px">
       <button class="btn" onclick="sehatiSelfCheck('${id}')">✅ ${T('적격 셀프체크')} <span class="en">· Self-check</span></button>
       ${isSD?`<button class="btn pri" onclick="previewSelfDeclaration('${id}')">📄 ${T('자기선언서 미리보기/생성')} <span class="en">· Self-Declaration</span></button>
@@ -4700,32 +4899,38 @@ SCREEN.application=async()=>{
     </div>
     <div id="sehatiAssessOut_${id}" style="margin-top:10px">${assessRender(id)}</div>
   </div></div>`:''}
-  <div class="card" style="margin-bottom:16px"><h3>② 파일 인테이크 <span class="en">· Intake (단계별) · AI 자동추출</span></h3>
+  <div class="card" style="margin-bottom:16px"><h3>② 파일 업로드 창 <span class="en">· Upload · 자동 분류·화면 연계</span></h3>
     <div class="body">
-      <div class="banner info" style="margin-bottom:10px">ZIP으로 올리면 자동 분류 → 프로필·제품·원재료·문서에 채워집니다. 아래 단계별 필요서류를 확인하세요.</div>
-      <div class="banner info" style="margin-bottom:8px">상단 버튼으로 <b>ZIP 업로드·OCR·성분 스크리닝</b>을 하거나 드래그로 올리세요. 단계별 필요서류는 아래에서 확인합니다.</div>
-      ${canApp?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center">
-        <button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 업로드</button>
-        <button class="btn" onclick="labelOcr('${id}')">📷 OCR</button>
-        <button class="btn" onclick="screenText('${id}')">🔤 성분 텍스트 스크리닝</button>
-        <div class="dropzone" style="flex:1;min-width:220px;margin:0" ondrop="handleDrop(event,'${id}')" ondragover="dzOver(event)" ondragleave="dzLeave(event)" onclick="document.getElementById('dzFile_${id}').click()">📎 ZIP 파일을 여기에 드래그 · 또는 클릭하여 선택</div>
-        <input type="file" id="dzFile_${id}" accept=".zip" style="display:none" onchange="handleDropInput(this,'${id}')"></div>
-      <div id="intakeOut_${id}" class="small" style="margin-bottom:6px">${INTAKE_OUT[id]||''}</div>`:''}
-      <div id="intakeOut" class="small" style="margin-bottom:10px">${INTAKE_OUT[id]||'<span class="muted">아직 인테이크 없음</span>'}</div>
+      <div class="banner info" style="margin-bottom:10px">📎 파일(ZIP·서류)을 올리면 자동 분류되어 <b>프로필·제품·원재료·문서 화면에 자동 연계</b>됩니다.</div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
-        ${sjphStage(id,"사전심사 단계","Pre-Audit","사업자·성분·제품공정 서류",["nib_business_license","factory_registration","product_list","material_list","process_flow"],chk)}
+        ${sjphStage(id,"신청 업로드 파일 리스트","Upload File List","사업자·성분·제품공정 서류",["nib_business_license","factory_registration","product_list","material_list","process_flow"],chk)}
         <div style="border:1px solid var(--line2);border-radius:10px;padding:12px">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <div style="font-weight:700;font-size:12.5px">📦 제품 · 원재료 <span class="en">· Products & Materials</span></div>
-            ${canApp?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="autoLinkMaterials('${id}')">🔗 원재료 자동연결</button>`:''}
-          </div>
-          <div class="muted small" style="margin-bottom:6px">제품을 클릭하면 연결된 원재료가 펼쳐집니다</div>
-          <div style="max-height:300px;overflow:auto">${prodAccordion(id,prods,mats,matrix)}</div>
+          <div style="font-weight:700;font-size:12.5px;margin-bottom:8px">📎 ${T('파일 업로드')} <span class="en">· Upload</span></div>
+          ${canApp?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center">
+            <button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 업로드</button>
+            <button class="btn" onclick="labelOcr('${id}')">📷 OCR</button>
+            <button class="btn" onclick="screenText('${id}')">🔤 성분 텍스트 스크리닝</button></div>
+          <div class="dropzone" style="margin:0 0 8px" ondrop="handleDrop(event,'${id}')" ondragover="dzOver(event)" ondragleave="dzLeave(event)" onclick="document.getElementById('dzFile_${id}').click()">📎 ZIP 파일을 여기에 드래그 · 또는 클릭하여 선택</div>
+          <input type="file" id="dzFile_${id}" accept=".zip" style="display:none" onchange="handleDropInput(this,'${id}')">
+          <div id="intakeOut_${id}" class="small" style="margin-bottom:6px">${INTAKE_OUT[id]||''}</div>`:''}
+          <div id="intakeOut" class="small">${INTAKE_OUT[id]||(()=>{
+            const files=(chk.checklist||[]).flatMap(x=>(x.files||[]).map(f=>({fn:f.filename,dt:x.doc_type_ko||x.doc_type})));
+            return files.length
+              ?`<div class="t-ok" style="font-weight:600;margin-bottom:5px">✅ ${T('인테이크 완료')} · ${T('문서')} ${files.length}${T('건')}</div><div class="muted" style="font-size:11.5px;line-height:1.85;max-height:340px;overflow:auto">${files.map(f=>`📄 ${esc(f.fn)} <span style="opacity:.7">· ${esc(f.dt)}</span>`).join('<br>')}</div>`
+              :'<span class="muted">아직 인테이크 없음 · 위에서 업로드하세요</span>';
+          })()}</div>
         </div>
       </div>
+      ${ROLE!=='client'?`<div style="border:1px solid var(--line2);border-radius:10px;padding:12px;margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-weight:700;font-size:12.5px">📦 제품 · 원재료 <span class="en">· Products & Materials</span></div>
+          ${canApp?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="autoLinkMaterials('${id}')">🔗 원재료 자동연결</button>`:''}
+        </div>
+        <div class="muted small" style="margin-bottom:6px">제품을 클릭하면 연결된 원재료가 펼쳐집니다</div>
+        <div style="max-height:300px;overflow:auto">${prodAccordion(id,prods,mats,matrix)}</div>
+      </div>`:''}
       <div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:6px">
         <button class="btn" onclick="go('materials')">🧪 원재료 화면</button>
-        <button class="btn" onclick="go('manualBuilder')">📓 SJPH 매뉴얼</button>
         <button class="btn" onclick="go('documents')">📁 문서 화면</button></div>
     </div></div>
   <div class="card" style="margin-bottom:16px"><div class="body btnrow" style="flex-wrap:wrap;gap:8px;align-items:center">
@@ -4739,7 +4944,6 @@ SCREEN.application=async()=>{
   <div class="grid two">
     <div class="card"><h3>① 기업 프로필 · Company Info <span class="en">· 고객 접수 양식(Form.1)</span></h3>
       <div class="body">
-        <div class="btnrow" style="margin-bottom:10px;gap:8px"><button class="btn" onclick="previewCompanyInfo('${id}')">👁 ${T('미리보기')} <span class="en">· Preview</span></button>${(c.facility_ids&&c.facility_ids.length)?`<button class="btn" onclick="previewFactoryProfile('${id}','${esc(c.facility_ids[0])}')">🏭 ${T('공장 미리보기')} <span class="en">· Factory</span></button>`:''}</div>
         <div class="field"><label>기업명 · Company Name</label><input class="v" id="apCompany" value="${esc(c.company_name||"")}">
           <div class="btnrow" style="margin-top:4px"><button class="btn" style="padding:3px 8px;font-size:11px" onclick="sihalalLookup(v('apCompany'))">🔎 ${T('SIHALAL 등록조회')}</button></div>
           <div id="sihalalOut" class="small" style="margin-top:4px"></div></div>
@@ -4752,7 +4956,7 @@ SCREEN.application=async()=>{
           <div class="field"><label>사업유형 · Business Type</label><input class="v" id="peBizType" value="${esc(pe.business_type||"")}" placeholder="제조/식당/화장품/케이터링/도축/서비스"></div>
           <div class="field"><label>등록유형 · Registration Type</label><select class="v" id="peRegType">${["","Manufacturing industry","restaurant","cosmetic","catering","slaughter house","services"].map(o=>`<option${(pe.registration_type||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-          <div class="field"><label>신청유형 · Application</label><select class="v" id="peAppType">${["","Regular","UAE","GSO"].map(o=>`<option${(pe.application_type||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div>
+          <div class="field"><label>신청유형 · Application</label><select class="v" id="peAppType">${[["","—"],["Regular","정규 · General"],["Self-Declare","자기선언 · Self-declare"]].map(([v,l])=>`<option value="${v}"${(pe.application_type||"")===v?" selected":""}>${l}</option>`).join("")}</select></div>
           <div class="field"><label>등록현황 · Status</label><select class="v" id="peRegStatus">${["","New","Renew","Development"].map(o=>`<option${(pe.registration_status||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div>
           <div class="field"><label>SIHALAL 여부</label><select class="v" id="peSiHalal">${["","Yes","No"].map(o=>`<option${(pe.si_halal||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -4791,26 +4995,16 @@ SCREEN.application=async()=>{
         <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="apConsent" ${c.notify_consent?"checked":""} style="width:auto"> 알림 수신 동의 · Notification opt-in (SMS·WhatsApp)</label></div>
         ${c.draft_state==='returned'&&c.return_reason?`<div class="banner bad" style="margin-bottom:8px">${T('↩ 반려됨 · 사유:')} ${esc(c.return_reason)}</div>`:''}
         <div style="margin-bottom:4px">${draftBadge(c.draft_state)}</div>
+        <div class="btnrow" style="margin-top:10px;gap:8px;border-top:1px solid var(--line);padding-top:10px"><button class="btn" onclick="previewCompanyInfo('${id}')">👁 ${T('미리보기')} <span class="en">· Preview</span></button>${["client","consultant","admin"].includes(ROLE)?`<button class="btn pri" onclick="saveProfile('${id}')">💾 ${T('저장')} <span class="en">· Save</span></button>`:''}</div>
       </div></div>
-    ${facMultiPanel(id)}
-    <div class="card"><h3>🏭 공장·시설 · Facility Info <span class="en">· 시설 데이터 양식(Form.2)</span></h3>
-      <div class="body">
-        <div style="border:1px solid var(--line2);border-radius:10px;padding:10px;margin-bottom:14px;background:var(--panel2,#fafafa)">
+    ${facMultiPanel(id, `<div style="border:1px solid var(--line2);border-radius:10px;padding:10px;margin-bottom:12px;background:var(--panel2,#fafafa)">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <b style="font-size:12.5px">🏢 회사 등록 공장 목록 · Registered Facilities <span class="muted">(회사 자산 · ${facs.length}개)</span></b>
+            <b style="font-size:12.5px">🏢 회사 등록 공장 목록 · Registered Facilities <span class="muted">(회사 자산 · ${facs.length}${T('개')})</span></b>
             ${canApp?`<button class="btn" style="padding:4px 10px" onclick="facAdd('${esc(org)}','${id}')">+ 공장 추가</button>`:''}
           </div>
           <div class="muted small" style="margin-bottom:4px">☑ 체크한 공장이 <b>이 신청 대상</b>으로 저장됩니다 · Select target facilities for this application</div>
           <div id="facListBox">${facListHtml(facs,org,canApp,c.facility_ids,id)}</div>
-        </div>
-        <div class="banner info" style="margin-bottom:6px">🏭 공장 상세(주소·도시·국가·우편·등록번호·제조업체·연락처)는 위 <b>공장 목록의 [편집]</b>에서 공장별로 관리합니다 — Facility 테이블에 저장됩니다.</div>
-        <details style="margin-top:12px"><summary class="muted small" style="cursor:pointer">🏛 ${T('할랄 인증기관 조회')} (공급사 인증서 발급기관 확인)</summary>
-          <div style="margin-top:6px"><div class="btnrow" style="gap:6px"><input class="box" id="instQ" placeholder="${T('기관명 (예: JAKIM, MUI, Sucofindo)')}" style="flex:1"></div>
-          <div class="btnrow" style="gap:6px;margin-top:6px">
-            <button class="btn" onclick="sihalalLookup(v('instQ'),'lhln')">🌏 ${T('해외 인증기관(LHLN)')}</button>
-            <button class="btn" onclick="sihalalLookup(v('instQ'),'lph')">🇮🇩 ${T('국내 인증기관(LPH)')}</button></div>
-          <div id="instOut" class="small" style="margin-top:8px"></div></div></details>
-      </div></div>
+        </div>`)}
   </div>
   <div class="grid three" style="margin-top:16px">
     <div class="card"><h3>할랄감독자 · Penyelia <span class="en">· Supervisor</span><span class="r">활성 ${penyeliaResp.active_count!=null?penyeliaResp.active_count:pens.filter(p=>p.status==='active').length}</span></h3>
@@ -5308,7 +5502,7 @@ function downloadText(fname,text){const blob=new Blob(["﻿"+String(text||"")],{
 const GENDOC_KO={sjph_manual:"SJPH 매뉴얼",audit_report:"현장심사 보고서"};
 async function genDocsCard(id,docType,title,genFn,canApprove){
   let rows=[];try{rows=await API(`/cases/${id}/gen-docs?doc_type=${docType}`);}catch(_){}
-  return `<div class="card" style="margin-top:16px"><h3>${esc(title)} <span class="en">· versions</span><span class="r">${rows.length}개 버전</span></h3>
+  return `<div class="card" style="margin-top:16px"><h3>${esc(title)} <span class="en">· versions</span><span class="r">${rows.length}${T('개')} ${T('버전')}</span></h3>
     <div class="body tight"><table><thead><tr><th>버전</th><th>상태</th><th>생성</th><th></th></tr></thead>
       <tbody>${rows.length?rows.map(g=>`<tr><td><b>v${g.version}</b></td><td>${bTag(g.status==='approved'?'ok':'mute',g.status)}</td>
         <td class="muted small">${esc((g.created_at||"").slice(0,16))}</td>
@@ -5420,7 +5614,7 @@ SCREEN.integration=async()=>{
     <div class="card"><h3>제품 · HPAS 매핑 <span class="en">· Products</span></h3>
       <div class="list" style="margin:0 -1px">${pRows}</div></div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>HPAS 매트릭스 <span class="en">· Product × Material</span><span class="r">${(matrix.links||[]).length}개 링크</span></h3>
+  <div class="card" style="margin-top:16px"><h3>HPAS 매트릭스 <span class="en">· Product × Material</span><span class="r">${(matrix.links||[]).length}${T('개')} ${T('링크')}</span></h3>
     <div class="body">
       ${mxLinks||'<div class="muted small" style="margin-bottom:10px">아직 링크된 매트릭스가 없습니다.</div>'}
       ${canMatrix?`<div class="divide"></div><div class="btnrow">
@@ -5651,10 +5845,10 @@ async function genFatwaDecree(id){
 }
 /* ===== 공장 다건 분류 패널 (Facility 1:N) ===== */
 let FAC_LIST=[];let FAC_SEL=0;
-function facMultiPanel(id){
+function facMultiPanel(id, topHtml){
   const prev=AFTER_RENDER;
   AFTER_RENDER=function(){ if(prev) try{prev()}catch(_){}; loadFacMulti(id); };
-  return '<div class="card"><h3>🏭 공장 목록 · Factories <span class="en">· 다건 분류(1:N)</span></h3><div class="body"><div id="facMultiBody" class="muted small">불러오는 중…</div></div></div>';
+  return '<div class="card"><h3>🏭 공장·시설 목록 · Factories <span class="en">· 다건 분류(1:N)</span></h3><div class="body">'+(topHtml||'')+'<div id="facMultiBody" class="muted small">불러오는 중…</div></div></div>';
 }
 async function loadFacMulti(id){
   try{ const r=await API(`/cases/${id}/factories`); FAC_LIST=(r&&r.factories)||[]; if(FAC_SEL>=FAC_LIST.length)FAC_SEL=0; renderFacMulti(id); }
@@ -5719,7 +5913,7 @@ async function delFacM(id,fid){
   catch(e){ toast("삭제 실패"); }
 }
 async function classifyFacs(id){
-  try{ const r=await API('/cases/'+id+'/factories/classify',{method:"POST",body:"{}"}); toast("분류 완료 · "+((r&&r.classified)||0)+"개 공장"); await loadFacMulti(id); }
+  try{ const r=await API('/cases/'+id+'/factories/classify',{method:"POST",body:"{}"}); toast("분류 완료 · "+((r&&r.classified)||0)+T('개')+" "+T('공장')); await loadFacMulti(id); }
   catch(e){ toast("분류 실패 · "+((e&&e.code)||"")); }
 }
 function selectDoc(did){DOC_SEL=did;applyView();}
@@ -6012,7 +6206,7 @@ async function proposeAuditDates(pid){
   const r=await dialog("현장심사 일정변경 제안 · 후보일 2~3개",[{key:"d1",label:"후보일 1 · Date 1",type:"date",required:true},{key:"d2",label:"후보일 2 · Date 2",type:"date"},{key:"d3",label:"후보일 3 · Date 3",type:"date"}]);
   if(!r)return;
   const dates=[r.d1,r.d2,r.d3].filter(Boolean);
-  try{await API(`/audit-plans/${pid}/propose-dates`,{method:"POST",body:JSON.stringify({dates})});toast("일정변경 제안 · "+dates.length+"개 후보일");applyView();}
+  try{await API(`/audit-plans/${pid}/propose-dates`,{method:"POST",body:JSON.stringify({dates})});toast("일정변경 제안 · "+dates.length+T('개')+" "+T('후보일'));applyView();}
   catch(e){toast("제안 실패 · "+((e&&e.code)||""));}
 }
 /* ===== A08: 현장심사 일정 캘린더(클라이언트 주도 조율) — SCREEN.onsiteCalendar =====
@@ -6020,7 +6214,11 @@ async function proposeAuditDates(pid){
    SCREEN.audit(현장심사 로직·audit-plan)와는 별개 화면(중복 없음). */
 let OC={y:0,mo:0,sel:new Set(),data:null,cid:null};
 const OC_DOW=["일","월","화","수","목","금","토"];
+const OC_DOW_ID=["Min","Sen","Sel","Rab","Kam","Jum","Sab"];   // Bahasa 요일 약어(요일 오역 방지 — 단일글자가 T()에서 금→Emas 등으로 오역되던 문제)
 const OC_MON=["1월","2월","3월","4월","5월","6월","7월","8월","9월","10월","11월","12월"];
+const OC_MON_ID=["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+function ocDow(){return LANG===2?OC_DOW_ID:OC_DOW;}
+function ocMonLbl(y,mo){return LANG===2?(OC_MON_ID[mo]+" "+y):(y+"년 "+OC_MON[mo]);}
 function ocPad(n){return (n<10?"0":"")+n;}
 function ocKey(y,mo,d){return y+"-"+ocPad(mo+1)+"-"+ocPad(d);}   // YYYY-MM-DD
 function ocToday(){const t=new Date();return ocKey(t.getFullYear(),t.getMonth(),t.getDate());}
@@ -6028,12 +6226,12 @@ function ocCanPropose(){return ["client","consultant"].includes(ROLE);}   // 클
 function ocCanAudit(){return ["auditor","ops","admin"].includes(ROLE);}    // 오디터 확정·재조율
 function ocPaint(){
   const grid=document.getElementById("ocGrid"); if(!grid)return;
-  const lbl=document.getElementById("ocMonLbl"); if(lbl)lbl.textContent=OC.y+"년 "+OC_MON[OC.mo];
+  const lbl=document.getElementById("ocMonLbl"); if(lbl)lbl.textContent=ocMonLbl(OC.y,OC.mo);
   const d=OC.data||{}; const cli=new Set(d.client_dates||[]); const aud=new Set(d.auditor_dates||[]);
   const conf=(d.confirmed&&d.confirmed.date)||"";
   const first=new Date(OC.y,OC.mo,1).getDay(), days=new Date(OC.y,OC.mo+1,0).getDate();
   const clickable=ocCanPropose()||ocCanAudit();
-  let cells=OC_DOW.map(w=>`<div class="oc-h">${w}</div>`).join("");
+  let cells=ocDow().map(w=>`<div class="oc-h">${w}</div>`).join("");
   for(let i=0;i<first;i++)cells+="<div></div>";
   for(let dd=1;dd<=days;dd++){
     const k=ocKey(OC.y,OC.mo,dd); let cls="oc-d",mk="";
@@ -6298,7 +6496,11 @@ async function contractStageCard(id){
   const steps=[['계약서','contract', ct.exists], ['고객 서명','client sign', !!ct.signed_a], ['GLHAC 서명','glhac sign', !!ct.signed_b], ['청구서','invoice', hasInv], ['입금확인','payment', paid]];
   let cur=steps.findIndex(s=>!s[2]); if(cur===-1)cur=steps.length-1;
   const stepbar=steps.map((s,i)=>{const done=s[2]; const cls=done?'done':(i===cur?'now':''); return `<div class="step ${cls}" style="min-width:78px">${i+1}. ${s[0]}<span class="en"> · ${s[1]}</span></div>`+(i<steps.length-1?'<span class="arrow">→</span>':'');}).join('');
-  const statusBanner = paid?`<div class="banner ok">✓ 입금 확인 완료 — 모의심사 진행 가능</div>`:(ct.exists?`<div class="banner warn">ℹ 계약·결제 진행 중 — 서명/입금 완료 시 모의심사로</div>`:`<div class="banner info">계약 대기 — 사전심사 완료 후 계약서가 생성됩니다</div>`);
+  const confirmed=(ct.status==='confirmed'||ct.status==='invoiced'||ct.status==='paid'||hasInv||paid);
+  const bothSigned=!!ct.signed_a&&!!ct.signed_b;
+  const statusBanner = paid?`<div class="banner ok">✓ 입금 확인 완료 — 모의심사 진행 가능</div>`:(confirmed?`<div class="banner ok">✓ 계약 최종 확인 완료 — 청구서 생성 가능</div>`:(bothSigned?`<div class="banner warn">✍ 양자 서명 완료 — <b>관리자 최종 확인</b> 후 청구서가 생성됩니다</div>`:(ct.exists?`<div class="banner warn">ℹ 계약·서명 진행 중 — 서명 완료 후 관리자 확인 단계로</div>`:`<div class="banner info">계약 대기 — 사전심사 완료 후 계약서가 생성됩니다</div>`)));
+  // 최종 계약서 확인(관리자) — 양자 서명 완료 & 미확인 상태에서 operator/admin에게 노출. 청구서 생성 게이트를 연다.
+  const confirmBox = (bothSigned&&!confirmed&&(ROLE==='ops'||ROLE==='admin'))?`<div class="btnrow" style="margin-top:10px"><button class="btn ok" onclick="confirmContract('${id}')">✅ 최종 계약서 확인 · Confirm</button></div>`:'';
   // 양자 전자서명(전자문서 동의 · 인증서 불필요) — party A(고객)/B(GL HAC). 미서명측만 해당 역할에 버튼 노출.
   const sigOf=(pt)=>{const arr=(ct.signatures||[]).filter(x=>x.party===pt);return arr.length?arr[arr.length-1]:null;};
   const sigCell=(pt,label,canSign)=>{const s=sigOf(pt);
@@ -6306,7 +6508,7 @@ async function contractStageCard(id){
     if(canSign)return `<div class="kv"><span>${label}</span><button class="btn ok" style="padding:3px 10px;font-size:12px" onclick="signContract('${ct.contract_id}','${pt}')">✍ ${label}</button></div>`;
     return `<div class="kv"><span>${label}</span><span class="muted small">${T('서명 대기')}</span></div>`;};
   const signBox = ct.exists?`<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">${sigCell('A','고객 서명', ROLE==='client')}${sigCell('B','GL HAC 서명', ROLE==='ops'||ROLE==='admin')}${psreSigNote()}</div>`:'';
-  return `<div class="card" style="margin-bottom:16px"><h3>계약 단계 진행 <span class="en">· Contract stage</span>${ct.contract_no?`<span class="r">${esc(ct.contract_no)}</span>`:''}</h3><div class="body"><div class="flow" style="overflow-x:auto">${stepbar}</div><div style="margin-top:10px">${statusBanner}</div>${signBox}${ct.fee?`<div class="kv" style="margin-top:6px"><span>계약금액</span><b>${Number(ct.fee).toLocaleString()} ${esc(ct.currency||'KRW')}</b></div>`:''}</div></div>`;
+  return `<div class="card" style="margin-bottom:16px"><h3>계약 단계 진행 <span class="en">· Contract stage</span>${ct.contract_no?`<span class="r">${esc(ct.contract_no)}</span>`:''}</h3><div class="body"><div class="flow" style="overflow-x:auto">${stepbar}</div><div style="margin-top:10px">${statusBanner}</div>${signBox}${confirmBox}${ct.fee?`<div class="kv" style="margin-top:6px"><span>계약금액</span><b>${Number(ct.fee).toLocaleString()} ${esc(ct.currency||'KRW')}</b></div>`:''}</div></div>`;
 }
 async function signContract(contractId, party){
   if(!contractId){toast(T('계약 없음'));return;}
@@ -6319,6 +6521,66 @@ async function signContract(contractId, party){
     toast(T('서명 완료'));applyView();}
   catch(e){toast(T('서명 실패')+' · '+(e&&e.code?e.code:''));}
 }
+async function confirmContract(id){
+  if(!id)return;
+  if(!confirm(T('최종 계약서를 확인합니까? 확인 후 청구서를 생성할 수 있습니다.')))return;
+  try{await API('/cases/'+id+'/contract/confirm',{method:'POST',body:'{}'});
+    toast(T('계약 최종 확인 완료'));applyView();}
+  catch(e){toast(T('확인 실패')+' · '+(e&&e.code?e.code:''));}
+}
+/* 수정요청 001 P3 — 케이스별 계약 큐 '현재 담당 역할' 판정(처리대기 배지용). */
+function contractTurnRole(st){
+  return ({requested:'ops',sent:'client',issued:'client',received:'auditor',signing:'client',signed:'ops'})[st]||null;
+}
+/* 수정요청 001 P2 — 계약 진행 큐(승인 이관) 카드 + 역할별 액션. 금액 요약은 청구서 생성 후에만 노출. */
+async function contractQueueCard(id){
+  if(!id) return '';
+  const [ct, invs] = await Promise.all([
+    API('/cases/'+id+'/contract').catch(()=>({exists:false})),
+    API('/cases/'+id+'/invoices').catch(()=>[])
+  ]);
+  const st = ct.exists ? (ct.status||'none') : 'none';
+  const hasInv=(invs||[]).length>0;
+  const RANK={none:0,draft:0,requested:1,sent:2,issued:2,received:3,signing:4,signed:4,confirmed:5,invoiced:6,paid:6};
+  const done=RANK[st]!=null?RANK[st]:0;
+  const isOps=(ROLE==='ops'||ROLE==='admin'), isClient=(ROLE==='client'||ROLE==='consultant'), isAud=(ROLE==='auditor');
+  const xs='padding:3px 9px;font-size:11px';
+  const steps=[
+    {n:1,ko:'계약 신청',en:'Request',owner:'클라이언트',act:(done<1&&isClient)?`<button class="btn pri" style="${xs}" onclick="contractRequest('${id}')">📝 계약 신청</button>`:''},
+    {n:2,ko:'승인·발송',en:'Approve',owner:'관리자',act:(done===1&&isOps)?`<button class="btn pri" style="${xs}" onclick="contractApprove('${id}')">✅ 승인·발송</button>`:''},
+    {n:3,ko:'접수·확인',en:'Receive',owner:'클라이언트',act:(done===2&&isClient)?`<button class="btn pri" style="${xs}" onclick="contractReceive('${id}')">📩 접수·확인</button>`:''},
+    {n:4,ko:'서명',en:'Sign',owner:'오디터/양자',act:(done===3&&isAud)?`<button class="btn pri" style="${xs}" onclick="contractRequestSignature('${id}')">✍ 서명 요청</button>`:(st==='signing'?`<span class="muted small">↓ 서명 진행</span>`:'')},
+    {n:5,ko:'최종 확인',en:'Confirm',owner:'관리자',act:(st==='signed'&&isOps)?`<span class="muted small">↓ 최종 확인</span>`:''},
+    {n:6,ko:'청구·입금',en:'Invoice',owner:'관리자',act:''},
+  ];
+  const cells=steps.map(s=>{
+    const state=s.n<=done?'done':(s.n===done+1?'now':'wait');
+    const cls=state==='done'?'done':(state==='now'?'now':'');
+    const foot=s.act?s.act:(state==='now'?`<span class="muted small">${esc(s.owner)} 대기</span>`:'');
+    return `<div class="step ${cls}" style="min-width:112px;flex:1"><div style="font-weight:700">${s.n}. ${T(s.ko)}</div><div class="en" style="font-size:10px">· ${s.en} · ${esc(s.owner)}</div>${foot?`<div style="margin-top:5px">${foot}</div>`:''}</div>`;
+  }).join('<span class="arrow">→</span>');
+  // 금액 표시 카드(총청구액/결제완료/미결제) 삭제(수정요청 001) — 금액은 청구서 목록에서 건별로만.
+  // 계약 확인(청구서 생성) 전엔 게이트 안내 배너만 노출.
+  const money=hasInv?'':`<div class="banner info" style="margin-top:12px">🔒 계약 최종 확인 후 청구서가 생성됩니다</div>`;
+  const canReturn=['requested','sent','issued','received','signing','signed'].includes(st)&&(contractTurnRole(st)===ROLE||isOps);
+  const returnBtn=canReturn?`<div class="btnrow" style="margin-top:8px"><button class="btn" style="color:var(--bad);${xs};margin-left:auto" onclick="contractReturn('${id}')">↩ 반려 · Return</button></div>`:'';
+  return `<div class="card" style="margin-bottom:16px"><h3>계약 진행 큐 <span class="en">· Contract Queue</span></h3><div class="body"><div class="flow" style="overflow-x:auto;align-items:stretch">${cells}</div>${returnBtn}${money}</div></div>`;
+}
+async function contractReturn(id){
+  const r=await dialog(T('계약 반려'),[{key:'reason',label:T('반려 사유 · Reason'),type:'text'}]);
+  if(!r)return;
+  try{await API('/cases/'+id+'/contract/return',{method:'POST',body:JSON.stringify({reason:r.reason||''})});
+    toast(T('반려 완료'));applyView();}
+  catch(e){toast(T('반려 실패')+' · '+(e&&e.code?e.code:''));}
+}
+async function _contractQAction(id,path,okMsg){
+  try{await API('/cases/'+id+'/contract/'+path,{method:'POST',body:'{}'});toast(T(okMsg));applyView();}
+  catch(e){toast(T('처리 실패')+' · '+(e&&e.code?e.code:''));}
+}
+async function contractRequest(id){ if(!confirm(T('계약을 신청합니까? 관리자 승인 후 계약서가 발송됩니다.')))return; _contractQAction(id,'request','계약 신청 완료'); }
+async function contractApprove(id){ if(!confirm(T('승인하고 계약서를 발송합니까?')))return; _contractQAction(id,'approve','승인·계약서 발송 완료'); }
+async function contractReceive(id){ if(!confirm(T('계약서를 접수·확인합니까?')))return; _contractQAction(id,'receive','계약서 접수·확인 완료'); }
+async function contractRequestSignature(id){ if(!confirm(T('서명을 요청합니까?')))return; _contractQAction(id,'request-signature','서명 요청 완료'); }
 async function uploadMockDoc(id,section){
   const sec=MOCK_EV_SECTIONS.find(s=>s.key===section)||{};
   const inp=document.createElement("input");inp.type="file";
@@ -6511,7 +6773,7 @@ var ONSITE_HPAS_REASONS=[];
 /* 법적효력 Phase 1 — PSrE 공인 전자서명 상태(정직표기). 미설정(기본)이면 내부 무결성 서명 + 미연동 안내를 노출.
    /admin/psre-status는 operator 전용이므로 비권한/미설정이면 기본값(미설정) 유지 → 절대 공인서명을 과장하지 않는다. */
 var PSRE_ST={configured:false,provider:null};
-async function loadPsreStatus(){try{const r=await API('/admin/psre-status');if(r&&r.psre)PSRE_ST=r.psre;}catch(_){/* 비권한/미설정 → 내부 서명 유지 */}}
+async function loadPsreStatus(){if(ROLE!=='ops'&&ROLE!=='admin')return;/* operator 전용 — 비권한 역할은 호출 안 함(403·경고배너 방지) */ try{const r=await API('/admin/psre-status');if(r&&r.psre)PSRE_ST=r.psre;}catch(_){/* 미설정 → 내부 서명 유지 */}}
 function psreSigNote(){
   if(PSRE_ST&&PSRE_ST.configured){
     return `<div class="muted small" style="margin-top:8px">🔏 <b>${T('PSrE 공인 전자서명')}</b>${PSRE_ST.provider?' · '+esc(PSRE_ST.provider):''} <span class="muted">${T('UU ITE 법적효력')}</span></div>`;
@@ -7268,11 +7530,7 @@ SCREEN.invoice=async()=>{
   const st2=inv.reduce((a,i)=>{const t=(i.total==null?i.amount:i.total)||0;a.total+=t;if(i.status==='paid')a.paid+=t;else a.unpaid+=t;return a;},{total:0,paid:0,unpaid:0});
   return `
   ${await contractStageCard(id)}
-  <div class="grid three" style="margin-bottom:16px">
-    <div class="card"><div class="body kpi"><span class="n" style="font-size:24px">${fmtIDR(st2.total)}</span><span class="l">총 청구액 · Total</span></div></div>
-    <div class="card"><div class="body kpi"><span class="n" style="font-size:24px;color:var(--ok)">${fmtIDR(st2.paid)}</span><span class="l">결제 완료 · Paid</span></div></div>
-    <div class="card"><div class="body kpi"><span class="n" style="font-size:24px;color:var(--warn)">${fmtIDR(st2.unpaid)}</span><span class="l">미결제 · Unpaid</span></div></div>
-  </div>
+  ${await contractQueueCard(id)}
   <div class="grid side">
     <div class="card"><h3>청구서 목록 <span class="en">· Invoices</span><span class="r">${inv.length}건 · row 클릭 → 상세</span></h3>
       <div class="body tight"><table><thead><tr><th>청구번호</th><th>서비스</th><th>금액 · IDR</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -7645,14 +7903,14 @@ SCREEN.opsCalendar=async()=>{
     const items=evs.map(e=>`<div class="calev" title="${esc(e.company_name||'')} · ${T('현장실사')}${e.time?' '+esc(e.time):''}" onclick="openCase('${esc(e.case_id)}')">${e.status==='confirmed'?'✅':'📍'} ${esc(e.company_name||T('현장실사'))}</div>`).join('');
     cells+=`<div class="calcell${ds===todayStr?' today':''}${evs.length?' has':''}"><div class="calday">${day}${evs.length?` <span class="calbadge">${evs.length}</span>`:''}</div>${items}</div>`;
   }
-  const grid=`<div class="calgrid-head">${WD.map(w=>`<div>${T(w)}</div>`).join('')}</div><div class="calgrid">${cells}</div>`;
+  const grid=`<div class="calgrid-head">${(LANG===2?OC_DOW_ID:WD).map(w=>`<div>${w}</div>`).join('')}</div><div class="calgrid">${cells}</div>`;
   const all=cal.events||[];
   const listRows=all.length?all.map(e=>`<tr class="clickable" onclick="openCase('${esc(e.case_id)}')"><td style="white-space:nowrap"><b>${esc(e.date)}</b>${e.time?` ${esc(e.time)}`:''}</td><td><b>${esc(e.company_name||'—')}</b><div class="muted small">${short(e.case_id)}</div></td><td>${e.status==='confirmed'?bTag('ok',T('확정')):bTag('gold',T('예정'))}${e.lph_name?` <span class="muted small">${esc(e.lph_name)}</span>`:''}</td></tr>`).join(''):`<tr><td colspan="3" class="muted small">${T('예정된 현장실사 일정이 없습니다.')}</td></tr>`;
   return `
   <div class="banner info" style="margin-bottom:16px">🗓️ <b>${T('전사 현장실사 일정')}</b> — ${T('현장실사 일정을 날짜별로 모아 봅니다. 항목을 누르면 해당 케이스로 이동합니다.')}</div>
   <div class="card" style="margin-bottom:16px"><div class="body">
     <div class="btnrow" style="align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-      <div style="font-weight:800;font-size:16px">${Y}${T('년')} ${M}${T('월')}</div>
+      <div style="font-weight:800;font-size:16px">${LANG===2?(OC_MON_ID[M-1]+' '+Y):(Y+T('년')+' '+M+T('월'))}</div>
       <div class="btnrow"><button class="btn" onclick="opsCalNav(-1)">‹ ${T('이전 달')}</button><button class="btn" onclick="opsCalToday()">${T('이번 달')}</button><button class="btn" onclick="opsCalNav(1)">${T('다음 달')} ›</button></div>
     </div>
     ${grid}
@@ -8895,7 +9153,7 @@ SCREEN.system=async()=>{
         <div class="btnrow"><button class="btn" onclick="reseedOntology()">온톨로지 재시드</button>
           <button class="btn bad" onclick="seedReset()">seed 초기화</button></div></div></div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>LPH 레퍼런스 <span class="en">· LPH references</span><span class="r">${(lphrefs||[]).length}개</span></h3>
+  <div class="card" style="margin-top:16px"><h3>LPH 레퍼런스 <span class="en">· LPH references</span><span class="r">${(lphrefs||[]).length}${T('개')}</span></h3>
     <div class="body tight"><table><thead><tr><th>기관명</th><th>인증번호</th><th>상태</th><th>지역</th></tr></thead>
       <tbody>${(lphrefs||[]).length?(lphrefs||[]).map(l=>`<tr><td><b>${esc(l.name||"—")}</b></td><td class="muted small">${esc(l.accreditation_no||"—")}</td><td>${tag(l.status==='active'?'ok':'mute',l.status||"—")}</td><td class="muted">${esc(l.region||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">등록된 LPH 없음</td></tr>'}</tbody></table></div></div>
   <div class="card" style="margin-top:16px"><h3>KMA 1360 면제 · 전체 케이스 <span class="en">· KMA exempt / All cases</span></h3>
@@ -8915,7 +9173,7 @@ SCREEN.system=async()=>{
         {key:"fatwa_status",label:"파트와",en:"Fatwa",sortable:false},
         {key:"org_id",label:"조직",en:"Org"}
       ]})}</div></div>
-  ${ovs.length?`<div class="card" style="margin-top:16px"><h3>조직별 개요 <span class="en">· Multi-tenant overview</span><span class="r">${ovs.length}개 조직</span></h3>
+  ${ovs.length?`<div class="card" style="margin-top:16px"><h3>조직별 개요 <span class="en">· Multi-tenant overview</span><span class="r">${ovs.length}${T('개')} ${T('조직')}</span></h3>
     <div class="body tight"><table><thead><tr><th>조직 · Org</th><th>케이스</th><th>사용자</th><th>인증서</th><th>매출 · Revenue</th></tr></thead><tbody>
     ${ovs.map(o=>`<tr><td><b>${esc(o.org_id)}</b></td><td>${o.cases}</td><td>${o.users}</td><td>${o.certificates}</td><td>${fmtIDR(o.revenue_paid)}</td></tr>`).join("")}
     </tbody></table></div></div>`:''}`;
@@ -9143,10 +9401,12 @@ function parseHash(){
 }
 async function boot(){
   if(!token()){document.getElementById("appView").style.display="none";document.getElementById("loginView").style.display="grid";
+    try{LANG=parseInt(localStorage.getItem("glhac_lang")||"0",10)||0;applyLang();}catch(_){}
     try{const cfg=await fetch("/public-config").then(r=>r.json());
       if(cfg&&cfg.dev_mode){const dp=document.getElementById("demoPanel");if(dp)dp.style.display="";}
       applyTenantBranding(cfg&&cfg.tenant);   // 범위확장: 도메인 매칭 시 화이트라벨 적용
     }catch(_){}
+    loginLocalize();   // 로그인/회원가입 화면 언어 적용(Bahasa 등)
     return;}
   try{const th=localStorage.getItem("glhac_theme")||"light";document.documentElement.setAttribute("data-theme",th);document.getElementById("themePill").textContent=th==="dark"?"☀️ 라이트":"🌙 다크";}catch(_){}
   try{LANG=parseInt(localStorage.getItem("glhac_lang")||"0",10)||0;applyLang();}catch(_){}
