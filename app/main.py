@@ -2516,26 +2516,33 @@ def _apply_intake_autofill(db, c, res):
         if not _fac and agg.get("factory_address"):
             _fac = db.query(models.Facility).filter_by(org_id=c.org_id,
                                                        address=agg["factory_address"]).first()
+        # reg·주소 매칭 실패 시 같은 회사명 공장 재사용(주소 표기 변동에 의한 중복 생성 방지)
         if not _fac:
+            _nm = agg.get("company_name") or c.company_name
+            if _nm:
+                _fac = db.query(models.Facility).filter_by(org_id=c.org_id, name=_nm).first()
+        # 이름·주소 단서가 있을 때만 생성(빈 공장 생성 방지)
+        if not _fac and (agg.get("factory_address") or agg.get("company_name") or c.company_name):
             _fac = models.Facility(org_id=c.org_id,
                                    name=agg.get("company_name") or c.company_name or "공장")
             db.add(_fac)
-        if agg.get("factory_address"):
-            _fac.address = agg["factory_address"]
-        if agg.get("factory_city"):
-            _fac.city = agg["factory_city"]
-        if agg.get("factory_country"):
-            _fac.country = agg["factory_country"]
-        if agg.get("factory_zip"):
-            _fac.zip = agg["factory_zip"]
-        if _reg:
-            _fac.reg_no = _reg
-        db.flush()
-        _fids = list(c.facility_ids or [])
-        if _fac.facility_id not in _fids:
-            _fids.append(_fac.facility_id)
-            c.facility_ids = _fids
-        applied["facility"] = _fac.facility_id
+        if _fac:
+            if agg.get("factory_address"):
+                _fac.address = agg["factory_address"]
+            if agg.get("factory_city"):
+                _fac.city = agg["factory_city"]
+            if agg.get("factory_country"):
+                _fac.country = agg["factory_country"]
+            if agg.get("factory_zip"):
+                _fac.zip = agg["factory_zip"]
+            if _reg:
+                _fac.reg_no = _reg
+            db.flush()
+            _fids = list(c.facility_ids or [])
+            if _fac.facility_id not in _fids:
+                _fids.append(_fac.facility_id)
+                c.facility_ids = _fids
+            applied["facility"] = _fac.facility_id
     # 제품·원재료 자동 연결(매트릭스) — 아코디언에 원재료가 붙도록
     applied["links"] = _auto_link_pm(db, c.case_id)
     # 문서 타입별 개별 프로세서 — 공정흐름도/할랄인증서/SJPH매뉴얼을 각 엔티티로 매핑
