@@ -225,8 +225,8 @@ def parse_file(name, data, dpi=None):
 _CLASSIFY_SYS = (
     "당신은 할랄 인증 서류 분류기입니다. 파일명과 본문 발췌를 보고 doc_type을 분류하고 핵심 필드를 추출하세요. "
     "doc_type은 반드시 다음 중 하나: " + ", ".join(DOC_TYPES) + ". "
-    "address는 회사(사업자) 주소, city/country/zip은 회사 주소의 도시/국가/우편번호. "
-    "factory_address는 공장 주소, factory_city/factory_country/factory_zip은 공장 주소의 도시/국가/우편번호. "
+    "address는 회사(사업자) 주소, city/province/country/zip은 회사 주소의 도시/도(주,state/province)/국가/우편번호. "
+    "factory_address는 공장 주소, factory_city/factory_province/factory_country/factory_zip은 공장 주소의 도시/도(주)/국가/우편번호. "
     "factory_reg_no는 공장/영업 등록번호, responsible_person은 대표자/책임자 이름. "
     "phone은 회사 전화번호, factory_phone은 공장 전화번호(Tel). "
     "business_type은 사업의 종류/업태(예: 제조업, 도소매업). "
@@ -239,8 +239,8 @@ _CLASSIFY_SYS = (
     "has_commitment/has_materials/has_process/has_product/has_monitoring는 SJPH 매뉴얼에 "
     "해당 5요소(약속·원재료·공정·제품·모니터링)가 포함되면 true. 없으면 null/false/[]. "
     '반드시 JSON으로만: {"doc_type":"...","confidence":0.0,'
-    '"fields":{"company_name":null,"nib":null,"address":null,"city":null,"country":null,"zip":null,'
-    '"factory_address":null,"factory_city":null,"factory_country":null,"factory_zip":null,'
+    '"fields":{"company_name":null,"nib":null,"address":null,"city":null,"province":null,"country":null,"zip":null,'
+    '"factory_address":null,"factory_city":null,"factory_province":null,"factory_country":null,"factory_zip":null,'
     '"responsible_person":null,"factory_reg_no":null,"phone":null,"factory_phone":null,'
     '"business_type":null,"employee_count":null,"product_names":[],"cert_no":null,'
     '"issuer":null,"expiry_date":null,"material_names":[],"process_steps":[],'
@@ -355,14 +355,14 @@ def _infer_country_zip(addr):
     return country, zipc
 
 
-def _complete_address(addr, city, country):
-    """LLM이 주소 뒷부분(시·국가)을 절단한 경우 도시/국가를 이어붙여 완성.
-    이미 포함돼 있으면 그대로 둔다(중복 방지)."""
+def _complete_address(addr, city, province, country):
+    """LLM이 주소 뒷부분(시·도·국가)을 절단한 경우 도시→도(주)→국가 순으로 이어붙여 완성.
+    이미 포함돼 있으면 그대로 둔다(중복 방지). 표기 순서(…시, 도, 국가)를 지킨다."""
     if not addr:
         return addr
     out = str(addr).rstrip(" .,")
     low = out.lower()
-    for part in (city, country):
+    for part in (city, province, country):   # 도시 → 도(주) → 국가 순
         if part and str(part).strip() and str(part).lower() not in low:
             out += ", " + str(part).strip()
             low = out.lower()
@@ -432,10 +432,10 @@ def classify(name, text):
 
 # 개별 업로드 컨텍스트 파싱 — doc_type별 추출 필드 스펙
 _FIELD_SPEC = {
-    "nib_business_license": ("회사명, NIB(사업자등록번호), 주소(도·시·국가 전체), 도시, 국가, 우편번호, 회사 전화번호, 사업의 종류/업태",
-                             '{"company_name":null,"nib":null,"address":null,"city":null,"country":null,"zip":null,"phone":null,"business_type":null}'),
-    "factory_registration": ("공장등록번호, 공장 주소(도·시·국가 전체), 도시, 국가, 우편번호, 공장 전화번호(Tel), 총 직원 수(숫자)",
-                             '{"factory_reg_no":null,"factory_address":null,"factory_city":null,"factory_country":null,"factory_zip":null,"factory_phone":null,"employee_count":null}'),
+    "nib_business_license": ("회사명, NIB(사업자등록번호), 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 회사 전화번호, 사업의 종류/업태",
+                             '{"company_name":null,"nib":null,"address":null,"city":null,"province":null,"country":null,"zip":null,"phone":null,"business_type":null}'),
+    "factory_registration": ("공장등록번호, 공장 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 공장 전화번호(Tel), 총 직원 수(숫자)",
+                             '{"factory_reg_no":null,"factory_address":null,"factory_city":null,"factory_province":null,"factory_country":null,"factory_zip":null,"factory_phone":null,"employee_count":null}'),
     "halal_certificate": ("인증번호, 발급기관, 만료일, 대상(제품/원재료)",
                           '{"cert_no":null,"issuer":null,"expiry_date":null,"scope":null}'),
     "quality_cert": ("인증종류(HACCP/ISO/GMP/FSSC), 인증번호, 만료일",
@@ -500,8 +500,8 @@ def aggregate_fields(docs):
     """분류 문서들의 추출 필드를 신청서용으로 집계.
     회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외)."""
     agg = {"company_name": None, "nib": None, "address": None, "factory_address": None,
-           "city": None, "country": None, "zip": None,
-           "factory_city": None, "factory_country": None, "factory_zip": None,
+           "city": None, "province": None, "country": None, "zip": None,
+           "factory_city": None, "factory_province": None, "factory_country": None, "factory_zip": None,
            "responsible_person": None, "phone": None, "factory_phone": None,
            "business_type": None, "employee_count": None,
            "factory_reg_no": None, "products": [], "materials": [], "certificates": []}
@@ -522,10 +522,10 @@ def aggregate_fields(docs):
                 agg["factory_address"] = f["factory_address"]
             if d.get("doc_type") == "factory_registration" and not agg["factory_address"] and f.get("address"):
                 agg["factory_address"] = f["address"]   # 공장등록증의 주소는 공장 주소
-            for _c in ("city", "country", "zip"):        # 회사 도시/국가/우편(NIB)
+            for _c in ("city", "province", "country", "zip"):        # 회사 도시/도/국가/우편(NIB)
                 if not agg[_c] and f.get(_c) and d.get("doc_type") != "factory_registration":
                     agg[_c] = f[_c]
-            for _fc in ("factory_city", "factory_country", "factory_zip"):   # 공장 도시/국가/우편(공장등록증)
+            for _fc in ("factory_city", "factory_province", "factory_country", "factory_zip"):   # 공장 도시/도/국가/우편(공장등록증)
                 if not agg[_fc] and f.get(_fc):
                     agg[_fc] = f[_fc]
             if not agg["responsible_person"] and f.get("responsible_person"):
@@ -556,9 +556,9 @@ def aggregate_fields(docs):
         if f.get("cert_no"):
             agg["certificates"].append({"cert_no": f.get("cert_no"), "issuer": f.get("issuer"),
                                         "expiry": f.get("expiry_date")})
-    # 주소 절단 보강: LLM이 주소 뒷부분(시·국가)을 자른 경우 도시/국가를 이어붙여 완성.
-    agg["address"] = _complete_address(agg["address"], agg["city"], agg["country"])
-    agg["factory_address"] = _complete_address(agg["factory_address"], agg["factory_city"], agg["factory_country"])
+    # 주소 절단 보강: LLM이 주소 뒷부분(시·도·국가)을 자른 경우 도시→도→국가 순으로 이어붙여 완성.
+    agg["address"] = _complete_address(agg["address"], agg["city"], agg["province"], agg["country"])
+    agg["factory_address"] = _complete_address(agg["factory_address"], agg["factory_city"], agg["factory_province"], agg["factory_country"])
     return agg
 
 
