@@ -279,6 +279,38 @@ def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000):
     return out
 
 
+def _infer_country_zip(addr):
+    """주소 문자열에서 국가/우편번호 추론(LLM이 분리 못했을 때 보정)."""
+    if not addr:
+        return None, None
+    zipc = None
+    m = re.search(r'\b(\d{5})\b', addr)
+    if m:
+        zipc = m.group(1)
+    low = addr.lower()
+    country = None
+    if any(x in low for x in ("indonesia", "dki", "provinsi", "kota adm", "jakarta",
+                              "kabupaten", "kelurahan", "kecamatan")):
+        country = "Indonesia"
+    elif "korea" in low:
+        country = "Republic of Korea"
+    return country, zipc
+
+
+def _enrich_address(fields):
+    """LLM이 country/zip을 비웠으면 주소에서 보정(도시는 LLM 프롬프트에 의존)."""
+    co, zp = _infer_country_zip(fields.get("address"))
+    if co and not fields.get("country"):
+        fields["country"] = co
+    if zp and not fields.get("zip"):
+        fields["zip"] = zp
+    fco, fzp = _infer_country_zip(fields.get("factory_address"))
+    if fco and not fields.get("factory_country"):
+        fields["factory_country"] = fco
+    if fzp and not fields.get("factory_zip"):
+        fields["factory_zip"] = fzp
+
+
 def classify(name, text):
     if not text.strip():
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
@@ -297,6 +329,12 @@ def classify(name, text):
         complete = _extract_list_complete(name, text, label)
         if len(complete) > len(r["fields"].get(fk) or []):
             r["fields"][fk] = complete
+    _enrich_address(r["fields"])   # 도시/국가/우편 보정
+    # 전성분표(material_list) 제품명이 비면 시트명([시트/제품명: ...])을 제품 후보로
+    if r["doc_type"] == "material_list" and not r["fields"].get("product_names"):
+        sheets = re.findall(r'\[시트/제품명:\s*([^\]]+)\]', text)
+        if sheets:
+            r["fields"]["product_names"] = list(dict.fromkeys(s.strip() for s in sheets if s.strip()))
     return r
 
 
@@ -343,6 +381,11 @@ def parse_typed(doc_type, filename, data):
         sys = "문서에서 다음 필드만 추출하세요(없으면 null). 반드시 JSON으로만: " + fmt + " (대상: " + desc + ")"
         r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, text[:2500]))
         fields = r if isinstance(r, dict) else {}
+    _enrich_address(fields)   # 도시/국가/우편 보정
+    if doc_type == "material_list" and not fields.get("product_names"):
+        sheets = re.findall(r'\[시트/제품명:\s*([^\]]+)\]', text)
+        if sheets:
+            fields["product_names"] = list(dict.fromkeys(s.strip() for s in sheets if s.strip()))
     return {"doc_type": doc_type, "fields": fields, "confidence": 0.85,
             "text_len": len(text), "excerpt": text[:300]}
 
