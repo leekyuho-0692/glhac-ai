@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko"><head>
+<html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GL-HAC AI · 할랄·샤리아 인증 플랫폼</title>
@@ -3812,7 +3812,7 @@ function filterChips(){
 }
 
 /* ---- lang / theme ---- */
-function applyLang(){const root=document.documentElement;if(LANG===1)root.setAttribute("data-lang","ko");else root.removeAttribute("data-lang");document.getElementById("langPill").textContent=LANGS[LANG];}
+function applyLang(){const root=document.documentElement;root.lang=["en","ko","id"][LANG]||"en";/* 네이티브 date/number 입력 포맷이 lang을 따름(연도.월.일 → en/id 로케일) */if(LANG===1)root.setAttribute("data-lang","ko");else root.removeAttribute("data-lang");document.getElementById("langPill").textContent=LANGS[LANG];}
 function cycleLang(){LANG=(LANG+1)%LANGS.length;try{localStorage.setItem("glhac_lang",String(LANG))}catch(_){}applyLang();loadMenus().then(buildNav);applyView();}
 /* 로그인/회원가입 화면 언어 스위칭 — 정적 HTML이라 원본 스냅샷 후 복원→localize(왕복 대응) */
 let LOGIN_HTML0=null;
