@@ -2507,11 +2507,18 @@ def _apply_profile_extras(c, agg, force=False):
         c.responsible_person = agg["responsible_person"]; filled.append("responsible_person")
     if agg.get("factory_reg_no") and (force or not c.factory_reg_no):
         c.factory_reg_no = agg["factory_reg_no"]; filled.append("factory_reg_no")
-    # 회사 주소 도시/국가/우편 → profile_ext(스키마 무변경). 공장쪽은 facility에 별도 반영.
+    # 회사 주소 도시/국가/우편 + 전화·사업유형·직원수 → profile_ext(스키마 무변경). 공장쪽은 facility에 별도 반영.
     pe = dict(c.profile_ext or {})
     for _k in ("city", "country", "zip"):
         if agg.get(_k) and (force or not pe.get(_k)):
             pe[_k] = agg[_k]; filled.append(_k)
+    # 화면 필드 키(office_phone/business_type/total_employee)에 매핑
+    _extra = (("office_phone", agg.get("phone") or agg.get("factory_phone")),
+              ("business_type", agg.get("business_type")),
+              ("total_employee", agg.get("employee_count")))
+    for _k, _v in _extra:
+        if _v not in (None, "") and (force or not pe.get(_k)):
+            pe[_k] = _v; filled.append(_k)
     if pe != (c.profile_ext or {}):
         c.profile_ext = pe
         try:
@@ -2525,7 +2532,7 @@ def _apply_profile_extras(c, agg, force=False):
 def _apply_agg_to_case(db, c, agg):
     """추출 필드(회사/NIB/주소/책임자/제품/원재료)를 케이스에 반영 — DocumentAsset 생성은 하지 않음(재처리용)."""
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": []}
-    if agg.get("company_name") and _is_co_placeholder(c.company_name):
+    if agg.get("company_name") and _co_replaceable(db, c):
         c.company_name = agg["company_name"]; applied["company_set"] = True
     if agg.get("nib") and c.nib != agg["nib"]:
         c.nib = agg["nib"]; applied["nib_set"] = True   # 문서 파싱 NIB가 상속/기존값보다 우선
@@ -2722,6 +2729,19 @@ def _is_co_placeholder(name):
     return n in _CO_PLACEHOLDER or bool(re.search(_CO_PLACEHOLDER_PAT, n))
 
 
+def _co_replaceable(db, c):
+    """회사명을 문서 추출값으로 덮어도 되는가 — 빈값/placeholder이거나,
+    org 조직명 그대로(=사용자 미입력, 케이스 생성 시 자동 상속된 초기값)이면 True.
+    사용자가 손수 입력한 회사명은 보존한다."""
+    if _is_co_placeholder(c.company_name):
+        return True
+    try:
+        org = db.get(models.Org, c.org_id)
+        return bool(org and org.name and c.company_name == org.name)
+    except Exception:
+        return False
+
+
 # 스캔 OCR 주소의 흔한 오인식 사전(도시·주 오탈자)
 _OCR_ADDR_FIX = {
     r"\bJaka[ir]ta\b": "Jakarta", r"\bJakatta\b": "Jakarta", r"\bJakara\b": "Jakarta",
@@ -2828,7 +2848,7 @@ def _apply_intake_autofill(db, c, res):
     agg = res.get("extracted", {})
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": [],
                "dup_skipped": dup_skipped}
-    if agg.get("company_name") and _is_co_placeholder(c.company_name):
+    if agg.get("company_name") and _co_replaceable(db, c):
         c.company_name = agg["company_name"]
         applied["company_set"] = True
     if agg.get("nib") and c.nib != agg["nib"]:
@@ -2889,6 +2909,15 @@ def _apply_intake_autofill(db, c, res):
                 _fac.zip = agg["factory_zip"]
             if _reg:
                 _fac.reg_no = _reg
+            if agg.get("factory_phone"):   # 공장 전화 → facility.profile_ext(스키마 무변경)
+                _fpe = dict(_fac.profile_ext or {})
+                _fpe["phone"] = agg["factory_phone"]
+                _fac.profile_ext = _fpe
+                try:
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(_fac, "profile_ext")
+                except Exception:
+                    pass
             db.flush()
             _fids = list(c.facility_ids or [])
             if _fac.facility_id not in _fids:
