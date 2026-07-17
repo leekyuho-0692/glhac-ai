@@ -39,7 +39,7 @@
    "i18n": {
     "ko": "배정함",
     "en": "Assignments",
-    "id": "배정함"
+    "id": "Penugasan"
    }
   },
   {
@@ -94,8 +94,8 @@
    "sort": 2,
    "i18n": {
     "ko": "신청",
-    "en": "서류",
-    "id": "서류"
+    "en": "Application",
+    "id": "Aplikasi"
    }
   },
   {
@@ -136,8 +136,8 @@
    "sort": 3,
    "i18n": {
     "ko": "계약",
-    "en": "결제",
-    "id": "결제"
+    "en": "Contract & Payment",
+    "id": "Kontrak & Pembayaran"
    }
   },
   {
@@ -192,8 +192,8 @@
    "sort": 4,
    "i18n": {
     "ko": "심사",
-    "en": "판정",
-    "id": "판정"
+    "en": "Assessment",
+    "id": "Penilaian"
    }
   },
   {
@@ -249,7 +249,7 @@
    "i18n": {
     "ko": "현장심사 캘린더",
     "en": "On-site Calendar",
-    "id": "현장심사 캘린더"
+    "id": "Kalender Audit Lapangan"
    }
   },
   {
@@ -333,7 +333,7 @@
    "i18n": {
     "ko": "종합 캘린더",
     "en": "Master Calendar",
-    "id": "종합 캘린더"
+    "id": "Kalender Utama"
    }
   },
   {
@@ -347,7 +347,7 @@
    "i18n": {
     "ko": "워크플로우 모니터",
     "en": "Workflow Monitor",
-    "id": "워크플로우 모니터"
+    "id": "Monitor Alur Kerja"
    }
   },
   {
@@ -361,7 +361,7 @@
    "i18n": {
     "ko": "오디터 업무 현황",
     "en": "Auditor Workload",
-    "id": "오디터 업무 현황"
+    "id": "Beban Kerja Auditor"
    }
   },
   {
@@ -389,7 +389,7 @@
    "i18n": {
     "ko": "상담",
     "en": "Support",
-    "id": "상담"
+    "id": "Konsultasi"
    }
   },
   {
@@ -515,7 +515,7 @@
    "i18n": {
     "ko": "자료함",
     "en": "Vault",
-    "id": "자료함"
+    "id": "Arsip"
    }
   },
   {
@@ -529,7 +529,7 @@
    "i18n": {
     "ko": "알림 센터",
     "en": "Notifications",
-    "id": "알림 센터"
+    "id": "Pusat Notifikasi"
    }
   },
   {

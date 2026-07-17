@@ -529,7 +529,7 @@ const AUDITOR_TABS=[
 let AUDITOR_TAB="all";
 let ASSESS_CACHE={}, INTAKE_OUT={}, PRODUCT_SEL=null, PAY_SEL=null;
 let CASE_SORT="recent";
-let LANG=0; const LANGS=["🌐 KO · EN","🌐 한국어","🌐 Bahasa"];
+let LANG=0; const LANGS=["🌐 EN","🌐 한국어","🌐 Bahasa"];
 
 /* ---- auth / api ---- */
 const TK="glhac_token", RTK="glhac_refresh";
@@ -680,13 +680,16 @@ const ID_LABEL={
 const NAV_ID={"feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
   integration:"Integrasi",documents:"Dokumen",audit:"Audit",onsiteCalendar:"현장심사 캘린더",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
   invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",opsDashboard:"Operasional",workflowMonitor:"워크플로우 모니터",regulations:"Regulasi & Hukum",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",aiExtractions:"Antrian Tinjau AI",auditLog:"Log Audit",compliance:"Kepatuhan",system:"Sistem"};
-function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];return KO_LABEL[k]||null;}
+function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];if(LANG===1&&KO_LABEL[k])return KO_LABEL[k];return null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
 /* 전역 상태→색상(원재료 판정) — 렌더 함수 밖(아코디언 등 전역 함수)에서도 사용. */
 function scol(s){return ({halal:'ok',haram:'bad',mushbooh:'warn',pass:'ok',needs_evidence:'warn',block:'bad',najis:'bad'}[String(s||'').toLowerCase()]||'mute');}
 function toast(m){const t=document.getElementById("toast");t.textContent=(LANG===2&&typeof UI_STRINGS!=="undefined"&&UI_STRINGS[String(m).trim()])||m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2600);}
-function T(s){s=String(s);return (LANG===2&&typeof UI_STRINGS!=="undefined"&&UI_STRINGS[s])?UI_STRINGS[s]:s;}
+/* 병기 "한글 · English" → {ko,en} 분리(뒤부분이 라틴·앞부분에 한글일 때만). 언어별 렌더용. */
+function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
+/* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
+function T(s){s=String(s);if(LANG===2&&typeof UI_STRINGS!=="undefined"&&UI_STRINGS[s])return UI_STRINGS[s];const d=_dualSplit(s);if(d)return LANG===1?d.ko:d.en;return s;}
 /* 재사용 모달 폼 — prompt() 대체. fields:[{key,label,type:text|number|textarea|select,options,value,placeholder,required}] */
 let _modalCb=null,_modalFields=null;
 function dialog(title, fields){
@@ -817,7 +820,7 @@ function clearCase(){CASE_PIN=false;CURCASE=null;try{localStorage.removeItem("gl
 function scopeLabel(){const m={own:"본인 조직 · own",owned:"담당 위주 · owned",assigned:"배정건 · assigned",all:"전체 · all"};return m[ROLE_DEF[ROLE].scope];}
 let MENU_TREE=null;   // GET /me/menus 결과(DB 동적). null이면 하드코딩 폴백
 async function loadMenus(){
-  try{const r=await API('/me/menus?lang='+(LANG===2?'id':'ko'));MENU_TREE=(Array.isArray(r)&&r.length)?r:null;}
+  try{const r=await API('/me/menus?lang='+(['en','ko','id'][LANG]||'en'));MENU_TREE=(Array.isArray(r)&&r.length)?r:null;}
   catch(_){MENU_TREE=null;}
 }
 /* 동적 메뉴(GET /me/menus)에 노출된 routePath면 접근 허용. 하드코딩 MENU_ACCESS 미등록 화면(menuAssign 등) 폴백 방지. */
@@ -913,6 +916,91 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  /* ID gap Bahasa 2026-07-17 */
+  "13자리 숫자":"13 digit angka",
+  "AI 문서 생성":"Pembuatan dokumen AI",
+  "AI 신뢰도":"Kepercayaan AI",
+  "AI 추천":"Rekomendasi AI",
+  "AI 추출 필드":"Kolom ekstraksi AI",
+  "AI 파트와 문서 생성":"Pembuatan dokumen Fatwa AI",
+  "AI 판단":"Penilaian AI",
+  "AI 현장 감사 보고서 생성":"Pembuatan laporan audit lapangan AI",
+  "E번호":"Nomor E",
+  "↺ 역할 기본값":"↺ Nilai default peran",
+  "⚠ 미검증 · 증빙필요":"⚠ Belum diverifikasi · Perlu bukti",
+  "⛔ 부적합":"⛔ Tidak sesuai",
+  "✓ 검증됨":"✓ Terverifikasi",
+  "개 적용":"Diterapkan",
+  "개도 함께 제거됩니다.":"Juga akan dihapus bersama.",
+  "계약 반려":"Kontrak ditolak",
+  "계약 신청 완료":"Pengajuan kontrak selesai",
+  "계약 최종 확인 완료":"Konfirmasi akhir kontrak selesai",
+  "계약서 접수·확인 완료":"Penerimaan & konfirmasi kontrak selesai",
+  "계약서를 접수·확인합니까?":"Terima & konfirmasi kontrak?",
+  "계약을 신청합니까? 관리자 승인 후 계약서가 발송됩니다.":"Ajukan kontrak? Kontrak akan dikirim setelah persetujuan admin.",
+  "공급사 할랄 인증 보유":"Pemasok memiliki sertifikasi Halal",
+  "공장 국가":"Negara pabrik",
+  "공장 도시":"Kota pabrik",
+  "공장 소재지":"Lokasi pabrik",
+  "공장 우편번호":"Kode pos pabrik",
+  "공정 단계":"Tahapan proses",
+  "국가명":"Nama negara",
+  "기대 필드":"Kolom yang diharapkan",
+  "단계 순서 배열":"Urutan tahapan",
+  "대표자 · 책임자":"Perwakilan · Penanggung jawab",
+  "도메인·브랜딩":"Domain & branding",
+  "도시명":"Nama kota",
+  "등록번호":"Nomor registrasi",
+  "만료일":"Tanggal kedaluwarsa",
+  "메뉴를 제거하면 하위":"Jika menu dihapus, sub-",
+  "미연동":"Belum terintegrasi",
+  "미판정 — 스크리닝 필요":"Belum diputuskan — perlu skrining",
+  "발급기관":"Lembaga penerbit",
+  "배정 기준":"Kriteria penugasan",
+  "사용자를 선택하세요":"Pilih pengguna",
+  "삭제 실패 ·":"Gagal hapus ·",
+  "생성 가능 문서":"Dokumen yang dapat dibuat",
+  "생성 실패 ·":"Gagal buat ·",
+  "생성 완료 — 담당 오디터 검토·서명으로 전달됩니다":"Pembuatan selesai — diteruskan untuk ditinjau & ditandatangani Auditor",
+  "서명 요청 완료":"Permintaan tanda tangan selesai",
+  "서명을 요청합니까?":"Minta tanda tangan?",
+  "승인·계약서 발송 완료":"Persetujuan & pengiriman kontrak selesai",
+  "승인·발송":"Setujui & kirim",
+  "승인하고 계약서를 발송합니까?":"Setujui dan kirim kontrak?",
+  "신청서 수정":"Perbaiki formulir pengajuan",
+  "심사자 의견":"Pendapat auditor",
+  "역할 기본값":"Nilai default peran",
+  "역할 기본값으로 복사":"Salin ke nilai default peran",
+  "원재료명 목록":"Daftar nama bahan baku",
+  "원재료명 배열":"Susunan nama bahan baku",
+  "이 사용자의 배정을 역할 기본값으로 되돌립니다. 진행할까요?":"Kembalikan penugasan pengguna ini ke nilai default peran? Lanjutkan?",
+  "인테이크 완료":"Intake selesai",
+  "재추출":"Ekstraksi ulang",
+  "적용 실패 ·":"Gagal terapkan ·",
+  "전체 메뉴":"Menu lengkap",
+  "전체 주소":"Alamat lengkap",
+  "접수·확인":"Terima & konfirmasi",
+  "제품 라벨":"Label produk",
+  "제품 목록·매트릭스":"Daftar & matriks produk",
+  "제품 클릭 시 사용 원재료 펼침":"Klik produk untuk memperluas bahan baku yang digunakan",
+  "제품명 목록":"Daftar nama produk",
+  "제품명 배열":"Susunan nama produk",
+  "조치 필요":"Tindakan diperlukan",
+  "증빙 0":"Bukti 0",
+  "청구·입금":"Tagihan & pembayaran",
+  "최종 계약서를 확인합니까? 확인 후 청구서를 생성할 수 있습니다.":"Konfirmasi kontrak akhir? Setelah itu, tagihan dapat dibuat.",
+  "최종 확인":"Konfirmasi akhir",
+  "파일 업로드":"Unggah file",
+  "파트와 결정을 진행할 제품 목록입니다.":"Daftar produk yang akan diproses keputusan Fatwa.",
+  "품질 인증":"Sertifikasi mutu",
+  "하람 아님":"Bukan Haram",
+  "현장 감사일":"Tanggal audit lapangan",
+  "회사 소재 도시":"Kota tempat perusahaan",
+  "회사 주소":"Alamat perusahaan",
+  "회사명 · 상호":"Nama perusahaan & nama usaha",
+  "💾 저장 완료 ·":"💾 Simpan selesai ·",
+  "🔍 메뉴명·코드 검색":"🔍 Cari nama menu & kode",
+
   "역할별":"Per Peran",
   "기관별":"Per Lembaga",
   "사용자별":"Per Pengguna",
@@ -3543,15 +3631,18 @@ const UI_STRINGS={
   "전 원재료 긍정목록 확인":"Semua bahan terkonfirmasi di daftar positif",
   "※ 온톨로지 매칭 기반 판정 — 공식 BPJPH bahan(할랄 긍정목록) 자체는 아님.":"※ Penilaian berbasis pencocokan ontologi — bukan daftar bahan (positif halal) resmi BPJPH.",
 };
+/* 전 언어 렌더 후처리: 병기 "한글 · English"를 언어별로 분리, Bahasa는 UI_STRINGS 매핑.
+   EN(0)=영문부 · KO(1)=한글부 · ID(2)=Bahasa(없으면 영문부). 텍스트노드+속성 대상. */
 function localizeUI(root){
-  if(LANG!==2)return;
   root=root||document.getElementById("appView");if(!root)return;
+  const map=(LANG===2&&typeof UI_STRINGS!=="undefined")?UI_STRINGS:null;
+  const pick=(key)=>{if(map&&map[key])return map[key];const d=_dualSplit(key);if(d)return LANG===1?d.ko:d.en;return null;};
   const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,null);
   const hits=[];let node;
-  while(node=w.nextNode()){const key=(node.nodeValue||"").trim();if(key&&UI_STRINGS[key])hits.push(node);}
-  hits.forEach(n=>{const key=n.nodeValue.trim();n.nodeValue=n.nodeValue.replace(key,UI_STRINGS[key]);});
+  while(node=w.nextNode()){const key=(node.nodeValue||"").trim();if(!key)continue;const v=pick(key);if(v!=null&&v!==key)hits.push([node,key,v]);}
+  hits.forEach(([n,key,v])=>{n.nodeValue=n.nodeValue.replace(key,v);});
   root.querySelectorAll("[placeholder],[aria-label],[title]").forEach(el=>{
-    ["placeholder","aria-label","title"].forEach(a=>{const v=el.getAttribute(a);if(v&&UI_STRINGS[v.trim()])el.setAttribute(a,UI_STRINGS[v.trim()]);});
+    ["placeholder","aria-label","title"].forEach(a=>{const raw=el.getAttribute(a);if(!raw)return;const key=raw.trim();const v=pick(key);if(v!=null&&v!==key)el.setAttribute(a,v);});
   });
 }
 /* ---- stale CURCASE 중앙 방어 ----
@@ -3662,7 +3753,7 @@ function loginLocalize(){
   const lf=document.getElementById("loginForm"),rf=document.getElementById("registerForm");
   if(LOGIN_HTML0==null)LOGIN_HTML0={login:lf?lf.innerHTML:"",reg:rf?rf.innerHTML:""};
   else{if(lf)lf.innerHTML=LOGIN_HTML0.login;if(rf)rf.innerHTML=LOGIN_HTML0.reg;}
-  if(LANG===2){if(lf)localizeUI(lf);if(rf)localizeUI(rf);}
+  if(lf)localizeUI(lf);if(rf)localizeUI(rf);
   const p=document.getElementById("loginLangPill");if(p)p.textContent=LANGS[LANG];
 }
 function loginCycleLang(){LANG=(LANG+1)%LANGS.length;try{localStorage.setItem("glhac_lang",String(LANG))}catch(_){}applyLang();loginLocalize();}
@@ -8944,7 +9035,7 @@ let MA_ROLE="auditor", MA_MODE="role", MA_USER="", MA_USERS=[], MA_MASTER=[], MA
 let MA_ORG="", MA_ORGS=[];   // P5-b: 기관별 배정
 const MA_ROLES=[["client","클라이언트"],["consultant","컨설턴트"],["auditor","오디터"],["sharia","샤리아"],["ops","최고운영자"],["admin","관리자"]];
 SCREEN.menuAssign=async()=>{
-  const lang=LANG===2?"id":"ko";
+  const lang=["en","ko","id"][LANG]||"en";
   MA_MASTER=await API("/admin/menus?lang="+lang).catch(()=>[]);
   let asg=[];
   if(MA_MODE==="user"){
@@ -8983,7 +9074,7 @@ SCREEN.menuAssign=async()=>{
 };
 /* 내 메뉴 설정(개인화) — 각 사용자가 자기 좌측 메뉴 구성·순서를 직접 관리. maLeft/maRight 드래그 UI 재활용(MA_MODE="me"). */
 SCREEN.myMenu=async()=>{
-  const lang=LANG===2?"id":"ko";
+  const lang=["en","ko","id"][LANG]||"en";
   MA_MODE="me"; MA_SEARCH="";
   const cfg=await API("/me/menu-config?lang="+lang).catch(()=>({master:[],assigned:[]}));
   MA_MASTER=cfg.master||[];
@@ -9190,7 +9281,7 @@ function applyTenantBranding(t){
     if(t.brand_name){const el=document.getElementById("loginBrand");if(el)el.textContent=t.brand_name;document.title=t.brand_name;}
     if(t.logo_url){const lw=document.getElementById("tenantLogo");if(lw){lw.innerHTML=`<img src="${esc(t.logo_url)}" alt="${esc(t.brand_name||'logo')}" style="max-height:52px;max-width:200px">`;lw.style.display="";}}
     if(t.primary_color&&/^#[0-9a-fA-F]{6}$/.test(t.primary_color))document.documentElement.style.setProperty("--accent",t.primary_color);
-    if(t.locale){const m={ko:0,en:1,id:2};if(m[t.locale]!=null&&localStorage.getItem("glhac_lang")==null)try{localStorage.setItem("glhac_lang",String(m[t.locale]));}catch(_){}}
+    if(t.locale){const m={en:0,ko:1,id:2};if(m[t.locale]!=null&&localStorage.getItem("glhac_lang")==null)try{localStorage.setItem("glhac_lang",String(m[t.locale]));}catch(_){}}
   }catch(_){}
 }
 /* 범위확장: 멀티테넌트 도메인·화이트라벨 관리 패널 */
