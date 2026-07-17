@@ -4011,7 +4011,7 @@ function facListHtml(facs,org,canApp,selected,caseId){
     <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:${caseId?'pointer':'default'}">
       ${caseId?`<input type="checkbox" data-fid="${f.facility_id}" ${sel.has(f.facility_id)?'checked':''} onchange="toggleFacSelect('${caseId}','${esc(org)}')">`:''}
       <div><b>${esc(f.name)}</b>${f.reg_no?` <span class="muted small">· ${esc(f.reg_no)}</span>`:''}
-        <div class="muted small">${esc([f.address,f.city,f.country,f.zip].filter(Boolean).join(", ")||"주소 미입력")}</div></div>
+        <div class="muted small">${esc((()=>{const a=(f.address||"").trim();const ex=[f.city,f.country,f.zip].filter(p=>p&&!a.toLowerCase().includes(String(p).toLowerCase().trim()));return [a,...ex].filter(Boolean).join(", ")||"주소 미입력";})())}</div></div>
     </label>
     <div style="display:flex;gap:4px;flex:none">
       ${canApp?`<button class="btn" style="padding:2px 8px" onclick="facEdit('${f.facility_id}','${esc(org)}','${caseId||""}')">편집</button>`:''}
