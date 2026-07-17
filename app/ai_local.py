@@ -55,6 +55,7 @@ def llm_json(system, user, timeout=90):
     try:
         r = httpx.post(f"{OLLAMA}/api/chat", timeout=timeout, json={
             "model": MODEL, "format": "json", "stream": False,
+            "options": {"temperature": 0},   # 문서 추출/분류는 결정적이어야(재현성·필드 누락 방지)
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}]})
         return json.loads(r.json()["message"]["content"])
