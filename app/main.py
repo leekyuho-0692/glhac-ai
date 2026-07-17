@@ -2507,6 +2507,18 @@ def _apply_profile_extras(c, agg, force=False):
         c.responsible_person = agg["responsible_person"]; filled.append("responsible_person")
     if agg.get("factory_reg_no") and (force or not c.factory_reg_no):
         c.factory_reg_no = agg["factory_reg_no"]; filled.append("factory_reg_no")
+    # 회사 주소 도시/국가/우편 → profile_ext(스키마 무변경). 공장쪽은 facility에 별도 반영.
+    pe = dict(c.profile_ext or {})
+    for _k in ("city", "country", "zip"):
+        if agg.get(_k) and (force or not pe.get(_k)):
+            pe[_k] = agg[_k]; filled.append(_k)
+    if pe != (c.profile_ext or {}):
+        c.profile_ext = pe
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(c, "profile_ext")   # JSON 컬럼 in-place 변경 감지
+        except Exception:
+            pass
     return filled
 
 

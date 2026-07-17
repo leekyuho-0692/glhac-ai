@@ -243,8 +243,9 @@ _LIST_FIELDS = {
 
 
 def _norm_key(s):
-    """제품/원재료 중복 판정 키 — 대소문자·구두점·공백 무시."""
-    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+    """제품/원재료 중복 판정 키 — 대소문자·구두점·공백 무시(한글 등 유니코드 문자 보존).
+    [^a-z0-9]로 지우면 한글 제품명이 빈 키가 돼 통째로 유실되므로 \\W_ 만 제거한다."""
+    return re.sub(r"[\W_]", "", (s or "").lower())
 
 
 def _chunk_text(text, size=4500):
@@ -330,11 +331,13 @@ def classify(name, text):
         if len(complete) > len(r["fields"].get(fk) or []):
             r["fields"][fk] = complete
     _enrich_address(r["fields"])   # 도시/국가/우편 보정
-    # 전성분표(material_list) 제품명이 비면 시트명([시트/제품명: ...])을 제품 후보로
-    if r["doc_type"] == "material_list" and not r["fields"].get("product_names"):
-        sheets = re.findall(r'\[시트/제품명:\s*([^\]]+)\]', text)
-        if sheets:
-            r["fields"]["product_names"] = list(dict.fromkeys(s.strip() for s in sheets if s.strip()))
+    # 전성분표(material_list): 시트명([시트/제품명: ...])은 각각 완제품 — LLM이 첫 시트만 뽑는
+    # 누락을 막기 위해 시트명 전부를 product_names에 합집합(union)한다.
+    if r["doc_type"] == "material_list":
+        _sheets = [s.strip() for s in re.findall(r'\[시트/제품명:\s*([^\]]+)\]', text) if s.strip()]
+        if _sheets:
+            _cur = r["fields"].get("product_names") or []
+            r["fields"]["product_names"] = list(dict.fromkeys([*_cur, *_sheets]))
     return r
 
 
@@ -382,17 +385,19 @@ def parse_typed(doc_type, filename, data):
         r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, text[:2500]))
         fields = r if isinstance(r, dict) else {}
     _enrich_address(fields)   # 도시/국가/우편 보정
-    if doc_type == "material_list" and not fields.get("product_names"):
-        sheets = re.findall(r'\[시트/제품명:\s*([^\]]+)\]', text)
-        if sheets:
-            fields["product_names"] = list(dict.fromkeys(s.strip() for s in sheets if s.strip()))
+    if doc_type == "material_list":
+        _sheets = [s.strip() for s in re.findall(r'\[시트/제품명:\s*([^\]]+)\]', text) if s.strip()]
+        if _sheets:
+            _cur = fields.get("product_names") or []
+            fields["product_names"] = list(dict.fromkeys([*_cur, *_sheets]))
     return {"doc_type": doc_type, "fields": fields, "confidence": 0.85,
             "text_len": len(text), "excerpt": text[:300]}
 
 
 _APPLICANT_DOCS = ("nib_business_license", "factory_registration")
 # 제품/원재료명을 신뢰할 카탈로그 문서 유형(기록·타목록의 오염 방지)
-_PRODUCT_SRC = {"product_list", "sjph_manual"}
+# material_list(전성분표)도 시트명 기반 완제품 추출 대상이므로 포함
+_PRODUCT_SRC = {"product_list", "sjph_manual", "material_list"}
 _MATERIAL_SRC = {"material_list", "coa_msds", "product_label"}
 
 
