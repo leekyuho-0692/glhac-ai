@@ -144,6 +144,10 @@ def parse_file(name, data, dpi=None):
             wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
             out = []
             for ws in wb.worksheets:
+                # 시트명은 제품명 후보를 담는 경우가 많다(전성분표 헤더) → 본문에 포함해 추출 대상으로.
+                title = (ws.title or "").strip()
+                if title and title.lower() not in ("sheet", "sheet1", "sheet2", "sheet3", "시트1"):
+                    out.append("[시트/제품명: %s]" % title)
                 for row in ws.iter_rows(values_only=True):
                     cells = [str(c) for c in row if c is not None]
                     if cells:
@@ -228,7 +232,8 @@ _FIELD_SPEC = {
                      '{"cert_type":null,"cert_no":null,"expiry_date":null}'),
     "consent": ("서명 여부, 서명일", '{"signed":false,"signed_date":null}'),
     "product_list": ("제품명 목록", '{"product_names":[]}'),
-    "material_list": ("원재료명 목록", '{"material_names":[]}'),
+    "material_list": ("원재료명 목록. 표 제목·시트명(예: '[시트/제품명: ...]')·문서 상단에 제품명이 있으면 product_names에도 넣으세요(원재료가 아닌 완제품명)",
+                      '{"material_names":[],"product_names":[]}'),
     "process_flow": ("공정 단계 순서 목록(원료입고→배합→가열→충전→포장 등)",
                      '{"process_steps":[]}'),
     "sjph_manual": ("SJPH 5요소 포함 여부(약속·원재료·공정·제품·모니터링)",
