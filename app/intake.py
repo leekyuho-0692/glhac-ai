@@ -177,6 +177,9 @@ _CLASSIFY_SYS = (
     "factory_address는 공장 주소, factory_city/factory_country/factory_zip은 공장 주소의 도시/국가/우편번호. "
     "factory_reg_no는 공장/영업 등록번호, responsible_person은 대표자/책임자 이름. "
     "process_steps는 공정흐름도의 공정 단계 순서 목록(원료입고→배합→가열→포장 등). "
+    "product_names는 완제품 이름 목록 — 제품목록 문서뿐 아니라 전성분표/원재료 문서라도 "
+    "시트명(예: '[시트/제품명: ...]')·표 제목·문서 상단에 완제품명이 있으면 product_names에 넣으세요. "
+    "material_names는 원재료(성분) 이름 목록(완제품이 아님). "
     "has_commitment/has_materials/has_process/has_product/has_monitoring는 SJPH 매뉴얼에 "
     "해당 5요소(약속·원재료·공정·제품·모니터링)가 포함되면 true. 없으면 null/false/[]. "
     '반드시 JSON으로만: {"doc_type":"...","confidence":0.0,'
