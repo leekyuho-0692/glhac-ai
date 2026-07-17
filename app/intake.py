@@ -125,6 +125,47 @@ def _ocr_bytes(data, ext):
             pass
 
 
+# 전성분표(원료명|INS No.|용도 반복 구조) 전용 구조 인식 파서.
+# 근본 해결: 2차원 표를 " ".join으로 1차원화하면 열 의미가 소실돼(원료명·용도·제품명 뒤섞임,
+# 인접 셀 병합) LLM이 오분류한다. 표 구조 그대로 제품명(시트 상단)·원재료(원료명 열)를 결정론적 추출.
+_ING_HDR_RE = re.compile(r"원료\s*명|ingredient\s*name")
+_ING_SKIP_RE = re.compile(r"^(원료\s*명|INS|용도|1차|2차|3차|ingredient|function|no\.?)$", re.I)
+
+
+def _xlsx_ingredient_table(wb):
+    """전성분표 구조가 감지되면 (products, materials) 반환, 아니면 None.
+    - 제품명 = 각 시트 1행의 첫 비어있지 않은 셀(완제품 1개/시트)
+    - 원재료 = '원료명' 헤더가 있는 열들의 데이터 값만(INS No.·용도 열 제외)"""
+    products, materials = [], []
+    detected = False
+    for ws in wb.worksheets:
+        rows = [list(r) for r in ws.iter_rows(values_only=True)]
+        if not rows:
+            continue
+        # 헤더행: '원료명' 헤더를 포함하는 첫 행 → 원료명 열 인덱스 수집
+        name_cols, hdr = [], None
+        for i, row in enumerate(rows[:8]):
+            cols = [j for j, c in enumerate(row) if c and _ING_HDR_RE.search(str(c))]
+            if cols:
+                name_cols, hdr = cols, i
+                break
+        if hdr is None:
+            continue   # 이 시트는 전성분표 구조 아님
+        detected = True
+        prod = next((str(c).strip() for c in rows[0] if c and str(c).strip()), None)
+        if prod and prod not in products:
+            products.append(prod)
+        for row in rows[hdr + 1:]:
+            for j in name_cols:
+                if j < len(row) and row[j]:
+                    v = str(row[j]).strip()
+                    if v and not _ING_SKIP_RE.match(v) and v not in materials:
+                        materials.append(v)
+    if not detected:
+        return None
+    return products, materials
+
+
 def parse_file(name, data, dpi=None):
     """확장자별 텍스트 추출 — OS 독립. 이미지/스캔PDF=OCR, PDF=fitz, docx/xlsx/txt.
     dpi 지정 시 스캔 렌더 해상도 오버라이드(고해상도 재처리용, 기본 _OCR_DPI)."""
@@ -153,9 +194,20 @@ def parse_file(name, data, dpi=None):
         if ext == "xlsx":
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            # 근본 해결: 전성분표 구조면 표를 구조 인식으로 파싱해 명시적 마커로 넘긴다(LLM 우회).
+            ing = _xlsx_ingredient_table(wb)
+            if ing:
+                wb.close()
+                prods, mats = ing
+                out = ["[전성분표]"]
+                for p in prods:
+                    out.append("[제품/시트: %s]" % p)
+                out.append("[원재료목록]")
+                out.extend(mats)
+                return "\n".join(out)[:60000]
+            # 일반 xlsx(전성분표 아님): 기존 flatten
             out = []
             for ws in wb.worksheets:
-                # 시트명은 제품명 후보를 담는 경우가 많다(전성분표 헤더) → 본문에 포함해 추출 대상으로.
                 title = (ws.title or "").strip()
                 if title and title.lower() not in ("sheet", "sheet1", "sheet2", "sheet3", "시트1"):
                     out.append("[시트/제품명: %s]" % title)
@@ -312,6 +364,19 @@ def _enrich_address(fields):
         fields["factory_zip"] = fzp
 
 
+def _parse_ingredient_markers(text):
+    """parse_file이 전성분표에 심은 구조 마커에서 (products, materials) 추출. 없으면 None.
+    구조 파서 결과이므로 LLM 목록추출을 대체(오분류·셀병합·비결정성 제거)."""
+    if "[전성분표]" not in text:
+        return None
+    prods = [m.strip() for m in re.findall(r'\[제품/시트:\s*([^\]]+)\]', text) if m.strip()]
+    mats = []
+    if "[원재료목록]" in text:
+        body = text.split("[원재료목록]", 1)[1]
+        mats = [ln.strip() for ln in body.splitlines() if ln.strip() and not ln.startswith("[")]
+    return list(dict.fromkeys(prods)), list(dict.fromkeys(mats))
+
+
 def classify(name, text):
     if not text.strip():
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
@@ -323,6 +388,18 @@ def classify(name, text):
         r["doc_type"] = "other"
     r.setdefault("confidence", 0.0)
     r.setdefault("fields", {})
+    # 근본: 전성분표 구조 마커가 있으면 구조 파서 결과를 신뢰(LLM 목록추출 전면 우회).
+    ing = _parse_ingredient_markers(text)
+    if ing is not None:
+        prods, mats = ing
+        r["doc_type"] = "material_list"
+        r["confidence"] = max(r.get("confidence", 0.0), 0.95)
+        if prods:
+            r["fields"]["product_names"] = prods    # 시트당 완제품 1개(A1)
+        if mats:
+            r["fields"]["material_names"] = mats     # '원료명' 열 값만
+        _enrich_address(r["fields"])
+        return r
     # 리스트형 문서는 전체 본문에서 목록을 완전 추출(절단 2000자로는 뒤쪽 누락).
     lf = _LIST_FIELDS.get(r["doc_type"])
     if lf and len(text) > 2000:
@@ -331,13 +408,6 @@ def classify(name, text):
         if len(complete) > len(r["fields"].get(fk) or []):
             r["fields"][fk] = complete
     _enrich_address(r["fields"])   # 도시/국가/우편 보정
-    # 전성분표(material_list): 시트명([시트/제품명: ...])은 각각 완제품 — LLM이 첫 시트만 뽑는
-    # 누락을 막기 위해 시트명 전부를 product_names에 합집합(union)한다.
-    if r["doc_type"] == "material_list":
-        _sheets = [s.strip() for s in re.findall(r'\[시트/제품명:\s*([^\]]+)\]', text) if s.strip()]
-        if _sheets:
-            _cur = r["fields"].get("product_names") or []
-            r["fields"]["product_names"] = list(dict.fromkeys([*_cur, *_sheets]))
     return r
 
 
@@ -369,6 +439,17 @@ def parse_typed(doc_type, filename, data):
     text = parse_file(filename, data)
     if not text.strip():
         return {"doc_type": doc_type, "fields": {}, "confidence": 0.0, "empty": True, "text_len": 0}
+    # 근본: 전성분표 구조 마커가 있으면 구조 파서 결과를 신뢰(LLM 목록추출 우회).
+    ing = _parse_ingredient_markers(text)
+    if ing is not None:
+        prods, mats = ing
+        fields = {}
+        if prods:
+            fields["product_names"] = prods
+        if mats:
+            fields["material_names"] = mats
+        return {"doc_type": "material_list", "fields": fields, "confidence": 0.95,
+                "text_len": len(text), "excerpt": text[:300]}
     spec = _FIELD_SPEC.get(doc_type)
     if not spec:
         cl = classify(filename, text)
@@ -385,11 +466,6 @@ def parse_typed(doc_type, filename, data):
         r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, text[:2500]))
         fields = r if isinstance(r, dict) else {}
     _enrich_address(fields)   # 도시/국가/우편 보정
-    if doc_type == "material_list":
-        _sheets = [s.strip() for s in re.findall(r'\[시트/제품명:\s*([^\]]+)\]', text) if s.strip()]
-        if _sheets:
-            _cur = fields.get("product_names") or []
-            fields["product_names"] = list(dict.fromkeys([*_cur, *_sheets]))
     return {"doc_type": doc_type, "fields": fields, "confidence": 0.85,
             "text_len": len(text), "excerpt": text[:300]}
 
