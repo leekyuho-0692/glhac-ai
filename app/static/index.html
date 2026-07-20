@@ -767,9 +767,9 @@ async function ENUMS(){if(_ENUMS)return _ENUMS;_ENUMS=await API("/meta/enums").c
 let PAGES={};
 function pageSlice(key,arr,per){per=per||10;const max=Math.max(0,Math.ceil(arr.length/per)-1);const cur=Math.min(PAGES[key]||0,max);PAGES[key]=cur;return {items:arr.slice(cur*per,cur*per+per),cur,max,total:arr.length,per};}
 function pager(key,m){if(m.total<=m.per)return"";return `<div class="pager">
-  <button class="btn" ${m.cur<=0?'disabled':''} onclick="gotoPage('${key}',${m.cur-1})">← 이전</button>
+  <button class="btn" ${m.cur<=0?'disabled':''} onclick="gotoPage('${key}',${m.cur-1})">${T('← 이전')}</button>
   <span class="muted small">${m.cur+1} / ${m.max+1} 페이지 · 총 ${m.total}${T('건')}</span>
-  <button class="btn" ${m.cur>=m.max?'disabled':''} onclick="gotoPage('${key}',${m.cur+1})">다음 →</button></div>`;}
+  <button class="btn" ${m.cur>=m.max?'disabled':''} onclick="gotoPage('${key}',${m.cur+1})">${T('다음 →')}</button></div>`;}
 function gotoPage(key,idx){PAGES[key]=Math.max(0,idx);applyView();}
 
 /* ---- 지역(주소 파싱) : 케이스 factory_address/address → 인니 province ---- */
@@ -3999,7 +3999,7 @@ async function renderRightPanel(){
      ${notifs.slice(0,5).map(n=>`<div class="rpnote ${n.read?"":"unread"}"${n.case_id?` style="cursor:pointer" onclick="openNotif('${n.id}','${esc(n.case_id)}')" title="${T('클릭 → 케이스로 이동')}"`:''}><b>${esc(n.title||n.event_type||"")}</b><div class="muted small">${esc((n.body||"").slice(0,70))}${n.case_id?' <span class="go-arrow">→</span>':''}</div></div>`).join("")||'<div class="muted small">알림 없음</div>'}</div>
    <div class="rpsec" style="border-bottom:none"><div class="rptitle">논의 · Discussion</div>
      <div class="rpdisc">${disc.slice(-8).map(d=>`<div class="rpmsg"><b class="small">${esc(d.author||d.author_role||"")}</b>${discRole(d.author_role)} <span class="muted small">${esc(String(d.created_at||"").slice(5,16))}</span><div class="small">${esc(d.text||"")}</div></div>`).join("")||'<div class="muted small">아직 논의 없음</div>'}</div>
-     <div class="btnrow" style="margin-top:8px"><input class="v" id="rpDiscInput" placeholder="메시지 입력…" style="flex:1;font-size:12px" onkeydown="if(event.key===\'Enter\')postDiscussion(\'${id}\')"><button class="btn pri" style="padding:5px 10px" onclick="postDiscussion(\'${id}\')">전송</button></div></div>`;
+     <div class="btnrow" style="margin-top:8px"><input class="v" id="rpDiscInput" placeholder="${T('메시지 입력…')}" style="flex:1;font-size:12px" onkeydown="if(event.key===\'Enter\')postDiscussion(\'${id}\')"><button class="btn pri" style="padding:5px 10px" onclick="postDiscussion(\'${id}\')">${T('전송')}</button></div></div>`;
 }
 function toggleRPanel(){const p=document.getElementById("rpanel");if(!p)return;p.classList.toggle("open");try{localStorage.setItem("glhac_rp",p.classList.contains("open")?"1":"0")}catch(_){}if(p.classList.contains("open"))renderRightPanel();}
 async function postDiscussion(id){const inp=document.getElementById("rpDiscInput");const tx=(inp&&inp.value||"").trim();if(!tx)return;try{await API(`/cases/${id}/discussions`,{method:"POST",body:JSON.stringify({text:tx,kind:"comment"})});if(inp)inp.value="";renderRightPanel();}catch(e){toast("전송 실패");}}
@@ -4014,7 +4014,7 @@ function facListHtml(facs,org,canApp,selected,caseId){
         <div class="muted small">${esc((()=>{const a=(f.address||"").trim();const ex=[f.city,f.country,f.zip].filter(p=>p&&!a.toLowerCase().includes(String(p).toLowerCase().trim()));return [a,...ex].filter(Boolean).join(", ")||"주소 미입력";})())}</div></div>
     </label>
     <div style="display:flex;gap:4px;flex:none">
-      ${canApp?`<button class="btn" style="padding:2px 8px" onclick="facEdit('${f.facility_id}','${esc(org)}','${caseId||""}')">편집</button>`:''}
+      ${canApp?`<button class="btn" style="padding:2px 8px" onclick="facEdit('${f.facility_id}','${esc(org)}','${caseId||""}')">${T('편집')}</button>`:''}
       ${canApp?`<button class="btn" style="padding:2px 8px" onclick="facDel('${f.facility_id}','${esc((f.name||"").replace(/'/g,""))}','${esc(org)}','${caseId||""}')">삭제</button>`:''}
     </div>
   </div>`).join("");
@@ -4081,7 +4081,7 @@ function matCategoryChecklist(mats){
   const warn=special.length
     ?`<div class="banner bad" style="margin-top:10px">⚠️ <b>${special.map(r=>r.label.split(' · ')[0]).join('·')}</b> 원재료가 미등록입니다. 제품 원재료뿐 아니라 <b>세척제·포장재·윤활제</b>에 쓰이는 원재료도 반드시 등록하세요 — 누락 시 사전심사·현장심사에서 보완 요청이 발생합니다.</div>`
     :`<div class="banner ok" style="margin-top:10px">✓ 제품원재료·세척제·포장재·윤활제 카테고리 모두 등록됨</div>`;
-  return `<div class="card"><h3>필수 원재료 카테고리 <span class="en">· Required categories</span></h3>
+  return `<div class="card"><h3>${T('필수 원재료 카테고리')} <span class="en">· Required categories</span></h3>
     <div class="body"><div>${chips}</div>${warn}</div></div>`;
 }
 function prodAccordion(id,prods,mats,matrix){
@@ -4100,7 +4100,7 @@ function sjphStage(id,ko,en,desc,types,chk){
   const rows=types.map(dt=>{const it=cl.find(x=>x.doc_type===dt);const okv=it&&it.satisfied;
     const files=(it&&it.files)||[];
     const flist=files.map(fileLine).join("");
-    return `<div class="check" style="padding:4px 0"><div class="cbox ${okv?"on":""}">${okv?"✓":""}</div><b style="flex:1;font-size:12px">${esc(T(it?(it.doc_type_ko||it.doc_type):dt))}</b>${okv?tag("ok",files.length+T('건')):tag("bad","미제출")}</div>${flist}`;}).join("");
+    return `<div class="check" style="padding:4px 0"><div class="cbox ${okv?"on":""}">${okv?"✓":""}</div><b style="flex:1;font-size:12px">${esc(T(it?(it.doc_type_ko||it.doc_type):dt))}</b>${okv?tag("ok",files.length+T('건')):tag("bad",T("미제출"))}</div>${flist}`;}).join("");
   // 요구 타입 외 업로드된 기타 파일(전체 업로드 리스트 완성)
   const extra=cl.filter(x=>!types.includes(x.doc_type)&&(x.files||[]).length);
   const extraRows=extra.length?`<div class="divide" style="margin:8px 0"></div><div class="muted small" style="margin-bottom:2px">기타 업로드 · Other files</div>`+
@@ -4145,8 +4145,8 @@ function matVerified(m){
 }
 function matVerifyTag(m){
   const st=(m.status||m.screen_status||m.result||'').toString().toLowerCase();
-  if(/haram|najis|차단|block|reject/.test(st)) return tag('bad','⛔ 부적합');
-  return matVerified(m)?tag('ok','✓ 검증됨'):tag('warn','⚠ 미검증 · 증빙필요');
+  if(/haram|najis|차단|block|reject/.test(st)) return tag('bad',T('⛔ 부적합'));
+  return matVerified(m)?tag('ok',T('✓ 검증됨')):tag('warn',T('⚠ 미검증 · 증빙필요'));
 }
 /* 제품→원재료 아코디언 — 제품 클릭 시 소속 원재료 펼침(오디터·심사자 공용). */
 function productAccordion(id,prods){
@@ -4370,7 +4370,7 @@ function fatwaColor(s){return {approved:"ok",provisional:"info",rejected:"bad",c
 SCREEN.dashboard=async()=>{
   const [sum,cases]=await Promise.all([API("/dashboard/summary"),loadCases(true)]);
   const _cc=CURCASE?cases.find(c=>c.case_id===CURCASE):null;
-  const caseProg=_cc?`${journeyCard(_cc.case_id)}<div class="card" style="margin-bottom:16px"><h3>진행 단계 <span class="en">· Progress</span><span class="r">${esc(_cc.company_name||"")}</span></h3><div class="body">${progressBar(_cc.status)}</div></div>`:"";
+  const caseProg=_cc?`${journeyCard(_cc.case_id)}<div class="card" style="margin-bottom:16px"><h3>${T('진행 단계')} <span class="en">· Progress</span><span class="r">${esc(_cc.company_name||"")}</span></h3><div class="body">${progressBar(_cc.status)}</div></div>`:"";
   let analytics=null;
   if(["ops","admin"].includes(ROLE)){try{analytics=await API("/analytics/summary");}catch(_){}}
   const kpi=sum.kpi||{total:0,issued:0,action:0,in_progress:0};
@@ -4412,7 +4412,7 @@ SCREEN.dashboard=async()=>{
   const workq=sum.worklist||[];
   const workLabel=ROLE==="auditor"?"심사 대기 · Audit":ROLE==="sharia"?"파트와 심의대기 · Fatwa":(ROLE==="ops"||ROLE==="admin")?"작업 큐(심사·파트와) · Worklist":"";
   const workCard=workLabel?`<div class="card" style="margin-bottom:16px"><h3>🗂 ${workLabel}<span class="r">${workq.length}${T('건')} · 클릭→상세</span></h3>
-    <div class="body tight"><table><thead><tr><th>ID</th><th>기업</th><th>단계</th><th>경로</th></tr></thead>
+    <div class="body tight"><table><thead><tr><th>ID</th><th>${T('기업')}</th><th>${T('단계')}</th><th>${T('경로')}</th></tr></thead>
       <tbody>${workq.length?workq.map(q=>`<tr class="clickable" onclick="openCase('${q.case_id}')"><td style="font-family:ui-monospace,monospace;font-size:11px">${short(q.case_id)}</td><td><b>${esc(q.company||"—")}</b></td><td>${bTag("info",q.stage)}</td><td>${bTag(q.pathway==='self_declare'?'info':'mute',q.pathway||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">대기 항목 없음</td></tr>'}</tbody></table></div></div>`:'';
   // 다중 케이스 준비도 비교 — 서버 집계(readiness)
   const rdRows=(sum.readiness||[]).map(rd=>`<tr class="clickable" onclick="openCase('${rd.case_id}')"><td><b>${esc(rd.company||short(rd.case_id))}</b></td>
@@ -4429,17 +4429,17 @@ SCREEN.dashboard=async()=>{
   </div>
   ${workCard}
   <div class="grid side" style="margin-bottom:16px">
-    <div class="card"><h3>🗺 지역별 등록현황 <span class="en">· By region</span><span class="r">서버 집계 · ${regions.length}${T('개')} ${T('지역')}</span></h3>
+    <div class="card"><h3>${T('🗺 지역별 등록현황')} <span class="en">· By region</span><span class="r">서버 집계 · ${regions.length}${T('개')} ${T('지역')}</span></h3>
       <div class="body">
         <div class="mapwrap">${bubbles||'<div style="display:grid;place-items:center;height:100%;color:var(--ink3);text-align:center;padding:20px">주소가 입력된 케이스가 없습니다.<br>신청 화면에서 <b>공장 주소</b>를 입력하면 지역별로 집계됩니다.</div>'}
           <div style="position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--ink3)">🇮🇩 Indonesia · ${mapped}${T('건')} 매핑 · 미지정 ${unassigned}${T('건')}</div></div>
         <div class="legend"><span><i style="background:#16A34A"></i>많음</span><span><i style="background:#2563EB"></i>보통</span><span><i style="background:#D97706"></i>적음</span><span class="muted">· 버블 클릭 → 지역 필터</span></div>
       </div></div>
-    <div class="card"><h3>단계별 현황 <span class="en">· By status</span><span class="r">클릭 → 필터</span></h3>
+    <div class="card"><h3>${T('단계별 현황')} <span class="en">· By status</span><span class="r">클릭 → 필터</span></h3>
       <div class="body"><div class="stagebars">${stageBars}</div></div></div>
   </div>
   <div class="grid side">
-    <div class="card"><h3>알림·공지 <span class="en">· Notifications</span><span class="r">${alerts.length}${T('건')}</span></h3>
+    <div class="card"><h3>${T('알림·공지')} <span class="en">· Notifications</span><span class="r">${alerts.length}${T('건')}</span></h3>
       <div class="body">
         ${notif.length?notif.map(([cl,ic,tx,cid])=>`<div class="banner ${cl} clickable" style="margin-bottom:10px" onclick="openCase('${cid}')">${ic} ${esc(tx)} <span class="go-arrow">→</span></div>`).join(""):'<div class="banner ok">✓ 처리 필요한 알림 없음</div>'}
         <div class="divide"></div>
@@ -4452,12 +4452,12 @@ SCREEN.dashboard=async()=>{
         </tbody></table>
         <div class="small muted" style="margin-top:4px">${T('수출 시 대상국 기관의 BPJPH 인정 여부를 확인하세요 — 미인정 국가는 현지 재인증이 필요합니다.')}</div>
       </div></div>
-    <div class="card"><h3>최근 감사 이벤트 <span class="en">· Audit events</span><span class="r">🔗 해시체인</span></h3>
+    <div class="card"><h3>${T('최근 감사 이벤트')} <span class="en">· Audit events</span><span class="r">🔗 해시체인</span></h3>
       <div class="list">${evHtml}</div></div>
   </div>
-  ${rdRows?`<div class="card" style="margin-top:16px"><h3>케이스 준비도 비교 <span class="en">· Readiness</span><span class="r">상위 ${(sum.readiness||[]).length}${T('건')} · 클릭→상세</span></h3>
-    <div class="body tight"><table><thead><tr><th>기업 · Company</th><th>준비도</th><th>밴드</th><th>경로</th></tr></thead><tbody>${rdRows}</tbody></table></div></div>`:''}
-  ${analytics?`<div class="card" style="margin-top:16px"><h3>운영 분석 <span class="en">· Analytics</span><span class="r">operator · 매출·추이</span></h3>
+  ${rdRows?`<div class="card" style="margin-top:16px"><h3>${T('케이스 준비도 비교')} <span class="en">· Readiness</span><span class="r">상위 ${(sum.readiness||[]).length}${T('건')} · 클릭→상세</span></h3>
+    <div class="body tight"><table><thead><tr><th>기업 · Company</th><th>${T('준비도')}</th><th>${T('밴드')}</th><th>${T('경로')}</th></tr></thead><tbody>${rdRows}</tbody></table></div></div>`:''}
+  ${analytics?`<div class="card" style="margin-top:16px"><h3>${T('운영 분석')} <span class="en">· Analytics</span><span class="r">operator · 매출·추이</span></h3>
     <div class="body">
       <div class="grid three" style="gap:10px;margin-bottom:14px">
         <div class="kpi"><span class="n" style="font-size:20px;color:var(--ok)">${fmtIDR(analytics.revenue_paid)}</span><span class="l">매출(결제완료)</span></div>
@@ -4513,15 +4513,15 @@ SCREEN.caseList=async()=>{
   // 인증 워크스페이스는 케이스 디테일 overview(renderCaseDetail)로 이전됨 — 리스트 화면에서는 미노출
   return `${filterChips()}${auditorHead}
   <div class="chipbar" style="margin-bottom:12px">
-    ${ROLE!=='client'?`<input class="v" style="width:auto;flex:1;max-width:280px" placeholder="🔍 검색 (기업·번호) — Enter" value="${esc(FILTERS.q||'')}" onkeydown="if(event.key==='Enter'){FILTERS.q=this.value;PAGES={};applyView();}">`:''}
+    ${ROLE!=='client'?`<input class="v" style="width:auto;flex:1;max-width:280px" placeholder="${T('🔍 검색 (기업·번호) — Enter')}" value="${esc(FILTERS.q||'')}" onkeydown="if(event.key==='Enter'){FILTERS.q=this.value;PAGES={};applyView();}">`:''}
     <select class="v" style="width:auto" onchange="CASE_SORT=this.value;applyView()">
-      <option value="recent"${CASE_SORT==='recent'?' selected':''}>정렬: 최근순</option>
-      <option value="due"${CASE_SORT==='due'?' selected':''}>정렬: 기한 우선</option></select>
+      <option value="recent"${CASE_SORT==='recent'?' selected':''}>${T('정렬: 최근순')}</option>
+      <option value="due"${CASE_SORT==='due'?' selected':''}>${T('정렬: 기한 우선')}</option></select>
     ${FILTERS.q?`<span class="fchip">검색: ${esc(FILTERS.q)} <b onclick="delete FILTERS.q;applyView()">✕</b></span>`:''}
   </div>
-  <div class="card"><h3>케이스 테이블 <span class="en">· Case table</span><span class="r">${ROLE==='auditor'?'배정 심사 관리':'row 클릭 → 상세'}</span></h3>
+  <div class="card"><h3>${T('케이스 테이블')} <span class="en">· Case table</span><span class="r">${ROLE==='auditor'?'배정 심사 관리':'row 클릭 → 상세'}</span></h3>
     <div class="body tight"><table>
-      <thead><tr><th>번호 · ID</th><th>기업 · Company</th><th>경로</th><th>상태 · Status</th><th>담당 · Auditor</th><th>기한 · Due</th></tr></thead>
+      <thead><tr><th>번호 · ID</th><th>기업 · Company</th><th>${T('경로')}</th><th>상태 · Status</th><th>담당 · Auditor</th><th>기한 · Due</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     ${pager("caseList",pg)}
     <div class="body btnrow" style="border-top:1px solid var(--line)">
@@ -5044,7 +5044,7 @@ SCREEN.preassess=async()=>{
           <div class="kv"><span>원재료 · Materials</span><b>${mats.length}${T('건')}</b></div>
           <div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="assessPathway('${id}')">🔍 ${T('사전심사 실행')} · Run</button></div>
         </div></div>
-      <div class="card" style="margin-top:16px"><h3>대상 품목 <span class="en">· Items</span><span class="r">${prods.length+mats.length}</span></h3>
+      <div class="card" style="margin-top:16px"><h3>${T('대상 품목')} <span class="en">· Items</span><span class="r">${prods.length+mats.length}</span></h3>
         <div class="body tight" style="max-height:360px;overflow:auto">
           ${prods.length?'<div class="muted small" style="padding:4px 0 5px;font-weight:600">제품 · Products <span class="muted" style="font-weight:400">— '+T('제품 클릭 시 사용 원재료 펼침')+' ▶</span></div>'+productAccordion(id,prods):''}
           ${(()=>{const vN=mats.filter(matVerified).length;const uN=mats.length-vN;return `<div class="muted small" style="padding:8px 0 4px;font-weight:600">원재료 · Materials (${mats.length}) ${tag('ok','✓ '+T('검증됨')+' '+vN)} ${tag('warn','⚠ '+T('미검증')+' '+uN)}</div>`;})()}
@@ -5072,18 +5072,18 @@ SCREEN.preassess=async()=>{
           </div>
           ${screened<mats.length?`<div class="banner warn" style="margin-top:10px">⚠ ${mats.length-screened}${T('건')} 미스크리닝 — 원재료 화면에서 스크리닝하세요.</div>`:(mats.length?'<div class="banner ok" style="margin-top:10px">✅ 전체 스크리닝 완료</div>':'')}
         </div></div>
-      <div class="card" style="margin-top:16px"><h3>부족 서류 <span class="en">· Missing</span><span class="r">${missN}</span></h3>
+      <div class="card" style="margin-top:16px"><h3>${T('부족 서류')} <span class="en">· Missing</span><span class="r">${missN}</span></h3>
         <div class="body">
           ${missN?`<div class="banner warn" style="margin-bottom:8px">${T('보완 필요 서류')} ${missN}${T('건')} · ${T('각 서류의 상태와 필요 내용을 확인하세요')}</div>`+(chk.missing||[]).map(x=>{
             const o=(x&&typeof x==='object')?x:{doc_type_ko:x};
             const dtko=o.doc_type_ko||o.doc_type||x;
             const st=o.status||'';
-            const stTag=st==='missing'?tag('bad','미제출 · 파일 없음'):(st==='rejected'?tag('warn','반려 · 내용 보완 필요'):'');
+            const stTag=st==='missing'?tag('bad',T('미제출 · 파일 없음')):(st==='rejected'?tag('warn','반려 · 내용 보완 필요'):'');
             return `<div class="li" style="align-items:flex-start;padding:8px 0"><div class="ic t-${st==='missing'?'bad':'warn'}">📄</div><div class="tx"><div><b>${esc(dtko)}</b> ${stTag}${o.file_count?` <span class="muted small">(제출 ${o.file_count}${T('건')})</span>`:''}</div>
               ${o.reason?`<div class="muted small" style="margin-top:3px">↳ ${esc(o.reason)}</div>`:''}
               ${o.requirement?`<div class="small" style="margin-top:3px;color:var(--ink2,#475569)">📋 필요 내용 · Requirement: ${esc(T(o.requirement))}</div>`:''}</div></div>`;
           }).join(''):'<div class="banner ok">✅ 필수 서류 완비 · Semua dokumen lengkap</div>'}
-          ${canApp?`<div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:6px"><button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 업로드</button><button class="btn" onclick="labelOcr('${id}')">📷 라벨 OCR</button></div><div id="intakeOut" class="small" style="margin-top:8px">${INTAKE_OUT[id]||''}</div>`:''}
+          ${canApp?`<div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:6px"><button class="btn" onclick="intakeZip('${id}')">${T('🗂 ZIP 업로드')}</button><button class="btn" onclick="labelOcr('${id}')">${T('📷 라벨 OCR')}</button></div><div id="intakeOut" class="small" style="margin-top:8px">${INTAKE_OUT[id]||''}</div>`:''}
         </div></div>
       ${auditorCard}
       ${clientPanel}
@@ -5182,9 +5182,9 @@ SCREEN.application=async()=>{
         <div style="border:1px solid var(--line2);border-radius:10px;padding:12px">
           <div style="font-weight:700;font-size:12.5px;margin-bottom:8px">📎 ${T('파일 업로드')} <span class="en">· Upload</span></div>
           ${canApp?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center">
-            <button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 업로드</button>
+            <button class="btn" onclick="intakeZip('${id}')">${T('🗂 ZIP 업로드')}</button>
             <button class="btn" onclick="labelOcr('${id}')">📷 OCR</button>
-            <button class="btn" onclick="screenText('${id}')">🔤 성분 텍스트 스크리닝</button></div>
+            <button class="btn" onclick="screenText('${id}')">${T('🔤 성분 텍스트 스크리닝')}</button></div>
           <div class="dropzone" style="margin:0 0 8px" ondrop="handleDrop(event,'${id}')" ondragover="dzOver(event)" ondragleave="dzLeave(event)" onclick="document.getElementById('dzFile_${id}').click()">📎 ZIP 파일을 여기에 드래그 · 또는 클릭하여 선택</div>
           <input type="file" id="dzFile_${id}" accept=".zip" style="display:none" onchange="handleDropInput(this,'${id}')">
           <div id="intakeOut_${id}" class="small" style="margin-bottom:6px">${INTAKE_OUT[id]||''}</div>`:''}
@@ -5199,14 +5199,14 @@ SCREEN.application=async()=>{
       ${ROLE!=='client'?`<div style="border:1px solid var(--line2);border-radius:10px;padding:12px;margin-top:12px">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div style="font-weight:700;font-size:12.5px">📦 제품 · 원재료 <span class="en">· Products & Materials</span></div>
-          ${canApp?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="autoLinkMaterials('${id}')">🔗 원재료 자동연결</button>`:''}
+          ${canApp?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="autoLinkMaterials('${id}')">${T('🔗 원재료 자동연결')}</button>`:''}
         </div>
         <div class="muted small" style="margin-bottom:6px">제품을 클릭하면 연결된 원재료가 펼쳐집니다</div>
         <div style="max-height:300px;overflow:auto">${prodAccordion(id,prods,mats,matrix)}</div>
       </div>`:''}
       <div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:6px">
-        <button class="btn" onclick="go('materials')">🧪 원재료 화면</button>
-        <button class="btn" onclick="go('documents')">📁 문서 화면</button></div>
+        <button class="btn" onclick="go('materials')">${T('🧪 원재료 화면')}</button>
+        <button class="btn" onclick="go('documents')">${T('📁 문서 화면')}</button></div>
     </div></div>
   <div class="card" style="margin-bottom:16px"><div class="body btnrow" style="flex-wrap:wrap;gap:8px;align-items:center">
     <b style="margin-right:auto;font-size:13px">💾 신청 정보 저장 · Save</b>
@@ -5224,7 +5224,7 @@ SCREEN.application=async()=>{
           <div id="sihalalOut" class="small" style="margin-top:4px"></div></div>
         ${(coChk&&coChk.mismatch&&coChk.suggested_company)?`<div class="banner bad" style="margin:-4px 0 10px"><b>⚠ ${T('기업명 불일치')}</b><br>${T('사업자등록증')}: <b>${esc(coChk.suggested_company)}</b> · ${T('유사도')} ${Math.round((coChk.best_similarity||0)*100)}%<br><button class="btn" style="margin-top:6px;padding:3px 8px;font-size:11px" onclick="applyDocCompany('${id}',${JSON.stringify(coChk.suggested_company).replace(/"/g,'&quot;')},${JSON.stringify(c.company_name||'').replace(/"/g,'&quot;')})">📄 ${T('문서 기업명으로 변경')}</button></div>`:''}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div class="field"><label>NIB · 사업자등록번호</label><input class="v" id="apNib" value="${esc(c.nib||"")}"></div>
+          <div class="field"><label>${T('NIB · 사업자등록번호')}</label><input class="v" id="apNib" value="${esc(c.nib||"")}"></div>
           <div class="field"><label>세금 ID · Tax ID</label><input class="v" id="peTaxId" value="${esc(pe.tax_id||"")}"></div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>법인등록번호 · Corp. Reg. No.</label><input class="v" id="peCorpRegNo" value="${esc(pe.corporate_reg_no||"")}"></div>
@@ -5236,7 +5236,7 @@ SCREEN.application=async()=>{
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
           <div class="field"><label>신청유형 · Application</label><select class="v" id="peAppType">${[["","—"],["Regular","정규 · General"],["Self-Declare","자기선언 · Self-declare"]].map(([v,l])=>`<option value="${v}"${(pe.application_type||"")===v?" selected":""}>${l}</option>`).join("")}</select></div>
           <div class="field"><label>등록현황 · Status</label><select class="v" id="peRegStatus">${["","New","Renew","Development"].map(o=>`<option${(pe.registration_status||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div>
-          <div class="field"><label>SIHALAL 여부</label><select class="v" id="peSiHalal">${["","Yes","No"].map(o=>`<option${(pe.si_halal||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div></div>
+          <div class="field"><label>${T('SIHALAL 여부')}</label><select class="v" id="peSiHalal">${["","Yes","No"].map(o=>`<option${(pe.si_halal||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>제품유형 · Product Type</label><input class="v" id="peProdType" value="${esc(pe.product_type||"")}"></div>
           <div class="field"><label>마케팅유형 · Marketing</label><input class="v" id="peMktType" value="${esc(pe.marketing_type||"")}" placeholder="retail/non-retail"></div></div>
@@ -5258,16 +5258,16 @@ SCREEN.application=async()=>{
         <div class="field"><label>이메일 · Email</label><input class="v" id="peEmail" value="${esc(c.email||"")}"></div>
         <div class="muted small" style="margin:10px 0 4px;font-weight:600">담당자 · PIC (Person In Charge)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div class="field"><label>이름</label><input class="v" id="pePicName" value="${esc(pe.pic_name||"")}"></div>
-          <div class="field"><label>직책</label><input class="v" id="pePicTitle" value="${esc(pe.pic_title||"")}"></div>
-          <div class="field"><label>휴대폰</label><input class="v" id="pePicPhone" value="${esc(pe.pic_phone||"")}"></div>
-          <div class="field"><label>이메일</label><input class="v" id="pePicEmail" value="${esc(pe.pic_email||"")}"></div></div>
+          <div class="field"><label>${T('이름')}</label><input class="v" id="pePicName" value="${esc(pe.pic_name||"")}"></div>
+          <div class="field"><label>${T('직책')}</label><input class="v" id="pePicTitle" value="${esc(pe.pic_title||"")}"></div>
+          <div class="field"><label>${T('휴대폰')}</label><input class="v" id="pePicPhone" value="${esc(pe.pic_phone||"")}"></div>
+          <div class="field"><label>${T('이메일')}</label><input class="v" id="pePicEmail" value="${esc(pe.pic_email||"")}"></div></div>
         <div class="muted small" style="margin:10px 0 4px;font-weight:600">업무담당자 · CP (Contact Person)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <div class="field"><label>이름</label><input class="v" id="peCpName" value="${esc(pe.cp_name||"")}"></div>
-          <div class="field"><label>직책</label><input class="v" id="peCpTitle" value="${esc(pe.cp_title||"")}"></div>
-          <div class="field"><label>휴대폰</label><input class="v" id="peCpPhone" value="${esc(pe.cp_phone||"")}"></div>
-          <div class="field"><label>이메일</label><input class="v" id="peCpEmail" value="${esc(pe.cp_email||"")}"></div></div>
+          <div class="field"><label>${T('이름')}</label><input class="v" id="peCpName" value="${esc(pe.cp_name||"")}"></div>
+          <div class="field"><label>${T('직책')}</label><input class="v" id="peCpTitle" value="${esc(pe.cp_title||"")}"></div>
+          <div class="field"><label>${T('휴대폰')}</label><input class="v" id="peCpPhone" value="${esc(pe.cp_phone||"")}"></div>
+          <div class="field"><label>${T('이메일')}</label><input class="v" id="peCpEmail" value="${esc(pe.cp_email||"")}"></div></div>
         <div class="field"><label>할랄감독자 · Halal Supervisor</label><input class="v" id="apSup" value="${esc(c.halal_supervisor||"")}"></div>
         <div class="field"><label>처리 기한 · Due date <span class="muted">(기한 경보)</span></label><input class="v" id="apDue" type="date" lang="${['en','ko','id'][LANG]||'en'}" value="${esc(c.due_date||"")}"> ${c.due_date?dueBadge(c.due_date):''}</div>
         <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="apConsent" ${c.notify_consent?"checked":""} style="width:auto"> 알림 수신 동의 · Notification opt-in (SMS·WhatsApp)</label></div>
@@ -5278,7 +5278,7 @@ SCREEN.application=async()=>{
     ${facMultiPanel(id, `<div style="border:1px solid var(--line2);border-radius:10px;padding:10px;margin-bottom:12px;background:var(--panel2,#fafafa)">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
             <b style="font-size:12.5px">🏢 회사 등록 공장 목록 · Registered Facilities <span class="muted">(회사 자산 · ${facs.length}${T('개')})</span></b>
-            ${canApp?`<button class="btn" style="padding:4px 10px" onclick="facAdd('${esc(org)}','${id}')">+ 공장 추가</button>`:''}
+            ${canApp?`<button class="btn" style="padding:4px 10px" onclick="facAdd('${esc(org)}','${id}')">${T('+ 공장 추가')}</button>`:''}
           </div>
           <div class="muted small" style="margin-bottom:4px">☑ 체크한 공장이 <b>이 신청 대상</b>으로 저장됩니다 · Select target facilities for this application</div>
           <div id="facListBox">${facListHtml(facs,org,canApp,c.facility_ids,id)}</div>
@@ -5288,18 +5288,18 @@ SCREEN.application=async()=>{
     <div class="card"><h3>할랄감독자 · Penyelia <span class="en">· Supervisor</span><span class="r">활성 ${penyeliaResp.active_count!=null?penyeliaResp.active_count:pens.filter(p=>p.status==='active').length}</span></h3>
       <div class="body">
         ${pens.length?pens.map(p=>`<div class="li"><div class="ic t-info">👤</div><div class="tx"><b>${esc(p.name)}</b><div>${esc(p.training_cert||"교육증명 없음")}</div></div><div class="when">${tag(p.status==='active'?'ok':'mute',p.status||"—")}${canApp?` <button class="btn" style="padding:2px 7px;font-size:11px" onclick="togglePenyelia('${p.penyelia_id}','${p.status==='active'?'inactive':'active'}')">${p.status==='active'?'비활성화':'활성화'}</button>`:''}</div></div>`).join(""):'<div class="muted small">등록된 감독자 없음</div>'}
-        ${canApp?`<div class="btnrow" style="margin-top:10px"><input class="v" id="pyName" placeholder="이름" style="flex:1"><button class="btn pri" onclick="addPenyelia()">등록</button></div>`:''}
+        ${canApp?`<div class="btnrow" style="margin-top:10px"><input class="v" id="pyName" placeholder="${T('이름')}" style="flex:1"><button class="btn pri" onclick="addPenyelia()">${T('등록')}</button></div>`:''}
       </div></div>
     <div class="card"><h3>동반자 · Pendamping <span class="en">· SEHATI</span></h3>
       <div class="body">
-        <div class="field"><label>배정 · Assign (컨설턴트)</label><div class="btnrow"><input class="v" id="pdId" placeholder="pendamping_id" style="flex:1"><button class="btn" onclick="assignPendamping('${id}')">배정</button></div></div>
-        <div class="field"><label>검증 · Verify (동반자)</label><div class="btnrow"><button class="btn ok" onclick="verifyPendamping('${id}','verified')">검증</button><button class="btn bad" onclick="verifyPendamping('${id}','rejected')">반려</button></div></div>
+        <div class="field"><label>${T('배정 · Assign (컨설턴트)')}</label><div class="btnrow"><input class="v" id="pdId" placeholder="pendamping_id" style="flex:1"><button class="btn" onclick="assignPendamping('${id}')">${T('배정')}</button></div></div>
+        <div class="field"><label>${T('검증 · Verify (동반자)')}</label><div class="btnrow"><button class="btn ok" onclick="verifyPendamping('${id}','verified')">${T('검증')}</button><button class="btn bad" onclick="verifyPendamping('${id}','rejected')">${T('반려')}</button></div></div>
       </div></div>
-    <div class="card"><h3>SIHALAL 동일성 <span class="en">· Identity</span></h3>
+    <div class="card"><h3>${T('SIHALAL 동일성')} <span class="en">· Identity</span></h3>
       <div class="body">
-        <div class="field"><label>① 연동 · Link</label><div class="btnrow"><input class="v" id="shUser" placeholder="external_username" style="flex:1"><button class="btn" onclick="sihalalLink('${id}')">연동</button></div></div>
+        <div class="field"><label>① 연동 · Link</label><div class="btnrow"><input class="v" id="shUser" placeholder="external_username" style="flex:1"><button class="btn" onclick="sihalalLink('${id}')">${T('연동')}</button></div></div>
         ${SIHALAL_EID[id]?`<div class="banner info" style="margin-bottom:8px">연동됨 · eid ${esc(String(SIHALAL_EID[id]).slice(0,8))}…</div>
-        <div class="field"><label>② 동일성 검증 · Verify</label><div class="btnrow"><input class="v" id="shExp" placeholder="expected_identifier (email/NIB)" style="flex:1"><button class="btn ok" onclick="sihalalVerify('${id}')">검증</button></div></div>`:'<div class="small muted">연동 후 동일성 검증(2단계)이 활성화됩니다.</div>'}
+        <div class="field"><label>② 동일성 검증 · Verify</label><div class="btnrow"><input class="v" id="shExp" placeholder="expected_identifier (email/NIB)" style="flex:1"><button class="btn ok" onclick="sihalalVerify('${id}')">${T('검증')}</button></div></div>`:'<div class="small muted">연동 후 동일성 검증(2단계)이 활성화됩니다.</div>'}
       </div></div>
   </div>`;
 };
@@ -5453,20 +5453,20 @@ SCREEN.materials=async()=>{
         <button class="btn pri" onclick="materialReport('${id}')">📄 성분 분석 보고서 · Report</button>
         ${canMatWrite?`<button class="btn" onclick="dedupMaterials('${id}')">🧹 ${T('중복 정리')}</button>
         <button class="btn" onclick="reuseMaterials('${id}')">♻️ ${T('기존 원재료 재사용')}</button>
-        <button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 인테이크</button>
-        <button class="btn" onclick="labelOcr('${id}')">📷 라벨 OCR</button>`:''}
+        <button class="btn" onclick="intakeZip('${id}')">${T('🗂 ZIP 인테이크')}</button>
+        <button class="btn" onclick="labelOcr('${id}')">${T('📷 라벨 OCR')}</button>`:''}
         <button class="btn" onclick="screenText('${id}')">🔤 텍스트 스크리닝</button></div>
       ${canMatWrite?`<div class="body" style="border-top:1px solid var(--line)">
-        <div class="btnrow"><input class="v" id="newMatName" list="ingList" placeholder="원재료명 (자동완성)" style="flex:1" oninput="suggestIngredient()">
+        <div class="btnrow"><input class="v" id="newMatName" list="ingList" placeholder="${T('원재료명 (자동완성)')}" style="flex:1" oninput="suggestIngredient()">
           <datalist id="ingList"></datalist>
           <select class="v" id="newMatType" style="width:auto">${(enums.material_type||[]).map(o=>`<option value="${o.value}">${esc(o.label)}</option>`).join("")||'<option value="">유형</option>'}</select>
-          <button class="btn pri" onclick="addMaterial('${id}')">＋ 추가</button></div></div>`:''}</div>
+          <button class="btn pri" onclick="addMaterial('${id}')">${T('＋ 추가')}</button></div></div>`:''}</div>
     <div class="card"><h3>원재료 스크리닝 <span class="en">· ontology</span></h3>
       <div class="body">
         ${bad.length?`<div class="banner bad" style="margin-bottom:12px">⛔ ${T('하람/고위험 의심')} ${bad.length}${T('건 — 증빙 필수')}</div>
           ${bad.map(m=>`<div class="field"><label>${esc(m.name)}</label><div class="v small">매칭: <b style="color:var(--bad)">${bSpan(m.result||m.status)}</b>${m.note?"<br>"+esc(m.note):""}</div></div>`).join("")}`
           :'<div class="banner ok">✓ 하람·고위험 의심 없음</div>'}
-        ${(()=>{const ne=mats.filter(m=>(m.evidence_count||0)===0&&/needs|mushbooh|warn|의심/i.test((m.status||"")+(m.result||"")+(m.severity||"")));return ne.length?`<div class="divide"></div><div class="small" style="font-weight:600;margin-bottom:6px">📎 ${T('증빙 미제출')} ${ne.length}${T('건')}</div>${ne.map(m=>`<div class="li" style="padding:6px 0"><div class="tx"><b>${esc(m.name)}</b><div>${esc(m.status||m.result||"")}</div></div><div class="when">${canMatWrite?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="attachEvidence('${id}','${m.material_id}')">증빙</button>`:'미제출'}</div></div>`).join("")}`:"";})()}
+        ${(()=>{const ne=mats.filter(m=>(m.evidence_count||0)===0&&/needs|mushbooh|warn|의심/i.test((m.status||"")+(m.result||"")+(m.severity||"")));return ne.length?`<div class="divide"></div><div class="small" style="font-weight:600;margin-bottom:6px">📎 ${T('증빙 미제출')} ${ne.length}${T('건')}</div>${ne.map(m=>`<div class="li" style="padding:6px 0"><div class="tx"><b>${esc(m.name)}</b><div>${esc(m.status||m.result||"")}</div></div><div class="when">${canMatWrite?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="attachEvidence('${id}','${m.material_id}')">${T('증빙')}</button>`:'미제출'}</div></div>`).join("")}`:"";})()}
         <div class="divide"></div>
         <div class="field"><label>원재료 해설 · Explain</label>
           <div class="btnrow"><input class="box" id="explInput" placeholder="원재료명 (예: gelatin)" style="flex:1"><button class="btn" onclick="explainMaterial()">해설</button></div></div>
@@ -5781,14 +5781,14 @@ const GENDOC_KO={sjph_manual:"SJPH 매뉴얼",audit_report:"현장심사 보고�
 async function genDocsCard(id,docType,title,genFn,canApprove){
   let rows=[];try{rows=await API(`/cases/${id}/gen-docs?doc_type=${docType}`);}catch(_){}
   return `<div class="card" style="margin-top:16px"><h3>${esc(title)} <span class="en">· versions</span><span class="r">${rows.length}${T('개')} ${T('버전')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>버전</th><th>상태</th><th>생성</th><th></th></tr></thead>
+    <div class="body tight"><table><thead><tr><th>${T('버전')}</th><th>${T('상태')}</th><th>${T('생성')}</th><th></th></tr></thead>
       <tbody>${rows.length?rows.map(g=>`<tr><td><b>v${g.version}</b></td><td>${bTag(g.status==='approved'?'ok':'mute',g.status)}</td>
         <td class="muted small">${esc((g.created_at||"").slice(0,16))}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn" style="padding:3px 8px;font-size:11px" onclick="serverPdf('/gen-docs/${g.gen_doc_id}/pdf','${docType}_v${g.version}.pdf')">📄 PDF</button>
-          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="printGenDoc('${g.gen_doc_id}')">🖨 인쇄</button>
+          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="printGenDoc('${g.gen_doc_id}')">${T('🖨 인쇄')}</button>
           <button class="btn" style="padding:3px 8px;font-size:11px" onclick="dlGenDoc('${g.gen_doc_id}')">⬇ txt</button>
-          ${canApprove&&g.status!=='approved'?`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="approveGenDoc('${g.gen_doc_id}')">승인</button>`:''}</td></tr>`).join(""):`<tr><td colspan="4" class="muted" style="text-align:center;padding:14px">생성된 문서 없음</td></tr>`}</tbody></table></div>
+          ${canApprove&&g.status!=='approved'?`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="approveGenDoc('${g.gen_doc_id}')">${T('승인')}</button>`:''}</td></tr>`).join(""):`<tr><td colspan="4" class="muted" style="text-align:center;padding:14px">생성된 문서 없음</td></tr>`}</tbody></table></div>
     <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn pri" onclick="${genFn}">＋ 새 버전 생성 · Generate</button></div></div>`;
 }
 async function printGenDoc(gid){try{const g=await API(`/gen-docs/${gid}`);const w=window.open("","_blank");if(!w){toast("팝업 차단");return;}
@@ -5833,8 +5833,8 @@ async function productDetailCard(cid){
   if(!p||!p.product_id){PRODUCT_SEL=null;return '';}
   const canApp=["client","consultant","admin"].includes(ROLE);
   const st=p.status||'draft';
-  const rows=(p.materials||[]).map(m=>`<tr><td>${esc(m.name)}</td><td>${bTag(statusColor(m.screen_status),m.screen_status||'—')}</td><td>${esc(m.screen_severity||'—')}</td><td>${esc(m.supplier||'—')}</td><td>${m.evidence_provided?tag('ok','증빙'):tag('warn','미첨부')}</td></tr>`).join('')||'<tr><td colspan="5" class="muted" style="text-align:center;padding:12px">연결된 원재료 없음 — 아래 HPAS 매트릭스에서 링크하세요</td></tr>';
-  return `<div class="card" style="margin-bottom:16px;border:2px solid var(--accent)"><h3>제품 상세 <span class="en">· Product Detail</span><span class="r"><button class="btn" style="padding:2px 9px" onclick="closeProduct()">✕ 닫기</button></span></h3>
+  const rows=(p.materials||[]).map(m=>`<tr><td>${esc(m.name)}</td><td>${bTag(statusColor(m.screen_status),m.screen_status||'—')}</td><td>${esc(m.screen_severity||'—')}</td><td>${esc(m.supplier||'—')}</td><td>${m.evidence_provided?tag('ok',T('증빙')):tag('warn',T('미첨부'))}</td></tr>`).join('')||'<tr><td colspan="5" class="muted" style="text-align:center;padding:12px">연결된 원재료 없음 — 아래 HPAS 매트릭스에서 링크하세요</td></tr>';
+  return `<div class="card" style="margin-bottom:16px;border:2px solid var(--accent)"><h3>${T('제품 상세')} <span class="en">· Product Detail</span><span class="r"><button class="btn" style="padding:2px 9px" onclick="closeProduct()">${T('✕ 닫기')}</button></span></h3>
     <div class="body">
       <div class="grid three">
         <div class="field"><label>제품명 · Name</label><input class="v" value="${esc(p.name||'')}" disabled></div>
@@ -5846,7 +5846,7 @@ async function productDetailCard(cid){
       </div>
       ${canApp?`<button class="btn pri" onclick="saveProduct('${cid}')">💾 저장 · Save</button>`:''}
       <div style="font-weight:600;margin:14px 0 6px">원재료 매트릭스 <span class="en">· Materials</span></div>
-      <div class="body tight"><table><thead><tr><th>원재료</th><th>판정</th><th>심각도</th><th>공급사</th><th>증빙</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="body tight"><table><thead><tr><th>${T('원재료')}</th><th>${T('판정')}</th><th>${T('심각도')}</th><th>${T('공급사')}</th><th>${T('증빙')}</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div></div>`;
 }
 function openProduct(cid,pid){PRODUCT_SEL=pid;applyView();}
@@ -5880,33 +5880,33 @@ SCREEN.integration=async()=>{
         <span>📦 ${esc(p.name)} <span class="muted" style="font-weight:400">${myMats.length}🧪${p.risk_count?` · <span class="bad">⚠${p.risk_count}</span>`:''} · ${esc(p.category||'—')}</span></span>
         <span class="nav-caret">▸</span></div>
       <div class="nav-group-items">${sub}
-        <div style="padding:5px 24px"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="openProduct('${id}','${p.product_id}')">제품 상세 →</button></div></div>
+        <div style="padding:5px 24px"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="openProduct('${id}','${p.product_id}')">${T('제품 상세 →')}</button></div></div>
     </div>`;
   }).join("")||'<div class="li"><div class="tx muted small">제품 없음</div></div>';
   return `
   ${pdCard}
   <div class="grid side">
-    <div class="card"><h3>SJPH 5요소 <span class="en">· 5 criteria</span><span class="r">완성도 ${sjph.completion==null?0:sjph.completion}%</span></h3>
+    <div class="card"><h3>${T('SJPH 5요소')} <span class="en">· 5 criteria</span><span class="r">완성도 ${sjph.completion==null?0:sjph.completion}%</span></h3>
       <div class="body">${elHtml}
-        <button class="btn pri" onclick="genSjph('${id}')">Manual SJPH 생성</button></div></div>
-    <div class="card"><h3>제품 · HPAS 매핑 <span class="en">· Products</span></h3>
+        <button class="btn pri" onclick="genSjph('${id}')">${T('Manual SJPH 생성')}</button></div></div>
+    <div class="card"><h3>${T('제품 · HPAS 매핑')} <span class="en">· Products</span></h3>
       <div class="list" style="margin:0 -1px">${pRows}</div></div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>HPAS 매트릭스 <span class="en">· Product × Material</span><span class="r">${(matrix.links||[]).length}${T('개')} ${T('링크')}</span></h3>
+  <div class="card" style="margin-top:16px"><h3>${T('HPAS 매트릭스')} <span class="en">· Product × Material</span><span class="r">${(matrix.links||[]).length}${T('개')} ${T('링크')}</span></h3>
     <div class="body">
       ${mxLinks||'<div class="muted small" style="margin-bottom:10px">아직 링크된 매트릭스가 없습니다.</div>'}
       ${canMatrix?`<div class="divide"></div><div class="btnrow">
         <select class="v" id="mxProd" style="width:auto">${prods.length?prods.map(p=>`<option value="${p.product_id}">${esc(p.name)}</option>`).join(""):'<option value="">제품 없음</option>'}</select>
         <span class="muted">↔</span>
         <select class="v" id="mxMat" style="width:auto">${mats.length?mats.map(m=>`<option value="${m.material_id}">${esc(m.name)}</option>`).join(""):'<option value="">원재료 없음</option>'}</select>
-        <button class="btn pri" onclick="matrixLink('${id}')">링크</button>
+        <button class="btn pri" onclick="matrixLink('${id}')">${T('링크')}</button>
       </div>`:''}
     </div></div>
   ${await genDocsCard(id,"sjph_manual","SJPH 매뉴얼 버전","genSjph('"+id+"')",false)}
-  <div class="card" style="margin-top:16px"><h3>SIHALAL 연동 이벤트 <span class="en">· Integration events</span><span class="r">${sihalal.length}${T('건')}</span></h3>
+  <div class="card" style="margin-top:16px"><h3>${T('SIHALAL 연동 이벤트')} <span class="en">· Integration events</span><span class="r">${sihalal.length}${T('건')}</span></h3>
     <div class="body">
       ${sihalal.length?`<div class="list" style="margin:0 -1px">${sihalal.map(e=>`<div class="li" style="padding:5px 0"><div class="ic t-info">🔗</div><div class="tx" style="flex:1"><b>${esc(e.event_type)}</b><div class="muted small">${esc(e.external_id||"")} · ${esc(String(e.created_at||"").slice(0,16))}</div></div><div class="when">${bTag(e.status==='processed'?'ok':'info',e.status)}</div></div>`).join("")}</div>`:'<div class="muted small">연동 이벤트 없음</div>'}
-      ${canIntg?`<button class="btn" style="margin-top:10px" onclick="recordIntegrationEvent('${id}')">＋ 연동 이벤트 기록</button>`:''}
+      ${canIntg?`<button class="btn" style="margin-top:10px" onclick="recordIntegrationEvent('${id}')">${T('＋ 연동 이벤트 기록')}</button>`:''}
     </div></div>`;
 };
 async function recordIntegrationEvent(id){
@@ -6006,9 +6006,9 @@ SCREEN.documents=async()=>{
         <div style="margin-top:3px">${(d.confidence!=null&&d.confidence<0.85)?`<span class="tag t-warn">⚠ ${T('신뢰도 낮음')}</span> `:''}${(nameCount[(d.filename||'').toLowerCase()]>1)?`<span class="tag t-bad">⛑ ${T('중복 파일명')}</span> `:''}${!d.has_file?`<span class="tag t-mute">${T('파일 없음')}</span>`:''}</div>
         ${canReview?`<div class="btnrow" style="margin-top:7px">
           <select class="v" style="font-size:11px;padding:3px 6px;width:auto" onclick="event.stopPropagation()" onchange="event.stopPropagation();reviewDoc('${d.document_id}',this.value)">
-            <option value="">검수…</option><option value="approved">승인</option><option value="rejected">반려</option><option value="rework">재작업</option><option value="pending">보류</option></select>
-          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();reclassifyDoc('${d.document_id}')">재분류</button>
-          ${d.has_file?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();reprocessDoc('${d.document_id}')" title="원본 재추출·재분류(OCR)">🔄 재처리</button>
+            <option value="">${T('검수…')}</option><option value="approved">${T('승인')}</option><option value="rejected">${T('반려')}</option><option value="rework">${T('재작업')}</option><option value="pending">${T('보류')}</option></select>
+          <button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();reclassifyDoc('${d.document_id}')">${T('재분류')}</button>
+          ${d.has_file?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();reprocessDoc('${d.document_id}')" title="원본 재추출·재분류(OCR)">${T('🔄 재처리')}</button>
           <button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();reprocessDoc('${d.document_id}',300)" title="${T('스캔을 고해상도(300dpi)로 재OCR — 오독 완화 시도')}">🔬 ${T('고해상도')}</button>`:''}</div>`:''}
       </div></div>`).join("")}</div>`
     :'<div class="muted small">업로드된 문서 없음</div>';
@@ -6016,7 +6016,7 @@ SCREEN.documents=async()=>{
       <div class="btnrow" style="margin-bottom:10px">
         <span class="chip">${esc(T(sel.doc_type_ko||sel.doc_type||"—"))}</span>${bTag(statusColor(sel.review_status),sel.review_status||"미검수")}
         <span class="chip">${T('신뢰도')} ${Math.round((sel.confidence||0)*100)}%</span>
-        ${sel.has_file?`<button class="btn" onclick="viewDoc('${sel.document_id}')">↗ 원본 열기</button>`:''}</div>
+        ${sel.has_file?`<button class="btn" onclick="viewDoc('${sel.document_id}')">${T('↗ 원본 열기')}</button>`:''}</div>
       ${sel.fields&&Object.keys(sel.fields).length?`<div style="margin-bottom:10px">${Object.entries(sel.fields).slice(0,8).map(([k,vv])=>`<div class="kv"><span>${esc(k)}</span><b>${esc(vv)}</b></div>`).join("")}</div>`:""}
       ${sel.has_file?`<div class="small" style="font-weight:600;margin-bottom:6px">📄 원본 미리보기 · Preview</div><div id="docPreview" style="margin-bottom:12px"></div>`:''}
       <div class="btnrow" style="justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -6032,13 +6032,13 @@ SCREEN.documents=async()=>{
   ${rvwSummary}
   ${docGenBar(id)}
   <div class="grid side">
-    <div class="card"><h3>필수서류 체크리스트 <span class="en">· Checklist</span><span class="r">${chk.complete?'완료':'미완'}</span></h3>
+    <div class="card"><h3>${T('필수서류 체크리스트')} <span class="en">· Checklist</span><span class="r">${chk.complete?'완료':'미완'}</span></h3>
       <div class="body">${chkHtml}
-        <div class="btnrow" style="margin-top:14px"><button class="btn" onclick="intakeZip('${id}')">🗂 ZIP 업로드</button></div></div></div>
-    <div class="card"><h3>문서 목록 <span class="en">· Documents</span><span class="r">${docs.length} ${T('건 · 클릭→뷰어')}</span></h3>
+        <div class="btnrow" style="margin-top:14px"><button class="btn" onclick="intakeZip('${id}')">${T('🗂 ZIP 업로드')}</button></div></div></div>
+    <div class="card"><h3>${T('문서 목록')} <span class="en">· Documents</span><span class="r">${docs.length} ${T('건 · 클릭→뷰어')}</span></h3>
       <div class="body">${docHtml}</div></div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>문서 뷰어 <span class="en">· Viewer</span><span class="r">${sel?esc(sel.filename||""):"선택 없음"}</span></h3>
+  <div class="card" style="margin-top:16px"><h3>${T('문서 뷰어')} <span class="en">· Viewer</span><span class="r">${sel?esc(sel.filename||""):"선택 없음"}</span></h3>
     <div class="body">${viewer}</div></div>`;
 };
 /* ===== P1-#4 클라이언트 자료함(Vault) — 업로드 문서·생성 문서·인증서·원재료 증빙을 한 화면에서
@@ -6092,16 +6092,16 @@ SCREEN.vault=async()=>{
 /* ===== 문서 자동생성 UI (6종) — 백엔드 gen-doc/리치PDF 엔드포인트 배선 ===== */
 function docGenBar(id){
   const buttons=[];
-  buttons.push(`<button class="btn" onclick="genCompanyInfo('${id}')">📄 기업정보(Company Info)</button>`);
-  buttons.push(`<button class="btn" onclick="genContract('${id}')">📄 계약서(Contract)</button>`);
+  buttons.push(`<button class="btn" onclick="genCompanyInfo('${id}')">${T('📄 기업정보(Company Info)')}</button>`);
+  buttons.push(`<button class="btn" onclick="genContract('${id}')">${T('📄 계약서(Contract)')}</button>`);
   if(['auditor','sharia','ops','admin'].includes(ROLE)){
-    buttons.push(`<button class="btn" onclick="serverPdf('/cases/${id}/factory-audit.pdf','factory_audit.pdf')">📄 현장심사보고서(Factory Audit)</button>`);
+    buttons.push(`<button class="btn" onclick="serverPdf('/cases/${id}/factory-audit.pdf','factory_audit.pdf')">${T('📄 현장심사보고서(Factory Audit)')}</button>`);
   }
-  buttons.push(`<button class="btn" onclick="serverPdf('/cases/${id}/sjph-manual.pdf','sjph_manual.pdf')">📄 SJPH 매뉴얼</button>`);
+  buttons.push(`<button class="btn" onclick="serverPdf('/cases/${id}/sjph-manual.pdf','sjph_manual.pdf')">${T('📄 SJPH 매뉴얼')}</button>`);
   if(['sharia','ops','admin'].includes(ROLE)){
-    buttons.push(`<button class="btn" onclick="genFatwaDecree('${id}')">📄 파트와 판결문(Fatwa Decree)</button>`);
+    buttons.push(`<button class="btn" onclick="genFatwaDecree('${id}')">${T('📄 파트와 판결문(Fatwa Decree)')}</button>`);
   }
-  return `<div class="card"><h3>📄 문서 자동생성 <span class="en">· Document Generation</span></h3><div class="body"><div class="btnrow">${buttons.join('')}</div></div></div>`;
+  return `<div class="card"><h3>${T('📄 문서 자동생성')} <span class="en">· Document Generation</span></h3><div class="body"><div class="btnrow">${buttons.join('')}</div></div></div>`;
 }
 async function genCompanyInfo(id){
   try{const r=await API(`/cases/${id}/docs/company-info`,{method:"POST",body:"{}"});toast("기업정보 생성");serverPdf(`/gen-docs/${r.gen_doc_id}/pdf`,"company_info.pdf");}
@@ -6345,14 +6345,14 @@ SCREEN.audit=async()=>{
       <td>${bTag(statusColor(f.status),f.status||"—")}</td>
       <td style="text-align:right;white-space:nowrap">
         ${(carsByF[f.finding_id]||[]).length?`<span class="chip" style="font-size:10px">CAR ${(carsByF[f.finding_id]||[]).length}</span>`:''}
-        ${(canCar&&f.status!=='closed')?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="submitCar('${f.finding_id}')">시정조치</button>`:''}
-        ${canEdit?`${f.status==='closed'?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="setFinding('${f.finding_id}','open')">재개</button>`:`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="setFinding('${f.finding_id}','closed')">종결</button>`}
-        <button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="delFinding('${f.finding_id}')">삭제</button>`:''}</td></tr>`).join("")
+        ${(canCar&&f.status!=='closed')?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="submitCar('${f.finding_id}')">${T('시정조치')}</button>`:''}
+        ${canEdit?`${f.status==='closed'?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="setFinding('${f.finding_id}','open')">${T('재개')}</button>`:`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="setFinding('${f.finding_id}','closed')">${T('종결')}</button>`}
+        <button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="delFinding('${f.finding_id}')">${T('삭제')}</button>`:''}</td></tr>`).join("")
     :`<tr><td colspan="5" class="muted" style="text-align:center;padding:18px">지적사항 없음</td></tr>`;
   const lphHtml=lph.length?lph.map(x=>`<div class="li"><div class="ic t-info">🏭</div><div class="tx"><b>${esc(x.lph_name)}</b><div>${esc(x.auditor_ref||"")} · ${esc(x.source||"")}</div></div></div>`).join(""):'<div class="li"><div class="tx muted small">LPH 배정 없음</div></div>';
   const openF=find.filter(f=>f.status!=='closed').length, closedF=find.filter(f=>f.status==='closed').length;
   const carHtml=find.length?`
-  <div class="card" style="margin-bottom:16px"><h3>시정조치 루프 <span class="en">· CAR loop</span><span class="r">지적 ${find.length} · 미해결 ${openF} · 종결 ${closedF}</span></h3>
+  <div class="card" style="margin-bottom:16px"><h3>${T('시정조치 루프')} <span class="en">· CAR loop</span><span class="r">지적 ${find.length} · 미해결 ${openF} · 종결 ${closedF}</span></h3>
     <div class="body"><div class="flow">
       <div class="step done">시정 요청</div><span class="arrow">→</span>
       <div class="step ${openF>0?'now':'done'}">조치·제출 대기</div><span class="arrow">→</span>
@@ -6363,21 +6363,21 @@ SCREEN.audit=async()=>{
   ${onsiteMockup}
   ${carHtml}
   <div class="grid side" style="margin-bottom:16px">
-    <div class="card"><h3>LPH 배정·현장심사 <span class="en">· On-site</span><span class="r">완료도 ${onsite.completion||0}%</span></h3>
+    <div class="card"><h3>${T('LPH 배정·현장심사')} <span class="en">· On-site</span><span class="r">완료도 ${onsite.completion||0}%</span></h3>
       <div class="list" style="margin:0 -1px">${lphHtml}</div>
       <div class="body" style="border-top:1px solid var(--line)">
         <div class="small" style="font-weight:600;margin-bottom:6px">현장심사 일정 · Schedule (${plans.length})</div>
-        ${plans.length?plans.map(p=>`<div class="li" style="padding:4px 0"><div class="tx" style="flex:1"><b>📅 ${esc(p.scheduled_date)}</b><div class="muted small">${esc(p.lph_name||"")} ${esc(p.scope||"")} ${bTag(p.status==='completed'?'ok':p.status==='cancelled'?'mute':'info',p.status)}</div></div>${canReview&&p.status==='scheduled'?`<div class="when" style="display:flex;gap:4px"><button class="btn" style="padding:2px 7px;font-size:11px" onclick="proposeAuditDates('${p.id}')">일정변경 제안</button><button class="btn" style="padding:2px 7px;font-size:11px" onclick="patchPlan('${p.id}','completed')">완료</button></div>`:''}${p.note?`<div class="muted small" style="color:var(--accent);flex-basis:100%">↳ ${esc(p.note)}</div>`:''}</div>`).join(""):'<div class="muted small">등록된 일정 없음</div>'}
+        ${plans.length?plans.map(p=>`<div class="li" style="padding:4px 0"><div class="tx" style="flex:1"><b>📅 ${esc(p.scheduled_date)}</b><div class="muted small">${esc(p.lph_name||"")} ${esc(p.scope||"")} ${bTag(p.status==='completed'?'ok':p.status==='cancelled'?'mute':'info',p.status)}</div></div>${canReview&&p.status==='scheduled'?`<div class="when" style="display:flex;gap:4px"><button class="btn" style="padding:2px 7px;font-size:11px" onclick="proposeAuditDates('${p.id}')">${T('일정변경 제안')}</button><button class="btn" style="padding:2px 7px;font-size:11px" onclick="patchPlan('${p.id}','completed')">${T('완료')}</button></div>`:''}${p.note?`<div class="muted small" style="color:var(--accent);flex-basis:100%">↳ ${esc(p.note)}</div>`:''}</div>`).join(""):'<div class="muted small">등록된 일정 없음</div>'}
         ${canPlan?`<button class="btn" style="margin-top:6px" onclick="schedulePlan('${id}')">📅 일정 등록 · Schedule</button>`:''}
       </div>
       <div class="body" style="border-top:1px solid var(--line)">
         <div class="small" style="font-weight:600;margin-bottom:6px">심사원 풀 · Auditor pool (${pool.length})</div>
         ${poolHtml}
-        ${canPool?`<div class="btnrow" style="margin-top:8px"><input class="v" id="apoolName" placeholder="심사원명" style="flex:1"><button class="btn" onclick="addAuditorPool('${id}')">＋ 심사원</button></div>`:''}
+        ${canPool?`<div class="btnrow" style="margin-top:8px"><input class="v" id="apoolName" placeholder="${T('심사원명')}" style="flex:1"><button class="btn" onclick="addAuditorPool('${id}')">${T('＋ 심사원')}</button></div>`:''}
       </div>
       <div class="body btnrow" style="border-top:1px solid var(--line)">
         ${canTeam?`<button class="btn pri" onclick="addLph('${id}')">LPH 배정 · Assign</button>`:'<span class="chip">🔒 LPH 배정 — 샤리아·최고운영자</span>'}</div></div>
-    <div class="card"><h3>현장 체크리스트 <span class="en">· Onsite</span><span class="r">${onsite.comply||0}/${onsite.total||0} 충족${canEdit?' · 클릭 순환':''}</span></h3>
+    <div class="card"><h3>${T('현장 체크리스트')} <span class="en">· Onsite</span><span class="r">${onsite.comply||0}/${onsite.total||0} 충족${canEdit?' · 클릭 순환':''}</span></h3>
       <div class="body">
         <div class="scorebox" style="margin-bottom:8px"><span class="big" style="color:var(--accent)">${onsite.completion||0}</span><span class="muted">% · 부적합 ${onsite.nonconformity||0}</span></div>
         <div class="bar" style="margin-bottom:12px"><i style="width:${onsite.completion||0}%"></i></div>
@@ -6388,22 +6388,22 @@ SCREEN.audit=async()=>{
             <span class="muted small">${it.result==='comply'?'충족':it.result==='nonconformity'?'부적합':'미확인'}</span></div>`;}).join("")||'<div class="muted small">항목 없음</div>'}</div>
       </div></div>
   </div>
-  <div class="card"><h3>지적사항 Findings <span class="en">· CRUD</span><span class="r">${canEdit?'편집 가능':'🔒 읽기전용'}</span></h3>
+  <div class="card"><h3>${T('지적사항 Findings')} <span class="en">· CRUD</span><span class="r">${canEdit?'편집 가능':'🔒 읽기전용'}</span></h3>
     <div class="body tight"><table>
-      <thead><tr><th>#</th><th>지적 내용 · Finding</th><th>심각도</th><th>상태</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>지적 내용 · Finding</th><th>${T('심각도')}</th><th>${T('상태')}</th><th></th></tr></thead>
       <tbody>${fRows}</tbody></table></div>
     ${pager("findings",fpg)}
     <div class="body btnrow" style="border-top:1px solid var(--line)">
-      ${canEdit?`<button class="btn pri" onclick="addFinding('${id}')">＋ 지적 추가</button>`:'<span class="chip">🔒 편집 불가</span>'}
+      ${canEdit?`<button class="btn pri" onclick="addFinding('${id}')">${T('＋ 지적 추가')}</button>`:'<span class="chip">🔒 편집 불가</span>'}
       ${["auditor","ops","admin"].includes(ROLE)&&onsiteActive?`<button class="btn ok" style="margin-left:auto" onclick="closeOnsite('${id}')">🏭 현장심사 완료 · Close audit</button>`:''}</div></div>
-  ${cars.length?`<div class="card" style="margin-top:16px"><h3>시정조치 CAR <span class="en">· Corrective actions</span><span class="r">${cars.length}${T('건')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>지적</th><th>조치 내용</th><th>상태</th><th>기한</th><th></th></tr></thead><tbody>
+  ${cars.length?`<div class="card" style="margin-top:16px"><h3>${T('시정조치 CAR')} <span class="en">· Corrective actions</span><span class="r">${cars.length}${T('건')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('지적')}</th><th>${T('조치 내용')}</th><th>${T('상태')}</th><th>${T('기한')}</th><th></th></tr></thead><tbody>
     ${cars.map(x=>`<tr>
       <td class="muted small" style="font-family:ui-monospace,monospace">${esc((x.finding_id||"").slice(0,6))}</td>
       <td><b>${esc(x.description||"")}</b>${x.reviewer_note?`<div class="muted small">검토: ${esc(x.reviewer_note)}</div>`:''}</td>
       <td>${bTag(x.status==='accepted'||x.status==='closed'?'ok':x.status==='rejected'?'bad':'info',x.status)}</td>
       <td class="muted small">${esc(x.due_date||"—")}</td>
-      <td style="text-align:right;white-space:nowrap">${(canReview&&x.status==='submitted')?`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="reviewCar('${x.id}','accepted')">수용</button><button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="reviewCar('${x.id}','rejected')">반려</button>`:''}</td></tr>`).join("")}
+      <td style="text-align:right;white-space:nowrap">${(canReview&&x.status==='submitted')?`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="reviewCar('${x.id}','accepted')">${T('수용')}</button><button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="reviewCar('${x.id}','rejected')">${T('반려')}</button>`:''}</td></tr>`).join("")}
     </tbody></table></div></div>`:''}
   ${await genDocsCard(id,"audit_report","현장심사 보고서 · Audit Report","genAuditReport('"+id+"')",["auditor","ops","admin"].includes(ROLE))}
   ${auditReportLoopCard(id,arep)}`;
@@ -6786,7 +6786,7 @@ async function contractStageCard(id){
     if(canSign)return `<div class="kv"><span>${label}</span><button class="btn ok" style="padding:3px 10px;font-size:12px" onclick="signContract('${ct.contract_id}','${pt}')">✍ ${label}</button></div>`;
     return `<div class="kv"><span>${label}</span><span class="muted small">${T('서명 대기')}</span></div>`;};
   const signBox = ct.exists?`<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">${sigCell('A','고객 서명', ROLE==='client')}${sigCell('B','GL HAC 서명', ROLE==='ops'||ROLE==='admin')}${psreSigNote()}</div>`:'';
-  return `<div class="card" style="margin-bottom:16px"><h3>계약 단계 진행 <span class="en">· Contract stage</span>${ct.contract_no?`<span class="r">${esc(ct.contract_no)}</span>`:''}</h3><div class="body"><div class="flow" style="overflow-x:auto">${stepbar}</div><div style="margin-top:10px">${statusBanner}</div>${signBox}${confirmBox}${ct.fee?`<div class="kv" style="margin-top:6px"><span>계약금액</span><b>${Number(ct.fee).toLocaleString()} ${esc(ct.currency||'KRW')}</b></div>`:''}</div></div>`;
+  return `<div class="card" style="margin-bottom:16px"><h3>${T('계약 단계 진행')} <span class="en">· Contract stage</span>${ct.contract_no?`<span class="r">${esc(ct.contract_no)}</span>`:''}</h3><div class="body"><div class="flow" style="overflow-x:auto">${stepbar}</div><div style="margin-top:10px">${statusBanner}</div>${signBox}${confirmBox}${ct.fee?`<div class="kv" style="margin-top:6px"><span>계약금액</span><b>${Number(ct.fee).toLocaleString()} ${esc(ct.currency||'KRW')}</b></div>`:''}</div></div>`;
 }
 async function signContract(contractId, party){
   if(!contractId){toast(T('계약 없음'));return;}
@@ -7008,8 +7008,8 @@ SCREEN.mockAudit=async()=>{
   }
   return `<div class="banner bad" style="margin-bottom:16px">⚠ 클라이언트 미노출 — 내부 심사 화면 (RBAC 403)</div>
   <div class="grid side">
-    <div class="card"><h3>모의심사 큐 <span class="en">· Queue</span><span class="r">${queue.length}${T('건')}</span></h3>
-      <div class="body tight"><table><thead><tr><th>ID</th><th>기업</th><th>단계</th><th>경로</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="card"><h3>${T('모의심사 큐')} <span class="en">· Queue</span><span class="r">${queue.length}${T('건')}</span></h3>
+      <div class="body tight"><table><thead><tr><th>ID</th><th>${T('기업')}</th><th>${T('단계')}</th><th>${T('경로')}</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${pager("mockq",qpg)}</div>
     ${panel}
   </div>`;
@@ -7396,7 +7396,7 @@ SCREEN.evaluation=async()=>{
   const sevHtml=(sev.items||[]).map(it=>`<div class="check"${canSev?` ondragover="event.preventDefault();this.style.background='var(--accent-soft)'" ondragleave="this.style.background=''" ondrop="this.style.background='';dropSjphEvidence(event,'${id}','${it.item_key}')" title="${T('파일을 드롭하여 업로드')}"`:''}>
       <div class="cbox ${it.uploaded?'on':''}">${it.uploaded?'✓':''}</div>
       <b style="flex:1">${esc(it.label)}${(!it.uploaded&&canSev)?' <span class="muted small">· ⬇ '+T('드롭 업로드')+'</span>':''}</b>
-      ${it.uploaded?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="viewDoc('${it.document_id}')">보기</button>`:(canSev?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="uploadSjphEvidence('${id}','${it.item_key}')">업로드</button>`:'<span class="muted small">미제출</span>')}
+      ${it.uploaded?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="viewDoc('${it.document_id}')">${T('보기')}</button>`:(canSev?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="uploadSjphEvidence('${id}','${it.item_key}')">${T('업로드')}</button>`:'<span class="muted small">미제출</span>')}
     </div>`).join("")||'<div class="muted small">증빙 항목 없음</div>';
   const canVerdict=["auditor","ops","admin"].includes(ROLE);   // 오디터 원클릭 판정 권한
   const s3of=e=>e.state3||(e.status==="ok"?"good":"gap");
@@ -7406,25 +7406,25 @@ SCREEN.evaluation=async()=>{
       <td>${tag(b[0],b[1])}</td>
       <td class="muted small" style="white-space:nowrap" title="${T('첨부 증거')}">📎 ${e.evidence_docs||0} · 🎥 ${e.evidence_media||0}</td>
       <td>${canVerdict?`<span class="btnrow" style="gap:4px">
-        <button class="btn ok" style="padding:2px 8px;font-size:11px" onclick="evalVerdict('${id}','${e.element}','good')">적합</button>
-        <button class="btn bad" style="padding:2px 8px;font-size:11px" onclick="evalVerdict('${id}','${e.element}','fail')">부적합</button></span>`:'<span class="muted small">—</span>'}</td></tr>`;}).join("")||`<tr><td colspan="4" class="muted" style="text-align:center;padding:18px">평가 항목 없음</td></tr>`;
+        <button class="btn ok" style="padding:2px 8px;font-size:11px" onclick="evalVerdict('${id}','${e.element}','good')">${T('적합')}</button>
+        <button class="btn bad" style="padding:2px 8px;font-size:11px" onclick="evalVerdict('${id}','${e.element}','fail')">${T('부적합')}</button></span>`:'<span class="muted small">—</span>'}</td></tr>`;}).join("")||`<tr><td colspan="4" class="muted" style="text-align:center;padding:18px">평가 항목 없음</td></tr>`;
   const okc=els.filter(e=>s3of(e)==="good").length;
   const failc=els.filter(e=>s3of(e)==="fail").length;
   return `
   <div class="grid side">
-    <div class="card"><h3>HPAS 자동 평가 <span class="en">· HPAS auto</span><span class="r">${okc}/${els.length} 적합후보${failc?` · ${failc} 부적합`:''}</span></h3>
-      <div class="body tight"><table><thead><tr><th>평가 항목 · Item</th><th>판정</th><th>증거</th><th>${canVerdict?'오디터 판정':'—'}</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="card"><h3>${T('HPAS 자동 평가')} <span class="en">· HPAS auto</span><span class="r">${okc}/${els.length} 적합후보${failc?` · ${failc} 부적합`:''}</span></h3>
+      <div class="body tight"><table><thead><tr><th>평가 항목 · Item</th><th>${T('판정')}</th><th>${T('증거')}</th><th>${canVerdict?'오디터 판정':'—'}</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="applyView()">🔄 HPAS 재판정 · Re-evaluate</button></div></div>
-    ${(canVerdict||ROLE==="sharia")?`<div class="card"><h3>파트와 상정 준비 <span class="en">· To Fatwa</span></h3>
+    ${(canVerdict||ROLE==="sharia")?`<div class="card"><h3>${T('파트와 상정 준비')} <span class="en">· To Fatwa</span></h3>
       <div class="body">
         <div class="scorebox" style="margin-bottom:14px"><span class="big" style="color:var(--ok)">${okc}</span><span class="muted">/ ${els.length} 요소 적합후보</span></div>
         <div class="banner ${failc?'bad':(okc===els.length&&els.length?'ok':'info')}" style="margin-bottom:12px">${failc?'⛔ 부적합 항목 있음 — 시정조치 필요':(okc===els.length&&els.length?'✓ 상정 기준 충족':'ℹ 보완 항목 확인')}</div>
         <button class="btn gold" onclick="go('fatwa')">파트와 화면으로 · To Fatwa →</button></div></div>`
       /* 회의 2026-07-10: 클라이언트 뷰에서 '파트와 상정 준비' 삭제 — 평가 내용은 오디터가 확인 후 상정 */
-      :`<div class="card"><h3>진행 안내 <span class="en">· Next</span></h3>
+      :`<div class="card"><h3>${T('진행 안내')} <span class="en">· Next</span></h3>
       <div class="body"><div class="banner info">ℹ 평가 결과는 담당 오디터가 확인하며, 이상이 없으면 오디터가 파트와 심의로 상정합니다.</div></div></div>`}
   </div>
-  <div class="card" style="margin-top:16px"><h3>SJPH 증빙 <span class="en">· Evidence</span><span class="r">${sev.uploaded||0}/${sev.total||0} · ${sev.completion||0}%</span></h3>
+  <div class="card" style="margin-top:16px"><h3>${T('SJPH 증빙')} <span class="en">· Evidence</span><span class="r">${sev.uploaded||0}/${sev.total||0} · ${sev.completion||0}%</span></h3>
     <div class="body">${sevHtml}</div></div>`;
 };
 async function uploadSjphEvidence(cid,key){
@@ -7598,11 +7598,11 @@ SCREEN.manualBuilder=async()=>{
   const AUTO_KEYS=new Set(["halal_policy","halal_declaration"]);
   const autoSecs=secs.filter(s=>AUTO_KEYS.has(s.key));
   const inputSecs=secs.filter(s=>!AUTO_KEYS.has(s.key));
-  const autoCard=autoSecs.length?`<div class="card" style="margin-bottom:16px"><h3>🤖 자동 채움 <span class="en">· Auto-filled</span>${tag('ok','입력 불필요')}</h3>
+  const autoCard=autoSecs.length?`<div class="card" style="margin-bottom:16px"><h3>🤖 자동 채움 <span class="en">· Auto-filled</span>${tag('ok',T('입력 불필요'))}</h3>
     <div class="body"><div class="muted small">${autoSecs.map(s=>`${MB_ICON[s.key]||'📄'} ${esc(T(s.ko))}`).join(' · ')} — ${T('기준 템플릿 원문(꾸란 전문·보일러플레이트)으로 생성 시 자동 삽입됩니다. 회사명·서명란만 병합.')}</div></div></div>`:'';
   const cards=inputSecs.map((s,i)=>{
     const dnd=canEdit?`draggable="true" ondragstart="mbDragStart(event,'${s.key}')" ondragend="mbDragEnd()" ondragover="mbDragOver(event)" ondrop="mbReorder(event,'${id}','${s.key}')"`:'';
-    const badge=s.has_default?tag('ok','✓ 기본내용 포함'):tag(s.image?'ok':'warn',s.image?'✓ 이미지 삽입됨':'기본내용 확인 필요');
+    const badge=s.has_default?tag('ok',T('✓ 기본내용 포함')):tag(s.image?'ok':'warn',s.image?'✓ 이미지 삽입됨':'기본내용 확인 필요');
     const imgBlock=s.image
       ? `<div style="margin-top:10px;height:88px;border-radius:8px;background:linear-gradient(135deg,var(--accent-soft),var(--accent));display:flex;align-items:center;justify-content:center;gap:10px;color:#fff;font-weight:700">🖼 ${esc(s.image.filename||'이미지')} 삽입됨${canEdit?` <span style="color:#fff;text-decoration:underline;cursor:pointer;font-weight:600" onclick="mbRemoveImage('${id}','${s.key}')">✕ 제거</span>`:''}</div>
          ${s.image.caption?`<div class="muted small" style="margin-top:6px;padding:6px 8px;border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:4px;white-space:pre-wrap;max-height:96px;overflow:auto">🔤 ${esc(s.image.caption)}</div>`:''}
@@ -7631,13 +7631,13 @@ SCREEN.manualBuilder=async()=>{
     <div class="bar" style="flex:1"><i style="width:${pct}%"></i></div>
     <div class="muted small">${pct}%</div></div></div>
   <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">${cards}</div>
-  <div class="card"><h3>매뉴얼 생성 <span class="en">· Generate</span></h3><div class="body">
+  <div class="card"><h3>${T('매뉴얼 생성')} <span class="en">· Generate</span></h3><div class="body">
     ${warn}
     <div class="btnrow">${genBtn}
       <button class="btn" onclick="pdfPreview('/cases/${id}/sjph-manual.pdf','SJPH 매뉴얼 (기준 템플릿 양식·KO·EN)','sjph_manual.pdf')">👁 미리보기 · Preview</button>
       <button class="btn ghost" onclick="serverPdf('/cases/${id}/sjph-manual.pdf','sjph_manual.pdf')">⬇ PDF</button>
-      <button class="btn ghost" onclick="serverPdf('/cases/${id}/sjph-manual.docx','sjph_manual.docx')">📝 DOCX (원본 양식)</button>
-      ${canEdit?`<button class="btn" onclick="mbSaveLayout('${id}')">💾 임시저장</button>`:''}
+      <button class="btn ghost" onclick="serverPdf('/cases/${id}/sjph-manual.docx','sjph_manual.docx')">${T('📝 DOCX (원본 양식)')}</button>
+      ${canEdit?`<button class="btn" onclick="mbSaveLayout('${id}')">${T('💾 임시저장')}</button>`:''}
     </div></div></div>`;
 };
 function mbDragStart(ev,key){MB_DRAG=key;try{ev.dataTransfer.effectAllowed='move';ev.dataTransfer.setData('text/plain',key);}catch(_){}}
@@ -7751,7 +7751,7 @@ SCREEN.consultation = async () => {
   const isStaff = ['admin', 'ops'].includes(ROLE);
   const rows = await API('/consultations').catch(() => []);
   const statusColor = s => s === 'answered' ? 'ok' : (s === 'closed' ? 'mute' : 'warn');
-  const submitCard = `<div class="card"><h3>문의하기 <span class="en">· New Inquiry</span></h3><div class="body"><button class="btn pri" onclick="submitConsultation()">✏️ 새 문의 작성</button></div></div>`;
+  const submitCard = `<div class="card"><h3>${T('문의하기')} <span class="en">· New Inquiry</span></h3><div class="body"><button class="btn pri" onclick="submitConsultation()">${T('✏️ 새 문의 작성')}</button></div></div>`;
   let listHtml;
   if (!rows.length) { listHtml = '<div class="muted small">문의 없음</div>'; }
   else {
@@ -7759,7 +7759,7 @@ SCREEN.consultation = async () => {
       const header = `<b>${esc(r.subject)}</b> ${bTag(statusColor(r.status), r.status)} <span class="muted small">· ${esc(r.channel)} · ${esc(r.created_at)}</span>`;
       const message = `<div class="small" style="white-space:pre-wrap;margin-top:4px">${esc(r.message)}</div>`;
       const responseHtml = r.response ? `<div style="background:var(--ok-soft);border-radius:8px;padding:8px;margin-top:6px"><b>답변</b><div style="white-space:pre-wrap">${esc(r.response)}</div></div>` : '';
-      const staffButtons = isStaff ? `<div class="btnrow" style="margin-top:6px"><button class="btn" onclick="respondConsultation('${r.id}')">답변</button>${r.status !== 'closed' ? `<button class="btn" onclick="patchConsultation('${r.id}','closed')">종료</button>` : ''}</div>` : '';
+      const staffButtons = isStaff ? `<div class="btnrow" style="margin-top:6px"><button class="btn" onclick="respondConsultation('${r.id}')">${T('답변')}</button>${r.status !== 'closed' ? `<button class="btn" onclick="patchConsultation('${r.id}','closed')">${T('종료')}</button>` : ''}</div>` : '';
       return `<div class="card" style="margin-bottom:10px">${header}${message}${responseHtml}${staffButtons}</div>`;
     }).join('');
   }
@@ -7777,7 +7777,7 @@ SCREEN.invoice=async()=>{
   const rows=ipg.items.length?ipg.items.map(i=>`<tr class="clickable${sel&&i.invoice_id===sel.invoice_id?' ':' '}" onclick="selectInvoice('${i.invoice_id}')">
       <td style="font-family:ui-monospace,monospace;font-size:12px">${esc(i.invoice_no||short(i.invoice_id))}</td>
       <td class="muted">${bSpan(i.service_type)}</td><td><b>${fmtIDR(i.total==null?i.amount:i.total)}</b></td>
-      <td>${bTag(payColor(i.status),payLabel(i.status))} ${(canMark&&i.status!=='paid')?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();payInvoice('${i.invoice_id}')">결제표시</button>`:''}</td></tr>`).join("")
+      <td>${bTag(payColor(i.status),payLabel(i.status))} ${(canMark&&i.status!=='paid')?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();payInvoice('${i.invoice_id}')">${T('결제표시')}</button>`:''}</td></tr>`).join("")
     :`<tr><td colspan="4" class="muted" style="text-align:center;padding:20px">청구서 없음</td></tr>`;
   const canCreate=["consultant","ops","admin"].includes(ROLE);
   const detail=sel?`
@@ -7792,7 +7792,7 @@ SCREEN.invoice=async()=>{
         <tr style="background:var(--accent-soft)"><td><b>합계 · Total</b></td><td style="text-align:right"><b>${fmtIDR(sel.total==null?sel.amount:sel.total)}</b></td></tr>
       </tbody></table>
       <div class="field"><label>상태 · Status</label><div>${bTag(payColor(sel.status),payLabel(sel.status))}</div>${payMsg(sel.status)}</div>
-      ${(canMark&&sel.status!=='paid')?`<div class="btnrow"><button class="btn pri" onclick="recordPayment('${sel.invoice_id}')">💳 결제 기록 · Record payment</button><button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">간이 결제표시</button></div>`:''}
+      ${(canMark&&sel.status!=='paid')?`<div class="btnrow"><button class="btn pri" onclick="recordPayment('${sel.invoice_id}')">💳 결제 기록 · Record payment</button><button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">${T('간이 결제표시')}</button></div>`:''}
       <div style="font-weight:600;font-size:12.5px;margin:12px 0 4px">📑 ${T('문서 미리보기·다운로드')} <span class="en">· Documents</span></div>
       <div class="btnrow" style="gap:6px;flex-wrap:wrap">
         <button class="btn" onclick="pdfPreview('/invoices/${sel.invoice_id}/quotation.pdf','${T('견적서')} · ${esc(sel.invoice_no||'')}','quotation_${esc(sel.invoice_no||'')}.pdf')">👁 ${T('견적서')} · Penawaran</button>
@@ -7810,16 +7810,16 @@ SCREEN.invoice=async()=>{
   ${await contractStageCard(id)}
   ${await contractQueueCard(id)}
   <div class="grid side">
-    <div class="card"><h3>청구서 목록 <span class="en">· Invoices</span><span class="r">${inv.length}${T('건')} · row 클릭 → 상세</span></h3>
-      <div class="body tight"><table><thead><tr><th>청구번호</th><th>서비스</th><th>금액 · IDR</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="card"><h3>${T('청구서 목록')} <span class="en">· Invoices</span><span class="r">${inv.length}${T('건')} · row 클릭 → 상세</span></h3>
+      <div class="body tight"><table><thead><tr><th>${T('청구번호')}</th><th>${T('서비스')}</th><th>금액 · IDR</th><th>${T('상태')}</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${pager("invoice",ipg)}
       <div class="body btnrow" style="border-top:1px solid var(--line)">
         ${canCreate?`<button class="btn pri" onclick="createInvoice('${id}')">청구 생성 · Create</button>`:'<span class="chip">🔒 청구 생성 권한 없음</span>'}</div></div>
-    <div class="card"><h3>인보이스 상세 <span class="en">· Detail</span></h3>
+    <div class="card"><h3>${T('인보이스 상세')} <span class="en">· Detail</span></h3>
       <div class="body">${detail}</div></div>
   </div>
-  ${pays.length?`<div class="card" style="margin-top:16px"><h3>결제 내역 <span class="en">· Payments</span><span class="r">${pays.length}${T('건')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>결제방식</th><th>금액 · IDR</th><th>참조</th><th>상태</th><th>일시</th></tr></thead><tbody>
+  ${pays.length?`<div class="card" style="margin-top:16px"><h3>${T('결제 내역')} <span class="en">· Payments</span><span class="r">${pays.length}${T('건')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('결제방식')}</th><th>금액 · IDR</th><th>${T('참조')}</th><th>${T('상태')}</th><th>${T('일시')}</th></tr></thead><tbody>
     ${pays.map(p=>`<tr><td>${bSpan(p.method)}</td><td><b>${fmtIDR(p.amount)}</b></td><td class="muted small">${esc(p.reference||"—")}</td><td>${bTag(p.status==='confirmed'?'ok':'mute',p.status)}</td><td class="muted small">${esc(String(p.paid_at||"").slice(0,16))}</td></tr>`).join("")}
     </tbody></table></div></div>`:''}
   <div class="card" style="margin-top:16px"><h3>${T('입금 증빙')} <span class="en">· Deposit proof</span><span class="r">${dproofs.length}</span></h3>
@@ -7876,7 +7876,7 @@ SCREEN.feedback=async()=>{
   const d=await API("/feedback").catch(()=>({items:[],is_admin:false}));
   const items=d.items||[]; const admin=fbIsAdmin();
   const catOpts=FB_CAT.map(x=>`<option value="${x[0]}">${T(x[1])}</option>`).join("");
-  const form=`<div class="card" style="margin-bottom:16px"><h3>💬 개선 피드백 <span class="en">· Feedback</span></h3>
+  const form=`<div class="card" style="margin-bottom:16px"><h3>${T('💬 개선 피드백')} <span class="en">· Feedback</span></h3>
     <div class="body">
       <div class="banner info" style="margin-bottom:10px">${T('플랫폼 개선 제안·오류를 남겨주세요. 관리자가 검토 후 답변·상태를 갱신합니다.')}</div>
       <div class="grid" style="grid-template-columns:180px 1fr;gap:10px">
@@ -7941,12 +7941,12 @@ SCREEN.notifyLog=async()=>{
   const rows=items.length?items.map(n=>`<tr><td class="muted small">${esc((n.created_at||"").slice(5,16))}</td><td><b>${esc(n.title||n.event_type||"")}</b></td><td>${(n.channels||[]).map(ch=>`<span class="chip">${esc(ch)}</span>`).join(" ")}</td><td>${bTag(notifColor(n.status),T(notifLabel(n.status)))}${n.attempts?` <span class="muted small">×${n.attempts}</span>`:""}</td><td class="muted small">${esc(n.last_error||"")}</td></tr>`).join(""):'<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">알림 없음</td></tr>';
   return `
   ${notifyBotBar(chd.channels||{},items)}
-  <div class="card" style="margin-bottom:16px"><h3>알림 발송 · 실행 <span class="en">· Delivery</span></h3>
+  <div class="card" style="margin-bottom:16px"><h3>${T('알림 발송 · 실행')} <span class="en">· Delivery</span></h3>
     <div class="body"><div class="banner info" style="margin-bottom:10px">미발송 큐를 즉시 발송합니다. Twilio/SMTP 크리덴셜 설정 시 실제 SMS·이메일 전송, 미설정 시 로그(stub) 후 완료. 백그라운드 워커로 자동발송도 가능합니다.</div>
       <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">${card(cc.unsent,"미발송","warn")}${card(cc.sent,"발송됨","ok")}${card(cc.failed,"실패","bad")}${card(cc.sending,"발송중","info")}</div>
-      <button class="btn pri" onclick="drainNotifications()">📣 미발송 큐 발송 실행</button></div></div>
-  <div class="card"><h3>발송 내역 <span class="en">· Log</span><span class="r">${items.length}${T('건')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>일시</th><th>제목</th><th>채널</th><th>상태</th><th>오류</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+      <button class="btn pri" onclick="drainNotifications()">${T('📣 미발송 큐 발송 실행')}</button></div></div>
+  <div class="card"><h3>${T('발송 내역')} <span class="en">· Log</span><span class="r">${items.length}${T('건')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('일시')}</th><th>${T('제목')}</th><th>${T('채널')}</th><th>${T('상태')}</th><th>${T('오류')}</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 };
 function notifLabel(s){return {unsent:"미발송",sent:"발송됨",failed:"실패",sending:"발송중"}[s]||s;}
 function notifColor(s){return {sent:"ok",failed:"bad",unsent:"warn",sending:"info"}[s]||"mute";}
@@ -8367,15 +8367,15 @@ SCREEN.deposits=async()=>{
   const [dep,cand]=await Promise.all([API("/admin/deposits").catch(()=>({items:[]})),API("/admin/payments/match-candidates").catch(()=>({items:[]}))]);
   const deps=dep.items||[], cands=cand.items||[];
   const drows=deps.length?deps.map(d=>`<tr><td class="muted small">${esc((d.deposit_at||"").slice(5,16))}</td><td><b>${esc(d.depositor_name||"—")}</b><div class="muted small">${esc(d.bank_name||"")} ${esc(d.account||"")}</div></td><td>${fmtIDR(d.amount)}</td><td class="muted small">${esc(d.ref_memo||"—")}</td><td>${bTag(d.match_status==="matched"?"ok":d.match_status==="candidate"?"warn":"mute",T(depStatusLabel(d.match_status)))}</td></tr>`).join(""):'<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">입금 내역 없음</td></tr>';
-  const crows=cands.length?cands.map(x=>`<tr><td><b>${esc(x.depositor||"—")}</b><div class="muted small">${esc(x.ref_memo||"")}</div></td><td>${esc(x.company||"—")} · ${esc(x.invoice_no||"")}</td><td>${fmtIDR(x.deposit_amount)} / ${fmtIDR(x.invoice_total)}</td><td><b>${x.score}</b> <span class="muted small">${(x.reason||[]).map(esc).join(", ")}</span>${(x.risk_flags||[]).length?` <span class="bad small">⚠${(x.risk_flags||[]).map(esc).join(",")}</span>`:""}</td><td style="white-space:nowrap"><button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="decideMatch('${x.id}','approved')">승인</button> <button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="decideMatch('${x.id}','rejected')">거절</button></td></tr>`).join(""):'<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">검토 대기 후보 없음</td></tr>';
+  const crows=cands.length?cands.map(x=>`<tr><td><b>${esc(x.depositor||"—")}</b><div class="muted small">${esc(x.ref_memo||"")}</div></td><td>${esc(x.company||"—")} · ${esc(x.invoice_no||"")}</td><td>${fmtIDR(x.deposit_amount)} / ${fmtIDR(x.invoice_total)}</td><td><b>${x.score}</b> <span class="muted small">${(x.reason||[]).map(esc).join(", ")}</span>${(x.risk_flags||[]).length?` <span class="bad small">⚠${(x.risk_flags||[]).map(esc).join(",")}</span>`:""}</td><td style="white-space:nowrap"><button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="decideMatch('${x.id}','approved')">${T('승인')}</button> <button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="decideMatch('${x.id}','rejected')">${T('거절')}</button></td></tr>`).join(""):'<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">검토 대기 후보 없음</td></tr>';
   return `
-  <div class="card" style="margin-bottom:16px"><h3>입금 등록 · 자동매칭 <span class="en">· Register deposit</span></h3>
+  <div class="card" style="margin-bottom:16px"><h3>${T('입금 등록 · 자동매칭')} <span class="en">· Register deposit</span></h3>
     <div class="body"><div class="banner info" style="margin-bottom:10px">입금내역을 등록하면 결제참조·금액·입금자명으로 자동 매칭합니다. 확실하면 자동확정, 모호하면 후보로 관리자 검토.</div>
-      <button class="btn pri" onclick="registerDeposit()">＋ 입금내역 등록</button></div></div>
-  <div class="card" style="margin-bottom:16px"><h3>매칭 후보 · 검토 <span class="en">· Match candidates</span><span class="r">${cands.length}${T('건')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>입금자·메모</th><th>후보 인보이스</th><th>입금/청구</th><th>점수·사유</th><th></th></tr></thead><tbody>${crows}</tbody></table></div></div>
-  <div class="card"><h3>입금 내역 <span class="en">· Deposits</span><span class="r">${deps.length}${T('건')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>일시</th><th>입금자</th><th>금액</th><th>메모</th><th>매칭</th></tr></thead><tbody>${drows}</tbody></table></div></div>`;
+      <button class="btn pri" onclick="registerDeposit()">${T('＋ 입금내역 등록')}</button></div></div>
+  <div class="card" style="margin-bottom:16px"><h3>${T('매칭 후보 · 검토')} <span class="en">· Match candidates</span><span class="r">${cands.length}${T('건')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('입금자·메모')}</th><th>${T('후보 인보이스')}</th><th>${T('입금/청구')}</th><th>${T('점수·사유')}</th><th></th></tr></thead><tbody>${crows}</tbody></table></div></div>
+  <div class="card"><h3>${T('입금 내역')} <span class="en">· Deposits</span><span class="r">${deps.length}${T('건')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('일시')}</th><th>${T('입금자')}</th><th>${T('금액')}</th><th>${T('메모')}</th><th>${T('매칭')}</th></tr></thead><tbody>${drows}</tbody></table></div></div>`;
 };
 function depStatusLabel(s){return {matched:"매칭됨",candidate:"후보",unmatched:"미매칭",rejected:"거절"}[s]||s;}
 async function registerDeposit(){
@@ -8406,18 +8406,18 @@ SCREEN.payments=async()=>{
     <div class="kv"><span>상태</span><b>${bTag(payColor(psel.status),payLabel(psel.status))}</b></div>
     <div class="btnrow" style="margin-top:12px;flex-wrap:wrap;gap:6px">
       ${(ROLE==='sharia')?`<span class="chip">👁 ${T('모니터링 전용 — 결제 처리 권한 없음')}</span>`:`
-      <button class="btn ok" onclick="setInvStatus('${psel.invoice_id}','paid')">✔ 결제확정</button>
-      <button class="btn bad" onclick="setInvStatus('${psel.invoice_id}','rejected')">✖ 거절</button>
-      ${psel.status==='paid'?`<button class="btn" onclick="requestRefund('${psel.invoice_id}')">↩ 환불 요청</button>`:''}
-      <button class="btn" onclick="setInvStatus('${psel.invoice_id}','expired')">⌛ 기한만료</button>`}</div>
+      <button class="btn ok" onclick="setInvStatus('${psel.invoice_id}','paid')">${T('✔ 결제확정')}</button>
+      <button class="btn bad" onclick="setInvStatus('${psel.invoice_id}','rejected')">${T('✖ 거절')}</button>
+      ${psel.status==='paid'?`<button class="btn" onclick="requestRefund('${psel.invoice_id}')">${T('↩ 환불 요청')}</button>`:''}
+      <button class="btn" onclick="setInvStatus('${psel.invoice_id}','expired')">${T('⌛ 기한만료')}</button>`}</div>
     <div class="divide" style="margin:10px 0"></div>
     <div class="small muted" style="margin-bottom:4px">🔔 PG 콜백 시뮬레이션 · Webhook</div>
     <div class="btnrow" style="flex-wrap:wrap;gap:6px">
-      <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','settlement')">💳 결제완료(settlement)</button>
-      <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','pending')">⏳ 처리중(pending)</button>
-      <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','expire')">⌛ 만료(expire)</button></div>`:'<div class="muted small">청구서를 선택하세요.</div>';
-  const refReview=refItems.length?`<div class="card" style="margin-bottom:16px"><h3>환불 승인 대기 <span class="en">· Refund approvals</span><span class="r">${refItems.length}${T('건')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>회사·청구</th><th>환불액</th><th>사유</th><th>요청자</th><th></th></tr></thead><tbody>${refItems.map(r=>`<tr><td><b>${esc(r.company||'—')}</b><div class="muted small">${esc(r.invoice_no||'')}</div></td><td>${esc(r.amount_idr||'')}</td><td class="muted small">${esc(r.reason||'')}</td><td class="muted small">${esc((r.requested_by||'').slice(0,8))}</td><td style="white-space:nowrap"><button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="decideRefund('${r.id}','approved')">승인</button> <button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="decideRefund('${r.id}','rejected')">거절</button></td></tr>`).join('')}</tbody></table>
+      <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','settlement')">${T('💳 결제완료(settlement)')}</button>
+      <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','pending')">${T('⏳ 처리중(pending)')}</button>
+      <button class="btn" onclick="pgSimulate('${psel.payment_ref||''}','expire')">${T('⌛ 만료(expire)')}</button></div>`:'<div class="muted small">청구서를 선택하세요.</div>';
+  const refReview=refItems.length?`<div class="card" style="margin-bottom:16px"><h3>${T('환불 승인 대기')} <span class="en">· Refund approvals</span><span class="r">${refItems.length}${T('건')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('회사·청구')}</th><th>${T('환불액')}</th><th>${T('사유')}</th><th>${T('요청자')}</th><th></th></tr></thead><tbody>${refItems.map(r=>`<tr><td><b>${esc(r.company||'—')}</b><div class="muted small">${esc(r.invoice_no||'')}</div></td><td>${esc(r.amount_idr||'')}</td><td class="muted small">${esc(r.reason||'')}</td><td class="muted small">${esc((r.requested_by||'').slice(0,8))}</td><td style="white-space:nowrap"><button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="decideRefund('${r.id}','approved')">${T('승인')}</button> <button class="btn bad" style="padding:3px 8px;font-size:11px" onclick="decideRefund('${r.id}','rejected')">${T('거절')}</button></td></tr>`).join('')}</tbody></table>
     <div class="muted small" style="margin-top:6px">⚠ 요청자 본인은 승인 불가(maker-checker)</div></div></div>`:'';
   return `
   <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
@@ -8428,9 +8428,9 @@ SCREEN.payments=async()=>{
     <button class="btn" onclick="serverPdf('/admin/payments/report.pdf?group=org','payment_report_org.pdf')">📄 ${T('기관별 리포트')} PDF</button></div></div>
   ${refReview}
   <div class="grid side">
-    <div class="card"><h3>청구·결제 목록 <span class="en">· Payments</span><span class="r">${items.length}${T('건')}</span></h3>
-      <div class="body tight"><table><thead><tr><th>청구번호</th><th>회사</th><th>금액</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div></div>
-    <div class="card"><h3>결제 상세·관리 <span class="en">· Manage</span></h3><div class="body">${detail}</div></div>
+    <div class="card"><h3>${T('청구·결제 목록')} <span class="en">· Payments</span><span class="r">${items.length}${T('건')}</span></h3>
+      <div class="body tight"><table><thead><tr><th>${T('청구번호')}</th><th>${T('회사')}</th><th>${T('금액')}</th><th>${T('상태')}</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+    <div class="card"><h3>${T('결제 상세·관리')} <span class="en">· Manage</span></h3><div class="body">${detail}</div></div>
   </div>`;
 };
 async function requestRefund(iid){
@@ -8550,7 +8550,7 @@ async function fatwaClientStatus(id){
   const color=st==='approved'?'ok':(st==='rejected'?'bad':(st==='conditional'?'warn':'info'));
   const banner={approved:'✓ 파트와 최종 승인 — 인증서 발급 단계로',rejected:'✕ 반려 — 보완 후 재심',conditional:'⚠ 조건부 승인 — 조건 이행 필요'}[st]||'ℹ 파트와 위원회 심의 진행 중';
   return `<div class="banner info" style="margin-bottom:16px">⚖️ 파트와 · Fatwa — 위원회 심의 진행 상태(읽기 전용). 위원 개별 의견 등 상세 심의는 비공개입니다.</div>
-    <div class="card"><h3>파트와 진행 상태 <span class="en">· Fatwa Status</span> <span class="r">${bTag(color,label)}</span></h3><div class="body">
+    <div class="card"><h3>${T('파트와 진행 상태')} <span class="en">· Fatwa Status</span> <span class="r">${bTag(color,label)}</span></h3><div class="body">
       <div class="banner ${color}" style="margin-bottom:12px">${banner}</div>
       <div class="kv"><span>결정 · Decision</span><b>${esc(s.decision||'pending')}</b></div>
       <div class="kv"><span>결정번호 · No</span><b>${esc(s.decision_no||'—')}</b></div>
@@ -8569,9 +8569,9 @@ SCREEN.fatwa=async()=>{
   const fc=fdash.counts||{};
   const fcard=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:22px;color:var(--${c})">${n||0}</span><span class="l">${l}</span></div></div>`;
   const frows=(fdash.items||[]).length?fdash.items.map(it=>`<tr class="clickable" onclick="onCaseChange('${it.case_id}')"><td><b>${esc(it.company||"—")}</b></td><td>${bTag(fatwaColor(it.fatwa_status),T(fatwaLabel(it.fatwa_status)))}</td><td class="muted small">${esc(it.decision_no||"—")}</td></tr>`).join(""):'<tr><td colspan="3" class="muted" style="text-align:center;padding:14px">심의 대상 없음</td></tr>';
-  const fatwaDashHtml=`<div class="card" style="margin-bottom:16px"><h3>파트와 위원회 대시보드 <span class="en">· Committee dashboard</span><span class="r">${(fdash.items||[]).length}${T('건')}</span></h3><div class="body">
+  const fatwaDashHtml=`<div class="card" style="margin-bottom:16px"><h3>${T('파트와 위원회 대시보드')} <span class="en">· Committee dashboard</span><span class="r">${(fdash.items||[]).length}${T('건')}</span></h3><div class="body">
     <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">${fcard(fc.review,"심의 대기","warn")}${fcard(fc.provisional,"가승인","info")}${fcard(fc.approved,"최종승인","ok")}${fcard((fc.rejected||0)+(fc.conditional||0),"반려/조건부","bad")}</div>
-    <div class="body tight"><table><thead><tr><th>회사</th><th>파트와 상태</th><th>결정번호</th></tr></thead><tbody>${frows}</tbody></table></div></div></div>`;
+    <div class="body tight"><table><thead><tr><th>${T('회사')}</th><th>${T('파트와 상태')}</th><th>${T('결정번호')}</th></tr></thead><tbody>${frows}</tbody></table></div></div></div>`;
   const committeeCard=await fatwaCommitteeCard();   // F05 위원 관리
   if(!CURCASE)return fatwaDashHtml+committeeCard+'<div class="card"><div class="body muted">위 목록에서 케이스를 선택하면 위원회 심의 상세가 표시됩니다.</div></div>';
   const mock=await fatwaDecisionView(CURCASE,true);
@@ -8661,7 +8661,7 @@ async function fatwaCommitteeAdvanced(id){
   if(CAN("fatwa.propose")||["ops","sharia","admin"].includes(ROLE)){try{voteTally=await API(`/cases/${id}/fatwa/votes`);}catch(_){}}
   const memHtml=(Array.isArray(members)?members:[]).map(m=>{
     const nm=typeof m==="string"?m:(m.name||"");const av=(nm||"?").slice(0,2).toUpperCase();
-    return `<div class="mem"><div class="av">${esc(av)}</div><div style="flex:1"><b>${esc(nm)}</b><div class="muted small">${esc(typeof m==="object"?(m.role||"위원"):"위원")}</div></div>${tag("ok","등록")}</div>`;}).join("")||'<div class="muted small">위원 정보 없음</div>';
+    return `<div class="mem"><div class="av">${esc(av)}</div><div style="flex:1"><b>${esc(nm)}</b><div class="muted small">${esc(typeof m==="object"?(m.role||"위원"):"위원")}</div></div>${tag("ok",T("등록"))}</div>`;}).join("")||'<div class="muted small">위원 정보 없음</div>';
   const fst=fd.fatwa_status||"none";
   const isProvisional=fst==="provisional", isFinal=fst==="approved";
   const canProvisional=["sharia","admin"].includes(ROLE);   // 샤리아 가승인
@@ -8671,7 +8671,7 @@ async function fatwaCommitteeAdvanced(id){
     :fst==="rejected"?["bad","⛔ 반려됨"]:fst==="conditional"?["warn","조건부 승인"]:["mute","심의 전"];
   return `<details style="margin-top:16px"><summary style="cursor:pointer;font-weight:700;padding:8px 4px">⚖️ ${T('심의 상세 (위원 구성·2단계 승인·투표)')} <span class="en">· Committee detail</span></summary>
   <div class="grid side" style="margin-top:12px">
-    <div class="card"><h3>파트와 위원회 심의 <span class="en">· Committee</span><span class="r">${bSpan(fst)}</span></h3>
+    <div class="card"><h3>${T('파트와 위원회 심의')} <span class="en">· Committee</span><span class="r">${bSpan(fst)}</span></h3>
       <div class="body">
         <div class="banner ${stageBanner[0]==='mute'?'info':stageBanner[0]}" style="margin-bottom:12px">${stageBanner[1]}${fd.decision_no?" · "+esc(fd.decision_no):""}${fd.final_approved_at?" · 최종 "+esc(String(fd.final_approved_at).slice(0,16)):""}</div>
         <div class="field"><label>심의 요지 · Note</label><div class="v small">${esc(fd.committee_note||"—")}</div></div>
@@ -8679,24 +8679,24 @@ async function fatwaCommitteeAdvanced(id){
         <div class="divide"></div>
         <div style="font-size:12.5px;margin-bottom:8px"><b>승인 단계 · 2-stage approval</b></div>
         ${canProvisional&&!isFinal?`<div class="field"><label>① 샤리아 가승인 · Provisional</label>
-          <div class="btnrow"><button class="btn ok" onclick="fatwaDecide('${id}','approved')">가승인</button>
-            <button class="btn gold" onclick="fatwaDecide('${id}','conditional')">조건부</button>
-            <button class="btn bad" onclick="fatwaDecide('${id}','rejected')">반려</button></div></div>`:''}
+          <div class="btnrow"><button class="btn ok" onclick="fatwaDecide('${id}','approved')">${T('가승인')}</button>
+            <button class="btn gold" onclick="fatwaDecide('${id}','conditional')">${T('조건부')}</button>
+            <button class="btn bad" onclick="fatwaDecide('${id}','rejected')">${T('반려')}</button></div></div>`:''}
         ${canFinal?`<div class="field"><label>② 최고운영자 최종승인 · Final approval</label>
           <button class="btn pri" ${isProvisional?'':'disabled'} onclick="fatwaFinalApprove('${id}')">${isFinal?'✓ 최종승인 완료':'최종승인 (scope 동결)'}</button>
           ${!isProvisional&&!isFinal?'<span class="chip" style="margin-left:6px">샤리아 가승인 후 활성화</span>':''}</div>`:''}
         ${!canProvisional&&!canFinal?'<span class="chip">🔒 샤리아(가승인)·최고운영자(최종승인) 전용</span>':''}
         ${canProvisional?`<button class="btn" style="margin-top:10px" onclick="setFatwaCommittee('${id}','${esc((fd&&fd.decision)||'pending')}')">✎ 위원 구성 · Committee</button>`:''}
-        <button class="btn" style="margin-top:10px" onclick="fatwaDoc('${id}')">📄 결정문 생성·다운로드</button>
+        <button class="btn" style="margin-top:10px" onclick="fatwaDoc('${id}')">${T('📄 결정문 생성·다운로드')}</button>
       </div></div>
-    <div class="card"><h3>위원 구성 <span class="en">· Members</span></h3>
+    <div class="card"><h3>${T('위원 구성')} <span class="en">· Members</span></h3>
       <div class="body"><div class="committee">${memHtml}</div>
         <div class="divide"></div>
         <div class="small" style="font-weight:600;margin-bottom:8px">심의 진행 체크리스트 · Review</div>
         ${[["위원 구성",members.length>0],["심의 요지 작성",!!fd.committee_note],["결정",!!(fd.decision&&fd.decision!=='pending')],["결정문 생성",!!fd.decision_no]].map(([t,ok])=>`<div class="check"><div class="cbox ${ok?'on':''}">${ok?'✓':''}</div><b style="flex:1">${t}</b><span class="muted small">${ok?'완료':'대기'}</span></div>`).join("")}
       </div></div>
   </div>
-  ${voteTally?`<div class="card" style="margin-top:16px"><h3>위원회 투표 <span class="en">· Committee vote</span><span class="r">${voteTally.result==='passed'?'✅ 가결':'심의중'} · 찬성 ${voteTally.approve}/${voteTally.members}</span></h3>
+  ${voteTally?`<div class="card" style="margin-top:16px"><h3>${T('위원회 투표')} <span class="en">· Committee vote</span><span class="r">${voteTally.result==='passed'?'✅ 가결':'심의중'} · 찬성 ${voteTally.approve}/${voteTally.members}</span></h3>
     <div class="body">
       <div class="banner ${voteTally.quorum_met?(voteTally.result==='passed'?'ok':'info'):'warn'}" style="margin-bottom:10px">정족수 ${voteTally.votes_cast}/${voteTally.quorum_need} · 찬성 ${voteTally.approve} · 반대 ${voteTally.reject} · 기권 ${voteTally.abstain} → <b>${voteTally.result==='passed'?'가결':'심의중'}</b></div>
       ${CAN("fatwa.propose")?(Array.isArray(members)?members:[]).map(m=>{const nm=typeof m==="string"?m:(m.name||"");const cur=((voteTally.ballots||[]).find(b=>b.member===nm)||{}).vote;
@@ -8958,10 +8958,10 @@ SCREEN.certificate=async()=>{
     :`<div class="banner info">아직 발급되지 않았습니다 · not issued</div>`;
   return `
   <div class="grid side">
-    <div class="card"><h3>할랄 인증서 <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
+    <div class="card"><h3>${T('할랄 인증서')} <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
       <div class="body">${certCard}
         <div class="banner info" style="margin-top:10px;font-size:12px;line-height:1.5">ℹ️ ${T('본 문서는 준비/내부 산출물이며, 공식 할랄 인증 발급은 BPJPH/SIHALAL 절차로 확정됩니다.')}</div>
-        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(c.certificate_no||"")}.pdf')">📄 인증서 PDF 다운로드</button><button class="btn" onclick="serverPdf('/cases/${id}/certificate/bundle.zip','halal_bundle_${esc(c.certificate_no||"")}.zip')">⤓ 전체 ZIP</button>${(ROLE==='ops'||ROLE==='admin')?`<button class="btn" onclick="serverPdf('/cases/${id}/evidence-bundle.zip','evidence-bundle_${esc(id)}.zip')">${T('📦 증거 번들 다운로드')}</button>`:''}<button class="btn" onclick="printCert('${id}')">🖨 인쇄</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
+        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(c.certificate_no||"")}.pdf')">${T('📄 인증서 PDF 다운로드')}</button><button class="btn" onclick="serverPdf('/cases/${id}/certificate/bundle.zip','halal_bundle_${esc(c.certificate_no||"")}.zip')">${T('⤓ 전체 ZIP')}</button>${(ROLE==='ops'||ROLE==='admin')?`<button class="btn" onclick="serverPdf('/cases/${id}/evidence-bundle.zip','evidence-bundle_${esc(id)}.zip')">${T('📦 증거 번들 다운로드')}</button>`:''}<button class="btn" onclick="printCert('${id}')">${T('🖨 인쇄')}</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
         ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span><div class="muted small" style="margin-top:4px">${T('내부 무결성 서명(공인 전자서명 아님)')}</div>${psreSigNote()}</div>`:''}
         ${c.issued&&c.status&&c.status!=='active'?`<div class="banner ${c.status==='withdrawn'?'bad':'warn'}" style="margin-top:10px">${c.status==='withdrawn'?'⛔ 철회됨 · Withdrawn':'⏸ 정지됨 · Suspended'}</div>`:''}
         ${c.issued&&CAN("certificate.suspend")?`<div class="btnrow" style="margin-top:10px">
@@ -8969,7 +8969,7 @@ SCREEN.certificate=async()=>{
           ${c.status==='suspended'?`<button class="btn ok" onclick="certLifecycle('${id}','reactivate')">▶ 재개 · Reactivate</button>`:''}
           ${(c.status==='active'||c.status==='suspended')?`<button class="btn bad" onclick="certLifecycle('${id}','revoke')">⛔ 철회 · Revoke</button>`:''}
         </div>`:''}</div></div>
-    <div class="card"><h3>발급·사후관리 <span class="en">· Post-cert</span></h3>
+    <div class="card"><h3>${T('발급·사후관리')} <span class="en">· Post-cert</span></h3>
       <div class="body">
         ${c.issued&&c.days_to_expiry!=null?(()=>{const d=c.days_to_expiry;const th=d<=30?["bad","D-30"]:d<=60?["warn","D-60"]:d<=90?["info","D-90"]:null;
           return th?`<div class="banner ${th[0]}" style="margin-bottom:8px">⏰ 인증서 만료 <b>D-${d}</b> (만료 ${esc(c.expiry_date||"")}) — <b>${th[1]} 알림 구간</b></div>
@@ -8980,15 +8980,15 @@ SCREEN.certificate=async()=>{
         </div>
         <div class="btnrow">
           ${canIssue&&!c.issued?`<button class="btn gold" onclick="issueCert('${id}')">인증서 발급 · Issue</button>`:''}
-          ${c.issued?`<button class="btn" onclick="changeImpact('${id}')">변경영향 분석</button>`:''}
+          ${c.issued?`<button class="btn" onclick="changeImpact('${id}')">${T('변경영향 분석')}</button>`:''}
           ${c.issued&&(CAN("certificate.renew")||CAN("certificate.renew_request"))?`<button class="btn" onclick="renewCert('${id}')">${CAN("certificate.renew")?"갱신 승인 · Approve renewal":"갱신 신청 · Request renewal"}</button>`:''}
           ${c.issued&&CAN("certificate.unlock")?`<button class="btn" onclick="unlockCert('${id}')">잠금해제 · Unlock</button>`:''}
           ${!canIssue?'<span class="chip">🔒 발급 — 최고운영자(최종 결제자)</span>':''}</div></div></div>
   </div>
   ${sihBlock}
   ${productCertCard(id,pc)}
-  <div class="card" style="margin-top:16px"><h3>변경영향 분석 이력 <span class="en">· Change-impact history</span><span class="r">${(ciHist||[]).length}${T('건')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>일시</th><th>변경 유형</th><th>위험도</th><th>점수</th><th>영향 제품</th><th>조치</th></tr></thead>
+  <div class="card" style="margin-top:16px"><h3>${T('변경영향 분석 이력')} <span class="en">· Change-impact history</span><span class="r">${(ciHist||[]).length}${T('건')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('일시')}</th><th>${T('변경 유형')}</th><th>${T('위험도')}</th><th>${T('점수')}</th><th>${T('영향 제품')}</th><th>${T('조치')}</th></tr></thead>
       <tbody>${(ciHist||[]).length?(ciHist||[]).map(x=>`<tr>
         <td class="muted small">${esc((x.created_at||"").slice(0,16))}</td>
         <td><b>${esc(x.change_type||"—")}</b></td>
@@ -9055,22 +9055,22 @@ SCREEN.assistant=async()=>{
     ||'<div class="msg a">이 케이스에 대해 질문하세요. 원재료·문서·절차 근거를 인용해 답합니다.</div>';
   return `
   <div class="grid side-r">
-    <div class="card"><h3>문맥·도구 <span class="en">· Context</span></h3>
+    <div class="card"><h3>${T('문맥·도구')} <span class="en">· Context</span></h3>
       <div class="body">
         <button class="btn" style="width:100%;margin-bottom:8px" onclick="screenText('${id}')">🧪 ${T('원재료 텍스트 스크리닝')}</button>
-        <button class="btn" style="width:100%;margin-bottom:8px" onclick="go('documents')">📁 문서 체크리스트 보기</button>
+        <button class="btn" style="width:100%;margin-bottom:8px" onclick="go('documents')">${T('📁 문서 체크리스트 보기')}</button>
         <div class="divide"></div>
         <div class="field"><label>케이스 · Case</label><div class="v small">${esc((curCaseObj()&&curCaseObj().company_name)||short(id))}</div></div>
         <div class="field"><label>장기기억 · CHU-1</label><div class="v small">${health.enabled?(health.ok?`${T('연결됨')} · ${health.count||health.total||"?"} ${T('항목')}`:T("응답 없음(폴백)")):T("비활성")}</div></div>
         <div class="field"><label>모델 · Model</label><div class="v small">로컬 Ollama · gemma3</div></div>
         <div class="small muted">RAG 3계층 · 단기(케이스)+도메인(온톨로지)+장기(CHU-1)</div>
       </div></div>
-    <div class="card"><h3>대화형 어시스턴트 <span class="en">· Chat</span><span class="r">근거 인용</span></h3>
+    <div class="card"><h3>${T('대화형 어시스턴트')} <span class="en">· Chat</span><span class="r">근거 인용</span></h3>
       <div class="body">
         <div class="chatlog" id="chatlog">${log}</div>
-        <div class="inputbar"><input class="box" id="askInput" placeholder="케이스에 대해 질문하기…" onkeydown="if(event.key==='Enter')askQ('${id}')">
+        <div class="inputbar"><input class="box" id="askInput" placeholder="${T('케이스에 대해 질문하기…')}" onkeydown="if(event.key==='Enter')askQ('${id}')">
           <button class="btn pri" onclick="askQ('${id}')">질문 · Ask</button>
-          <button class="btn" onclick="CHAT=[];applyView()">지우기</button></div>
+          <button class="btn" onclick="CHAT=[];applyView()">${T('지우기')}</button></div>
       </div></div>
   </div>`;
 };
@@ -9113,7 +9113,7 @@ async function dataListRender(id){
       :`<tr><td colspan="${cfg.columns.length}" class="muted" style="text-align:center;padding:16px">${st.q?'검색 결과 없음 · no match':'데이터 없음 · empty'}</td></tr>`;
     body.innerHTML=`<table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table>`;
     const from=total?st.offset+1:0, to=Math.min(st.offset+st.limit,total), pages=Math.max(1,Math.ceil(total/st.limit)), pg=Math.floor(st.offset/st.limit)+1;
-    foot.innerHTML=`<span>${from}–${to} / ${total}</span><span><button class="btn" ${st.offset<=0?'disabled':''} onclick="dlPage('${id}',-1)">‹ 이전</button><span style="margin:0 8px">${pg}/${pages}</span><button class="btn" ${to>=total?'disabled':''} onclick="dlPage('${id}',1)">다음 ›</button></span>`;
+    foot.innerHTML=`<span>${from}–${to} / ${total}</span><span><button class="btn" ${st.offset<=0?'disabled':''} onclick="dlPage('${id}',-1)">${T('‹ 이전')}</button><span style="margin:0 8px">${pg}/${pages}</span><button class="btn" ${to>=total?'disabled':''} onclick="dlPage('${id}',1)">${T('다음 ›')}</button></span>`;
   }catch(e){body.innerHTML=`<div class="banner bad">불러오기 실패 · ${esc(e&&e.code?e.code:'error')}</div>`;foot.innerHTML='';}
 }
 function dlSearch(id,q){const st=_DL_STATE[id];if(!st)return;st.q=(q||"").trim();st.offset=0;dataListRender(id);}
@@ -9249,7 +9249,7 @@ SCREEN.menuAssign=async()=>{
   return `<div class="card"><h3>🗂 메뉴 배정 관리 <span class="en">· Menu Assignment</span></h3>
     <div class="body">
       <div class="btnrow" style="gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">${T('배정 기준')} ${modeSel} ${targetSel}
-        <input class="box" placeholder="🔍 메뉴명·코드 검색" style="flex:1;min-width:150px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
+        <input class="box" placeholder="${T('🔍 메뉴명·코드 검색')}" style="flex:1;min-width:150px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
         <button class="btn pri" onclick="maSave()">💾 ${T('저장')}</button></div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">
         <div><div class="muted small" style="margin-bottom:4px">${T('전체 메뉴')} — 드래그/더블클릭 → 배정</div>
@@ -9271,7 +9271,7 @@ SCREEN.myMenu=async()=>{
     <div class="body">
       <div class="muted small" style="margin-bottom:10px">${T('내가 쓰는 좌측 메뉴의 구성과 순서를 직접 정합니다. 저장하면 내 화면에 바로 반영됩니다.')}</div>
       <div class="btnrow" style="gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
-        <input class="box" placeholder="🔍 메뉴명·코드 검색" style="flex:1;min-width:150px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
+        <input class="box" placeholder="${T('🔍 메뉴명·코드 검색')}" style="flex:1;min-width:150px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
         <button class="btn" onclick="myMenuReset()" title="역할 기본값으로 초기화">↺ ${T('기본값')}</button>
         <button class="btn pri" onclick="maSave()">💾 ${T('저장')}</button></div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">
@@ -9408,33 +9408,33 @@ SCREEN.system=async()=>{
     <div class="card"><h3>🗂 메뉴 배정 관리 <span class="en">· Menu Assignment</span></h3>
       <div class="body btnrow" style="align-items:center;gap:10px"><button class="btn pri" onclick="go('menuAssign')">🗂 메뉴 배정 관리 열기</button>
         <span class="muted small">역할별 메뉴 노출·순서를 드래그로 관리 (설계서 §6.1)</span></div></div>
-    <div class="card"><h3>사용자 <span class="en">· Users</span><span class="r">${users.length}</span></h3>
-      <div class="body tight"><table><thead><tr><th>이름</th><th>역할</th><th>조직</th><th></th></tr></thead><tbody>${uRows}</tbody></table></div>
+    <div class="card"><h3>${T('사용자')} <span class="en">· Users</span><span class="r">${users.length}</span></h3>
+      <div class="body tight"><table><thead><tr><th>${T('이름')}</th><th>${T('역할')}</th><th>${T('조직')}</th><th></th></tr></thead><tbody>${uRows}</tbody></table></div>
       ${pager("users",upg)}
       <div class="body" style="border-top:1px solid var(--line)">
-        <div class="btnrow"><input class="v" id="nuUser" placeholder="아이디" style="flex:1;min-width:90px">
-          <input class="v" id="nuPass" placeholder="비밀번호" value="pw" style="width:90px">
+        <div class="btnrow"><input class="v" id="nuUser" placeholder="${T('아이디')}" style="flex:1;min-width:90px">
+          <input class="v" id="nuPass" placeholder="${T('비밀번호')}" value="pw" style="width:90px">
           <select class="v" id="nuRole" style="width:auto">${roleOpts('applicant')}</select>
-          <button class="btn pri" onclick="createUser()">생성</button></div></div></div>
-    <div class="card"><h3>조직 <span class="en">· Orgs</span><span class="r">${(orgs||[]).length}</span></h3>
-      <div class="body tight"><table><thead><tr><th>조직</th><th>ID</th><th>케이스</th><th>${T('테넌트')}</th></tr></thead><tbody>${oRows}</tbody></table></div>
+          <button class="btn pri" onclick="createUser()">${T('생성')}</button></div></div></div>
+    <div class="card"><h3>${T('조직')} <span class="en">· Orgs</span><span class="r">${(orgs||[]).length}</span></h3>
+      <div class="body tight"><table><thead><tr><th>${T('조직')}</th><th>ID</th><th>${T('케이스')}</th><th>${T('테넌트')}</th></tr></thead><tbody>${oRows}</tbody></table></div>
       <div class="body" style="border-top:1px solid var(--line)">
         <div class="btnrow"><input class="v" id="noId" placeholder="org_id" style="width:110px">
-          <input class="v" id="noName" placeholder="조직명" style="flex:1;min-width:90px">
-          <button class="btn pri" onclick="createOrg()">생성</button></div></div></div>
-    <div class="card"><h3>온톨로지·감사 <span class="en">· Ontology</span></h3>
+          <input class="v" id="noName" placeholder="${T('조직명')}" style="flex:1;min-width:90px">
+          <button class="btn pri" onclick="createOrg()">${T('생성')}</button></div></div></div>
+    <div class="card"><h3>${T('온톨로지·감사')} <span class="en">· Ontology</span></h3>
       <div class="body">
         <div class="grid two" style="gap:10px;margin-bottom:14px">
           <div class="kpi"><span class="n" style="font-size:20px">${(onto.ontology_count==null?0:onto.ontology_count).toLocaleString()}</span><span class="l">온톨로지 항목</span></div>
           <div class="kpi"><span class="n" style="font-size:20px">${onto.rule_versions?Object.keys(onto.rule_versions).length:0}</span><span class="l">룰 버전</span></div>
         </div>
-        <div class="btnrow"><button class="btn" onclick="reseedOntology()">온톨로지 재시드</button>
-          <button class="btn bad" onclick="seedReset()">seed 초기화</button></div></div></div>
+        <div class="btnrow"><button class="btn" onclick="reseedOntology()">${T('온톨로지 재시드')}</button>
+          <button class="btn bad" onclick="seedReset()">${T('seed 초기화')}</button></div></div></div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>LPH 레퍼런스 <span class="en">· LPH references</span><span class="r">${(lphrefs||[]).length}${T('개')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>기관명</th><th>인증번호</th><th>상태</th><th>지역</th></tr></thead>
+  <div class="card" style="margin-top:16px"><h3>${T('LPH 레퍼런스')} <span class="en">· LPH references</span><span class="r">${(lphrefs||[]).length}${T('개')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('기관명')}</th><th>${T('인증번호')}</th><th>${T('상태')}</th><th>${T('지역')}</th></tr></thead>
       <tbody>${(lphrefs||[]).length?(lphrefs||[]).map(l=>`<tr><td><b>${esc(l.name||"—")}</b></td><td class="muted small">${esc(l.accreditation_no||"—")}</td><td>${tag(l.status==='active'?'ok':'mute',l.status||"—")}</td><td class="muted">${esc(l.region||"—")}</td></tr>`).join(""):'<tr><td colspan="4" class="muted" style="text-align:center;padding:16px">등록된 LPH 없음</td></tr>'}</tbody></table></div></div>
-  <div class="card" style="margin-top:16px"><h3>KMA 1360 면제 · 전체 케이스 <span class="en">· KMA exempt / All cases</span></h3>
+  <div class="card" style="margin-top:16px"><h3>${T('KMA 1360 면제 · 전체 케이스')} <span class="en">· KMA exempt / All cases</span></h3>
     <div class="body">
       <div class="grid two" style="gap:10px;margin-bottom:12px">
         <div class="kpi"><span class="n" style="font-size:20px">${(admCases||[]).length}</span><span class="l">전체 케이스(admin)</span></div>
@@ -9442,7 +9442,7 @@ SCREEN.system=async()=>{
       </div>
       <div class="btnrow">${(kma.terms||[]).slice(0,40).map(t=>`<span class="chip">${esc(typeof t==='string'?t:(t.term||t.name||t.keyword||""))}</span>`).join("")||'<span class="muted small">면제 용어 없음</span>'}</div>
     </div></div>
-  <div class="card dl" style="margin-top:16px"><h3>전체 케이스 <span class="en">· All cases (DataList)</span></h3>
+  <div class="card dl" style="margin-top:16px"><h3>${T('전체 케이스')} <span class="en">· All cases (DataList)</span></h3>
     <div class="body">${dataList({id:"dlAdminCases",endpoint:"/admin/cases",pageSize:15,sort:"created_at",dir:"desc",search:true,csv:true,csvName:"admin_cases",
       columns:[
         {key:"company_name",label:"기업",en:"Company",render:r=>`<b>${esc(r.company_name||"—")}</b>`},
@@ -9451,8 +9451,8 @@ SCREEN.system=async()=>{
         {key:"fatwa_status",label:"파트와",en:"Fatwa",sortable:false},
         {key:"org_id",label:"조직",en:"Org"}
       ]})}</div></div>
-  ${ovs.length?`<div class="card" style="margin-top:16px"><h3>조직별 개요 <span class="en">· Multi-tenant overview</span><span class="r">${ovs.length}${T('개')} ${T('조직')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>조직 · Org</th><th>케이스</th><th>사용자</th><th>인증서</th><th>매출 · Revenue</th></tr></thead><tbody>
+  ${ovs.length?`<div class="card" style="margin-top:16px"><h3>${T('조직별 개요')} <span class="en">· Multi-tenant overview</span><span class="r">${ovs.length}${T('개')} ${T('조직')}</span></h3>
+    <div class="body tight"><table><thead><tr><th>조직 · Org</th><th>${T('케이스')}</th><th>${T('사용자')}</th><th>${T('인증서')}</th><th>매출 · Revenue</th></tr></thead><tbody>
     ${ovs.map(o=>`<tr><td><b>${esc(o.org_id)}</b></td><td>${o.cases}</td><td>${o.users}</td><td>${o.certificates}</td><td>${fmtIDR(o.revenue_paid)}</td></tr>`).join("")}
     </tbody></table></div></div>`:''}`;
 };
@@ -9604,7 +9604,7 @@ async function renderCaseDetail(id, tab){
     <div class="detail-top">
       <button class="btn" onclick="history.back()">← 목록으로 · Back</button>
       <div class="dt-title"><h1>${esc(c.company_name||"—")} <span class="muted" style="font-size:14px;font-weight:500">${short(c.case_id)}</span></h1>
-        <div class="dt-sub">${bTag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')} ${bTag(statusColor(c.status),c.status||'—')} ${c.scope_frozen?tag('gold','scope 동결'):''}</div></div>
+        <div class="dt-sub">${bTag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')} ${bTag(statusColor(c.status),c.status||'—')} ${c.scope_frozen?tag('gold',T('scope 동결')):''}</div></div>
     </div>
     <div class="tabbar">${tabs.map(([t,ko,en])=>`<button class="tabbtn ${t===tab?'on':''}" onclick="openCaseTab('${t}')">${ko} <span class="muted">· ${en}</span></button>`).join("")}</div>`;
   let panel="";
@@ -9615,9 +9615,9 @@ async function renderCaseDetail(id, tab){
     let gatesCard="";try{gatesCard=await workflowGatesCard(id,w);}catch(_){}
     const phases=(w.phases||[]);
     const flow=phases.map((p,i)=>`<div class="step ${p.status==="done"?"done":p.status==="current"?"now":(p.done?"done":p.current?"now":"")}" style="min-width:64px">${esc(p.label||p.state||p.key||"")}</div>${i<phases.length-1?'<span class="arrow">›</span>':''}`).join("")||'<div class="muted small">—</div>';
-    panel=`${wsStagesCard(id)}<div class="card" style="margin-bottom:16px"><h3>인증 진행 단계 <span class="en">· Milestone (5단계)</span><span class="r">${esc(w.state_label||c.status||"—")}</span></h3><div class="body">${progressBar(c.status)}</div></div>
+    panel=`${wsStagesCard(id)}<div class="card" style="margin-bottom:16px"><h3>${T('인증 진행 단계')} <span class="en">· Milestone (5단계)</span><span class="r">${esc(w.state_label||c.status||"—")}</span></h3><div class="body">${progressBar(c.status)}</div></div>
     <div class="grid side">
-      <div class="card"><h3>케이스 진행 단계 <span class="en">· Workflow</span></h3>
+      <div class="card"><h3>${T('케이스 진행 단계')} <span class="en">· Workflow</span></h3>
         <div class="body"><div class="flow" style="margin-bottom:14px">${flow}</div>
           <div class="kv"><span>기업 · Company</span><b>${esc(c.company_name||"—")}</b></div>
           <div class="kv"><span>경로 · Pathway</span><b>${esc(c.pathway||"—")}</b></div>
@@ -9625,36 +9625,36 @@ async function renderCaseDetail(id, tab){
           <div class="kv"><span>NIB</span><b>${esc(c.nib||"—")}</b></div>
           <div class="kv"><span>책임자</span><b>${esc(c.responsible_person||"—")}</b></div>
         </div></div>
-      <div class="card"><h3>준비도 <span class="en">· Readiness</span></h3>
+      <div class="card"><h3>${T('준비도')} <span class="en">· Readiness</span></h3>
         <div class="body">
           <div class="scorebox" style="margin-bottom:12px"><span class="big" style="color:var(--${rd.band==='ready'?'ok':rd.band==='warn'?'warn':'bad'})">${rd.readiness==null?"—":rd.readiness}</span><span class="muted">% · ${bSpan(rd.band)}</span></div>
           ${rd.breakdown?Object.entries(rd.breakdown).map(([k,vv])=>`<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;font-size:12px"><span>${esc(k)}</span><b>${vv}%</b></div><div class="bar"><i style="width:${vv}%"></i></div></div>`).join(""):""}
           <div class="btnrow" style="margin-top:12px">
-            <button class="btn" onclick="CURCASE='${id}';go('application')">📝 신청 상세 →</button><!-- 회의 2026-07-10: 신청은 별도 메뉴가 아니라 내 케이스 디테일에서 진입 -->
+            <button class="btn" onclick="CURCASE='${id}';go('application')">${T('📝 신청 상세 →')}</button><!-- 회의 2026-07-10: 신청은 별도 메뉴가 아니라 내 케이스 디테일에서 진입 -->
             <button class="btn" onclick="openCaseTab('materials')">🧪 원재료 →</button>
-            <button class="btn" onclick="openCaseTab('documents')">📁 문서 →</button>
+            <button class="btn" onclick="openCaseTab('documents')">${T('📁 문서 →')}</button>
             <button class="btn" onclick="openCaseTab('audit')">🏭 심사 →</button>
             <button class="btn" onclick="CURCASE='${id}';go('mockAudit')">🧷 모의심사·사진 →</button><!-- 회의 2026-07-10: 사진심사(모의심사) 내용 케이스에서 바로 진입 -->
             <button class="btn" onclick="exportCaseJson('${id}')">⬇ JSON</button>
-            <button class="btn" onclick="exportReport('${id}')">📄 종합 보고서</button></div>
+            <button class="btn" onclick="exportReport('${id}')">${T('📄 종합 보고서')}</button></div>
         </div></div>
     </div>
     ${gatesCard}
     <div class="card" style="margin-top:16px"><h3>협의 · Discussion <span class="en">· thread</span><span class="r">${disc.length}${T('건')}</span></h3>
       <div class="body">
         <div class="chatlog" style="max-height:240px">${disc.length?disc.map(d=>`<div class="msg a" style="max-width:100%"><b>${esc(d.author||d.author_role||"—")}</b>${discRole(d.author_role)} <span class="muted small">· ${esc(d.kind||"comment")} ${esc((d.created_at||"").slice(0,16))}</span><br>${esc(d.text)}</div>`).join(""):'<div class="muted small">협의 내역 없음</div>'}</div>
-        <div class="inputbar"><input class="box" id="discInput" placeholder="협의 코멘트 입력…" onkeydown="if(event.key==='Enter')postDiscussion('${id}')">
-          <button class="btn pri" onclick="postDiscussion('${id}')">등록</button></div>
+        <div class="inputbar"><input class="box" id="discInput" placeholder="${T('협의 코멘트 입력…')}" onkeydown="if(event.key==='Enter')postDiscussion('${id}')">
+          <button class="btn pri" onclick="postDiscussion('${id}')">${T('등록')}</button></div>
       </div></div>`;
   } else if(tab==="materials"){
     const mats=await API(`/cases/${id}/materials`).catch(()=>[]);
     const rows=mats.length?mats.map(m=>`<tr><td><b>${esc(m.name)}</b></td><td>${bTag(statusColor(m.status||m.result),m.status||m.result||"—")}</td><td class="small">${m.evidence_count?"✓ "+m.evidence_count:'<span class="muted">없음</span>'}</td></tr>`).join(""):`<tr><td colspan="3" class="muted" style="text-align:center;padding:18px">원재료 없음</td></tr>`;
-    panel=`<div class="card"><h3>원재료 스크리닝 <span class="en">· Materials</span></h3>
-      <div class="body tight"><table><thead><tr><th>원재료</th><th>상태</th><th>증빙</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="CURCASE='${id}';go('materials')">원재료 화면 열기 →</button></div></div>`;
+    panel=`<div class="card"><h3>${T('원재료 스크리닝')} <span class="en">· Materials</span></h3>
+      <div class="body tight"><table><thead><tr><th>${T('원재료')}</th><th>${T('상태')}</th><th>${T('증빙')}</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="CURCASE='${id}';go('materials')">${T('원재료 화면 열기 →')}</button></div></div>`;
   } else if(tab==="documents"){
     const docs=await API(`/cases/${id}/documents`).catch(()=>[]);
-    panel=`<div class="card"><h3>첨부 문서 <span class="en">· Attachments</span><span class="r">클릭 → 원본</span></h3>
+    panel=`<div class="card"><h3>${T('첨부 문서')} <span class="en">· Attachments</span><span class="r">클릭 → 원본</span></h3>
       <div class="body"><div class="filegrid">${docs.length?docs.map(d=>`<div class="filecard" onclick="viewDoc('${d.document_id}')">
         <div class="fico">${/png|jpg|jpeg|img/i.test(d.filename||"")?'🖼':'📄'}</div>
         <div class="fmeta"><b>${esc(d.filename||"문서")}</b><span class="muted small">${esc(d.doc_type||"")} · ${esc(d.review_status||"미검수")}</span></div></div>`).join(""):'<div class="muted small">문서 없음</div>'}</div></div></div>`;
@@ -9662,8 +9662,8 @@ async function renderCaseDetail(id, tab){
     if(c.pathway==='self_declare'){ return head+`<div class="detail-panel">${sdExemptCard(T('현장심사'))}</div>`; }
     const find=await API(`/cases/${id}/findings`).catch(()=>[]);
     const rows=find.length?find.map(f=>`<tr><td><b>${esc(f.finding)}</b><div class="muted small">${esc(f.area||"")}</div></td><td>${bTag(statusColor(f.severity),f.severity||"—")}</td><td>${bTag(statusColor(f.status),f.status||"—")}</td></tr>`).join(""):`<tr><td colspan="3" class="muted" style="text-align:center;padding:18px">지적사항 없음</td></tr>`;
-    panel=`<div class="card"><h3>지적사항 <span class="en">· Findings</span></h3>
-      <div class="body tight"><table><thead><tr><th>내용</th><th>심각도</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>
+    panel=`<div class="card"><h3>${T('지적사항')} <span class="en">· Findings</span></h3>
+      <div class="body tight"><table><thead><tr><th>${T('내용')}</th><th>${T('심각도')}</th><th>${T('상태')}</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="CURCASE='${id}';go('audit')">심사 화면 열기 →</button></div></div>`;
   }
   return head+`<div class="detail-panel">${panel}</div>`;
