@@ -427,6 +427,35 @@ def _parse_ingredient_markers(text):
     return list(dict.fromkeys(prods)), list(dict.fromkeys(mats))
 
 
+# 시험성적서(CoA/MSDS) 정량 측정값 추출 — 정규식(결정적). param_key는 main.QUANT_CRITERIA와 일치.
+_QUANT_PATTERNS = {
+    "ethanol_pct":  r"(?:ethanol|알코올|에탄올|alcohol)[^\d%]{0,25}?([\d.]+)\s*%",
+    "lead_ppm":     r"(?:lead|\bPb\b|납)[^\d]{0,25}?([\d.]+)\s*(?:ppm|mg/kg)",
+    "cadmium_ppm":  r"(?:cadmium|\bCd\b|카드뮴)[^\d]{0,25}?([\d.]+)\s*(?:ppm|mg/kg)",
+    "mercury_ppm":  r"(?:mercury|\bHg\b|수은)[^\d]{0,25}?([\d.]+)\s*(?:ppm|mg/kg)",
+    "arsenic_ppm":  r"(?:arsenic|\bAs\b|비소)[^\d]{0,25}?([\d.]+)\s*(?:ppm|mg/kg)",
+}
+
+
+def extract_measurements(text):
+    """시험성적서 본문에서 정량 파라미터 측정값을 추출(결정적 정규식). {param_key: value(float)}."""
+    if not text:
+        return {}
+    out = {}
+    for k, pat in _QUANT_PATTERNS.items():
+        m = re.search(pat, text, re.I)
+        if m:
+            try:
+                out[k] = float(m.group(1))
+            except ValueError:
+                pass
+    # 돼지 DNA: 검출/불검출(정성)
+    if re.search(r"(?:pork|porcine|돼지|돈지|babi)[^\n]{0,20}?(?:dna|pcr)", text, re.I):
+        neg = re.search(r"(?:not\s*detect|non[- ]?detect|negative|불검출|음성|없음|none|absent)", text, re.I)
+        out["pork_dna"] = 0.0 if neg else 1.0
+    return out
+
+
 def classify(name, text):
     if not text.strip():
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
@@ -458,6 +487,11 @@ def classify(name, text):
         if len(complete) > len(r["fields"].get(fk) or []):
             r["fields"][fk] = complete
     _enrich_address(r["fields"])   # 도시/국가/우편 보정
+    # 시험성적서/성분명세/품질인증 → 정량 측정값 추출(자동 반영용)
+    if r["doc_type"] in ("coa_msds", "quality_cert", "supplier_declaration"):
+        _meas = extract_measurements(text)
+        if _meas:
+            r["fields"]["measurements"] = _meas
     return r
 
 

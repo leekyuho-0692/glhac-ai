@@ -2935,6 +2935,29 @@ def _apply_intake_autofill(db, c, res):
     # 문서 타입별 개별 프로세서 — 공정흐름도/할랄인증서/SJPH매뉴얼을 각 엔티티로 매핑
     for _d in res.get("classified", []):
         _process_doc(db, c, _d, applied)
+    # CoA/성적서 정량 측정값 자동 반영 → MaterialMeasurement (기준 대비 pass/fail 자동 판정)
+    import uuid as _uuid
+    _mcount = 0
+    for _d in res.get("classified", []):
+        _meas = (_d.get("fields") or {}).get("measurements") or {}
+        for _pk, _val in _meas.items():
+            _crit = QUANT_CRITERIA.get(_pk)
+            if not _crit or _val is None:
+                continue
+            _mx = _crit.get("max")
+            _vd = "pass" if (_mx is not None and float(_val) <= float(_mx)) else "fail"
+            _ex = (db.query(models.MaterialMeasurement)
+                   .filter_by(case_id=c.case_id, param_key=_pk).first())
+            if _ex:
+                _ex.value = _val; _ex.unit = _crit.get("unit"); _ex.verdict = _vd
+            else:
+                db.add(models.MaterialMeasurement(
+                    measurement_id=_uuid.uuid4().hex, case_id=c.case_id, param_key=_pk,
+                    value=_val, unit=_crit.get("unit"), verdict=_vd,
+                    lab_name=(_d.get("fields") or {}).get("issuer"), recorded_by="ai"))
+            _mcount += 1
+    if _mcount:
+        applied["measurements"] = _mcount
     # 사전심사 업로드 → 신청서 임시저장 진입(작성 이어하기 대상)
     if c.status in ("onboarding", "application_draft"):
         c.status = "application_draft"
