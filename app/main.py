@@ -10993,9 +10993,9 @@ def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session
     missing = [{
         "doc_type": c["doc_type"], "doc_type_ko": c["doc_type_ko"], "status": c["status"],
         "file_count": c["file_count"], "requirement": c["requirement"],
-        "reason": ("서류가 제출되지 않았습니다 (파일 없음) · Belum diunggah"
+        "reason": ("서류가 제출되지 않았습니다 (파일 없음)"
                    if c["status"] == "missing"
-                   else "제출됐으나 반려됨 — 내용 보완이 필요합니다 · Ditolak, perlu perbaikan"),
+                   else "제출됐으나 반려됨 — 내용 보완이 필요합니다"),
     } for c in checklist if c.get("required") and not c["satisfied"]]
     return {"checklist": checklist, "missing": missing, "complete": len(missing) == 0}
 
