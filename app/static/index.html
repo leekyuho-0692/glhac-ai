@@ -937,7 +937,7 @@ function pageHead(id){
 function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="margin-bottom:14px">⚠ 일부 데이터를 불러오지 못했습니다 (${FETCH_ERRORS}${T('건')} 실패) — 표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.</div>`:"";}
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
-const UI_STRINGS={
+const UI_STRINGS={"승인 대기중":"Menunggu Persetujuan", "오디터가 신청을 검토하고 있습니다":"Auditor sedang meninjau permohonan Anda", "AI 분석중":"Analisis AI Berjalan", "오디터 검토 대기":"Menunggu Tinjauan Auditor", "오디터 심사 진행중":"Peninjauan Auditor Berlangsung", "결과를 기다리는 중입니다":"Menunggu hasil", "사전심사 보고서 도착":"Laporan Pra-penilaian Diterima", "아래에서 확인 후 재제출하세요":"Periksa di bawah lalu kirim ulang", "사전심사 완료":"Pra-penilaian Selesai", "결과를 확인하세요":"Periksa hasilnya", "사전심사 신청 준비":"Siap Mengajukan Pra-penilaian", "아래에서 사전심사를 실행하세요":"Jalankan pra-penilaian di bawah", "서류가 제출되지 않았습니다 (파일 없음)":"Belum diunggah (tidak ada file)", "제출됐으나 반려됨 — 내용 보완이 필요합니다":"Dikirim tetapi ditolak — perlu perbaikan", "🤖 자동 채움":"🤖 Isi Otomatis", "＋그룹":"＋Grup", "🧪 원재료 →":"🧪 Bahan →", "🏭 심사 →":"🏭 Audit →", "🧷 모의심사·사진 →":"🧷 Audit Simulasi·Foto →", "심사 화면 열기 →":"Buka Layar Audit →",
   /* 어시스턴트/CHU-1 2026-07-17 */
   "연결됨":"Terhubung",
   "항목":"item",
