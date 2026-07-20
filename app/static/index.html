@@ -4001,7 +4001,7 @@ async function renderRightPanel(){
    <div class="rpsec"><div class="rptitle">알림 · Notifications <span class="muted small">${notifs.filter(n=>!n.read).length} unread</span></div>
      ${notifs.slice(0,5).map(n=>`<div class="rpnote ${n.read?"":"unread"}"${n.case_id?` style="cursor:pointer" onclick="openNotif('${n.id}','${esc(n.case_id)}')" title="${T('클릭 → 케이스로 이동')}"`:''}><b>${esc(n.title||n.event_type||"")}</b><div class="muted small">${esc((n.body||"").slice(0,70))}${n.case_id?' <span class="go-arrow">→</span>':''}</div></div>`).join("")||'<div class="muted small">알림 없음</div>'}</div>
    <div class="rpsec" style="border-bottom:none"><div class="rptitle">논의 · Discussion</div>
-     <div class="rpdisc">${disc.slice(-8).map(d=>`<div class="rpmsg"><b class="small">${esc(d.author||d.author_role||"")}</b>${discRole(d.author_role)} <span class="muted small">${esc(String(d.created_at||"").slice(5,16))}</span><div class="small">${esc(d.text||"")}</div></div>`).join("")||'<div class="muted small">아직 논의 없음</div>'}</div>
+     <div class="rpdisc">${disc.slice(-8).map(d=>`<div class="rpmsg"><b class="small">${esc(d.author||d.author_role||"")}</b>${discRole(d.author_role)} <span class="muted small">${esc(String(d.created_at||"").slice(5,16))}</span><div class="small">${esc(d.text||"")}</div></div>`).join("")||'<div class="muted small">'+T('아직 논의 없음')+'</div>'}</div>
      <div class="btnrow" style="margin-top:8px"><input class="v" id="rpDiscInput" placeholder="${T('메시지 입력…')}" style="flex:1;font-size:12px" onkeydown="if(event.key===\'Enter\')postDiscussion(\'${id}\')"><button class="btn pri" style="padding:5px 10px" onclick="postDiscussion(\'${id}\')">${T('전송')}</button></div></div>`;
 }
 function toggleRPanel(){const p=document.getElementById("rpanel");if(!p)return;p.classList.toggle("open");try{localStorage.setItem("glhac_rp",p.classList.contains("open")?"1":"0")}catch(_){}if(p.classList.contains("open"))renderRightPanel();}
@@ -4119,7 +4119,7 @@ function matBasis(m){
   const st=(m.status||m.screen_status||m.result||'').toString().toLowerCase();
   const parts=[];
   if(/halal|pass|clear|cleared/.test(st)){
-    parts.push(m.matched_uid?(T('할랄 기준목록 대조 통과')+' (참조: '+esc(m.matched_uid)+')')
+    parts.push(m.matched_uid?(T('할랄 기준목록 대조 통과')+' ('+T('참조')+': '+esc(m.matched_uid)+')')
                             :T('임계(위험) 성분 아님 — 기본 통과'));
   }else if(/mushbooh|syubhat|의심|warn|needs|doubt/.test(st)){
     parts.push(T('⚠ 의심(Mushbooh) — 원산지·성분·공정 증빙 확인 필요'));
@@ -5288,7 +5288,7 @@ SCREEN.application=async()=>{
         </div>`)}
   </div>
   <div class="grid three" style="margin-top:16px">
-    <div class="card"><h3>할랄감독자 · Penyelia <span class="en">· Supervisor</span><span class="r">활성 ${penyeliaResp.active_count!=null?penyeliaResp.active_count:pens.filter(p=>p.status==='active').length}</span></h3>
+    <div class="card"><h3>할랄감독자 · Penyelia <span class="en">· Supervisor</span><span class="r">${T('활성')} ${penyeliaResp.active_count!=null?penyeliaResp.active_count:pens.filter(p=>p.status==='active').length}</span></h3>
       <div class="body">
         ${pens.length?pens.map(p=>`<div class="li"><div class="ic t-info">👤</div><div class="tx"><b>${esc(p.name)}</b><div>${esc(p.training_cert||"교육증명 없음")}</div></div><div class="when">${tag(p.status==='active'?'ok':'mute',p.status||"—")}${canApp?` <button class="btn" style="padding:2px 7px;font-size:11px" onclick="togglePenyelia('${p.penyelia_id}','${p.status==='active'?'inactive':'active'}')">${p.status==='active'?'비활성화':'활성화'}</button>`:''}</div></div>`).join(""):'<div class="muted small">등록된 감독자 없음</div>'}
         ${canApp?`<div class="btnrow" style="margin-top:10px"><input class="v" id="pyName" placeholder="${T('이름')}" style="flex:1"><button class="btn pri" onclick="addPenyelia()">${T('등록')}</button></div>`:''}
