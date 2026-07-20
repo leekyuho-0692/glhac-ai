@@ -231,6 +231,7 @@ _CLASSIFY_SYS = (
     "phone은 회사 전화번호, factory_phone은 공장 전화번호(Tel). "
     "business_type은 사업의 종류/업태(예: 제조업, 도소매업). "
     "employee_count는 총 직원 수(숫자만, 남녀 합계). "
+    "establishment_date는 개업일/설립일(YYYY-MM-DD), corporate_reg_no는 법인등록번호(사업자번호 nib와 다른 별도 번호). "
     "주소(address/factory_address)는 도로명부터 도·시·국가까지 전체를 그대로 넣으세요(중간에서 자르지 말 것). "
     "process_steps는 공정흐름도의 공정 단계 순서 목록(원료입고→배합→가열→포장 등). "
     "product_names는 완제품 이름 목록 — 제품목록 문서뿐 아니라 전성분표/원재료 문서라도 "
@@ -242,7 +243,8 @@ _CLASSIFY_SYS = (
     '"fields":{"company_name":null,"nib":null,"address":null,"city":null,"province":null,"country":null,"zip":null,'
     '"factory_address":null,"factory_city":null,"factory_province":null,"factory_country":null,"factory_zip":null,'
     '"responsible_person":null,"factory_reg_no":null,"phone":null,"factory_phone":null,'
-    '"business_type":null,"employee_count":null,"product_names":[],"cert_no":null,'
+    '"business_type":null,"employee_count":null,"establishment_date":null,"corporate_reg_no":null,'
+    '"product_names":[],"cert_no":null,'
     '"issuer":null,"expiry_date":null,"material_names":[],"process_steps":[],'
     '"has_commitment":false,"has_materials":false,"has_process":false,'
     '"has_product":false,"has_monitoring":false}}'
@@ -432,8 +434,8 @@ def classify(name, text):
 
 # 개별 업로드 컨텍스트 파싱 — doc_type별 추출 필드 스펙
 _FIELD_SPEC = {
-    "nib_business_license": ("회사명, NIB(사업자등록번호), 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 회사 전화번호, 사업의 종류/업태",
-                             '{"company_name":null,"nib":null,"address":null,"city":null,"province":null,"country":null,"zip":null,"phone":null,"business_type":null}'),
+    "nib_business_license": ("회사명, NIB(사업자등록번호), 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 회사 전화번호, 사업의 종류/업태, 개업일(YYYY-MM-DD), 법인등록번호",
+                             '{"company_name":null,"nib":null,"address":null,"city":null,"province":null,"country":null,"zip":null,"phone":null,"business_type":null,"establishment_date":null,"corporate_reg_no":null}'),
     "factory_registration": ("공장등록번호, 공장 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 공장 전화번호(Tel), 총 직원 수(숫자)",
                              '{"factory_reg_no":null,"factory_address":null,"factory_city":null,"factory_province":null,"factory_country":null,"factory_zip":null,"factory_phone":null,"employee_count":null}'),
     "halal_certificate": ("인증번호, 발급기관, 만료일, 대상(제품/원재료)",
@@ -504,6 +506,7 @@ def aggregate_fields(docs):
            "factory_city": None, "factory_province": None, "factory_country": None, "factory_zip": None,
            "responsible_person": None, "phone": None, "factory_phone": None,
            "business_type": None, "employee_count": None,
+           "establishment_date": None, "corporate_reg_no": None,
            "factory_reg_no": None, "products": [], "materials": [], "certificates": []}
     _pk = set()   # 제품 중복 판정 키(대소문자 무시)
     _mk = set()   # 원재료 중복 판정 키
@@ -543,6 +546,10 @@ def aggregate_fields(docs):
                 agg["business_type"] = f["business_type"]
             if not agg["employee_count"] and f.get("employee_count") not in (None, ""):
                 agg["employee_count"] = f["employee_count"]
+            if not agg["establishment_date"] and f.get("establishment_date"):
+                agg["establishment_date"] = f["establishment_date"]
+            if not agg["corporate_reg_no"] and f.get("corporate_reg_no"):
+                agg["corporate_reg_no"] = f["corporate_reg_no"]
         # 제품/원재료명은 해당 카탈로그 문서에서만 수집(기록·타목록의 오염 방지).
         _dt = d.get("doc_type")
         if _dt in _PRODUCT_SRC or _dt is None:

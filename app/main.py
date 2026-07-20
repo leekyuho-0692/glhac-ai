@@ -2515,7 +2515,9 @@ def _apply_profile_extras(c, agg, force=False):
     # 화면 필드 키(office_phone/business_type/total_employee)에 매핑
     _extra = (("office_phone", agg.get("phone") or agg.get("factory_phone")),
               ("business_type", agg.get("business_type")),
-              ("total_employee", agg.get("employee_count")))
+              ("total_employee", agg.get("employee_count")),
+              ("establishment_date", agg.get("establishment_date")),
+              ("corporate_reg_no", agg.get("corporate_reg_no")))
     for _k, _v in _extra:
         if _v not in (None, "") and (force or not pe.get(_k)):
             pe[_k] = _v; filled.append(_k)
