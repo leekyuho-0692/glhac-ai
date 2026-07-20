@@ -5026,6 +5026,14 @@ SCREEN.preassess=async()=>{
   }
   return `
   ${cliStepbar}
+  ${(()=>{
+    if(pre.doc_request&&!(pre.resubmit&&(pre.resubmit.round||0)>=(pre.doc_request.round||0)))return `<div class="banner warn" style="margin-bottom:16px">📬 ${T('사전심사 보고서 도착')} · ${T('오디터가 추가서류를 요청했습니다')} (${pre.doc_request.round}${T('회차')}) — ${T('아래에서 확인 후 재제출하세요')}</div>`;
+    if(pre.reviewed)return `<div class="banner ok" style="margin-bottom:16px">✅ ${T('사전심사 완료')} · ${T('결과를 확인하세요')}</div>`;
+    if(cliStage>=4)return `<div class="banner info" style="margin-bottom:16px">🔍 ${T('오디터 심사 진행중')} · ${T('결과를 기다리는 중입니다')}</div>`;
+    if(cliStage===3)return `<div class="banner info" style="margin-bottom:16px">🤖 ${T('AI 분석중')} · ${T('오디터 검토 대기')}</div>`;
+    if(cliStage===2)return `<div class="banner info" style="margin-bottom:16px">⏳ ${T('승인 대기중')} · ${T('오디터가 신청을 검토하고 있습니다')}</div>`;
+    return `<div class="banner info" style="margin-bottom:16px">📝 ${T('사전심사 신청 준비')} · ${T('아래에서 사전심사를 실행하세요')}</div>`;
+  })()}
   <div class="grid side">
     <div>
       <div class="card"><h3>${T('사전심사 대상')} <span class="en">· Pre-assessment · 가심사</span><span class="r">${esc(c.company_name||'')}</span></h3>
@@ -5349,7 +5357,7 @@ async function applyDocCompany(id,docName,caseName){
 const DRAFT_DEF={saved:{ko:"임시저장",c:"mute"},in_progress:{ko:"작성중",c:"info"},completed:{ko:"작성완료",c:"ok"},returned:{ko:"반려",c:"bad"}};
 function draftBadge(ds){const d=DRAFT_DEF[ds];return d?bTag(d.c,d.ko):'';}
 async function saveDraft(id){await saveProfile(id,true);try{await API(`/cases/${id}/save-draft`,{method:"POST",body:"{}"});await loadCases(true);applyView();alert("✅ 임시저장 완료 · Draft saved");}catch(e){toast("임시저장 실패 · "+(e&&e.code?e.code:""));}}
-async function submitApp(id){if(!confirm("작성완료로 제출할까요? AI 사전평가 후 경로판정(자기선언/정규) 확정으로 넘어갑니다."))return;await saveProfile(id,true);try{await API(`/cases/${id}/submit-application`,{method:"POST",body:"{}"});await loadCases(true);applyView();alert("✅ 작성완료 제출되었습니다 · Submitted");}catch(e){toast("제출 실패 · "+(e&&e.code?e.code:""));}}
+async function submitApp(id){if(!confirm("작성완료로 제출할까요? AI 사전평가 후 경로판정(자기선언/정규) 확정으로 넘어갑니다."))return;await saveProfile(id,true);try{await API(`/cases/${id}/submit-application`,{method:"POST",body:"{}"});await loadCases(true);alert("✅ 작성완료 제출 · 오디터 승인 후 [사전심사] 화면에서 진행됩니다");try{CURCASE=id;go('preassess');}catch(_){applyView();}}catch(e){toast("제출 실패 · "+(e&&e.code?e.code:""));}}
 async function returnApp(id){const r=await dialog("신청서 반려 · Return",[{key:"reason",label:"반려 사유 · Reason",type:"textarea",required:true}]);if(!r)return;try{await API(`/cases/${id}/return-application`,{method:"POST",body:JSON.stringify({reason:r.reason})});toast("반려 처리");await loadCases(true);applyView();}catch(e){toast("반려 실패 · "+(e&&e.code?e.code:""));}}
 async function assessPathway(id){try{const r=await API(`/cases/${id}/pathway/assess`,{method:"POST",body:"{}"});ASSESS_CACHE[id]=r;toast("사전심사 · 추천 "+(r.suggested_pathway||"—")+" · 위험 "+(r.risk_category||"—"));applyView();}catch(e){toast("사전심사 실패 · "+(e&&e.code?e.code:""));}}
 function assessRender(id){
