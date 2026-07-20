@@ -537,14 +537,16 @@ def aggregate_fields(docs):
                 agg["responsible_person"] = f["responsible_person"]
             if not agg["factory_reg_no"] and f.get("factory_reg_no"):
                 agg["factory_reg_no"] = f["factory_reg_no"]
-            # 전화·사업유형·직원수. 전화는 회사/공장 어느 문서든 수집(LLM이 phone/factory_phone
-            # 칸을 혼동해도 유실 방지) — 회사 전화(office_phone)와 공장 전화를 각각 최초값으로.
-            if not agg["phone"] and f.get("phone"):
+            # 전화 엄격 분리(오피스↔공장 혼입 방지): 회사 전화(office_phone)=사업자등록증(NIB)에서만,
+            # 공장 전화=공장등록증에서만. 해당 문서에 전화가 없으면 비워둔다(타 문서 값으로 오염 금지).
+            if d.get("doc_type") == "nib_business_license" and not agg["phone"] and f.get("phone"):
                 agg["phone"] = f["phone"]
-            if not agg["factory_phone"] and (f.get("factory_phone") or
-                                             (d.get("doc_type") == "factory_registration" and f.get("phone"))):
+            if d.get("doc_type") == "factory_registration" and not agg["factory_phone"] and (f.get("factory_phone") or f.get("phone")):
                 agg["factory_phone"] = f.get("factory_phone") or f.get("phone")
-            if not agg["business_type"] and f.get("business_type"):
+            # 사업유형은 회사 속성(사업자등록증의 업태·종목)이 정본 → NIB 우선, 없을 때만 타 문서
+            if d.get("doc_type") == "nib_business_license" and f.get("business_type"):
+                agg["business_type"] = f["business_type"]
+            elif not agg["business_type"] and f.get("business_type"):
                 agg["business_type"] = f["business_type"]
             if not agg["employee_count"] and f.get("employee_count") not in (None, ""):
                 agg["employee_count"] = f["employee_count"]
