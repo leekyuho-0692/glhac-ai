@@ -4125,24 +4125,33 @@ function sjphStage(id,ko,en,desc,types,chk){
     <div class="muted small" style="margin-bottom:6px">${desc}</div>${rows}${extraRows}
     ${totalFiles?'':'<div class="muted small" style="padding:6px 0">업로드된 파일이 없습니다 · No files uploaded</div>'}</div>`;
 }
-/* 원재료 판정 근거·분석 — 스크리닝 필드로 사람이 읽는 설명 생성(오디터 평가·사용자 이해용) */
+/* 필요증빙 코드 → 한글 라벨 */
+const EVID_KO={composition_breakdown:'성분 조성표',source_declaration:'원산지·유래 선언',
+  alcohol_carrier_check:'알코올 캐리어 확인',halal_cert:'공급사 할랄인증서',slaughter_cert:'도축증명(할랄 도축)',
+  origin_proof:'원산지 증빙',coa:'시험성적서(CoA)',msds:'MSDS',flow_chart:'제조공정도'};
+const SEV_KO={high:'高·고위험',medium:'中·중위험',low:'低·저위험'};
+/* 원재료 판정 근거·분석 — 위험등급·판정근거·유형·필요증빙을 상세히 노출(오디터 심사용) */
 function matBasis(m){
-  const st=(m.status||m.screen_status||m.result||'').toString().toLowerCase();
+  const st=(m.status||m.screen_status||m.result||m.verdict||'').toString().toLowerCase();
   const parts=[];
   if(/halal|pass|clear|cleared/.test(st)){
     parts.push(m.matched_uid?(T('할랄 기준목록 대조 통과')+' ('+T('참조')+': '+esc(m.matched_uid)+')')
-                            :T('임계(위험) 성분 아님 — 기본 통과'));
+                            :T('위험 키워드 미검출 · 면제 기준(KMA1360) 해당 → 기본 통과'));
   }else if(/mushbooh|syubhat|의심|warn|needs|doubt/.test(st)){
-    parts.push(T('⚠ 의심(Mushbooh) — 원산지·성분·공정 증빙 확인 필요'));
+    parts.push(T('⚠ 의심(Mushbooh) — 유래(동물/식물)에 따라 할랄 여부가 갈림'));
   }else if(/haram|차단|block|reject|prohibit/.test(st)){
     parts.push(T('⛔ 하람(Haram) 성분 — 사용 불가(대체 필요)'));
   }else if(/najis/.test(st)){
     parts.push(T('⛔ 나지스(Najis) — 세척·대체 필요'));
   }else{ parts.push(T('미판정 — 스크리닝 필요')); }
+  if(m.severity && SEV_KO[m.severity]) parts.push(T('위험등급')+' '+T(SEV_KO[m.severity]));
+  if(m.matched_uid && !/halal|pass|clear/.test(st)) parts.push(T('참조')+': '+esc(m.matched_uid));
+  if(m.category) parts.push(T('유형')+': '+esc(m.category));
   if(m.cert==='certified') parts.push(T('공급사 할랄 인증 보유'));
   else if(m.cert&&m.cert!=='unknown') parts.push(T('인증')+': '+esc(m.cert));
   if(m.e_number) parts.push(T('E번호')+' '+esc(m.e_number));
-  if(m.mat_type) parts.push(T('유형')+': '+esc(m.mat_type));
+  const ev=m.required_evidence||[];
+  if(ev.length) parts.push(T('필요증빙')+': '+ev.map(e=>T(EVID_KO[e]||e)).join(', '));
   if(m.note) parts.push(esc(m.note));
   return parts.join(' · ')||'—';
 }
