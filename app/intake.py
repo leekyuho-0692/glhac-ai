@@ -359,6 +359,33 @@ def _infer_country_zip(addr):
     return country, zipc
 
 
+_ZIP_CACHE = {}
+_ZIP_LOOKUP = os.environ.get("GLHAC_ZIP_LOOKUP", "1") == "1"
+
+
+def _lookup_zip(address):
+    """문서에 우편번호가 없을 때 주소로 우편번호를 조회(Nominatim/OpenStreetMap 지오코딩, 전세계).
+    무료·키 불필요. 실패/미발견 시 None. 캐시. 한국 상세 도로명은 정확도가 낮을 수 있음."""
+    if not _ZIP_LOOKUP or not address:
+        return None
+    a = str(address).strip()
+    if not a or a in _ZIP_CACHE:
+        return _ZIP_CACHE.get(a)
+    z = None
+    try:
+        import httpx
+        r = httpx.get("https://nominatim.openstreetmap.org/search",
+                      params={"q": a, "format": "json", "addressdetails": 1, "limit": 1},
+                      headers={"User-Agent": "GLHAC-Halal-Cert/1.0"}, timeout=6)
+        d = r.json()
+        if d:
+            z = (d[0].get("address") or {}).get("postcode")
+    except Exception:  # noqa: BLE001 — 네트워크 장애 시 조용히 폴백(추출 차단 없음)
+        z = None
+    _ZIP_CACHE[a] = z
+    return z
+
+
 def _complete_address(addr, city, province, country):
     """LLM이 주소 뒷부분(시·도·국가)을 절단한 경우 도시→도(주)→국가 순으로 이어붙여 완성.
     이미 포함돼 있으면 그대로 둔다(중복 방지). 표기 순서(…시, 도, 국가)를 지킨다."""
@@ -587,6 +614,11 @@ def aggregate_fields(docs):
     # 주소 절단 보강: LLM이 주소 뒷부분(시·도·국가)을 자른 경우 도시→도→국가 순으로 이어붙여 완성.
     agg["address"] = _complete_address(agg["address"], agg["city"], agg["province"], agg["country"])
     agg["factory_address"] = _complete_address(agg["factory_address"], agg["factory_city"], agg["factory_province"], agg["factory_country"])
+    # 우편번호가 문서에 없으면 주소로 조회(전세계 지오코딩) — 회사·공장 각각.
+    if not agg["zip"] and agg["address"]:
+        agg["zip"] = _lookup_zip(agg["address"])
+    if not agg["factory_zip"] and agg["factory_address"]:
+        agg["factory_zip"] = _lookup_zip(agg["factory_address"])
     return agg
 
 
