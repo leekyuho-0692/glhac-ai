@@ -4159,7 +4159,7 @@ function productAccordion(id,prods){
       <div onclick="toggleProdAcc('${id}','${p.product_id}',this)" style="display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;border-top:1px solid var(--line);user-select:none">
         <span class="pacc-ar" style="color:var(--ink3);font-size:10px;width:11px;display:inline-block">▶</span>
         <b style="flex:1;font-size:12.5px">${esc(p.name)}</b>
-        ${tag(rc,'원재료 '+(p.material_count||0))}${p.risk_count>0?tag('bad','⚠ 위험 '+p.risk_count):''}
+        ${tag(rc,T('원재료')+' '+(p.material_count||0))}${p.risk_count>0?tag('bad','⚠ '+T('위험')+' '+p.risk_count):''}
       </div>
       <div class="pacc-b" style="display:none;padding:2px 11px 10px 32px;background:var(--panel2,#f7f9fc)"></div>
     </div>`;
