@@ -4861,14 +4861,14 @@ SCREEN.preassess=async()=>{
       <div class="body">
         ${kv('기업명',co.company_name)}${kv('NIB',co.nib)}${kv('대표·책임자',co.responsible_person)}
         ${kv('할랄 감독자',co.halal_supervisor)}${kv('주소',co.address)}${kv('연락처',co.phone)}${kv('이메일',co.email)}
-        ${kv('위험등급',co.risk_category)}${kv('신청일',co.created_at)}
+        ${kv('위험등급',co.risk_category)}${kv('신청일',co.created_at)}${kv('법인등록번호',px.corporate_reg_no)}${kv('개업일',px.establishment_date)}
         <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;font-size:12.5px">${T('업체 상세 정보')} <span class="en">· Details</span></summary>
           <div style="padding-top:6px">
           ${kv('등록유형',px.registration_type)}${kv('신청유형',px.application_type)}${kv('등록현황',px.registration_status)}
           ${kv('업종',px.business_type)}${kv('제품유형',px.product_type)}${kv('도시',px.city)}${kv('국가',px.country)}${kv('우편번호',px.zip)}
           ${kv('담당자(PIC)',px.pic_name)}${kv('PIC 직책',px.pic_title)}${kv('PIC 연락처',px.pic_phone)}${kv('PIC 이메일',px.pic_email)}
           ${kv('업무담당자(CP)',px.cp_name)}${kv('CP 연락처',px.cp_phone)}
-          ${kv('총 직원 수',px.total_employee)}${kv('생산능력',px.production_capacity)}${kv('마케팅 유형',px.marketing_type)}${kv('사업자번호',px.tax_id)}${kv('법인등록번호',px.corporate_reg_no)}${kv('개업일',px.establishment_date)}
+          ${kv('총 직원 수',px.total_employee)}${kv('생산능력',px.production_capacity)}${kv('마케팅 유형',px.marketing_type)}${kv('사업자번호',px.tax_id)}
           ${Object.keys(px).length?'':`<div class="muted small">${T('상세 정보 미입력')}</div>`}
           </div></details>
       </div></div>`;

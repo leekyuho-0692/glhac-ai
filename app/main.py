@@ -10363,7 +10363,8 @@ def _preassess_company(db, c):
                              "pic_phone", "pic_email", "cp_name", "cp_title", "cp_phone", "cp_email",
                              "registration_type", "application_type", "registration_status",
                              "product_type", "total_employee", "marketing_type", "tax_id",
-                             "production_capacity") if px.get(k)},
+                             "production_capacity", "establishment_date", "corporate_reg_no",
+                             "office_phone") if px.get(k)},
             "org_profile_ext": oe}
 
 
