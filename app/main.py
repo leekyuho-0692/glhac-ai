@@ -130,12 +130,13 @@ async def _rate_limit_write_mw(request: Request, call_next):
 # 인라인 스크립트/스타일·QR(data:)·이미지(blob:)를 서빙하므로 앱을 깨지 않는 합리적 정책을 기본값으로.
 # 값은 모두 env로 완화 가능(GLHAC_CSP 등). HSTS는 HTTPS 요청에만 부여 → 로컬 http 개발 무손상.
 # (마지막 등록 미들웨어 = 최외곽 → 모든 응답(429 포함)에 헤더 부여.)
-_DEFAULT_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
-                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+_DEFAULT_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://t1.daumcdn.net; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.daumcdn.net https://*.daum.net; "
                 # PDF 미리보기(영수증·견적서 등)는 blob: URL을 <iframe>/<embed>로 렌더 →
                 # frame-src/object-src에 blob: 없으면 Chrome이 CSP로 차단("콘텐츠가 차단됨").
-                "frame-src 'self' blob:; object-src 'self' blob:; "
-                "connect-src 'self'; frame-ancestors 'none'")
+                # Daum 우편번호 위젯: 스크립트(t1.daumcdn.net)·검색 iframe(postcode.map.daum.net) 허용.
+                "frame-src 'self' blob: https://postcode.map.daum.net; object-src 'self' blob:; "
+                "connect-src 'self' https://t1.daumcdn.net; frame-ancestors 'none'")
 _SECURITY_HEADERS = {
     "X-Frame-Options": os.environ.get("GLHAC_X_FRAME_OPTIONS", "DENY"),
     "X-Content-Type-Options": "nosniff",
