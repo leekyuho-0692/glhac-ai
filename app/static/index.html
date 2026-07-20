@@ -4862,7 +4862,7 @@ SCREEN.preassess=async()=>{
     const kv=(k,v)=>v?`<div class="kv"><span>${T(k)}</span><b>${esc(String(v))}</b></div>`:'';
     const compCard=`<div class="card"><h3>🏢 ${T('기업 정보')} <span class="en">· Company</span>${co.pathway?`<span class="r">${bTag(co.pathway==='self_declare'?'info':'mute',co.pathway)}</span>`:''}</h3>
       <div class="body">
-        ${kv('기업명',co.company_name)}${kv('NIB',co.nib)}${kv('대표·책임자',co.responsible_person)}
+        ${kv('기업명',co.company_name)}${kv('기업명(영문)',(co.profile_ext||{}).company_name_en)}${kv('NIB',co.nib)}${kv('대표·책임자',co.responsible_person)}
         ${kv('할랄 감독자',co.halal_supervisor)}${kv('주소',co.address)}${kv('연락처',co.phone)}${kv('이메일',co.email)}
         ${kv('위험등급',co.risk_category)}${kv('신청일',co.created_at)}${kv('법인등록번호',px.corporate_reg_no)}${kv('개업일',px.establishment_date)}
         <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;font-size:12.5px">${T('업체 상세 정보')} <span class="en">· Details</span></summary>
@@ -5225,6 +5225,7 @@ SCREEN.application=async()=>{
         <div class="field"><label>기업명 · Company Name</label><input class="v" id="apCompany" value="${esc(c.company_name||"")}">
           <div class="btnrow" style="margin-top:4px"><button class="btn" style="padding:3px 8px;font-size:11px" onclick="sihalalLookup(v('apCompany'))">🔎 ${T('SIHALAL 등록조회')}</button></div>
           <div id="sihalalOut" class="small" style="margin-top:4px"></div></div>
+        <div class="field"><label>기업명(영문) · Company (EN)</label><input class="v" id="peCompanyEn" value="${esc(pe.company_name_en||"")}"></div>
         ${(coChk&&coChk.mismatch&&coChk.suggested_company)?`<div class="banner bad" style="margin:-4px 0 10px"><b>⚠ ${T('기업명 불일치')}</b><br>${T('사업자등록증')}: <b>${esc(coChk.suggested_company)}</b> · ${T('유사도')} ${Math.round((coChk.best_similarity||0)*100)}%<br><button class="btn" style="margin-top:6px;padding:3px 8px;font-size:11px" onclick="applyDocCompany('${id}',${JSON.stringify(coChk.suggested_company).replace(/"/g,'&quot;')},${JSON.stringify(c.company_name||'').replace(/"/g,'&quot;')})">📄 ${T('문서 기업명으로 변경')}</button></div>`:''}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>${T('NIB · 사업자등록번호')}</label><input class="v" id="apNib" value="${esc(c.nib||"")}"></div>
@@ -5325,7 +5326,7 @@ async function autofillProfile(id){
 async function saveProfile(id,silent){
   const cel=document.getElementById("apConsent");
   const pe={};
-  [["peTaxId","tax_id"],["peCorpRegNo","corporate_reg_no"],["peEstDate","establishment_date"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peRevenue","annual_revenue"],["peOutlet","outlet_count"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
+  [["peCompanyEn","company_name_en"],["peTaxId","tax_id"],["peCorpRegNo","corporate_reg_no"],["peEstDate","establishment_date"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peRevenue","annual_revenue"],["peOutlet","outlet_count"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
   const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),address:v("peAddress"),email:v("peEmail"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined,profile_ext:pe};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];await loadCases(true);applyView();if(!silent)alert("✅ 저장이 완료되었습니다 · Saved");}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}

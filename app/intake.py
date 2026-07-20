@@ -503,7 +503,8 @@ _MATERIAL_SRC = {"material_list", "coa_msds", "product_label"}
 def aggregate_fields(docs):
     """분류 문서들의 추출 필드를 신청서용으로 집계.
     회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외)."""
-    agg = {"company_name": None, "nib": None, "address": None, "factory_address": None,
+    agg = {"company_name": None, "company_name_ko": None, "company_name_en": None,
+           "nib": None, "address": None, "factory_address": None,
            "city": None, "province": None, "country": None, "zip": None,
            "factory_city": None, "factory_province": None, "factory_country": None, "factory_zip": None,
            "responsible_person": None, "phone": None, "factory_phone": None,
@@ -516,8 +517,14 @@ def aggregate_fields(docs):
         f = d.get("fields") or {}
         applicant = d.get("doc_type") in _APPLICANT_DOCS or d.get("doc_type") is None
         if applicant:
-            if not agg["company_name"] and f.get("company_name"):
-                agg["company_name"] = f["company_name"]
+            # 회사명 국문/영문 분리 — 한글 포함이면 국문(정식상호), 아니면 영문. 주 필드는 국문 우선.
+            if f.get("company_name"):
+                _cn = str(f["company_name"]).strip()
+                if re.search(r'[가-힣]', _cn):
+                    if not agg["company_name_ko"]:
+                        agg["company_name_ko"] = _cn
+                elif not agg["company_name_en"]:
+                    agg["company_name_en"] = _cn
             if not agg["nib"] and f.get("nib"):
                 agg["nib"] = f["nib"]
             # 회사 주소(NIB)와 공장 주소(공장등록증)를 분리 — 뭉치면 회사주소가 공장주소로 잘못 저장됨
@@ -567,6 +574,8 @@ def aggregate_fields(docs):
         if f.get("cert_no"):
             agg["certificates"].append({"cert_no": f.get("cert_no"), "issuer": f.get("issuer"),
                                         "expiry": f.get("expiry_date")})
+    # 회사명 주 필드 = 국문 정식상호 우선(없으면 영문)
+    agg["company_name"] = agg["company_name_ko"] or agg["company_name_en"]
     # 주소 절단 보강: LLM이 주소 뒷부분(시·도·국가)을 자른 경우 도시→도→국가 순으로 이어붙여 완성.
     agg["address"] = _complete_address(agg["address"], agg["city"], agg["province"], agg["country"])
     agg["factory_address"] = _complete_address(agg["factory_address"], agg["factory_city"], agg["factory_province"], agg["factory_country"])

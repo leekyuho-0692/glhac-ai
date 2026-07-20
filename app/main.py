@@ -2513,11 +2513,13 @@ def _apply_profile_extras(c, agg, force=False):
         if agg.get(_k) and (force or not pe.get(_k)):
             pe[_k] = agg[_k]; filled.append(_k)
     # 화면 필드 키(office_phone/business_type/total_employee)에 매핑
-    _extra = (("office_phone", agg.get("phone") or agg.get("factory_phone")),
+    _extra = (("office_phone", agg.get("phone")),   # 회사 전화만(공장 전화는 facility.phone에 별도 저장)
               ("business_type", agg.get("business_type")),
               ("total_employee", agg.get("employee_count")),
               ("establishment_date", agg.get("establishment_date")),
-              ("corporate_reg_no", agg.get("corporate_reg_no")))
+              ("corporate_reg_no", agg.get("corporate_reg_no")),
+              ("company_name_ko", agg.get("company_name_ko")),
+              ("company_name_en", agg.get("company_name_en")))
     for _k, _v in _extra:
         if _v not in (None, "") and (force or not pe.get(_k)):
             pe[_k] = _v; filled.append(_k)
@@ -10364,7 +10366,7 @@ def _preassess_company(db, c):
                              "registration_type", "application_type", "registration_status",
                              "product_type", "total_employee", "marketing_type", "tax_id",
                              "production_capacity", "establishment_date", "corporate_reg_no",
-                             "office_phone") if px.get(k)},
+                             "office_phone", "company_name_ko", "company_name_en") if px.get(k)},
             "org_profile_ext": oe}
 
 
