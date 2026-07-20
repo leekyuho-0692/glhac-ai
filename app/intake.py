@@ -507,7 +507,8 @@ def aggregate_fields(docs):
            "nib": None, "address": None, "factory_address": None,
            "city": None, "province": None, "country": None, "zip": None,
            "factory_city": None, "factory_province": None, "factory_country": None, "factory_zip": None,
-           "responsible_person": None, "phone": None, "factory_phone": None,
+           "responsible_person": None, "responsible_person_ko": None, "responsible_person_en": None,
+           "phone": None, "factory_phone": None,
            "business_type": None, "employee_count": None,
            "establishment_date": None, "corporate_reg_no": None,
            "factory_reg_no": None, "products": [], "materials": [], "certificates": []}
@@ -540,8 +541,14 @@ def aggregate_fields(docs):
             for _fc in ("factory_city", "factory_province", "factory_country", "factory_zip"):   # 공장 도시/도/국가/우편(공장등록증)
                 if not agg[_fc] and f.get(_fc):
                     agg[_fc] = f[_fc]
-            if not agg["responsible_person"] and f.get("responsible_person"):
-                agg["responsible_person"] = f["responsible_person"]
+            # 대표자 국문/영문 분리 — 한글 포함이면 국문, 아니면 영문. 주 필드는 국문 우선.
+            if f.get("responsible_person"):
+                _rp = str(f["responsible_person"]).strip()
+                if re.search(r'[가-힣]', _rp):
+                    if not agg["responsible_person_ko"]:
+                        agg["responsible_person_ko"] = _rp
+                elif not agg["responsible_person_en"]:
+                    agg["responsible_person_en"] = _rp
             if not agg["factory_reg_no"] and f.get("factory_reg_no"):
                 agg["factory_reg_no"] = f["factory_reg_no"]
             # 전화 엄격 분리(오피스↔공장 혼입 방지): 회사 전화(office_phone)=사업자등록증(NIB)에서만,
@@ -574,8 +581,9 @@ def aggregate_fields(docs):
         if f.get("cert_no"):
             agg["certificates"].append({"cert_no": f.get("cert_no"), "issuer": f.get("issuer"),
                                         "expiry": f.get("expiry_date")})
-    # 회사명 주 필드 = 국문 정식상호 우선(없으면 영문)
+    # 회사명·대표자 주 필드 = 국문 우선(없으면 영문)
     agg["company_name"] = agg["company_name_ko"] or agg["company_name_en"]
+    agg["responsible_person"] = agg["responsible_person_ko"] or agg["responsible_person_en"]
     # 주소 절단 보강: LLM이 주소 뒷부분(시·도·국가)을 자른 경우 도시→도→국가 순으로 이어붙여 완성.
     agg["address"] = _complete_address(agg["address"], agg["city"], agg["province"], agg["country"])
     agg["factory_address"] = _complete_address(agg["factory_address"], agg["factory_city"], agg["factory_province"], agg["factory_country"])
