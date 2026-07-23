@@ -97,3 +97,50 @@ def ocr_image(path, lang="korean"):
         return {"ok": True, "lines": lines}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
+
+
+# ── B-5: 언어별 엔진 캐시 + 다국어 OCR 병합 (조직도 인니/한글 혼재 대응) ──
+# 기존 전역 _ocr(단일 엔진·최초 lang 고정)와 분리 — reconcile가 korean/latin을 함께 인식.
+_ocr_engines = {}
+
+
+def ocr_image_lang(path, lang):
+    """언어별 엔진 캐시로 OCR(전역 _ocr 미오염). 미설치/실패 시 graceful."""
+    try:
+        eng = _ocr_engines.get(lang)
+        if eng is None:
+            from paddleocr import PaddleOCR
+            try:
+                eng = PaddleOCR(lang=lang, use_doc_orientation_classify=False,
+                                use_doc_unwarping=False, use_textline_orientation=False)
+            except TypeError:
+                eng = PaddleOCR(lang=lang)
+            _ocr_engines[lang] = eng
+        result = eng.predict(path)
+        lines = []
+        for r in result:
+            data = r if isinstance(r, dict) else getattr(r, "json", {}) or {}
+            texts = data.get("rec_texts", []) or []
+            scores = data.get("rec_scores", []) or []
+            for t, s in zip(texts, scores):
+                lines.append({"text": t, "confidence": float(s)})
+        return {"ok": True, "lines": lines}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)}
+
+
+def ocr_text_multi(path, langs):
+    """여러 언어로 OCR → 텍스트 병합(중복 라인 제거). 하나라도 성공하면 ok=True.
+    조직도가 인니어(라틴)·한국어 혼재여도 인식률↑. langs 예: ['korean','latin']."""
+    any_ok, seen, out, used = False, set(), [], []
+    for lg in (langs or []):
+        r = ocr_image_lang(path, lg)
+        if r.get("ok"):
+            any_ok = True
+            used.append(lg)
+            for ln in r.get("lines", []):
+                t = (ln.get("text") or "").strip()
+                if t and t not in seen:
+                    seen.add(t)
+                    out.append(t)
+    return {"ok": any_ok, "text": "\n".join(out), "langs_used": used}

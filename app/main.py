@@ -3625,6 +3625,19 @@ def _reconcile_org(persons, ocr_text):
     return {"matched": matched, "mismatches": mism, "summary": summary}
 
 
+def _reconcile_ocr_langs(persons):
+    """폼 담당자 이름 스크립트로 OCR 언어 선택 — 한글 있으면 korean, 항상 latin(인니어).
+    GLHAC_OCR_LANGS 환경변수로 오버라이드 가능(쉼표구분)."""
+    env = os.environ.get("GLHAC_OCR_LANGS")
+    if env:
+        return [x.strip() for x in env.split(",") if x.strip()]
+    langs = []
+    if any(re.search(r"[가-힣]", p.get("name", "")) for p in persons):
+        langs.append("korean")
+    langs.append("latin")   # 인니어/라틴 이름
+    return langs
+
+
 @app.post("/cases/{case_id}/halal-org/reconcile")
 def reconcile_halal_org(case_id: str, body: dict = None,
                         user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -3648,14 +3661,16 @@ def reconcile_halal_org(case_id: str, body: dict = None,
     persons = _form_halal_persons(db, c)
     raw = _b64.b64decode(d.content_b64)
     suffix = _os.path.splitext(d.filename or "")[1] or ".png"
-    path, ocr_text, ocr_ok = None, "", True
+    path, ocr_text, ocr_ok, ocr_langs = None, "", True, []
     try:
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
             f.write(raw)
             path = f.name
-        res = ai_local.ocr_image(path, "korean") or {}
+        langs = _reconcile_ocr_langs(persons)
+        res = ai_local.ocr_text_multi(path, langs) or {}
         if res.get("ok"):
-            ocr_text = "\n".join(l.get("text", "") for l in res.get("lines", []))
+            ocr_text = res.get("text", "")
+            ocr_langs = res.get("langs_used", [])
         else:
             ocr_ok = False
     except Exception:  # noqa: BLE001  — OCR 엔진 부재/실패 시 대조는 진행(전원 미검출로 표기)
@@ -3668,6 +3683,7 @@ def reconcile_halal_org(case_id: str, body: dict = None,
                 pass
     rec = _reconcile_org(persons, ocr_text)
     rec["ocr_available"] = ocr_ok
+    rec["ocr_langs"] = ocr_langs
     rec["document_id"] = doc_id
     sm.record_event(db, c, c.status, c.status, "org.reconcile", user["role"], user["uid"],
                     {"summary": rec["summary"], "document_id": doc_id})
