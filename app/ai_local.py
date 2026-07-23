@@ -131,7 +131,7 @@ def ocr_image_lang(path, lang):
 
 def ocr_text_multi(path, langs):
     """여러 언어로 OCR → 텍스트 병합(중복 라인 제거). 하나라도 성공하면 ok=True.
-    조직도가 인니어(라틴)·한국어 혼재여도 인식률↑. langs 예: ['korean','latin']."""
+    조직도가 인니어(id)·한국어(korean) 혼재여도 인식률↑. langs 예: ['korean','id']."""
     any_ok, seen, out, used = False, set(), [], []
     for lg in (langs or []):
         r = ocr_image_lang(path, lg)

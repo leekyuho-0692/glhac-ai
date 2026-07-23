@@ -22,9 +22,10 @@ _PNG_1x1 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAA"
 
 
 def test_ocr_lang_selection_by_script():
-    assert _reconcile_ocr_langs([{"name": "홍길동"}, {"name": "김철수"}]) == ["korean", "latin"]
-    assert _reconcile_ocr_langs([{"name": "Budi Santoso"}, {"name": "Siti"}]) == ["latin"]
-    assert _reconcile_ocr_langs([{"name": "홍길동"}, {"name": "Budi"}]) == ["korean", "latin"]
+    # 한글 포함 → korean+id, 인니 전용 → id+korean(폴백), 혼재 → korean+id
+    assert _reconcile_ocr_langs([{"name": "홍길동"}, {"name": "김철수"}]) == ["korean", "id"]
+    assert _reconcile_ocr_langs([{"name": "Budi Santoso"}, {"name": "Siti"}]) == ["id", "korean"]
+    assert _reconcile_ocr_langs([{"name": "홍길동"}, {"name": "Budi"}]) == ["korean", "id"]
 
 
 def test_ocr_lang_env_override():

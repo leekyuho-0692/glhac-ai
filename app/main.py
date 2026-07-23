@@ -3626,7 +3626,8 @@ def _reconcile_org(persons, ocr_text):
 
 
 def _reconcile_ocr_langs(persons):
-    """폼 담당자 이름 스크립트로 OCR 언어 선택 — 한글 있으면 korean, 항상 latin(인니어).
+    """폼 담당자 이름 스크립트로 OCR 언어 선택 — 한글 있으면 korean, 인니어는 id.
+    korean 모델은 인텍이 이미 캐시(라틴도 인식) → 폴백으로 항상 포함해 인니 전용도 안전.
     GLHAC_OCR_LANGS 환경변수로 오버라이드 가능(쉼표구분)."""
     env = os.environ.get("GLHAC_OCR_LANGS")
     if env:
@@ -3634,7 +3635,9 @@ def _reconcile_ocr_langs(persons):
     langs = []
     if any(re.search(r"[가-힣]", p.get("name", "")) for p in persons):
         langs.append("korean")
-    langs.append("latin")   # 인니어/라틴 이름
+    langs.append("id")          # 인니어(라틴) — PaddleOCR 3.x Indonesian 모델
+    if "korean" not in langs:   # 캐시된 korean을 폴백으로(다운로드 실패·오프라인 대비)
+        langs.append("korean")
     return langs
 
 
