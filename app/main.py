@@ -3699,6 +3699,20 @@ def reconcile_halal_org(case_id: str, body: dict = None,
             except Exception:  # noqa: BLE001
                 pass
     rec = _reconcile_org(persons, ocr_text)
+    # A-2: Penyelia 자격(무슬림·임명장SK·교육증명) 미비 → 높음 플래그(차단 아님, 오디터 판단)
+    for p in _build_halal_org(c, db).get("penyelia", []):
+        miss = []
+        if not p.get("is_muslim"):
+            miss.append("무슬림 미확인")
+        if not p.get("sk"):
+            miss.append("임명장(SK) 미제출")
+        if not p.get("training_cert"):
+            miss.append("교육증명 미제출")
+        if miss:
+            rec["mismatches"].append({"type": "penyelia_unqualified", "name": p["name"],
+                                      "role": "halal_supervisor", "role_ko": "할랄감독자",
+                                      "detail": "자격 미비: " + ", ".join(miss), "severity": "high", "score": 0.0})
+    rec["summary"]["high"] = sum(1 for m in rec["mismatches"] if m["severity"] == "high")
     rec["ocr_available"] = ocr_ok
     rec["ocr_langs"] = ocr_langs
     rec["document_id"] = doc_id
@@ -3735,7 +3749,11 @@ def _build_halal_org(c, db):
     """정규화 조직 모델 = 기존 필드 파생(top·penyelia·PIC·CP) + 추가 부서대표(halal_org.members)."""
     base = _form_halal_persons(db, c, include_extra=False)
     top = next((p for p in base if p["role"] == "top_management"), None)
-    penyelia = [{"name": p["name"]} for p in base if p["role"] == "halal_supervisor"]
+    # A-2: Penyelia 자격(무슬림·임명장SK·교육증명) — profile_ext.halal_org.penyelia_quals(이름 키)
+    _pq = ((c.profile_ext or {}).get("halal_org") or {}).get("penyelia_quals") or {}
+    penyelia = [dict({"name": p["name"], "is_muslim": False, "sk": False, "training_cert": False},
+                     **(_pq.get(p["name"]) or {}))
+                for p in base if p["role"] == "halal_supervisor"]
     members = [{"name": p["name"], "title": "", "role": p["role"], "division": "", "source": "form"}
                for p in base if p["role"] in ("coordinator", "liaison")]
     members += [{**m, "source": "manual"} for m in _halal_org_extra_members(c)]
@@ -3755,26 +3773,35 @@ def get_halal_org(case_id: str, user=Depends(auth.get_current_user), db: Session
 def put_halal_org(case_id: str, body: dict = None,
                   user=Depends(auth.require_roles("applicant", "consultant", "auditor", "admin")),
                   db: Session = Depends(get_db)):
-    """추가 부서대표(members) 저장 — profile_ext.halal_org.members(최대 30). 기존 필드는 불변."""
+    """부분 업데이트 — members(부서대표) / penyelia_quals(자격) 각각 선택 저장. 기존 필드는 불변."""
     c = _get_case(db, case_id, user)
-    clean = []
-    for m in ((body or {}).get("members") or [])[:30]:
-        nm = str((m or {}).get("name") or "").strip()
-        if not nm:
-            continue
-        role = m.get("role") if m.get("role") in _MEMBER_ROLES else "member"
-        div = m.get("division") if m.get("division") in _DIVISIONS else ""
-        clean.append({"name": nm[:80], "title": str(m.get("title") or "").strip()[:80],
-                      "division": div, "role": role})
+    b = body or {}
     pe = dict(c.profile_ext or {})
     ho = dict(pe.get("halal_org") or {})
-    ho["members"] = clean
+    n_mem = None
+    if "members" in b:
+        clean = []
+        for m in (b.get("members") or [])[:30]:
+            nm = str((m or {}).get("name") or "").strip()
+            if not nm:
+                continue
+            role = m.get("role") if m.get("role") in _MEMBER_ROLES else "member"
+            div = m.get("division") if m.get("division") in _DIVISIONS else ""
+            clean.append({"name": nm[:80], "title": str(m.get("title") or "").strip()[:80],
+                          "division": div, "role": role})
+        ho["members"] = clean
+        n_mem = len(clean)
+    if isinstance(b.get("penyelia_quals"), dict):
+        ho["penyelia_quals"] = {str(k)[:80]: {"is_muslim": bool((v or {}).get("is_muslim")),
+                                              "sk": bool((v or {}).get("sk")),
+                                              "training_cert": bool((v or {}).get("training_cert"))}
+                                for k, v in b["penyelia_quals"].items() if isinstance(v, dict)}
     ho["updated_at"] = datetime.utcnow().isoformat()
     pe["halal_org"] = ho
     c.profile_ext = pe
     flag_modified(c, "profile_ext")
     sm.record_event(db, c, c.status, c.status, "halal_org.update", user["role"], user["uid"],
-                    {"members": len(clean)})
+                    {"members": n_mem, "quals": len(ho.get("penyelia_quals") or {})})
     db.commit()
     return _build_halal_org(c, db)
 
