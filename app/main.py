@@ -3565,8 +3565,9 @@ def _org_name_score(name, text_norm, text_tokens):
     return round(best, 3)
 
 
-def _form_halal_persons(db, c):
-    """신청서 담당자 → 조직도 역할 목록(대표·할랄감독자·PIC·CP·Penyelia). L1 deriveHalalOrg와 동형."""
+def _form_halal_persons(db, c, include_extra=True):
+    """신청서 담당자 → 조직도 역할 목록(대표·할랄감독자·PIC·CP·Penyelia). L1 deriveHalalOrg와 동형.
+    include_extra=True면 L3 정규화 부서대표(profile_ext.halal_org.members)도 포함(대조 대상)."""
     pe = c.profile_ext or {}
     persons, seen = [], set()
 
@@ -3581,11 +3582,15 @@ def _form_halal_persons(db, c):
         add(p.name, "halal_supervisor")
     add(pe.get("pic_name"), "coordinator")
     add(pe.get("cp_name"), "liaison")
+    if include_extra:
+        for m in _halal_org_extra_members(c):
+            r = m["role"] if m["role"] in ("coordinator", "liaison") else "member"
+            add(m["name"], r)
     return persons
 
 
 _ORG_ROLE_KO = {"top_management": "경영책임자", "halal_supervisor": "할랄감독자",
-                "coordinator": "실무담당(PIC)", "liaison": "대외연락(CP)"}
+                "coordinator": "실무담당(PIC)", "liaison": "대외연락(CP)", "member": "부서 대표"}
 
 
 def _reconcile_org(persons, ocr_text):
@@ -3668,6 +3673,77 @@ def reconcile_halal_org(case_id: str, body: dict = None,
                     {"summary": rec["summary"], "document_id": doc_id})
     db.commit()
     return rec
+
+
+# ── L3: 정규화 할랄팀 조직 모델(halal_org) ──────────────────────────────────
+# 설계: docs 상세설계서 GLHAC-TDD-2026-0723-ORG (L3). DB 마이그레이션 없이 기존 JSON 컬럼
+# profile_ext.halal_org 에 정규화 저장(부서대표 members). 대표·할랄감독자·PIC·CP는 기존 필드가
+# SSoT로 유지되고, halal_org.members 에는 '추가 부서대표'만 저장 → 이중 진실원천 회피.
+_MEMBER_ROLES = {"coordinator", "liaison", "qc", "produksi", "purchasing", "gudang", "rnd", "member"}
+_DIVISIONS = {"produksi", "qc", "purchasing", "gudang", "rnd", "umum"}
+
+
+def _halal_org_extra_members(c):
+    """profile_ext.halal_org.members(사용자 추가 부서대표) 정규화 목록."""
+    st = (c.profile_ext or {}).get("halal_org") or {}
+    out = []
+    for m in (st.get("members") or []):
+        nm = str((m or {}).get("name") or "").strip()
+        if not nm:
+            continue
+        role = m.get("role") if m.get("role") in _MEMBER_ROLES else "member"
+        div = m.get("division") if m.get("division") in _DIVISIONS else ""
+        out.append({"name": nm[:80], "title": str(m.get("title") or "").strip()[:80],
+                    "division": div, "role": role})
+    return out
+
+
+def _build_halal_org(c, db):
+    """정규화 조직 모델 = 기존 필드 파생(top·penyelia·PIC·CP) + 추가 부서대표(halal_org.members)."""
+    base = _form_halal_persons(db, c, include_extra=False)
+    top = next((p for p in base if p["role"] == "top_management"), None)
+    penyelia = [{"name": p["name"]} for p in base if p["role"] == "halal_supervisor"]
+    members = [{"name": p["name"], "title": "", "role": p["role"], "division": "", "source": "form"}
+               for p in base if p["role"] in ("coordinator", "liaison")]
+    members += [{**m, "source": "manual"} for m in _halal_org_extra_members(c)]
+    stored = (c.profile_ext or {}).get("halal_org") or {}
+    return {"top_mgmt": {"name": top["name"] if top else "", "title": "대표자 · Direktur"},
+            "penyelia": penyelia, "members": members, "updated_at": stored.get("updated_at")}
+
+
+@app.get("/cases/{case_id}/halal-org")
+def get_halal_org(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """정규화 할랄팀 조직 모델 조회(파생+저장 병합). 심사·매뉴얼·CAR 공용 소스."""
+    c = _get_case(db, case_id, user)
+    return _build_halal_org(c, db)
+
+
+@app.put("/cases/{case_id}/halal-org")
+def put_halal_org(case_id: str, body: dict = None,
+                  user=Depends(auth.require_roles("applicant", "consultant", "auditor", "admin")),
+                  db: Session = Depends(get_db)):
+    """추가 부서대표(members) 저장 — profile_ext.halal_org.members(최대 30). 기존 필드는 불변."""
+    c = _get_case(db, case_id, user)
+    clean = []
+    for m in ((body or {}).get("members") or [])[:30]:
+        nm = str((m or {}).get("name") or "").strip()
+        if not nm:
+            continue
+        role = m.get("role") if m.get("role") in _MEMBER_ROLES else "member"
+        div = m.get("division") if m.get("division") in _DIVISIONS else ""
+        clean.append({"name": nm[:80], "title": str(m.get("title") or "").strip()[:80],
+                      "division": div, "role": role})
+    pe = dict(c.profile_ext or {})
+    ho = dict(pe.get("halal_org") or {})
+    ho["members"] = clean
+    ho["updated_at"] = datetime.utcnow().isoformat()
+    pe["halal_org"] = ho
+    c.profile_ext = pe
+    flag_modified(c, "profile_ext")
+    sm.record_event(db, c, c.status, c.status, "halal_org.update", user["role"], user["uid"],
+                    {"members": len(clean)})
+    db.commit()
+    return _build_halal_org(c, db)
 
 
 def _next_version(db, case_id, doc_type):
