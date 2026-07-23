@@ -3485,12 +3485,26 @@ def _sjph_manual_layout_view(db, case_id):
             if cap:
                 item["caption"] = str(cap)[:2000]
             inserts[k] = item
+    # A-1 하이브리드: 조직도 서류를 별도 업로드 안 해도, 폼 담당자 파생 조직도(대표+할랄감독자)로
+    # org_chart 섹션 완료 인정. 오디터는 필요시 원본 서류 보완 요청 가능(사전심사 doc-request).
+    _org_cache = {}
+
+    def _org_derived_ok():
+        if "ok" not in _org_cache:
+            c = db.get(models.CaseApplication, case_id)
+            org = _build_halal_org(c, db) if c else {"top_mgmt": {}, "penyelia": []}
+            _org_cache["ok"] = bool((org.get("top_mgmt") or {}).get("name") and org.get("penyelia"))
+        return _org_cache["ok"]
     sections = []
     for k in order:
         img = inserts.get(k)
         complete = bool(meta[k]["has_default"] or img)
+        auto = False
+        if k == "org_chart" and not complete and _org_derived_ok():
+            complete, auto = True, True   # 폼 파생 조직도로 자동 인정
         sections.append({"key": k, "ko": meta[k]["ko"], "en": meta[k]["en"],
-                         "has_default": meta[k]["has_default"], "image": img, "complete": complete})
+                         "has_default": meta[k]["has_default"], "image": img,
+                         "complete": complete, "auto": auto})
     done = sum(1 for s in sections if s["complete"])
     return {"order": order, "inserts": inserts, "sections": sections,
             "done": done, "total": len(sections), "ready": done == len(sections)}
