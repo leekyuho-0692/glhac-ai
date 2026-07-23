@@ -1,6 +1,7 @@
 """GL-HAC AI API — M1(dual-pathway) + M3(OCR/판정) + M2(인증·UI). 설계 24.14 / B.4."""
 import io
 import os
+import re
 import time
 import base64
 import logging
@@ -3526,6 +3527,147 @@ def set_sjph_manual_layout(case_id: str, body: dict = None,
                     {"order": order, "inserts": inserts})
     db.commit()
     return _sjph_manual_layout_view(db, case_id)
+
+
+# ── L2: 할랄팀 조직도 서류 ↔ 신청서 담당자 교차검증 ────────────────────────
+# 설계: docs 상세설계서 GLHAC-TDD-2026-0723-ORG (L2). 스키마 무변경(WorkflowEvent 로깅).
+# 방향: 신청서 담당자(SSoT)가 제출된 조직도 이미지(org_chart)에 실제로 나타나는지 OCR로 대조.
+_ORG_HONORIFICS = re.compile(
+    r"\b(bapak|bpk|ibu|bu|pak|sdr|drs|ir|hj|tuan|nyonya)\b\.?", re.IGNORECASE)
+
+
+def _org_norm(s):
+    """이름/텍스트 정규화 — 소문자·경칭제거·영문/숫자/한글만·공백축약."""
+    s = str(s or "").lower()
+    s = _ORG_HONORIFICS.sub(" ", s)
+    s = re.sub(r"[^0-9a-z가-힣\s]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _org_name_score(name, text_norm, text_tokens):
+    """이름이 OCR 텍스트에 존재하는지 점수(0~1). 정규화 후 부분포함 + 슬라이딩윈도 유사도."""
+    import difflib
+    n = _org_norm(name)
+    if not n:
+        return 0.0
+    if n in text_norm:
+        return 1.0
+    ntoks = n.split()
+    L = len(ntoks)
+    if L == 0 or not text_tokens:
+        return 0.0
+    best = 0.0
+    for i in range(0, max(1, len(text_tokens) - L + 1)):
+        window = " ".join(text_tokens[i:i + L])
+        r = difflib.SequenceMatcher(None, n, window).ratio()
+        if r > best:
+            best = r
+    return round(best, 3)
+
+
+def _form_halal_persons(db, c):
+    """신청서 담당자 → 조직도 역할 목록(대표·할랄감독자·PIC·CP·Penyelia). L1 deriveHalalOrg와 동형."""
+    pe = c.profile_ext or {}
+    persons, seen = [], set()
+
+    def add(name, role):
+        n = str(name or "").strip()
+        if n and (n, role) not in seen:
+            seen.add((n, role))
+            persons.append({"name": n, "role": role})
+    add(c.responsible_person, "top_management")
+    add(c.halal_supervisor, "halal_supervisor")
+    for p in db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active"):
+        add(p.name, "halal_supervisor")
+    add(pe.get("pic_name"), "coordinator")
+    add(pe.get("cp_name"), "liaison")
+    return persons
+
+
+_ORG_ROLE_KO = {"top_management": "경영책임자", "halal_supervisor": "할랄감독자",
+                "coordinator": "실무담당(PIC)", "liaison": "대외연락(CP)"}
+
+
+def _reconcile_org(persons, ocr_text):
+    """신청서 담당자를 OCR 조직도 텍스트와 대조 → matched / mismatches / summary."""
+    tnorm = _org_norm(ocr_text)
+    ttok = tnorm.split()
+    matched, mism = [], []
+    penyelia_found = False
+    has_penyelia = any(p["role"] == "halal_supervisor" for p in persons)
+    for p in persons:
+        sc = _org_name_score(p["name"], tnorm, ttok)
+        role_ko = _ORG_ROLE_KO.get(p["role"], p["role"])
+        if sc >= 0.90:
+            matched.append({"name": p["name"], "role": p["role"], "role_ko": role_ko, "score": sc})
+            if p["role"] == "halal_supervisor":
+                penyelia_found = True
+        elif sc >= 0.70:
+            mism.append({"type": "review", "name": p["name"], "role": p["role"], "role_ko": role_ko,
+                         "detail": "유사 후보(점수 %.2f) — 사람 확인 필요" % sc, "severity": "info", "score": sc})
+        else:
+            sev = "high" if p["role"] == "halal_supervisor" else "warn"
+            mism.append({"type": "missing_in_doc", "name": p["name"], "role": p["role"], "role_ko": role_ko,
+                         "detail": "조직도 서류에서 찾지 못함", "severity": sev, "score": sc})
+    if has_penyelia and not penyelia_found:
+        mism.append({"type": "penyelia_absent", "name": None, "role": "halal_supervisor",
+                     "role_ko": "할랄감독자", "detail": "조직도에 할랄감독자(Penyelia) 미표기 — SJPH 필수",
+                     "severity": "high", "score": 0.0})
+    summary = {"total": len(persons), "matched": len(matched),
+               "high": sum(1 for m in mism if m["severity"] == "high"),
+               "warn": sum(1 for m in mism if m["severity"] == "warn"),
+               "review": sum(1 for m in mism if m["severity"] == "info")}
+    return {"matched": matched, "mismatches": mism, "summary": summary}
+
+
+@app.post("/cases/{case_id}/halal-org/reconcile")
+def reconcile_halal_org(case_id: str, body: dict = None,
+                        user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """조직도 이미지(org_chart 섹션 삽입분 또는 body.document_id)를 OCR → 신청서 담당자와 대조."""
+    import base64 as _b64
+    import tempfile
+    import os as _os
+    c = _get_case(db, case_id, user)
+    doc_id = (body or {}).get("document_id")
+    if not doc_id:
+        for s in _sjph_manual_layout_view(db, case_id)["sections"]:
+            if s["key"] == "org_chart" and s.get("image"):
+                doc_id = s["image"].get("document_id")
+                break
+    if not doc_id:
+        raise HTTPException(400, {"code": "NO_ORG_CHART",
+                                  "detail": "조직도 이미지가 없습니다 — 먼저 조직도를 삽입/업로드하세요."})
+    d = db.get(models.DocumentAsset, doc_id)
+    if not d or not d.content_b64:
+        raise HTTPException(404, {"code": "FILE_NOT_AVAILABLE"})
+    persons = _form_halal_persons(db, c)
+    raw = _b64.b64decode(d.content_b64)
+    suffix = _os.path.splitext(d.filename or "")[1] or ".png"
+    path, ocr_text, ocr_ok = None, "", True
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            f.write(raw)
+            path = f.name
+        res = ai_local.ocr_image(path, "korean") or {}
+        if res.get("ok"):
+            ocr_text = "\n".join(l.get("text", "") for l in res.get("lines", []))
+        else:
+            ocr_ok = False
+    except Exception:  # noqa: BLE001  — OCR 엔진 부재/실패 시 대조는 진행(전원 미검출로 표기)
+        ocr_ok = False
+    finally:
+        if path:
+            try:
+                _os.unlink(path)
+            except Exception:  # noqa: BLE001
+                pass
+    rec = _reconcile_org(persons, ocr_text)
+    rec["ocr_available"] = ocr_ok
+    rec["document_id"] = doc_id
+    sm.record_event(db, c, c.status, c.status, "org.reconcile", user["role"], user["uid"],
+                    {"summary": rec["summary"], "document_id": doc_id})
+    db.commit()
+    return rec
 
 
 def _next_version(db, case_id, doc_type):
