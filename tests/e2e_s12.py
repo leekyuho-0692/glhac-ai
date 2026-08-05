@@ -3,9 +3,9 @@ import os
 import sys
 import sqlite3
 import httpx
-from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
+from _target import base, db_path   # 대상 서버·DB 는 GLHAC_E2E_BASE / GLHAC_DB_URL 로만 지정(라이브 오염 방지)
 
-DB_PATH = "glhac.db"
+DB_PATH = db_path()   # 서버와 동일한 GLHAC_DB_URL 에서 해석(상대경로 하드코딩이 깨지던 원인)
 B = base()
 P, F = [], []
 

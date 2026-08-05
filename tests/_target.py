@@ -72,3 +72,49 @@ def base(path: str = "") -> str:
         )
 
     return url.rstrip("/") + path
+
+
+def db_path() -> str:
+    """테스트가 직접 열 SQLite 파일의 절대경로를 반환한다.
+
+    일부 시나리오(e2e_s8/s10/s12/s13)는 API 만으로 만들기 어려운 전제 상태를
+    DB 직접 UPDATE 로 만든다(예: renew 테스트를 위한 certificate_issued 강제).
+    종전엔 DB_PATH="glhac.db" 상대경로 하드코딩이라 서버가 다른 DB 로 뜨면
+    'no such table' 로 실패했다. 서버가 쓰는 GLHAC_DB_URL 을 테스트도 그대로 읽어
+    단일 출처로 삼는다 — 러너·CI 가 서버와 같은 값을 테스트 프로세스에도 넘긴다.
+    """
+    raw = (os.environ.get("GLHAC_DB_URL") or "").strip()
+    if not raw:
+        sys.stderr.write(
+            "오류: GLHAC_DB_URL 환경변수가 지정되지 않았습니다.\n"
+            "이 테스트는 서버와 '같은' DB 를 직접 열어야 하므로 서버와 동일한 값이 필요합니다.\n"
+            "  GLHAC_DB_URL=sqlite:////tmp/t.db GLHAC_E2E_BASE=http://127.0.0.1:8899 python tests/e2e_s8.py\n"
+        )
+        raise SystemExit(2)
+    if not raw.startswith("sqlite:///"):
+        sys.stderr.write(
+            "오류: DB 직접 조작은 SQLite 에서만 지원합니다(GLHAC_DB_URL=%s).\n"
+            "파일 기반 sqlite URL 로 서버를 띄우세요: sqlite:////절대경로 또는 sqlite:///상대경로\n" % raw
+        )
+        raise SystemExit(2)
+
+    # sqlite:///상대경로 · sqlite:////절대경로 — 접두사를 떼면 나머지가 곧 경로다.
+    path = raw[len("sqlite:///"):]
+    if "?" in path:                      # sqlite:///x.db?check_same_thread=False
+        path = path.split("?", 1)[0]
+    if path in ("", ":memory:"):
+        sys.stderr.write(
+            "오류: 메모리 DB(sqlite:///:memory:)는 프로세스 간에 공유되지 않습니다.\n"
+            "별도 프로세스인 테스트가 서버의 메모리 DB 를 열 수 없으므로, 파일 기반 sqlite 로 서버를 띄우세요.\n"
+        )
+        raise SystemExit(2)
+
+    # 상대경로면 테스트 프로세스의 cwd 기준이다 — 어디를 찾았는지 드러나도록 절대경로로 정규화한다.
+    path = os.path.abspath(path)
+    if not os.path.exists(path):
+        sys.stderr.write(
+            "오류: DB 파일이 없습니다: %s\n"
+            "서버와 다른 DB 를 보고 있을 수 있습니다. 서버에 준 GLHAC_DB_URL 과 같은 값인지 확인하세요.\n" % path
+        )
+        raise SystemExit(2)
+    return path

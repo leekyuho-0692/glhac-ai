@@ -26,8 +26,10 @@ fi
 # e2e_s*.py는 실행 중인 서버에 HTTP로 쏘는 클라이언트다. 대상은 tests/_target.py가 GLHAC_E2E_BASE
 # 에서만 해석하며, 미지정·프로덕션(8800)이면 스크립트가 스스로 거부한다(exit 2). 여기 조건은 그
 # 방어의 2차선 — 대상이 없으면 아예 실행하지 않는다.
-# NOTE: 이 루프의 대상 서버 DB는 '서버 쪽' 설정이다. 클라이언트에 GLHAC_DB_URL을 줘도 효과가 없어
-#       종전의 "각자 신선 임시 DB" 표기는 사실이 아니었다 — 대상 서버를 격리해 띄우는 것이 전제다.
+# NOTE: DB는 '서버 쪽' 설정이다(종전의 "각자 신선 임시 DB" 표기는 사실이 아니었다 — 대상 서버를
+#       격리해 띄우는 것이 전제). 다만 일부 시나리오(s8/s10/s12/s13)는 API로 만들기 어려운 전제
+#       상태를 서버 DB에 직접 써서 만든다. 그 스크립트들이 _target.db_path()로 같은 파일을 찾도록
+#       서버와 '동일한' GLHAC_DB_URL을 테스트 프로세스에도 그대로 넘긴다(단일 출처).
 # 격리(quarantine) — e2e를 CI에서 켜자 드러난 기존 실패분. 오늘 변경 탓이 아니라 방치돼 썩은 것들이라
 # 별도 과제로 고친다. 그동안 CI를 인질로 잡지 않되 '조용히 빠지지는 않게' 매 실행마다 사유와 함께 표시한다.
 # 고친 파일은 이 목록에서 지울 것. 목록이 비면 격리 표시도 자연히 사라진다.
@@ -35,11 +37,7 @@ fi
 quarantine_list=(
   "e2e_s3.py|단정 실패(인증서 발급·frozen_product_ids·frozen_material_ids)"
   "e2e_s4.py|IndexError — 인보이스가 이미 있다고 가정"
-  "e2e_s8.py|DB_PATH=\"glhac.db\" 상대경로 하드코딩 → no such table"
-  "e2e_s10.py|DB_PATH 상대경로 하드코딩"
   "e2e_s11.py|단정 실패(정규 경로 rg_suppl 단계 포함)"
-  "e2e_s12.py|DB_PATH 상대경로 하드코딩"
-  "e2e_s13.py|DB_PATH 상대경로 하드코딩"
 )
 quarantine_count=0
 if [ -n "${GLHAC_E2E_BASE:-}" ] && [[ "${GLHAC_E2E_BASE}" != *":8800"* ]]; then

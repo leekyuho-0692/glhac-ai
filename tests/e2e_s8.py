@@ -3,9 +3,9 @@ import os
 import sys
 import sqlite3
 import httpx
-from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
+from _target import base, db_path   # 대상 서버·DB 는 GLHAC_E2E_BASE / GLHAC_DB_URL 로만 지정(라이브 오염 방지)
 
-DB_PATH = "glhac.db"
+DB_PATH = db_path()   # 서버와 동일한 GLHAC_DB_URL 에서 해석(상대경로 하드코딩이 깨지던 원인)
 
 
 def force_status(case_id, status):
@@ -127,6 +127,12 @@ if "case_id" in ca:
     _pconn.execute("UPDATE case_application SET pathway=? WHERE case_id=?", ("self_declare", ca["case_id"]))
 if "case_id" in cb:
     _pconn.execute("UPDATE case_application SET pathway=? WHERE case_id=?", ("reguler", cb["case_id"]))
+_pconn.commit()   # HTTP 요청 전에 락을 놓는다 — 서버가 같은 SQLite에 INSERT 하므로 database is locked 회피
+# certificate_issued 자립 케이스 — renew가 부모를 renewal_preparation으로 전이시켜 앞 블록의 CID가
+# certificate_issued에 남지 않는다. 필터 검증이 앞 블록 상태에 의존하지 않도록 별도 케이스로 만든다.
+cc = httpx.post(f"{B}/cases", headers=HC, json={"company_name": "FilterCert", "org_id": "org_demo"}).json()
+if "case_id" in cc:
+    _pconn.execute("UPDATE case_application SET status=? WHERE case_id=?", ("certificate_issued", cc["case_id"]))
 _pconn.commit()
 _pconn.close()
 
