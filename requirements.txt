@@ -10,6 +10,7 @@ pymupdf>=1.24          # 서버 PDF 생성(§7, 내장 CJK 폰트)
 psycopg2-binary>=2.9   # Postgres 드라이버(§6.1)
 openpyxl>=3.1          # xlsx 파싱(인테이크)
 python-docx>=1.1       # docx 파싱(인테이크)
+pycryptodome>=3.20     # AES/Hash/KDF — app/crypto.py 최상단 임포트(앱 기동 필수, models.py가 EncryptedType 사용)
 
 # OCR (문서 이미지 텍스트 추출 — app/ai_local.py, app/ocr_pipeline.py) · D1 배포 재현성
 paddleocr==3.7.0
