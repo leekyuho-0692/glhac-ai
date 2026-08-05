@@ -1,8 +1,9 @@
 """케이스 목록 + 임시저장 UI 검증."""
 import sys
 from playwright.sync_api import sync_playwright
+from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
 
-BASE = "http://127.0.0.1:8800/ui/"
+BASE = base("/ui/")
 P, F = [], []
 
 

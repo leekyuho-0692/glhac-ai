@@ -2,8 +2,9 @@
 import os
 import sys
 from playwright.sync_api import sync_playwright
+from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
 
-BASE = "http://127.0.0.1:8800/ui/"
+BASE = base("/ui/")
 OUT = os.path.join(os.path.dirname(os.path.dirname(__file__)), "demo_shots")
 os.makedirs(OUT, exist_ok=True)
 P, F = [], []

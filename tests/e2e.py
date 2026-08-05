@@ -2,8 +2,9 @@
 import os
 import sys
 import httpx
+from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
 
-B = os.environ.get("GLHAC_E2E_BASE", "http://127.0.0.1:8800")
+B = base()
 P, F = [], []
 
 
@@ -66,9 +67,12 @@ httpx.post(f"{B}/sihalal/identity/{ei['external_identity_id']}/verify", headers=
 blocked = httpx.post(f"{B}/cases/{sd}/submit-application", headers=H(ct))
 block_data = blocked.json().get("detail", {}) if blocked.status_code == 409 else {}
 block_codes = [b.get("code") for b in (block_data.get("blockers") or [])]
+# NIB은 create_case가 org.profile_ext에서 상속하므로(main.py 회사 프로필 역상속) 같은 org의
+# 두 번째 신청부터는 NIB_MISSING이 안 나온다 → 서버 DB 재사용 시 흔들리는 단정이 된다.
+# 케이스 단위로 항상 성립하는 NO_PRODUCT를 기준으로 판정한다.
 ok("가드: 신청 미완비 → submit-application 409",
    blocked.status_code == 409 and block_data.get("code") == "TRANSITION_BLOCKED"
-   and "NIB_MISSING" in block_codes and "NO_PRODUCT" in block_codes,
+   and "NO_PRODUCT" in block_codes,
    f"status={blocked.status_code} code={block_data.get('code')} blockers={block_codes}")
 # 요건 충족: NIB(프로필 PATCH로만 설정 가능) + 제품 1개
 SD_NIB = "9876543210987"

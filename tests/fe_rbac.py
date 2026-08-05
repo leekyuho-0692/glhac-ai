@@ -1,8 +1,9 @@
 """P-6 프론트 RBAC 검증 — 역할별 nav 게이팅 + glhacCan 버튼게이팅 + admin 시스템설정."""
 import sys
 from playwright.sync_api import sync_playwright
+from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
 
-URL = "http://127.0.0.1:8800/ui/"
+URL = base("/ui/")
 NAV_EXPECT = {
     'consultant': 13, 'applicant': 9, 'penyelia_halal': 7,
     'pendamping_pph': 6, 'auditor': 4, 'fatwa_liaison': 4, 'admin': 14,

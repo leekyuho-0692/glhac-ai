@@ -2,9 +2,10 @@
 import sys
 import sqlite3
 import httpx
+from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
 
 DB_PATH = "glhac.db"
-B = "http://127.0.0.1:8800"
+B = base()
 P, F = [], []
 
 
