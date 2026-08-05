@@ -41,8 +41,13 @@ def issue_cert_2person(issuer, checker, cid):
 print("=== A. 인프라 ===")
 ok("health 200", httpx.get(f"{B}/health").status_code == 200)
 ok("/ui/ 200", httpx.get(f"{B}/ui/").status_code == 200)
-aih = httpx.get(f"{B}/ai/health").json()
-ok("ollama up + gemma3 ready", aih.get("ollama") == "up" and aih.get("model_ready"), aih.get("configured"))
+# Ollama 는 로컬에만 있다. CI 러너에는 없어 이 단정만 구조적으로 통과 불가 —
+# 건너뛰되 조용히 사라지지 않도록 사유를 출력한다(다른 단정은 그대로 수행).
+if os.environ.get("GLHAC_E2E_SKIP_OLLAMA") == "1":
+    print("  ⏭ ollama up + gemma3 ready — 건너뜀 (GLHAC_E2E_SKIP_OLLAMA=1 · 러너에 Ollama 없음)")
+else:
+    aih = httpx.get(f"{B}/ai/health").json()
+    ok("ollama up + gemma3 ready", aih.get("ollama") == "up" and aih.get("model_ready"), aih.get("configured"))
 
 print("=== B. 인증 / RBAC / ABAC ===")
 ct, at, adt = login("consultant1", "pw"), login("applicant1", "pw"), login("admin", "admin")
