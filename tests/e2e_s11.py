@@ -80,6 +80,12 @@ for b in blockers:
 
 # pathway별 phases 분기 — DB 직접 UPDATE는 서버 커넥션 풀 스냅숏이 못 보는 경합(플레이키)이라
 # API 경유(pathway/confirm)로 현대화. SD는 MSME+무임계재료+SIHALAL 검증으로 가드 통과.
+# 순서 의존 제거 — guard_intake_complete(회사명·NIB·제품 1개)가 application_draft →
+# ai_pre_assessment_ready 전이를 막는다. 종전엔 앞서 실행된 다른 스크립트가 org_demo 프로필에
+# 남긴 NIB 을 상속해 우연히 통과했고, 단독 실행하면 깨졌다. 각 케이스가 스스로 요건을 갖춘다.
+S11_NIB = "1112223330011"
+
+
 def _to_pathway_determination(cid):
     for st in ("application_draft", "ai_pre_assessment_ready",
                "ai_pre_assessment_running", "pathway_determination"):
@@ -92,6 +98,8 @@ cb = httpx.post(f"{B}/cases", headers=HC,
 if "case_id" in cb:
     cbid = cb["case_id"]
     httpx.post(f"{B}/cases/{cbid}/products", headers=HC, json={"name": "S11P"})
+    # NIB 은 POST /cases 로 못 넣는다 — 프로필 PATCH 로만 설정된다(단독 실행 대비)
+    httpx.patch(f"{B}/cases/{cbid}/profile", headers=HC, json={"nib": S11_NIB})
     ei = httpx.post(f"{B}/cases/{cbid}/sihalal/identity/link", headers=HC,
                     json={"external_email": "s11sd@x.com"}).json()
     httpx.post(f"{B}/sihalal/identity/{ei['external_identity_id']}/verify", headers=HC,
@@ -106,6 +114,9 @@ cc = httpx.post(f"{B}/cases", headers=HC,
                 json={"company_name": "S11 RG Co", "org_id": "org_demo", "is_msme": False}).json()
 if "case_id" in cc:
     ccid = cc["case_id"]
+    # RG 케이스는 종전에 제품·NIB 을 전혀 등록하지 않아 NO_PRODUCT·NIB_MISSING 으로 막혔다
+    httpx.post(f"{B}/cases/{ccid}/products", headers=HC, json={"name": "S11P-RG"})
+    httpx.patch(f"{B}/cases/{ccid}/profile", headers=HC, json={"nib": S11_NIB})
     _to_pathway_determination(ccid)
     httpx.post(f"{B}/cases/{ccid}/pathway/confirm", headers=HC, json={"pathway": "reguler"})
     wr = httpx.get(f"{B}/cases/{ccid}/workflow", headers=HC).json()
