@@ -35,8 +35,6 @@ fi
 # 고친 파일은 이 목록에서 지울 것. 목록이 비면 격리 표시도 자연히 사라진다.
 # GLHAC_E2E_ALL=1 이면 격리를 무시하고 전부 실행(고치는 사람이 검증할 때 사용).
 quarantine_list=(
-  "e2e_s3.py|단정 실패(인증서 발급·frozen_product_ids·frozen_material_ids)"
-  "e2e_s4.py|IndexError — 인보이스가 이미 있다고 가정"
   "e2e_s11.py|단정 실패(정규 경로 rg_suppl 단계 포함)"
 )
 quarantine_count=0

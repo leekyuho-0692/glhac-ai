@@ -19,6 +19,8 @@ HA = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
       json={"username": "admin", "password": "admin"}).json()["token"]}
 HO = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
       json={"username": "operator1", "password": "pw"}).json()["token"]}
+HF = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
+      json={"username": "fatwa1", "password": "pw"}).json()["token"]}
 
 cid = httpx.post(f"{B}/cases", headers=HC,
                  json={"company_name": "S3Test", "org_id": "org_demo"}).json()["case_id"]
@@ -70,12 +72,25 @@ print(f"\n=== S3-3 인증서 동결/언락 (case={cid[:8]}) ===")
 # 2단계 파트와: PATCH(approved)=가승인(provisional) → operator 최종승인 후에야 발급 가능
 r_fa = httpx.post(f"{B}/cases/{cid}/fatwa/final-approve", headers=HO).json()
 ok("파트와 최종승인(operator)", r_fa.get("fatwa_status") == "approved", r_fa)
+# 인증서 발급은 2인 승인(maker-checker) 구조: operator가 요청 후 fatwa_liaison이 승인해야 실제 발급됨
 rc = httpx.post(f"{B}/cases/{cid}/certificate/issue", headers=HO).json()
-ok("인증서 발급", "certificate_no" in rc or rc.get("ok") is True, rc)
+rc_dict = rc if isinstance(rc, dict) else {}
+approval_id = rc_dict.get("approval_id")
+
+# certificate_no가 이미 있으면 구경로(발급 완료), 없으면 approval_id로 checker 승인 요청
+if "certificate_no" not in rc_dict and approval_id:
+    ra = httpx.post(f"{B}/approvals/{approval_id}/approve", headers=HF).json()
+    ra_dict = ra if isinstance(ra, dict) else {}
+    result = ra_dict.get("result", ra_dict)
+else:
+    result = rc_dict
+
+ok("인증서 발급", "certificate_no" in result if isinstance(result, dict) else False, result)
 
 cert = httpx.get(f"{B}/cases/{cid}/certificate", headers=HC).json()
-ok("frozen_product_ids 존재", "frozen_product_ids" in cert, cert)
-ok("frozen_material_ids 존재", "frozen_material_ids" in cert, cert)
+cert_dict = cert if isinstance(cert, dict) else {}
+ok("frozen_product_ids 존재", "frozen_product_ids" in cert_dict, cert_dict)
+ok("frozen_material_ids 존재", "frozen_material_ids" in cert_dict, cert_dict)
 
 # unlock (operator 전용 + 사유 필수)
 ru = httpx.post(f"{B}/cases/{cid}/certificate/unlock", headers=HO,

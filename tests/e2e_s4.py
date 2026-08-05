@@ -48,15 +48,32 @@ print(f"\n=== S4-2 서비스 요청 카드 — 인보이스 API (case={cid[:8]})
 invs = httpx.get(f"{B}/cases/{cid}/invoices", headers=HC).json()
 ok("인보이스 목록 조회", isinstance(invs, list), type(invs).__name__)
 
+# 청구서는 계약 최종확인(confirmed) 후에만 생성 가능(CONTRACT_NOT_CONFIRMED) → 계약 큐 6단계 선행.
+# operator/auditor 전용 단계는 admin(HA)이 통과한다(auth.require_roles: admin은 항상 통과).
+httpx.post(f"{B}/cases/{cid}/contract/request", headers=HC)
+approve_resp = httpx.post(f"{B}/cases/{cid}/contract/approve", headers=HA)
+contract_id = None
+if isinstance(approve_resp.json(), dict):
+    contract_id = approve_resp.json().get("contract_id")
+httpx.post(f"{B}/cases/{cid}/contract/receive", headers=HC)
+httpx.post(f"{B}/cases/{cid}/contract/request-signature", headers=HA)
+if contract_id:
+    httpx.post(f"{B}/contracts/{contract_id}/sign", params={"party": "A", "name": "S4 대표"}, headers=HC)
+    httpx.post(f"{B}/contracts/{contract_id}/sign", params={"party": "B", "name": "GL HAC"}, headers=HA)
+httpx.post(f"{B}/cases/{cid}/contract/confirm", headers=HA)
+
 # 인보이스 생성 후 상태 확인
 inv = httpx.post(f"{B}/cases/{cid}/invoices", headers=HC,
                  json={"service_type": "pre_audit", "amount": 500000}).json()
-ok("인보이스 생성", "invoice_no" in inv, inv)
+inv_dict = inv if isinstance(inv, dict) else {}
+ok("인보이스 생성", "invoice_no" in inv_dict, inv_dict)
 
 invs2 = httpx.get(f"{B}/cases/{cid}/invoices", headers=HC).json()
-ok("생성 후 목록 1건 이상", len(invs2) >= 1, len(invs2))
-ok("status=waiting_payment", invs2[0].get("status") == "waiting_payment", invs2[0].get("status"))
-ok("total=PPN 포함", invs2[0].get("total", 0) > 500000, invs2[0].get("total"))
+invs2_list = invs2 if isinstance(invs2, list) else []
+first_inv = invs2_list[0] if invs2_list else {}
+ok("생성 후 목록 1건 이상", len(invs2_list) >= 1, len(invs2_list))
+ok("status=waiting_payment", first_inv.get("status") == "waiting_payment", first_inv.get("status"))
+ok("total=PPN 포함", first_inv.get("total", 0) > 500000, first_inv.get("total"))
 
 # ── S4-3: 케이스 JSON 내보내기 ───────────────────────────
 print(f"\n=== S4-3 케이스 JSON 내보내기 (case={cid[:8]}) ===")
