@@ -61,6 +61,19 @@ sd = httpx.post(f"{B}/cases", headers=H(ct), json={"company_name": "SD Co", "is_
 httpx.post(f"{B}/cases/{sd}/materials", headers=H(ct), json={"name": "citric acid"})  # halal
 ei = httpx.post(f"{B}/cases/{sd}/sihalal/identity/link", headers=H(ct), json={"external_email": "sd@x.com"}).json()
 httpx.post(f"{B}/sihalal/identity/{ei['external_identity_id']}/verify", headers=H(ct), json={"expected_identifier": "sd@x.com"})
+# 가드 검증은 요건을 채우기 '전에' 해야 한다 — 미완비(NIB·제품 없음) 상태에서 submit-application이
+# 409로 막히는지 먼저 확인하고, 그 다음 요건을 채워 정상 제출로 넘어간다.
+blocked = httpx.post(f"{B}/cases/{sd}/submit-application", headers=H(ct))
+block_data = blocked.json().get("detail", {}) if blocked.status_code == 409 else {}
+block_codes = [b.get("code") for b in (block_data.get("blockers") or [])]
+ok("가드: 신청 미완비 → submit-application 409",
+   blocked.status_code == 409 and block_data.get("code") == "TRANSITION_BLOCKED"
+   and "NIB_MISSING" in block_codes and "NO_PRODUCT" in block_codes,
+   f"status={blocked.status_code} code={block_data.get('code')} blockers={block_codes}")
+# 요건 충족: NIB(프로필 PATCH로만 설정 가능) + 제품 1개
+SD_NIB = "9876543210987"
+httpx.patch(f"{B}/cases/{sd}/profile", headers=H(ct), json={"nib": SD_NIB})
+httpx.post(f"{B}/cases/{sd}/products", headers=H(ct), json={"name": "Sambal SD"})
 sub = httpx.post(f"{B}/cases/{sd}/submit-application", headers=H(ct)).json()
 ok("신청 제출 → 경로판정 대기", sub.get("status") == "pathway_determination", sub.get("status"))
 a = httpx.post(f"{B}/cases/{sd}/pathway/assess", headers=H(ct)).json()

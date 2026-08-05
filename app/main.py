@@ -3228,19 +3228,32 @@ def submit_application(case_id: str, user=Depends(auth.require_roles("applicant"
                        db: Session = Depends(get_db)):
     """작성완료 제출 — AI 사전평가 체인 경유 후 경로판정 대기로.
     (전수검사 G1 수정: 종전엔 consultant_review로 직접 점프해 pathway_determination을
-    건너뛰어 pathway/confirm이 WRONG_STATE로 영구 불가 → 자기선언 경로 진입 차단)"""
+    건너뛰어 pathway/confirm이 WRONG_STATE로 영구 불가 → 자기선언 경로 진입 차단)
+
+    가드 우회 수정: 종전엔 sm.allowed(인접성)만 보고 GUARDS를 태우지 않아, 회사명·NIB·
+    제품이 없는 미완비 신청서도 pathway_determination까지 전진했다(raw /transition은
+    가드를 태우므로 동일 전이가 경로에 따라 다르게 통과). 체인 각 단계를 can_transition으로
+    검사하고, 막히면 rollback 후 409로 반려한다(부분 전진 금지)."""
     c = _get_case(db, case_id, user)
     prev = c.status
-    c.draft_state = "completed"
-    c.return_reason = None
     if c.status in ("onboarding", "application_draft"):
         cur = c.status
         for st in ("application_draft", "ai_pre_assessment_ready",
                    "ai_pre_assessment_running", "pathway_determination"):
             if sm.allowed(cur, st):
+                # can_transition은 출발 상태를 case.status에서 읽으므로 c.status를 매 단계 갱신해야 한다.
+                can_ok, blockers = sm.can_transition(db, c, st)
+                if not can_ok:
+                    db.rollback()   # 앞선 단계의 flush된 이벤트까지 되돌려 부분 전진을 남기지 않음
+                    raise HTTPException(409, {"code": "TRANSITION_BLOCKED",
+                                              "blockers": blockers, "to": st})
+                sm.apply_side_effects(c, st)
                 sm.record_event(db, c, cur, st, "application.submit.auto", user["role"], user["uid"])
+                c.status = st
                 cur = st
-        c.status = cur
+    # 체인이 모두 통과한 뒤에만 제출 완료로 표시 — 가드에 막히면 draft 상태가 유지된다.
+    c.draft_state = "completed"
+    c.return_reason = None
     sm.record_event(db, c, prev, c.status, "application.submit", user["role"], user["uid"])
     _notify(db, c, "application.submitted", "신청서 작성완료 제출",
             "%s 신청서가 제출되었습니다. 경로판정(자기선언/정규) 확정 대기." % (c.company_name or c.case_id),
