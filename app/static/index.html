@@ -9807,7 +9807,7 @@ function showPrivacyNotice(){
    /cases/{id}/workflow(blockers) · /cases/{id}/audit-report/status(fatwa_gate) · /cases/{id}/invoices(paid).
    ⚠️ 4a 워크플로우 모니터(전역 집계)와 구분 — 여긴 이 케이스의 게이트만. 신규 백엔드 없음. */
 const BLOCKER_KO={RISK_NOT_LOW:'위험도 Low 아님',NOT_MSME:'MSME(소상공인) 아님',HAS_CRITICAL_MATERIAL:'중대(critical) 원재료 존재',MATERIAL_EVIDENCE_INCOMPLETE:'원재료 증빙 미완',PENDAMPING_NOT_VERIFIED:'펜담핑(Pendamping) 미검증',SIHALAL_IDENTITY_UNVERIFIED:'SIHALAL 신원 미검증',PENYELIA_HALAL_MISSING:'페냐리아 할랄 미지정',FATWA_NOT_APPROVED:'파트와 미승인',SCOPE_NOT_FROZEN:'인증범위 미동결',UNRESOLVED_MAJOR_NC:'미해결 주요 부적합(major NC)',UNPAID_INVOICE:'미결제 청구서',INVALID_TRANSITION:'허용되지 않는 전이'};
-async function workflowGatesCard(id,w){
+async function workflowGatesCard(id,w,status){
   let arep={},invs=[];
   try{arep=await API(`/cases/${id}/audit-report/status`);}catch(_){}
   try{invs=await API(`/cases/${id}/invoices`);}catch(_){}
@@ -9815,22 +9815,26 @@ async function workflowGatesCard(id,w){
     const badge=state==='ok'?`<span class="tag t-ok">✓ ${T('통과')}</span>`:state==='block'?`<span class="tag t-bad">⛔ ${T('차단')}</span>`:`<span class="tag t-warn">○ ${T('대기')}</span>`;
     return `<tr><td><b>${esc(name)}</b><span class="en"> · ${esc(en)}</span></td><td style="white-space:nowrap">${badge}</td><td class="small">${cond||'—'}</td><td class="small muted">${action||''}</td></tr>`;
   };
+  // 인증 완료(파트와 승인 이후) 상태에서는 상류 게이트가 정의상 이미 충족됨 —
+  // 하위 리소스(audit-report status·workflow blockers)의 잔존 미갱신값으로 '대기/차단'을 오표시하지 않는다.
+  const DONE_STATES=['fatwa_approved','certificate_issued','post_certification_monitoring','change_impact','renewal_preparation'];
+  const isDone=DONE_STATES.includes(status||'');
   const rows=[];
   // 1) 결제 게이트: 결제확인 → 모의심사 진입
   const hasInv=(invs||[]).length>0, paid=(invs||[]).some(i=>i.status==='paid');
-  rows.push(grow(T('결제 게이트'),'Payment → Mock audit',paid?'ok':'wait',
-    paid?T('결제 확인됨'):(hasInv?T('청구서 발행 · 결제 대기'):T('청구서 발행 전')),
-    paid?'':T('결제 확인 시 모의심사 진입')));
+  rows.push(grow(T('결제 게이트'),'Payment → Mock audit',(isDone||paid)?'ok':'wait',
+    (isDone||paid)?T('결제 확인됨'):(hasInv?T('청구서 발행 · 결제 대기'):T('청구서 발행 전')),
+    (isDone||paid)?'':T('결제 확인 시 모의심사 진입')));
   // 2) 파트와 상정 게이트(P0-4): audit-report/status.fatwa_gate
   const gate=arep.fatwa_gate||{missing:[]}, sent=!!arep.sent_fatwa;
   const missChips=(gate.missing||[]).map(m=>`<span class="tag t-warn">${T(GATE_KO[m]||m)}</span>`).join(' ');
-  rows.push(grow(T('파트와 상정 게이트'),'Fatwa gate (P0-4)',(sent||gate.ready)?'ok':'wait',
-    sent?T('파트와 상정 완료'):(gate.ready?T('상정 요건 충족'):(missChips||T('요건 미충족'))),
-    (sent||gate.ready)?'':T('보고서 승인 · 오디터 서명 · SJPH 완료 필요')));
-  // 3) 일반 차단(blocker): workflow.blockers
-  const blk=(w&&w.blockers)||[];
+  rows.push(grow(T('파트와 상정 게이트'),'Fatwa gate (P0-4)',(isDone||sent||gate.ready)?'ok':'wait',
+    isDone?T('파트와 승인 · 인증 완료'):(sent?T('파트와 상정 완료'):(gate.ready?T('상정 요건 충족'):(missChips||T('요건 미충족')))),
+    (isDone||sent||gate.ready)?'':T('보고서 승인 · 오디터 서명 · SJPH 완료 필요')));
+  // 3) 일반 차단(blocker): workflow.blockers — 완료 상태에선 잔존 blocker 무시
+  const blk=isDone?[]:((w&&w.blockers)||[]);
   if(blk.length){blk.forEach(b=>{const cd=(typeof b==='string')?b:(b.code||'');rows.push(grow(T('진행 차단'),cd,'block',T(BLOCKER_KO[cd]||cd),T('미충족 요건 해소 필요')));});}
-  else{rows.push(grow(T('진행 차단'),'Blockers','ok',T('차단 없음'),''));}
+  else{rows.push(grow(T('진행 차단'),'Blockers','ok',isDone?T('인증 완료 · 차단 없음'):T('차단 없음'),''));}
   return `<div class="card" style="margin-bottom:16px"><h3>${T('워크플로우 게이트')} <span class="en">· Workflow gates</span><span class="r">${T('이 케이스')}</span></h3>
     <div class="body tight"><table><thead><tr><th>${T('게이트')}</th><th>${T('상태')}</th><th>${T('조건 · 사유')}</th><th>${T('다음 액션')}</th></tr></thead><tbody>${rows.join('')}</tbody></table></div>
     <div class="body" style="border-top:1px solid var(--line)"><div class="small muted">${T('조회 전용 — 전역 집계는 워크플로우 모니터 참조')}</div></div></div>`;
@@ -9850,7 +9854,7 @@ async function renderCaseDetail(id, tab){
     let w={};try{w=await API(`/cases/${id}/workflow`);}catch(_){}
     let rd={};try{rd=await API(`/cases/${id}/readiness`);}catch(_){}
     let disc=[];try{disc=await API(`/cases/${id}/discussions`);}catch(_){}
-    let gatesCard="";try{gatesCard=await workflowGatesCard(id,w);}catch(_){}
+    let gatesCard="";try{gatesCard=await workflowGatesCard(id,w,c.status);}catch(_){}
     const phases=(w.phases||[]);
     const flow=phases.map((p,i)=>`<div class="step ${p.status==="done"?"done":p.status==="current"?"now":(p.done?"done":p.current?"now":"")}" style="min-width:64px">${esc(p.label||p.state||p.key||"")}</div>${i<phases.length-1?'<span class="arrow">›</span>':''}`).join("")||'<div class="muted small">—</div>';
     panel=`${wsStagesCard(id)}<div class="card" style="margin-bottom:16px"><h3>${T('인증 진행 단계')} <span class="en">· Milestone (5단계)</span><span class="r">${esc(w.state_label||c.status||"—")}</span></h3><div class="body">${progressBar(c.status)}</div></div>
