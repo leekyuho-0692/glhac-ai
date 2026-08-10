@@ -3471,6 +3471,22 @@ SJPH_MANUAL_SECTIONS = [
     ("material_process", "재료 · 공정", "Materials & Process", True),
 ]
 
+# 서명·도장 슬롯 — (key, KO, EN, 기본직책). 스키마 무변경(layout payload.signers)
+SJPH_SIGNERS = [
+    ("ceo", "대표자 · 책임자", "CEO / Responsible Person", "CEO"),
+    ("halal_supervisor", "할랄 감독관", "Halal Supervisor", "Halal Supervisor"),
+    ("glhac_auditor", "GL-HAC 심사원", "GL-HAC Halal Auditor", "Halal Auditor"),
+    ("glhac_sharia", "GL-HAC 샤리아 위원", "GL-HAC Sharia Board", "Sharia Board"),
+]
+
+# 슬롯별 편집 권한(백엔드 역할 기준) — 없는 키는 편집 불가
+SJPH_SIGNER_ROLES = {
+    "ceo": {"applicant", "consultant", "penyelia_halal", "admin"},
+    "halal_supervisor": {"applicant", "consultant", "penyelia_halal", "admin"},
+    "glhac_auditor": {"auditor", "fatwa_liaison", "operator", "admin"},
+    "glhac_sharia": {"auditor", "fatwa_liaison", "operator", "admin"},
+}
+
 
 def _sjph_manual_layout_latest(db, case_id):
     e = (db.query(models.WorkflowEvent)
@@ -3480,8 +3496,33 @@ def _sjph_manual_layout_latest(db, case_id):
     return (e.payload or {}) if e else None
 
 
-def _sjph_manual_layout_view(db, case_id):
-    """저장상태 + 섹션 상수 → 정규화(순서 보정·미지의 키 제거·완료도)."""
+def _sjph_norm_signers(raw):
+    """layout payload의 signers를 정규화. 알려진 키만, 값은 길이 제한. 빈 항목은 버린다."""
+    keys = {s[0] for s in SJPH_SIGNERS}
+    if not isinstance(raw, dict):
+        return {}
+    result = {}
+    for k, v in raw.items():
+        if k not in keys or not isinstance(v, dict):
+            continue
+        item = {}
+        name = str(v.get("name") or "").strip()[:120]
+        pos = str(v.get("position") or "").strip()[:120]
+        sid = str(v.get("stamp_document_id") or "").strip()[:64]
+        if name:
+            item["name"] = name
+        if pos:
+            item["position"] = pos
+        if sid:
+            item["stamp_document_id"] = sid
+        if item:
+            result[k] = item
+    return result
+
+
+def _sjph_manual_layout_view(db, case_id, role=None):
+    """저장상태 + 섹션 상수 → 정규화(순서 보정·미지의 키 제거·완료도).
+    role을 주면 서명자 슬롯별 편집 가능 여부(can_edit)를 함께 계산한다."""
     saved = _sjph_manual_layout_latest(db, case_id) or {}
     keys = [s[0] for s in SJPH_MANUAL_SECTIONS]
     kset = set(keys)
@@ -3519,15 +3560,22 @@ def _sjph_manual_layout_view(db, case_id):
                          "has_default": meta[k]["has_default"], "image": img,
                          "complete": complete, "auto": auto})
     done = sum(1 for s in sections if s["complete"])
+    signers = _sjph_norm_signers(saved.get("signers"))
+    signer_meta = [{"key": s[0], "ko": s[1], "en": s[2], "default_position": s[3],
+                    "value": signers.get(s[0]) or {},
+                    "can_edit": bool(role) and role in SJPH_SIGNER_ROLES.get(s[0], set())}
+                   for s in SJPH_SIGNERS]
+    # 도장은 선택 항목 — ready/done 계산에 넣지 않는다(도장 없어도 생성 가능, 하위호환)
     return {"order": order, "inserts": inserts, "sections": sections,
-            "done": done, "total": len(sections), "ready": done == len(sections)}
+            "done": done, "total": len(sections), "ready": done == len(sections),
+            "signers": signers, "signer_slots": signer_meta}
 
 
 @app.get("/cases/{case_id}/sjph-manual/layout")
 def get_sjph_manual_layout(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """할랄매뉴얼 빌더 상태(섹션 순서·이미지 삽입) 조회 — 없으면 기본 순서."""
     _get_case(db, case_id, user)
-    return _sjph_manual_layout_view(db, case_id)
+    return _sjph_manual_layout_view(db, case_id, user["role"])
 
 
 @app.post("/cases/{case_id}/sjph-manual/layout")
@@ -3550,10 +3598,26 @@ def set_sjph_manual_layout(case_id: str, body: dict = None,
             if cap:
                 item["caption"] = str(cap)[:2000]
             inserts[k] = item
+    # body에 signers 키가 없으면 기존 저장값 유지 — 부분 저장으로 도장이 날아가지 않게.
+    # 편집 권한 없는 슬롯은 요청값을 무시하고 기존값으로 되돌린다(신청사↔GL-HAC 상호 변조 차단).
+    prev = _sjph_norm_signers((_sjph_manual_layout_latest(db, case_id) or {}).get("signers"))
+    if "signers" in b:
+        incoming = _sjph_norm_signers(b.get("signers"))
+        signers = {}
+        for k in {s[0] for s in SJPH_SIGNERS}:
+            allowed = user["role"] in SJPH_SIGNER_ROLES.get(k, set())
+            # 요청에 명시된 슬롯만 갱신 — 미포함 슬롯은 기존값 보존(부분 저장 안전)
+            val = incoming.get(k) if (allowed and k in incoming) else prev.get(k)
+            if not allowed and k in incoming and incoming.get(k) != prev.get(k):
+                log.warning("sjph 서명자 슬롯 권한 없음 — slot=%s role=%s case=%s", k, user["role"], case_id)
+            if val:
+                signers[k] = val
+    else:
+        signers = prev
     sm.record_event(db, c, c.status, c.status, "sjph_manual.layout", user["role"], user["uid"],
-                    {"order": order, "inserts": inserts})
+                    {"order": order, "inserts": inserts, "signers": signers})
     db.commit()
-    return _sjph_manual_layout_view(db, case_id)
+    return _sjph_manual_layout_view(db, case_id, user["role"])
 
 
 # ── L2: 할랄팀 조직도 서류 ↔ 신청서 담당자 교차검증 ────────────────────────
@@ -5257,6 +5321,22 @@ def _sjph_docx_para_replace(p, repl):
             p.add_run(new)
 
 
+def _sjph_xml_text_replace(el, repl):
+    """w:t 노드를 직접 순회하며 치환 — sdt(콘텐츠 컨트롤) 등 Paragraph.runs가 못 보는 영역 보강.
+    한 w:t 안에 온전히 들어있는 플레이스홀더만 처리한다(문단 단위 치환의 후처리용)."""
+    from docx.oxml.ns import qn as _qn
+    for t in el.iter(_qn("w:t")):
+        s = t.text or ""
+        if not s:
+            continue
+        new = s
+        for k, v in repl.items():
+            if k in new:
+                new = new.replace(k, v)
+        if new != s:
+            t.text = new
+
+
 def _sjph_docx_cell_set(cell, value):
     p = cell.paragraphs[0]
     if p.runs:
@@ -5279,6 +5359,35 @@ def _sjph_docx_label_fill(tbl, prefix, value):
                 run = cell.add_paragraph().add_run(v)
                 run.bold = True
                 return
+
+
+def _sjph_clone_rows(tbl, proto_ri, anchor_ri, n):
+    """proto_ri 행을 서식 원형으로 n개 복제해 anchor_ri 행 '뒤에' 순서대로 삽입.
+    addnext를 연속 호출하면 역순이 되므로 커서를 갱신해 순방향을 유지한다."""
+    if n <= 0:
+        return
+    import copy as _copy
+    proto = tbl.rows[proto_ri]._tr
+    cur = tbl.rows[anchor_ri]._tr
+    for _ in range(n):
+        tr = _copy.deepcopy(proto)
+        cur.addnext(tr)
+        cur = tr
+
+
+def _sjph_drop_rows(tbl, from_ri, to_ri):
+    """from_ri..to_ri(포함) 행을 역순으로 삭제. 인덱스 밀림 방지."""
+    for ri in range(to_ri, from_ri - 1, -1):
+        if ri < 0 or ri >= len(tbl.rows):
+            continue
+        tr = tbl.rows[ri]._tr
+        tr.getparent().remove(tr)
+
+
+def _sjph_fill_row(cells, vals):
+    """vals를 cells에 순서대로 채운다. 빈 값도 반드시 써서 템플릿 샘플 텍스트를 지운다."""
+    for ci, v in enumerate(vals[:len(cells)]):
+        _sjph_docx_cell_set(cells[ci], v)
 
 
 def _sjph_para_after(par):
@@ -5313,8 +5422,8 @@ def _sjph_insert_layout_images(doc, db, case_id):
         if not anchor or not doc_id:
             continue
         d = db.get(models.DocumentAsset, doc_id)
-        if not d or not d.content_b64 or not str(d.content_type or "").startswith("image/"):
-            continue   # PDF 첨부 등 비이미지는 원문 보관만 (docx 임베드는 이미지 한정)
+        if not d or not d.content_b64 or not str(d.content_type or "").startswith("image/") or d.case_id != case_id:
+            continue   # 비이미지(PDF 등)는 원문 보관만 / 타 케이스 자산은 IDOR 차단
         par = next((p for p in doc.paragraphs if p.text.strip().startswith(anchor)), None)
         if par is None:
             continue
@@ -5330,6 +5439,112 @@ def _sjph_insert_layout_images(doc, db, case_id):
             log.warning("sjph 이미지 임베드 실패(%s): %s", key, e)
 
 
+def _sjph_stamp_bytes(db, doc_id, case_id):
+    """DocumentAsset id → 이미지 bytes. 이미지가 아니거나 타 케이스 자산이면 None."""
+    if not doc_id:
+        return None
+    d = db.get(models.DocumentAsset, doc_id)
+    if not d or not d.content_b64 or not str(d.content_type or "").startswith("image/"):
+        return None
+    if d.case_id != case_id:
+        log.warning("sjph 도장 IDOR 차단 — doc=%s case=%s", doc_id, case_id)
+        return None
+    try:
+        import base64 as _b64
+        return _b64.b64decode(d.content_b64)
+    except Exception:
+        return None
+
+
+def _sjph_cell_stamp(cell, img, width_in=1.1):
+    """셀에 도장 이미지 삽입 — add_picture는 run에만 가능."""
+    import io as _io
+    from docx.shared import Inches
+    # 셀에 라벨 텍스트가 있으면 그 아래 새 문단에, 빈 셀이면 첫 문단을 재사용
+    p = cell.paragraphs[0] if (cell.paragraphs and not cell.text.strip()) else cell.add_paragraph()
+    p.add_run().add_picture(_io.BytesIO(img), width=Inches(width_in))
+
+
+def _sjph_insert_stamps(doc, db, case_id):
+    """서명자 이름·직책 텍스트 + 도장 이미지를 템플릿 서명칸에 병합. 값 없으면 원본 그대로 둔다."""
+    try:
+        signers = _sjph_norm_signers((_sjph_manual_layout_latest(db, case_id) or {}).get("signers"))
+    except Exception:
+        return
+    if not signers:
+        return
+    import io as _io2
+    from docx.shared import Inches as _Inches2
+    cache = {}
+
+    def _img(key):
+        sid = (signers.get(key) or {}).get("stamp_document_id")
+        if not sid:
+            return None
+        if sid not in cache:
+            cache[sid] = _sjph_stamp_bytes(db, sid, case_id)
+        return cache[sid]
+
+    def _label(key):
+        v = signers.get(key) or {}
+        return "\n".join([x for x in [v.get("name") or "", v.get("position") or ""] if x])
+
+    star_seen = 0
+    for t in doc.tables:
+        try:
+            # (a) 1행 2열 서명표 — 별표는 표지(GL-HAC 심사원·샤리아), 나머지는 본문 대표 서약
+            if len(t.rows) == 1 and len(t.columns) == 2:
+                lbl = t.rows[0].cells[0].text.strip()
+                if not lbl.startswith("Name & Position"):
+                    continue
+                if lbl.rstrip().endswith("*"):
+                    key = "glhac_auditor" if star_seen == 0 else "glhac_sharia"
+                    star_seen += 1
+                else:
+                    key = "ceo"
+                txt = _label(key)
+                if txt:
+                    run = t.rows[0].cells[0].add_paragraph().add_run(txt)
+                    run.bold = True
+                img = _img(key)
+                if img is not None:
+                    _sjph_cell_stamp(t.rows[0].cells[1], img)
+            # (b) 4열 CEO/Halal Supervisor 표 — 끝에서 두 번째 행이 도장 자리
+            elif len(t.columns) == 4 and len(t.rows) >= 3:
+                last = t.rows[-1].cells
+                if not last[0].text.strip().startswith("CEO"):
+                    continue
+                if not last[3].text.strip().startswith("Halal Supervisor"):
+                    continue
+                srow = t.rows[-2].cells
+                ci = _img("ceo")
+                if ci is not None:
+                    _sjph_cell_stamp(srow[0], ci)
+                si = _img("halal_supervisor")
+                if si is not None:
+                    _sjph_cell_stamp(srow[3], si)
+        except Exception as e:
+            log.warning("sjph 도장 삽입 실패: %s", e)
+    # 텍스트 플레이스홀더형 서명 자리 — [CEO SIGN]/[CEO 서명]은 대표자 도장, [SIGN]은 실물 서명란(비움)
+    from docx.oxml.ns import qn as _qn2
+    from docx.text.paragraph import Paragraph as _Para2
+    ceo_img = _img("ceo")
+    for _p in list(doc.element.body.iter(_qn2("w:p"))):
+        try:
+            para = _Para2(_p, doc)
+            txt = para.text.strip()
+            if txt in ("[CEO SIGN]", "[CEO 서명]"):
+                for r in para.runs:
+                    r.text = ""
+                if ceo_img is not None:
+                    para.add_run().add_picture(_io2.BytesIO(ceo_img), width=_Inches2(1.1))
+            elif txt == "[SIGN]":
+                for r in para.runs:
+                    r.text = ""
+        except Exception as e:
+            log.warning("sjph 서명 자리 처리 실패: %s", e)
+
+
 def _sjph_manual_docx_bytes(db, c):
     """기준 템플릿 docx를 열어 실데이터 병합 — 양식(표지·표·부록17·EN/KO 병기) 원본 그대로 유지."""
     import io as _io
@@ -5338,34 +5553,75 @@ def _sjph_manual_docx_bytes(db, c):
     company = c.company_name or ""
     px = c.profile_ext or {}
     today = date.today().isoformat()
+
+    def _pv(x):
+        """'—'·빈문자·N/A는 없는 값으로 취급하는 정규화."""
+        s = ("" if x is None else str(x)).strip()
+        return "" if s in ("", "-", "—", "N/A", "n/a") else s
+
     ceo = px.get("ceo_name") or c.responsible_person or ""
     sup = c.halal_supervisor or px.get("pic_name") or ""
     repl = {
         "[Your company Name]": company, "[Your Company Name]": company,
-        "[Company Name]": company, "[회사명]": company, "[귀사명]": company,
+        "[Company Name]": company, "[COMPANY NAME]": company,
+        "[YOUR COMPANY NAME]": company,
+        "[회사명]": company, "[귀사명]": company,
         "[Company Letterhead]": company,
         "[CEO NAME]": ceo or "CEO", "[HALAL SUPERVISOR NAME]": sup or "Halal Supervisor",
         "[PLACE]": px.get("city") or "", "[Place]": px.get("city") or "", "[장소]": px.get("city") or "",
+        "[CEO 이름]": ceo or "CEO",
+        "[HALAL SUPERVISOR 이름]": sup or "Halal Supervisor",
+        "[할랄감독관 이름]": sup or "Halal Supervisor",
     }
-    for p in doc.paragraphs:
-        _sjph_docx_para_replace(p, repl)
+    # doc.paragraphs는 본문 최상위 문단만 잡는다(408/3229). 텍스트박스 안 문단까지 모두 순회해야
+    # 회사명·대표자명 플레이스홀더가 남지 않는다. 단, 표 셀 안은 날짜 치환 제외(빈 기록양식 유지).
+    repl_para = dict(repl)
+    repl_para["(dd/mm/yyyy)"] = today
+    from docx.oxml.ns import qn as _qn
+    from docx.text.paragraph import Paragraph as _Para
+
+    def _in_table_cell(el):
+        par = el.getparent()
+        while par is not None:
+            if par.tag == _qn("w:tc"):
+                return True
+            par = par.getparent()
+        return False
+
+    for _p in list(doc.element.body.iter(_qn("w:p"))):
+        p = _Para(_p, doc)
+        _sjph_docx_para_replace(p, repl if _in_table_cell(_p) else repl_para)
         if p.text.strip().replace("\t", "").replace(" ", "") in ("Date:", "Date/날짜:"):
             p.add_run(" " + today)
-    for t in doc.tables:
-        for row in t.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    _sjph_docx_para_replace(p, repl)
+    _sjph_xml_text_replace(doc.element.body, repl)   # sdt 등 Paragraph가 못 보는 영역 보강
     # 고객 정보 폼(표지 뒤 16x6 표) — 라벨 셀에 실데이터 병합
     info_tbl = next((t for t in doc.tables
                      if t.rows and t.rows[0].cells[0].text.strip().startswith("Date 날짜")), None)
     if info_tbl is not None:
         pathway_app = "Self-Declare" if (c.pathway == "self_declare") else "Regular"
+        # 회사명·대표자명 영문 병기: "한글(영문)" — 영문 없거나 한글과 같으면 한글만
+        _cn_en = _pv(px.get("company_name_en"))
+        client_org = ("%s (%s)" % (company, _cn_en)) if (_cn_en and _cn_en != company) else company
+        _rp = _pv(c.responsible_person)
+        _rp_en = _pv(px.get("responsible_person_en"))
+        client_name = ("%s (%s)" % (_rp, _rp_en)) if (_rp and _rp_en and _rp_en != _rp) else (_rp or _rp_en)
+        # 본사주소 + 공장주소·공장등록번호 병기 (템플릿에 공장 칸이 없어 Address 칸에 함께 적음)
+        _addr_parts = []
+        if _pv(c.address):
+            _addr_parts.append(_pv(c.address))
+        if _pv(c.factory_address):
+            _fa = "Factory 공장: %s" % _pv(c.factory_address)
+            if _pv(c.factory_reg_no):
+                _fa += " (Reg. No. %s)" % _pv(c.factory_reg_no)
+            _addr_parts.append(_fa)
+        addr_merged = "\n".join(_addr_parts)
+        tax_id_val = _pv(px.get("tax_id")) or _pv(c.nib)          # 사업자번호 폴백
+        office_phone_val = _pv(c.phone) or _pv(px.get("office_phone"))
         for prefix, val in [
-            ("Date 날짜", today), ("Client Name 고객 이름", c.responsible_person),
-            ("Client Organization / Company Name", company),
-            ("Office Phone", c.phone), ("Email Address 메일 주소", c.email),
-            ("Address 회사 주소", c.address), ("City 도시", px.get("city")),
+            ("Date 날짜", today), ("Client Name 고객 이름", client_name),
+            ("Client Organization / Company Name", client_org),
+            ("Office Phone", office_phone_val), ("Email Address 메일 주소", c.email),
+            ("Address 회사 주소", addr_merged), ("City 도시", px.get("city")),
             ("Country 국가", px.get("country")), ("ZIP Code", px.get("zip")),
             ("Occupation/Business Type", px.get("business_type")),
             ("Person In Charge (PIC) Name", px.get("pic_name")),
@@ -5379,7 +5635,7 @@ def _sjph_manual_docx_bytes(db, c):
             ("Product Type 제품유형", px.get("product_type")),
             ("Total Employee 총 직원 수", px.get("total_employee")),
             ("Product Marketing Type", px.get("marketing_type")),
-            ("ID TAX Company", px.get("tax_id")),
+            ("ID TAX Company", tax_id_val),
             ("Production Capacity 생산능력", px.get("production_capacity")),
         ]:
             _sjph_docx_label_fill(info_tbl, prefix, val)
@@ -5392,27 +5648,57 @@ def _sjph_manual_docx_bytes(db, c):
                     _sjph_docx_cell_set(cell, ceo)
                 elif s.startswith("HALAL SUPERVISOR name") and sup:
                     _sjph_docx_cell_set(cell, sup)
+    # Appendix 8 진술서 표(4행 3열: 라벨 / : / 값) — 법인등록번호·회사명·성명 채움
+    _brn = _pv(px.get("corporate_reg_no")) or _pv(c.nib)
+    for t in doc.tables:
+        if len(t.columns) != 3 or len(t.rows) < 3:
+            continue
+        if not t.rows[0].cells[0].text.strip().startswith("Name"):
+            continue
+        for row in t.rows:
+            lbl = row.cells[0].text.strip()
+            if lbl.startswith("Business Registration") and _brn:
+                _sjph_docx_cell_set(row.cells[2], _brn)
+            elif lbl.startswith("Company") and company:
+                _sjph_docx_cell_set(row.cells[2], company)
+            elif lbl.startswith("Name") and ceo:
+                _sjph_docx_cell_set(row.cells[2], ceo)
     # Appendix 4 사용재료 목록표 — 원재료 실데이터 행 채움 (헤더 2행 아래부터)
     mats = db.query(models.Material).filter_by(case_id=c.case_id).all()
     ap4 = next((t for t in doc.tables
                 if t.rows and "Appendix.4" in t.rows[0].cells[0].text), None)
     if ap4 is not None and mats:
-        start = 4   # 0 제목 / 1 공백 / 2·3 헤더(병합)
+        # 템플릿: 0 제목 / 1 공백 / 2·3 헤더 / 4~6 샘플데이터 / 7·8 안내행 / 9 새행안내 / 10 ※주석(전폭병합)
+        AP4_PROTO = 4        # 서식 원형 행
+        AP4_SAMPLE_LAST = 6  # 샘플 데이터행 마지막
+        AP4_SAMPLE_N = AP4_SAMPLE_LAST - AP4_PROTO + 1   # 3
+        n = len(mats)
+        # 1) 부족분만 row6 뒤에 복제 삽입 (안내행·주석행은 자동으로 아래로 밀림)
+        if n > AP4_SAMPLE_N:
+            _sjph_clone_rows(ap4, AP4_PROTO, AP4_SAMPLE_LAST, n - AP4_SAMPLE_N)
+        # 2) row4부터 n행 채우기
         for i, m in enumerate(mats):
-            while start + i >= len(ap4.rows):
-                ap4.add_row()
-            cells = ap4.rows[start + i].cells
+            ri = AP4_PROTO + i
+            if ri >= len(ap4.rows):
+                break
+            _judg = _sjph_mat_judgment(m)
+            _sup = []
+            if _judg and _judg != "—":
+                _sup.append(_judg)
+            if m.evidence_provided:
+                _sup.append("제출 Submitted")
             vals = [str(i + 1), m.name or "", m.name or "", m.mat_type or "",
                     m.supplier or "", "", m.supplier or "",
                     ("Y" if m.cert == "certified" else "N"), m.cert_no or "", "",
-                    ("제출 Submitted" if m.evidence_provided else "")]
-            for ci, v in enumerate(vals[:len(cells)]):
-                if v:
-                    _sjph_docx_cell_set(cells[ci], v)
+                    "\n".join(_sup)]
+            _sjph_fill_row(ap4.rows[ri].cells, vals)
+        # 3) 재료가 3개 미만이면 남는 샘플행 삭제
+        if n < AP4_SAMPLE_N:
+            _sjph_drop_rows(ap4, AP4_PROTO + n, AP4_SAMPLE_LAST)
     # Appendix 5 원재료×제품 매트릭스 — 제품명 헤더 치환 + 사용여부 ✔
     # 템플릿 매트릭스는 제품 컬럼이 6개 고정 → 6개 초과 제품은 매트릭스 표를 블록으로 반복 생성(전체 제품 수용).
     prods = db.query(models.Product).filter_by(case_id=c.case_id).all()
-    links = db.query(models.ProductMaterial).all()
+    links = db.query(models.ProductMaterial).filter_by(case_id=c.case_id).all()
     used = {(l.product_id, l.material_id) for l in links}
     ap5 = next((t for t in doc.tables
                 if t.rows and "Appendix 5" in t.rows[0].cells[0].text), None)
@@ -5431,10 +5717,14 @@ def _sjph_manual_docx_bytes(db, c):
                         ci = PC0 + pi
                         if ci <= PC0 + PCOLS - 1 and ci < len(hcells):
                             _sjph_docx_cell_set(hcells[ci], pr.name or "")
+            # 템플릿: row5~13 샘플데이터 9행 / row14 안내행 / row15 ※주석행
+            n = len(mats)
+            if n > 9:
+                _sjph_clone_rows(tbl, DATA_START, 13, n - 9)
             for i, m in enumerate(mats):
                 ri = DATA_START + i
-                while ri >= len(tbl.rows):
-                    tbl.add_row()
+                if ri >= len(tbl.rows):
+                    break
                 cells = tbl.rows[ri].cells
                 _sjph_docx_cell_set(cells[0], str(i + 1))
                 if len(cells) > 1:
@@ -5445,6 +5735,8 @@ def _sjph_manual_docx_bytes(db, c):
                     ci = PC0 + pi
                     if ci <= PC0 + PCOLS - 1 and ci < len(cells):
                         _sjph_docx_cell_set(cells[ci], "V" if (pr.product_id, m.material_id) in used else "-")
+            if n < 9:
+                _sjph_drop_rows(tbl, DATA_START + n, 13)
 
         blueprint = _copy.deepcopy(ap5._tbl)      # 빈 원본 구조 보존(추가 블록 복제용)
         _fill_matrix(ap5, groups[0])
@@ -5457,9 +5749,26 @@ def _sjph_manual_docx_bytes(db, c):
             last = tobj
     # 빌더 드롭 이미지(조직도·공정도·서명) 임베드
     _sjph_insert_layout_images(doc, db, c.case_id)
+    _sjph_insert_stamps(doc, db, c.case_id)      # 승인자 이름·직책·도장
     buf = _io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+def _content_disposition(filename):
+    """한글 파일명 안전 다운로드 헤더 — RFC 5987 filename* + ASCII fallback 병기."""
+    import re as _re
+    from urllib.parse import quote as _quote
+    ascii_name = _re.sub(r"[^A-Za-z0-9._-]+", "_", filename).strip("_") or "download"
+    return "attachment; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_name, _quote(filename, safe=""))
+
+
+def _sjph_manual_filename(c, ext):
+    """SJPH_Manual_{회사명}_{YYYY-MM-DD}.{ext}"""
+    import re as _re
+    name = c.company_name or c.case_id[:8]
+    name = _re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", name).strip() or c.case_id[:8]
+    return "SJPH_Manual_%s_%s.%s" % (name[:60], date.today().isoformat(), ext)
 
 
 def _docx_to_pdf_bytes(docx_bytes):
@@ -5490,7 +5799,7 @@ def get_sjph_manual_docx(case_id, user=Depends(auth.get_current_user), db=Depend
     data = _sjph_manual_docx_bytes(db, c)
     return Response(content=data,
                     media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    headers={"Content-Disposition": "attachment; filename=sjph_manual_%s.docx" % case_id[:8]})
+                    headers={"Content-Disposition": _content_disposition(_sjph_manual_filename(c, "docx"))})
 
 
 @app.get("/cases/{case_id}/sjph-manual.pdf")
@@ -5508,7 +5817,7 @@ def get_sjph_manual_pdf(case_id, user=Depends(auth.get_current_user), db=Depends
                                subtitle=(c.company_name or ""),
                                footer="GL-HAC AI · SJPH/HPAS Manual " + case_id[:8])
     return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": "attachment; filename=sjph_manual_%s.pdf" % case_id[:8]})
+                    headers={"Content-Disposition": _content_disposition(_sjph_manual_filename(c, "pdf"))})
 
 
 # ===== 공장 다건 분류 (Facility 1:N) — 스키마 무변경(case.facility_ids + profile_ext.label/source_docs) =====

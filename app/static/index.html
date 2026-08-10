@@ -7677,6 +7677,7 @@ SCREEN.manualBuilder=async()=>{
     <div class="bar" style="flex:1"><i style="width:${pct}%"></i></div>
     <div class="muted small">${pct}%</div></div></div>
   <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">${cards}</div>
+  ${mbSignerCard(L,id)}
   <div class="card"><h3>${T('매뉴얼 생성')} <span class="en">· Generate</span></h3><div class="body">
     ${warn}
     <div class="btnrow">${genBtn}
@@ -7689,7 +7690,88 @@ SCREEN.manualBuilder=async()=>{
 function mbDragStart(ev,key){MB_DRAG=key;try{ev.dataTransfer.effectAllowed='move';ev.dataTransfer.setData('text/plain',key);}catch(_){}}
 function mbDragEnd(){MB_DRAG=null;}
 function mbDragOver(ev){if(MB_DRAG)ev.preventDefault();}
-function mbCurState(L){const order=(L.sections||[]).map(s=>s.key);const inserts={};(L.sections||[]).forEach(s=>{if(s.image)inserts[s.key]=s.image;});return {order,inserts};}
+function mbCurState(L){const order=(L.sections||[]).map(s=>s.key);const inserts={};(L.sections||[]).forEach(s=>{if(s.image)inserts[s.key]=s.image;});const signers=Object.assign({},L.signers||{});return {order,inserts,signers};}
+/* 승인자·도장 — 이름·직책은 서명란 텍스트, 도장 이미지는 Signature/Stamp 칸에 삽입(스키마 무변경: layout payload.signers) */
+function mbSignerCard(L,cid){
+  const slots=L.signer_slots||[];
+  if(!slots.length)return '';
+  const canEditSlot=(key)=>{
+    if(["client","consultant","admin"].includes(ROLE) && (key==='ceo'||key==='halal_supervisor')) return true;
+    if(["auditor","sharia","ops","admin"].includes(ROLE) && (key==='glhac_auditor'||key==='glhac_sharia')) return true;
+    return false;
+  };
+  const rows=slots.map(slot=>{
+    const key=slot.key;
+    const v=slot.value||{};
+    const canEdit=(slot.can_edit!==undefined)?!!slot.can_edit:canEditSlot(key);
+    const stampHtml=v.stamp_document_id
+      ? `${tag('ok','🔏 '+T('도장 등록됨'))} ${canEdit?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="mbStampRemove('${cid}','${key}')">✕ ${T('제거')}</button>`:''}`
+      : tag('warn',T('도장 없음'));
+    let nameField,posField;
+    if(canEdit){
+      nameField=`<input class="inp" id="sg_name_${key}" value="${esc(v.name||'')}" placeholder="${T('성명')}" style="flex:0 0 140px">`;
+      posField=`<input class="inp" id="sg_pos_${key}" value="${esc(v.position||'')}" placeholder="${esc(slot.default_position||'')}" style="flex:0 0 140px">`;
+    }else{
+      nameField=`<span style="flex:0 0 140px">${esc(v.name||'—')}</span>`;
+      posField=`<span style="flex:0 0 140px">${esc(v.position||'—')}</span>`;
+    }
+    const buttons=canEdit
+      ? `<button class="btn" onclick="mbStampUpload('${cid}','${key}')">🔏 ${T('도장 업로드')}</button> <button class="btn" onclick="mbSignerSave('${cid}','${key}')">💾 ${T('저장')}</button>`
+      : '';
+    return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)">
+      <span style="flex:0 0 160px"><strong>${esc(T(slot.ko))}</strong><br><span class="en">${esc(slot.en)}</span></span>
+      ${nameField}
+      ${posField}
+      <span style="flex:0 0 160px">${stampHtml}</span>
+      ${buttons}
+    </div>`;
+  }).join('');
+  return `<div class="card" style="margin-bottom:16px"><h3>🖋 ${T('승인자 · 도장')} <span class="en">· Approvers &amp; Stamps</span></h3><div class="body">
+  <div class="muted small" style="margin-bottom:10px">${T('이름·직책은 매뉴얼 서명란에, 도장 이미지는 Signature/Stamp 칸에 삽입됩니다. 도장은 선택 항목이며 없어도 매뉴얼은 생성됩니다.')}</div>
+  ${rows}
+</div></div>`;
+}
+async function mbSignerSave(cid,key){
+  try{
+    const L=await API('/cases/'+cid+'/sjph-manual/layout');
+    const {order,inserts,signers}=mbCurState(L);
+    const nm=(document.getElementById('sg_name_'+key)||{}).value||'';
+    const ps=(document.getElementById('sg_pos_'+key)||{}).value||'';
+    const cur=Object.assign({},signers[key]||{});
+    cur.name=nm.trim();cur.position=ps.trim();
+    signers[key]=cur;
+    await API('/cases/'+cid+'/sjph-manual/layout',{method:"POST",body:JSON.stringify({order,inserts,signers})});
+    toast(T('승인자 저장'));applyView();
+  }catch(e){toast(T('저장 실패')+' · '+((e&&e.code)||''));}
+}
+function mbStampUpload(cid,key){
+  const input=document.createElement('input');
+  input.type='file';input.accept='image/*';
+  input.onchange=()=>{if(input.files&&input.files[0])mbStampAttach(cid,key,input.files[0]);};
+  input.click();
+}
+async function mbStampAttach(cid,key,file){
+  try{
+    const b64=await fileB64(file);
+    const d=await API('/cases/'+cid+'/documents',{method:"POST",body:JSON.stringify({filename:file.name,file_b64:b64,doc_type:"signer_stamp"})});
+    const L=await API('/cases/'+cid+'/sjph-manual/layout');
+    const {order,inserts,signers}=mbCurState(L);
+    signers[key]=Object.assign({},signers[key]||{},{stamp_document_id:d.document_id});
+    await API('/cases/'+cid+'/sjph-manual/layout',{method:"POST",body:JSON.stringify({order,inserts,signers})});
+    toast(T('도장 등록')+' · '+file.name);applyView();
+  }catch(e){toast(T('저장 실패')+' · '+((e&&e.code)||''));}
+}
+async function mbStampRemove(cid,key){
+  try{
+    const L=await API('/cases/'+cid+'/sjph-manual/layout');
+    const {order,inserts,signers}=mbCurState(L);
+    const cur=Object.assign({},signers[key]||{});
+    delete cur.stamp_document_id;
+    signers[key]=cur;
+    await API('/cases/'+cid+'/sjph-manual/layout',{method:"POST",body:JSON.stringify({order,inserts,signers})});
+    toast(T('도장 제거'));applyView();
+  }catch(e){toast(T('저장 실패')+' · '+((e&&e.code)||''));}
+}
 async function mbReorder(ev,cid,targetKey){
   ev.preventDefault();
   const src=MB_DRAG;MB_DRAG=null;
