@@ -5466,13 +5466,11 @@ def _sjph_cell_stamp(cell, img, width_in=1.1):
 
 
 def _sjph_insert_stamps(doc, db, case_id):
-    """서명자 이름·직책 텍스트 + 도장 이미지를 템플릿 서명칸에 병합. 값 없으면 원본 그대로 둔다."""
+    """서명자 이름·직책·도장을 템플릿 서명칸에 병합. 도장이 없어도 [SIGN]류 자리표시자는 지운다(빈 서명란 유지)."""
     try:
         signers = _sjph_norm_signers((_sjph_manual_layout_latest(db, case_id) or {}).get("signers"))
     except Exception:
-        return
-    if not signers:
-        return
+        signers = {}
     import io as _io2
     from docx.shared import Inches as _Inches2
     cache = {}
