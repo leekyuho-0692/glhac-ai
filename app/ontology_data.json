@@ -7674,5 +7674,305 @@
    "plant-based diglycerides"
   ],
   "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.taurine",
+  "canonical_name": "Taurine",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [
+    "taurin"
+   ],
+   "ko": [
+    "타우린"
+   ],
+   "en": [
+    "taurine"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [
+   "synthetic taurine (declared)"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.l_carnitine",
+  "canonical_name": "L-Carnitine",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [
+    "l-karnitin",
+    "karnitin"
+   ],
+   "ko": [
+    "L-카르니틴",
+    "카르니틴"
+   ],
+   "en": [
+    "l-carnitine",
+    "carnitine",
+    "levocarnitine"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [
+   "fermentation-derived L-carnitine"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.vitamin_premix",
+  "canonical_name": "Vitamin premix / Vitamin B complex",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": "gelatin",
+  "sources": [
+   "unknown"
+  ],
+  "aliases": {
+   "id": [
+    "premiks vitamin"
+   ],
+   "ko": [
+    "비타민 프리믹스",
+    "비타민B컴플렉스",
+    "비타민미네랄믹스"
+   ],
+   "en": [
+    "vitamin b complex",
+    "vitamin premix",
+    "vitamin mineral mix",
+    "vitaminmineralmix",
+    "vitamin mix"
+   ]
+  },
+  "required_evidence": [
+   "composition_breakdown",
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.gardenia_color",
+  "canonical_name": "Gardenia color (yellow/blue/red)",
+  "category": "colorant",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "gardenia"
+   ],
+   "ko": [
+    "치자색소",
+    "치자"
+   ],
+   "en": [
+    "gardenia",
+    "gardenia yellow",
+    "gardenia blue",
+    "gardenia red",
+    "genipin"
+   ]
+  },
+  "required_evidence": [
+   "composition_breakdown",
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.stevia_enzymatic",
+  "canonical_name": "Enzymatically modified stevia",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "stevia enzim"
+   ],
+   "ko": [
+    "효소처리스테비아",
+    "효소 처리 스테비아"
+   ],
+   "en": [
+    "enzymatically modified stevia",
+    "enzyme modified stevia",
+    "stevia"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "steviol glycoside (declared enzyme origin)"
+  ],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.l_arginine",
+  "canonical_name": "L-Arginine",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "ferment",
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [
+    "l-arginin"
+   ],
+   "ko": [
+    "L-아르기닌",
+    "아르기닌"
+   ],
+   "en": [
+    "l-arginine",
+    "arginine"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.l_theanine",
+  "canonical_name": "L-Theanine",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [
+    "l-teanin"
+   ],
+   "ko": [
+    "L-테아닌",
+    "테아닌"
+   ],
+   "en": [
+    "l-theanine",
+    "theanine"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.nicotinamide",
+  "canonical_name": "Nicotinamide",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [
+    "nikotinamida"
+   ],
+   "ko": [
+    "니코틴아미드",
+    "니아신아미드"
+   ],
+   "en": [
+    "nicotinamide",
+    "niacinamide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.dextrose",
+  "canonical_name": "Dextrose",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "dekstrosa"
+   ],
+   "ko": [
+    "덱스트로스",
+    "포도당"
+   ],
+   "en": [
+    "dextrose",
+    "dextrose anhydrate",
+    "glucose"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "BPJPH-2026-01"
  }
 ]
