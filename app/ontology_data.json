@@ -7974,5 +7974,418 @@
   ],
   "alternatives": [],
   "rule_version": "BPJPH-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.pork",
+  "canonical_name": "Pork (swine)",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "babi",
+    "daging babi"
+   ],
+   "ko": [
+    "돼지고기",
+    "돈육"
+   ],
+   "en": [
+    "pork",
+    "swine",
+    "pig meat",
+    "bacon",
+    "ham (pork)"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [
+   "beef (halal slaughtered)",
+   "chicken (halal)"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.pork_derivative",
+  "canonical_name": "Pork-derived material",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "turunan babi"
+   ],
+   "ko": [
+    "돼지유래",
+    "돈지"
+   ],
+   "en": [
+    "pork derivative",
+    "porcine",
+    "pork fat",
+    "pig fat"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [
+   "plant-based equivalent"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.pork_pepsin",
+  "canonical_name": "Pepsin (porcine)",
+  "category": "enzyme",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "pepsin babi"
+   ],
+   "ko": [
+    "돼지펩신"
+   ],
+   "en": [
+    "porcine pepsin",
+    "pork pepsin",
+    "pepsin (porcine)"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [
+   "microbial protease"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.pork_collagen",
+  "canonical_name": "Collagen (porcine)",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "kolagen babi"
+   ],
+   "ko": [
+    "돼지콜라겐"
+   ],
+   "en": [
+    "porcine collagen",
+    "pork collagen"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [
+   "fish collagen"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.blood",
+  "canonical_name": "Blood",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "darah"
+   ],
+   "ko": [
+    "혈액",
+    "혈액추출물"
+   ],
+   "en": [
+    "blood",
+    "blood extract",
+    "blood powder"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.blood_plasma",
+  "canonical_name": "Blood plasma / hemoglobin",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "plasma darah"
+   ],
+   "ko": [
+    "혈장",
+    "헤모글로빈"
+   ],
+   "en": [
+    "blood plasma",
+    "plasma protein",
+    "hemoglobin",
+    "hydrolyzed hemoglobin",
+    "globulin concentrate",
+    "fibrinogen"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.carrion",
+  "canonical_name": "Carrion (bangkai)",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "bangkai"
+   ],
+   "ko": [
+    "사체",
+    "폐사축"
+   ],
+   "en": [
+    "carrion",
+    "dead animal",
+    "not slaughtered"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.non_halal_slaughter",
+  "canonical_name": "Non-halal slaughtered meat",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "sembelihan tidak halal"
+   ],
+   "ko": [
+    "비할랄도축",
+    "비할랄육"
+   ],
+   "en": [
+    "non-halal meat",
+    "non halal slaughter",
+    "conventional slaughter meat"
+   ]
+  },
+  "required_evidence": [
+   "halal_slaughter_certificate"
+  ],
+  "alternatives": [
+   "halal slaughtered meat"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.human_derived",
+  "canonical_name": "Human-derived material",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "human"
+  ],
+  "aliases": {
+   "id": [
+    "rambut manusia",
+    "plasenta manusia"
+   ],
+   "ko": [
+    "사람모발",
+    "인태반",
+    "인체유래"
+   ],
+   "en": [
+    "human hair",
+    "human placenta",
+    "human derived",
+    "human keratin"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [
+   "synthetic or microbial source"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.khamr_derivative",
+  "canonical_name": "Khamr by-product",
+  "category": "alcohol",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "ferment"
+  ],
+  "aliases": {
+   "id": [
+    "khamr",
+    "turunan khamr"
+   ],
+   "ko": [
+    "주정부산물",
+    "주류부산물"
+   ],
+   "en": [
+    "khamr",
+    "wine derivative",
+    "brewing by-product",
+    "wine vinegar (khamr)"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.dog",
+  "canonical_name": "Dog-derived material",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "haram",
+  "severity": "high",
+  "najis_risk": true,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "anjing"
+   ],
+   "ko": [
+    "개",
+    "견육"
+   ],
+   "en": [
+    "dog",
+    "canine"
+   ]
+  },
+  "required_evidence": [
+   "reformulation"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.ethanol",
+  "canonical_name": "Ethanol (industrial/synthetic)",
+  "category": "alcohol",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": "alcohol",
+  "sources": [
+   "ferment",
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [
+    "etanol",
+    "alkohol etil"
+   ],
+   "ko": [
+    "에탄올",
+    "에틸알코올",
+    "주정"
+   ],
+   "en": [
+    "ethanol",
+    "ethyl alcohol",
+    "alcohol"
+   ]
+  },
+  "required_evidence": [
+   "alcohol_carrier_check",
+   "source_declaration",
+   "residual_alcohol_test"
+  ],
+  "alternatives": [
+   "non-alcoholic solvent",
+   "propylene glycol"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
  }
 ]

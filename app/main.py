@@ -1138,6 +1138,9 @@ def admin_ontology_reseed(rescreen: bool = True, user=Depends(auth.require_roles
            {"ontology_count": out["ontology_count"], "rescreened": out["rescreened"],
             "changed": out["changed"]})
     db.commit()
+    # 반드시 마지막 — 앞선 commit들이 캐시 객체를 expire시키므로 여기서 다시 로드해야
+    # 요청 종료 후에도 DetachedInstanceError가 나지 않는다(기동 시 규약과 동일).
+    screening.load_ontology(db)
     return out
 
 
