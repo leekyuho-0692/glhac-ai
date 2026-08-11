@@ -5589,8 +5589,16 @@ def _sjph_manual_docx_bytes(db, c):
     for _p in list(doc.element.body.iter(_qn("w:p"))):
         p = _Para(_p, doc)
         _sjph_docx_para_replace(p, repl if _in_table_cell(_p) else repl_para)
-        if p.text.strip().replace("\t", "").replace(" ", "") in ("Date:", "Date/날짜:"):
+        _norm = p.text.strip().replace("\t", "").replace(" ", "")
+        if _norm in ("Date:", "Date/날짜:"):
             p.add_run(" " + today)
+        elif sup and not _in_table_cell(_p):
+            # 1장 B절 할랄 감독관 임명 — 본문 직계의 빈 'Name :' / 'Position :' 두 줄 채움.
+            # 표 안에도 'Name' 셀이 여럿 있어 표 바깥 조건이 반드시 필요하다.
+            if _norm in ("Name:", "성명:"):
+                p.add_run(" " + sup)
+            elif _norm in ("Position:", "직책:"):
+                p.add_run(" Halal Supervisor / 할랄 감독관")
     _sjph_xml_text_replace(doc.element.body, repl)   # sdt 등 Paragraph가 못 보는 영역 보강
     # 고객 정보 폼(표지 뒤 16x6 표) — 라벨 셀에 실데이터 병합
     info_tbl = next((t for t in doc.tables
