@@ -18,6 +18,9 @@ def load_ontology(db):
                 _CACHE["by_alias"][n.strip().lower()] = it
 
 
+_STATUS_RANK = {"haram": 0, "mushbooh": 1, "halal": 2}
+
+
 def _match(name, e_number):
     if e_number:
         it = _CACHE["by_e"].get(e_number.strip().upper())
@@ -27,9 +30,14 @@ def _match(name, e_number):
         key = name.strip().lower()
         if key in _CACHE["by_alias"]:
             return _CACHE["by_alias"][key]
-        for alias, it in _CACHE["by_alias"].items():
-            if len(alias) >= 4 and (alias in key or key in alias):
-                return it
+        # 부분 매칭은 후보를 모두 모아 '안전측 우선'으로 고른다.
+        # 먼저 걸린 것을 그대로 쓰면 사전 순서에 따라 위험 성분이 할랄로 통과한다
+        # (예: 'Sweet Potato Protein Ball'이 'sweet potato'에 걸려 halal 처리되던 문제).
+        cands = [(alias, it) for alias, it in _CACHE["by_alias"].items()
+                 if len(alias) >= 4 and (alias in key or key in alias)]
+        if cands:
+            cands.sort(key=lambda p: (_STATUS_RANK.get(p[1].default_status, 3), -len(p[0])))
+            return cands[0][1]
     return None
 
 

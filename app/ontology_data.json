@@ -8387,5 +8387,1106 @@
    "propylene glycol"
   ],
   "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.rice",
+  "canonical_name": "Rice",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "beras",
+    "nasi"
+   ],
+   "ko": [
+    "쌀",
+    "쌀가루",
+    "현미",
+    "누룽지"
+   ],
+   "en": [
+    "rice",
+    "rice powder",
+    "brown rice",
+    "roasted brown rice",
+    "nurungji"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.wheat",
+  "canonical_name": "Wheat",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "gandum",
+    "tepung terigu"
+   ],
+   "ko": [
+    "밀",
+    "밀가루",
+    "통밀",
+    "밀식이섬유"
+   ],
+   "en": [
+    "wheat",
+    "wheat flour",
+    "whole wheat",
+    "wheat dietary fiber",
+    "wheat fiber"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.oat",
+  "canonical_name": "Oat",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "oat",
+    "havermut"
+   ],
+   "ko": [
+    "귀리",
+    "오트",
+    "오트분말"
+   ],
+   "en": [
+    "oat",
+    "oat powder",
+    "oat fiber",
+    "roasted oat"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.rye",
+  "canonical_name": "Rye",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "gandum hitam"
+   ],
+   "ko": [
+    "호밀",
+    "호밀가루"
+   ],
+   "en": [
+    "rye",
+    "rye powder"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.corn_starch",
+  "canonical_name": "Corn starch / syrup",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "pati jagung",
+    "sirup jagung"
+   ],
+   "ko": [
+    "옥수수전분",
+    "콘시럽",
+    "물엿"
+   ],
+   "en": [
+    "corn starch",
+    "cornstarch",
+    "corn syrup",
+    "glucose syrup"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.malt_syrup",
+  "canonical_name": "Malt syrup",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "sirup malt"
+   ],
+   "ko": [
+    "맥아시럽",
+    "조청"
+   ],
+   "en": [
+    "malt syrup",
+    "malt extract"
+   ]
+  },
+  "required_evidence": [
+   "alcohol_carrier_check"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.soybean",
+  "canonical_name": "Soybean / soy protein",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "kedelai",
+    "protein kedelai"
+   ],
+   "ko": [
+    "대두",
+    "콩",
+    "분리대두단백",
+    "볶은콩"
+   ],
+   "en": [
+    "soybean",
+    "soy protein",
+    "isolated soy protein",
+    "roasted soybean",
+    "black bean"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.fruit_concentrate",
+  "canonical_name": "Fruit juice/concentrate powder",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "konsentrat buah",
+    "bubuk buah"
+   ],
+   "ko": [
+    "과즙분말",
+    "농축과즙",
+    "과일농축분말"
+   ],
+   "en": [
+    "juice powder",
+    "concentrate powder",
+    "fruit concentrate",
+    "blueberry concentrate",
+    "green apple concentrate",
+    "green grape concentrate",
+    "lychee concentrate",
+    "shine muscat",
+    "lemon juice powder",
+    "peach juice powder",
+    "sweet potato concentrate"
+   ]
+  },
+  "required_evidence": [
+   "alcohol_carrier_check"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.banana",
+  "canonical_name": "Banana",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "pisang"
+   ],
+   "ko": [
+    "바나나"
+   ],
+   "en": [
+    "banana",
+    "banana chip"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.sweet_potato",
+  "canonical_name": "Sweet potato",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "ubi jalar"
+   ],
+   "ko": [
+    "고구마",
+    "고구마분말"
+   ],
+   "en": [
+    "sweet potato",
+    "sweet potato powder",
+    "sweet potato extract"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.tea_extract",
+  "canonical_name": "Tea extract (green/black/matcha)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "ekstrak teh",
+    "teh hijau"
+   ],
+   "ko": [
+    "녹차",
+    "홍차추출물",
+    "말차",
+    "차추출물"
+   ],
+   "en": [
+    "tea extract",
+    "green tea",
+    "black tea",
+    "matcha",
+    "tea powder"
+   ]
+  },
+  "required_evidence": [
+   "alcohol_carrier_check"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.coffee",
+  "canonical_name": "Coffee",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "kopi"
+   ],
+   "ko": [
+    "커피",
+    "커피분말"
+   ],
+   "en": [
+    "coffee",
+    "coffee powder",
+    "coffee 100%"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.coconut",
+  "canonical_name": "Coconut (milk/oil/cream/sap)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "kelapa",
+    "santan",
+    "minyak kelapa"
+   ],
+   "ko": [
+    "코코넛",
+    "코코넛오일",
+    "코코넛밀크",
+    "코코넛꽃수액"
+   ],
+   "en": [
+    "coconut",
+    "coconut milk",
+    "coconut oil",
+    "coconut cream",
+    "coconut flower sap"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.cocoa",
+  "canonical_name": "Cocoa (powder/mass/butter)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "kakao",
+    "bubuk kakao"
+   ],
+   "ko": [
+    "코코아",
+    "코코아분말",
+    "카카오매스",
+    "코코아버터"
+   ],
+   "en": [
+    "cocoa",
+    "cocoa powder",
+    "cocoa mass",
+    "cocoa butter",
+    "cacao"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.fructose",
+  "canonical_name": "Crystalline fructose",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "fruktosa"
+   ],
+   "ko": [
+    "결정과당",
+    "과당"
+   ],
+   "en": [
+    "fructose",
+    "crystalline fructose"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.seaweed_calcium",
+  "canonical_name": "Seaweed calcium",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "mineral"
+  ],
+  "aliases": {
+   "id": [
+    "kalsium rumput laut"
+   ],
+   "ko": [
+    "해조칼슘"
+   ],
+   "en": [
+    "seaweed calcium",
+    "algae calcium"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.phosphate_salt",
+  "canonical_name": "Sodium metaphosphate / pyrophosphate",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [
+    "natrium metafosfat"
+   ],
+   "ko": [
+    "메타인산나트륨",
+    "피로인산나트륨"
+   ],
+   "en": [
+    "sodium metaphosphate",
+    "sodium pyrophosphate",
+    "tetrasodium pyrophosphate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.zinc_oxide",
+  "canonical_name": "Zinc oxide",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral"
+  ],
+  "aliases": {
+   "id": [
+    "seng oksida"
+   ],
+   "ko": [
+    "산화아연"
+   ],
+   "en": [
+    "zinc oxide"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.ferrous_salt",
+  "canonical_name": "Ferrous fumarate / iron salt",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral",
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [
+    "besi fumarat"
+   ],
+   "ko": [
+    "푸마르산제일철",
+    "철분제"
+   ],
+   "en": [
+    "ferrous fumarate",
+    "ferrous sulfate",
+    "iron fumarate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.synthetic_color",
+  "canonical_name": "Synthetic food color (FD&C)",
+  "category": "colorant",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [
+    "pewarna sintetis"
+   ],
+   "ko": [
+    "합성착색료",
+    "적색40호"
+   ],
+   "en": [
+    "fd&c",
+    "fd&c red",
+    "allura red",
+    "synthetic color"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.vitamin_fatsoluble",
+  "canonical_name": "Fat-soluble vitamin preparation (A/D/E)",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": "gelatin",
+  "sources": [
+   "unknown"
+  ],
+  "aliases": {
+   "id": [
+    "vitamin larut lemak"
+   ],
+   "ko": [
+    "지용성비타민제제",
+    "비타민A제제",
+    "비타민E제제",
+    "토코페롤아세테이트"
+   ],
+   "en": [
+    "vitamin a mixed preparations",
+    "vitamin e mixed preparations",
+    "vitamin a fatty acid ester",
+    "tocopheryl acetate",
+    "di-a-tocopheryl acetate",
+    "retinyl",
+    "vitamin d preparation"
+   ]
+  },
+  "required_evidence": [
+   "composition_breakdown",
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [
+   "fish gelatin coated",
+   "starch-coated beadlet"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.vitamin_watersoluble",
+  "canonical_name": "Water-soluble vitamin (B/C group)",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [
+    "vitamin larut air"
+   ],
+   "ko": [
+    "수용성비타민",
+    "비타민C",
+    "비타민B2",
+    "티아민",
+    "피리독신",
+    "엽산",
+    "판토텐산칼슘"
+   ],
+   "en": [
+    "vitamin c",
+    "ascorbic acid",
+    "vitamin b2",
+    "riboflavin",
+    "thiamine hydrochloride",
+    "pyridoxine hydrochloride",
+    "folic acid",
+    "calcium pantothenate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.processed_oil",
+  "canonical_name": "Processed / refined oil (source unspecified)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "unknown"
+  ],
+  "aliases": {
+   "id": [
+    "minyak olahan"
+   ],
+   "ko": [
+    "가공유지",
+    "정제가공유",
+    "가공유"
+   ],
+   "en": [
+    "processed oil",
+    "refined processed oil",
+    "refined oil",
+    "edible oil (unspecified)"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [
+   "declared vegetable oil"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.vegetable_oil",
+  "canonical_name": "Vegetable oil",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "minyak nabati",
+    "minyak sawit"
+   ],
+   "ko": [
+    "식물성유지",
+    "팜유",
+    "경화팜유"
+   ],
+   "en": [
+    "vegetable oil",
+    "palm oil",
+    "hydrogenated palm oil",
+    "canola oil",
+    "sunflower oil"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.vegetable_cream",
+  "canonical_name": "Vegetable cream / creamer",
+  "category": "base",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "unknown"
+  ],
+  "aliases": {
+   "id": [
+    "krimer nabati"
+   ],
+   "ko": [
+    "식물성크림",
+    "크리머",
+    "베지터블크림"
+   ],
+   "en": [
+    "vegetable cream",
+    "non-dairy creamer",
+    "creamer"
+   ]
+  },
+  "required_evidence": [
+   "composition_breakdown",
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.milk_powder",
+  "canonical_name": "Milk powder",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "susu bubuk"
+   ],
+   "ko": [
+    "분유",
+    "탈지분유",
+    "전지분유",
+    "혼합분유"
+   ],
+   "en": [
+    "milk powder",
+    "skim milk powder",
+    "whole milk powder",
+    "skimmed milk",
+    "mixed milk powder"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.milk_protein",
+  "canonical_name": "Milk protein isolate / concentrate",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "protein susu"
+   ],
+   "ko": [
+    "유단백",
+    "분리유단백",
+    "우유단백질"
+   ],
+   "en": [
+    "milk protein",
+    "milk protein isolate",
+    "milk protein concentrate",
+    "milk protein crisp"
+   ]
+  },
+  "required_evidence": [
+   "halal_cert",
+   "source_declaration"
+  ],
+  "alternatives": [
+   "microbial rennet declared"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.chocolate",
+  "canonical_name": "Chocolate (milk/white/compound)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "animal"
+  ],
+  "aliases": {
+   "id": [
+    "cokelat",
+    "cokelat susu"
+   ],
+   "ko": [
+    "초콜릿",
+    "밀크초콜릿",
+    "화이트초콜릿",
+    "초콜릿분말"
+   ],
+   "en": [
+    "chocolate",
+    "milk chocolate",
+    "white chocolate",
+    "chocolate powder",
+    "compound chocolate"
+   ]
+  },
+  "required_evidence": [
+   "composition_breakdown",
+   "source_declaration"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.compound_premix",
+  "canonical_name": "Compound premix (composition unspecified)",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "unknown"
+  ],
+  "aliases": {
+   "id": [
+    "campuran bahan tambahan",
+    "formulasi campuran"
+   ],
+   "ko": [
+    "복합첨가물",
+    "혼합제제",
+    "혼합조제품"
+   ],
+   "en": [
+    "food additive mixture",
+    "mixed formulation",
+    "mixed preparation",
+    "compound premix"
+   ]
+  },
+  "required_evidence": [
+   "composition_breakdown",
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.compound_snack",
+  "canonical_name": "Compound snack ball / crisp",
+  "category": "base",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "unknown"
+  ],
+  "aliases": {
+   "id": [
+    "bola sereal"
+   ],
+   "ko": [
+    "시리얼볼",
+    "곡물볼",
+    "크리스프"
+   ],
+   "en": [
+    "oat ball",
+    "oat choco ball",
+    "oat coco ball",
+    "matcha oat ball",
+    "protein ball",
+    "crisp ball"
+   ]
+  },
+  "required_evidence": [
+   "composition_breakdown"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.polishing_agent",
+  "canonical_name": "Polishing / glazing agent",
+  "category": "glazing",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "unknown"
+  ],
+  "aliases": {
+   "id": [
+    "bahan pengkilap"
+   ],
+   "ko": [
+    "광택제",
+    "표면처리제"
+   ],
+   "en": [
+    "polishing",
+    "polishing agent",
+    "glazing agent"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [
+   "carnauba wax",
+   "plant-based glaze"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.triacetin",
+  "canonical_name": "Triacetin (glyceryl triacetate)",
+  "category": "additive",
+  "e_number": "E1518",
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": "alcohol",
+  "sources": [
+   "plant",
+   "animal",
+   "synthetic"
+  ],
+  "aliases": {
+   "id": [
+    "triasetin"
+   ],
+   "ko": [
+    "트리아세틴"
+   ],
+   "en": [
+    "triacetin",
+    "glyceryl triacetate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "alcohol_carrier_check"
+  ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
  }
 ]
