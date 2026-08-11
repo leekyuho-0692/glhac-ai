@@ -2,7 +2,9 @@
 carrier_check: 'alcohol'(향료 등 알코올 용매 점검) | 'gelatin'(카로틴 등 젤라틴 캐리어 점검)."""
 from .models import IngredientOntology, RuleVersion
 
-RULE_VERSION = "BPJPH-2026-01"
+# 내부 초안 룰셋 — BPJPH/MUI 공식 고시를 그대로 옮긴 것이 아니라 전문가 검수 전 예시다.
+# 공식 규정처럼 보이는 코드명을 쓰면 심사·대외 자료에서 근거를 오인하게 되므로 DRAFT로 명시한다.
+RULE_VERSION = "GLHAC-DRAFT-2026-01"
 
 
 def _e(uid, name, cat, status, sev, sources, aliases, evidence=None, alts=None,
@@ -350,14 +352,21 @@ def seed(db):
     """규칙버전 + 성분 온톨로지 증분 시딩 — uid 미존재분만 추가(기존 DB 보존, 대량확장 반영)."""
     if not db.get(RuleVersion, RULE_VERSION):
         db.add(RuleVersion(code=RULE_VERSION, jurisdiction="ID",
-                           effective_from="2026-01-01", status="active"))
+                           effective_from="2026-01-01", status="draft"))
+    # 과거에 심긴 공식 규정형 코드명은 active로 남겨두면 근거를 오인시킨다 → draft로 강등
+    _legacy = db.get(RuleVersion, "BPJPH-2026-01")
+    if _legacy is not None and _legacy.status != "draft":
+        _legacy.status = "draft"
     existing = {u for (u,) in db.query(IngredientOntology.ingredient_uid).all()}
     added = 0
     for row in _load_ontology():
         uid = row.get("ingredient_uid")
         if not uid or uid in existing:
             continue
-        db.add(IngredientOntology(**{k: v for k, v in row.items() if k in _COLS}))
+        vals = {k: v for k, v in row.items() if k in _COLS}
+        # 데이터 파일에 옛 코드명이 박혀 있어도 코드 상수를 정본으로 삼는다(공식 규정 오인 방지)
+        vals["rule_version"] = RULE_VERSION
+        db.add(IngredientOntology(**vals))
         existing.add(uid)
         added += 1
     db.commit()

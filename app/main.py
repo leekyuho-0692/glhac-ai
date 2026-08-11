@@ -1110,12 +1110,35 @@ def admin_ontology_stats(user=Depends(auth.require_roles()), db: Session = Depen
 
 
 @app.post("/admin/ontology/reseed")
-def admin_ontology_reseed(user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
-    from .ontology_seed import seed
+def admin_ontology_reseed(rescreen: bool = True, user=Depends(auth.require_roles()),
+                          db: Session = Depends(get_db)):
+    """온톨로지 재시딩 + 모듈 캐시 갱신 + 기존 원재료 재판정.
+
+    캐시 갱신과 재판정이 없으면 재시딩이 사실상 무효였다(옛 판정이 그대로 남음).
+    rescreen=false 로 재판정을 건너뛸 수 있다.
+    """
     db.query(models.IngredientOntology).delete()
     db.commit()
     seed(db)
-    return {"reseeded": True, "ontology_count": db.query(models.IngredientOntology).count()}
+    screening.load_ontology(db)      # 모듈 캐시 갱신 — 없으면 이후 판정이 옛 온톨로지를 쓴다
+    out = {"reseeded": True, "ontology_count": db.query(models.IngredientOntology).count(),
+           "rescreened": 0, "changed": 0}
+    if rescreen:
+        changed = 0
+        mats = db.query(models.Material).all()
+        for m in mats:
+            before = (m.screen_status, m.screen_result)
+            screening.apply_screen(m)
+            if (m.screen_status, m.screen_result) != before:
+                changed += 1
+        db.commit()
+        out["rescreened"] = len(mats)
+        out["changed"] = changed
+    _audit(db, user, "ontology.reseed", "system", None, None,
+           {"ontology_count": out["ontology_count"], "rescreened": out["rescreened"],
+            "changed": out["changed"]})
+    db.commit()
+    return out
 
 
 @app.get("/admin/kma1360-exempt")
