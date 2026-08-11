@@ -62,8 +62,10 @@
   .crumb{font-size:14.5px;color:var(--ink2)}
   .crumb b{color:var(--ink)}
   .topbar .spacer{flex:1}
-  .pill{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;padding:7px 12px;border-radius:999px;
+  .pill{display:inline-flex;white-space:nowrap;flex-shrink:0;align-items:center;gap:6px;font-size:13.5px;padding:7px 12px;border-radius:999px;
     border:1px solid var(--line2);color:var(--ink2);background:var(--card);cursor:pointer}
+  /* M1 맥북(1440·1512) 폭에서 헤더 알약이 넘치지 않도록 — 케이스 ID 칩은 복사 편의용이라 좁은 화면에서 숨김 */
+  @media(max-width:1560px){ #caseIdChip{display:none!important} }
   .pill.live{background:var(--ok-soft);color:var(--ok);border-color:transparent;font-weight:600}
   .pill select{border:none;background:transparent;color:inherit;font-size:12px;outline:none;max-width:160px}
   .dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 3px color-mix(in srgb,currentColor 20%,transparent)}
@@ -540,7 +542,7 @@ const AUDITOR_TABS=[
 let AUDITOR_TAB="all";
 let ASSESS_CACHE={}, INTAKE_OUT={}, PRODUCT_SEL=null, PAY_SEL=null;
 let CASE_SORT="recent";
-let LANG=0; const LANGS=["🌐 EN","🌐 한국어","🌐 Bahasa"];
+let LANG=1; const LANGS=["🌐 EN","🌐 한국어","🌐 Bahasa"];
 
 /* ---- auth / api ---- */
 const TK="glhac_token", RTK="glhac_refresh";
@@ -10005,7 +10007,7 @@ function parseHash(){
 }
 async function boot(){
   if(!token()){document.getElementById("appView").style.display="none";document.getElementById("loginView").style.display="grid";
-    try{LANG=parseInt(localStorage.getItem("glhac_lang")||"0",10)||0;applyLang();}catch(_){}
+    try{LANG=parseInt(localStorage.getItem("glhac_lang")||"1",10)||0;applyLang();}catch(_){}
     try{const cfg=await fetch("/public-config").then(r=>r.json());
       if(cfg&&cfg.dev_mode){const dp=document.getElementById("demoPanel");if(dp)dp.style.display="";}
       applyTenantBranding(cfg&&cfg.tenant);   // 범위확장: 도메인 매칭 시 화이트라벨 적용
@@ -10013,7 +10015,7 @@ async function boot(){
     loginLocalize();   // 로그인/회원가입 화면 언어 적용(Bahasa 등)
     return;}
   try{const th=localStorage.getItem("glhac_theme")||"light";document.documentElement.setAttribute("data-theme",th);document.getElementById("themePill").textContent=th==="dark"?"☀️ 라이트":"🌙 다크";}catch(_){}
-  try{LANG=parseInt(localStorage.getItem("glhac_lang")||"0",10)||0;applyLang();}catch(_){}
+  try{LANG=parseInt(localStorage.getItem("glhac_lang")||"1",10)||0;applyLang();}catch(_){}
   let me;try{me=await API("/auth/me");}catch(_){logout();return;}
   const br=me.role||localStorage.getItem("glhac_role")||"applicant";
   BROLE=br;   // 원본 백엔드 역할 보존(전용 메뉴 판정)
