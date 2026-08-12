@@ -5,8 +5,10 @@ ok=False + reason("no_credentials")을 반환한다(워커는 이 경우 재시�
 inapp(앱 내 알림 = DB 저장)은 항상 동작한다.
 
 지원 연동:
-- SMS / WhatsApp → Twilio REST API (GLHAC_TWILIO_*)
-- KakaoTalk 알림톡 → 대행사 스텁(GLHAC_KAKAO_API_KEY, 미구현)
+- SMS → Twilio REST API (GLHAC_TWILIO_SID/TOKEN/SMS_FROM)
+- WhatsApp → Twilio REST API (GLHAC_TWILIO_WA_FROM). 24시간 고객응대 창 밖에서는
+  Meta 승인 템플릿만 허용 — GLHAC_TWILIO_WA_TEMPLATE_SID 설정 시 템플릿 경로로 발송.
+- KakaoTalk 알림톡 → 대행사 HTTP API 연동(GLHAC_KAKAO_API_URL/API_KEY, 선택 SENDER_KEY·TEMPLATE_CODE)
 - Email → SMTP (GLHAC_SMTP_HOST/PORT/USER/PASS/FROM)
 - Webhook → HTTP POST + HMAC 서명 (case별/전역 URL, GLHAC_WEBHOOK_SECRET)
 
@@ -19,7 +21,7 @@ import logging
 log = logging.getLogger("glhac.notify")
 
 
-def _twilio_send(to, text, from_key, prefix=""):
+def _twilio_send(to, text, from_key, prefix="", content_sid=None, content_vars=None):
     sid = os.environ.get("GLHAC_TWILIO_SID")
     token = os.environ.get("GLHAC_TWILIO_TOKEN")
     frm = os.environ.get(from_key)
@@ -29,10 +31,19 @@ def _twilio_send(to, text, from_key, prefix=""):
         return {"ok": False, "reason": "no_contact"}
     import httpx
     try:
+        data = {"To": prefix + to, "From": prefix + frm}
+        if content_sid:
+            # 승인 템플릿 발송 — 24시간 창 밖에서는 이 경로만 허용된다.
+            data["ContentSid"] = content_sid
+            if content_vars:
+                import json as _json
+                data["ContentVariables"] = _json.dumps(content_vars, ensure_ascii=False)
+        else:
+            data["Body"] = text
         r = httpx.post(
             "https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json" % sid,
             auth=(sid, token), timeout=10,
-            data={"To": prefix + to, "From": prefix + frm, "Body": text})
+            data=data)
         if r.status_code in (200, 201):
             return {"ok": True, "sid": r.json().get("sid")}
         return {"ok": False, "reason": "twilio_%d" % r.status_code}
@@ -51,12 +62,25 @@ def _send_sms(contacts, text, notification=None):
 
 
 def _send_whatsapp(contacts, text, notification=None):
+    """WhatsApp 발송. 24시간 고객응대 창 밖에서는 Meta 승인 템플릿만 허용되므로,
+    GLHAC_TWILIO_WA_TEMPLATE_SID가 설정되면 템플릿 경로로 보낸다(권장).
+    미설정 시 자유 텍스트로 보내며, 이는 24시간 창 안에서만 성공한다."""
     to = contacts.get("phone")
-    res = _twilio_send(to, text, "GLHAC_TWILIO_WA_FROM", prefix="whatsapp:")
+    tpl = os.environ.get("GLHAC_TWILIO_WA_TEMPLATE_SID")
+    cvars = None
+    if tpl:
+        title = getattr(notification, "title", None) or ""
+        body = getattr(notification, "body", None) or text or ""
+        # 기본 템플릿 변수 규약: {{1}}=제목, {{2}}=본문. 승인 템플릿의 변수 개수와 맞춰야 한다.
+        cvars = {"1": str(title)[:200], "2": str(body)[:800]}
+    res = _twilio_send(to, text, "GLHAC_TWILIO_WA_FROM", prefix="whatsapp:",
+                       content_sid=tpl, content_vars=cvars)
     if res is None:
         log.info("[WhatsApp stub · no Twilio creds] to=%s :: %s", to, text)
         return {"channel": "whatsapp", "ok": False, "reason": "no_credentials"}
     res["channel"] = "whatsapp"
+    if not tpl:
+        res["note"] = "freeform_24h_window_only"
     return res
 
 
@@ -163,13 +187,16 @@ def channel_status():
     twilio_core = bool(e("GLHAC_TWILIO_SID") and e("GLHAC_TWILIO_TOKEN"))
     sms_ok = bool(twilio_core and e("GLHAC_TWILIO_SMS_FROM"))
     wa_ok = bool(twilio_core and e("GLHAC_TWILIO_WA_FROM"))
+    wa_tpl = bool(e("GLHAC_TWILIO_WA_TEMPLATE_SID"))
     kakao_ok = bool(e("GLHAC_KAKAO_API_URL") and e("GLHAC_KAKAO_API_KEY"))
     return {
         "inapp": {"configured": True, "implemented": True, "status": "connected"},
         "sms": {"configured": sms_ok, "implemented": True,
                 "status": "connected" if sms_ok else "unset"},
         "whatsapp": {"configured": wa_ok, "implemented": True,
-                     "status": "connected" if wa_ok else "unset"},
+                     "template_configured": wa_tpl,
+                     "status": ("connected" if wa_tpl else "connected_freeform_only")
+                               if wa_ok else "unset"},
         "kakao": {"configured": kakao_ok, "implemented": True,
                   "status": "connected" if kakao_ok else "unset"},
     }
