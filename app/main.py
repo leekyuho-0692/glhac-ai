@@ -1930,6 +1930,7 @@ def list_materials(case_id: str, user=Depends(auth.get_current_user), db: Sessio
               .group_by(models.DocumentAsset.material_id).all())
     return [{"material_id": m.material_id, "name": m.name, "e_number": m.e_number,
              "mat_type": m.mat_type, "source": m.source, "supplier": m.supplier,
+             "origin": m.origin,
              "cert": m.cert, "cert_no": m.cert_no, "v1_risk": m.v1_risk, "note": m.note,
              "result": m.screen_result, "status": m.screen_status, "severity": m.screen_severity,
              "matched_uid": m.matched_uid, "evidence_count": ev.get(m.material_id, 0)} for m in rows]
@@ -5719,8 +5720,9 @@ def _sjph_manual_docx_bytes(db, c):
                 _sup.append(_judg)
             if m.evidence_provided:
                 _sup.append("제출 Submitted")
+            # 컬럼 순서: No·재료명(KOR)·재료명(ENG)·유형·제조사·원산지·공급자·할랄인증·인증번호·유효기간·증빙
             vals = [str(i + 1), m.name or "", m.name or "", m.mat_type or "",
-                    m.supplier or "", "", m.supplier or "",
+                    m.supplier or "", m.origin or "", m.supplier or "",
                     ("Y" if m.cert == "certified" else "N"), m.cert_no or "", "",
                     "\n".join(_sup)]
             _sjph_fill_row(ap4.rows[ri].cells, vals)
