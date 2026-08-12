@@ -63,9 +63,13 @@ def _match(name, e_number):
             for tok, alias, it in _CACHE["alias_tok"]:
                 if tok <= key_tok:
                     cands.append((_STATUS_RANK.get(it.default_status, 3), 0, -len(tok), it))
-        for alias, it in _CACHE["by_alias"].items():
-            if len(alias) >= 4 and (alias in key or key in alias):
-                cands.append((_STATUS_RANK.get(it.default_status, 3), 1, -len(alias), it))
+        # 짧은 이름(SAN·PP·LDPE 등 약어)은 부분문자열 매칭에서 제외한다.
+        # 'san'이 인도네시아어 별칭 'pisang'(바나나)·'santan'(코코넛밀크) 안에 우연히 들어가
+        # 플라스틱 SAN이 바나나로 판정됐다. 짧은 약어는 정확·토큰 매칭으로만 잡아야 한다.
+        if len(key) >= 5:
+            for alias, it in _CACHE["by_alias"].items():
+                if len(alias) >= 4 and (alias in key or key in alias):
+                    cands.append((_STATUS_RANK.get(it.default_status, 3), 1, -len(alias), it))
         if cands:
             cands.sort(key=lambda p: (p[0], p[1], p[2]))
             return cands[0][3]
@@ -103,7 +107,15 @@ def screen(material):
 
 
 def apply_screen(material):
-    r = screen(material)
+    """DB에 저장되는 판정 — 조회·보고서가 쓰는 screen_merged와 같은 경로로 계산한다.
+    원시 screen()만 쓰면 미등재 성분이 저장값 UNKNOWN / 조회값 NEEDS_EVIDENCE로 갈려
+    화면과 DB가 어긋난다(재스크리닝 후 실측에서 확인)."""
+    r = screen_merged(getattr(material, "name", None), getattr(material, "e_number", None),
+                      getattr(material, "source", None), getattr(material, "cert_no", None),
+                      bool(getattr(material, "evidence_provided", False)),
+                      (getattr(material, "source_known", None)
+                       if getattr(material, "source_known", None) is not None else True),
+                      getattr(material, "note", "") or "")
     material.screen_result = r["result"]
     material.screen_status = r["status"]
     material.screen_severity = r["severity"]
@@ -202,13 +214,19 @@ def screen_merged(name, e_number=None, source=None, cert_no=None,
         elif v1risk == "medium":
             res, sev, st = "NEEDS_EVIDENCE", "medium", "mushbooh"
         else:
-            res, sev, st = "PASS", "low", "halal"
+            # 온톨로지에 없는 성분을 할랄로 통과시키지 않는다. 모르는 것은 '모른다'로 둬야 한다.
+            # (화장품 원료 실측: 프로폴리스·유산균발효물·알란토인·정체불명 코드명이 전부 PASS로
+            #  빠져나갔다. 벌·발효배지·요산 유래 가능성이 있어 최소 확인 대상이다.)
+            # 면제 목록(물·소금 등 KMA1360_EXEMPT)은 아래에서 따로 PASS로 돌린다.
+            res, sev, st = "NEEDS_EVIDENCE", "low", "mushbooh"
         if cert == "exempt":
-            res, st = "PASS", "halal"
+            res, st, sev = "PASS", "halal", "low"
         out = {"result": res, "status": st, "severity": sev, "matched_uid": None,
                "carrier_check": None, "sources": [source] if source else [],
                "required_evidence": [] if res == "PASS" else ["source_declaration"],
-               "alternatives": [], "decision_by": "v1_rule"}
+               "alternatives": [],
+               "decision_by": "v1_rule" if v1risk in ("high", "medium") or cert == "exempt"
+               else "unmatched_default"}
     out["v1_risk"] = v1risk
     out["v1_cert"] = cert
     out["source"] = source
@@ -361,6 +379,9 @@ _EXPLAIN_L10N = {
             "'%s' is not formally registered in the ontology; the verdict '%s' comes from the "
             "v1 rule/keyword screen.",
         "• v1 위험도: ": "• v1 risk level: ",
+        "• 미등재 성분은 할랄로 간주하지 않습니다 — 유래·조성 확인 후 판정합니다.":
+            "• An ingredient absent from the ontology is not treated as halal — the verdict "
+            "follows verification of its source and composition.",
         "미상": "unknown",
     },
     "id": {
@@ -386,6 +407,9 @@ _EXPLAIN_L10N = {
             "'%s' belum terdaftar resmi dalam ontologi; putusan '%s' berasal dari aturan/kata "
             "kunci v1.",
         "• v1 위험도: ": "• Tingkat risiko v1: ",
+        "• 미등재 성분은 할랄로 간주하지 않습니다 — 유래·조성 확인 후 판정합니다.":
+            "• Bahan yang belum terdaftar dalam ontologi tidak dianggap halal — putusan "
+            "ditetapkan setelah sumber dan komposisinya diverifikasi.",
         "미상": "tidak diketahui",
     },
 }
@@ -446,6 +470,8 @@ def explain(name, e_number=None, source=None, cert_no=None, note="", lang="ko"):
     else:
         lines.append(S("‘%s’은(는) 온톨로지 정식 등재 성분이 아니며, v1 규칙/키워드 기반으로 ‘%s’ 판정되었습니다.")
                      % (name, verdict))
+        if sc.get("decision_by") == "unmatched_default":
+            lines.append(S("• 미등재 성분은 할랄로 간주하지 않습니다 — 유래·조성 확인 후 판정합니다."))
         if sc.get("v1_risk"):
             lines.append(S("• v1 위험도: ") + str(sc["v1_risk"]))
     return {"name": name, "verdict": verdict, "severity": sc.get("severity"),

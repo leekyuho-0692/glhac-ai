@@ -36,7 +36,7 @@ DOC_TYPES = [
 DOC_KO = {
     "nib_business_license": "사업자등록증(NIB)", "factory_registration": "공장등록증",
     "product_list": "제품 목록", "process_flow": "공정 흐름도",
-    "halal_certificate": "할랄 인증서", "material_list": "원재료 목록",
+    "halal_certificate": "공급사 할랄 인증서", "material_list": "원재료 목록",
     "coa_msds": "CoA/MSDS 성분명세", "supplier_declaration": "공급사 선언서",
     "quality_cert": "품질/식품안전 인증(HACCP·FSSC·GMP)",
     "sjph_manual": "SJPH 매뉴얼", "other": "기타/미분류",
@@ -45,7 +45,7 @@ DOC_KO = {
 DOC_EN = {
     "nib_business_license": "Business license (NIB)", "factory_registration": "Factory registration",
     "product_list": "Product list", "process_flow": "Process flow",
-    "halal_certificate": "Halal certificate", "material_list": "Material list",
+    "halal_certificate": "Supplier halal certificate", "material_list": "Material list",
     "coa_msds": "CoA/MSDS specification", "supplier_declaration": "Supplier declaration",
     "quality_cert": "Quality/food-safety certificate (HACCP·FSSC·GMP)",
     "sjph_manual": "SJPH manual", "other": "Other/unclassified",
@@ -53,7 +53,7 @@ DOC_EN = {
 DOC_ID = {
     "nib_business_license": "Izin usaha (NIB)", "factory_registration": "Registrasi pabrik",
     "product_list": "Daftar produk", "process_flow": "Alur proses",
-    "halal_certificate": "Sertifikat halal", "material_list": "Daftar bahan baku",
+    "halal_certificate": "Sertifikat halal pemasok", "material_list": "Daftar bahan baku",
     "coa_msds": "Spesifikasi CoA/MSDS", "supplier_declaration": "Deklarasi pemasok",
     "quality_cert": "Sertifikat mutu/keamanan pangan (HACCP·FSSC·GMP)",
     "sjph_manual": "Manual SJPH", "other": "Lainnya/belum terklasifikasi",
@@ -70,7 +70,7 @@ DOC_REQUIREMENT = {
     "product_list": "인증 대상 전(全) 제품 목록 — 제품명·분류·등록유형(신규/기존 등)",
     "process_flow": "제조 공정 흐름도 — 원료입고→배합→가열→충전→포장 등 단계 순서",
     "material_list": "전(全) 원재료 목록 — 원재료명·공급사·할랄 상태(인증/선언)",
-    "halal_certificate": "임계 원재료 공급사의 할랄 인증서(해당 원재료가 있는 경우)",
+    "halal_certificate": "임계 원재료 공급사가 받은 할랄 인증서 사본 — 이 플랫폼이 발급하는 인증서가 아니라 신청자가 제출하는 입력 서류다(해당 원재료가 있는 경우)",
     "sjph_manual": "SJPH 매뉴얼 — 5요소(경영약속·원재료·공정·제품·모니터링) 포함",
 }
 

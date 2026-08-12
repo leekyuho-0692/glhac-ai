@@ -9609,5 +9609,855 @@
    "plant-fermented lactate declared"
   ],
   "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.propolis",
+  "canonical_name": "Propolis",
+  "category": "other",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "insect"
+  ],
+  "aliases": {
+   "ko": [
+    "프로폴리스",
+    "수용성 프로폴리스"
+   ],
+   "en": [
+    "propolis",
+    "propolis extract",
+    "water-soluble propolis",
+    "bee propolis"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "plant-derived resin alternative"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.royal_jelly",
+  "canonical_name": "Royal jelly",
+  "category": "other",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "insect"
+  ],
+  "aliases": {
+   "ko": [
+    "로열젤리"
+   ],
+   "en": [
+    "royal jelly",
+    "gelee royale"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.honey_extract",
+  "canonical_name": "Honey / honey extract",
+  "category": "other",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "insect"
+  ],
+  "aliases": {
+   "ko": [
+    "꿀",
+    "벌꿀추출물"
+   ],
+   "en": [
+    "honey",
+    "honey extract",
+    "mel"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.snail_mucin",
+  "canonical_name": "Snail secretion filtrate",
+  "category": "other",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "달팽이점액여과물"
+   ],
+   "en": [
+    "snail mucin",
+    "snail secretion filtrate"
+   ]
+  },
+  "required_evidence": [
+   "animal_source_declaration"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.hyaluronic_acid",
+  "canonical_name": "Hyaluronic acid",
+  "category": "other",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "ko": [
+    "히알루론산",
+    "히알루론산나트륨"
+   ],
+   "en": [
+    "hyaluronic acid",
+    "sodium hyaluronate",
+    "triple hyaluronic acid",
+    "hyaluronate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "bacterial-fermentation hyaluronic acid (declared)"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.allantoin",
+  "canonical_name": "Allantoin",
+  "category": "other",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic",
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "알란토인"
+   ],
+   "en": [
+    "allantoin",
+    "ronacare allantoin"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "synthetic allantoin (declared)"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.ceramide",
+  "canonical_name": "Ceramide",
+  "category": "other",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant",
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "세라마이드"
+   ],
+   "en": [
+    "ceramide",
+    "ceramide np",
+    "ceramide ns",
+    "ecoceramide",
+    "phytosphingosine"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "phyto-ceramide (plant, declared)"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.squalane",
+  "canonical_name": "Squalane / squalene",
+  "category": "other",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "스쿠알란",
+    "스쿠알렌"
+   ],
+   "en": [
+    "squalane",
+    "squalene",
+    "shark liver oil"
+   ]
+  },
+  "required_evidence": [
+   "animal_source_declaration"
+  ],
+  "alternatives": [
+   "olive-derived squalane (declared)"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.elastin",
+  "canonical_name": "Elastin",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "엘라스틴"
+   ],
+   "en": [
+    "elastin",
+    "hydrolyzed elastin"
+   ]
+  },
+  "required_evidence": [
+   "animal_source_declaration",
+   "halal_slaughter_cert"
+  ],
+  "alternatives": [
+   "plant peptide alternative"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.silk_sericin",
+  "canonical_name": "Silk protein / sericin",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "insect"
+  ],
+  "aliases": {
+   "ko": [
+    "실크단백질",
+    "세리신"
+   ],
+   "en": [
+    "silk protein",
+    "sericin",
+    "hydrolyzed silk",
+    "silk amino acids"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.cholesterol",
+  "canonical_name": "Cholesterol",
+  "category": "animal_fat",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "microbial"
+  ],
+  "aliases": {
+   "ko": [
+    "콜레스테롤"
+   ],
+   "en": [
+    "cholesterol"
+   ]
+  },
+  "required_evidence": [
+   "animal_source_declaration"
+  ],
+  "alternatives": [
+   "plant phytosterol"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.peptide_generic",
+  "canonical_name": "Peptide (unspecified source)",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal",
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "펩타이드"
+   ],
+   "en": [
+    "peptide",
+    "oligopeptide",
+    "polypeptide",
+    "acetyl hexapeptide",
+    "palmitoyl pentapeptide"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "synthetic peptide (declared)"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.lactic_ferment",
+  "canonical_name": "Lactic acid bacteria ferment",
+  "category": "ferment",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "microbial"
+  ],
+  "aliases": {
+   "ko": [
+    "유산균발효물",
+    "락토바실러스발효물"
+   ],
+   "en": [
+    "lactobacillus ferment",
+    "lactobacillus ferment lysate",
+    "lactoreal",
+    "lactic acid bacteria ferment"
+   ]
+  },
+  "required_evidence": [
+   "process_declaration"
+  ],
+  "alternatives": [
+   "plant-medium ferment (declared)"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.shea_butter",
+  "canonical_name": "Shea butter",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "시어버터"
+   ],
+   "en": [
+    "shea butter",
+    "butyrospermum parkii"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.hydroxyethylcellulose",
+  "canonical_name": "Hydroxyethylcellulose",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "하이드록시에틸셀룰로스"
+   ],
+   "en": [
+    "hydroxyethylcellulose",
+    "natrosol",
+    "natrosol 250hhr",
+    "hec"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.essential_oil",
+  "canonical_name": "Essential oil (plant)",
+  "category": "flavor",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "에센셜오일",
+    "정유"
+   ],
+   "en": [
+    "essential oil",
+    "tea tree oil",
+    "lemon oil",
+    "lime oil",
+    "palmarosa oil",
+    "melaleuca oil",
+    "citrus oil"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.panthenol",
+  "canonical_name": "Panthenol (provitamin B5)",
+  "category": "vitamin",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "판테놀",
+    "덱스판테놀"
+   ],
+   "en": [
+    "panthenol",
+    "d-panthenol",
+    "dexpanthenol",
+    "provitamin b5"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.niacinamide_cos",
+  "canonical_name": "Niacinamide (cosmetic)",
+  "category": "vitamin",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "나이아신아마이드"
+   ],
+   "en": [
+    "niacinamide",
+    "nicotinamide (cosmetic)"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.polypropylene",
+  "canonical_name": "Polypropylene (PP)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "petrochemical"
+  ],
+  "aliases": {
+   "ko": [
+    "폴리프로필렌"
+   ],
+   "en": [
+    "polypropylene",
+    "pp resin",
+    "j-580"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.polyethylene",
+  "canonical_name": "Polyethylene (PE/LDPE/HDPE)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "petrochemical"
+  ],
+  "aliases": {
+   "ko": [
+    "폴리에틸렌",
+    "저밀도폴리에틸렌"
+   ],
+   "en": [
+    "polyethylene",
+    "ldpe",
+    "hdpe",
+    "lldpe"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.polystyrene_san",
+  "canonical_name": "Styrene copolymer (SAN/AS/ABS)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "petrochemical"
+  ],
+  "aliases": {
+   "ko": [
+    "스티렌-아크릴로니트릴",
+    "스티렌아크릴로니트릴"
+   ],
+   "en": [
+    "styrene acrylonitrile",
+    "san resin",
+    "as resin",
+    "abs resin",
+    "polystyrene"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.tritan_copolyester",
+  "canonical_name": "Copolyester (Tritan)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "petrochemical"
+  ],
+  "aliases": {
+   "ko": [
+    "트라이탄",
+    "코폴리에스터"
+   ],
+   "en": [
+    "tritan",
+    "copolyester",
+    "tx-1001",
+    "yx-601"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.pet_resin",
+  "canonical_name": "Polyethylene terephthalate (PET)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "petrochemical"
+  ],
+  "aliases": {
+   "ko": [
+    "페트",
+    "폴리에틸렌테레프탈레이트"
+   ],
+   "en": [
+    "pet resin",
+    "polyethylene terephthalate"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.silicone_rubber",
+  "canonical_name": "Silicone rubber",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "mineral",
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "실리콘",
+    "실리콘고무"
+   ],
+   "en": [
+    "silicone rubber",
+    "silicone",
+    "polysiloxane"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.polycarbonate",
+  "canonical_name": "Polycarbonate (PC)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "petrochemical"
+  ],
+  "aliases": {
+   "ko": [
+    "폴리카보네이트"
+   ],
+   "en": [
+    "polycarbonate",
+    "pc resin"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.polyamide",
+  "canonical_name": "Polyamide / Nylon",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "petrochemical"
+  ],
+  "aliases": {
+   "ko": [
+    "폴리아미드",
+    "나일론"
+   ],
+   "en": [
+    "polyamide",
+    "nylon"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.slip_agent",
+  "canonical_name": "Slip agent (erucamide/oleamide)",
+  "category": "processing_aid",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "슬립제",
+    "미끄럼제"
+   ],
+   "en": [
+    "slip agent",
+    "erucamide",
+    "oleamide",
+    "stearamide",
+    "fatty acid amide"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "plant-derived erucamide (declared)"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.metal_stearate",
+  "canonical_name": "Metal stearate (Ca/Zn/Mg)",
+  "category": "processing_aid",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "칼슘스테아레이트",
+    "아연스테아레이트",
+    "금속비누"
+   ],
+   "en": [
+    "calcium stearate",
+    "zinc stearate",
+    "metallic stearate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "plant-derived stearate (declared)"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.mold_release",
+  "canonical_name": "Mold release agent",
+  "category": "processing_aid",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "animal",
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "이형제",
+    "박리제"
+   ],
+   "en": [
+    "mold release agent",
+    "release agent",
+    "demolding agent"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "silicone-based release agent"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.gms_pkg",
+  "canonical_name": "Glycerol monostearate (antistatic)",
+  "category": "processing_aid",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "글리세롤모노스테아레이트",
+    "대전방지제"
+   ],
+   "en": [
+    "glycerol monostearate",
+    "gms",
+    "antistatic agent"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": []
  }
 ]
