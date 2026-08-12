@@ -11432,6 +11432,9 @@ _PRE_RPT_L10N = {
         "6. 정량 기준 비교 · Quantitative": "6. Quantitative Comparison",
         "7. 오디터 검토 결과 · Auditor Review": "7. Auditor Review",
         "원재료": "Material", "공급사": "Supplier", "인증번호": "Certificate No.",
+        "※ 업로드된 할랄 인증서 %d건은 이 보고서에 싣지 않습니다 — 할랄 인증서는 본 기관이 발급하며, 제출본은 심사 화면에서 확인합니다.":
+            "* %d uploaded halal certificate(s) are omitted from this report — the halal "
+            "certificate is issued by this body; submitted copies are reviewed on the audit screen.",
         "원산지": "Origin",
         "총 %d건 · 인증번호 미확보 %d건 — 번호 대조는 오디터가 수행합니다.":
             "%d on file · %d without a certificate number — verification of the numbers is "
@@ -11477,6 +11480,9 @@ _PRE_RPT_L10N = {
         "6. 정량 기준 비교 · Quantitative": "6. Perbandingan Kuantitatif · Quantitative",
         "7. 오디터 검토 결과 · Auditor Review": "7. Tinjauan Auditor · Auditor Review",
         "원재료": "Bahan baku", "공급사": "Pemasok", "인증번호": "No. Sertifikat",
+        "※ 업로드된 할랄 인증서 %d건은 이 보고서에 싣지 않습니다 — 할랄 인증서는 본 기관이 발급하며, 제출본은 심사 화면에서 확인합니다.":
+            "* %d sertifikat halal yang diunggah tidak disertakan dalam laporan ini — sertifikat "
+            "halal diterbitkan oleh lembaga ini; salinan yang diserahkan ditinjau pada layar audit.",
         "원산지": "Asal",
         "총 %d건 · 인증번호 미확보 %d건 — 번호 대조는 오디터가 수행합니다.":
             "%d tercatat · %d tanpa nomor sertifikat — verifikasi nomor dilakukan oleh auditor.",
@@ -11620,10 +11626,19 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
         doc.add_paragraph(L("등록된 공장 정보 없음."))
 
     doc.add_heading(L("3. 문서 분석 · Document Analysis"), level=1)
-    docs = dos.get("documents") or []
+    # 업로드된 '할랄 인증서'는 외부로 나가는 산출물에서 제외한다. 정본은 이 플랫폼이 발급하는
+    # 인증서이고, 타기관 인증서가 같은 문서에 실리면 어느 것이 유효한지 헷갈린다.
+    # 심사자용 화면(dossier)에는 그대로 남아 있어 검토에는 지장이 없다.
+    _all_docs = dos.get("documents") or []
+    docs = [d for d in _all_docs if d.get("doc_type") != "halal_certificate"]
+    _hidden = len(_all_docs) - len(docs)
     neg = [d for d in docs if d.get("review_status") in ("rejected", "rework")]
     rest = [d for d in docs if d not in neg]
     doc.add_paragraph(L("총 %d건 · 부정(반려·재작업) %d건") % (len(docs), len(neg)))
+    if _hidden:
+        doc.add_paragraph(L("※ 업로드된 할랄 인증서 %d건은 이 보고서에 싣지 않습니다 — "
+                            "할랄 인증서는 본 기관이 발급하며, 제출본은 심사 화면에서 확인합니다.")
+                          % _hidden)
     if docs:
         _dn = _intake_doc_names(lang)
         table([[_fn_show(d, lang), _dn.get(d.get("doc_type"), d.get("doc_type_ko")),
