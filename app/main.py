@@ -2194,6 +2194,12 @@ def delete_material(material_id: str,
     m = db.get(models.Material, material_id)
     if m:
         _get_case(db, m.case_id, user)
+        # 원재료 삭제는 할랄 문서에서 성분을 빼는 행위다. 무엇을 어떤 판정 상태에서
+        # 지웠는지 남겨야 나중에 되짚을 수 있다(삭제 전에 기록 — 행이 사라지면 못 남긴다).
+        _audit(db, user, "material.delete", "material", material_id, m.case_id,
+               {"name": m.name, "screen_result": m.screen_result,
+                "screen_status": m.screen_status, "supplier": m.supplier,
+                "cert_no": m.cert_no}, commit=False)
         db.delete(m)
         db.commit()
     return {"deleted": material_id}
