@@ -115,7 +115,9 @@ ONTOLOGY = [
        {"ko": ["골탄"], "en": ["bone char"]}, evidence=["process_declaration"], alts=["활성탄"]),
     # ── 향료·캐리어 점검 (carrier_check) ──
     _e("ing.flavor", "Flavor/Fragrance", "flavor", "mushbooh", "medium", ["unknown"],
-       {"id": ["perisa", "pewangi"], "ko": ["향료", "착향료"], "en": ["flavor", "flavour", "fragrance", "aroma"]},
+       {"id": ["perisa", "pewangi"], "ko": ["향료", "착향료"],
+        # 'taste powder'는 향료의 실무 표기 변형 — 종전엔 미매칭이었다('taste' 단독은 과잉매칭 위험).
+        "en": ["flavor", "flavour", "fragrance", "aroma", "taste powder", "flavored powder"]},
        carrier="alcohol", evidence=["alcohol_carrier_check", "composition_breakdown"],
        alts=["알코올프리 향료", "PG 캐리어 향료"]),
     _e("ing.vanilla_extract", "Vanilla extract", "flavor", "mushbooh", "medium", ["plant", "ferment"],
@@ -362,6 +364,21 @@ ONTOLOGY = [
        {"id": ["triasetin"], "ko": ["트리아세틴"], "en": ["triacetin", "glyceryl triacetate"]},
        e_number="E1518", carrier="alcohol",
        evidence=["source_declaration", "alcohol_carrier_check"]),
+    # ── 성분 재검증 보정 (2026-08, 웹 교차검증) ──
+    # E473이 'sugar' 별칭에 걸려 할랄로 통과하던 미탐을 막는다. 지방산 유래가 쟁점이라
+    # E471·E570과 같은 기준(출처 의존)으로 둔다.
+    _e("ing.e473", "Sucrose esters of fatty acids", "emulsifier", "mushbooh", "medium",
+       ["plant", "animal"],
+       {"id": ["ester sukrosa asam lemak"], "ko": ["자당지방산에스테르", "수크로스지방산에스테르"],
+        "en": ["sucrose fatty acid ester", "sucrose esters of fatty acids", "sucrose ester"]},
+       e_number="E473",
+       evidence=["source_declaration", "halal_cert"],
+       alts=["plant-derived fatty acid declared"]),
+    # 해조(Lithothamnion) 유래 해양 미네랄 — 동물 유래 없음. 종전에는 'water'에 잘못 걸렸다.
+    _e("ing.marine_mineral", "Marine mineral calcium (Aquamin/Lithothamnion)", "additive",
+       "halal", "low", ["plant", "mineral"],
+       {"id": ["kalsium laut"], "ko": ["해양미네랄", "해조칼슘복합", "아쿠아민"],
+        "en": ["aquamin", "lithothamnion", "marine mineral", "aqua calcium", "marine calcium"]}),
 ]
 
 

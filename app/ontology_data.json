@@ -3751,28 +3751,39 @@
  },
  {
   "ingredient_uid": "ing.e473",
-  "canonical_name": "Sucrose Esters of Fatty Acids",
-  "category": "additive",
+  "canonical_name": "Sucrose esters of fatty acids",
+  "category": "emulsifier",
   "e_number": "E473",
   "default_status": "mushbooh",
   "severity": "medium",
   "najis_risk": false,
   "carrier_check": null,
   "sources": [
-   "animal",
-   "plant"
+   "plant",
+   "animal"
   ],
   "aliases": {
+   "id": [
+    "ester sukrosa asam lemak"
+   ],
+   "ko": [
+    "자당지방산에스테르",
+    "수크로스지방산에스테르"
+   ],
    "en": [
-    "sucrose esters of fatty acids"
+    "sucrose fatty acid ester",
+    "sucrose esters of fatty acids",
+    "sucrose ester"
    ]
   },
   "required_evidence": [
    "source_declaration",
    "halal_cert"
   ],
-  "alternatives": [],
-  "rule_version": "BPJPH-2026-01"
+  "alternatives": [
+   "plant-derived fatty acid declared"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
  },
  {
   "ingredient_uid": "ing.e474",
@@ -5373,7 +5384,9 @@
     "flavor",
     "flavour",
     "fragrance",
-    "aroma"
+    "aroma",
+    "taste powder",
+    "flavored powder"
    ]
   },
   "required_evidence": [
@@ -5384,7 +5397,7 @@
    "알코올프리 향료",
    "PG 캐리어 향료"
   ],
-  "rule_version": "BPJPH-2026-01"
+  "rule_version": "GLHAC-DRAFT-2026-01"
  },
  {
   "ingredient_uid": "ing.gelatin",
@@ -9486,6 +9499,40 @@
    "source_declaration",
    "alcohol_carrier_check"
   ],
+  "alternatives": [],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.marine_mineral",
+  "canonical_name": "Marine mineral calcium (Aquamin/Lithothamnion)",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "mineral"
+  ],
+  "aliases": {
+   "id": [
+    "kalsium laut"
+   ],
+   "ko": [
+    "해양미네랄",
+    "해조칼슘복합",
+    "아쿠아민"
+   ],
+   "en": [
+    "aquamin",
+    "lithothamnion",
+    "marine mineral",
+    "aqua calcium",
+    "marine calcium"
+   ]
+  },
+  "required_evidence": [],
   "alternatives": [],
   "rule_version": "GLHAC-DRAFT-2026-01"
  }
