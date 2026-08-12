@@ -11860,15 +11860,28 @@ def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session
     for d in docs:
         by_type.setdefault(d.doc_type, []).append(
             {"document_id": d.document_id, "filename": d.filename, "review_status": d.review_status})
+    # 시스템이 생성한 산출물도 제출물로 인정한다. SJPH 매뉴얼은 이 플랫폼이 만들어 내는
+    # 정식 문서(GeneratedDocument)인데, DocumentAsset만 보면 정작 자기가 생성한 매뉴얼을
+    # '미제출'로 표시하게 된다. 다만 무엇으로 충족됐는지는 source로 드러낸다(업로드와 구분).
+    gen = {}
+    for g in (db.query(models.GeneratedDocument).filter_by(case_id=case_id)
+              .order_by(models.GeneratedDocument.version.desc()).all()):
+        gen.setdefault(g.doc_type, g)
     checklist = []
     for dt in REQUIRED_DOCS:
         files = by_type.get(dt, [])
         non_rejected = [x for x in files if x["review_status"] != "rejected"]
         satisfied = bool(non_rejected)
+        source = "업로드 파일" if satisfied else None
+        g = gen.get(dt)
+        if not satisfied and g is not None:
+            satisfied = True
+            source = "생성 문서 v%s · %s" % (g.version, g.status)
         # 미제출(파일 없음) vs 반려(제출됐으나 전부 반려=내용 부족) 구분
         status = "ok" if satisfied else ("rejected" if files else "missing")
         checklist.append({"doc_type": dt, "doc_type_ko": DOC_KO[dt], "satisfied": satisfied,
                           "files": files, "file_count": len(files), "status": status,
+                          "source": source,
                           "requirement": DOC_REQUIREMENT.get(dt, ""), "required": True})
     # 필수 외 실제 업로드된 문서 유형(기타·공급사선언·성적서 등)도 포함 — 전체 파일 표출
     for dt, files in by_type.items():
