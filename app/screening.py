@@ -2,11 +2,11 @@
 import re
 from .models import IngredientOntology
 
-_CACHE = {"by_e": {}, "by_alias": {}}
+_CACHE = {"by_e": {}, "by_alias": {}, "alias_tok": []}
 
 
 def load_ontology(db):
-    _CACHE["by_e"], _CACHE["by_alias"] = {}, {}
+    _CACHE["by_e"], _CACHE["by_alias"], _CACHE["alias_tok"] = {}, {}, []
     for it in db.query(IngredientOntology).all():
         if it.e_number:
             _CACHE["by_e"][it.e_number.upper()] = it
@@ -15,7 +15,30 @@ def load_ontology(db):
             names += v if isinstance(v, list) else [v]
         for n in names:
             if n:
-                _CACHE["by_alias"][n.strip().lower()] = it
+                key = n.strip().lower()
+                _CACHE["by_alias"][key] = it
+                tok = _tokens(key)
+                if len(tok) >= 2:          # 단일 토큰 별칭은 과잉매칭이라 토큰매칭에서 제외
+                    _CACHE["alias_tok"].append((tok, key, it))
+
+
+# 표기 변형 흡수용 불용어 — 의미를 담지 않는 연결어만. 'powder/extract' 같은 형태어는
+# 성분 구분에 쓰이므로 절대 넣지 마라(과잉매칭이 난다).
+_STOPWORDS = {"of", "and", "the", "with", "for", "a", "an", "in", "on", "de", "dan"}
+
+
+def _tokens(text):
+    """어순·복수형·구두점 차이를 흡수한 토큰 집합.
+    'Sucrose Fatty Acid Esters' 와 'sucrose esters of fatty acids' 가 같은 집합이 된다."""
+    out = set()
+    for t in re.split(r"[^0-9a-z가-힣]+", (text or "").lower()):
+        if not t or t in _STOPWORDS:
+            continue
+        # 단순 복수형 정규화: acids→acid, esters→ester. 'ss'로 끝나거나 짧은 말은 건드리지 않는다.
+        if len(t) > 3 and t.endswith("s") and not t.endswith("ss"):
+            t = t[:-1]
+        out.add(t)
+    return out
 
 
 _STATUS_RANK = {"haram": 0, "mushbooh": 1, "halal": 2}
@@ -30,14 +53,22 @@ def _match(name, e_number):
         key = name.strip().lower()
         if key in _CACHE["by_alias"]:
             return _CACHE["by_alias"][key]
-        # 부분 매칭은 후보를 모두 모아 '안전측 우선'으로 고른다.
-        # 먼저 걸린 것을 그대로 쓰면 사전 순서에 따라 위험 성분이 할랄로 통과한다
-        # (예: 'Sweet Potato Protein Ball'이 'sweet potato'에 걸려 halal 처리되던 문제).
-        cands = [(alias, it) for alias, it in _CACHE["by_alias"].items()
-                 if len(alias) >= 4 and (alias in key or key in alias)]
+        # 토큰 매칭(어순·복수형 흡수)과 부분 문자열 매칭을 하나의 후보 풀로 합쳐
+        # '안전측 우선'으로 고른다. 단계를 나눠 먼저 걸린 쪽을 반환하면,
+        # 단일 토큰 별칭(flavor 등)이 경쟁에서 빠져 위험 성분이 할랄로 통과한다.
+        # 정렬: (위험도, 토큰매칭 우선, 매칭 강도 큰 순)
+        cands = []
+        key_tok = _tokens(key)
+        if key_tok:
+            for tok, alias, it in _CACHE["alias_tok"]:
+                if tok <= key_tok:
+                    cands.append((_STATUS_RANK.get(it.default_status, 3), 0, -len(tok), it))
+        for alias, it in _CACHE["by_alias"].items():
+            if len(alias) >= 4 and (alias in key or key in alias):
+                cands.append((_STATUS_RANK.get(it.default_status, 3), 1, -len(alias), it))
         if cands:
-            cands.sort(key=lambda p: (_STATUS_RANK.get(p[1].default_status, 3), -len(p[0])))
-            return cands[0][1]
+            cands.sort(key=lambda p: (p[0], p[1], p[2]))
+            return cands[0][3]
     return None
 
 
