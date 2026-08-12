@@ -1245,9 +1245,25 @@ def _verify_wf_chain(evs):
     return {"integrity_ok": broken is None, "count": len(evs), "break_at": broken}
 
 
-def _verify_audit_chain(rows):
-    """AuditLog HMAC 체인 재계산(audit_log_verify 미러·전량) → (integrity_ok, checked, break_at)."""
-    broken, checked, prev_row = None, 0, None
+def _audit_chain_hashes(db):
+    """전역 AuditLog의 _chain.row 집합 — 부분집합 검증에서 '선행 로그 삭제'를 판별하는 데 쓴다."""
+    out = set()
+    for (meta,) in db.query(models.AuditLog.meta).all():
+        ch = meta.get("_chain") if isinstance(meta, dict) else None
+        if isinstance(ch, dict) and ch.get("row"):
+            out.add(ch["row"])
+    return out
+
+
+def _verify_audit_chain(rows, subset=False, known_hashes=None):
+    """AuditLog HMAC 체인 재계산(audit_log_verify 미러) → (integrity_ok, checked, break_at).
+
+    감사체인은 전역이다(_last_audit_hash가 테이블 전체의 마지막 행을 prev로 삼는다).
+    따라서 케이스 등으로 걸러낸 부분집합은 다른 케이스 로그가 사이에 끼는 순간 연결이 끊긴 것처럼
+    보이며, 연결성을 그대로 검사하면 정상 데이터를 위조로 오탐한다. subset=True면 행 자기무결성만
+    검사한다(audit_log_verify가 필터 시 연결성을 면제하는 것과 같은 규칙).
+    단, prev를 만든 행이 DB에 없는 경우(선행 로그 삭제)는 부분집합에서도 실제 단절이므로 보고한다."""
+    broken, checked, prev_row, deleted = None, 0, None, []
     for r in rows:
         meta = r.meta if isinstance(r.meta, dict) else {}
         ch = meta.get("_chain")
@@ -1257,12 +1273,23 @@ def _verify_audit_chain(rows):
         body = _audit_row_body(r.actor_id, r.action, r.resource_type, r.resource_id,
                                r.case_id, r.created_at, base)
         checked += 1
-        linkage_ok = prev_row is None or ch.get("prev") == prev_row
-        if sm.chain_row_hash(ch.get("prev", ""), body) != ch.get("row") or not linkage_ok:
-            broken = r.id
-            break
+        prev = ch.get("prev", "")
+        if known_hashes is not None and prev and prev not in known_hashes:
+            deleted.append(r.id)   # 선행 로그가 삭제됨 — 부분집합에서도 실제 단절
+        if broken is None:         # 첫 실패 지점만 기록하고, 삭제 탐지는 끝까지 이어간다
+            linkage_ok = subset or prev_row is None or prev == prev_row
+            if sm.chain_row_hash(prev, body) != ch.get("row") or not linkage_ok:
+                broken = r.id
         prev_row = ch.get("row")
-    return {"integrity_ok": broken is None, "checked": checked, "break_at": broken}
+    out = {"integrity_ok": broken is None and not deleted,
+           "checked": checked, "break_at": broken}
+    if subset:
+        out["scope"] = "subset"
+        out["note"] = ("부분집합(케이스 범위) 검증 — 감사체인은 전역이므로 행 자기무결성만 대조한다. "
+                       "선행 로그가 삭제된 단절은 deleted_predecessor로 별도 보고.")
+    if deleted:
+        out["deleted_predecessor"] = deleted
+    return out
 
 
 @app.get("/cases/{case_id}/evidence-bundle.zip")
@@ -1283,7 +1310,8 @@ def evidence_bundle_zip(case_id: str, user=Depends(auth.require_roles("operator"
             .order_by(models.GeneratedDocument.created_at).all())
     cert = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
     wf_report = _verify_wf_chain(evs)
-    al_report = _verify_audit_chain(audits)
+    # audits는 케이스로 거른 부분집합이고 감사체인은 전역이므로 연결성은 면제한다(오탐 방지).
+    al_report = _verify_audit_chain(audits, subset=True, known_hashes=_audit_chain_hashes(db))
     generated_at = datetime.utcnow().isoformat()
     evidence = {
         "generated_at": generated_at,
@@ -1313,15 +1341,27 @@ def evidence_bundle_zip(case_id: str, user=Depends(auth.require_roles("operator"
         "integrity_ok": bool(wf_report["integrity_ok"] and al_report["integrity_ok"]),
         "disclaimer": _LEGAL_DISCLAIMER_VERIFY,
     }
+    # 감사체인이 깨졌다면 그 사유를 숨기지 않고 명시한다(삭제 흔적은 남는 것이 정상 동작).
+    al_note = ""
+    if al_report.get("deleted_predecessor"):
+        al_note = ("\n※ AuditLog 단절 %d건: 선행 감사로그가 삭제되어 prev를 찾을 수 없습니다."
+                   " 각 행의 본문 해시는 모두 일치하므로 내용 변조는 없습니다.\n"
+                   "   Rantai audit terputus: log sebelumnya telah dihapus (isi tiap baris tetap utuh).\n"
+                   % len(al_report["deleted_predecessor"]))
+    elif not al_report["integrity_ok"]:
+        al_note = "\n※ AuditLog 단절 지점: %s\n" % al_report.get("break_at")
     readme = (
         "GL-HAC 증거 아카이브 번들 (Evidence Bundle)\n"
         "Case: %s (%s)\nGenerated: %s\n\n"
         "포함 파일 · Contents:\n"
         " - evidence.json : 워크플로 전이(해시체인)·접근 감사로그·생성문서 목록\n"
         " - integrity_report.json : 양 해시체인 무결성 재검증 리포트(integrity_ok)\n\n"
-        "무결성 · Integrity: WorkflowEvent=%s, AuditLog=%s (HMAC 체인 재계산)\n\n"
+        "무결성 · Integrity: WorkflowEvent=%s, AuditLog=%s (HMAC 체인 재계산)\n"
+        "  · AuditLog는 케이스 범위 부분집합이라 행 자기무결성을 대조합니다"
+        "(체인 연결은 전역이므로 전량 검증은 /admin/audit-log-verify).\n%s\n"
         "%s\n" % (c.company_name or "-", case_id, generated_at,
-                  wf_report["integrity_ok"], al_report["integrity_ok"], _LEGAL_DISCLAIMER_PDF))
+                  wf_report["integrity_ok"], al_report["integrity_ok"], al_note,
+                  _LEGAL_DISCLAIMER_PDF))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("evidence.json", _json.dumps(evidence, ensure_ascii=False, indent=2))
