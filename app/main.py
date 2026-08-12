@@ -1175,6 +1175,50 @@ def admin_seed_reset(body: schemas.SeedResetReq, user=Depends(auth.require_roles
     return {"reset": True, "demo_users_ensured": added}
 
 
+def _db_file_path():
+    """SQLite 파일 경로(파일 DB가 아니면 None) — 초기화 후 실제 회수량 측정용."""
+    try:
+        url = engine.url
+        return url.database if url.get_backend_name() == "sqlite" and url.database else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _db_file_bytes():
+    p = _db_file_path()
+    if not p:
+        return None
+    total = 0
+    for suffix in ("", "-wal", "-shm"):   # WAL·SHM까지 합산해야 실제 점유가 나온다
+        try:
+            total += os.path.getsize(p + suffix)
+        except OSError:
+            pass
+    return total
+
+
+def _upload_sandbox_files():
+    """GLHAC_UPLOAD_DIR 안의 스테이징 파일 목록 — (경로, 바이트).
+
+    업로드 원본은 DB(document_asset.content_b64, 암호화)에 있고 이 디렉터리는 OCR·라벨판정에
+    넘길 때 쓰는 작업 공간이다. 케이스 귀속 정보가 없어 부분 초기화로는 지울 근거가 없다.
+    그래서 sweep_uploads는 기본 off이고, 켤 때만 샌드박스 안에서만 지운다."""
+    sandbox = os.path.realpath(os.environ.get("GLHAC_UPLOAD_DIR", "") or "")
+    if not sandbox or not os.path.isdir(sandbox):
+        return sandbox, []
+    out = []
+    for root, _dirs, names in os.walk(sandbox):
+        for n in names:
+            p = os.path.realpath(os.path.join(root, n))
+            if not p.startswith(sandbox + os.sep):   # 심볼릭 링크로 밖을 가리키면 건너뛴다
+                continue
+            try:
+                out.append((p, os.path.getsize(p)))
+            except OSError:
+                pass
+    return sandbox, out
+
+
 def _case_scoped_models():
     """case_id를 가진 모델 전부 — 단, AuditLog는 제외한다.
 
@@ -1220,9 +1264,26 @@ def admin_cases_purge(body: schemas.CasePurgeReq, user=Depends(auth.require_role
                      "audit_log_preserved": db.query(models.AuditLog)
                      .filter(models.AuditLog.case_id == c.case_id).count()})
 
+    # 업로드 원본은 디스크가 아니라 DB(document_asset.content_b64, 암호화)에 있다.
+    # 행을 지우면 내용도 사라지지만 SQLite는 파일을 줄이지 않아 빈 페이지에 잔상이 남는다 → VACUUM.
+    sandbox, sandbox_files = _upload_sandbox_files()
+    blob_bytes = 0
+    for c in targets:
+        blob_bytes += int(db.query(func.coalesce(func.sum(func.length(
+            models.DocumentAsset.content_b64)), 0))
+            .filter(models.DocumentAsset.case_id == c.case_id).scalar() or 0)
+
     out = {"dry_run": bool(body.dry_run), "keep": sorted(keep), "keep_not_found": missing,
            "delete_count": len(targets), "kept_count": len(cases) - len(targets),
            "cases": plan,
+           "files": {"stored_in": "db(document_asset.content_b64, encrypted)",
+                     "blob_bytes": blob_bytes,
+                     "db_file_bytes": _db_file_bytes(),
+                     "vacuum": bool(body.vacuum),
+                     "upload_sandbox": sandbox or None,
+                     "sandbox_files": len(sandbox_files),
+                     "sandbox_bytes": sum(b for _p, b in sandbox_files),
+                     "sweep_uploads": bool(body.sweep_uploads)},
            "note": "audit_log는 삭제하지 않는다(체인 보존). 삭제 사실은 감사로그에 기록된다."}
     if body.dry_run:
         return out
@@ -1254,6 +1315,40 @@ def admin_cases_purge(body: schemas.CasePurgeReq, user=Depends(auth.require_role
         db.delete(c)              # 부모는 마지막
         deleted["case_application"] = deleted.get("case_application", 0) + 1
     db.commit()
+
+    files = out["files"]
+    before_bytes = files["db_file_bytes"]
+    removed, freed = [], 0
+    if body.sweep_uploads:
+        for p, b in sandbox_files:
+            try:
+                os.remove(p)
+                removed.append(os.path.basename(p))
+                freed += b
+            except OSError as e:   # 지워지지 않은 건 숨기지 않고 보고한다
+                files.setdefault("sweep_errors", []).append("%s: %s" % (os.path.basename(p), e))
+    files["sandbox_removed"] = len(removed)
+    files["sandbox_freed_bytes"] = freed
+
+    if body.vacuum and _db_file_path():
+        # 삭제한 원본이 빈 페이지에 남지 않도록 파일에서 회수한다. VACUUM은 트랜잭션 밖에서만 된다.
+        db.commit()
+        try:
+            with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+                conn.exec_driver_sql("VACUUM")
+                # WAL 모드에선 VACUUM 결과가 WAL에 쌓인다. TRUNCATE 체크포인트로 본 파일에 반영하고
+                # WAL을 잘라내야 삭제분이 WAL에 남지 않는다(잔상 제거의 나머지 절반).
+                conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+            files["vacuum_ok"] = True
+        except Exception as e:  # noqa: BLE001 — 회수 실패가 초기화 자체를 되돌리진 않는다
+            files["vacuum_ok"] = False
+            files["vacuum_error"] = str(e)[:200]
+            log.warning("purge VACUUM 실패: %s", e)
+    after_bytes = _db_file_bytes()
+    files["db_file_bytes_after"] = after_bytes
+    if before_bytes is not None and after_bytes is not None:
+        files["db_file_reclaimed_bytes"] = before_bytes - after_bytes
+
     out.update({"dry_run": False, "deleted_rows": deleted,
                 "audit_log_preserved": db.query(models.AuditLog).count()})
     return out

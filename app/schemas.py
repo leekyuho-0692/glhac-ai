@@ -340,6 +340,8 @@ class CasePurgeReq(BaseModel):   # 심사데이터 초기화 — 감사 흔적�
     dry_run: bool = True                    # 기본은 미리보기. 실삭제는 명시적으로 꺼야 한다
     confirm: Optional[str] = None           # 실삭제 시 "PURGE" 필요
     expect_delete: Optional[int] = None     # 삭제 예정 건수 — 미리보기와 다르면 중단(오조작 방지)
+    vacuum: bool = True                     # 삭제 후 VACUUM — 빈 페이지에 남는 원본 잔상까지 회수
+    sweep_uploads: bool = False             # GLHAC_UPLOAD_DIR 스테이징 파일 정리(케이스 귀속 불가라 기본 off)
 
 
 class FacilityReq(BaseModel):

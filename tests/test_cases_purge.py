@@ -128,6 +128,72 @@ def test_purge_keeps_audit_chain_unbroken():
         assert break_at is None, "감사로그 본문 무결성이 깨졌다: %s" % break_at
 
 
+def test_purge_removes_uploaded_content_and_reclaims_file():
+    """업로드 원본은 DB blob에 있다 — 행 삭제로 내용이 사라지고 VACUUM으로 파일에서도 회수된다."""
+    import base64
+
+    from app import models
+    from app.db import SessionLocal
+
+    with TestClient(app) as c:
+        h = _h(c)
+        keep = _mkcase(c, h, "파일보존")
+        drop = _mkcase(c, h, "파일폐기")
+        blob = base64.b64encode(b"%PDF-1.4 " + b"x" * 300000).decode()   # 300KB 더미
+        r = c.post("/cases/%s/documents" % drop, headers=h,
+                   json={"filename": "spec.pdf", "file_b64": blob, "doc_type": "other"})
+        assert r.status_code in (200, 201), r.text
+
+        db = SessionLocal()
+        assert db.query(models.DocumentAsset).filter_by(case_id=drop).count() == 1
+        db.close()
+
+        pre = c.post("/admin/cases/purge", json={"keep": [keep]}, headers=h).json()
+        assert pre["files"]["blob_bytes"] > 0          # 지울 원본 용량을 미리 보여준다
+        assert pre["files"]["stored_in"].startswith("db(")
+
+        r = c.post("/admin/cases/purge", headers=h,
+                   json={"keep": [keep], "dry_run": False, "confirm": "PURGE",
+                         "reason": "파일 회수 검증", "expect_delete": pre["delete_count"]})
+        assert r.status_code == 200, r.text
+        f = r.json()["files"]
+        assert f.get("vacuum_ok") is True, f
+        assert f["db_file_reclaimed_bytes"] > 0, f     # 파일이 실제로 줄어야 한다
+
+        db = SessionLocal()
+        assert db.query(models.DocumentAsset).filter_by(case_id=drop).count() == 0
+        db.close()
+
+
+def test_purge_sweep_uploads_stays_in_sandbox():
+    """sweep_uploads는 GLHAC_UPLOAD_DIR 안에서만 지운다(기본 off)."""
+    sandbox = os.environ.get("GLHAC_UPLOAD_DIR")
+    if not sandbox or not os.path.isdir(sandbox):
+        return   # 샌드박스가 없는 환경이면 건너뛴다
+    outside = os.path.join(os.path.dirname(sandbox.rstrip("/")), "glhac_outside_probe.txt")
+    with open(outside, "w") as fh:
+        fh.write("건드리면 안 되는 파일")
+    inside = os.path.join(sandbox, "staged_probe.bin")
+    with open(inside, "wb") as fh:
+        fh.write(b"z" * 1000)
+    try:
+        with TestClient(app) as c:
+            h = _h(c)
+            keep = _mkcase(c, h, "샌드박스")
+            n = c.post("/admin/cases/purge", json={"keep": [keep]}, headers=h).json()["delete_count"]
+            r = c.post("/admin/cases/purge", headers=h,
+                       json={"keep": [keep], "dry_run": False, "confirm": "PURGE",
+                             "reason": "샌드박스 정리", "expect_delete": n,
+                             "sweep_uploads": True}).json()
+            assert r["files"]["sandbox_removed"] >= 1, r["files"]
+            assert not os.path.exists(inside), "샌드박스 안 파일이 안 지워졌다"
+            assert os.path.exists(outside), "샌드박스 밖 파일을 지웠다"
+    finally:
+        for p in (inside, outside):
+            if os.path.exists(p):
+                os.remove(p)
+
+
 def test_purge_forbidden_for_non_admin():
     with TestClient(app) as c:
         r = c.post("/auth/login", json={"username": "operator1", "password": "pw"})
