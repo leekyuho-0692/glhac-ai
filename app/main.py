@@ -11264,14 +11264,14 @@ def _preassess_factories(db, c):
     return out
 
 
-def _preassess_dossier(db, c):
+def _preassess_dossier(db, c, lang="ko"):
     """사전심사 심사자 뷰 종합 데이터 — 기업/공장 상세 + 문서·재료 분석(부정 우선 정렬).
 
     · materials: 원재료별 판정·근거·필요증빙·대체재·소스문서(원문 링크) — BLOCK→NEEDS_EVIDENCE→CLEARED 순
     · documents: 문서별 분류·신뢰도·추출필드·검수상태 — rejected→rework→pending→approved 순
     """
     case_id = c.case_id
-    rep = _material_report(db, c)
+    rep = _material_report(db, c, lang=lang)
     mats = sorted(rep["materials"],
                   key=lambda m: (_NEG_RANK.get(m.get("verdict"), 9), -(1 if m.get("najis") else 0),
                                  (m.get("name") or "")))
@@ -11391,6 +11391,12 @@ _PRE_RPT_L10N = {
 }
 
 
+def _intake_doc_names(lang):
+    """서류명 표 — 지원 언어면 그 표를, 아니면 한국어 표를 돌려준다(빈칸 방지)."""
+    from .intake import DOC_KO, DOC_NAME_L10N
+    return DOC_NAME_L10N.get((lang or "ko").lower()) or DOC_KO
+
+
 def _pre_rpt_lang(lang):
     """보고서 라벨 번역기 — 미지원 언어·미등록 키는 한국어 원문을 그대로 돌려준다(누락이 빈칸이 되지 않게)."""
     m = _PRE_RPT_L10N.get((lang or "ko").lower()) or {}
@@ -11418,8 +11424,9 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
     from docx.shared import Pt
     from fastapi.responses import Response
     c = _get_case(db, case_id, user)
-    dos = _preassess_dossier(db, c)
+    dos = _preassess_dossier(db, c, lang=lang)
     L = _pre_rpt_lang(lang)
+    _EVID, _ALT = screening.term_tables(lang)   # 증빙코드·대체재도 같은 언어로
     doc = _docx.Document()
     doc.add_heading(L("사전심사 결과 보고서 · Pre-assessment Report"), level=0)
     doc.add_paragraph("GL-HAC AI · %s · %s %s"
@@ -11467,7 +11474,8 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
     rest = [d for d in docs if d not in neg]
     doc.add_paragraph(L("총 %d건 · 부정(반려·재작업) %d건") % (len(docs), len(neg)))
     if docs:
-        table([[d.get("filename"), d.get("doc_type_ko"),
+        _dn = _intake_doc_names(lang)
+        table([[d.get("filename"), _dn.get(d.get("doc_type"), d.get("doc_type_ko")),
                 ("%.0f%%" % (100 * d["confidence"])) if d.get("confidence") else "-",
                 d.get("review_status") or L("미검수")] for d in (neg + rest)],
               headers=[L("파일"), L("분류"), L("AI 신뢰도"), L("검수 상태")])
@@ -11491,9 +11499,11 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
         if m.get("najis"):
             meta.append(L("najis 위험"))
         if m.get("required_evidence"):
-            meta.append(L("필요 증빙") + ": " + ", ".join(m["required_evidence"]))
+            meta.append(L("필요 증빙") + ": "
+                        + ", ".join(_EVID.get(x, x) for x in m["required_evidence"]))
         if m.get("alternatives"):
-            meta.append(L("대체재") + ": " + ", ".join(m["alternatives"]))
+            meta.append(L("대체재") + ": "
+                        + ", ".join(_ALT.get(x, x) for x in m["alternatives"]))
         if m.get("source_docs"):
             meta.append(L("근거 문서") + ": " + ", ".join(
                 d.get("filename") or d.get("document_id") for d in m["source_docs"]))
@@ -11588,8 +11598,9 @@ def save_material_report_snapshot(case_id, body: dict = None, user=Depends(auth.
     return {"gen_doc_id": g.gen_doc_id, "version": g.version, "checked": len(checked), "total": len(mats)}
 
 
-def _material_report(db, c):
-    """케이스 원재료 전수를 온톨로지로 분석해 종합 보고서 데이터로 집계 (설계 C·v2 이관)."""
+def _material_report(db, c, lang="ko"):
+    """케이스 원재료 전수를 온톨로지로 분석해 종합 보고서 데이터로 집계 (설계 C·v2 이관).
+    lang은 판정 근거 서술의 언어만 바꾼다 — 판정 값 자체는 언어와 무관하다."""
     mats = db.query(models.Material).filter_by(case_id=c.case_id).order_by(models.Material.name).all()
     _src = _material_source_docs(db, c.case_id)  # M2: 성분별 소스문서(고유번호·위치)
     rows, summary = [], {"total": 0, "cleared": 0, "needs_evidence": 0, "blocked": 0,
@@ -11603,7 +11614,7 @@ def _material_report(db, c):
             if _mt in _ts:
                 cat_counts[_k] += 1
         exp = screening.explain(m.name, e_number=m.e_number, source=m.source,
-                                cert_no=m.cert_no, note=m.note or "")
+                                cert_no=m.cert_no, note=m.note or "", lang=lang)
         v = exp.get("verdict")
         summary["total"] += 1
         if v == "BLOCK":

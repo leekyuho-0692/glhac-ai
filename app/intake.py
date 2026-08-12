@@ -41,6 +41,24 @@ DOC_KO = {
     "quality_cert": "품질/식품안전 인증(HACCP·FSSC·GMP)",
     "sjph_manual": "SJPH 매뉴얼", "other": "기타/미분류",
 }
+# 서류명 다국어 — 보고서(docx/pdf) 문서분석표의 '분류'를 언어에 맞춰 인쇄하는 데 쓴다.
+DOC_EN = {
+    "nib_business_license": "Business license (NIB)", "factory_registration": "Factory registration",
+    "product_list": "Product list", "process_flow": "Process flow",
+    "halal_certificate": "Halal certificate", "material_list": "Material list",
+    "coa_msds": "CoA/MSDS specification", "supplier_declaration": "Supplier declaration",
+    "quality_cert": "Quality/food-safety certificate (HACCP·FSSC·GMP)",
+    "sjph_manual": "SJPH manual", "other": "Other/unclassified",
+}
+DOC_ID = {
+    "nib_business_license": "Izin usaha (NIB)", "factory_registration": "Registrasi pabrik",
+    "product_list": "Daftar produk", "process_flow": "Alur proses",
+    "halal_certificate": "Sertifikat halal", "material_list": "Daftar bahan baku",
+    "coa_msds": "Spesifikasi CoA/MSDS", "supplier_declaration": "Deklarasi pemasok",
+    "quality_cert": "Sertifikat mutu/keamanan pangan (HACCP·FSSC·GMP)",
+    "sjph_manual": "Manual SJPH", "other": "Lainnya/belum terklasifikasi",
+}
+DOC_NAME_L10N = {"en": DOC_EN, "id": DOC_ID}
 # 신청 필수 서류(라우팅 대상)
 REQUIRED_DOCS = ["nib_business_license", "factory_registration", "product_list",
                  "process_flow", "material_list", "halal_certificate", "sjph_manual"]
