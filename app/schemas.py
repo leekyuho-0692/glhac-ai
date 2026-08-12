@@ -179,6 +179,10 @@ class MaterialEvidenceReq(BaseModel):
     evidence_type: str            # msds|coa|halal_certificate|supplier_declaration|process_flow|facility_photo
     file_b64: str
     filename: Optional[str] = "evidence"
+    # 출처 기록과 증빙 충족은 다르다. 원산지증명서처럼 '어디서 온 자료인지'는 밝히지만
+    # 요구 증빙(유래 선언·조성표 등)을 충족하지 않는 문서는 False로 붙여야 한다.
+    # False면 파일은 원재료에 연결되되 재스크리닝·evidence_provided를 건드리지 않는다.
+    counts_as_evidence: bool = True
 
 
 class ProductPhotoReq(BaseModel):

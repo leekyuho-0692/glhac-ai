@@ -2586,6 +2586,17 @@ def add_material_evidence(case_id: str, material_id: str, body: schemas.Material
                                 lat=gps[0] if gps else None, lng=gps[1] if gps else None,
                                 geo_source="exif" if gps else None))
     prev = m.screen_result
+    if not body.counts_as_evidence:
+        # 출처만 남기는 첨부 — 파일은 원재료에 연결되지만 판정은 손대지 않는다.
+        # 원산지증명서가 유래 선언을 대신할 수 없는데도 NEEDS_EVIDENCE를 CLEARED로
+        # 바꿔버리면 할랄 문서에서 가장 위험한 종류의 거짓이 된다.
+        sm.record_event(db, c, c.status, c.status, "material.provenance", user["role"], user["uid"],
+                        {"material_id": material_id, "doc_type": body.evidence_type,
+                         "filename": body.filename, "screen_result": prev})
+        db.commit()
+        return {"material_id": material_id, "evidence_type": body.evidence_type,
+                "screen_result": prev, "was": prev, "recleared": False,
+                "counts_as_evidence": False}
     m.evidence_provided = True
     sc = screening.screen_merged(m.name, m.e_number, m.source, m.cert_no, True,
                                  m.source_known if m.source_known is not None else True, m.note or "")
@@ -11343,6 +11354,8 @@ _PRE_RPT_L10N = {
         "※ 부정 항목(차단·증빙필요)을 먼저 기재합니다.":
             "* Negative findings (blocked / evidence required) are listed first.",
         "심각도": "Severity", "najis 위험": "najis risk", "필요 증빙": "Required evidence",
+        "출처 문서": "Source document", "출처": "Source",
+        "원재료 정보 출처": "Material data source",
         "대체재": "Alternatives", "근거 문서": "Source documents",
         "종합 판정": "Overall verdict", "검토 총평": "Reviewer summary",
         "총 %d건 · 부정(반려·재작업) %d건": "%d total · %d negative (rejected/rework)",
@@ -11377,6 +11390,8 @@ _PRE_RPT_L10N = {
         "오디터 검토 미기록.": "Tinjauan auditor belum dicatat.",
         "※ 부정 항목(차단·증빙필요)을 먼저 기재합니다.":
             "* Temuan negatif (diblokir / perlu bukti) dicantumkan lebih dahulu.",
+        "출처 문서": "Dokumen sumber", "출처": "Sumber",
+        "원재료 정보 출처": "Sumber data bahan baku",
         "심각도": "Tingkat keparahan", "najis 위험": "risiko najis",
         "필요 증빙": "Bukti yang diperlukan", "대체재": "Alternatif",
         "근거 문서": "Dokumen pendukung", "종합 판정": "Putusan keseluruhan",
@@ -11485,6 +11500,13 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
     doc.add_paragraph(L("총 %d건 · 차단(하람) %d · 증빙필요 %d · 적합 %d · najis 위험 %d")
                       % (s["total"], s["blocked"], s["needs_evidence"], s["cleared"], s["najis"]))
     doc.add_paragraph(L("※ 부정 항목(차단·증빙필요)을 먼저 기재합니다."))
+    # 심사자는 판정만으로 확인할 수 없다 — 이 값이 어느 파일에서 왔는지 밝힌다.
+    # 성분에 직접 연결된 문서가 없으면 케이스에 올라온 원재료 목록 원본을 출처로 적는다.
+    _srcdocs = _material_source_docs(db, case_id)
+    _mlist = [d.get("filename") for d in (dos.get("documents") or [])
+              if d.get("doc_type") == "material_list" and d.get("filename")]
+    if _mlist:
+        doc.add_paragraph("%s: %s" % (L("원재료 정보 출처"), ", ".join(_mlist)))
     VK = {"BLOCK": L("차단(하람)"), "NEEDS_EVIDENCE": L("증빙 필요"),
           "CLEARED": L("적합"), "PASS": L("적합")}
     for m in dos["materials"]:
@@ -11504,9 +11526,12 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
         if m.get("alternatives"):
             meta.append(L("대체재") + ": "
                         + ", ".join(_ALT.get(x, x) for x in m["alternatives"]))
-        if m.get("source_docs"):
-            meta.append(L("근거 문서") + ": " + ", ".join(
-                d.get("filename") or d.get("document_id") for d in m["source_docs"]))
+        _sd = m.get("source_docs") or _srcdocs.get(m.get("material_id")) or []
+        if _sd:
+            meta.append(L("출처 문서") + ": " + ", ".join(
+                d.get("filename") or d.get("document_id") for d in _sd))
+        elif _mlist:
+            meta.append("%s: %s" % (L("출처"), _mlist[0]))
         if meta:
             doc.add_paragraph(" · ".join(meta))
 
