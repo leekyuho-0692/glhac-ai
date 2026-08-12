@@ -1175,6 +1175,90 @@ def admin_seed_reset(body: schemas.SeedResetReq, user=Depends(auth.require_roles
     return {"reset": True, "demo_users_ensured": added}
 
 
+def _case_scoped_models():
+    """case_id를 가진 모델 전부 — 단, AuditLog는 제외한다.
+
+    감사로그를 케이스와 함께 지우면 전역 HMAC 체인의 prev가 사라져 영구 단절이 남는다
+    (2026-08-04 초기화가 그렇게 깨졌다). 초기화는 케이스 데이터를 지우는 것이지
+    '지웠다는 사실'까지 지우는 것이 아니다. CaseApplication은 부모라 호출부에서 마지막에 지운다."""
+    out = []
+    for name in dir(models):
+        m = getattr(models, name)
+        t = getattr(m, "__table__", None)
+        if t is None or name.startswith("_"):
+            continue
+        if "case_id" in t.columns and m is not models.AuditLog and m is not models.CaseApplication:
+            out.append((t.name, m))
+    return sorted(out)
+
+
+@app.post("/admin/cases/purge")
+def admin_cases_purge(body: schemas.CasePurgeReq, user=Depends(auth.require_roles("admin")),
+                      db: Session = Depends(get_db)):
+    """심사데이터 초기화(보존 화이트리스트 방식) — 스크립트로 DB를 직접 지우는 경로를 대체한다.
+
+    직접 삭제는 감사로그를 남기지 않고, 감사로그까지 지우면 체인이 영구 단절된다.
+    이 엔드포인트는 (1) AuditLog를 보존하고 (2) 케이스별·전체 삭제 사실을 감사로그에 남긴다.
+    기본은 dry_run 미리보기이며, 실삭제는 confirm='PURGE'와 사유가 있어야 한다."""
+    if not auth.dev_mode():
+        raise HTTPException(403, {"code": "PURGE_DISABLED", "hint": "GLHAC_DEV=1 에서만 허용"})
+    keep = set(body.keep or [])
+    cases = db.query(models.CaseApplication).all()
+    targets = [c for c in cases if c.case_id not in keep]
+    missing = sorted(keep - {c.case_id for c in cases})
+
+    scoped = _case_scoped_models()
+    plan = []
+    for c in targets:
+        counts = {}
+        for tname, m in scoped:
+            n = db.query(m).filter(m.case_id == c.case_id).count()
+            if n:
+                counts[tname] = n
+        plan.append({"case_id": c.case_id, "company_name": c.company_name,
+                     "status": c.status, "rows": counts,
+                     "audit_log_preserved": db.query(models.AuditLog)
+                     .filter(models.AuditLog.case_id == c.case_id).count()})
+
+    out = {"dry_run": bool(body.dry_run), "keep": sorted(keep), "keep_not_found": missing,
+           "delete_count": len(targets), "kept_count": len(cases) - len(targets),
+           "cases": plan,
+           "note": "audit_log는 삭제하지 않는다(체인 보존). 삭제 사실은 감사로그에 기록된다."}
+    if body.dry_run:
+        return out
+    if body.confirm != "PURGE":
+        raise HTTPException(400, {"code": "CONFIRM_REQUIRED", "hint": "confirm='PURGE'"})
+    if not (body.reason or "").strip():
+        raise HTTPException(400, {"code": "REASON_REQUIRED", "hint": "초기화 사유는 감사로그에 남는다"})
+    if body.expect_delete is not None and body.expect_delete != len(targets):
+        raise HTTPException(409, {"code": "COUNT_MISMATCH", "expected": body.expect_delete,
+                                  "actual": len(targets),
+                                  "hint": "dry_run 결과와 다르다 — 데이터가 그새 바뀌었다"})
+
+    # 삭제 '전에' 기록한다. 도중에 실패해도 착수 사실은 남아야 한다.
+    for item in plan:
+        _audit(db, user, "case.purge", "case", item["case_id"], item["case_id"],
+               {"company_name": item["company_name"], "reason": body.reason,
+                "rows_deleted": item["rows"]}, commit=False)
+    _audit(db, user, "admin.cases.purge", "system", None, None,
+           {"reason": body.reason, "deleted": [i["case_id"] for i in plan],
+            "kept": sorted(keep)}, commit=False)
+    db.commit()
+
+    deleted = {}
+    for c in targets:
+        for tname, m in scoped:   # 자식 먼저
+            n = db.query(m).filter(m.case_id == c.case_id).delete(synchronize_session=False)
+            if n:
+                deleted[tname] = deleted.get(tname, 0) + n
+        db.delete(c)              # 부모는 마지막
+        deleted["case_application"] = deleted.get("case_application", 0) + 1
+    db.commit()
+    out.update({"dry_run": False, "deleted_rows": deleted,
+                "audit_log_preserved": db.query(models.AuditLog).count()})
+    return out
+
+
 @app.get("/cases/{case_id}/audit-verify")
 def audit_verify(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """감사 해시체인 재계산 검증 (B.5 replay)."""

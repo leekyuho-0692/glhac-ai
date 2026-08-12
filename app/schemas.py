@@ -334,6 +334,14 @@ class SeedResetReq(BaseModel):
     confirm: str   # "RESET" 필요
 
 
+class CasePurgeReq(BaseModel):   # 심사데이터 초기화 — 감사 흔적을 남기는 API 경로
+    keep: List[str] = []                    # 보존 화이트리스트(case_id). 나머지가 삭제 대상
+    reason: Optional[str] = None            # 초기화 사유 — 감사로그에 남는다(실삭제 시 필수)
+    dry_run: bool = True                    # 기본은 미리보기. 실삭제는 명시적으로 꺼야 한다
+    confirm: Optional[str] = None           # 실삭제 시 "PURGE" 필요
+    expect_delete: Optional[int] = None     # 삭제 예정 건수 — 미리보기와 다르면 중단(오조작 방지)
+
+
 class FacilityReq(BaseModel):
     name: str
     address: Optional[str] = None
