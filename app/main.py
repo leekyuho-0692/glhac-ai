@@ -2579,7 +2579,8 @@ def add_material_evidence(case_id: str, material_id: str, body: schemas.Material
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
     b64 = _validate_upload(body.file_b64, body.filename)
     gps = _exif_gps(b64)
-    db.add(models.DocumentAsset(case_id=case_id, filename=body.filename, doc_type=body.evidence_type,
+    db.add(models.DocumentAsset(case_id=case_id, filename=body.filename,
+                                filename_en=_fn_en(body.filename), doc_type=body.evidence_type,
                                 material_id=material_id, review_status="pending",
                                 content_b64=b64 if len(b64) < 4_000_000 else None,
                                 content_type=_ctype(body.filename),
@@ -2664,7 +2665,8 @@ def list_material_evidence(case_id: str, material_id: str,
                            user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     rows = db.query(models.DocumentAsset).filter_by(case_id=case_id, material_id=material_id).all()
-    return [{"document_id": d.document_id, "filename": d.filename, "evidence_type": d.doc_type,
+    return [{"document_id": d.document_id, "filename": d.filename,
+             "filename_en": d.filename_en, "evidence_type": d.doc_type,
              "review_status": d.review_status, "has_file": bool(d.content_b64)} for d in rows]
 
 
@@ -2680,7 +2682,8 @@ def add_product_photo(case_id: str, product_id: str, body: schemas.ProductPhotoR
         raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
     b64 = _validate_upload(body.file_b64, body.filename)
     gps = _exif_gps(b64)
-    db.add(models.DocumentAsset(case_id=case_id, filename=body.filename, doc_type="product_photo",
+    db.add(models.DocumentAsset(case_id=case_id, filename=body.filename,
+                                filename_en=_fn_en(body.filename), doc_type="product_photo",
                                 product_id=product_id, review_status="pending",
                                 content_b64=b64 if len(b64) < 4_000_000 else None,
                                 content_type=_ctype(body.filename),
@@ -2697,7 +2700,8 @@ def list_product_photos(case_id: str, product_id: str,
     _get_case(db, case_id, user)
     rows = db.query(models.DocumentAsset).filter_by(case_id=case_id, product_id=product_id,
                                                     doc_type="product_photo").all()
-    return [{"document_id": d.document_id, "filename": d.filename, "has_file": bool(d.content_b64),
+    return [{"document_id": d.document_id, "filename": d.filename,
+             "filename_en": d.filename_en, "has_file": bool(d.content_b64),
              "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source} for d in rows]
 
 
@@ -2872,22 +2876,46 @@ def _hangul_ratio(s):
     return sum(1 for ch in letters if "가" <= ch <= "힣") / len(letters)
 
 
-def _translate_text(text, lang):
-    """한→대상언어 문서 번역 — qwen2.5(영문지시)로 청크 분할 번역. 실패 시 ''.
+def detect_doc_lang(text):
+    """문서 원문 언어 추정 — ko|id|en. 서류는 한국어·인도네시아어·영어로 들어온다.
+    한글이 섞여 있으면 ko(혼재 문서도 번역 대상), 아니면 인도네시아어 불용어 빈도로 id/en 판별."""
+    t = (text or "").strip()
+    if not t:
+        return "en"
+    if _hangul_ratio(t) > 0.05:
+        return "ko"
+    low = " %s " % re.sub(r"[^a-zA-Z ]+", " ", t.lower())
+    id_hits = sum(low.count(" %s " % w) for w in
+                  ("dan", "yang", "untuk", "dengan", "pada", "tidak", "adalah", "dari",
+                   "ini", "atau", "produk", "bahan", "perusahaan", "nomor", "tanggal"))
+    en_hits = sum(low.count(" %s " % w) for w in
+                  ("and", "the", "for", "with", "not", "is", "of", "this", "or",
+                   "product", "material", "company", "number", "date"))
+    return "id" if id_hits > en_hits else "en"
+
+
+def _translate_text(text, lang, src=None):
+    """문서 번역 — qwen2.5(영문지시)로 청크 분할. 실패 시 ''.
+    원문 언어를 감지해 지시를 맞춘다(한국어 고정이면 인니·영문 문서에 틀린 지시가 나간다).
+    원문과 목표가 같으면 번역하지 않고 원문을 돌려준다 — 지어내지 않게.
     한글 echo(번역실패) 청크는 1회 재시도. gemma3는 KO를 그대로 반환해 부적합."""
+    src = src or detect_doc_lang(text)
+    if src == (lang or "").lower():
+        return (text or "").strip()
     tgt = _LANG_EN.get(lang, _LANG_NAME.get(lang, lang))
-    sysmsg = ("You are a professional document translator. Translate the given Korean text into "
+    srcname = {"ko": "Korean", "id": "Indonesian (Bahasa Indonesia)", "en": "English"}.get(src, "Korean")
+    sysmsg = ("You are a professional document translator. Translate the given %s text into "
               "%s. Keep proper nouns, registration/business numbers, dates, and figures as-is. "
-              "Preserve line breaks. Output ONLY the translation — no Korean characters, "
-              "no explanations, no preamble." % tgt)
+              "Preserve line breaks. Output ONLY the translation — no %s characters, "
+              "no explanations, no preamble." % (srcname, tgt, srcname))
     out = []
     for i in range(0, len(text), 1500):
         ch = text[i:i + 1500]
         if not ch.strip():
             continue
         res = ai_local.llm_text(sysmsg, ch, model=_TRANSLATE_MODEL) or ""
-        # 번역 실패(한글 다량 잔존) 시 1회 재시도
-        if _hangul_ratio(res) > 0.15:
+        # 한국어 원문일 때만 한글 잔존을 실패 신호로 본다(인니·영문 원문엔 해당 없음)
+        if src == "ko" and _hangul_ratio(res) > 0.15:
             res = ai_local.llm_text(sysmsg, ch, model=_TRANSLATE_MODEL) or res
         out.append(res)
     return "\n".join(out).strip()
@@ -3111,7 +3139,7 @@ def _apply_intake_autofill(db, c, res):
             _seen_h.add(_h)
         else:
             _seen_n.add(_nm)
-        db.add(models.DocumentAsset(case_id=c.case_id, filename=_nm, doc_type=d["doc_type"],
+        db.add(models.DocumentAsset(case_id=c.case_id, filename=_nm, filename_en=_fn_en(_nm), doc_type=d["doc_type"],
                                     confidence=float(d.get("confidence") or 0), fields=d.get("fields"),
                                     text_excerpt=d.get("excerpt"), content_b64=d.get("content_b64"),
                                     content_type=d.get("content_type"), file_hash=_h))
@@ -3599,7 +3627,8 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
         applied["products_added"] = len(names)
     from .intake import _ctype
     _b64 = _validate_upload(body.file_b64, body.filename)
-    db.add(models.DocumentAsset(case_id=case_id, filename=body.filename, doc_type=body.doc_type,
+    db.add(models.DocumentAsset(case_id=case_id, filename=body.filename,
+                                filename_en=_fn_en(body.filename), doc_type=body.doc_type,
                                 confidence=float(r.get("confidence") or 0), fields=f,
                                 text_excerpt=r.get("excerpt"),
                                 content_b64=_b64 if len(_b64) < 4_000_000 else None,
@@ -6351,7 +6380,7 @@ def upload_case_document(case_id: str, body: dict = None,
         raise HTTPException(400, {"code": "NO_FILE"})
     b64 = _validate_upload(b64, fn)
     doc_type = b.get("doc_type") or "other"
-    d = models.DocumentAsset(case_id=case_id, filename=fn, doc_type=doc_type,
+    d = models.DocumentAsset(case_id=case_id, filename=fn, filename_en=_fn_en(fn), doc_type=doc_type,
                              content_b64=b64, content_type=_ctype(fn),
                              file_hash=_sha256_b64(b64))
     # A08 증거 귀속 메타 — 모의/현장 증거(사진·영상)에 누가·언제·어디서·무결성 기록
@@ -11233,7 +11262,9 @@ def _material_source_docs(db, case_id):
     out = {}
     rows = db.query(models.DocumentAsset).filter_by(case_id=case_id).filter(models.DocumentAsset.material_id.isnot(None)).all()
     for d in rows:
-        out.setdefault(d.material_id, []).append({"document_id": d.document_id, "filename": d.filename})
+        out.setdefault(d.material_id, []).append({"document_id": d.document_id,
+                                                  "filename": d.filename,
+                                                  "filename_en": d.filename_en})
     return out
 
 
@@ -11262,6 +11293,8 @@ def _preassess_company(db, c):
                              "product_type", "total_employee", "marketing_type", "tax_id",
                              "production_capacity", "establishment_date", "corporate_reg_no",
                              "office_phone", "company_name_ko", "company_name_en",
+                             # 영문 표기 — 인니·영문 보고서가 고유명사를 옮기는 근거 데이터
+                             "responsible_person_en", "halal_supervisor_en", "pic_name_en",
                              "responsible_person_en") if px.get(k)},
             "org_profile_ext": oe}
 
@@ -11270,7 +11303,9 @@ def _preassess_factories(db, c):
     out = []
     for f in _case_facilities(db, c):
         d = _fac_dict(f)
-        d["source_docs"] = (f.profile_ext or {}).get("source_docs") or []
+        pe = f.profile_ext or {}
+        d["source_docs"] = pe.get("source_docs") or []
+        d["name_en"] = pe.get("name_en") or pe.get("company_name_en")   # 영문 시설·법인명(입력값)
         out.append(d)
     return out
 
@@ -11290,6 +11325,7 @@ def _preassess_dossier(db, c, lang="ko"):
     docs = []
     for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all():
         docs.append({"document_id": d.document_id, "filename": d.filename,
+                     "filename_en": d.filename_en,
                      "doc_type": d.doc_type, "doc_type_ko": DOC_KO.get(d.doc_type, d.doc_type),
                      "confidence": d.confidence, "fields": d.fields or {},
                      "excerpt": (d.text_excerpt or "")[:1200],
@@ -11406,6 +11442,32 @@ _PRE_RPT_L10N = {
 }
 
 
+def _fn_en(name):
+    """한글 파일명의 영문 표시명 — 결정적 용어사전. 영문 파일명이면 None(중복 저장 안 함)."""
+    from .filename_l10n import to_en
+    if not name:
+        return None
+    en, _full = to_en(name)
+    return en if en != name else None
+
+
+def _ent(v, lang, v_en=None):
+    """보고서 데이터 필드의 표시값.
+    en·id일 때 (1) 신청서에 입력된 영문명(v_en) (2) 법인격·직책 같은 일반 용어 치환 순으로 쓴다.
+    영문명이 없으면 원문을 남긴다 — 고유명사를 코드에 박으면 그 업체에만 통한다."""
+    from .filename_l10n import entity
+    return entity(v, lang, v_en)
+
+
+def _fn_show(d, lang):
+    """표시용 파일명 — ko는 원문, en·id는 저장된 영문 표시명(없으면 즉석 변환·그래도 없으면 원문)."""
+    nm = d.get("filename") if isinstance(d, dict) else getattr(d, "filename", None)
+    if (lang or "ko").lower() == "ko":
+        return nm
+    en = d.get("filename_en") if isinstance(d, dict) else getattr(d, "filename_en", None)
+    return en or _fn_en(nm) or nm
+
+
 def _intake_doc_names(lang):
     """서류명 표 — 지원 언어면 그 표를, 아니면 한국어 표를 돌려준다(빈칸 방지)."""
     from .intake import DOC_KO, DOC_NAME_L10N
@@ -11427,6 +11489,19 @@ def _preassess_report_filename(c, lang, ext):
                                              date.today().isoformat(), ext)
 
 
+@app.post("/util/romanize")
+def util_romanize(body: dict = None, user=Depends(auth.get_current_user)):
+    """한글 인명·표기를 로마자로 변환(제안값). 확정은 사람이 한다 — 상호는 로마자 표기와
+    실제 영문 상호가 다를 수 있다(바이오로제트 → 표기 Baiorojeteu / 상호 BIOROSETTE)."""
+    from .romanize import romanize, romanize_name
+    b = body or {}
+    names = b.get("names") or {}
+    kind = (b.get("kind") or "name").lower()
+    fn = romanize_name if kind == "name" else romanize
+    return {"kind": kind, "result": {k: (fn(v) if v else "") for k, v in names.items()},
+            "note": "제안값입니다. 여권·법인 등기 표기와 다를 수 있으니 확인 후 저장하세요."}
+
+
 @app.get("/cases/{case_id}/preassess-report.docx")
 def preassess_report_docx(case_id: str, lang: str = Query("ko"),
                           user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
@@ -11444,8 +11519,10 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
     _EVID, _ALT = screening.term_tables(lang)   # 증빙코드·대체재도 같은 언어로
     doc = _docx.Document()
     doc.add_heading(L("사전심사 결과 보고서 · Pre-assessment Report"), level=0)
+    _cpx = c.profile_ext or {}
     doc.add_paragraph("GL-HAC AI · %s · %s %s"
-                      % (c.company_name or "-", L("생성일"), date.today().isoformat()))
+                      % (_ent(c.company_name, lang, _cpx.get("company_name_en")) or "-",
+                         L("생성일"), date.today().isoformat()))
 
     def table(rows, headers=None):
         t = doc.add_table(rows=0, cols=len(headers or rows[0]))
@@ -11463,21 +11540,27 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
     comp = dos["company"]
     doc.add_heading(L("1. 기업 정보 · Company"), level=1)
     px = comp.get("profile_ext") or {}
-    table([[L("기업명"), comp.get("company_name")], ["NIB", comp.get("nib")],
-           [L("대표/책임자"), comp.get("responsible_person")],
-           [L("할랄 감독자"), comp.get("halal_supervisor")],
+    table([[L("기업명"), _ent(comp.get("company_name"), lang, px.get("company_name_en"))],
+           ["NIB", comp.get("nib")],
+           [L("대표/책임자"), _ent(comp.get("responsible_person"), lang,
+                                px.get("responsible_person_en"))],
+           [L("할랄 감독자"), _ent(comp.get("halal_supervisor"), lang,
+                                px.get("halal_supervisor_en"))],
            [L("주소"), comp.get("address")],
            [L("연락처"), "%s / %s" % (comp.get("phone") or "-", comp.get("email") or "-")],
            [L("경로 · Pathway"), comp.get("pathway")], [L("위험등급"), comp.get("risk_category")],
            [L("등록유형"), px.get("registration_type")], [L("신청유형"), px.get("application_type")],
-           [L("담당자(PIC)"), "%s %s" % (px.get("pic_name") or "-", px.get("pic_title") or "")],
+           [L("담당자(PIC)"), "%s %s" % (_ent(px.get("pic_name"), lang,
+                                             px.get("pic_name_en")) or "-",
+                                        _ent(px.get("pic_title"), lang) or "")],
            [L("총 직원 수"), px.get("total_employee")], [L("생산능력"), px.get("production_capacity")]],
           headers=[L("항목"), L("내용")])
 
     doc.add_heading(L("2. 공장·시설 정보 · Facilities"), level=1)
     facs = dos.get("factories") or []
     if facs:
-        table([[f.get("label") or f.get("name"), f.get("reg_no"), f.get("address"),
+        table([[_ent(f.get("label") or f.get("name"), lang, f.get("name_en")),
+                f.get("reg_no"), f.get("address"),
                 "%s / %s" % (f.get("city") or "-", f.get("country") or "-")] for f in facs],
               headers=[L("공장"), L("등록번호"), L("주소"), L("도시/국가")])
     else:
@@ -11490,7 +11573,7 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
     doc.add_paragraph(L("총 %d건 · 부정(반려·재작업) %d건") % (len(docs), len(neg)))
     if docs:
         _dn = _intake_doc_names(lang)
-        table([[d.get("filename"), _dn.get(d.get("doc_type"), d.get("doc_type_ko")),
+        table([[_fn_show(d, lang), _dn.get(d.get("doc_type"), d.get("doc_type_ko")),
                 ("%.0f%%" % (100 * d["confidence"])) if d.get("confidence") else "-",
                 d.get("review_status") or L("미검수")] for d in (neg + rest)],
               headers=[L("파일"), L("분류"), L("AI 신뢰도"), L("검수 상태")])
@@ -11503,7 +11586,7 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
     # 심사자는 판정만으로 확인할 수 없다 — 이 값이 어느 파일에서 왔는지 밝힌다.
     # 성분에 직접 연결된 문서가 없으면 케이스에 올라온 원재료 목록 원본을 출처로 적는다.
     _srcdocs = _material_source_docs(db, case_id)
-    _mlist = [d.get("filename") for d in (dos.get("documents") or [])
+    _mlist = [_fn_show(d, lang) for d in (dos.get("documents") or [])
               if d.get("doc_type") == "material_list" and d.get("filename")]
     if _mlist:
         doc.add_paragraph("%s: %s" % (L("원재료 정보 출처"), ", ".join(_mlist)))
@@ -11529,7 +11612,7 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
         _sd = m.get("source_docs") or _srcdocs.get(m.get("material_id")) or []
         if _sd:
             meta.append(L("출처 문서") + ": " + ", ".join(
-                d.get("filename") or d.get("document_id") for d in _sd))
+                _fn_show(d, lang) or d.get("document_id") for d in _sd))
         elif _mlist:
             meta.append("%s: %s" % (L("출처"), _mlist[0]))
         if meta:
@@ -11852,7 +11935,8 @@ def add_sjph_evidence(case_id: str, body: schemas.SjphEvidenceReq,
     if body.item_key not in {k for k, _ in SJPH_EVIDENCE_ITEMS}:
         raise HTTPException(422, {"code": "BAD_ITEM_KEY"})
     b64 = _validate_upload(body.file_b64, body.filename)
-    doc = models.DocumentAsset(case_id=case_id, filename=body.filename, doc_type="sjph_evidence",
+    doc = models.DocumentAsset(case_id=case_id, filename=body.filename,
+                                filename_en=_fn_en(body.filename), doc_type="sjph_evidence",
                                review_status="pending", content_b64=b64 if len(b64) < 4_000_000 else None,
                                content_type=_ctype(body.filename))
     db.add(doc)

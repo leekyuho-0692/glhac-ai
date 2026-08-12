@@ -729,6 +729,9 @@ var EN_STRINGS={"무슬림":"Muslim", "임명장(SK)":"Decree (SK)", "교육증�
 function T(s){s=String(s);if(LANG===2&&typeof UI_STRINGS!=="undefined"&&UI_STRINGS[s])return UI_STRINGS[s];if(LANG===0&&EN_STRINGS[s])return EN_STRINGS[s];const d=_dualSplit(s);if(d)return LANG===1?d.ko:d.en;return s;}
 /* 서버 리포트(docx/pdf) 언어 — 화면 언어(LANG 0=EN·1=KO·2=ID)를 서버 코드로 옮긴다. */
 function RPT_LANG(){return LANG===0?"en":(LANG===2?"id":"ko");}
+/* 문서 표시명 — 한국어 화면은 원문, EN/ID 화면은 서버가 만든 영문 표시명(filename_en).
+   원문은 title 툴팁으로 남긴다(심사자가 실제 파일과 대조할 수 있어야 한다). */
+function FN(d){ if(!d) return ""; const o=d.filename||""; return LANG===1?o:((d.filename_en||o)); }
 /* 재사용 모달 폼 — prompt() 대체. fields:[{key,label,type:text|number|textarea|select,options,value,placeholder,required}] */
 let _modalCb=null,_modalFields=null;
 function dialog(title, fields){
@@ -5264,6 +5267,8 @@ SCREEN.application=async()=>{
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>대표자 · Representative</label><input class="v" id="apResp" value="${esc(c.responsible_person||"")}"></div>
           <div class="field"><label>대표자(영문) · Rep. (EN)</label><input class="v" id="peRespEn" value="${esc(pe.responsible_person_en||"")}"></div></div>
+        <div class="btnrow" style="margin:-4px 0 10px"><button class="btn" style="padding:3px 8px;font-size:11px" onclick="fillRomanized()">🔤 ${T('영문명 자동 채움(로마자)')}</button>
+          <span class="muted small">${T('빈 칸만 채웁니다 · 여권 표기와 다를 수 있으니 확인 후 저장하세요')}</span></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>사업유형 · Business Type</label><select class="v" id="peBizType">${(()=>{const cur=pe.business_type||"";const opts=["제조업","식당","화장품","케이터링","도축","서비스"];const all=cur&&!opts.includes(cur)?[cur].concat(opts):opts;return `<option value="">${T('선택')}</option>`+all.map(o=>`<option value="${esc(o)}" ${cur===o?"selected":""}>${esc(T(o))}</option>`).join("");})()}</select></div>
           <div class="field"><label>등록유형 · Registration Type</label><select class="v" id="peRegType">${["","Manufacturing industry","restaurant","cosmetic","catering","slaughter house","services"].map(o=>`<option${(pe.registration_type||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div></div>
@@ -5294,6 +5299,7 @@ SCREEN.application=async()=>{
         <div class="muted small" style="margin:10px 0 4px;font-weight:600">담당자 · PIC (Person In Charge)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>${T('이름')}</label><input class="v" id="pePicName" value="${esc(pe.pic_name||"")}"></div>
+          <div class="field"><label>${T('이름')}(EN)</label><input class="v" id="pePicNameEn" value="${esc(pe.pic_name_en||"")}"></div>
           <div class="field"><label>${T('직책')}</label><input class="v" id="pePicTitle" value="${esc(pe.pic_title||"")}"></div>
           <div class="field"><label>${T('휴대폰')}</label><input class="v" id="pePicPhone" value="${esc(pe.pic_phone||"")}"></div>
           <div class="field"><label>${T('이메일')}</label><input class="v" id="pePicEmail" value="${esc(pe.pic_email||"")}"></div></div>
@@ -5303,7 +5309,9 @@ SCREEN.application=async()=>{
           <div class="field"><label>${T('직책')}</label><input class="v" id="peCpTitle" value="${esc(pe.cp_title||"")}"></div>
           <div class="field"><label>${T('휴대폰')}</label><input class="v" id="peCpPhone" value="${esc(pe.cp_phone||"")}"></div>
           <div class="field"><label>${T('이메일')}</label><input class="v" id="peCpEmail" value="${esc(pe.cp_email||"")}"></div></div>
-        <div class="field"><label>할랄감독자 · Halal Supervisor</label><input class="v" id="apSup" value="${esc(c.halal_supervisor||"")}"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="field"><label>할랄감독자 · Halal Supervisor</label><input class="v" id="apSup" value="${esc(c.halal_supervisor||"")}"></div>
+          <div class="field"><label>할랄감독자(영문) · Supervisor (EN)</label><input class="v" id="peSupEn" value="${esc(pe.halal_supervisor_en||"")}"></div></div>
         <div class="field"><label>처리 기한 · Due date <span class="muted">(기한 경보)</span></label><input class="v" id="apDue" type="date" lang="${['en','ko','id'][LANG]||'en'}" value="${esc(c.due_date||"")}"> ${c.due_date?dueBadge(c.due_date):''}</div>
         <div class="field"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="apConsent" ${c.notify_consent?"checked":""} style="width:auto"> 알림 수신 동의 · Notification opt-in (SMS·WhatsApp)</label></div>
         ${c.draft_state==='returned'&&c.return_reason?`<div class="banner bad" style="margin-bottom:8px">${T('↩ 반려됨 · 사유:')} ${esc(c.return_reason)}</div>`:''}
@@ -5359,10 +5367,21 @@ async function autofillProfile(id){
     else{toast(T('채울 정보 없음 — 신청기업 서류를 먼저 업로드하세요'));}
   }catch(e){toast(T('자동채움 실패')+' · '+(e&&e.code?e.code:''));}
 }
+async function fillRomanized(){
+  /* 한글 이름을 로마자로 제안 — 이미 값이 있는 칸은 건드리지 않는다(사람이 넣은 값이 우선). */
+  const pairs=[["apResp","peRespEn"],["apSup","peSupEn"],["pePicName","pePicNameEn"]];
+  const names={}; pairs.forEach(([ko,en])=>{const k=document.getElementById(ko),e=document.getElementById(en);
+    if(k&&e&&k.value.trim()&&!e.value.trim())names[en]=k.value.trim();});
+  if(!Object.keys(names).length){toast(T('채울 빈 칸이 없습니다'));return;}
+  try{const r=await API('/util/romanize',{method:'POST',body:JSON.stringify({kind:'name',names})});
+    let n=0; Object.entries(r.result||{}).forEach(([id,v])=>{const e=document.getElementById(id);if(e&&v){e.value=v;n++;}});
+    toast(T('로마자 제안 채움')+' · '+n);}
+  catch(e){toast(T('변환 실패'));}
+}
 async function saveProfile(id,silent){
   const cel=document.getElementById("apConsent");
   const pe={};
-  [["peCompanyEn","company_name_en"],["peRespEn","responsible_person_en"],["peTaxId","tax_id"],["peCorpRegNo","corporate_reg_no"],["peEstDate","establishment_date"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peRevenue","annual_revenue"],["peOutlet","outlet_count"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
+  [["peCompanyEn","company_name_en"],["peRespEn","responsible_person_en"],["peTaxId","tax_id"],["peCorpRegNo","corporate_reg_no"],["peEstDate","establishment_date"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peRevenue","annual_revenue"],["peOutlet","outlet_count"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["peSupEn","halal_supervisor_en"],["pePicNameEn","pic_name_en"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
   const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),address:v("peAddress"),email:v("peEmail"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined,profile_ext:pe};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];await loadCases(true);applyView();if(!silent)alert("✅ 저장이 완료되었습니다 · Saved");}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
@@ -5756,7 +5775,7 @@ async function materialReport(id){
     const rows=(r.materials||[]).map(m=>`<div class="li" style="padding:8px 0;border-bottom:1px solid var(--line)">
       <div class="tx" style="display:flex;align-items:center;gap:6px">${canChk?`<input type="checkbox" class="matChk" data-mid="${esc(m.material_id||"")}">`:''}<b>${esc(m.name)}${m.e_number?' ('+esc(m.e_number)+')':''}</b> ${bTag(vColor(m.verdict),T(m.verdict_ko||m.verdict||'—'))}${m.najis?' '+bTag("bad","najis"):''}${m.severity?' <span class="muted small">· '+esc(m.severity)+'</span>':''}</div>
       <div class="small" style="white-space:pre-wrap;color:var(--ink2);margin-top:2px">${esc(m.explanation||"")}</div>
-      <div class="small" style="margin-top:3px">${(m.source_docs||[]).map(d=>`<span class="chip" style="cursor:pointer" title="${T('문서 뷰어')}" onclick="viewDoc('${d.document_id}')">📄 ${esc(d.filename||d.document_id)}</span>`).join(' ')||`<span class="muted small">${T('연결 문서 없음')}</span>`}</div>
+      <div class="small" style="margin-top:3px">${(m.source_docs||[]).map(d=>`<span class="chip" style="cursor:pointer" title="${T('문서 뷰어')}" onclick="viewDoc('${d.document_id}')" title="${esc(d.filename||'')}">📄 ${esc(FN(d)||d.document_id)}</span>`).join(' ')||`<span class="muted small">${T('연결 문서 없음')}</span>`}</div>
     </div>`).join("")||`<div class="muted" style="padding:12px">${T('원재료 없음')}</div>`;
     const snapBtn=canChk?`<div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="saveMatSnapshot('${id}')">💾 ${T('스냅샷 저장·전달')}</button><span class="muted small">${T('체크한 성분·문서를 이력으로 저장(클라이언트 전달)')}</span></div>`:'';
     // P3: 정량 측정값이 응답에 있으면 실측 표(quantTable), 없으면 legacy 정성표 폴백
@@ -6043,7 +6062,7 @@ SCREEN.documents=async()=>{
   const sel=docs.find(d=>d.document_id===DOC_SEL)||docs.find(d=>d.has_file)||docs[0]||null;
   const docHtml=docs.length?`<div class="filegrid">${docs.map(d=>`<div class="filecard" style="align-items:flex-start;${sel&&d.document_id===sel.document_id?'border-color:var(--accent);background:var(--accent-soft)':''}" onclick="selectDoc('${d.document_id}')">
       <div class="fico">${/png|jpg|jpeg|img/i.test(d.filename||"")?'🖼':'📄'}</div>
-      <div class="fmeta" style="flex:1"><b>${esc(d.filename||"문서")}</b>
+      <div class="fmeta" style="flex:1"><b title="${esc(d.filename||"")}">${esc(FN(d)||"문서")}</b>
         <div class="muted small" style="margin-top:2px">🤖 ${T('AI 판단')}: <b>${esc(T(d.doc_type_ko||d.doc_type||"미분류"))}</b> · ${T('신뢰도')} ${Math.round((d.confidence||0)*100)}% · ${bTag(statusColor(d.review_status),d.review_status||"미검수")}</div>
         <div style="margin-top:3px">${(d.confidence!=null&&d.confidence<0.85)?`<span class="tag t-warn">⚠ ${T('신뢰도 낮음')}</span> `:''}${(nameCount[(d.filename||'').toLowerCase()]>1)?`<span class="tag t-bad">⛑ ${T('중복 파일명')}</span> `:''}${!d.has_file?`<span class="tag t-mute">${T('파일 없음')}</span>`:''}</div>
         ${canReview?`<div class="btnrow" style="margin-top:7px">
@@ -6108,7 +6127,7 @@ SCREEN.vault=async()=>{
   const empty=t=>`<div class="muted small">${t}</div>`;
   // ① 업로드 문서
   const upBody=docs.length?`<table><tbody>${docs.map(d=>`<tr>
-      <td>${/png|jpg|jpeg|img|image/i.test((d.filename||'')+(d.doc_type||''))?'🖼':'📄'} <b>${esc(d.filename||T('문서'))}</b><div class="muted small">${esc(T(d.doc_type_ko||d.doc_type||''))}</div></td>
+      <td>${/png|jpg|jpeg|img|image/i.test((d.filename||'')+(d.doc_type||''))?'🖼':'📄'} <b title="${esc(d.filename||'')}">${esc(FN(d)||T('문서'))}</b><div class="muted small">${esc(T(d.doc_type_ko||d.doc_type||''))}</div></td>
       <td style="text-align:right;white-space:nowrap">${d.has_file?`<button class="btn xs" onclick="viewDoc('${esc(d.document_id)}')">⤓ ${T('다운로드')}</button>`:`<span class="muted small">${T('파일 없음')}</span>`}</td></tr>`).join('')}</tbody></table>`:empty(T('항목 없음'));
   const upCard=show('upload')?`<div class="card"><h3>📄 ${T('업로드 문서')} <span class="en">· Uploaded</span><span class="r">${docs.length}</span></h3><div class="body tight">${upBody}</div></div>`:'';
   // ② 생성 문서(GeneratedDocument) — PDF 다운로드

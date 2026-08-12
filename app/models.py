@@ -302,6 +302,7 @@ class DocumentAsset(Base):
     document_id = Column(String, primary_key=True, default=uid)
     case_id = Column(String, nullable=False)
     filename = Column(String, nullable=False)
+    filename_en = Column(String)   # 한글 파일명의 영문 표시명(결정적 용어사전) — 인니·영문 심사자용
     doc_type = Column(String)
     confidence = Column(Float)
     fields = Column(JSON)
