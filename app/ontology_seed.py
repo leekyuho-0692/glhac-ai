@@ -379,6 +379,24 @@ ONTOLOGY = [
        "halal", "low", ["plant", "mineral"],
        {"id": ["kalsium laut"], "ko": ["해양미네랄", "해조칼슘복합", "아쿠아민"],
         "en": ["aquamin", "lithothamnion", "marine mineral", "aqua calcium", "marine calcium"]}),
+    # ── 성분명세(Form 5) 대조로 정체가 밝혀진 상품명 (2026-08) ──
+    # 상품명만으로는 판정이 불가능했던 것들. 공급사 사양서로 실체를 확인해 등록한다.
+    _e("ing.bitter_melon", "Bitter melon extract (Momordica charantia)", "base", "mushbooh", "low",
+       ["plant"],
+       {"id": ["pare", "ekstrak pare"], "ko": ["여주", "여주추출분말", "여주추출물"],
+        "en": ["bitter melon", "momordica charantia", "yeoju extract", "yeoju"]},
+       carrier="alcohol",
+       evidence=["source_declaration", "alcohol_carrier_check"],
+       alts=["water-extracted declared"]),
+    # GALAXIUM PEARLS EXCEL = 젖산칼슘 상품명(GALACTIC S.A.). 상품명이라 종전엔 미상이었다.
+    # 젖산칼슘 자체는 E327(ing.e327)에 등록돼 있어 별칭만 연결한다.
+    _e("ing.calcium_lactate_brand", "Calcium lactate (brand: Galaxium Pearls)", "additive",
+       "mushbooh", "low", ["plant", "ferment"],
+       {"id": ["kalsium laktat"], "ko": ["젖산칼슘", "락트산칼슘"],
+        "en": ["galaxium pearls", "galaxium pearls excel", "calcium lactate"]},
+       e_number=None,
+       evidence=["source_declaration", "halal_cert"],
+       alts=["plant-fermented lactate declared"]),
 ]
 
 

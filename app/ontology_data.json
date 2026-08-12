@@ -9535,5 +9535,79 @@
   "required_evidence": [],
   "alternatives": [],
   "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.bitter_melon",
+  "canonical_name": "Bitter melon extract (Momordica charantia)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": "alcohol",
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "id": [
+    "pare",
+    "ekstrak pare"
+   ],
+   "ko": [
+    "여주",
+    "여주추출분말",
+    "여주추출물"
+   ],
+   "en": [
+    "bitter melon",
+    "momordica charantia",
+    "yeoju extract",
+    "yeoju"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "alcohol_carrier_check"
+  ],
+  "alternatives": [
+   "water-extracted declared"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
+ },
+ {
+  "ingredient_uid": "ing.calcium_lactate_brand",
+  "canonical_name": "Calcium lactate (brand: Galaxium Pearls)",
+  "category": "additive",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "ferment"
+  ],
+  "aliases": {
+   "id": [
+    "kalsium laktat"
+   ],
+   "ko": [
+    "젖산칼슘",
+    "락트산칼슘"
+   ],
+   "en": [
+    "galaxium pearls",
+    "galaxium pearls excel",
+    "calcium lactate"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration",
+   "halal_cert"
+  ],
+  "alternatives": [
+   "plant-fermented lactate declared"
+  ],
+  "rule_version": "GLHAC-DRAFT-2026-01"
  }
 ]
