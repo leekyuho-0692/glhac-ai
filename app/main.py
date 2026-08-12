@@ -3394,9 +3394,32 @@ def company_check(case_id: str, user=Depends(auth.get_current_user), db: Session
     found.sort(key=lambda x: (x["doc_type"] != "nib_business_license", -x["similarity"]))
     best = max((f["similarity"] for f in found), default=None)
     mismatch = bool(found) and best is not None and best < 0.5
+
+    # 문서만 봐서는 '남의 공장등록증이 붙은' 사고를 못 잡는다 — 케이스에 연결된 시설 자체를
+    # 신청자와 대조한다. 국문·영문 상호를 모두 후보로 두고 가장 높은 유사도를 쓴다
+    # (신청자 '천우건설' vs 시설 'Dongyang Chemical'처럼 언어가 갈리면 오탐이 난다).
+    px = c.profile_ext or {}
+    names = [x for x in (c.company_name, px.get("company_name_en"), px.get("company_name_ko")) if x]
+    fac_rows = []
+    for f in _case_facilities(db, c):
+        fpx = f.profile_ext or {}
+        fnames = [x for x in (f.name, fpx.get("name_en"), fpx.get("label"),
+                              fpx.get("manufacturer_name")) if x]
+        sim = max((_name_sim(a2, b2) for a2 in names for b2 in fnames), default=0.0)
+        fac_rows.append({"facility_id": f.facility_id, "name": f.name,
+                         "name_en": fpx.get("name_en"), "similarity": sim,
+                         "is_manufacturer": bool(fpx.get("manufacturer_name") or fpx.get("name_en"))})
+    # 신청자≠제조사 구조(유통사 신청)는 정상이므로 '불일치'가 곧 오류는 아니다.
+    # 확인이 필요한 대상으로만 표시하고 판단은 오디터가 한다.
+    fac_review = [f for f in fac_rows if f["similarity"] < 0.5]
     return {"case_company": c.company_name, "applicant_docs": found,
             "mismatch": mismatch, "best_similarity": best,
-            "suggested_company": found[0]["doc_company"] if (mismatch and found) else None}
+            "suggested_company": found[0]["doc_company"] if (mismatch and found) else None,
+            "facilities": fac_rows, "facility_review": fac_review,
+            "facility_review_count": len(fac_review),
+            "note": ("신청자와 이름이 다른 시설이 있습니다 — 위탁제조(OEM)면 정상이나, "
+                     "다른 업체의 공장등록증이 잘못 첨부된 것은 아닌지 확인하세요.")
+            if fac_review else None}
 
 
 @app.post("/cases/{case_id}/profile/autofill")
@@ -6189,14 +6212,28 @@ def update_factory(facility_id, body: dict = None, user=Depends(auth.get_current
 
 @app.delete("/cases/{case_id}/factories/{facility_id}")
 def delete_factory(case_id, facility_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """케이스에서 공장 연결을 끊는다. 공장 레코드는 아무 케이스도 참조하지 않을 때만 지운다.
+
+    이전에는 연결 해제가 곧 레코드 삭제였다. 같은 공장을 여러 케이스가 참조하는 상황(위탁제조·
+    데모 시드)에서 한 케이스에서 빼면 다른 케이스의 공장까지 사라졌다(실제로 발생시킴).
+    '잘못 붙은 공장을 뗀다'와 '공장을 없앤다'는 다른 행위다."""
     c = _get_case(db, case_id, user)
     ids = [x for x in (c.facility_ids or []) if x != facility_id]
     c.facility_ids = ids
     f = db.get(models.Facility, facility_id)
-    if f and (user["role"] == "admin" or f.org_id == c.org_id):
+    still_used = [x for x in db.query(models.CaseApplication)
+                  .filter(models.CaseApplication.case_id != case_id).all()
+                  if facility_id in (x.facility_ids or [])]
+    removed = False
+    if f and not still_used and (user["role"] == "admin" or f.org_id == c.org_id):
         db.delete(f)
+        removed = True
+    _audit(db, user, "case.facility.unlink", "facility", facility_id, case_id,
+           {"facility_name": f.name if f else None, "record_deleted": removed,
+            "still_used_by": len(still_used)}, commit=False)
     db.commit()
-    return {"deleted": facility_id, "remaining": ids}
+    return {"unlinked": facility_id, "remaining": ids, "record_deleted": removed,
+            "still_used_by_cases": len(still_used)}
 
 
 @app.post("/cases/{case_id}/factories/classify")
@@ -11391,6 +11428,14 @@ _PRE_RPT_L10N = {
             "* Negative findings (blocked / evidence required) are listed first.",
         "심각도": "Severity", "najis 위험": "najis risk", "필요 증빙": "Required evidence",
         "출처 문서": "Source document", "출처": "Source",
+        "5. 공급사 할랄 인증번호 · Supplier Halal Certificates": "5. Supplier Halal Certificates",
+        "6. 정량 기준 비교 · Quantitative": "6. Quantitative Comparison",
+        "7. 오디터 검토 결과 · Auditor Review": "7. Auditor Review",
+        "원재료": "Material", "공급사": "Supplier", "인증번호": "Certificate No.",
+        "원산지": "Origin",
+        "총 %d건 · 인증번호 미확보 %d건 — 번호 대조는 오디터가 수행합니다.":
+            "%d on file · %d without a certificate number — verification of the numbers is "
+            "performed by the auditor.",
         "원재료 정보 출처": "Material data source",
         "대체재": "Alternatives", "근거 문서": "Source documents",
         "종합 판정": "Overall verdict", "검토 총평": "Reviewer summary",
@@ -11427,6 +11472,14 @@ _PRE_RPT_L10N = {
         "※ 부정 항목(차단·증빙필요)을 먼저 기재합니다.":
             "* Temuan negatif (diblokir / perlu bukti) dicantumkan lebih dahulu.",
         "출처 문서": "Dokumen sumber", "출처": "Sumber",
+        "5. 공급사 할랄 인증번호 · Supplier Halal Certificates":
+            "5. Nomor Sertifikat Halal Pemasok · Supplier Halal Certificates",
+        "6. 정량 기준 비교 · Quantitative": "6. Perbandingan Kuantitatif · Quantitative",
+        "7. 오디터 검토 결과 · Auditor Review": "7. Tinjauan Auditor · Auditor Review",
+        "원재료": "Bahan baku", "공급사": "Pemasok", "인증번호": "No. Sertifikat",
+        "원산지": "Asal",
+        "총 %d건 · 인증번호 미확보 %d건 — 번호 대조는 오디터가 수행합니다.":
+            "%d tercatat · %d tanpa nomor sertifikat — verifikasi nomor dilakukan oleh auditor.",
         "원재료 정보 출처": "Sumber data bahan baku",
         "심각도": "Tingkat keparahan", "najis 위험": "risiko najis",
         "필요 증빙": "Bukti yang diperlukan", "대체재": "Alternatif",
@@ -11618,16 +11671,27 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
         if meta:
             doc.add_paragraph(" · ".join(meta))
 
+    # 공급사 할랄 인증번호 — 인증서 원본은 오디터가 대조할 몫이고, 시스템은 '무엇을 대조해야 하는지'를
+    # 빠짐없이 제시한다. 번호가 없는 원재료는 확보 대상으로 함께 센다(없는 것을 있다고 하지 않는다).
+    certs = [m for m in dos["materials"] if (m.get("cert_no") or "").strip()]
+    if certs:
+        doc.add_heading(L("5. 공급사 할랄 인증번호 · Supplier Halal Certificates"), level=1)
+        doc.add_paragraph(L("총 %d건 · 인증번호 미확보 %d건 — 번호 대조는 오디터가 수행합니다.")
+                          % (len(certs), len(dos["materials"]) - len(certs)))
+        table([[m.get("name"), m.get("supplier") or "-", m.get("cert_no"), m.get("origin") or "-"]
+               for m in sorted(certs, key=lambda x: (x.get("name") or ""))],
+              headers=[L("원재료"), L("공급사"), L("인증번호"), L("원산지")])
+
     q = [x for x in (dos.get("quantitative") or []) if x.get("value") is not None]
     if q:
-        doc.add_heading(L("5. 정량 기준 비교 · Quantitative"), level=1)
+        doc.add_heading(L("6. 정량 기준 비교 · Quantitative"), level=1)
         table([[x["param_ko"], "%s %s" % (x["value"], x.get("unit") or ""),
                 "≤ %s" % x.get("threshold"),
                 {"pass": L("적합"), "fail": L("부적합")}.get(x.get("verdict"), "-")]
                for x in q], headers=[L("항목"), L("측정값"), L("기준"), L("판정")])
 
     rv = dos.get("review") or {}
-    doc.add_heading(L("6. 오디터 검토 결과 · Auditor Review"), level=1)
+    doc.add_heading(L("7. 오디터 검토 결과 · Auditor Review"), level=1)
     if rv:
         secko = {"documents": L("문서"), "materials": L("재료"), "process": L("제조")}
         table([[secko.get(k, k), L("적합") if (v or {}).get("ok") else L("보완"),
@@ -11742,6 +11806,9 @@ def _material_report(db, c, lang="ko"):
                      "alternatives": exp.get("alternatives") or [],
                      "evidence_count": m.evidence_count if hasattr(m, "evidence_count") else None,
                      "source_docs": _src.get(m.material_id) or [],  # M2: 문서 고유번호·위치→뷰어링크
+                     # 공급사 할랄 인증번호 — 오디터가 발급기관에 대조할 값
+                     "supplier": m.supplier, "cert": m.cert, "cert_no": m.cert_no,
+                     "origin": m.origin,
                      "explanation": exp.get("explanation") or ""})
     category_registration = [{"category": k, "count": cat_counts[k],
                               "registered": cat_counts[k] > 0} for k in _CATS]
@@ -12120,9 +12187,19 @@ def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session
         checklist.append({"doc_type": dt, "doc_type_ko": DOC_KO.get(dt, dt), "satisfied": True,
                           "files": files, "file_count": len(files), "status": "ok",
                           "requirement": DOC_REQUIREMENT.get(dt, ""), "required": False})
+    # 공급사 할랄 인증서는 '원본 서류'가 없어도 인증번호는 확보돼 있을 수 있다.
+    # 오디터가 대조할 대상이 몇 건인지 함께 보여야 '자료가 전무하다'는 오해가 안 생긴다.
+    _cn = (db.query(models.Material)
+           .filter(models.Material.case_id == case_id,
+                   models.Material.cert_no.isnot(None), models.Material.cert_no != "").count())
+    for _c in checklist:
+        if _c["doc_type"] == "halal_certificate" and _cn:
+            _c["cert_no_on_file"] = _cn
+            _c["note"] = "공급사 인증번호 %d건 확보 — 원본 서류 미제출(번호 대조는 오디터)" % _cn
     missing = [{
         "doc_type": c["doc_type"], "doc_type_ko": c["doc_type_ko"], "status": c["status"],
         "file_count": c["file_count"], "requirement": c["requirement"],
+        "note": c.get("note"), "cert_no_on_file": c.get("cert_no_on_file"),
         "reason": ("서류가 제출되지 않았습니다 (파일 없음)"
                    if c["status"] == "missing"
                    else "제출됐으나 반려됨 — 내용 보완이 필요합니다"),
