@@ -11313,21 +11313,117 @@ def get_preassess_dossier(case_id: str,
     return _preassess_dossier(db, c)
 
 
+# 사전심사 보고서 고정 라벨의 EN/ID 대역 — 한국어 원문을 키로 쓴다(프런트 T()와 같은 방식).
+# 성분 판정 근거 문장은 서버가 온톨로지에서 생성하는 한국어 서술이라 여기서 번역하지 않는다.
+# 겉면(제목·표머리·판정어)만 현지화해도 BPJPH 제출 맥락에서 읽히고, 근거는 영문 용어가 병기된다.
+_PRE_RPT_L10N = {
+    "en": {
+        "사전심사 결과 보고서 · Pre-assessment Report": "Pre-assessment Report",
+        "생성일": "Issued", "1. 기업 정보 · Company": "1. Company",
+        "2. 공장·시설 정보 · Facilities": "2. Facilities",
+        "3. 문서 분석 · Document Analysis": "3. Document Analysis",
+        "4. 성분(원재료) 분석 · Material Analysis": "4. Material Analysis",
+        "5. 정량 기준 비교 · Quantitative": "5. Quantitative Comparison",
+        "6. 오디터 검토 결과 · Auditor Review": "6. Auditor Review",
+        "항목": "Item", "내용": "Value", "공장": "Facility", "등록번호": "Reg. No.",
+        "주소": "Address", "도시/국가": "City/Country", "파일": "File", "분류": "Type",
+        "AI 신뢰도": "AI confidence", "검수 상태": "Review status", "측정값": "Measured",
+        "기준": "Threshold", "판정": "Verdict", "섹션": "Section", "코멘트": "Comment",
+        "기업명": "Company name", "대표/책임자": "Responsible person",
+        "할랄 감독자": "Halal supervisor", "연락처": "Contact",
+        "경로 · Pathway": "Pathway", "위험등급": "Risk category",
+        "등록유형": "Registration type", "신청유형": "Application type",
+        "담당자(PIC)": "PIC", "총 직원 수": "Total employees", "생산능력": "Production capacity",
+        "차단(하람)": "Blocked (haram)", "증빙 필요": "Evidence required", "적합": "Compliant",
+        "부적합": "Non-compliant", "보완": "Needs improvement", "미검수": "Not reviewed",
+        "적합(진행 가능)": "Ready to proceed", "보완 필요": "Supplement required",
+        "미검토": "Not reviewed", "문서": "Documents", "재료": "Materials", "제조": "Process",
+        "등록된 공장 정보 없음.": "No facility registered.",
+        "오디터 검토 미기록.": "No auditor review recorded.",
+        "※ 부정 항목(차단·증빙필요)을 먼저 기재합니다.":
+            "* Negative findings (blocked / evidence required) are listed first.",
+        "심각도": "Severity", "najis 위험": "najis risk", "필요 증빙": "Required evidence",
+        "대체재": "Alternatives", "근거 문서": "Source documents",
+        "종합 판정": "Overall verdict", "검토 총평": "Reviewer summary",
+        "총 %d건 · 부정(반려·재작업) %d건": "%d total · %d negative (rejected/rework)",
+        "총 %d건 · 차단(하람) %d · 증빙필요 %d · 적합 %d · najis 위험 %d":
+            "%d total · blocked %d · evidence required %d · compliant %d · najis risk %d",
+        "※ 본 보고서는 AI 온톨로지 기반 준비용 분석이며, 공식 판정은 BPJPH/MUI Fatwa 절차로 확정됩니다.":
+            "* This report is a preparatory analysis based on an AI ontology. "
+            "Official determination is made through the BPJPH/MUI Fatwa process.",
+    },
+    "id": {
+        "사전심사 결과 보고서 · Pre-assessment Report": "Laporan Pra-audit · Pre-assessment Report",
+        "생성일": "Diterbitkan", "1. 기업 정보 · Company": "1. Perusahaan · Company",
+        "2. 공장·시설 정보 · Facilities": "2. Fasilitas · Facilities",
+        "3. 문서 분석 · Document Analysis": "3. Analisis Dokumen · Document Analysis",
+        "4. 성분(원재료) 분석 · Material Analysis": "4. Analisis Bahan Baku · Material Analysis",
+        "5. 정량 기준 비교 · Quantitative": "5. Perbandingan Kuantitatif · Quantitative",
+        "6. 오디터 검토 결과 · Auditor Review": "6. Tinjauan Auditor · Auditor Review",
+        "항목": "Item", "내용": "Isi", "공장": "Pabrik", "등록번호": "No. Registrasi",
+        "주소": "Alamat", "도시/국가": "Kota/Negara", "파일": "Berkas", "분류": "Klasifikasi",
+        "AI 신뢰도": "Keyakinan AI", "검수 상태": "Status tinjauan", "측정값": "Nilai terukur",
+        "기준": "Ambang batas", "판정": "Putusan", "섹션": "Bagian", "코멘트": "Komentar",
+        "기업명": "Nama perusahaan", "대표/책임자": "Penanggung jawab",
+        "할랄 감독자": "Penyelia Halal", "연락처": "Kontak",
+        "경로 · Pathway": "Jalur · Pathway", "위험등급": "Kategori risiko",
+        "등록유형": "Jenis registrasi", "신청유형": "Jenis permohonan",
+        "담당자(PIC)": "PIC", "총 직원 수": "Jumlah karyawan", "생산능력": "Kapasitas produksi",
+        "차단(하람)": "Diblokir (haram)", "증빙 필요": "Perlu bukti", "적합": "Sesuai",
+        "부적합": "Tidak sesuai", "보완": "Perlu perbaikan", "미검수": "Belum ditinjau",
+        "적합(진행 가능)": "Sesuai (dapat dilanjutkan)", "보완 필요": "Perlu perbaikan",
+        "미검토": "Belum ditinjau", "문서": "Dokumen", "재료": "Bahan", "제조": "Produksi",
+        "등록된 공장 정보 없음.": "Tidak ada data pabrik terdaftar.",
+        "오디터 검토 미기록.": "Tinjauan auditor belum dicatat.",
+        "※ 부정 항목(차단·증빙필요)을 먼저 기재합니다.":
+            "* Temuan negatif (diblokir / perlu bukti) dicantumkan lebih dahulu.",
+        "심각도": "Tingkat keparahan", "najis 위험": "risiko najis",
+        "필요 증빙": "Bukti yang diperlukan", "대체재": "Alternatif",
+        "근거 문서": "Dokumen pendukung", "종합 판정": "Putusan keseluruhan",
+        "검토 총평": "Ringkasan peninjau",
+        "총 %d건 · 부정(반려·재작업) %d건": "%d total · %d negatif (ditolak/perbaikan)",
+        "총 %d건 · 차단(하람) %d · 증빙필요 %d · 적합 %d · najis 위험 %d":
+            "%d total · diblokir %d · perlu bukti %d · sesuai %d · risiko najis %d",
+        "※ 본 보고서는 AI 온톨로지 기반 준비용 분석이며, 공식 판정은 BPJPH/MUI Fatwa 절차로 확정됩니다.":
+            "* Laporan ini merupakan analisis persiapan berbasis ontologi AI. "
+            "Penetapan resmi ditentukan melalui proses BPJPH/MUI Fatwa.",
+    },
+}
+
+
+def _pre_rpt_lang(lang):
+    """보고서 라벨 번역기 — 미지원 언어·미등록 키는 한국어 원문을 그대로 돌려준다(누락이 빈칸이 되지 않게)."""
+    m = _PRE_RPT_L10N.get((lang or "ko").lower()) or {}
+    return lambda s: m.get(s, s)
+
+
+def _preassess_report_filename(c, lang, ext):
+    """Preassess_Report_{회사명}_{lang}_{YYYY-MM-DD}.{ext}"""
+    import re as _re
+    name = c.company_name or c.case_id[:8]
+    name = _re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", name).strip() or c.case_id[:8]
+    return "Preassess_Report_%s_%s_%s.%s" % (name[:60], (lang or "ko").lower(),
+                                             date.today().isoformat(), ext)
+
+
 @app.get("/cases/{case_id}/preassess-report.docx")
-def preassess_report_docx(case_id: str,
+def preassess_report_docx(case_id: str, lang: str = Query("ko"),
                           user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
                                                           "consultant")),
                           db: Session = Depends(get_db)):
-    """사전심사 결과 보고서 — 편집 가능한 Word(.docx). 기업·공장·문서·성분(부정 우선)·판정 수록."""
+    """사전심사 결과 보고서 — 편집 가능한 Word(.docx). 기업·공장·문서·성분(부정 우선)·판정 수록.
+    lang=ko|en|id — 제목·표머리·판정어 등 고정 라벨을 현지화한다(성분 근거 서술은 원문 유지)."""
     import io as _io
     import docx as _docx
     from docx.shared import Pt
     from fastapi.responses import Response
     c = _get_case(db, case_id, user)
     dos = _preassess_dossier(db, c)
+    L = _pre_rpt_lang(lang)
     doc = _docx.Document()
-    doc.add_heading("사전심사 결과 보고서 · Pre-assessment Report", level=0)
-    doc.add_paragraph("GL-HAC AI · %s · 생성일 %s" % (c.company_name or "-", date.today().isoformat()))
+    doc.add_heading(L("사전심사 결과 보고서 · Pre-assessment Report"), level=0)
+    doc.add_paragraph("GL-HAC AI · %s · %s %s"
+                      % (c.company_name or "-", L("생성일"), date.today().isoformat()))
 
     def table(rows, headers=None):
         t = doc.add_table(rows=0, cols=len(headers or rows[0]))
@@ -11343,43 +11439,46 @@ def preassess_report_docx(case_id: str,
         return t
 
     comp = dos["company"]
-    doc.add_heading("1. 기업 정보 · Company", level=1)
+    doc.add_heading(L("1. 기업 정보 · Company"), level=1)
     px = comp.get("profile_ext") or {}
-    table([["기업명", comp.get("company_name")], ["NIB", comp.get("nib")],
-           ["대표/책임자", comp.get("responsible_person")], ["할랄 감독자", comp.get("halal_supervisor")],
-           ["주소", comp.get("address")], ["연락처", "%s / %s" % (comp.get("phone") or "-", comp.get("email") or "-")],
-           ["경로 · Pathway", comp.get("pathway")], ["위험등급", comp.get("risk_category")],
-           ["등록유형", px.get("registration_type")], ["신청유형", px.get("application_type")],
-           ["담당자(PIC)", "%s %s" % (px.get("pic_name") or "-", px.get("pic_title") or "")],
-           ["총 직원 수", px.get("total_employee")], ["생산능력", px.get("production_capacity")]],
-          headers=["항목", "내용"])
+    table([[L("기업명"), comp.get("company_name")], ["NIB", comp.get("nib")],
+           [L("대표/책임자"), comp.get("responsible_person")],
+           [L("할랄 감독자"), comp.get("halal_supervisor")],
+           [L("주소"), comp.get("address")],
+           [L("연락처"), "%s / %s" % (comp.get("phone") or "-", comp.get("email") or "-")],
+           [L("경로 · Pathway"), comp.get("pathway")], [L("위험등급"), comp.get("risk_category")],
+           [L("등록유형"), px.get("registration_type")], [L("신청유형"), px.get("application_type")],
+           [L("담당자(PIC)"), "%s %s" % (px.get("pic_name") or "-", px.get("pic_title") or "")],
+           [L("총 직원 수"), px.get("total_employee")], [L("생산능력"), px.get("production_capacity")]],
+          headers=[L("항목"), L("내용")])
 
-    doc.add_heading("2. 공장·시설 정보 · Facilities", level=1)
+    doc.add_heading(L("2. 공장·시설 정보 · Facilities"), level=1)
     facs = dos.get("factories") or []
     if facs:
         table([[f.get("label") or f.get("name"), f.get("reg_no"), f.get("address"),
                 "%s / %s" % (f.get("city") or "-", f.get("country") or "-")] for f in facs],
-              headers=["공장", "등록번호", "주소", "도시/국가"])
+              headers=[L("공장"), L("등록번호"), L("주소"), L("도시/국가")])
     else:
-        doc.add_paragraph("등록된 공장 정보 없음.")
+        doc.add_paragraph(L("등록된 공장 정보 없음."))
 
-    doc.add_heading("3. 문서 분석 · Document Analysis", level=1)
+    doc.add_heading(L("3. 문서 분석 · Document Analysis"), level=1)
     docs = dos.get("documents") or []
     neg = [d for d in docs if d.get("review_status") in ("rejected", "rework")]
     rest = [d for d in docs if d not in neg]
-    doc.add_paragraph("총 %d건 · 부정(반려·재작업) %d건" % (len(docs), len(neg)))
+    doc.add_paragraph(L("총 %d건 · 부정(반려·재작업) %d건") % (len(docs), len(neg)))
     if docs:
         table([[d.get("filename"), d.get("doc_type_ko"),
                 ("%.0f%%" % (100 * d["confidence"])) if d.get("confidence") else "-",
-                d.get("review_status") or "미검수"] for d in (neg + rest)],
-              headers=["파일", "분류", "AI 신뢰도", "검수 상태"])
+                d.get("review_status") or L("미검수")] for d in (neg + rest)],
+              headers=[L("파일"), L("분류"), L("AI 신뢰도"), L("검수 상태")])
 
-    doc.add_heading("4. 성분(원재료) 분석 · Material Analysis", level=1)
+    doc.add_heading(L("4. 성분(원재료) 분석 · Material Analysis"), level=1)
     s = dos["summary"]
-    doc.add_paragraph("총 %d건 · 차단(하람) %d · 증빙필요 %d · 적합 %d · najis 위험 %d"
+    doc.add_paragraph(L("총 %d건 · 차단(하람) %d · 증빙필요 %d · 적합 %d · najis 위험 %d")
                       % (s["total"], s["blocked"], s["needs_evidence"], s["cleared"], s["najis"]))
-    doc.add_paragraph("※ 부정 항목(차단·증빙필요)을 먼저 기재합니다.")
-    VK = {"BLOCK": "차단(하람)", "NEEDS_EVIDENCE": "증빙 필요", "CLEARED": "적합", "PASS": "적합"}
+    doc.add_paragraph(L("※ 부정 항목(차단·증빙필요)을 먼저 기재합니다."))
+    VK = {"BLOCK": L("차단(하람)"), "NEEDS_EVIDENCE": L("증빙 필요"),
+          "CLEARED": L("적합"), "PASS": L("적합")}
     for m in dos["materials"]:
         h = doc.add_heading("%s — %s" % (m.get("name"), VK.get(m.get("verdict"), m.get("verdict") or "-")), level=2)
         for r in h.runs:
@@ -11388,65 +11487,76 @@ def preassess_report_docx(case_id: str,
             doc.add_paragraph(m["explanation"])
         meta = []
         if m.get("severity"):
-            meta.append("심각도 %s" % m["severity"])
+            meta.append("%s %s" % (L("심각도"), m["severity"]))
         if m.get("najis"):
-            meta.append("najis 위험")
+            meta.append(L("najis 위험"))
         if m.get("required_evidence"):
-            meta.append("필요 증빙: " + ", ".join(m["required_evidence"]))
+            meta.append(L("필요 증빙") + ": " + ", ".join(m["required_evidence"]))
         if m.get("alternatives"):
-            meta.append("대체재: " + ", ".join(m["alternatives"]))
+            meta.append(L("대체재") + ": " + ", ".join(m["alternatives"]))
         if m.get("source_docs"):
-            meta.append("근거 문서: " + ", ".join(d.get("filename") or d.get("document_id") for d in m["source_docs"]))
+            meta.append(L("근거 문서") + ": " + ", ".join(
+                d.get("filename") or d.get("document_id") for d in m["source_docs"]))
         if meta:
             doc.add_paragraph(" · ".join(meta))
 
     q = [x for x in (dos.get("quantitative") or []) if x.get("value") is not None]
     if q:
-        doc.add_heading("5. 정량 기준 비교 · Quantitative", level=1)
+        doc.add_heading(L("5. 정량 기준 비교 · Quantitative"), level=1)
         table([[x["param_ko"], "%s %s" % (x["value"], x.get("unit") or ""),
-                "≤ %s" % x.get("threshold"), {"pass": "적합", "fail": "부적합"}.get(x.get("verdict"), "-")]
-               for x in q], headers=["항목", "측정값", "기준", "판정"])
+                "≤ %s" % x.get("threshold"),
+                {"pass": L("적합"), "fail": L("부적합")}.get(x.get("verdict"), "-")]
+               for x in q], headers=[L("항목"), L("측정값"), L("기준"), L("판정")])
 
     rv = dos.get("review") or {}
-    doc.add_heading("6. 오디터 검토 결과 · Auditor Review", level=1)
+    doc.add_heading(L("6. 오디터 검토 결과 · Auditor Review"), level=1)
     if rv:
-        secko = {"documents": "문서", "materials": "재료", "process": "제조"}
-        table([[secko.get(k, k), "적합" if (v or {}).get("ok") else "보완", (v or {}).get("note") or ""]
-               for k, v in (rv.get("sections") or {}).items()], headers=["섹션", "판정", "코멘트"])
-        doc.add_paragraph("종합 판정: %s" % {"ready": "적합(진행 가능)", "supplement": "보완 필요"}
-                          .get(rv.get("verdict"), rv.get("verdict") or "미검토"))
+        secko = {"documents": L("문서"), "materials": L("재료"), "process": L("제조")}
+        table([[secko.get(k, k), L("적합") if (v or {}).get("ok") else L("보완"),
+                (v or {}).get("note") or ""]
+               for k, v in (rv.get("sections") or {}).items()],
+              headers=[L("섹션"), L("판정"), L("코멘트")])
+        doc.add_paragraph("%s: %s" % (L("종합 판정"),
+                          {"ready": L("적합(진행 가능)"), "supplement": L("보완 필요")}
+                          .get(rv.get("verdict"), rv.get("verdict") or L("미검토"))))
         if rv.get("note"):
-            doc.add_paragraph("검토 총평: " + rv["note"])
+            doc.add_paragraph(L("검토 총평") + ": " + rv["note"])
     else:
-        doc.add_paragraph("오디터 검토 미기록.")
+        doc.add_paragraph(L("오디터 검토 미기록."))
     doc.add_paragraph("")
-    doc.add_paragraph("※ 본 보고서는 AI 온톨로지 기반 준비용 분석이며, 공식 판정은 BPJPH/MUI Fatwa 절차로 확정됩니다.")
+    doc.add_paragraph(L("※ 본 보고서는 AI 온톨로지 기반 준비용 분석이며, "
+                        "공식 판정은 BPJPH/MUI Fatwa 절차로 확정됩니다."))
 
-    _audit(db, user, "preassess_report.docx", "case", case_id, case_id)
+    _audit(db, user, "preassess_report.docx", "case", case_id, case_id, {"lang": lang})
     db.commit()
     buf = _io.BytesIO()
     doc.save(buf)
     return Response(content=buf.getvalue(),
                     media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    headers={"Content-Disposition": "attachment; filename=preassess_%s.docx" % case_id[:8]})
+                    headers={"Content-Disposition":
+                             _content_disposition(_preassess_report_filename(c, lang, "docx"))})
 
 
 @app.get("/cases/{case_id}/preassess-report.pdf")
-def preassess_report_pdf(case_id: str,
+def preassess_report_pdf(case_id: str, lang: str = Query("ko"),
                          user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
                                                          "consultant")),
                          db: Session = Depends(get_db)):
     """사전심사 보고서 PDF — docx를 LibreOffice로 변환(인라인 미리보기용, docx와 동일 양식).
     soffice 부재 시 docx 그대로 반환(다운로드 폴백)."""
     from fastapi.responses import Response
-    resp = preassess_report_docx(case_id, user, db)   # 동일 로직 재사용 → docx bytes
+    resp = preassess_report_docx(case_id, lang, user, db)   # 동일 로직 재사용 → docx bytes
     try:
         pdf = _docx_to_pdf_bytes(resp.body)
     except Exception as e:  # noqa: BLE001
         log.warning("preassess docx->pdf 변환 실패, docx 반환: %s", e)
         return resp
+    c = _get_case(db, case_id, user)
     return Response(content=pdf, media_type="application/pdf",
-                    headers={"Content-Disposition": "inline; filename=preassess_%s.pdf" % case_id[:8]})
+                    headers={"Content-Disposition":
+                             _content_disposition(
+                                 _preassess_report_filename(c, lang, "pdf")).replace(
+                                     "attachment;", "inline;")})
 
 
 @app.post("/cases/{case_id}/material-report/snapshot")
