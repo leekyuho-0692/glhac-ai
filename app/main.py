@@ -3339,6 +3339,18 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
                     setattr(c, _col, int(_v) if _v not in (None, "") else None)
                 except (ValueError, TypeError):
                     pass
+        # 사업 규모(Skala Usaha) → MSME 컬럼 미러. 자기선언 자격과 필수 서류 범위가
+        # 여기서 갈리는데, 지금까지 규모는 케이스 생성 시점에만 정할 수 있어 정정할 길이
+        # 없었다. 사전이 모르는 표기는 건드리지 않는다(지어낸 규모로 경로를 열지 않는다).
+        if _ext.get("business_scale"):
+            from . import domain_dict as _dd
+            _ms = _dd.is_msme_scale(_ext["business_scale"])
+            if _ms is not None and bool(c.is_msme) != _ms:
+                sm.record_event(db, c, c.status, c.status, "case.scale.update",
+                                user["role"], user["uid"],
+                                {"business_scale": _ext["business_scale"],
+                                 "is_msme": _ms, "was": bool(c.is_msme)})
+                c.is_msme = _ms
     if not c.draft_state or c.draft_state == "returned":
         c.draft_state = "in_progress"  # 편집 시작 → 작성중(반려분 재편집 포함)
     # 회사 프로필 → org 미러(회사 자산 정본) — 다음 신청이 최신 회사정보를 상속
@@ -10372,10 +10384,14 @@ def _wf_phases(pathway):
 
 def _calc_readiness(db, case_id):
     """준비도 계산(auth 없이 재사용) — 문서35·SJPH30·원재료20·심사15%."""
-    from .intake import REQUIRED_DOCS
+    from .intake import doc_requirements
+    _c = db.get(models.CaseApplication, case_id)      # 면제된 서류는 분모에서도 뺀다
+    req = doc_requirements(_c.pathway if _c else None,
+                           (_c.profile_ext or {}).get("country") if _c else None,
+                           _c.is_msme if _c else None)["required"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     have_types = {d.doc_type for d in docs if d.review_status != "rejected"}
-    doc_score = (sum(1 for r in REQUIRED_DOCS if r in have_types) / len(REQUIRED_DOCS)) if REQUIRED_DOCS else 1.0
+    doc_score = (sum(1 for r in req if r in have_types) / len(req)) if req else 1.0
     have = _ensure_hpas(db, case_id)
     sjph_score = sum(1 for h in have.values() if h.status == "ok") / len(HPAS_ELEMENTS)
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
@@ -12067,8 +12083,13 @@ def evaluation_verdict(case_id: str, body: dict = None,
 
 @app.get("/cases/{case_id}/doc-checklist")
 def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    _get_case(db, case_id, user)
-    from .intake import REQUIRED_DOCS, DOC_KO, DOC_REQUIREMENT
+    c = _get_case(db, case_id, user)
+    from .intake import REQUIRED_DOCS, DOC_KO, DOC_REQUIREMENT, doc_requirements
+    # 필수 서류는 신청 경로와 관할·규모에 따라 다르다. 목록에서 빼더라도 행은 남겨
+    # '해당 없음'으로 사유와 함께 보여준다 — 조용히 사라지면 심사자가 빠뜨린 것인지
+    # 면제인지 구분할 수 없다.
+    _rq = doc_requirements(c.pathway, (c.profile_ext or {}).get("country"), c.is_msme)
+    _req, _na, _alt = _rq["required"], _rq["not_applicable"], _rq["alt"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     by_type = {}
     for d in docs:
@@ -12093,10 +12114,14 @@ def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session
             source = "생성 문서 v%s · %s" % (g.version, g.status)
         # 미제출(파일 없음) vs 반려(제출됐으나 전부 반려=내용 부족) 구분
         status = "ok" if satisfied else ("rejected" if files else "missing")
-        checklist.append({"doc_type": dt, "doc_type_ko": DOC_KO[dt], "satisfied": satisfied,
-                          "files": files, "file_count": len(files), "status": status,
-                          "source": source,
-                          "requirement": DOC_REQUIREMENT.get(dt, ""), "required": True})
+        row = {"doc_type": dt, "doc_type_ko": DOC_KO[dt], "satisfied": satisfied,
+               "files": files, "file_count": len(files), "status": status,
+               "source": source, "applicable": True,
+               "requirement": DOC_REQUIREMENT.get(dt, ""), "required": dt in _req}
+        if dt in _na:                       # 이 경로에서 요구되지 않는 서류
+            row.update({"applicable": False, "status": "not_applicable",
+                        "required": False, "na_reason": _na[dt]})
+        checklist.append(row)
     # 필수 외 실제 업로드된 문서 유형(기타·공급사선언·성적서 등)도 포함 — 전체 파일 표출
     for dt, files in by_type.items():
         if dt in REQUIRED_DOCS:
@@ -12113,6 +12138,12 @@ def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session
         if _c["doc_type"] == "halal_certificate" and _cn:
             _c["cert_no_on_file"] = _cn
             _c["note"] = "공급사 인증번호 %d건 확보 — 원본 서류 미제출(번호 대조는 오디터)" % _cn
+            # 자기선언 경로는 인증번호 자체가 제출물이다(BPJPH가 직접 대조).
+            # 무엇으로 갈음했는지 source에 남겨 업로드 충족과 구분한다.
+            _a = _alt.get("halal_certificate")
+            if _a and not _c["satisfied"] and _a["by"] == "supplier_cert_no":
+                _c.update({"satisfied": True, "status": "ok",
+                           "source": "공급사 인증번호 %d건 · %s" % (_cn, _a["note"])})
     missing = [{
         "doc_type": c["doc_type"], "doc_type_ko": c["doc_type_ko"], "status": c["status"],
         "file_count": c["file_count"], "requirement": c["requirement"],

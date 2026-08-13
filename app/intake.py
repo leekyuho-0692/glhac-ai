@@ -42,9 +42,74 @@ DOC_KO = _doc_labels("ko")
 DOC_EN = _doc_labels("en")
 DOC_ID = _doc_labels("id")
 DOC_NAME_L10N = {"en": DOC_EN, "id": DOC_ID}
-# 신청 필수 서류(라우팅 대상)
+# 신청 필수 서류 — 경로별로 다르다.
+#
+# 왜 나누는가: 인도네시아 소규모 자기선언(SEHATI)은 NIB 하나로 사업자·시설을 갈음하고,
+# 공급사 할랄 인증서는 사본 대신 인증번호를 BPJPH가 직접 대조한다. 한국 정규 경로 기준
+# 목록을 그대로 적용하면 인니 완성본이 '서류 부족'으로 잘못 표시된다(CV CITRA 실측).
+# 목록에서 뺀다고 검토를 건너뛰는 것이 아니라, 그 경로에서 '요구되지 않는 서류'를
+# 미제출로 세지 않는 것이다.
 REQUIRED_DOCS = ["nib_business_license", "factory_registration", "product_list",
                  "process_flow", "material_list", "halal_certificate", "sjph_manual"]
+
+# 경로별 필수 목록. 미정(undetermined)은 정규 기준을 쓴다 — 넓게 요구하는 쪽이 안전하다.
+REQUIRED_DOCS_BY_PATHWAY = {
+    "reguler": REQUIRED_DOCS,
+    "self_declare": ["nib_business_license", "product_list", "process_flow",
+                     "material_list", "halal_certificate", "sjph_manual"],
+}
+# 서류 원본 대신 다른 근거로 충족할 수 있는 항목 — 무엇으로 갈음했는지 반드시 표기한다.
+DOC_ALT_SATISFY = {
+    "self_declare": {
+        "halal_certificate": {"by": "supplier_cert_no",
+                              "note": "인도네시아 자기선언 경로 — 공급사 인증번호로 갈음(BPJPH 대조)"},
+    },
+}
+# 그 경로에서 요구되지 않는 서류 — 화면에 '해당 없음'으로 표시해 누락과 구분한다.
+DOC_NOT_APPLICABLE = {
+    "self_declare": {"factory_registration":
+                     "소규모 자기선언 — NIB로 갈음(별도 공장등록증 요구 없음)"},
+}
+
+
+# 관할·규모에서 오는 면제 — 경로와는 다른 축이다.
+# 실측(CV. CITRA PRATAMA): 육류·가금 원료 때문에 판정이 reguler로 나와도, 인도네시아
+# 소규모 사업자에게 '공장등록증'이라는 서류 자체가 존재하지 않는다. NIB(사업자번호)가
+# 사업자 등록과 시설 등록을 겸한다. 그래서 경로 축만으로는 이 면제를 표현할 수 없다.
+DOC_JURISDICTION = {
+    ("ID", True): {"factory_registration":
+                   "인도네시아 소규모 사업자 — NIB가 시설 등록을 겸함(별도 공장등록증 제도 없음)"},
+}
+_COUNTRY_ID = {"id", "idn", "indonesia", "republic of indonesia", "인도네시아"}
+
+
+def _country_key(country):
+    """국가 표기 흔들림 흡수. 모르는 나라는 None — 면제를 적용하지 않는다(넓은 쪽)."""
+    c = (country or "").strip().lower()
+    return "ID" if c in _COUNTRY_ID else None
+
+
+def required_docs(pathway=None):
+    """경로별 필수 서류 목록. 모르는 경로는 정규 기준(넓은 쪽)."""
+    return REQUIRED_DOCS_BY_PATHWAY.get((pathway or "").lower(), REQUIRED_DOCS)
+
+
+def doc_requirements(pathway=None, country=None, is_msme=None):
+    """이 신청 건에 실제로 요구되는 서류 — 경로(pathway)와 관할·규모를 함께 본다.
+
+    돌려주는 것
+      required        요구되는 doc_type 목록
+      not_applicable  {doc_type: 사유} — 요구되지 않는 서류. 목록에서 지우지 않고
+                      사유와 함께 남긴다. 조용히 사라지면 면제인지 누락인지 알 수 없다.
+      alt             {doc_type: {by, note}} — 원본 서류 대신 다른 근거로 충족 가능한 항목
+    """
+    pw = (pathway or "").lower()
+    req = list(required_docs(pw))
+    na = dict(DOC_NOT_APPLICABLE.get(pw, {}))
+    na.update(DOC_JURISDICTION.get((_country_key(country), bool(is_msme)), {}))
+    req = [d for d in req if d not in na]
+    alt = {k: v for k, v in DOC_ALT_SATISFY.get(pw, {}).items() if k in req}
+    return {"required": req, "not_applicable": na, "alt": alt}
 
 # 필수 서류별 요구 내용(보완 안내용) — 무엇이 담겨야 하는지 상세 설명
 DOC_REQUIREMENT = {

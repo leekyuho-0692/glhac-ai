@@ -2982,5 +2982,327 @@
    "glhac"
   ],
   "status": "approved"
+ },
+ {
+  "id": "DOC_KEBIJAKAN_HALAL",
+  "axis": "DOC",
+  "labels": {
+   "id": "Dokumen Kebijakan Halal",
+   "ko": "할랄 방침 문서",
+   "en": "Halal policy document"
+  },
+  "surface": {
+   "id": [
+    "dokumen kebijakan halal"
+   ],
+   "ko": [
+    "할랄 방침 문서",
+    "할랄정책 문서"
+   ],
+   "en": [
+    "halal policy document"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "sjph_manual"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_TIM_HALAL_SK",
+  "axis": "DOC",
+  "labels": {
+   "id": "SK Tim Manajemen Halal",
+   "ko": "할랄팀 지정서(SK)",
+   "en": "Halal team decree (SK)"
+  },
+  "surface": {
+   "id": [
+    "sk tim manajemen halal",
+    "surat keputusan tim halal"
+   ],
+   "ko": [
+    "할랄팀 지정서",
+    "할랄팀 임명장"
+   ],
+   "en": [
+    "halal team decree"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "sjph_manual",
+   "evidence_key": "halal_supervisor"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_AUDIT_INTERNAL_REC",
+  "axis": "DOC",
+  "labels": {
+   "id": "Catatan Audit Internal",
+   "ko": "내부심사 기록",
+   "en": "Internal audit record"
+  },
+  "surface": {
+   "id": [
+    "catatan audit internal",
+    "laporan audit internal"
+   ],
+   "ko": [
+    "내부심사 기록",
+    "내부감사 보고서"
+   ],
+   "en": [
+    "internal audit report",
+    "internal audit record"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "sjph_manual",
+   "evidence_key": "internal_audit"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_KAJI_ULANG",
+  "axis": "DOC",
+  "labels": {
+   "id": "Laporan Kaji Ulang Manajemen",
+   "ko": "경영검토 기록",
+   "en": "Management review record"
+  },
+  "surface": {
+   "id": [
+    "laporan kaji ulang",
+    "catatan kaji ulang manajemen"
+   ],
+   "ko": [
+    "경영검토 기록",
+    "경영자 검토 기록"
+   ],
+   "en": [
+    "management review record"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "sjph_manual"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_HALAL_POSTER",
+  "axis": "DOC",
+  "labels": {
+   "id": "Poster Sosialisasi Halal",
+   "ko": "할랄 게시물",
+   "en": "Halal awareness poster"
+  },
+  "surface": {
+   "id": [
+    "poster halal",
+    "poster sosialisasi halal",
+    "sosialisasi halal"
+   ],
+   "ko": [
+    "할랄 게시물",
+    "할랄 포스터"
+   ],
+   "en": [
+    "halal poster",
+    "halal awareness poster"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "sjph_manual",
+   "evidence_key": "training"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SKALA_MIKRO",
+  "axis": "SCALE",
+  "labels": {
+   "id": "Mikro",
+   "ko": "소규모(미크로)",
+   "en": "Micro"
+  },
+  "surface": {
+   "id": [
+    "mikro",
+    "usaha mikro",
+    "skala mikro"
+   ],
+   "ko": [
+    "미크로",
+    "영세"
+   ],
+   "en": [
+    "micro",
+    "micro scale"
+   ]
+  },
+  "context": [
+   "APPLICATION",
+   "PATHWAY"
+  ],
+  "actions": {
+   "msme": true,
+   "scale_key": "mikro"
+  },
+  "authority": "UU 33/2014 · PP 39/2021",
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SKALA_KECIL",
+  "axis": "SCALE",
+  "labels": {
+   "id": "Kecil",
+   "ko": "소기업",
+   "en": "Small"
+  },
+  "surface": {
+   "id": [
+    "kecil",
+    "usaha kecil",
+    "skala kecil",
+    "mikro kecil",
+    "mikro/kecil"
+   ],
+   "ko": [
+    "소기업"
+   ],
+   "en": [
+    "small",
+    "small scale"
+   ]
+  },
+  "context": [
+   "APPLICATION",
+   "PATHWAY"
+  ],
+  "actions": {
+   "msme": true,
+   "scale_key": "kecil"
+  },
+  "authority": "UU 33/2014 · PP 39/2021",
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SKALA_MENENGAH",
+  "axis": "SCALE",
+  "labels": {
+   "id": "Menengah",
+   "ko": "중기업",
+   "en": "Medium"
+  },
+  "surface": {
+   "id": [
+    "menengah",
+    "usaha menengah",
+    "skala menengah"
+   ],
+   "ko": [
+    "중기업"
+   ],
+   "en": [
+    "medium",
+    "medium scale"
+   ]
+  },
+  "context": [
+   "APPLICATION",
+   "PATHWAY"
+  ],
+  "actions": {
+   "msme": false,
+   "scale_key": "menengah"
+  },
+  "authority": "UU 33/2014 · PP 39/2021",
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SKALA_BESAR",
+  "axis": "SCALE",
+  "labels": {
+   "id": "Besar",
+   "ko": "대기업",
+   "en": "Large"
+  },
+  "surface": {
+   "id": [
+    "besar",
+    "usaha besar",
+    "skala besar"
+   ],
+   "ko": [
+    "대기업"
+   ],
+   "en": [
+    "large",
+    "large scale"
+   ]
+  },
+  "context": [
+   "APPLICATION",
+   "PATHWAY"
+  ],
+  "actions": {
+   "msme": false,
+   "scale_key": "besar"
+  },
+  "authority": "UU 33/2014 · PP 39/2021",
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
  }
 ]

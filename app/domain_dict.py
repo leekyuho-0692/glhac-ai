@@ -145,6 +145,16 @@ def material_type(raw):
     return key, bool(actions(key).get("screen", True))
 
 
+def is_msme_scale(raw):
+    """신청서 '사업 규모(Skala Usaha)' 값 → 중소영세(MSME) 여부.
+    Mikro/Kecil만 자기선언(SEHATI) 자격이 열린다. 모르는 값은 None을 돌려
+    호출부가 기존 값을 유지하게 한다 — 지어낸 규모로 경로 자격을 바꾸면 안 된다."""
+    k = lookup(raw, axis="SCALE")
+    if not k:
+        return None
+    return bool(actions(k).get("msme"))
+
+
 def doc_labels(lang="ko"):
     """doc_type → 언어별 표기. intake.DOC_KO/EN/ID를 이 사전에서 파생시킨다.
     같은 doc_type이 여러 항목에 있으면(증빙용 인니 서류) 필수 서류 쪽을 우선한다."""

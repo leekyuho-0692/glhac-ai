@@ -4121,9 +4121,13 @@ function sjphStage(id,ko,en,desc,types,chk){
   const cl=(chk&&chk.checklist)||[];
   const fileLine=f=>`<div class="muted" style="font-size:11px;padding:1px 0 1px 24px;word-break:break-all">📄 ${esc(f.filename||f.document_id||'')}${f.review_status==='rejected'?' <span style="color:var(--bad)">· 반려</span>':''}</div>`;
   const rows=types.map(dt=>{const it=cl.find(x=>x.doc_type===dt);const okv=it&&it.satisfied;
+    const na=it&&it.applicable===false;   // 신청 경로에서 요구되지 않는 서류 — 누락과 구분
     const files=(it&&it.files)||[];
     const flist=files.map(fileLine).join("");
-    return `<div class="check" style="padding:4px 0"><div class="cbox ${okv?"on":""}">${okv?"✓":""}</div><b style="flex:1;font-size:12px">${esc(T(it?(it.doc_type_ko||it.doc_type):dt))}</b>${okv?tag("ok",files.length+T('건')):tag("bad",T("미제출"))}</div>${flist}`;}).join("");
+    const naLine=na&&it.na_reason?`<div class="muted" style="font-size:11px;padding:1px 0 1px 24px">${esc(T(it.na_reason))}</div>`:"";
+    const srcLine=(okv&&it&&it.source&&!files.length)?`<div class="muted" style="font-size:11px;padding:1px 0 1px 24px">${esc(T(it.source))}</div>`:"";
+    const st=na?tag("mute",T("해당 없음")):(okv?tag("ok",(files.length||1)+T('건')):tag("bad",T("미제출")));
+    return `<div class="check" style="padding:4px 0"><div class="cbox ${okv&&!na?"on":""}">${okv&&!na?"✓":(na?"—":"")}</div><b style="flex:1;font-size:12px">${esc(T(it?(it.doc_type_ko||it.doc_type):dt))}</b>${st}</div>${flist}${naLine}${srcLine}`;}).join("");
   // 요구 타입 외 업로드된 기타 파일(전체 업로드 리스트 완성)
   const extra=cl.filter(x=>!types.includes(x.doc_type)&&(x.files||[]).length);
   const extraRows=extra.length?`<div class="divide" style="margin:8px 0"></div><div class="muted small" style="margin-bottom:2px">기타 업로드 · Other files</div>`+
@@ -4834,7 +4838,7 @@ SCREEN.preassess=async()=>{
   // P0-3 회신루프 — 오디터 검토 카드 / 클라이언트 요청패널
   const rv=pre.review||{}, rvs=rv.sections||{};
   const secKO={documents:T('문서'),materials:T('재료'),process:T('제조')};
-  const missItems=(chk.checklist||[]).filter(x=>!x.satisfied);
+  const missItems=(chk.checklist||[]).filter(x=>!x.satisfied&&x.applicable!==false);
   const auditorCard=isAud?`
       <div class="card" style="margin-top:16px"><h3>${T('오디터 검토')} <span class="en">· Auditor Review</span>${pre.reviewed?`<span class="r">${rv.verdict==='ready'?tag('ok',T('적합')):tag('warn',T('보완'))}</span>`:''}</h3>
         <div class="body">
@@ -6055,8 +6059,9 @@ SCREEN.documents=async()=>{
   const checklist=chk.checklist||[];
   const chkHtml=checklist.length?checklist.map(it=>{
     const present=it.present||it.ok||it.status==="ok";
-    return `<div class="check"><div class="cbox ${present?'on':''}">${present?'✓':''}</div>
-      <b style="flex:1">${esc(T(it.doc_type_ko||it.label||it.doc_type||it.name||it))}</b><span class="muted small">${present?T('제출'):T('미제출')}</span></div>`;}).join("")
+    const na=it.applicable===false;
+    return `<div class="check"><div class="cbox ${present&&!na?'on':''}">${present&&!na?'✓':(na?'—':'')}</div>
+      <b style="flex:1">${esc(T(it.doc_type_ko||it.label||it.doc_type||it.name||it))}</b><span class="muted small">${na?T('해당 없음'):(present?T('제출'):T('미제출'))}</span></div>`;}).join("")
     :'<div class="muted small">체크리스트 없음</div>';
   const canReview=["consultant","auditor","admin"].includes(ROLE);   // A05: 오디터 문서 판정 포함(rbac document.review와 정합)
   const sel=docs.find(d=>d.document_id===DOC_SEL)||docs.find(d=>d.has_file)||docs[0]||null;
