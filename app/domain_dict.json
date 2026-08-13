@@ -1,0 +1,1813 @@
+[
+ {
+  "id": "MATERIAL_RAW",
+  "axis": "MATERIAL",
+  "labels": {
+   "id": "Bahan Baku",
+   "ko": "원료",
+   "en": "Raw Material"
+  },
+  "surface": {
+   "id": [
+    "bahan baku",
+    "bahan utama",
+    "material utama"
+   ],
+   "ko": [
+    "원료",
+    "원재료",
+    "주원료"
+   ],
+   "en": [
+    "raw material"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen": true,
+   "material_type": "raw"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "MATERIAL_ADDITIVE",
+  "axis": "MATERIAL",
+  "labels": {
+   "id": "Bahan Tambahan",
+   "ko": "첨가물",
+   "en": "Additive"
+  },
+  "surface": {
+   "id": [
+    "bahan tambahan",
+    "bahan tambahan pangan",
+    "btp"
+   ],
+   "ko": [
+    "첨가물",
+    "식품첨가물"
+   ],
+   "en": [
+    "additive",
+    "food additive"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen": true,
+   "material_type": "additive"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "MATERIAL_PROCESSING_AID",
+  "axis": "MATERIAL",
+  "labels": {
+   "id": "Bahan Penolong",
+   "ko": "보조재",
+   "en": "Processing Aid"
+  },
+  "surface": {
+   "id": [
+    "bahan penolong"
+   ],
+   "ko": [
+    "보조재",
+    "가공보조제"
+   ],
+   "en": [
+    "processing aid"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen": true,
+   "material_type": "processing_aid",
+   "note": "잔류 여부 확인 대상"
+  },
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "MATERIAL_CLEANING",
+  "axis": "MATERIAL",
+  "labels": {
+   "id": "Bahan Pembersih",
+   "ko": "세척제",
+   "en": "Cleaning Agent"
+  },
+  "surface": {
+   "id": [
+    "bahan pembersih",
+    "cleaning agent",
+    "pembersih",
+    "sabun cuci"
+   ],
+   "ko": [
+    "세척제",
+    "세제"
+   ],
+   "en": [
+    "cleaning agent",
+    "detergent"
+   ]
+  },
+  "context": [
+   "AUDIT",
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen": false,
+   "material_type": "cleaning",
+   "note": "제품 성분이 아니다 — 설비 세척(사무) 절차로 검토"
+  },
+  "source": [
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "MATERIAL_LUBRICANT",
+  "axis": "MATERIAL",
+  "labels": {
+   "id": "Pelumas",
+   "ko": "윤활유",
+   "en": "Lubricant"
+  },
+  "surface": {
+   "id": [
+    "pelumas",
+    "oli mesin"
+   ],
+   "ko": [
+    "윤활유",
+    "윤활제"
+   ],
+   "en": [
+    "lubricant",
+    "machine oil"
+   ]
+  },
+  "context": [
+   "AUDIT",
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen": false,
+   "material_type": "lubricant",
+   "note": "식품 접촉 가능성 검토(food-grade 여부)"
+  },
+  "source": [
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "MATERIAL_PACKAGING",
+  "axis": "MATERIAL",
+  "labels": {
+   "id": "Kemasan",
+   "ko": "포장재",
+   "en": "Packaging"
+  },
+  "surface": {
+   "id": [
+    "kemasan",
+    "bahan kemasan"
+   ],
+   "ko": [
+    "포장재",
+    "용기"
+   ],
+   "en": [
+    "packaging",
+    "packaging material"
+   ]
+  },
+  "context": [
+   "AUDIT",
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen": false,
+   "material_type": "packaging",
+   "note": "접촉 재질·첨가제(슬립제·이형제) 검토"
+  },
+  "source": [
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "PENYELIA_HALAL",
+  "axis": "ROLE",
+  "labels": {
+   "id": "Penyelia Halal",
+   "ko": "할랄 감독자",
+   "en": "Halal Supervisor"
+  },
+  "surface": {
+   "id": [
+    "penyelia halal",
+    "penyelia",
+    "supervisor halal"
+   ],
+   "ko": [
+    "할랄감독자",
+    "할랄 감독자",
+    "할랄 책임자"
+   ],
+   "en": [
+    "halal supervisor"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "AUDIT",
+   "SIGNATURE"
+  ],
+  "actions": {
+   "requires_signature": true,
+   "role_key": "penyelia_halal"
+  },
+  "authority": "UU 33/2014",
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "AUDITOR_HALAL",
+  "axis": "ROLE",
+  "labels": {
+   "id": "Auditor Halal",
+   "ko": "할랄 심사원",
+   "en": "Halal Auditor"
+  },
+  "surface": {
+   "id": [
+    "auditor halal",
+    "auditor"
+   ],
+   "ko": [
+    "할랄심사원",
+    "오디터",
+    "심사원"
+   ],
+   "en": [
+    "halal auditor"
+   ]
+  },
+  "context": [
+   "AUDIT",
+   "SIGNATURE"
+  ],
+  "actions": {
+   "requires_signature": true,
+   "role_key": "auditor"
+  },
+  "authority": "UU 33/2014",
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "P3H",
+  "axis": "ROLE",
+  "labels": {
+   "id": "Pendamping Proses Produk Halal",
+   "ko": "할랄제품공정 동반자",
+   "en": "Halal Product Process Companion"
+  },
+  "surface": {
+   "id": [
+    "pendamping proses produk halal",
+    "pendamping pph",
+    "p3h",
+    "pendamping"
+   ],
+   "ko": [
+    "동반자",
+    "PPH 동반자"
+   ],
+   "en": [
+    "p3h",
+    "companion"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "SELF_DECLARE"
+  ],
+  "actions": {
+   "role_key": "pendamping_pph",
+   "pathway": "self_declare"
+  },
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "TIM_HALAL",
+  "axis": "ROLE",
+  "labels": {
+   "id": "Tim Manajemen Halal",
+   "ko": "할랄팀",
+   "en": "Halal Management Team"
+  },
+  "surface": {
+   "id": [
+    "tim manajemen halal",
+    "tim halal",
+    "halal team"
+   ],
+   "ko": [
+    "할랄팀",
+    "할랄관리팀"
+   ],
+   "en": [
+    "halal team",
+    "halal management team"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "AUDIT"
+  ],
+  "actions": {
+   "hpas_section": "1.B",
+   "org_chart": true
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BPJPH",
+  "axis": "ORG",
+  "labels": {
+   "id": "Badan Penyelenggara Jaminan Produk Halal",
+   "ko": "할랄제품보장청",
+   "en": "Halal Product Assurance Organizing Agency"
+  },
+  "surface": {
+   "id": [
+    "bpjph",
+    "badan penyelenggara jaminan produk halal"
+   ],
+   "ko": [
+    "BPJPH"
+   ],
+   "en": [
+    "bpjph"
+   ]
+  },
+  "context": [
+   "FATWA",
+   "CERTIFICATE"
+  ],
+  "actions": {
+   "issues_certificate": true,
+   "cert_no_prefix": [
+    "ID"
+   ]
+  },
+  "authority": "UU 33/2014",
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LPH",
+  "axis": "ORG",
+  "labels": {
+   "id": "Lembaga Pemeriksa Halal",
+   "ko": "할랄검사기관",
+   "en": "Halal Inspection Agency"
+  },
+  "surface": {
+   "id": [
+    "lph",
+    "lembaga pemeriksa halal"
+   ],
+   "ko": [
+    "LPH",
+    "할랄검사기관"
+   ],
+   "en": [
+    "lph",
+    "halal inspection agency"
+   ]
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "performs_audit": true
+  },
+  "authority": "UU 33/2014",
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "MUI",
+  "axis": "ORG",
+  "labels": {
+   "id": "Majelis Ulama Indonesia",
+   "ko": "인도네시아 울라마 협의회",
+   "en": "Indonesian Ulema Council"
+  },
+  "surface": {
+   "id": [
+    "mui",
+    "majelis ulama indonesia",
+    "lppom mui",
+    "lppom"
+   ],
+   "ko": [
+    "MUI"
+   ],
+   "en": [
+    "mui",
+    "lppom"
+   ]
+  },
+  "context": [
+   "FATWA"
+  ],
+  "actions": {
+   "issues_fatwa": true,
+   "cert_no_prefix": [
+    "LPPOM"
+   ]
+  },
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPH",
+  "axis": "HPAS",
+  "labels": {
+   "id": "Sistem Jaminan Produk Halal",
+   "ko": "할랄제품보장시스템",
+   "en": "Halal Product Assurance System"
+  },
+  "surface": {
+   "id": [
+    "sistem jaminan produk halal"
+   ],
+   "ko": [
+    "할랄제품보장시스템"
+   ],
+   "en": [
+    "halal product assurance system",
+    "hpas"
+   ]
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "scheme": true,
+   "hpas_root": true
+  },
+  "authority": "UU 33/2014",
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "PPH",
+  "axis": "PROCESS",
+  "labels": {
+   "id": "Proses Produk Halal",
+   "ko": "할랄제품 공정",
+   "en": "Halal Product Process"
+  },
+  "surface": {
+   "id": [
+    "proses produk halal",
+    "pph"
+   ],
+   "ko": [
+    "할랄제품공정",
+    "PPH"
+   ],
+   "en": [
+    "halal product process",
+    "pph"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "AUDIT"
+  ],
+  "actions": {
+   "hpas_section": "3"
+  },
+  "authority": "UU 33/2014",
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "KEBIJAKAN_HALAL",
+  "axis": "HPAS",
+  "labels": {
+   "id": "Kebijakan Halal",
+   "ko": "할랄 방침",
+   "en": "Halal Policy"
+  },
+  "surface": {
+   "id": [
+    "kebijakan halal"
+   ],
+   "ko": [
+    "할랄방침",
+    "할랄 정책"
+   ],
+   "en": [
+    "halal policy"
+   ]
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_section": "1.A",
+   "doc_type": "sjph_manual"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "AUDIT_INTERNAL",
+  "axis": "AUDIT",
+  "labels": {
+   "id": "Audit Internal",
+   "ko": "내부 심사",
+   "en": "Internal Audit"
+  },
+  "surface": {
+   "id": [
+    "audit internal"
+   ],
+   "ko": [
+    "내부심사",
+    "내부 감사"
+   ],
+   "en": [
+    "internal audit"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "AUDIT"
+  ],
+  "actions": {
+   "hpas_section": "5",
+   "evidence_key": "internal_audit"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "KAJI_ULANG_MANAJEMEN",
+  "axis": "HPAS",
+  "labels": {
+   "id": "Kaji Ulang Manajemen",
+   "ko": "경영 검토",
+   "en": "Management Review"
+  },
+  "surface": {
+   "id": [
+    "kaji ulang manajemen",
+    "tinjauan manajemen"
+   ],
+   "ko": [
+    "경영검토",
+    "경영자 검토"
+   ],
+   "en": [
+    "management review"
+   ]
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_section": "5"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "AUDIT_LAPANGAN",
+  "axis": "AUDIT",
+  "labels": {
+   "id": "Audit Lapangan",
+   "ko": "현장 심사",
+   "en": "On-site Audit"
+  },
+  "surface": {
+   "id": [
+    "audit lapangan",
+    "pemeriksaan lapangan"
+   ],
+   "ko": [
+    "현장심사",
+    "현장 실사"
+   ],
+   "en": [
+    "on-site audit",
+    "onsite audit"
+   ]
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "checklist": true
+  },
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "KETIDAKSESUAIAN",
+  "axis": "AUDIT",
+  "labels": {
+   "id": "Ketidaksesuaian",
+   "ko": "부적합",
+   "en": "Non-Conformity"
+  },
+  "surface": {
+   "id": [
+    "ketidaksesuaian",
+    "temuan",
+    "nc"
+   ],
+   "ko": [
+    "부적합",
+    "지적사항",
+    "발견사항"
+   ],
+   "en": [
+    "non-conformity",
+    "nonconformity",
+    "finding"
+   ]
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "creates_finding": true,
+   "requires_corrective_action": true
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "TINDAKAN_KOREKSI",
+  "axis": "AUDIT",
+  "labels": {
+   "id": "Tindakan Koreksi",
+   "ko": "시정조치",
+   "en": "Corrective Action"
+  },
+  "surface": {
+   "id": [
+    "tindakan koreksi",
+    "tindakan perbaikan",
+    "capa"
+   ],
+   "ko": [
+    "시정조치",
+    "개선조치"
+   ],
+   "en": [
+    "corrective action",
+    "capa"
+   ]
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "closes_finding": true
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BUKTI",
+  "axis": "AUDIT",
+  "labels": {
+   "id": "Bukti",
+   "ko": "증빙",
+   "en": "Evidence"
+  },
+  "surface": {
+   "id": [
+    "bukti",
+    "bukti dukung",
+    "dokumen bukti"
+   ],
+   "ko": [
+    "증빙",
+    "증거",
+    "증빙자료"
+   ],
+   "en": [
+    "evidence",
+    "supporting document"
+   ]
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "accepts": [
+    "photo",
+    "video",
+    "document"
+   ]
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SIDANG_FATWA",
+  "axis": "FATWA",
+  "labels": {
+   "id": "Sidang Fatwa",
+   "ko": "파트와 심의",
+   "en": "Fatwa Session"
+  },
+  "surface": {
+   "id": [
+    "sidang fatwa",
+    "sidang komisi fatwa"
+   ],
+   "ko": [
+    "파트와 심의",
+    "파트와 회의"
+   ],
+   "en": [
+    "fatwa session"
+   ]
+  },
+  "context": [
+   "FATWA"
+  ],
+  "actions": {
+   "stage": "fatwa_review"
+  },
+  "source": [
+   "BPJPH",
+   "MUI"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "KEPUTUSAN_FATWA",
+  "axis": "FATWA",
+  "labels": {
+   "id": "Keputusan Fatwa",
+   "ko": "파트와 결정",
+   "en": "Fatwa Decision"
+  },
+  "surface": {
+   "id": [
+    "keputusan fatwa",
+    "ketetapan halal"
+   ],
+   "ko": [
+    "파트와 결정",
+    "할랄 확정"
+   ],
+   "en": [
+    "fatwa decision",
+    "halal decree"
+   ]
+  },
+  "context": [
+   "FATWA",
+   "CERTIFICATE"
+  ],
+  "actions": {
+   "produces_document": true,
+   "unlocks": "certificate_issue"
+  },
+  "source": [
+   "BPJPH",
+   "MUI"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "STATUS_HALAL",
+  "axis": "STATUS",
+  "labels": {
+   "id": "Halal",
+   "ko": "할랄(허용)",
+   "en": "Halal (permitted)"
+  },
+  "surface": {
+   "id": [
+    "halal"
+   ],
+   "ko": [
+    "할랄",
+    "허용"
+   ],
+   "en": [
+    "halal",
+    "permitted"
+   ]
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "screen_status": "halal"
+  },
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "STATUS_HARAM",
+  "axis": "STATUS",
+  "labels": {
+   "id": "Haram",
+   "ko": "금지(하람)",
+   "en": "Haram (prohibited)"
+  },
+  "surface": {
+   "id": [
+    "haram",
+    "tidak halal"
+   ],
+   "ko": [
+    "하람",
+    "금지"
+   ],
+   "en": [
+    "haram",
+    "prohibited"
+   ]
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "screen_status": "haram",
+   "blocks_certification": true
+  },
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "STATUS_SYUBHAT",
+  "axis": "STATUS",
+  "labels": {
+   "id": "Syubhat",
+   "ko": "의심(무슈부흐)",
+   "en": "Doubtful (mushbooh)"
+  },
+  "surface": {
+   "id": [
+    "syubhat",
+    "subhat",
+    "meragukan"
+   ],
+   "ko": [
+    "무슈부흐",
+    "샤부하",
+    "의심"
+   ],
+   "en": [
+    "mushbooh",
+    "doubtful",
+    "syubhat"
+   ]
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "screen_status": "mushbooh",
+   "requires_evidence": true
+  },
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NAJIS",
+  "axis": "STATUS",
+  "labels": {
+   "id": "Najis",
+   "ko": "부정물(나지스)",
+   "en": "Najis (ritually unclean)"
+  },
+  "surface": {
+   "id": [
+    "najis"
+   ],
+   "ko": [
+    "나지스",
+    "부정물"
+   ],
+   "en": [
+    "najis",
+    "unclean"
+   ]
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "requires_samak": true,
+   "dedicated_line": true
+  },
+  "source": [
+   "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "UNIT_PIECE",
+  "axis": "UNIT",
+  "labels": {
+   "id": "buah",
+   "ko": "개",
+   "en": "piece"
+  },
+  "surface": {
+   "id": [
+    "buah",
+    "pcs",
+    "biji",
+    "unit"
+   ],
+   "ko": [
+    "개",
+    "個"
+   ],
+   "en": [
+    "piece",
+    "pc",
+    "pcs"
+   ]
+  },
+  "context": [
+   "UNIT"
+  ],
+  "actions": {
+   "translate_by": "table_only",
+   "forbid": {
+    "id": [
+     "anjing",
+     "ekor"
+    ]
+   }
+  },
+  "source": [
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "UNIT_ANIMAL",
+  "axis": "UNIT",
+  "labels": {
+   "id": "ekor",
+   "ko": "마리",
+   "en": "head"
+  },
+  "surface": {
+   "id": [
+    "ekor"
+   ],
+   "ko": [
+    "마리",
+    "두"
+   ],
+   "en": [
+    "head",
+    "animal"
+   ]
+  },
+  "context": [
+   "UNIT"
+  ],
+  "actions": {
+   "translate_by": "table_only",
+   "applies_to": "animal_only"
+  },
+  "source": [
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "UNIT_MASS",
+  "axis": "UNIT",
+  "labels": {
+   "id": "kilogram",
+   "ko": "킬로그램",
+   "en": "kilogram"
+  },
+  "surface": {
+   "id": [
+    "kg",
+    "kilogram",
+    "gram",
+    "gr",
+    "ton"
+   ],
+   "ko": [
+    "킬로그램",
+    "그램",
+    "톤"
+   ],
+   "en": [
+    "kg",
+    "kilogram",
+    "gram",
+    "ton"
+   ]
+  },
+  "context": [
+   "UNIT"
+  ],
+  "actions": {
+   "translate_by": "table_only",
+   "strip_in_matching": true
+  },
+  "source": [
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "UNIT_VOLUME",
+  "axis": "UNIT",
+  "labels": {
+   "id": "liter",
+   "ko": "리터",
+   "en": "liter"
+  },
+  "surface": {
+   "id": [
+    "liter",
+    "ltr",
+    "ml",
+    "cc",
+    "galon"
+   ],
+   "ko": [
+    "리터",
+    "밀리리터"
+   ],
+   "en": [
+    "liter",
+    "litre",
+    "ml"
+   ]
+  },
+  "context": [
+   "UNIT"
+  ],
+  "actions": {
+   "translate_by": "table_only",
+   "strip_in_matching": true
+  },
+  "source": [
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "UNIT_PACK",
+  "axis": "UNIT",
+  "labels": {
+   "id": "bungkus",
+   "ko": "봉지",
+   "en": "pack"
+  },
+  "surface": {
+   "id": [
+    "bungkus",
+    "sachet",
+    "pack",
+    "pak",
+    "renceng",
+    "dus",
+    "box",
+    "kaleng",
+    "botol",
+    "btl"
+   ],
+   "ko": [
+    "봉지",
+    "포",
+    "박스",
+    "캔",
+    "병"
+   ],
+   "en": [
+    "pack",
+    "sachet",
+    "box",
+    "can",
+    "bottle"
+   ]
+  },
+  "context": [
+   "UNIT"
+  ],
+  "actions": {
+   "translate_by": "table_only",
+   "strip_in_matching": true
+  },
+  "source": [
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_NIB",
+  "axis": "DOC",
+  "labels": {
+   "id": "Izin usaha (NIB)",
+   "ko": "사업자등록증(NIB)",
+   "en": "Business license (NIB)"
+  },
+  "surface": {
+   "id": [
+    "izin usaha",
+    "nib",
+    "nomor induk berusaha",
+    "akta perusahaan",
+    "company info"
+   ],
+   "ko": [
+    "사업자등록증",
+    "사업자등록증명원"
+   ],
+   "en": [
+    "business license",
+    "business registration"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "nib_business_license",
+   "required": true
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_FACTORY_REG",
+  "axis": "DOC",
+  "labels": {
+   "id": "Registrasi pabrik",
+   "ko": "공장등록증",
+   "en": "Factory registration"
+  },
+  "surface": {
+   "id": [
+    "registrasi pabrik",
+    "izin pabrik"
+   ],
+   "ko": [
+    "공장등록증"
+   ],
+   "en": [
+    "factory registration",
+    "plant registration"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "factory_registration",
+   "required": true
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_PRODUCT_LIST",
+  "axis": "DOC",
+  "labels": {
+   "id": "Daftar produk",
+   "ko": "제품 목록",
+   "en": "Product list"
+  },
+  "surface": {
+   "id": [
+    "daftar produk",
+    "daftar produk produksi"
+   ],
+   "ko": [
+    "제품 목록",
+    "전체 생산 품목 목록표"
+   ],
+   "en": [
+    "product list",
+    "list of products"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "product_list",
+   "required": true
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_PROCESS_FLOW",
+  "axis": "DOC",
+  "labels": {
+   "id": "Alur proses",
+   "ko": "공정 흐름도",
+   "en": "Process flow"
+  },
+  "surface": {
+   "id": [
+    "diagram alir proses produksi",
+    "diagram alir",
+    "alur proses",
+    "alur produksi"
+   ],
+   "ko": [
+    "공정 흐름도",
+    "제조공정도",
+    "제조 및 포장 공정도"
+   ],
+   "en": [
+    "process flow",
+    "flow diagram"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "process_flow",
+   "required": true
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_HALAL_CERT",
+  "axis": "DOC",
+  "labels": {
+   "id": "Sertifikat halal pemasok",
+   "ko": "공급사 할랄 인증서",
+   "en": "Supplier halal certificate"
+  },
+  "surface": {
+   "id": [
+    "sertifikat halal pemasok",
+    "sertifikat halal"
+   ],
+   "ko": [
+    "공급사 할랄 인증서"
+   ],
+   "en": [
+    "supplier halal certificate"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "halal_certificate",
+   "required": true
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_MATERIAL_LIST",
+  "axis": "DOC",
+  "labels": {
+   "id": "Daftar bahan baku",
+   "ko": "원재료 목록",
+   "en": "Material list"
+  },
+  "surface": {
+   "id": [
+    "daftar bahan",
+    "daftar bahan halal",
+    "daftar bahan baku",
+    "bahan vs produk matriks"
+   ],
+   "ko": [
+    "원재료 목록",
+    "사용재료 목록표"
+   ],
+   "en": [
+    "material list",
+    "list of materials"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "material_list",
+   "required": true
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_COA_MSDS",
+  "axis": "DOC",
+  "labels": {
+   "id": "Spesifikasi CoA/MSDS",
+   "ko": "CoA/MSDS 성분명세",
+   "en": "CoA/MSDS specification"
+  },
+  "surface": {
+   "id": [
+    "coa",
+    "msds",
+    "sds",
+    "spesifikasi bahan"
+   ],
+   "ko": [
+    "성분명세",
+    "시험성적서"
+   ],
+   "en": [
+    "coa",
+    "msds",
+    "certificate of analysis"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "coa_msds"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_SUPPLIER_DECL",
+  "axis": "DOC",
+  "labels": {
+   "id": "Deklarasi pemasok",
+   "ko": "공급사 선언서",
+   "en": "Supplier declaration"
+  },
+  "surface": {
+   "id": [
+    "deklarasi pemasok",
+    "pernyataan bebas babi",
+    "surat pernyataan"
+   ],
+   "ko": [
+    "공급사 선언서",
+    "돈육 불사용 선언"
+   ],
+   "en": [
+    "supplier declaration",
+    "pork free statement"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "supplier_declaration"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_QUALITY_CERT",
+  "axis": "DOC",
+  "labels": {
+   "id": "Sertifikat mutu/keamanan pangan (HACCP·FSSC·GMP)",
+   "ko": "품질/식품안전 인증(HACCP·FSSC·GMP)",
+   "en": "Quality/food-safety certificate (HACCP·FSSC·GMP)"
+  },
+  "surface": {
+   "id": [
+    "sertifikat mutu",
+    "haccp",
+    "iso 22000"
+   ],
+   "ko": [
+    "품질인증",
+    "식품안전인증"
+   ],
+   "en": [
+    "haccp",
+    "fssc",
+    "gmp",
+    "iso"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "quality_cert"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_SJPH_MANUAL",
+  "axis": "DOC",
+  "labels": {
+   "id": "Manual SJPH",
+   "ko": "SJPH 매뉴얼",
+   "en": "SJPH manual"
+  },
+  "surface": {
+   "id": [
+    "manual sjph",
+    "dokumen sjph"
+   ],
+   "ko": [
+    "SJPH 매뉴얼",
+    "할랄 매뉴얼"
+   ],
+   "en": [
+    "sjph manual",
+    "hpas manual"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "sjph_manual",
+   "required": true
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_OTHER",
+  "axis": "DOC",
+  "labels": {
+   "id": "Lainnya/belum terklasifikasi",
+   "ko": "기타/미분류",
+   "en": "Other/unclassified"
+  },
+  "surface": {
+   "id": [
+    "lainnya"
+   ],
+   "ko": [
+    "기타"
+   ],
+   "en": [
+    "other"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "other"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_DENAH_RUANG",
+  "axis": "DOC",
+  "labels": {
+   "id": "Denah ruang produksi",
+   "ko": "생산실 배치도",
+   "en": "Production area layout"
+  },
+  "surface": {
+   "id": [
+    "denah ruang produksi",
+    "denah pabrik",
+    "layout produksi"
+   ],
+   "ko": [
+    "시설 배치도",
+    "생산실 배치도"
+   ],
+   "en": [
+    "facility layout",
+    "floor plan"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "other",
+   "evidence_key": "facility_layout"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_CATATAN_PRODUKSI",
+  "axis": "DOC",
+  "labels": {
+   "id": "Catatan hasil produksi",
+   "ko": "생산 결과 기록",
+   "en": "Production record"
+  },
+  "surface": {
+   "id": [
+    "catatan hasil produksi",
+    "catatan produksi"
+   ],
+   "ko": [
+    "생산 기록",
+    "생산 결과 기록"
+   ],
+   "en": [
+    "production record"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "other",
+   "evidence_key": "production_log"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_CATATAN_PEMBELIAN",
+  "axis": "DOC",
+  "labels": {
+   "id": "Catatan pembelian barang",
+   "ko": "구매 기록",
+   "en": "Purchase record"
+  },
+  "surface": {
+   "id": [
+    "catatan pembelian barang",
+    "catatan pembelian"
+   ],
+   "ko": [
+    "구매 기록",
+    "재료 구매 기록"
+   ],
+   "en": [
+    "purchase record"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "other",
+   "evidence_key": "purchase_log"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_CATATAN_PEMERIKSAAN",
+  "axis": "DOC",
+  "labels": {
+   "id": "Catatan pemeriksaan barang",
+   "ko": "입고 검사 기록",
+   "en": "Incoming inspection record"
+  },
+  "surface": {
+   "id": [
+    "catatan pemeriksaan barang",
+    "catatan pemeriksaan"
+   ],
+   "ko": [
+    "입고 검사",
+    "성분 검사 양식"
+   ],
+   "en": [
+    "inspection record"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "other",
+   "evidence_key": "receiving_log"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_CATATAN_PENYIMPANAN",
+  "axis": "DOC",
+  "labels": {
+   "id": "Catatan penyimpanan barang",
+   "ko": "보관 기록",
+   "en": "Storage record"
+  },
+  "surface": {
+   "id": [
+    "catatan penyimpanan barang",
+    "catatan penyimpanan"
+   ],
+   "ko": [
+    "보관 기록",
+    "재료 보관 기록"
+   ],
+   "en": [
+    "storage record"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "other",
+   "evidence_key": "usage_log"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOC_CATATAN_PENJUALAN",
+  "axis": "DOC",
+  "labels": {
+   "id": "Catatan penjualan",
+   "ko": "판매·유통 기록",
+   "en": "Sales / distribution record"
+  },
+  "surface": {
+   "id": [
+    "catatan penjualan",
+    "catatan distribusi"
+   ],
+   "ko": [
+    "판매 기록",
+    "유통 기록"
+   ],
+   "en": [
+    "sales record",
+    "distribution record"
+   ]
+  },
+  "context": [
+   "HPAS",
+   "DOC"
+  ],
+  "actions": {
+   "doc_type": "other",
+   "evidence_key": "distribution_log"
+  },
+  "source": [
+   "BPJPH",
+   "field"
+  ],
+  "status": "approved"
+ }
+]

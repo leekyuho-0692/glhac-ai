@@ -33,31 +33,14 @@ DOC_TYPES = [
     "sjph_manual",              # SJPH/HPAS 매뉴얼
     "other",
 ]
-DOC_KO = {
-    "nib_business_license": "사업자등록증(NIB)", "factory_registration": "공장등록증",
-    "product_list": "제품 목록", "process_flow": "공정 흐름도",
-    "halal_certificate": "공급사 할랄 인증서", "material_list": "원재료 목록",
-    "coa_msds": "CoA/MSDS 성분명세", "supplier_declaration": "공급사 선언서",
-    "quality_cert": "품질/식품안전 인증(HACCP·FSSC·GMP)",
-    "sjph_manual": "SJPH 매뉴얼", "other": "기타/미분류",
-}
-# 서류명 다국어 — 보고서(docx/pdf) 문서분석표의 '분류'를 언어에 맞춰 인쇄하는 데 쓴다.
-DOC_EN = {
-    "nib_business_license": "Business license (NIB)", "factory_registration": "Factory registration",
-    "product_list": "Product list", "process_flow": "Process flow",
-    "halal_certificate": "Supplier halal certificate", "material_list": "Material list",
-    "coa_msds": "CoA/MSDS specification", "supplier_declaration": "Supplier declaration",
-    "quality_cert": "Quality/food-safety certificate (HACCP·FSSC·GMP)",
-    "sjph_manual": "SJPH manual", "other": "Other/unclassified",
-}
-DOC_ID = {
-    "nib_business_license": "Izin usaha (NIB)", "factory_registration": "Registrasi pabrik",
-    "product_list": "Daftar produk", "process_flow": "Alur proses",
-    "halal_certificate": "Sertifikat halal pemasok", "material_list": "Daftar bahan baku",
-    "coa_msds": "Spesifikasi CoA/MSDS", "supplier_declaration": "Deklarasi pemasok",
-    "quality_cert": "Sertifikat mutu/keamanan pangan (HACCP·FSSC·GMP)",
-    "sjph_manual": "Manual SJPH", "other": "Lainnya/belum terklasifikasi",
-}
+# 서류명 3개 언어 — 도메인 사전(domain_dict.json)의 DOC 축에서 파생한다.
+# 전에는 여기 세 벌을 손으로 유지했는데, 같은 말을 사전과 코드가 따로 갖고 있어
+# 인니어 원문 표기('Diagram alir proses produksi')를 서류 유형으로 잇지 못했다.
+from .domain_dict import doc_labels as _doc_labels   # noqa: E402
+
+DOC_KO = _doc_labels("ko")
+DOC_EN = _doc_labels("en")
+DOC_ID = _doc_labels("id")
 DOC_NAME_L10N = {"en": DOC_EN, "id": DOC_ID}
 # 신청 필수 서류(라우팅 대상)
 REQUIRED_DOCS = ["nib_business_license", "factory_registration", "product_list",
@@ -297,11 +280,25 @@ _NAME_RULES = [
 
 
 def refine_doctype_reason(name, llm_type):
-    """(doc_type, 규칙근거) — 파일명 규칙이 매칭되면 그 규칙을, 아니면 (llm_type, None)."""
+    """(doc_type, 규칙근거) — 파일명 규칙 → 도메인 사전 → LLM 판단 순.
+
+    사전 폴백을 둔 이유: 인니어 원문 파일명('Diagram alir proses produksi',
+    'Catatan pembelian barang')은 한국어·영어로 짜인 _NAME_RULES에 걸리지 않는다.
+    사전은 세 언어 표면형을 한 표준 키로 모으므로 규칙을 언어마다 늘리지 않아도 된다."""
     n = (name or "").lower()
+    from .domain_dict import doc_type_of, evidence_key_of, lookup
+    base = re.sub(r"\.[a-z0-9]{2,5}$", "", (name or "").strip())
     for pat, dt, why in _NAME_RULES:
         if re.search(pat, n):
-            return dt, why
+            # 규칙이 잡았더라도 사전이 증빙 항목을 알고 있으면 근거에 함께 남긴다
+            # (인니 실무 기록물은 doc_type은 other여도 SJPH 증빙 항목에 붙는다).
+            ev = evidence_key_of(base)
+            return dt, (why + " · 증빙 " + ev) if ev else why
+    dt = doc_type_of(base)
+    if dt:
+        key = lookup(base, axis="DOC")
+        ev = evidence_key_of(base)
+        return dt, "도메인사전 %s%s" % (key, ("·증빙 " + ev) if ev else "")
     return llm_type, None
 
 
