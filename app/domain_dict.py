@@ -43,12 +43,19 @@ def load(path=None):
     p = path or _PATH
     with open(p, encoding="utf-8") as f:
         rows = json.load(f)
-    terms, surface, axis = {}, {}, {}
+    terms, surface, axis, label_ko = {}, {}, {}, {}
     dup = []
     for t in rows:
         key = t["id"]
         terms[key] = t
         axis.setdefault(t.get("axis") or "OTHER", []).append(key)
+        ko = (t.get("labels") or {}).get("ko")
+        if ko:
+            label_ko.setdefault(ko, key)      # 한국어 원문 → 키(보고서 문구 조회용)
+        if t.get("axis") == "LABEL":
+            # 보고서 문구는 문장이라 표면형 색인에 넣으면 lookup의 포함매칭을 오염시킨다.
+            # 정확일치 표(label_ko)로만 쓴다.
+            continue
         cands = [t["id"]]
         for v in (t.get("labels") or {}).values():
             cands.append(v)
@@ -64,9 +71,9 @@ def load(path=None):
             surface[n] = key
     with _LOCK:
         _STATE.update({"terms": terms, "surface": surface, "axis": axis, "loaded": True,
-                       "duplicates": dup})
+                       "label_ko": label_ko, "duplicates": dup})
     return {"terms": len(terms), "surface": len(surface), "axes": len(axis),
-            "duplicates": dup}
+            "label_ko": len(label_ko), "duplicates": dup}
 
 
 def _ensure():
@@ -164,6 +171,26 @@ def evidence_key_of(text):
     """서류명 → SJPH 증빙 항목 키(있으면). 인니 실무 서류가 증빙 항목에 붙는다."""
     k = lookup(text, axis="DOC")
     return (actions(k) or {}).get("evidence_key") if k else None
+
+
+def text(ko, lang="ko"):
+    """한국어 원문 문구 → 해당 언어 표기. 사전에 없거나 그 언어 표기가 비면 원문을 그대로 쓴다.
+
+    보고서·화면 문구를 코드에 세 벌 두는 대신 사전 한 곳에서 꺼낸다.
+    없는 문구를 지어내지 않는 것이 중요하다 — 빈 문자열을 내보내면 문서에 구멍이 난다."""
+    lang = (lang or "ko").lower()
+    if lang == "ko" or not ko:
+        return ko
+    _ensure()
+    key = _STATE.get("label_ko", {}).get(ko)
+    if not key:
+        return ko
+    return (term(key).get("labels") or {}).get(lang) or ko
+
+
+def text_fn(lang):
+    """호출부가 L('한국어 문구') 형태로 쓰도록 묶어준다."""
+    return lambda s: text(s, lang)
 
 
 def unit_surfaces():

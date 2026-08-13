@@ -11397,110 +11397,6 @@ def get_preassess_dossier(case_id: str,
     return _preassess_dossier(db, c)
 
 
-# 사전심사 보고서 고정 라벨의 EN/ID 대역 — 한국어 원문을 키로 쓴다(프런트 T()와 같은 방식).
-# 성분 판정 근거 문장은 서버가 온톨로지에서 생성하는 한국어 서술이라 여기서 번역하지 않는다.
-# 겉면(제목·표머리·판정어)만 현지화해도 BPJPH 제출 맥락에서 읽히고, 근거는 영문 용어가 병기된다.
-_PRE_RPT_L10N = {
-    "en": {
-        "사전심사 결과 보고서 · Pre-assessment Report": "Pre-assessment Report",
-        "생성일": "Issued", "1. 기업 정보 · Company": "1. Company",
-        "2. 공장·시설 정보 · Facilities": "2. Facilities",
-        "3. 문서 분석 · Document Analysis": "3. Document Analysis",
-        "4. 성분(원재료) 분석 · Material Analysis": "4. Material Analysis",
-        "5. 정량 기준 비교 · Quantitative": "5. Quantitative Comparison",
-        "6. 오디터 검토 결과 · Auditor Review": "6. Auditor Review",
-        "항목": "Item", "내용": "Value", "공장": "Facility", "등록번호": "Reg. No.",
-        "주소": "Address", "도시/국가": "City/Country", "파일": "File", "분류": "Type",
-        "AI 신뢰도": "AI confidence", "검수 상태": "Review status", "측정값": "Measured",
-        "기준": "Threshold", "판정": "Verdict", "섹션": "Section", "코멘트": "Comment",
-        "기업명": "Company name", "대표/책임자": "Responsible person",
-        "할랄 감독자": "Halal supervisor", "연락처": "Contact",
-        "경로 · Pathway": "Pathway", "위험등급": "Risk category",
-        "등록유형": "Registration type", "신청유형": "Application type",
-        "담당자(PIC)": "PIC", "총 직원 수": "Total employees", "생산능력": "Production capacity",
-        "차단(하람)": "Blocked (haram)", "증빙 필요": "Evidence required", "적합": "Compliant",
-        "부적합": "Non-compliant", "보완": "Needs improvement", "미검수": "Not reviewed",
-        "적합(진행 가능)": "Ready to proceed", "보완 필요": "Supplement required",
-        "미검토": "Not reviewed", "문서": "Documents", "재료": "Materials", "제조": "Process",
-        "등록된 공장 정보 없음.": "No facility registered.",
-        "오디터 검토 미기록.": "No auditor review recorded.",
-        "※ 부정 항목(차단·증빙필요)을 먼저 기재합니다.":
-            "* Negative findings (blocked / evidence required) are listed first.",
-        "심각도": "Severity", "najis 위험": "najis risk", "필요 증빙": "Required evidence",
-        "출처 문서": "Source document", "출처": "Source",
-        "5. 공급사 할랄 인증번호 · Supplier Halal Certificates": "5. Supplier Halal Certificates",
-        "6. 정량 기준 비교 · Quantitative": "6. Quantitative Comparison",
-        "7. 오디터 검토 결과 · Auditor Review": "7. Auditor Review",
-        "원재료": "Material", "공급사": "Supplier", "인증번호": "Certificate No.",
-        "※ 업로드된 할랄 인증서 %d건은 이 보고서에 싣지 않습니다 — 할랄 인증서는 본 기관이 발급하며, 제출본은 심사 화면에서 확인합니다.":
-            "* %d uploaded halal certificate(s) are omitted from this report — the halal "
-            "certificate is issued by this body; submitted copies are reviewed on the audit screen.",
-        "원산지": "Origin",
-        "총 %d건 · 인증번호 미확보 %d건 — 번호 대조는 오디터가 수행합니다.":
-            "%d on file · %d without a certificate number — verification of the numbers is "
-            "performed by the auditor.",
-        "원재료 정보 출처": "Material data source",
-        "대체재": "Alternatives", "근거 문서": "Source documents",
-        "종합 판정": "Overall verdict", "검토 총평": "Reviewer summary",
-        "총 %d건 · 부정(반려·재작업) %d건": "%d total · %d negative (rejected/rework)",
-        "총 %d건 · 차단(하람) %d · 증빙필요 %d · 적합 %d · najis 위험 %d":
-            "%d total · blocked %d · evidence required %d · compliant %d · najis risk %d",
-        "※ 본 보고서는 AI 온톨로지 기반 준비용 분석이며, 공식 판정은 BPJPH/MUI Fatwa 절차로 확정됩니다.":
-            "* This report is a preparatory analysis based on an AI ontology. "
-            "Official determination is made through the BPJPH/MUI Fatwa process.",
-    },
-    "id": {
-        "사전심사 결과 보고서 · Pre-assessment Report": "Laporan Pra-audit · Pre-assessment Report",
-        "생성일": "Diterbitkan", "1. 기업 정보 · Company": "1. Perusahaan · Company",
-        "2. 공장·시설 정보 · Facilities": "2. Fasilitas · Facilities",
-        "3. 문서 분석 · Document Analysis": "3. Analisis Dokumen · Document Analysis",
-        "4. 성분(원재료) 분석 · Material Analysis": "4. Analisis Bahan Baku · Material Analysis",
-        "5. 정량 기준 비교 · Quantitative": "5. Perbandingan Kuantitatif · Quantitative",
-        "6. 오디터 검토 결과 · Auditor Review": "6. Tinjauan Auditor · Auditor Review",
-        "항목": "Item", "내용": "Isi", "공장": "Pabrik", "등록번호": "No. Registrasi",
-        "주소": "Alamat", "도시/국가": "Kota/Negara", "파일": "Berkas", "분류": "Klasifikasi",
-        "AI 신뢰도": "Keyakinan AI", "검수 상태": "Status tinjauan", "측정값": "Nilai terukur",
-        "기준": "Ambang batas", "판정": "Putusan", "섹션": "Bagian", "코멘트": "Komentar",
-        "기업명": "Nama perusahaan", "대표/책임자": "Penanggung jawab",
-        "할랄 감독자": "Penyelia Halal", "연락처": "Kontak",
-        "경로 · Pathway": "Jalur · Pathway", "위험등급": "Kategori risiko",
-        "등록유형": "Jenis registrasi", "신청유형": "Jenis permohonan",
-        "담당자(PIC)": "PIC", "총 직원 수": "Jumlah karyawan", "생산능력": "Kapasitas produksi",
-        "차단(하람)": "Diblokir (haram)", "증빙 필요": "Perlu bukti", "적합": "Sesuai",
-        "부적합": "Tidak sesuai", "보완": "Perlu perbaikan", "미검수": "Belum ditinjau",
-        "적합(진행 가능)": "Sesuai (dapat dilanjutkan)", "보완 필요": "Perlu perbaikan",
-        "미검토": "Belum ditinjau", "문서": "Dokumen", "재료": "Bahan", "제조": "Produksi",
-        "등록된 공장 정보 없음.": "Tidak ada data pabrik terdaftar.",
-        "오디터 검토 미기록.": "Tinjauan auditor belum dicatat.",
-        "※ 부정 항목(차단·증빙필요)을 먼저 기재합니다.":
-            "* Temuan negatif (diblokir / perlu bukti) dicantumkan lebih dahulu.",
-        "출처 문서": "Dokumen sumber", "출처": "Sumber",
-        "5. 공급사 할랄 인증번호 · Supplier Halal Certificates":
-            "5. Nomor Sertifikat Halal Pemasok · Supplier Halal Certificates",
-        "6. 정량 기준 비교 · Quantitative": "6. Perbandingan Kuantitatif · Quantitative",
-        "7. 오디터 검토 결과 · Auditor Review": "7. Tinjauan Auditor · Auditor Review",
-        "원재료": "Bahan baku", "공급사": "Pemasok", "인증번호": "No. Sertifikat",
-        "※ 업로드된 할랄 인증서 %d건은 이 보고서에 싣지 않습니다 — 할랄 인증서는 본 기관이 발급하며, 제출본은 심사 화면에서 확인합니다.":
-            "* %d sertifikat halal yang diunggah tidak disertakan dalam laporan ini — sertifikat "
-            "halal diterbitkan oleh lembaga ini; salinan yang diserahkan ditinjau pada layar audit.",
-        "원산지": "Asal",
-        "총 %d건 · 인증번호 미확보 %d건 — 번호 대조는 오디터가 수행합니다.":
-            "%d tercatat · %d tanpa nomor sertifikat — verifikasi nomor dilakukan oleh auditor.",
-        "원재료 정보 출처": "Sumber data bahan baku",
-        "심각도": "Tingkat keparahan", "najis 위험": "risiko najis",
-        "필요 증빙": "Bukti yang diperlukan", "대체재": "Alternatif",
-        "근거 문서": "Dokumen pendukung", "종합 판정": "Putusan keseluruhan",
-        "검토 총평": "Ringkasan peninjau",
-        "총 %d건 · 부정(반려·재작업) %d건": "%d total · %d negatif (ditolak/perbaikan)",
-        "총 %d건 · 차단(하람) %d · 증빙필요 %d · 적합 %d · najis 위험 %d":
-            "%d total · diblokir %d · perlu bukti %d · sesuai %d · risiko najis %d",
-        "※ 본 보고서는 AI 온톨로지 기반 준비용 분석이며, 공식 판정은 BPJPH/MUI Fatwa 절차로 확정됩니다.":
-            "* Laporan ini merupakan analisis persiapan berbasis ontologi AI. "
-            "Penetapan resmi ditentukan melalui proses BPJPH/MUI Fatwa.",
-    },
-}
-
-
 def _fn_en(name):
     """한글 파일명의 영문 표시명 — 결정적 용어사전. 영문 파일명이면 None(중복 저장 안 함)."""
     from .filename_l10n import to_en
@@ -11533,10 +11429,16 @@ def _intake_doc_names(lang):
     return DOC_NAME_L10N.get((lang or "ko").lower()) or DOC_KO
 
 
+# 사전심사 보고서 고정 라벨 — 도메인 사전(domain_dict.json)의 LABEL 축에서 꺼낸다.
+# 전에는 여기 EN·ID 두 벌을 손으로 유지했다. 같은 문구를 프런트(UI_STRINGS)와 서버가
+# 따로 갖고 있어 한쪽만 고쳐지는 일이 생겼다. 사전 한 곳으로 모은다.
+
+
 def _pre_rpt_lang(lang):
-    """보고서 라벨 번역기 — 미지원 언어·미등록 키는 한국어 원문을 그대로 돌려준다(누락이 빈칸이 되지 않게)."""
-    m = _PRE_RPT_L10N.get((lang or "ko").lower()) or {}
-    return lambda s: m.get(s, s)
+    """보고서 라벨 번역기 — 미지원 언어·미등록 문구는 한국어 원문을 그대로 돌려준다
+    (누락이 빈칸이 되지 않게)."""
+    from .domain_dict import text_fn
+    return text_fn(lang)
 
 
 def _preassess_report_filename(c, lang, ext):

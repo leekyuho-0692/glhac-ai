@@ -93,3 +93,37 @@ def test_lookup_unknown_returns_none():
     assert D.lookup("이런 말은 사전에 없다") is None
     assert D.label("NO_SUCH_KEY", "ko") is None
     assert D.actions("NO_SUCH_KEY") == {}
+
+
+def test_report_labels_resolve_in_three_languages():
+    """보고서 문구가 사전에서 나온다 — 코드에 세 벌 두지 않는다(3단계)."""
+    for ko, en_head, id_head in [
+            ("원재료", "Material", "Bahan"),
+            ("필요 증빙", "Required", "Bukti"),
+            ("인증번호", "Certificate", "No. Sertifikat"),
+            ("출처 문서", "Source", "Dokumen")]:
+        assert D.text(ko, "ko") == ko
+        assert D.text(ko, "en").startswith(en_head), (ko, D.text(ko, "en"))
+        assert D.text(ko, "id").startswith(id_head), (ko, D.text(ko, "id"))
+
+
+def test_report_label_falls_back_to_source_text():
+    """사전에 없는 문구는 원문을 그대로 쓴다 — 빈칸이 되면 문서에 구멍이 난다."""
+    unknown = "사전에 없는 보고서 문구"
+    for lang in ("ko", "en", "id"):
+        assert D.text(unknown, lang) == unknown
+
+
+def test_role_label_comes_from_domain_term_not_duplicate():
+    """'할랄 감독자'는 보고서 라벨이 아니라 도메인 역할 용어에서 나온다(중복 제거).
+    법정 역할명이라 표기가 한 곳에서만 정해져야 한다."""
+    assert D.lookup("할랄 감독자") == "PENYELIA_HALAL"
+    assert D.text("할랄 감독자", "en") == "Halal Supervisor"
+    assert D.text("할랄 감독자", "id") == "Penyelia Halal"
+
+
+def test_label_axis_not_in_surface_index():
+    """보고서 문장이 표면형 색인에 들어가면 lookup의 포함매칭을 오염시킨다."""
+    long_label = "※ 부정 항목(차단·증빙필요)을 먼저 기재합니다."
+    assert D.text(long_label, "en")            # 문구 조회는 된다
+    assert D.lookup(long_label) is None        # 개념 조회에는 잡히지 않는다

@@ -1809,5 +1809,1178 @@
    "field"
   ],
   "status": "approved"
+ },
+ {
+  "id": "LBL_97B7F8F74B",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "사전심사 결과 보고서 · Pre-assessment Report",
+   "en": "Pre-assessment Report",
+   "id": "Laporan Pra-audit · Pre-assessment Report"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_A5466453BB",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "생성일",
+   "en": "Issued",
+   "id": "Diterbitkan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_C8133F8D11",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "1. 기업 정보 · Company",
+   "en": "1. Company",
+   "id": "1. Perusahaan · Company"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_709E14287D",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "2. 공장·시설 정보 · Facilities",
+   "en": "2. Facilities",
+   "id": "2. Fasilitas · Facilities"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_DC0913E6FA",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "3. 문서 분석 · Document Analysis",
+   "en": "3. Document Analysis",
+   "id": "3. Analisis Dokumen · Document Analysis"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_8D74153CD5",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "4. 성분(원재료) 분석 · Material Analysis",
+   "en": "4. Material Analysis",
+   "id": "4. Analisis Bahan Baku · Material Analysis"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_FB0ED0F4A2",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "5. 정량 기준 비교 · Quantitative",
+   "en": "5. Quantitative Comparison",
+   "id": "5. Perbandingan Kuantitatif · Quantitative"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_80B3EC6619",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "6. 오디터 검토 결과 · Auditor Review",
+   "en": "6. Auditor Review",
+   "id": "6. Tinjauan Auditor · Auditor Review"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_1E59196785",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "항목",
+   "en": "Item",
+   "id": "Item"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_8A0C65F9E1",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "내용",
+   "en": "Value",
+   "id": "Isi"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_8263FD4308",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "공장",
+   "en": "Facility",
+   "id": "Pabrik"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_97E4462E7D",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "등록번호",
+   "en": "Reg. No.",
+   "id": "No. Registrasi"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_117BAB8097",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "주소",
+   "en": "Address",
+   "id": "Alamat"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_EC4BB5691B",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "도시/국가",
+   "en": "City/Country",
+   "id": "Kota/Negara"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_68B8EECB19",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "파일",
+   "en": "File",
+   "id": "Berkas"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_8B1D74F0C2",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "분류",
+   "en": "Type",
+   "id": "Klasifikasi"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_04145CDFFF",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "AI 신뢰도",
+   "en": "AI confidence",
+   "id": "Keyakinan AI"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_5F298C3A4F",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "검수 상태",
+   "en": "Review status",
+   "id": "Status tinjauan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_DAA0DE5085",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "측정값",
+   "en": "Measured",
+   "id": "Nilai terukur"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_39B300C745",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "기준",
+   "en": "Threshold",
+   "id": "Ambang batas"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_8BD39BB74E",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "판정",
+   "en": "Verdict",
+   "id": "Putusan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_02C2D758CA",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "섹션",
+   "en": "Section",
+   "id": "Bagian"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_F56CEDA8FA",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "코멘트",
+   "en": "Comment",
+   "id": "Komentar"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_327867F2B4",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "기업명",
+   "en": "Company name",
+   "id": "Nama perusahaan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_C4C18FFD05",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "대표/책임자",
+   "en": "Responsible person",
+   "id": "Penanggung jawab"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_4374DB90CE",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "연락처",
+   "en": "Contact",
+   "id": "Kontak"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_1C6EC86F84",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "경로 · Pathway",
+   "en": "Pathway",
+   "id": "Jalur · Pathway"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_F7ADA8F28F",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "위험등급",
+   "en": "Risk category",
+   "id": "Kategori risiko"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_2594C5C428",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "등록유형",
+   "en": "Registration type",
+   "id": "Jenis registrasi"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_156022A663",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "신청유형",
+   "en": "Application type",
+   "id": "Jenis permohonan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_218873E392",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "담당자(PIC)",
+   "en": "PIC",
+   "id": "PIC"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_E3ADA5C355",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "총 직원 수",
+   "en": "Total employees",
+   "id": "Jumlah karyawan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_9406BAB8D2",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "생산능력",
+   "en": "Production capacity",
+   "id": "Kapasitas produksi"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_8518A4B931",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "차단(하람)",
+   "en": "Blocked (haram)",
+   "id": "Diblokir (haram)"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_3562DF0327",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "증빙 필요",
+   "en": "Evidence required",
+   "id": "Perlu bukti"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_57F805CD0F",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "적합",
+   "en": "Compliant",
+   "id": "Sesuai"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_47A53DDC06",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "보완",
+   "en": "Needs improvement",
+   "id": "Perlu perbaikan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_4D79A5D222",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "미검수",
+   "en": "Not reviewed",
+   "id": "Belum ditinjau"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_8E59BB3F33",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "적합(진행 가능)",
+   "en": "Ready to proceed",
+   "id": "Sesuai (dapat dilanjutkan)"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_97BFDC9DEF",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "보완 필요",
+   "en": "Supplement required",
+   "id": "Perlu perbaikan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_B6A8EB5154",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "미검토",
+   "en": "Not reviewed",
+   "id": "Belum ditinjau"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_19E4EB25A1",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "문서",
+   "en": "Documents",
+   "id": "Dokumen"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_ED17A518F9",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "재료",
+   "en": "Materials",
+   "id": "Bahan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_BE77EA8D0B",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "제조",
+   "en": "Process",
+   "id": "Produksi"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_3091113A7A",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "등록된 공장 정보 없음.",
+   "en": "No facility registered.",
+   "id": "Tidak ada data pabrik terdaftar."
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_1221DCABC2",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "오디터 검토 미기록.",
+   "en": "No auditor review recorded.",
+   "id": "Tinjauan auditor belum dicatat."
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_151C0585E7",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "※ 부정 항목(차단·증빙필요)을 먼저 기재합니다.",
+   "en": "* Negative findings (blocked / evidence required) are listed first.",
+   "id": "* Temuan negatif (diblokir / perlu bukti) dicantumkan lebih dahulu."
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_84117751BA",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "심각도",
+   "en": "Severity",
+   "id": "Tingkat keparahan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_99773EA494",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "najis 위험",
+   "en": "najis risk",
+   "id": "risiko najis"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_E796D7676A",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "필요 증빙",
+   "en": "Required evidence",
+   "id": "Bukti yang diperlukan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_D873C70EFF",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "출처 문서",
+   "en": "Source document",
+   "id": "Dokumen sumber"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_2151EDBEBC",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "출처",
+   "en": "Source",
+   "id": "Sumber"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_5F9606D263",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "5. 공급사 할랄 인증번호 · Supplier Halal Certificates",
+   "en": "5. Supplier Halal Certificates",
+   "id": "5. Nomor Sertifikat Halal Pemasok · Supplier Halal Certificates"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_A3EAA4E03A",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "6. 정량 기준 비교 · Quantitative",
+   "en": "6. Quantitative Comparison",
+   "id": "6. Perbandingan Kuantitatif · Quantitative"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_E8EC1F76C2",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "7. 오디터 검토 결과 · Auditor Review",
+   "en": "7. Auditor Review",
+   "id": "7. Tinjauan Auditor · Auditor Review"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_B8652B1934",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "원재료",
+   "en": "Material",
+   "id": "Bahan baku"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_E5ADE49201",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "공급사",
+   "en": "Supplier",
+   "id": "Pemasok"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_D2A9729B92",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "인증번호",
+   "en": "Certificate No.",
+   "id": "No. Sertifikat"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_20799D6693",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "※ 업로드된 할랄 인증서 %d건은 이 보고서에 싣지 않습니다 — 할랄 인증서는 본 기관이 발급하며, 제출본은 심사 화면에서 확인합니다.",
+   "en": "* %d uploaded halal certificate(s) are omitted from this report — the halal certificate is issued by this body; submitted copies are reviewed on the audit screen.",
+   "id": "* %d sertifikat halal yang diunggah tidak disertakan dalam laporan ini — sertifikat halal diterbitkan oleh lembaga ini; salinan yang diserahkan ditinjau pada layar audit."
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_BF55A6B21B",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "원산지",
+   "en": "Origin",
+   "id": "Asal"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_86F6148B40",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "총 %d건 · 인증번호 미확보 %d건 — 번호 대조는 오디터가 수행합니다.",
+   "en": "%d on file · %d without a certificate number — verification of the numbers is performed by the auditor.",
+   "id": "%d tercatat · %d tanpa nomor sertifikat — verifikasi nomor dilakukan oleh auditor."
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_1C0AF986D4",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "원재료 정보 출처",
+   "en": "Material data source",
+   "id": "Sumber data bahan baku"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_C9814DFD46",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "대체재",
+   "en": "Alternatives",
+   "id": "Alternatif"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_D09B8B23A2",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "근거 문서",
+   "en": "Source documents",
+   "id": "Dokumen pendukung"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_E04AF8592F",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "종합 판정",
+   "en": "Overall verdict",
+   "id": "Putusan keseluruhan"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_512C74F7F8",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "검토 총평",
+   "en": "Reviewer summary",
+   "id": "Ringkasan peninjau"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_711CE1B060",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "총 %d건 · 부정(반려·재작업) %d건",
+   "en": "%d total · %d negative (rejected/rework)",
+   "id": "%d total · %d negatif (ditolak/perbaikan)"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_D3BC5C17B9",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "총 %d건 · 차단(하람) %d · 증빙필요 %d · 적합 %d · najis 위험 %d",
+   "en": "%d total · blocked %d · evidence required %d · compliant %d · najis risk %d",
+   "id": "%d total · diblokir %d · perlu bukti %d · sesuai %d · risiko najis %d"
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_44B6B2D810",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "※ 본 보고서는 AI 온톨로지 기반 준비용 분석이며, 공식 판정은 BPJPH/MUI Fatwa 절차로 확정됩니다.",
+   "en": "* This report is a preparatory analysis based on an AI ontology. Official determination is made through the BPJPH/MUI Fatwa process.",
+   "id": "* Laporan ini merupakan analisis persiapan berbasis ontologi AI. Penetapan resmi ditentukan melalui proses BPJPH/MUI Fatwa."
+  },
+  "context": [
+   "REPORT"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
  }
 ]
