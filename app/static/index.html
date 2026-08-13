@@ -4044,7 +4044,7 @@ function facListHtml(facs,org,canApp,selected,caseId){
 }
 async function facReload(org,caseId){
   try{
-    const facs=await API(`/orgs/${org}/facilities`);
+    const facs=await API(`/orgs/${org}/facilities${caseId?`?case_id=${caseId}`:""}`);
     let sel=[];if(caseId){try{const c=await API(`/cases/${caseId}`);sel=c.facility_ids||[];}catch(_){}}
     const box=document.getElementById("facListBox");if(box)box.innerHTML=facListHtml(facs,org,true,sel,caseId);
   }catch(_){}
@@ -4071,7 +4071,7 @@ async function facAdd(org,caseId){
   catch(e){toast("공장 등록 실패 · "+(e&&e.code?e.code:""));}
 }
 async function facEdit(fid,org,caseId){
-  const facs=await API(`/orgs/${org}/facilities`).catch(()=>[]);
+  const facs=await API(`/orgs/${org}/facilities${caseId?`?case_id=${caseId}`:""}`).catch(()=>[]);
   const fac=(facs||[]).find(f=>f.facility_id===fid);if(!fac)return toast("공장을 찾을 수 없습니다");
   const out=await dialog("공장 상세 편집 · Facility",_FAC_FIELDS(fac));
   if(!out)return;
@@ -5193,7 +5193,7 @@ SCREEN.application=async()=>{
   const org=c.org_id||(()=>{try{return localStorage.getItem("glhac_org")||""}catch(_){return""}})();
   let penyeliaResp={items:[]};try{penyeliaResp=await API(`/orgs/${org}/penyelia`);}catch(_){}
   const pens=penyeliaResp.items||[];
-  let facs=[];try{facs=await API(`/orgs/${org}/facilities`);}catch(_){}
+  let facs=[];try{facs=await API(`/orgs/${org}/facilities?case_id=${id}`);}catch(_){}
   const canApp=["client","consultant","admin"].includes(ROLE);
   const isSD=c.pathway==="self_declare";                                   // A1/A3: 자기선언(SEHATI) 경로
   const sdPromote=isSD||!c.pathway||c.pathway==="undetermined";            // A3: 경로 미확정이면 SD-first 안내 노출

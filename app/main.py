@@ -1743,8 +1743,9 @@ def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("appli
               "address", "factory_reg_no", "factory_address"):
         if oext.get(k) is not None:
             setattr(c, k, oext[k])
-    # 공장도 org 자산 상속(오피스 1:N 공장) — 새 신청에 org 공장 자동 연결(회사프로필 상속과 대칭)
-    facs = db.query(models.Facility).filter_by(org_id=org).all()
+    # 공장도 org 자산 상속(오피스 1:N 공장) — 새 신청에 org 공장 자동 연결(회사프로필 상속과 대칭).
+    # 단 다른 회사가 이미 쓰는 공장은 상속하지 않는다(_facilities_for_case 주석 참조).
+    facs = _facilities_for_case(db, c)
     if facs:
         c.facility_ids = [f.facility_id for f in facs]
     db.add(c)
@@ -3382,8 +3383,8 @@ def select_facilities(case_id: str, body: schemas.FacilitySelectReq,
                       db: Session = Depends(get_db)):
     """이 신청 대상 공장 선택·분류(오피스 공장 중 선택) — facility_ids 저장."""
     c = _get_case(db, case_id, user)
-    # 소속 오피스(org)의 공장만 허용
-    valid = {f.facility_id for f in db.query(models.Facility).filter_by(org_id=c.org_id).all()}
+    # 소속 오피스(org)의 공장만 허용 — 다른 회사가 쓰는 공장은 선택 대상이 아니다
+    valid = {f.facility_id for f in _facilities_for_case(db, c)}
     c.facility_ids = [fid for fid in (body.facility_ids or []) if fid in valid]
     db.commit()
     return {"facility_ids": c.facility_ids}
@@ -13354,9 +13355,50 @@ def _root_redirect():
 
 
 # ===== 공장·시설 (회사1:공장N) — Phase 3 =====
+def _company_key(c):
+    """회사 식별자 — 상호와 사업자번호를 함께 본다. org 하나에 여러 회사가 든 경우를 가른다.
+
+    번호만으로는 부족했다. 새 신청이 org 프로필(사업자번호 포함)을 상속하는 탓에
+    서로 다른 회사 셋이 같은 번호를 달고 있었다(실측: 바이오로제트·질경이·천우건설).
+    둘 다 같아야 같은 회사로 본다 — 덜 묶이면 공장을 다시 고르면 그만이지만, 잘못 묶이면
+    남의 공장이 남의 인증 신청서에 실린다."""
+    return ((c.nib or "").strip(), (c.company_name or "").strip())
+
+
+def _facilities_for_case(db, c):
+    """이 신청의 '회사 자산' 공장 — 같은 org라도 다른 회사가 이미 쓰는 공장은 뺀다.
+
+    모델은 org=회사(1:N 공장)를 전제하지만, 실제 데이터에는 org 하나에 여러 회사가
+    들어있는 경우가 있다(데모 org). 그러면 케이스 생성 시 org 공장을 전부 상속해
+    인도네시아 케이터링 신청서에 한국 공장이 붙는다(CV. CITRA PRATAMA 실측).
+
+    가르는 기준은 '다른 회사가 이미 연결해 쓰는 공장인가'다. org=회사인 정상 데이터에서는
+    같은 회사의 지난 신청이 걸릴 뿐이라 아무것도 빠지지 않는다 — 회사 자산 상속은 그대로다.
+    """
+    rows = (db.query(models.Facility).filter_by(org_id=c.org_id)
+            .order_by(models.Facility.created_at).all())
+    mine = set(c.facility_ids or [])
+    me = _company_key(c)
+    taken = set()
+    for other in db.query(models.CaseApplication).filter(
+            models.CaseApplication.org_id == c.org_id,
+            models.CaseApplication.case_id != c.case_id).all():
+        if _company_key(other) != me:
+            taken.update(other.facility_ids or [])
+    return [f for f in rows if f.facility_id in mine or f.facility_id not in taken]
+
+
 @app.get("/orgs/{org_id}/facilities")
-def list_facilities(org_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    rows = db.query(models.Facility).filter_by(org_id=org_id).order_by(models.Facility.created_at).all()
+def list_facilities(org_id: str, case_id: str = Query(None),
+                    user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    # 타 조직 조회 차단 — org_id는 URL에서 오므로 검사 없이는 남의 회사 공장이 열린다.
+    if user["role"] != "admin" and org_id != user["org_id"]:
+        raise HTTPException(403, {"code": "ORG_FORBIDDEN", "org_id": org_id})
+    if case_id:   # 케이스 문맥이 있으면 그 회사의 자산만
+        rows = _facilities_for_case(db, _get_case(db, case_id, user))
+    else:
+        rows = (db.query(models.Facility).filter_by(org_id=org_id)
+                .order_by(models.Facility.created_at).all())
     return [{"facility_id": f.facility_id, "name": f.name, "address": f.address, "city": f.city,
              "country": f.country, "zip": f.zip, "reg_no": f.reg_no,
              "profile_ext": f.profile_ext or {}, "created_at": str(f.created_at)} for f in rows]
