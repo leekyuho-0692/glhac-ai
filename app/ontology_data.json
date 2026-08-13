@@ -10459,5 +10459,1278 @@
    "source_declaration"
   ],
   "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.meat_generic",
+  "canonical_name": "Meat (unspecified species)",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "육류",
+    "고기"
+   ],
+   "en": [
+    "meat"
+   ],
+   "id": [
+    "daging",
+    "daging potong",
+    "daging segar"
+   ]
+  },
+  "required_evidence": [
+   "halal_slaughter_cert",
+   "animal_source_declaration"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.beef",
+  "canonical_name": "Beef",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "소고기",
+    "쇠고기"
+   ],
+   "en": [
+    "beef",
+    "cattle meat"
+   ],
+   "id": [
+    "daging sapi",
+    "sapi potong",
+    "rasa sapi",
+    "sapi",
+    "buntut sapi",
+    "iga sapi",
+    "lidah sapi"
+   ]
+  },
+  "required_evidence": [
+   "halal_slaughter_cert"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.chicken",
+  "canonical_name": "Chicken / poultry",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "닭고기",
+    "가금류"
+   ],
+   "en": [
+    "chicken",
+    "poultry"
+   ],
+   "id": [
+    "ayam",
+    "ayam potong",
+    "daging ayam",
+    "unggas",
+    "rasa ayam"
+   ]
+  },
+  "required_evidence": [
+   "halal_slaughter_cert"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.goat_lamb",
+  "canonical_name": "Goat / lamb",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "염소고기",
+    "양고기"
+   ],
+   "en": [
+    "goat meat",
+    "lamb",
+    "mutton"
+   ],
+   "id": [
+    "kambing",
+    "daging kambing",
+    "domba"
+   ]
+  },
+  "required_evidence": [
+   "halal_slaughter_cert"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.duck",
+  "canonical_name": "Duck",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "오리고기"
+   ],
+   "en": [
+    "duck meat"
+   ],
+   "id": [
+    "bebek",
+    "daging bebek",
+    "itik"
+   ]
+  },
+  "required_evidence": [
+   "halal_slaughter_cert"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.broth_stock",
+  "canonical_name": "Broth / stock (kaldu)",
+  "category": "flavor_enhancer",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "육수",
+    "스톡"
+   ],
+   "en": [
+    "broth",
+    "stock",
+    "bouillon"
+   ],
+   "id": [
+    "kaldu",
+    "kaldu sapi",
+    "kaldu ayam"
+   ]
+  },
+  "required_evidence": [
+   "animal_source_declaration",
+   "halal_slaughter_cert"
+  ],
+  "alternatives": [
+   "plant-based stock"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.fish",
+  "canonical_name": "Fish",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "marine"
+  ],
+  "aliases": {
+   "ko": [
+    "생선",
+    "어류"
+   ],
+   "en": [
+    "fish"
+   ],
+   "id": [
+    "ikan",
+    "ikan segar"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.shrimp",
+  "canonical_name": "Shrimp / prawn",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "marine"
+  ],
+  "aliases": {
+   "ko": [
+    "새우"
+   ],
+   "en": [
+    "shrimp",
+    "prawn"
+   ],
+   "id": [
+    "udang",
+    "terasi"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.squid_crab",
+  "canonical_name": "Squid / crab",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "marine"
+  ],
+  "aliases": {
+   "ko": [
+    "오징어",
+    "게"
+   ],
+   "en": [
+    "squid",
+    "crab"
+   ],
+   "id": [
+    "cumi",
+    "cumi-cumi",
+    "kepiting"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.egg",
+  "canonical_name": "Egg",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "계란",
+    "달걀"
+   ],
+   "en": [
+    "egg",
+    "chicken egg"
+   ],
+   "id": [
+    "telur",
+    "telur ayam",
+    "telur bebek"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.cooking_oil",
+  "canonical_name": "Cooking oil (vegetable)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "식용유",
+    "튀김유"
+   ],
+   "en": [
+    "cooking oil",
+    "vegetable oil",
+    "palm oil"
+   ],
+   "id": [
+    "minyak goreng",
+    "minyak sawit",
+    "minyak nabati",
+    "minyak kelapa"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.margarine",
+  "canonical_name": "Margarine",
+  "category": "animal_fat",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "마가린"
+   ],
+   "en": [
+    "margarine"
+   ],
+   "id": [
+    "margarin",
+    "mentega putih"
+   ]
+  },
+  "required_evidence": [
+   "source_declaration"
+  ],
+  "alternatives": [
+   "plant-based margarine (declared)"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.cheese",
+  "canonical_name": "Cheese",
+  "category": "animal_protein",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "high",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "치즈"
+   ],
+   "en": [
+    "cheese"
+   ],
+   "id": [
+    "keju"
+   ]
+  },
+  "required_evidence": [
+   "rennet_source_declaration"
+  ],
+  "alternatives": [
+   "microbial-rennet cheese"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.soy_sauce",
+  "canonical_name": "Soy sauce (kecap)",
+  "category": "flavor_enhancer",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "ferment"
+  ],
+  "aliases": {
+   "ko": [
+    "간장"
+   ],
+   "en": [
+    "soy sauce"
+   ],
+   "id": [
+    "kecap",
+    "kecap manis",
+    "kecap asin"
+   ]
+  },
+  "required_evidence": [
+   "process_declaration",
+   "residual_alcohol_test"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.seasoning_mix",
+  "canonical_name": "Seasoning / flavor enhancer mix (bumbu)",
+  "category": "flavor_enhancer",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant",
+   "animal"
+  ],
+  "aliases": {
+   "ko": [
+    "조미료",
+    "복합조미식품"
+   ],
+   "en": [
+    "seasoning",
+    "flavor enhancer mix"
+   ],
+   "id": [
+    "bumbu",
+    "bumbu pelezat",
+    "penyedap rasa",
+    "bumbu serbaguna"
+   ]
+  },
+  "required_evidence": [
+   "composition_breakdown",
+   "source_declaration"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.vinegar",
+  "canonical_name": "Vinegar (cuka)",
+  "category": "acid",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "ferment"
+  ],
+  "aliases": {
+   "ko": [
+    "식초"
+   ],
+   "en": [
+    "vinegar"
+   ],
+   "id": [
+    "cuka"
+   ]
+  },
+  "required_evidence": [
+   "process_declaration"
+  ],
+  "alternatives": [
+   "synthetic acetic acid"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.yeast",
+  "canonical_name": "Yeast (ragi)",
+  "category": "ferment",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "microbial"
+  ],
+  "aliases": {
+   "ko": [
+    "효모",
+    "이스트"
+   ],
+   "en": [
+    "yeast",
+    "baker's yeast"
+   ],
+   "id": [
+    "ragi"
+   ]
+  },
+  "required_evidence": [
+   "process_declaration"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.oyster_sauce",
+  "canonical_name": "Oyster sauce",
+  "category": "flavor_enhancer",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "marine"
+  ],
+  "aliases": {
+   "ko": [
+    "굴소스"
+   ],
+   "en": [
+    "oyster sauce"
+   ],
+   "id": [
+    "saus tiram"
+   ]
+  },
+  "required_evidence": [
+   "composition_breakdown"
+  ],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.pepper_spice",
+  "canonical_name": "Pepper (merica/lada)",
+  "category": "flavor",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "후추"
+   ],
+   "en": [
+    "pepper",
+    "black pepper",
+    "white pepper"
+   ],
+   "id": [
+    "merica",
+    "merica bubuk",
+    "lada",
+    "lada bubuk"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.allium",
+  "canonical_name": "Onion / garlic / shallot",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "양파",
+    "마늘",
+    "샬롯"
+   ],
+   "en": [
+    "onion",
+    "garlic",
+    "shallot"
+   ],
+   "id": [
+    "bawang",
+    "bawang merah",
+    "bawang putih",
+    "bawang bombay"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.chili",
+  "canonical_name": "Chili",
+  "category": "flavor",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "고추"
+   ],
+   "en": [
+    "chili",
+    "chilli"
+   ],
+   "id": [
+    "cabai",
+    "cabe",
+    "cabai merah",
+    "sambal"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.tapioca",
+  "canonical_name": "Tapioca / cassava starch",
+  "category": "carbohydrate",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "타피오카",
+    "카사바전분"
+   ],
+   "en": [
+    "tapioca",
+    "cassava starch"
+   ],
+   "id": [
+    "tapioka",
+    "tepung tapioka",
+    "sagu"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.cornstarch_id",
+  "canonical_name": "Corn starch (maizena)",
+  "category": "carbohydrate",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "옥수수전분"
+   ],
+   "en": [
+    "corn starch",
+    "cornstarch"
+   ],
+   "id": [
+    "maizena",
+    "tepung jagung",
+    "tepung maizena"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.soy_products",
+  "canonical_name": "Tofu / tempeh",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "두부",
+    "템페"
+   ],
+   "en": [
+    "tofu",
+    "tempeh"
+   ],
+   "id": [
+    "tahu",
+    "tempe"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.coconut_milk_id",
+  "canonical_name": "Coconut milk (santan)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "코코넛밀크"
+   ],
+   "en": [
+    "coconut milk"
+   ],
+   "id": [
+    "santan",
+    "santan kelapa"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.tamarind",
+  "canonical_name": "Tamarind (asam)",
+  "category": "acid",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "타마린드"
+   ],
+   "en": [
+    "tamarind"
+   ],
+   "id": [
+    "asem",
+    "asam jawa",
+    "buah asem"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.spice_whole",
+  "canonical_name": "Whole spices (plant)",
+  "category": "flavor",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "향신료"
+   ],
+   "en": [
+    "spice",
+    "clove",
+    "cardamom",
+    "cinnamon",
+    "nutmeg",
+    "star anise",
+    "cumin",
+    "coriander",
+    "candlenut",
+    "sesame"
+   ],
+   "id": [
+    "cengkeh",
+    "kapulaga",
+    "kayu manis",
+    "pala",
+    "bunga lawang",
+    "jinten",
+    "ketumbar",
+    "kemiri",
+    "wijen",
+    "andaliman",
+    "kluwek",
+    "melinjo"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.rhizome",
+  "canonical_name": "Rhizome spices (ginger family)",
+  "category": "flavor",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "생강류"
+   ],
+   "en": [
+    "ginger",
+    "turmeric",
+    "galangal",
+    "aromatic ginger"
+   ],
+   "id": [
+    "jahe",
+    "kunyit",
+    "lengkuas",
+    "kencur",
+    "temu kunci",
+    "sereh",
+    "serai"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.leaf_herb",
+  "canonical_name": "Culinary leaves / herbs",
+  "category": "flavor",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "향엽",
+    "허브"
+   ],
+   "en": [
+    "bay leaf",
+    "celery leaf",
+    "pandan leaf",
+    "basil leaf"
+   ],
+   "id": [
+    "daun salam",
+    "daun seledri",
+    "daun pandan",
+    "daun kemangi",
+    "daun pepaya",
+    "daun jeruk",
+    "daun kunyit",
+    "daun bawang"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.citrus_fruit",
+  "canonical_name": "Citrus fruit",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "감귤류"
+   ],
+   "en": [
+    "lime",
+    "kaffir lime",
+    "citrus"
+   ],
+   "id": [
+    "jeruk nipis",
+    "jeruk purut",
+    "jeruk limau",
+    "jeruk"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.vegetable",
+  "canonical_name": "Vegetables (fresh)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "채소"
+   ],
+   "en": [
+    "vegetable",
+    "tomato",
+    "potato",
+    "carrot",
+    "cabbage",
+    "cucumber",
+    "broccoli",
+    "bean sprout",
+    "long bean"
+   ],
+   "id": [
+    "sayur",
+    "sayuran",
+    "tomat",
+    "kentang",
+    "wortel",
+    "kol",
+    "kembang kol",
+    "timun",
+    "buncis",
+    "toge",
+    "tauge",
+    "sawi",
+    "kacang panjang",
+    "labusiam",
+    "brokoli",
+    "petai",
+    "bunga pepaya"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.legume_nut",
+  "canonical_name": "Legumes / nuts",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "콩류",
+    "견과류"
+   ],
+   "en": [
+    "peanut",
+    "mung bean",
+    "walnut",
+    "nut",
+    "legume"
+   ],
+   "id": [
+    "kacang",
+    "kacang tanah",
+    "kacang ijo",
+    "kacang hijau",
+    "kacang kenari"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.fruit_fresh",
+  "canonical_name": "Fresh fruit",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "과일"
+   ],
+   "en": [
+    "fruit",
+    "jackfruit"
+   ],
+   "id": [
+    "buah",
+    "nangka"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.mushroom",
+  "canonical_name": "Mushroom",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "버섯"
+   ],
+   "en": [
+    "mushroom",
+    "wood ear"
+   ],
+   "id": [
+    "jamur",
+    "jamur kuping"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.breadcrumb",
+  "canonical_name": "Breadcrumb / wrapper dough",
+  "category": "carbohydrate",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "빵가루",
+    "만두피"
+   ],
+   "en": [
+    "breadcrumb",
+    "wonton wrapper"
+   ],
+   "id": [
+    "tepung roti",
+    "tepung panir",
+    "kulit pangsit",
+    "kulit lumpia"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.pasta_noodle",
+  "canonical_name": "Pasta / noodle",
+  "category": "carbohydrate",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "plant"
+  ],
+  "aliases": {
+   "ko": [
+    "파스타",
+    "면"
+   ],
+   "en": [
+    "pasta",
+    "macaroni",
+    "spaghetti",
+    "noodle"
+   ],
+   "id": [
+    "makaroni",
+    "mi",
+    "mie",
+    "bihun",
+    "soun"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.milk_liquid",
+  "canonical_name": "Milk (liquid/UHT)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "dairy"
+  ],
+  "aliases": {
+   "ko": [
+    "우유",
+    "멸균우유"
+   ],
+   "en": [
+    "milk",
+    "uht milk",
+    "full cream milk"
+   ],
+   "id": [
+    "susu",
+    "susu uht",
+    "susu full cream",
+    "susu segar",
+    "susu cair"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
+ },
+ {
+  "ingredient_uid": "ing.nonfood_cleaning",
+  "canonical_name": "Cleaning agent (non-food)",
+  "category": "processing_aid",
+  "e_number": null,
+  "default_status": "mushbooh",
+  "severity": "medium",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "synthetic"
+  ],
+  "aliases": {
+   "ko": [
+    "세제",
+    "세정제"
+   ],
+   "en": [
+    "dishwashing liquid",
+    "floor cleaner",
+    "glass cleaner"
+   ],
+   "id": [
+    "cairan pencuci piring",
+    "pembersih",
+    "karbol",
+    "sabun cuci"
+   ]
+  },
+  "required_evidence": [
+   "composition_breakdown"
+  ],
+  "alternatives": [
+   "할랄 전용 라인·세척(사무) 절차로 관리 — 제품 성분이 아님"
+  ]
+ },
+ {
+  "ingredient_uid": "ing.nonfood_packaging",
+  "canonical_name": "Packaging / disposable ware (non-food)",
+  "category": "base",
+  "e_number": null,
+  "default_status": "halal",
+  "severity": "low",
+  "najis_risk": false,
+  "carrier_check": null,
+  "sources": [
+   "petrochemical"
+  ],
+  "aliases": {
+   "ko": [
+    "포장재",
+    "일회용기"
+   ],
+   "en": [
+    "plastic spoon",
+    "plastic fork",
+    "aluminium foil",
+    "food container",
+    "plastic bag",
+    "tissue",
+    "box"
+   ],
+   "id": [
+    "sendok plastik",
+    "garpu plastik",
+    "alumunium foil",
+    "aluminium foil",
+    "thinwall",
+    "plastik kantong",
+    "kertas minyak",
+    "dus kotak",
+    "box snack",
+    "mika plasik",
+    "mika plastik",
+    "tissue",
+    "kain lap",
+    "kain pell",
+    "kuas oles plastik"
+   ]
+  },
+  "required_evidence": [],
+  "alternatives": []
  }
 ]

@@ -27,12 +27,22 @@ def load_ontology(db):
 _STOPWORDS = {"of", "and", "the", "with", "for", "a", "an", "in", "on", "de", "dan"}
 
 
+# 상품명에 붙는 계량 단위 — 인도네시아 실무 자료는 성분명이 아니라 상품명으로 적힌다
+# ('Minyak Bimoli 5 Liter', 'DAGING POTONG 1 KG BRAVOO'). 수량·단위는 성분 구분에
+# 기여하지 않으므로 토큰에서 뺀다. 브랜드는 열거할 수 없어 제거하지 않는다
+# (부분문자열 매칭이 'minyak'을 잡아주므로 굳이 지울 필요도 없다).
+_UNITS = {"kg", "g", "gr", "gram", "mg", "l", "liter", "litre", "ltr", "ml", "cc",
+          "pcs", "pack", "pak", "box", "dus", "btl", "botol", "sachet", "renceng",
+          "bungkus", "kaleng", "galon", "lusin", "ton"}
+
+
 def _tokens(text):
     """어순·복수형·구두점 차이를 흡수한 토큰 집합.
-    'Sucrose Fatty Acid Esters' 와 'sucrose esters of fatty acids' 가 같은 집합이 된다."""
+    'Sucrose Fatty Acid Esters' 와 'sucrose esters of fatty acids' 가 같은 집합이 된다.
+    숫자·계량단위는 제외한다(상품명의 용량 표기가 매칭을 방해하지 않게)."""
     out = set()
     for t in re.split(r"[^0-9a-z가-힣]+", (text or "").lower()):
-        if not t or t in _STOPWORDS:
+        if not t or t in _STOPWORDS or t in _UNITS or t.isdigit():
             continue
         # 단순 복수형 정규화: acids→acid, esters→ester. 'ss'로 끝나거나 짧은 말은 건드리지 않는다.
         if len(t) > 3 and t.endswith("s") and not t.endswith("ss"):
@@ -44,13 +54,24 @@ def _tokens(text):
 _STATUS_RANK = {"haram": 0, "mushbooh": 1, "halal": 2}
 
 
+def _norm_key(s):
+    """매칭 전 표기 정규화 — 곱슬따옴표·비분리공백처럼 같은 이름을 갈라놓는 문자만 손본다
+    ('Merica Bubuk “Ladaku”'). 내용을 바꾸는 치환은 하지 않는다."""
+    if not s:
+        return ""
+    for a, b in (("\u201c", '"'), ("\u201d", '"'), ("\u2018", "'"), ("\u2019", "'"),
+                 ("\u00a0", " "), ("\u200b", " ")):
+        s = s.replace(a, b)
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def _match(name, e_number):
     if e_number:
         it = _CACHE["by_e"].get(e_number.strip().upper())
         if it:
             return it
     if name:
-        key = name.strip().lower()
+        key = _norm_key(name).lower()
         if key in _CACHE["by_alias"]:
             return _CACHE["by_alias"][key]
         # 토큰 매칭(어순·복수형 흡수)과 부분 문자열 매칭을 하나의 후보 풀로 합쳐
