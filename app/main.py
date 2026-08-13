@@ -1380,7 +1380,12 @@ def audit_log_verify(actor: str = Query(None), action: str = Query(None),
                      case: str = Query(None), user=Depends(auth.require_roles()),
                      db: Session = Depends(get_db)):
     """법적효력 P3b — AuditLog HMAC 체인 재생·재계산 검증(admin). audit_verify(WorkflowEvent) 미러.
-    각 로그의 정규 본문+저장된 prev로 row 해시를 재계산해 저장값과 대조(변조 시 break_at)."""
+
+    끊김을 한 덩어리로 보고하면 안 된다. 로그를 지워 생긴 단절과 본문을 고친 위조는
+    성격이 전혀 다른데, 예전에는 둘 다 integrity_ok=false 하나로만 나와 화면에서
+    구분할 수 없었다(실측: 위조 0건인데 삭제자국 4건 때문에 false).
+    이제 tampered(위조)와 deleted_predecessor(선행 로그 삭제)를 갈라 돌려준다.
+    integrity_ok 자체는 보수적으로 유지한다 — 지워서 감춘 것을 '무결'로 부르지 않는다."""
     q = db.query(models.AuditLog)
     if actor:
         q = q.filter(models.AuditLog.actor_id == actor)
@@ -1389,24 +1394,12 @@ def audit_log_verify(actor: str = Query(None), action: str = Query(None),
     if case:
         q = q.filter(models.AuditLog.case_id == case)
     rows = q.order_by(models.AuditLog.created_at, models.AuditLog.id).all()
-    broken, checked, prev_row = None, 0, None
-    for r in rows:
-        meta = r.meta if isinstance(r.meta, dict) else {}
-        ch = meta.get("_chain")
-        if not isinstance(ch, dict):
-            continue   # 체인 없는 레거시 로그는 스킵(검증 대상 아님)
-        base = {k: v for k, v in meta.items() if k != "_chain"}
-        body = _audit_row_body(r.actor_id, r.action, r.resource_type, r.resource_id,
-                               r.case_id, r.created_at, base)
-        rh = sm.chain_row_hash(ch.get("prev", ""), body)
-        checked += 1
-        # 행 자기무결성(본문/row 변조 감지) + 연결성(필터 없을 때만: prev==직전 row)
-        linkage_ok = (actor or action or case) or prev_row is None or ch.get("prev") == prev_row
-        if rh != ch.get("row") or not linkage_ok:
-            broken = r.id
-            break
-        prev_row = ch.get("row")
-    return {"integrity_ok": broken is None, "checked": checked, "break_at": broken}
+    filtered = bool(actor or action or case)
+    out = _verify_audit_chain(rows, subset=filtered, known_hashes=_audit_chain_hashes(db))
+    gaps = out.get("deleted_predecessor") or []
+    out["summary"] = ("위조 %d건 · 선행로그 삭제로 인한 단절 %d건 (검사 %d행)"
+                      % (out["tampered_count"], len(gaps), out["checked"]))
+    return out
 
 
 def _verify_wf_chain(evs):
@@ -1443,6 +1436,7 @@ def _verify_audit_chain(rows, subset=False, known_hashes=None):
     검사한다(audit_log_verify가 필터 시 연결성을 면제하는 것과 같은 규칙).
     단, prev를 만든 행이 DB에 없는 경우(선행 로그 삭제)는 부분집합에서도 실제 단절이므로 보고한다."""
     broken, checked, prev_row, deleted = None, 0, None, []
+    tampered = []          # 행 자기무결성 위반 — 본문이 바뀐 진짜 위조 신호
     for r in rows:
         meta = r.meta if isinstance(r.meta, dict) else {}
         ch = meta.get("_chain")
@@ -1455,13 +1449,20 @@ def _verify_audit_chain(rows, subset=False, known_hashes=None):
         prev = ch.get("prev", "")
         if known_hashes is not None and prev and prev not in known_hashes:
             deleted.append(r.id)   # 선행 로그가 삭제됨 — 부분집합에서도 실제 단절
-        if broken is None:         # 첫 실패 지점만 기록하고, 삭제 탐지는 끝까지 이어간다
+        self_ok = sm.chain_row_hash(prev, body) == ch.get("row")
+        if not self_ok:
+            tampered.append(r.id)  # 끝까지 센다 — 몇 건인지가 판단을 가른다
+        if broken is None:         # 첫 실패 지점만 기록하고, 탐지는 끝까지 이어간다
             linkage_ok = subset or prev_row is None or prev == prev_row
-            if sm.chain_row_hash(prev, body) != ch.get("row") or not linkage_ok:
+            if not self_ok or not linkage_ok:
                 broken = r.id
         prev_row = ch.get("row")
+    # integrity_ok는 보수적으로 둔다 — 단절도 false다. 로그를 지워 활동을 감춘 것을
+    # '무결'로 표시하면 안 되기 때문이다. 대신 위조(tampered)와 삭제자국
+    # (deleted_predecessor)을 갈라 보고해, 읽는 사람이 '위조 0건'인지 바로 알게 한다.
     out = {"integrity_ok": broken is None and not deleted,
-           "checked": checked, "break_at": broken}
+           "checked": checked, "break_at": broken,
+           "tampered": tampered, "tampered_count": len(tampered)}
     if subset:
         out["scope"] = "subset"
         out["note"] = ("부분집합(케이스 범위) 검증 — 감사체인은 전역이므로 행 자기무결성만 대조한다. "
@@ -11918,6 +11919,11 @@ SJPH_EVIDENCE_ITEMS = [
 ]
 
 
+# 본문까지 열어볼 문서 유형 — 유형이 이미 특정된 문서는 여기서 제외한다.
+_BODY_PARSE_TYPES = {"other", "sjph_manual", "sjph_evidence"}
+_BODY_PARSE_MAX_B64 = 3_000_000     # 앞머리 400자 보려고 큰 파일을 통째로 열지 않는다
+
+
 def _evidence_key_for_doc(d):
     """이 문서가 채울 SJPH 증빙 항목 — 파일명 우선, 없으면 본문 앞머리.
 
@@ -11931,8 +11937,13 @@ def _evidence_key_for_doc(d):
         return k, "파일명"
     if (d.content_type or "").startswith("image/"):
         return None, None
+    # 본문 파싱은 '이름으로 모르는 문서'에만 쓴다. 유형이 이미 밝혀진 문서(COA/MSDS·
+    # 원산지증명 등)는 SJPH 증빙 슬롯의 후보가 아니다. 이 가드가 없으면 성적서 54건
+    # 22MB를 통째로 파싱하다 편철 한 번에 2분이 넘는다(질경이 실측).
+    if (d.doc_type or "other") not in _BODY_PARSE_TYPES:
+        return None, None
     head = (d.text_excerpt or "")[:400]
-    if not head and d.content_b64:
+    if not head and d.content_b64 and len(d.content_b64) <= _BODY_PARSE_MAX_B64:
         # 범용 업로드 경로는 본문을 추출하지 않는다(text_excerpt가 비어 있다).
         # 편철 판단에 필요한 앞머리만 여기서 읽는다 — 이미지는 위에서 이미 걸렀다.
         try:
@@ -11971,6 +11982,10 @@ def autofile_sjph_evidence(case_id: str,
     필수 서류 체크리스트에는 안 걸리지만 SJPH 증빙 항목에는 제자리가 있다.
     비어 있는 항목만 채우므로 여러 번 눌러도 결과가 같다."""
     _get_case(db, case_id, user)
+    # 채울 자리가 없으면 문서를 열어보지 않는다 — 다시 눌러도 즉시 끝나야 한다.
+    have = {e.item_key for e in db.query(models.SjphEvidence).filter_by(case_id=case_id).all()}
+    if have >= {k for k, _ in SJPH_EVIDENCE_ITEMS}:
+        return {"filled": [], "count": 0, "note": "빈 증빙 항목 없음"}
     filled = []
     for d in (db.query(models.DocumentAsset).filter_by(case_id=case_id)
               .order_by(models.DocumentAsset.created_at).all()):

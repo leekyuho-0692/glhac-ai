@@ -4119,6 +4119,17 @@ function prodAccordion(id,prods,mats,matrix){
     return `<div class="nav-group${op?' open':''}"><div class="nav-group-label" style="text-transform:none;font-size:12px;color:var(--ink);letter-spacing:0;font-weight:600" onclick="toggleProdGroup(this,'${p.product_id}')"><span>📦 ${esc(p.name)} <span class="muted" style="font-weight:400">${my.length}🧪</span></span><span class="nav-caret">▸</span></div><div class="nav-group-items">${sub}</div></div>`;
   }).join("")||'<div class="muted small">제품 없음 · ZIP 업로드로 자동 추가</div>';
 }
+/* 감사로그 체인 배너 — 위조와 '삭제로 인한 단절'을 같은 빨간 경고로 묶으면 안 된다.
+   본문을 고친 위조는 사고지만, 선행 로그가 지워져 생긴 단절은 삭제 사실 자체를 드러내는
+   정상 신호다. 실측: 위조 0건인데 단절 4건 때문에 화면이 '손상 감지'로만 떴다. */
+function alChainBanner(v){
+  const gaps=(v.deleted_predecessor||[]).length, tam=v.tampered_count||0;
+  const n=`${T('검사')} ${v.checked||0}${T('행')}`;
+  if(tam) return `<div class="banner bad" style="margin:12px 0 6px">⛔ ${T('감사로그 위조 감지')} · ${tam}${T('건')} · ${n}${v.break_at?` · ${esc(String(v.break_at))}`:''}</div>`;
+  if(gaps) return `<div class="banner warn" style="margin:12px 0 6px">⚠ ${T('선행 로그 삭제로 인한 단절')} ${gaps}${T('건')} · ${T('위조 0건')} · ${n}
+    <div class="small muted" style="margin-top:3px">${T('남아 있는 로그는 모두 원본과 일치합니다. 삭제는 초기화 이력에서 확인하세요.')}</div></div>`;
+  return `<div class="banner ok" style="margin:12px 0 6px">✓ ${T('감사로그 검증 통과')} · ${n}</div>`;
+}
 function sjphStage(id,ko,en,desc,types,chk){
   const cl=(chk&&chk.checklist)||[];
   const fileLine=f=>`<div class="muted" style="font-size:11px;padding:1px 0 1px 24px;word-break:break-all">📄 ${esc(f.filename||f.document_id||'')}${f.review_status==='rejected'?' <span style="color:var(--bad)">· 반려</span>':''}</div>`;
@@ -4615,7 +4626,7 @@ SCREEN.workflow=async()=>{
       <div class="body">
         ${(verify&&verify.integrity_ok!==undefined)?`<div class="banner ${verify.integrity_ok?'ok':'bad'}" style="margin-bottom:12px">${verify.integrity_ok?'✓ 무결성 검증 통과':'⛔ 체인 손상 감지'} · 이벤트 ${verify.count||0}${T('건')}${verify.broken_at?` · 손상지점 ${esc(String(verify.broken_at))}`:''}</div>
           <div class="small muted">append-only 해시체인으로 감사 이벤트의 위·변조를 탐지합니다.</div>`:'<div class="banner" style="margin-bottom:12px">· 감사체인 검증 정보 없음 · verify unavailable</div><div class="small muted">감사 이벤트 검증 응답을 불러오지 못했습니다.</div>'}
-        ${alverify?`<div class="banner ${alverify.integrity_ok?'ok':'bad'}" style="margin:12px 0 6px">${alverify.integrity_ok?T('✓ 감사로그 검증 통과'):T('⛔ 감사로그 손상 감지')} · ${T('감사로그 무결성')} · ${T('검사')} ${alverify.checked||0}${alverify.break_at?` · ${esc(String(alverify.break_at))}`:''}</div>`:''}
+        ${alverify?alChainBanner(alverify):''}
         ${tsa&&tsa.tsa?`<div class="small muted" style="margin-top:6px">🕘 ${T('신뢰 타임스탬프')} · ${tsa.tsa.configured?('<span style="color:var(--ok,#15803d)">'+T('TSA 연동됨 · 신뢰 타임스탬프 적용')+'</span>'):('<span style="color:#b45309">⚠ '+T('TSA 미연동 — 내부 시각만 사용')+'</span>')}</div>`:''}
         ${(ROLE==='ops'||ROLE==='admin')?`<div class="btnrow" style="margin-top:12px"><button class="btn" onclick="serverPdf('/cases/${id}/evidence-bundle.zip','evidence-bundle_${esc(id)}.zip')">${T('📦 증거 번들 다운로드')}</button></div>
           <div class="small muted" style="margin-top:4px">${T('장기 법적 증거보존용 아카이브 (전이·감사로그·문서목록·체인검증 리포트)')}</div>`:''}
@@ -9564,7 +9575,11 @@ SCREEN.auditLog=async()=>{
   const qs=new URLSearchParams();
   Object.entries(AUDLOG_F).forEach(([k,v])=>{if(v&&String(v).trim())qs.set(k,String(v).trim());});
   qs.set("limit",AUDLOG_LIM);qs.set("offset",AUDLOG_OFF);
-  const d=await API("/admin/audit-logs?"+qs.toString()).catch(()=>({total:0,items:[],limit:AUDLOG_LIM,offset:0}));
+  // 체인 검증 결과가 SCREEN.workflow(메뉴 비노출)에만 있어 화면에서 볼 길이 없었다.
+  // 감사로그를 보는 자리가 무결성을 확인할 자리다.
+  const [d,chain]=await Promise.all([
+    API("/admin/audit-logs?"+qs.toString()).catch(()=>({total:0,items:[],limit:AUDLOG_LIM,offset:0})),
+    API("/admin/audit-log-verify"+(AUDLOG_F.case_id?`?case=${encodeURIComponent(AUDLOG_F.case_id)}`:"")).catch(()=>null)]);
   const items=d.items||[], total=d.total||0;
   const tr=items.length?items.map(r=>{
     const meta=r.meta==null?"":(typeof r.meta==="object"?JSON.stringify(r.meta):String(r.meta));
@@ -9579,6 +9594,7 @@ SCREEN.auditLog=async()=>{
   const from=total?AUDLOG_OFF+1:0, to=Math.min(AUDLOG_OFF+AUDLOG_LIM,total);
   return `
   <div class="banner info" style="margin-bottom:16px">🛡️ <b>${T("전역 감사로그")}</b> — ${T("모든 사용자·시스템의 접근·변경 이력을 조회합니다. 읽기 전용(관리자 전용).")}</div>
+  ${chain?alChainBanner(chain):''}
   <div class="card" style="margin-bottom:16px"><h3>${T("필터")} <span class="en">· Filter</span></h3>
     <div class="body"><div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px">
       <div class="field"><label for="audlog_actor">${T("행위자(actor)")}</label><input class="v" id="audlog_actor" value="${esc(AUDLOG_F.actor_id)}" oninput="audlogSet('actor_id',this.value)" placeholder="user id"></div>
