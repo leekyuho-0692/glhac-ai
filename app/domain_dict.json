@@ -1337,7 +1337,8 @@
   ],
   "actions": {
    "doc_type": "process_flow",
-   "required": true
+   "required": true,
+   "evidence_key": "production_flow"
   },
   "source": [
    "BPJPH",
@@ -3027,7 +3028,9 @@
   "surface": {
    "id": [
     "sk tim manajemen halal",
-    "surat keputusan tim halal"
+    "surat keputusan tim halal",
+    "keputusan penetapan tim manajemen halal",
+    "penetapan tim manajemen halal"
    ],
    "ko": [
     "할랄팀 지정서",
@@ -3141,7 +3144,9 @@
    ],
    "en": [
     "halal poster",
-    "halal awareness poster"
+    "halal awareness poster",
+    "halal posters",
+    "halal awareness posters"
    ]
   },
   "context": [

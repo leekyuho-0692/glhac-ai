@@ -178,8 +178,12 @@ def doc_type_of(text):
 
 
 def evidence_key_of(text):
-    """서류명 → SJPH 증빙 항목 키(있으면). 인니 실무 서류가 증빙 항목에 붙는다."""
-    k = lookup(text, axis="DOC")
+    """서류명 → SJPH 증빙 항목 키(있으면). 인니 실무 서류가 증빙 항목에 붙는다.
+
+    DOC 축을 먼저 보고, 없으면 축을 풀어 다시 찾는다. 같은 말이 문서 축과 개념 축에
+    동시에 있을 수 없어(표면형 전역 유일) 'Internal_Audit' 같은 이름은 개념 축의
+    AUDIT_INTERNAL에만 걸리는데, 그 개념이 이미 증빙 항목을 알고 있다."""
+    k = lookup(text, axis="DOC") or lookup(text)
     return (actions(k) or {}).get("evidence_key") if k else None
 
 

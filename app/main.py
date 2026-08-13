@@ -6450,8 +6450,11 @@ def upload_case_document(case_id: str, body: dict = None,
     db.add(d)
     db.flush()
     _audit(db, user, "document.upload", "document", d.document_id)
+    # 증빙 항목에 제자리가 있으면 바로 편철 — 올려두고 어디에도 안 걸리는 문서를 없앤다
+    filed = _autofile_evidence(db, case_id, d, user)
     db.commit()
-    return {"document_id": d.document_id, "filename": fn, "doc_type": d.doc_type}
+    return {"document_id": d.document_id, "filename": fn, "doc_type": d.doc_type,
+            "sjph_evidence": filed}
 
 
 @app.get("/cases/{case_id}/gen-docs")
@@ -11913,6 +11916,69 @@ SJPH_EVIDENCE_ITEMS = [
     ("purchase_log", "구매 기록"), ("receiving_log", "입고 기록"), ("usage_log", "사용 기록"),
     ("production_log", "생산 기록"), ("distribution_log", "출고 기록"), ("internal_audit", "내부 심사 기록"),
 ]
+
+
+def _evidence_key_for_doc(d):
+    """이 문서가 채울 SJPH 증빙 항목 — 파일명 우선, 없으면 본문 앞머리.
+
+    파일명만 보면 놓친다. 'Halal_Team.pdf'는 이름만으로는 팀 소개서인지 지정서(SK)인지
+    알 수 없지만 본문 제목이 'KEPUTUSAN PENETAPAN TIM MANAJEMEN HALAL'이다.
+    이미지는 본문을 보지 않는다 — OCR 비용이 편철 하나 값보다 크다."""
+    from . import domain_dict as dd
+    base = re.sub(r"\.[A-Za-z0-9]{2,5}$", "", d.filename or "")
+    k = dd.evidence_key_of(base)
+    if k:
+        return k, "파일명"
+    if (d.content_type or "").startswith("image/"):
+        return None, None
+    head = (d.text_excerpt or "")[:400]
+    if not head and d.content_b64:
+        # 범용 업로드 경로는 본문을 추출하지 않는다(text_excerpt가 비어 있다).
+        # 편철 판단에 필요한 앞머리만 여기서 읽는다 — 이미지는 위에서 이미 걸렀다.
+        try:
+            from .intake import parse_file
+            head = (parse_file(d.filename or "",
+                               base64.b64decode(str(d.content_b64).split(",")[-1])) or "")[:400]
+        except Exception:  # noqa: BLE001
+            head = ""
+    return (dd.evidence_key_of(head), "본문") if head else (None, None)
+
+
+def _autofile_evidence(db, case_id, d, user=None):
+    """문서를 비어 있는 SJPH 증빙 항목에 편철. 이미 채워진 항목은 건드리지 않는다
+    (사람이 고른 증빙을 자동 판단이 덮으면 안 된다). 무엇을 근거로 넣었는지 남긴다."""
+    key, how = _evidence_key_for_doc(d)
+    if not key or key not in {k for k, _ in SJPH_EVIDENCE_ITEMS}:
+        return None
+    if db.query(models.SjphEvidence).filter_by(case_id=case_id, item_key=key).first():
+        return None
+    db.add(models.SjphEvidence(case_id=case_id, item_key=key,
+                               filename=d.filename, document_id=d.document_id))
+    if user:
+        _audit(db, user, "sjph.evidence.autofile", "document", d.document_id,
+               meta={"item_key": key, "matched_by": how, "filename": d.filename})
+    return key
+
+
+@app.post("/cases/{case_id}/sjph-evidence/autofile")
+def autofile_sjph_evidence(case_id: str,
+                           user=Depends(auth.require_roles("applicant", "penyelia_halal",
+                                                           "consultant", "admin")),
+                           db: Session = Depends(get_db)):
+    """이미 올라온 문서를 비어 있는 증빙 항목에 편철한다.
+
+    ZIP 일괄 업로드로 들어온 인니 실무 기록물(Catatan…·Denah…)은 doc_type이 other라
+    필수 서류 체크리스트에는 안 걸리지만 SJPH 증빙 항목에는 제자리가 있다.
+    비어 있는 항목만 채우므로 여러 번 눌러도 결과가 같다."""
+    _get_case(db, case_id, user)
+    filled = []
+    for d in (db.query(models.DocumentAsset).filter_by(case_id=case_id)
+              .order_by(models.DocumentAsset.created_at).all()):
+        k = _autofile_evidence(db, case_id, d, user)
+        if k:
+            filled.append({"item_key": k, "filename": d.filename})
+    db.commit()
+    return {"filled": filled, "count": len(filled)}
 
 
 @app.get("/cases/{case_id}/sjph-evidence")
