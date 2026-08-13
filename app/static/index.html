@@ -457,6 +457,7 @@ const NAV = [
   ["opsCalendar","🗓️","종합 캘린더","Master Calendar","전사 일정·Schedule"],
   ["workflowMonitor","🔀","워크플로우 모니터","Workflow Monitor","핸드오프·Handoff"],
   ["regulations","📜","규정·법령","Regulations","법령관리·Registry"],
+  ["auditReport","📄","보고서","Audit Report","감사보고서·Report"],
   ["fatwa","⚖️","파트와","Fatwa","심의·Fatwa"],
   ["certificate","🏅","인증서","Certificate","발급·Issue"],
   ["assistant","🤖","AI 어시스턴트","Assistant","AI 보조·Assist"],
@@ -471,7 +472,7 @@ const NAV_GROUPS=[
   {label:"개요 · Overview", ids:["caseList","pendamping","assignments","resubmitCenter","materials","aiExtractions"]},   // 배정함→보완재전송→원재료→AI큐 (pendamping=동반자 인박스)
   {label:"신청·서류 · Application", ids:["application","preassess"]},   // 회의 2026-07-10: integration 삭제 · 원재료·AI큐는 개요 그룹으로
   {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
-  {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
+  {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","auditReport","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
   {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","auditorWork","regulations","consultation","notifyLog","auditLog","compliance","system"]},   // prod notifyLog 유지 + 오디터 업무 현황 + 컴플라이언스
   {label:"기타 · Others", ids:["assistant","feedback"]},   // prod 고유 그룹 유지
   {label:"내 정보 관리 · My Data", ids:["documents","vault","notifCenter"]},   // M6: 문서=내 자료함 · P1-#4 자료함(Vault) · C13 알림 센터
@@ -517,6 +518,7 @@ const MENU_ACCESS = {
   opsCalendar: ["sharia","ops","admin"],   // P1-#5 종합 캘린더 — 샤리아=현장심사 일정 모니터링
   workflowMonitor: ["ops","admin"],   // 신청~인증서 발급 전 과정 모니터링(샤리아 포함)
   regulations: ["ops","admin"],   // M06 규정·법령 관리(전역·케이스무관) — operator(ops)·admin 전용
+  auditReport: ["consultant","auditor","sharia","ops","admin"],   // 작성=오디터·운영 / 열람=컨설턴트·샤리아
   fatwa:    ["consultant","auditor","sharia","ops","admin"],   // 회의 2026-07-10: 클라이언트는 파트와 화면 불필요(인증서만) — client 제외
   certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
@@ -694,7 +696,7 @@ const ID_LABEL={
 };
 const NAV_ID={"feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
   integration:"Integrasi",documents:"Dokumen",audit:"Audit",onsiteCalendar:"현장심사 캘린더",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
-  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",opsDashboard:"Operasional",workflowMonitor:"워크플로우 모니터",regulations:"Regulasi & Hukum",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",aiExtractions:"Antrian Tinjau AI",auditLog:"Log Audit",compliance:"Kepatuhan",system:"Sistem"};
+  invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",opsDashboard:"Operasional",workflowMonitor:"워크플로우 모니터",regulations:"Regulasi & Hukum",auditReport:"Laporan Audit",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",aiExtractions:"Antrian Tinjau AI",auditLog:"Log Audit",compliance:"Kepatuhan",system:"Sistem"};
 /* 영어 enum 라벨 — EN 모드에서 raw 코드(consultant_review 등) 대신 표기 */
 const EN_LABEL={
   onboarding:"Onboarding",application_draft:"Application Draft",ai_pre_assessment_ready:"AI Pre-Assessment Ready",
@@ -6388,6 +6390,22 @@ function sdExemptCard(what){
     </div></div>`;
 }
 async function sdCase(id){try{const c=await API(`/cases/${id}`);return (c&&c.pathway==='self_declare')?c:null;}catch(_){return null;}}
+/* 감사 보고서 · Audit Report — 좌측 '보고서' 메뉴의 목적지.
+   DB 메뉴(REPORT)의 route_path가 fatwa로 잘못 배선돼 오디터가 파트와 화면으로 튕겼다.
+   보고서 작성·서명·재심·파트와 상정은 원래 현장심사 화면 하단에만 있었는데, 메뉴가 따로
+   있는 이상 갈 곳도 따로 있어야 한다. 같은 카드를 재사용해 화면 두 벌을 만들지 않는다. */
+SCREEN.auditReport=async()=>{
+  const id=CURCASE;
+  if(!id) return `<div class="card"><div class="body muted">${T('케이스를 선택하세요')}</div></div>`;
+  if(await sdCase(id)) return sdExemptCard(T('현장 감사 보고서'));
+  const arep=await API(`/cases/${id}/audit-report/status`).catch(()=>({report:{approved:false},
+    signed:null,latest_return:null,latest_resubmit:null,latest_reconfirm:null,
+    fatwa_gate:{ready:false,missing:[]},sent_fatwa:false}));
+  // 제목은 셸이 메뉴명으로 그린다 — 화면이 h1을 또 넣으면 제목이 두 번 보인다.
+  return `<div class="banner info" style="margin-bottom:14px">${T('현장심사 결과를 보고서로 만들고, 서명 후 파트와 위원회에 상정합니다.')}</div>
+  ${await genDocsCard(id,"audit_report","현장심사 보고서 · Audit Report","genAuditReport('"+id+"')",["auditor","ops","admin"].includes(ROLE))}
+  ${auditReportLoopCard(id,arep)}`;
+};
 SCREEN.audit=async()=>{
   const id=CURCASE;
   if(await sdCase(id)) return sdExemptCard(T('현장심사'));

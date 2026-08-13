@@ -539,7 +539,7 @@
    "route": "pendamping",
    "icon": "🤝",
    "depth": 2,
-   "sort": 3,
+   "sort": 7,
    "i18n": {
     "ko": "동반자 워크스페이스",
     "en": "Pendamping Workspace",
@@ -564,7 +564,7 @@
    "menu_code": "REPORT",
    "parent": "GRP_4",
    "type": "screen",
-   "route": "fatwa",
+   "route": "auditReport",
    "icon": "📄",
    "depth": 2,
    "sort": 6,
@@ -1144,17 +1144,17 @@
   {
    "role": "ops",
    "menu_code": "PENDAMPING",
-   "sort": 3
+   "sort": 7
   },
   {
    "role": "admin",
    "menu_code": "PENDAMPING",
-   "sort": 3
+   "sort": 7
   },
   {
    "role": "pendamping_pph",
    "menu_code": "PENDAMPING",
-   "sort": 3
+   "sort": 7
   },
   {
    "role": "admin",

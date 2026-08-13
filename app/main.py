@@ -13601,6 +13601,22 @@ def _ensure_approvals_menu(db):
     db.commit()
 
 
+def _fix_report_route(db):
+    """'보고서'(REPORT) 메뉴가 파트와 화면을 가리키던 것을 바로잡는다. idempotent.
+
+    REPORT는 오디터·컨설턴트에게, FATWA는 샤리아·운영에게 배정돼 있어 역할 구분은
+    처음부터 맞았는데 route_path만 fatwa로 남아 있었다(정렬순서도 6으로 겹침).
+    그 결과 오디터가 '보고서'를 누르면 파트와 심의 화면으로 튕겼다.
+
+    시드는 이미 시드된 DB를 건드리지 않으므로(위 조기반환) 운영 DB는 여기서 교정한다.
+    사람이 의도적으로 다른 화면을 지정한 경우는 건드리지 않는다 — fatwa일 때만 고친다."""
+    rep = db.query(models.SysMenu).filter_by(menu_code="REPORT").first()
+    if not rep or rep.route_path != "fatwa":
+        return
+    rep.route_path = "auditReport"
+    db.commit()
+
+
 def seed_menus(db):
     """현행 메뉴 구조(menu_seed.json)를 DB에 시드 — idempotent. 설계서 §10 마이그레이션."""
     import json as _json
@@ -13608,6 +13624,7 @@ def seed_menus(db):
         _ensure_menu_assign(db)   # 이미 시드됨 — 관리 메뉴만 보강(사이드바 노출)
         _ensure_my_menu(db)       # '내 메뉴 설정'(개인화) 보강
         _ensure_approvals_menu(db)  # '승인함'(2인 승인) 보강
+        _fix_report_route(db)     # '보고서' 메뉴가 파트와로 가던 라우팅 교정
         return
     path = os.path.join(os.path.dirname(__file__), "menu_seed.json")
     if not os.path.exists(path):
@@ -13635,6 +13652,7 @@ def seed_menus(db):
     _ensure_menu_assign(db)   # 신규 시드에도 '메뉴 배정 관리' 사이드바 노출
     _ensure_my_menu(db)       # '내 메뉴 설정'(개인화) 사이드바 노출
     _ensure_approvals_menu(db)  # '승인함'(2인 승인) 사이드바 노출
+    _fix_report_route(db)
 
 
 _BR2ROLE_MENU = {"applicant": "client", "consultant": "consultant", "auditor": "auditor",
