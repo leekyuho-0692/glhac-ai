@@ -92,8 +92,19 @@ def ocr_image(path, lang="korean"):
             data = r if isinstance(r, dict) else getattr(r, "json", {}) or {}
             texts = data.get("rec_texts", []) or []
             scores = data.get("rec_scores", []) or []
-            for t, s in zip(texts, scores):
-                lines.append({"text": t, "confidence": float(s)})
+            # 좌표를 함께 넘긴다. 표 사진은 좌표 없이 열이 섞여 행 복원이 불가능하다
+            # (실측: 인니 구매·검사·보관 기록 사진에서 재료명과 담당자가 엉켰다).
+            polys = data.get("rec_polys") or data.get("dt_polys") or []
+            for i, (t, sc) in enumerate(zip(texts, scores)):
+                item = {"text": t, "confidence": float(sc)}
+                if i < len(polys):
+                    try:
+                        xs = [float(pt[0]) for pt in polys[i]]
+                        ys = [float(pt[1]) for pt in polys[i]]
+                        item["box"] = [min(xs), min(ys), max(xs), max(ys)]
+                    except Exception:  # noqa: BLE001
+                        pass
+                lines.append(item)
         return {"ok": True, "lines": lines}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}

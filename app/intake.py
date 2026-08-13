@@ -138,15 +138,87 @@ def _zip_name(zi):
     return name
 
 
+class ArchiveError(Exception):
+    """압축을 열 수 없음 — 호출부가 사용자에게 사유를 그대로 보여준다."""
+
+
+# 형식은 확장자가 아니라 매직바이트로 가린다. 이름만 .zip 으로 바꿔 보내는 경우가 있다.
+_MAGIC = [(b"PK\x03\x04", "zip"), (b"PK\x05\x06", "zip"), (b"PK\x07\x08", "zip"),
+          (b"Rar!\x1a\x07", "rar"), (b"7z\xbc\xaf\x27\x1c", "7z")]
+
+
+def archive_kind(data):
+    for sig, kind in _MAGIC:
+        if data[:len(sig)] == sig:
+            return kind
+    return None
+
+
+def _extract_with_tool(data, suffix):
+    """bsdtar(macOS 기본 내장 libarchive)로 RAR·7z 를 푼다. 없으면 unar 로 폴백.
+
+    파이썬 rarfile 패키지도 결국 외부 unrar 바이너리를 요구한다. bsdtar 는 이미 깔려
+    있으므로 새 의존성 없이 같은 일을 한다."""
+    import shutil
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, "archive" + suffix)
+        dst = os.path.join(td, "out")
+        os.makedirs(dst)
+        with open(src, "wb") as f:
+            f.write(data)
+        if shutil.which("bsdtar"):
+            cmd = ["bsdtar", "-xf", src, "-C", dst]
+        elif shutil.which("unar"):
+            cmd = ["unar", "-quiet", "-force-overwrite", "-output-directory", dst, src]
+        else:
+            raise ArchiveError("이 서버에 %s 해제 도구가 없습니다 (bsdtar·unar 미설치)"
+                               % suffix.lstrip("."))
+        r = subprocess.run(cmd, capture_output=True, timeout=180)
+        if r.returncode != 0:
+            raise ArchiveError("압축을 풀지 못했습니다: %s"
+                               % (r.stderr.decode("utf-8", "ignore")[:200] or "unknown"))
+        out = []
+        for root, _dirs, names in os.walk(dst):
+            for n in sorted(names):
+                if n.startswith("."):
+                    continue
+                p = os.path.join(root, n)
+                rel = os.path.relpath(p, dst)
+                if "__MACOSX" in rel:
+                    continue
+                try:
+                    with open(p, "rb") as f:
+                        out.append((rel, f.read()))
+                except Exception:  # noqa: BLE001
+                    pass
+        return out
+
+
 def extract_zip(data):
+    """압축 묶음 → [(파일명, 바이트)]. ZIP·RAR·7z 를 모두 받는다.
+
+    함수명은 zip 시절 그대로 두되(호출부가 여럿) 실제로는 형식을 가려서 연다.
+    인도네시아 업체는 RAR로 보내는 일이 흔하다 — 예전에는 BadZipFile 로 500이 났고
+    화면에는 '인테이크 완료'라고 떠서 서류 0건인 채 넘어갔다(실측)."""
+    kind = archive_kind(data)
+    if kind in ("rar", "7z"):
+        return _extract_with_tool(data, "." + kind)
+    if kind is None:
+        raise ArchiveError("압축 파일이 아닙니다 (ZIP·RAR·7z 만 지원합니다)")
     out = []
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as e:
+        raise ArchiveError("ZIP 파일이 손상되었습니다: %s" % e) from e
+    with z:
         for zi in z.infolist():
             if zi.is_dir():
                 continue
             name = _zip_name(zi)
             base = os.path.basename(name)
-            if not base or base.startswith("."):
+            if not base or base.startswith(".") or "__MACOSX" in name:
                 continue
             try:
                 out.append((name, z.read(zi)))
@@ -536,9 +608,20 @@ def extract_measurements(text):
     return out
 
 
+# 파일명만으로 종류가 확정되고, LLM 이 뽑는 필드도 쓰지 않는 서류들.
+# 이 경우 LLM 호출은 결과가 어차피 파일명 규칙으로 덮어써져 순수 낭비다(파일당 ~25초).
+# 실측: 16건 인테이크 9분 30초 중 7분이 LLM 대기였고 11건은 파일명으로 이미 판별됐다.
+_NAME_DECIDES = {"sjph_manual", "supplier_declaration", "process_flow",
+                 "quality_cert", "origin_certificate", "halal_certificate"}
+
+
 def classify(name, text):
     if not text.strip():
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
+    dt_by_name, why = refine_doctype_reason(name, None)
+    if dt_by_name in _NAME_DECIDES:
+        return {"doc_type": dt_by_name, "confidence": 0.9, "fields": {},
+                "decided_by": "filename", "reason": why}
     r = ai_local.llm_json(_CLASSIFY_SYS, "파일명: %s\n본문 발췌:\n%s" % (name, text[:2000]))
     if not isinstance(r, dict) or "doc_type" not in r:
         r = {"doc_type": "other", "confidence": 0.0, "fields": {}}

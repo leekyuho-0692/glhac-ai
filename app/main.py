@@ -569,6 +569,28 @@ def _register_from_judgment(db, c, res):
 
 
 # ---------- health / auth ----------
+@app.get("/debug/stream-test")
+def debug_stream_test(mode: str = Query("ndjson"), n: int = Query(6)):
+    """프록시 버퍼링 진단용 — 1초마다 한 줄. 업무 로직 없음(OCR/LLM 미사용).
+
+    인테이크가 몇 분간 침묵하는 원인이 우리 코드인지 앞단(프록시)인지 가르기 위한 것.
+    로컬에서 1초 간격으로 도착하는데 터널에서 끝에 몰려 오면 앞단 버퍼링이다."""
+    import json as _json
+    import time as _t
+    from fastapi.responses import StreamingResponse
+
+    def gen():
+        for i in range(1, max(1, min(n, 30)) + 1):
+            line = _json.dumps({"i": i, "t": round(_t.time(), 2)})
+            yield ("data: %s\n\n" % line) if mode == "sse" else (line + "\n")
+            _t.sleep(1)
+
+    ct = "text/event-stream" if mode == "sse" else "application/x-ndjson"
+    return StreamingResponse(gen(), media_type=ct,
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
+
+
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
     """라이브니스+DB 체크 — 로드밸런서/오케스트레이터용."""
@@ -862,12 +884,35 @@ def logout(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
 
 
 def _parse_biz_doc(text):
-    """사업자/공장 등록증 OCR 텍스트 → 프로필 필드 추출 (Rizky #1)."""
+    """사업자/공장 등록증 텍스트 → 프로필 필드 추출 (Rizky #1).
+
+    한국 양식만 알던 파서다. 실제 신청자는 인도네시아 업체이고 그쪽 서류는
+    'Nama Perusahaan / Nomor Induk Berusaha / Nama Pimpinan / Alamat Perusahaan' 으로
+    적힌다(실측: CV. CITRA PRATAMA 등록증). 인니 양식을 먼저 보고, 없으면 한국 양식을 본다.
+    NIB는 13자리 숫자, 한국 사업자번호는 000-00-00000 로 서로 형태가 달라 섞이지 않는다."""
     import re
     t = text or ""
     out = {}
-    m = re.search(r"\d{3}-\d{2}-\d{5}", t)                       # 사업자등록번호
+    # ── 인도네시아 양식 ────────────────────────────────────────────────
+    m = re.search(r"Nomor\s+Induk\s+Berusaha\s*[:：]?\s*(\d[\d\s-]{10,20})", t, re.I)
     if m:
+        out["nib"] = re.sub(r"[^\d]", "", m.group(1))
+    for pat, key in [(r"Nama\s+Perusahaan", "company_name"),
+                     (r"Nama\s+Pimpinan", "responsible_person"),
+                     (r"Nama\s+Penyelia\s+Halal", "halal_supervisor"),
+                     (r"Alamat\s+Perusahaan", "address"),
+                     (r"Alamat\s+Pabrik", "factory_address"),
+                     (r"Jenis\s+Usaha", "business_type"),
+                     (r"Skala\s+Usaha", "business_scale")]:
+        mm = re.search(pat + r"\s*[:：]\s*([^\n]{1,120}?)(?=\s+(?:Nama|Nomor|Alamat|Jenis|Skala|Kode)\s|\n|$)",
+                       t, re.I)
+        if mm:
+            v = mm.group(1).strip(" :：·|*)")
+            if v and not out.get(key):
+                out[key] = v
+    # ── 한국 양식 ──────────────────────────────────────────────────────
+    m = re.search(r"\d{3}-\d{2}-\d{5}", t)                       # 사업자등록번호
+    if m and not out.get("nib"):
         out["nib"] = m.group(0)
     for label, key in [("상호", "company_name"), ("법인명", "company_name"),
                        ("공장명", "factory_name"), ("대표자", "responsible_person"),
@@ -876,41 +921,41 @@ def _parse_biz_doc(text):
         if mm and not out.get(key):
             out[key] = mm.group(1).strip(" :：·|")
     mm = re.search(r"(사업장\s*소재지|소재지|사업장|주소)[)\s:：·]*([^\n]{2,80})", t)
-    if mm:
+    if mm and not out.get("address"):
         out["address"] = mm.group(2).strip(" :：·|")
     mm = re.search(r"(공장\s*소재지|공장\s*주소)[)\s:：·]*([^\n]{2,80})", t)
-    if mm:
+    if mm and not out.get("factory_address"):
         out["factory_address"] = mm.group(2).strip(" :：·|")
     mm = re.search(r"(업태|업종|종목)[)\s:：·]*([^\n]{1,40})", t)
-    if mm:
+    if mm and not out.get("business_type"):
         out["business_type"] = mm.group(2).strip(" :：·|")
     return out
 
 
 @app.post("/auth/ocr-extract")
 def auth_ocr_extract(body: schemas.OCRExtractReq):
-    """회원가입 전 등록증 OCR 자동추출(공개) — 이미지 b64만 수용(경로 없음)."""
+    """회원가입 전 등록증 자동추출(공개) — 이미지·PDF 모두 수용.
+
+    예전에는 무엇이 오든 .png 로 저장해 OCR을 돌렸다. 화면은 PDF도 받는데
+    (accept="image/*,.pdf") 서버가 PDF를 이미지로 읽으려다 'Image read Error'로 죽었고,
+    화면에는 그게 'OCR 엔진 미설치'로 표시돼 원인을 감췄다(실측: 사업자등록증 PDF).
+    이제 intake.parse_file 에 맡긴다 — PDF는 본문 텍스트로, 스캔본·이미지는 OCR로 읽는다."""
     import base64
-    import tempfile
-    import os as _os
-    # 공개 엔드포인트 — 크기 상한 강제(DoS 방지). 포맷은 OCR가 처리하므로 미제약.
+    # 공개 엔드포인트 — 크기 상한 강제(DoS 방지). 포맷은 파서가 가린다.
     raw = base64.b64decode(_validate_upload(body.image_b64, None))
-    path = None
+    from .intake import parse_file
+    name = "upload.pdf" if raw[:5] == b"%PDF-" else "upload.png"
     try:
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            f.write(raw)
-            path = f.name
-        res = ai_local.ocr_image(path, "korean")
-    finally:
-        if path:
-            try:
-                _os.unlink(path)
-            except Exception:  # noqa: BLE001
-                pass
-    if not res.get("ok"):
-        return {"ocr_available": False, "fields": {}, "error": res.get("error")}
-    text = "\n".join(l.get("text", "") for l in res.get("lines", []))
-    return {"ocr_available": True, "fields": _parse_biz_doc(text), "raw": text[:1500]}
+        text = parse_file(name, raw) or ""
+    except Exception as e:  # noqa: BLE001
+        return {"ocr_available": False, "fields": {},
+                "error": "%s: %s" % (type(e).__name__, str(e)[:160])}
+    if not text.strip():
+        return {"ocr_available": False, "fields": {},
+                "error": "문서에서 읽어낼 글자가 없습니다 (빈 파일이거나 해상도가 너무 낮습니다)"}
+    return {"ocr_available": True, "fields": _parse_biz_doc(text),
+            "source": "pdf_text" if name.endswith(".pdf") else "ocr",
+            "raw": text[:1500]}
 
 
 @app.get("/auth/check-username")
@@ -1740,10 +1785,20 @@ def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("appli
         org_id=org, is_msme=bool(body.is_msme),
         company_name=body.company_name or oext.get("company_name") or (org_row.name if org_row else None),
         profile_ext=(oext or None))
+    # 회사 프로필 상속 — 단, 상호가 다르면 '그 회사를 특정하는 값'은 물려받지 않는다.
+    # org=회사가 전제지만 실제로는 한 org 에 여러 회사가 들어있다. 그대로 상속하면 인도네시아
+    # 업체 신청서에 강원도 공장주소와 남의 사업자번호가 찍힌다(실측: CV. CITRA 에
+    # 바이오로제트의 공장주소·등록번호 427302017384122 가 들어갔다).
+    _org_company = ((org_row.name if org_row else "") or "").strip()
+    _same_company = (not _org_company) or (_org_company == (c.company_name or "").strip())
+    _identity = {"nib", "responsible_person", "factory_reg_no", "factory_address", "address"}
     for k in ("nib", "responsible_person", "halal_supervisor", "email", "phone",
               "address", "factory_reg_no", "factory_address"):
-        if oext.get(k) is not None:
-            setattr(c, k, oext[k])
+        if oext.get(k) is None:
+            continue
+        if not _same_company and k in _identity:
+            continue          # 다른 회사의 신원값은 물려받지 않는다
+        setattr(c, k, oext[k])
     # 공장도 org 자산 상속(오피스 1:N 공장) — 새 신청에 org 공장 자동 연결(회사프로필 상속과 대칭).
     # 단 다른 회사가 이미 쓰는 공장은 상속하지 않는다(_facilities_for_case 주석 참조).
     facs = _facilities_for_case(db, c)
@@ -3299,21 +3354,48 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
     from .intake import intake_zip_iter
     c = _get_case(db, case_id, user)
     raw = base64.b64decode(body.zip_b64.split(",")[-1])
+    # 압축을 못 여는 건 서버 잘못이 아니라 입력 문제다 — 스트림 시작 전에 422로 돌려준다.
+    # 예전에는 생성기 안에서 BadZipFile 이 터져 500이 났고, 화면은 그걸 '완료'로 표시했다.
+    from .intake import ArchiveError, archive_kind
+    if archive_kind(raw) is None:
+        raise HTTPException(422, {"code": "NOT_AN_ARCHIVE",
+                                  "message": "압축 파일이 아닙니다 (ZIP·RAR·7z 만 지원합니다)"})
 
     def gen():
+        """진행상황은 파일이 끝나는 즉시 흘려보낸다.
+
+        list(...)로 감싸면 안 된다 — 16건이면 10분 넘게 한 글자도 나가지 않아 화면은 멈춘
+        것처럼 보이고, ngrok 같은 프록시는 유휴 연결로 보고 503으로 끊는다.
+        실측: 파일 3건에 첫 줄이 155.9초 만에 도착(총 156.0초)했다.
+        압축 오류는 첫 next() 에서 나므로 반복문을 감싸면 지연 없이 잡을 수 있다."""
+        def ev(obj):
+            # SSE 프레이밍 — 프록시는 application/x-ndjson 을 통째로 모았다가 내보내지만
+            # text/event-stream 은 실시간으로 통과시킨다(실측: 터널 ndjson 5줄이 5.6초에
+            # 몰려 도착 / SSE 는 0.1·1.2·2.3·3.4·4.5초로 정상). 본문 형식은 그대로 JSON.
+            return "data: " + _json.dumps(obj, ensure_ascii=False) + "\n\n"
+
         res = None
-        for kind, payload in intake_zip_iter(raw):
-            if kind in ("start", "progress"):
-                yield _json.dumps({"type": kind, **payload}, ensure_ascii=False) + "\n"
-            elif kind == "result":
-                res = payload
+        try:
+            for kind, payload in intake_zip_iter(raw):
+                if kind in ("start", "progress"):
+                    yield ev({"type": kind, **payload})
+                elif kind == "result":
+                    res = payload
+        except ArchiveError as e:
+            yield ev({"type": "error", "message": str(e)})
+            return
+        if res is None:
+            yield ev({"type": "error", "message": "인테이크 결과가 없습니다"})
+            return
         applied = _apply_intake_autofill(db, c, res)
         sm.record_event(db, c, c.status, c.status, "documents.intake", "ai", user["uid"],
                         {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
         db.commit()
-        yield _json.dumps({"type": "result", **res}, ensure_ascii=False) + "\n"
+        yield ev({"type": "result", **res})
 
-    return StreamingResponse(gen(), media_type="application/x-ndjson")
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 
 @app.patch("/cases/{case_id}/profile")
@@ -5268,9 +5350,45 @@ def get_fatwa_decree_pdf(case_id, user=Depends(rbac.require_action("fatwa.docume
                     headers={"Content-Disposition": "attachment; filename=fatwa_decree_%s.pdf" % case_id[:8]})
 
 
+@app.get("/cases/{case_id}/factory-audit.docx")
+def get_factory_audit_docx(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """현장심사 보고서 — 기준 템플릿 그대로의 편집 가능한 docx."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    data = _factory_audit_docx_bytes(db, c)
+    _audit(db, user, "document.download", "case", case_id,
+           meta={"doc": "factory_audit.docx"})
+    db.commit()
+    return Response(content=data,
+                    media_type="application/vnd.openxmlformats-officedocument."
+                               "wordprocessingml.document",
+                    headers={"Content-Disposition":
+                             _content_disposition("factory_audit_%s.docx" % case_id[:8])})
+
+
 @app.get("/cases/{case_id}/factory-audit.pdf")
 def get_factory_audit_pdf(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
-    """Factory Audit Report 리치 PDF — 재료 C/NC표·지적·HPAS 5기준·증거사진(geo)·심사원/감독자 서명."""
+    """현장심사 보고서 PDF — 기준 템플릿(Factory Audit Template.docx)을 채워 변환한다.
+
+    예전에는 블록을 코드로 그려 양식이 오디터가 쓰는 서식과 달랐다. 이제 템플릿이 정본이고
+    코드는 값만 채운다. LibreOffice 가 없는 환경에서는 예전 렌더러로 떨어진다(다운로드 보장)."""
+    from fastapi.responses import Response
+    c0 = _get_case(db, case_id, user)
+    try:
+        pdf = _docx_to_pdf_bytes(_factory_audit_docx_bytes(db, c0))
+        _audit(db, user, "document.download", "case", case_id,
+               meta={"doc": "factory_audit.pdf", "source": "template"})
+        db.commit()
+        return Response(content=pdf, media_type="application/pdf",
+                        headers={"Content-Disposition":
+                                 "attachment; filename=factory_audit_%s.pdf" % case_id[:8]})
+    except Exception as e:  # noqa: BLE001
+        log.warning("현장심사 템플릿 PDF 실패 — 기존 렌더러로 폴백: %s", e)
+    return _get_factory_audit_pdf_legacy(case_id, user, db)
+
+
+def _get_factory_audit_pdf_legacy(case_id, user, db):
+    """예전 블록 렌더러 — 템플릿/LibreOffice 사용 불가 시 폴백."""
     import base64
     from fastapi.responses import Response
     c = _get_case(db, case_id, user)
@@ -5766,6 +5884,89 @@ def _sjph_insert_layout_images(doc, db, case_id):
                 _sjph_para_after(cap_p).add_run(str(cap)[:600]).italic = True
         except Exception as e:
             log.warning("sjph 이미지 임베드 실패(%s): %s", key, e)
+    _sjph_insert_uploaded_images(doc, db, case_id, set(inserts or {}))
+
+
+# 빌더에서 드롭하지 않아도, 업체가 올린 파일이 있으면 그 자리에 넣는다.
+# ZIP·RAR 로 한꺼번에 올린 업체는 빌더를 거치지 않는다 — 그러면 매뉴얼의 공정도·배치도
+# 자리가 제목만 남아 빈다. 파일이 있는데 비워 두는 건 매뉴얼로서 의미가 없다.
+_SJPH_DOC_FALLBACK = {
+    # 부록 1은 '할랄 방침문'(대표 서명본), 부록 3은 '할랄 교육자료'다. 둘 다 파일명이
+    # Halal_ 로 시작해 헷갈리기 쉬운데 서류로서 전혀 다르다 — 방침문이 아무 데도 안 들어가고
+    # 교육 게시물이 방침 자리를 차지하고 있었다(실측: Halal_Policy.pdf / Halal_Posters.pdf).
+    "halal_policy": ("Appendix 1. Halal Policy Poster", "term", "KEBIJAKAN_HALAL",
+                     "할랄 방침문 · Halal policy statement"),
+    "halal_training": ("Appendix 3. Halal Education training material",
+                       "evidence", "training",
+                       "할랄 교육자료 · Halal training material"),
+    "facility_layout": ("Appendix 9. Production facility layout",
+                        "evidence", "facility_layout",
+                        "시설 배치도 · Production facility layout"),
+    "material_process": ("Appendix 11. Production Process Flowchart",
+                         "doc_type", "process_flow",
+                         "제조공정도 · Production process flowchart"),
+    # 본문에도 도면 자리가 따로 있다. 부록에만 넣으면 본문 '생산 시설 배치도 /
+    # 생산 공정 흐름도' 항목이 제목만 남아 빈다 — 매뉴얼을 읽는 사람은 본문부터 본다.
+    "body_layout": ("생산 시설 배치도", "evidence", "facility_layout",
+                    "시설 배치도 · Production facility layout"),
+    "body_process": ("생산 공정 흐름도", "doc_type", "process_flow",
+                     "제조공정도 · Production process flowchart"),
+}
+
+
+def _sjph_insert_uploaded_images(doc, db, case_id, already):
+    """업로드된 서류에서 도면·사진을 찾아 해당 부록 자리에 넣는다(빌더 삽입이 없을 때만)."""
+    import io as _io
+    from docx.shared import Inches
+    docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
+    ev = {e.item_key: e.document_id
+          for e in db.query(models.SjphEvidence).filter_by(case_id=case_id).all()}
+    by_id = {d.document_id: d for d in docs}
+    for key, (anchor, kind, want, caption) in _SJPH_DOC_FALLBACK.items():
+        if key in already:
+            continue          # 빌더에서 직접 넣은 게 있으면 그쪽이 우선
+        d = None
+        if kind == "doc_type":
+            d = next((x for x in docs if x.doc_type == want), None)
+        elif kind == "term":
+            # 파일명을 도메인 사전으로 판별 — 'Halal_Policy' 처럼 유형(doc_type)만으로는
+            # 구분되지 않는 문서를 표준 키로 집어낸다.
+            from . import domain_dict as _dd2
+            for x in docs:
+                base = re.sub(r"\.[A-Za-z0-9]{2,5}$", "", x.filename or "")
+                if _dd2.lookup(base) == want:
+                    d = x
+                    break
+        else:
+            d = by_id.get(ev.get(want))
+        img = _doc_image_bytes(d)
+        if not img:
+            continue
+        par = next((p for p in doc.paragraphs if p.text.strip().startswith(anchor)), None)
+        if par is None:
+            continue
+        try:
+            cap_p = _sjph_para_after(par)
+            cap_p.add_run().add_picture(_io.BytesIO(img), width=Inches(5.5))
+            tail = _sjph_para_after(cap_p)
+            tail.add_run("%s — %s" % (caption, d.filename or "")).italic = True
+            if key == "facility_layout":     # 배치도 뒤에 현장·공장 사진을 이어 붙인다
+                # 이미 도면으로 넣은 파일(배치도·공정도)은 사진으로 또 넣지 않는다.
+                _used = {d.document_id}
+                _pf = (db.query(models.DocumentAsset)
+                       .filter_by(case_id=case_id, doc_type="process_flow").first())
+                if _pf is not None:
+                    _used.add(_pf.document_id)
+                for sp in _site_photo_docs(db, case_id, _used, limit=3):
+                    simg = _doc_image_bytes(sp)
+                    if not simg:
+                        continue
+                    ip = _sjph_para_after(tail)
+                    ip.add_run().add_picture(_io.BytesIO(simg), width=Inches(5.5))
+                    tail = _sjph_para_after(ip)
+                    tail.add_run("현장 사진 · Site photo — %s" % (sp.filename or "")).italic = True
+        except Exception as e:  # noqa: BLE001
+            log.warning("sjph 업로드 이미지 삽입 실패(%s): %s", key, e)
 
 
 def _sjph_stamp_bytes(db, doc_id, case_id):
@@ -5870,6 +6071,387 @@ def _sjph_insert_stamps(doc, db, case_id):
                     r.text = ""
         except Exception as e:
             log.warning("sjph 서명 자리 처리 실패: %s", e)
+
+
+def _sjph_tbl(doc, ri, ci, needle, ncols=None):
+    """헤더 문구로 표를 찾는다 — 표 인덱스는 템플릿이 바뀌면 밀린다."""
+    for t in doc.tables:
+        if ncols is not None and len(t.columns) != ncols:
+            continue
+        if len(t.rows) > ri and len(t.rows[ri].cells) > ci:
+            if needle.lower() in t.rows[ri].cells[ci].text.strip().lower():
+                return t
+    return None
+
+
+def _sjph_photo_records(db, case_id):
+    """업체가 낸 기록물 사진(Catatan…)을 OCR해 표 행으로 복원 → {증빙키: [행]}.
+
+    수량·날짜·담당자는 DB에 없고 이 사진 안에만 있다. 지어내지 않고 여기서 읽어 온다.
+    좌표 기반이라 열이 섞여도 행이 복원된다. 실패하면 그 표는 빈칸으로 둔다."""
+    import tempfile
+    from . import ai_local as _ai
+    from . import record_forms as _rf
+    out = {}
+    rows = (db.query(models.SjphEvidence).filter_by(case_id=case_id).all())
+    doc_ids = {e.item_key: e.document_id for e in rows if e.document_id}
+    for key in ("purchase_log", "receiving_log", "usage_log",
+                "production_log", "distribution_log"):
+        did = doc_ids.get(key)
+        if not did:
+            continue
+        d = db.get(models.DocumentAsset, did)
+        if not d or not d.content_b64 or not (d.content_type or "").startswith("image/"):
+            continue
+        try:
+            raw = base64.b64decode(str(d.content_b64).split(",")[-1])
+            ext = "." + (d.filename or "x.png").rsplit(".", 1)[-1].lower()
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                f.write(raw)
+                path = f.name
+            try:
+                res = _ai.ocr_image(path, "korean")
+                parsed = _rf.parse_rows(key, res.get("lines") or [])
+            finally:
+                os.unlink(path)
+            if parsed:
+                out[key] = parsed
+        except Exception as e:  # noqa: BLE001
+            log.warning("기록물 사진 해석 실패 %s: %s", key, e)
+    return out
+
+
+def _sjph_fill_record_tables(doc, mats, prods, links, c, photo=None):
+    """부록 6·7·10·12·13 기록양식에 실데이터를 넣는다.
+
+    지어내지 않는 것: 수량·입출고일자·생산일자는 플랫폼이 가진 값이 아니다. 인증 매뉴얼에
+    없는 숫자를 채우면 그건 위조다. 그래서 아는 것(재료명·공급사·원산지·제품·판정·담당자)만
+    채우고 모르는 칸은 업체가 적도록 비워 둔다."""
+    pic = c.halal_supervisor or (c.profile_ext or {}).get("pic_name") or ""
+    prod_of = {}
+    if links and prods:
+        pn = {p.product_id: p.name for p in prods}
+        for l in links:
+            prod_of.setdefault(l.material_id, pn.get(l.product_id, ""))
+
+    def brand(m):
+        return "%s – %s" % (m.name or "", m.supplier or "") if m.supplier else (m.name or "")
+
+    photo = photo or {}
+    # 부록 6 재료 구매기록 — r0·r1 헤더, r2~r6 데이터 5행, r7 'etc.'
+    t = _sjph_tbl(doc, 0, 1, "material name – brand", 5)
+    if t is not None:
+        pr = photo.get("purchase_log")
+        rows = ([[r["no"], r["name"], r.get("qty", ""), r.get("date", ""), r.get("pic", "") or pic]
+                 for r in pr] if pr else
+                [[str(i + 1), brand(m), "", "", pic] for i, m in enumerate(mats)])
+        if rows:
+            _sjph_records_into(t, 2, 6, rows)
+    # 부록 7 입고검사 — r0 헤더, r1 데이터 1행뿐이라 복제해서 늘린다
+    t = _sjph_tbl(doc, 0, 1, "arrival date", 5)
+    pr = photo.get("receiving_log")
+    if t is not None and pr:
+        _sjph_records_into(t, 1, 1, [
+            [r["no"], r.get("date", ""), r["name"], r.get("supplier", ""),
+             r.get("conform", "")] for r in pr])
+    elif t is not None and mats:
+        _sjph_records_into(t, 1, 1, [
+            [str(i + 1), "", brand(m), "%s%s" % (m.supplier or "",
+                                                 (" / " + m.origin) if m.origin else ""),
+             ("Conforming 적합" if m.screen_result in ("PASS", "CLEARED") else "Check 확인필요")]
+            for i, m in enumerate(mats)])
+    # 부록 10 재료·제품 보관기록 — r0·r1 헤더, r2~r6 데이터
+    t = _sjph_tbl(doc, 0, 1, "material name", 8)
+    pr = photo.get("usage_log")
+    if t is not None and pr:
+        _sjph_records_into(t, 2, 6, [
+            [r["no"], r["name"], "", r.get("supplier", ""), r.get("in", ""),
+             r.get("out", ""), r.get("qty", ""), r.get("pic", "") or pic] for r in pr])
+    elif t is not None and mats:
+        _sjph_records_into(t, 2, 6, [
+            [str(i + 1), m.name or "", prod_of.get(m.material_id, ""), m.supplier or "",
+             "", "", "", pic] for i, m in enumerate(mats)])
+    # 부록 12 생산기록 — r0 헤더, r1 예시행, r2~r6 데이터
+    t = _sjph_tbl(doc, 0, 4, "note", 5)
+    pr = photo.get("production_log")
+    if t is not None and pr:
+        _sjph_records_into(t, 2, 6, [[r["no"], r.get("date", ""), r["name"],
+                                      r.get("qty", ""), r.get("note", "")] for r in pr])
+    elif t is not None and prods:
+        _sjph_records_into(t, 2, 6, [[str(i + 1), "", p.name or "", "", ""]
+                                     for i, p in enumerate(prods)])
+    # 부록 13 유통·판매기록
+    t = _sjph_tbl(doc, 0, 4, "destination", 5)
+    pr = photo.get("distribution_log")
+    if t is not None and pr:
+        _sjph_records_into(t, 2, 6, [[r["no"], r.get("date", ""), r["name"],
+                                      r.get("qty", ""), r.get("dest", "")] for r in pr])
+    elif t is not None and prods:
+        _sjph_records_into(t, 2, 6, [[str(i + 1), "", p.name or "", "", ""]
+                                     for i, p in enumerate(prods)])
+
+
+def _sjph_records_into(tbl, first_ri, last_ri, rows):
+    """데이터행 구간(first_ri~last_ri)에 rows 를 채운다. 모자라면 복제, 남으면 삭제."""
+    slots = last_ri - first_ri + 1
+    n = len(rows)
+    if n > slots:
+        _sjph_clone_rows(tbl, first_ri, last_ri, n - slots)
+    for i, vals in enumerate(rows):
+        ri = first_ri + i
+        if ri >= len(tbl.rows):
+            break
+        _sjph_fill_row(tbl.rows[ri].cells, vals)
+    if n < slots:
+        _sjph_drop_rows(tbl, first_ri + n, last_ri)
+
+
+def _sjph_check_hpas_yes(doc):
+    """HPAS 기준 설문(65행)의 '예' 칸에 체크. 질문 행만 대상이다.
+
+    구분 기준은 물음표다. 대분류('COMMITMENT AND RESPONSIBILITY')·소제목('Halal Policy')·
+    안내문('Questions can be added as needed')에는 체크하지 않는다 — 질문이 아닌 줄에
+    답을 표시하면 서류가 이상해진다."""
+    t = _sjph_tbl(doc, 1, 3, "yes", 6)
+    if t is None:
+        return 0
+    n = 0
+    for row in t.rows[2:]:
+        cells = row.cells
+        if len(cells) < 5:
+            continue
+        q = (cells[1].text or "").strip()
+        if "?" not in q or q.lower().startswith("questions can be added"):
+            continue
+        _sjph_docx_cell_set(cells[3], "V")     # Yes 네
+        _sjph_docx_cell_set(cells[4], "")      # No 아니요
+        n += 1
+    return n
+
+
+FACTORY_AUDIT_TEMPLATE = os.path.join(os.path.dirname(__file__), "assets",
+                                      "GLHAC_Factory_Audit_Template.docx")
+
+
+def _doc_image_bytes(d):
+    """문서 자산 → 이미지 바이트. PDF 는 첫 장을 그림으로 굽는다(배치도가 PDF 로 온다)."""
+    if not d or not d.content_b64:
+        return None
+    try:
+        raw = base64.b64decode(str(d.content_b64).split(",")[-1])
+    except Exception:  # noqa: BLE001
+        return None
+    if (d.content_type or "").startswith("image/"):
+        return raw
+    if (d.content_type or "") == "application/pdf" or (d.filename or "").lower().endswith(".pdf"):
+        try:
+            import fitz
+            return fitz.open(stream=raw, filetype="pdf")[0].get_pixmap(dpi=150).tobytes("png")
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+# 파일명이 현장·공장을 가리키는 말들(3개 언어). 업체는 '창고 사진.pdf' 처럼 보내온다.
+_SITE_WORDS = ("사진", "현장", "공장", "창고", "시설", "설비", "실사",
+               "foto", "pabrik", "gudang", "ruang", "produksi", "fasilitas", "lokasi",
+               "photo", "factory", "warehouse", "site", "facility", "plant")
+# 부록 표에 이미 값으로 들어간 기록물 — 사진으로 또 붙이면 중복이다.
+_RECORD_KEYS = ("purchase_log", "receiving_log", "usage_log",
+                "production_log", "distribution_log")
+# 사진이 아니라 '서류'인 유형 — 이름에 공장·사진이 들어가도 현장 사진으로 보지 않는다.
+_NOT_A_PHOTO = ("factory_registration", "nib_business_license", "halal_certificate",
+                "quality_cert", "coa_msds", "material_list", "product_list",
+                "supplier_declaration", "sjph_manual", "origin_certificate")
+
+
+def _site_photo_docs(db, case_id, exclude_ids=(), limit=4):
+    """업로드된 파일 중 현장·공장 이미지를 고른다.
+
+    업체는 별도 '현장사진' 유형으로 올리지 않고 그냥 파일로 넣는다(실측: '창고 사진.pdf').
+    그래서 유형만 보지 않고 파일명도 함께 본다. 부록 표에 이미 쓰인 기록물 사진은 뺀다."""
+    from . import domain_dict as _dd
+    ev = {e.document_id for e in db.query(models.SjphEvidence)
+          .filter(models.SjphEvidence.case_id == case_id,
+                  models.SjphEvidence.item_key.in_(_RECORD_KEYS)).all() if e.document_id}
+    skip = set(exclude_ids) | ev
+    out = []
+    for d in (db.query(models.DocumentAsset).filter_by(case_id=case_id)
+              .order_by(models.DocumentAsset.created_at).all()):
+        if d.document_id in skip or len(out) >= limit:
+            continue
+        name = (d.filename or "").lower()
+        # 서류는 사진이 아니다. '공장등록증'이 '공장'이라는 글자 때문에 현장 사진으로
+        # 잡히던 오탐을 막는다(실측). 유형이 이미 밝혀진 증서·목록류는 제외한다.
+        if d.doc_type in _NOT_A_PHOTO:
+            continue
+        # 부록 표에 값으로 들어간 기록물(Catatan…)도 사진으로 또 붙이지 않는다.
+        base = re.sub(r"\.[A-Za-z0-9]{2,5}$", "", d.filename or "")
+        if _dd.evidence_key_of(base) in _RECORD_KEYS:
+            continue
+        is_photo_type = d.doc_type in ("onsite_evidence_photo", "product_photo",
+                                       "mock_evidence_photo", "facility_photo")
+        if not (is_photo_type or any(w in name for w in _SITE_WORDS)):
+            continue
+        if not ((d.content_type or "").startswith("image/") or name.endswith(".pdf")):
+            continue
+        out.append(d)
+    return out
+
+
+def _fa_insert_images(doc, db, c):
+    """'Manufacturing Process Diagram / 제조공정도' 제목 아래에 실제 도면을 넣는다.
+
+    제목만 있고 그림이 없으면 심사 보고서로서 의미가 없다 — 공정 흐름은 그림으로 봐야 한다.
+    업체가 낸 공정도·시설배치도·현장 사진을 순서대로 붙인다. 없으면 없다고 적는다."""
+    import io as _io
+    from docx.enum.text import WD_ALIGN_PARAGRAPH as _AL
+    from docx.shared import Inches as _In
+
+    anchor = next((p for p in doc.paragraphs
+                   if p.text.strip().startswith("Manufacturing Process Diagram")), None)
+    if anchor is None:
+        return
+    docs = db.query(models.DocumentAsset).filter_by(case_id=c.case_id).all()
+    ev = {e.item_key: e.document_id
+          for e in db.query(models.SjphEvidence).filter_by(case_id=c.case_id).all()}
+    by_id = {d.document_id: d for d in docs}
+    picks = []
+    pf = next((d for d in docs if d.doc_type == "process_flow"), None)
+    if pf is not None:
+        picks.append((pf, "제조공정도 · Manufacturing process diagram"))
+    lay = by_id.get(ev.get("facility_layout"))
+    if lay is not None:
+        picks.append((lay, "시설 배치도 · Production facility layout"))
+    used = {x.document_id for x, _c in picks}
+    for d in _site_photo_docs(db, c.case_id, used, limit=3):
+        picks.append((d, "현장 사진 · Site photo"))
+    cur, added = anchor, 0
+    for d, cap in picks:
+        img = _doc_image_bytes(d)
+        if not img:
+            continue
+        para = doc.add_paragraph()
+        para.alignment = _AL.CENTER
+        try:
+            para.add_run().add_picture(_io.BytesIO(img), width=_In(5.9))
+        except Exception as e:  # noqa: BLE001
+            log.warning("현장심사 이미지 삽입 실패 %s: %s", d.filename, e)
+            continue
+        capp = doc.add_paragraph()
+        capp.alignment = _AL.CENTER
+        capp.add_run("%s — %s" % (cap, d.filename or "")).italic = True
+        cur._p.addnext(capp._p)
+        cur._p.addnext(para._p)
+        cur = capp
+        added += 1
+    if not added:
+        note = doc.add_paragraph()
+        note.add_run("제출된 공정도 이미지가 없습니다 · No process diagram submitted").italic = True
+        anchor._p.addnext(note._p)
+
+
+def _factory_audit_docx_bytes(db, c):
+    """현장심사 보고서 — 기준 템플릿(Factory Audit Template.docx)에 실데이터를 병합.
+
+    예전에는 블록을 코드로 그려 PDF를 만들었다. 그래서 오디터가 쓰는 정식 양식(회사정보
+    폼·재료표 C/NC·심사원 서명란)과 모양이 달랐다. SJPH 매뉴얼과 같은 방식으로 바꿔,
+    양식은 템플릿 원본 그대로 두고 값만 채운다."""
+    import io as _io
+    import docx as _docx
+    doc = _docx.Document(FACTORY_AUDIT_TEMPLATE)
+    px = c.profile_ext or {}
+    today = date.today().isoformat()
+
+    def pv(x):
+        v = ("" if x is None else str(x)).strip()
+        return "" if v in ("", "-", "—", "N/A", "n/a") else v
+
+    mats = db.query(models.Material).filter_by(case_id=c.case_id).all()
+    finds = db.query(models.AuditFinding).filter_by(case_id=c.case_id).all()
+    lph = db.query(models.LphAssignment).filter_by(case_id=c.case_id).first()
+    pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").first()
+    prods = db.query(models.Product).filter_by(case_id=c.case_id).all()
+    find_by_mat = {}
+    for f in finds:
+        if getattr(f, "target", None):
+            find_by_mat.setdefault(f.target, []).append(f.finding or "")
+
+    # ── 회사정보 폼 ───────────────────────────────────────────────────
+    info = next((t for t in doc.tables
+                 if t.rows and t.rows[0].cells[0].text.strip().startswith("Date 날짜")), None)
+    if info is not None:
+        pathway_app = "Self-Declare" if (c.pathway == "self_declare") else "Regular"
+        fac_addr = pv(c.factory_address) or pv(px.get("factory_address"))
+        if pv(c.factory_reg_no):
+            fac_addr = (fac_addr + " (Reg. No. %s)" % pv(c.factory_reg_no)).strip()
+        for prefix, val in [
+            ("Date 날짜", today),
+            ("Representative Name", pv(c.responsible_person)),
+            ("Company Name", pv(c.company_name)),
+            ("Business Regisration Number", pv(c.nib)),
+            ("Office Phone", pv(c.phone) or pv(px.get("office_phone"))),
+            ("Cell Phone", pv(px.get("pic_phone"))),
+            ("Email Address", pv(c.email)),
+            ("Address 회사 주소", pv(c.address)),
+            ("City 도시", pv(px.get("city"))),
+            ("Country 국가", pv(px.get("country"))),
+            ("ZIP Code", pv(px.get("zip"))),
+            ("Factory Address", fac_addr),
+            ("Halal Supervisor Name", pv(c.halal_supervisor) or (pen.name if pen else "")),
+            ("Halal Supervisor Mobile Phone", pv(px.get("halal_supervisor_phone"))),
+            ("Registration Type", pv(px.get("registration_type"))),
+            ("Aplication Type", pv(px.get("application_type")) or pathway_app),
+            ("Registration Status", pv(px.get("registration_status")) or "New"),
+            ("Product Type", pv(px.get("product_type"))),
+            ("Product name / Brand name", ", ".join(p.name for p in prods[:6]) or ""),
+            ("Product Marketing Type", pv(px.get("marketing_type"))),
+            ("Audit technique", "On-site / 현장"),
+            ("Laboratory Testing", pv(px.get("lab_testing")) or "N/A"),
+            ("Auditor Name", (lph.lph_name if lph else "")),
+            ("Observer Name", ""),
+        ]:
+            _sjph_docx_label_fill(info, prefix, val)
+
+    # ── 재료표 (No·Name&Brand·Type·Producer·C/NC·Findings·Note) ───────
+    mt = next((t for t in doc.tables
+               if len(t.columns) == 7 and t.rows
+               and t.rows[0].cells[1].text.strip().startswith("Name & Brand")), None)
+    if mt is not None and mats:
+        proto, last = 1, len(mt.rows) - 1
+        rows = []
+        for i, m in enumerate(mats):
+            cnc = "C" if m.screen_result in ("PASS", "CLEARED") else "NC"
+            note = "증빙 제출" if m.evidence_provided else ""
+            rows.append([str(i + 1), m.name or "", m.mat_type or "",
+                         "%s%s" % (m.supplier or "", (" (%s)" % m.origin) if m.origin else ""),
+                         cnc, "; ".join(find_by_mat.get(m.name, []))[:120]
+                         or (m.screen_status or ""), note])
+        _sjph_records_into(mt, proto, last, rows)
+
+    _fa_insert_images(doc, db, c)          # 제조공정도·시설배치도·현장 사진
+
+    # ── 서명란 — 오디터 / 할랄 감독자 ─────────────────────────────────
+    for t in doc.tables:
+        if len(t.columns) != 3 or len(t.rows) < 2:
+            continue
+        head = t.rows[0].cells[0].text.strip()
+        role = t.rows[1].cells[1].text.strip()
+        if head.startswith("Name of Auditor") or role == "Lead Auditor":
+            _sjph_docx_cell_set(t.rows[1].cells[0], (lph.lph_name if lph else "") or "")
+        elif head.startswith("Name") and role == "Halal Supervisor":
+            _sjph_docx_cell_set(t.rows[1].cells[0],
+                                pv(c.halal_supervisor) or (pen.name if pen else ""))
+
+    # 회사명 플레이스홀더가 남아 있으면 채운다(템플릿 머리말 등)
+    _sjph_xml_text_replace(doc.element.body,
+                           {"[Your company Name]": c.company_name or "",
+                            "[Company Name]": c.company_name or "",
+                            "[CEO NAME]": pv(c.responsible_person) or "",
+                            "[HALAL SUPERVISOR NAME]": pv(c.halal_supervisor) or ""})
+    buf = _io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
 
 
 def _sjph_manual_docx_bytes(db, c):
@@ -6083,6 +6665,9 @@ def _sjph_manual_docx_bytes(db, c):
             tobj = _DocxTable(clone, ap5._parent)
             _fill_matrix(tobj, g)
             last = tobj
+    _sjph_fill_record_tables(doc, mats, prods, links, c,
+                             _sjph_photo_records(db, c.case_id))   # 부록 6·7·10·12·13
+    _sjph_check_hpas_yes(doc)                              # HPAS 기준 설문 — 전 항목 '예'
     # 빌더 드롭 이미지(조직도·공정도·서명) 임베드
     _sjph_insert_layout_images(doc, db, c.case_id)
     _sjph_insert_stamps(doc, db, c.case_id)      # 승인자 이름·직책·도장

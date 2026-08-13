@@ -310,6 +310,12 @@
   .rpnote{padding:6px 8px;border-radius:8px;margin-bottom:5px;background:var(--bg);font-size:12px}
   .rpnote.unread{background:var(--accent-soft)}
   .rpdisc{max-height:170px;overflow:auto} .rpmsg{padding:5px 8px;border-radius:8px;background:var(--bg);margin-bottom:4px}
+  /* 네이티브 date 입력의 자리표시자('연도. 월. 일.')는 브라우저 UI 로케일을 따른다.
+     element lang=id 를 줘도 크롬은 OS 로케일로 그린다 — 인니어 화면에 한국어가 남는 이유다.
+     값이 없고 포커스도 없을 때만 감춘다. 입력을 시작하면 정상 표시된다. */
+  input[type="date"]:not(.hasval):not(:focus)::-webkit-datetime-edit{color:transparent}
+  input[type="date"]:not(.hasval):not(:focus){color:transparent}
+  input[type="date"]:focus,input[type="date"].hasval{color:inherit}
 </style>
 </head>
 <body>
@@ -605,12 +611,18 @@ function logout(skipServer){
 function showRegister(on){document.getElementById("loginForm").style.display=on?"none":"";document.getElementById("registerForm").style.display=on?"":"none";}
 function quickLogin(u,p){document.getElementById("loginUser").value=u;document.getElementById("loginPass").value=p;doLogin();}
 function regOcrPick(){
-  const inp=document.createElement("input");inp.type="file";inp.accept="image/*";
+  // 사업자등록증은 PDF로 오는 경우가 더 많다. 서버가 PDF 본문·이미지 OCR을 모두 처리한다.
+  const inp=document.createElement("input");inp.type="file";inp.accept="image/*,.pdf";
   inp.onchange=async()=>{const file=inp.files[0];if(!file)return;
-    const st=document.getElementById("regOcrStatus");st.textContent="AI 추출 중… (PaddleOCR)";
+    const st=document.getElementById("regOcrStatus");
+    st.textContent=T("AI 추출 중… 잠시 기다려 주세요");
     const b64=await fileB64(file);
     try{const r=await API("/auth/ocr-extract",{method:"POST",body:JSON.stringify({image_b64:b64})});
-      if(!r.ocr_available){st.innerHTML='<span style="color:var(--warn)">⚠ OCR 엔진 미설치 — 아래 필드를 수동 입력하세요</span>';return;}
+      // 실패 사유를 그대로 보여준다 — 예전에는 무슨 이유든 'OCR 엔진 미설치'로 떠서 원인을 감췄다.
+      if(!r.ocr_available){st.innerHTML='<span style="color:var(--warn)">⚠ '+
+        T("자동추출 실패 — 아래 필드를 직접 입력하세요")+
+        (r.error?'<br><span class="muted" style="font-size:11px">'+esc(String(r.error).slice(0,120))+'</span>':'')+
+        '</span>';return;}
       const f=r.fields||{},set=(id,val)=>{if(val){const el=document.getElementById(id);if(el)el.value=val;}};
       set("regCompany",f.company_name);set("regNib",f.nib);set("regResp",f.responsible_person);set("regAddr",f.address);set("regFactory",f.factory_address);
       st.innerHTML='<span style="color:var(--ok)">✓ '+Object.keys(f).length+T('개')+' 필드 자동추출됨 — 확인 후 가입</span>';
@@ -913,6 +925,15 @@ function buildNav(){
   document.getElementById("navfoot").innerHTML=
     `${T('표시중')} ${shown} / ${T('전체')} ${NAV.length}<br><span style="color:#64748B">scope · ${T(scopeLabel())}</span>`;
 }
+/* date 입력 자리표시자 감추기용 상태 클래스 — 값이 있으면 정상 표시로 되돌린다. */
+function markDateInputs(root){
+  (root||document).querySelectorAll('input[type="date"]').forEach(el=>{
+    el.classList.toggle('hasval', !!el.value);});
+}
+document.addEventListener('input',e=>{
+  if(e.target&&e.target.type==='date')e.target.classList.toggle('hasval',!!e.target.value);});
+document.addEventListener('change',e=>{
+  if(e.target&&e.target.type==='date')e.target.classList.toggle('hasval',!!e.target.value);});
 function toggleNavGroup(el){if(el&&el.parentElement)el.parentElement.classList.toggle("open");}
 function toggleNav(on){
   const app=document.getElementById("appView");if(!app)return;
@@ -1073,7 +1094,7 @@ const UI_STRINGS={"무슬림":"Muslim", "임명장(SK)":"SK Penetapan", "교육�
   "모든 필수 항목을 빠짐없이 명확하게 업로드해야 합니다. 불완전하거나 불명확한 자료는 모의 감사 검토에 영향을 줄 수 있습니다.":"Semua item wajib harus diunggah lengkap dan jelas. Materi yang tidak lengkap atau tidak jelas dapat memengaruhi tinjauan audit simulasi.",
 
   /* 역할괄호 듀얼 2026-07-17 */
-  "검증 · Verify (동반자)":"Verifikasi (Pasangan)",
+  "검증 · Verify (동반자)":"Verifikasi · Verify (Pendamping)",
   "배정 · Assign (컨설턴트)":"Tugaskan (Konsultan)",
   "내부 참조번호 · Internal Ref (비공식)":"Ref Internal (tidak resmi)",
   "사유 · Reason (필수, 5자 이상)":"Alasan (wajib, min 5 karakter)",
@@ -1310,7 +1331,7 @@ const UI_STRINGS={"무슬림":"Muslim", "임명장(SK)":"SK Penetapan", "교육�
   "AI 모의심사":"Audit Simulasi AI",
   "AI 모의심사 리포트 생성":"Buat Laporan Audit Simulasi AI",
   "AI 사전심사 먼저 실행":"Jalankan Pra-audit AI Dulu",
-  "AI 사전심사 미실행 — 버튼을 눌러 리스크·추천경로·차단사유를 확인하세요.":"AI 사전 심사 미실행 — 버튼을 누르면 리스크·추천 경로·차단 사유를 확인하세요.",
+  "AI 사전심사 미실행 — 버튼을 눌러 리스크·추천경로·차단사유를 확인하세요.": "Pra-penilaian AI belum dijalankan — tekan tombol untuk melihat risiko, jalur rekomendasi, dan alasan blokir.",
   "AI 사전평가 리포트":"Laporan Pra-evaluasi AI",
   "AI 사전평가 준비":"Persiapan Pra-evaluasi AI",
   "AI 사전평가 진행":"Jalankan Pra-evaluasi AI",
@@ -1569,8 +1590,8 @@ const UI_STRINGS={"무슬림":"Muslim", "임명장(SK)":"SK Penetapan", "교육�
   "검수 ·":"Pemeriksaan ·",
   "검수 실패 ·":"Gagal Pemeriksaan ·",
   "검증":"Verifikasi",
-  "검증 ·":"검증 · Verify (Partner)",
-  "검증 · Verify (동반자)":"검증 · Verify (Pasangan)",
+  "검증 ·":"Verifikasi ·",
+  "검증 · Verify (동반자)": "Verifikasi · Verify (Pendamping)",
   "검증 불가":"Pembuktian Tidak Dapat Dilakukan",
   "검증 실패 ·":"Pembuktian Gagal ·",
   "검토":"Peninjauan",
@@ -1766,7 +1787,7 @@ const UI_STRINGS={"무슬림":"Muslim", "임명장(SK)":"SK Penetapan", "교육�
   "문의하기":"Buat Pertanyaan",
   "문의하기 · New Inquiry":"Buat Pertanyaan · Permintaan Baru",
   "미개시":"Belum Dibuka",
-  "미결제 · Unpaid":"미결제 · Tidak Terbayar",
+  "미결제 · Unpaid":"Belum Dibayar · Unpaid",
   "미결제 청구서":"Faktur yang Belum Terbayar",
   "미리보기 불러오는 중…":"Mengambil Preview …",
   "미리보기 실패":"Gagal Mengambil Preview ·",
@@ -1955,17 +1976,17 @@ const UI_STRINGS={"무슬림":"Muslim", "임명장(SK)":"SK Penetapan", "교육�
   "신청 화면에서":"Pada layar permohonan",
   "신청·서류":"Permohonan · Dokumen",
   "신청·서류 · Application":"Permohonan · Aplikasi",
-  "신청기업 계정 생성 · Applicant sign-up":"계정 생성 · Pendaftaran Applicant",
+  "신청기업 계정 생성 · Applicant sign-up":"Pendaftaran Akun Pemohon · Applicant sign-up",
   "신청서 반려":"Kembalikan Aplikasi",
-  "신청유형":"신청 유형 · Application Type",
-  "신청유형 · Application":"신청 유형 · Aplikasi",
-  "신청중":"대기 중 · Pending",
-  "실시간":" 실시간 · Real-time",
-  "실시간 연결 상태 · Live status":"실시간 연결 상태 · Status Live",
+  "신청유형":"Jenis Permohonan",
+  "신청유형 · Application":"Jenis Permohonan · Application",
+  "신청중":"Menunggu · Pending",
+  "실시간":"Real-time",
+  "실시간 연결 상태 · Live status":"Status Koneksi Real-time · Live status",
   "심사 데이터를 불러오지 못했습니다.":"Gagal memuat data pemeriksaan.",
-  "심의 상세 (위원 구성·2단계 승인·투표)":"심의 세부사항 (위원회 구성 · 2단계 승인 · 투표)",
-  "심의 요지 · Note":"심의 주요 사항 · Catatan",
-  "심의 진행 체크리스트 · Review":"심의 진행 체크리스트 · Tinjauan",
+  "심의 상세 (위원 구성·2단계 승인·투표)":"Rincian Musyawarah (Komposisi Komite · Persetujuan 2 Tahap · Voting)",
+  "심의 요지 · Note":"Pokok Musyawarah · Catatan",
+  "심의 진행 체크리스트 · Review":"Daftar Periksa Musyawarah · Tinjauan",
   "아래 문서를 다운로드하여 검토하세요.":"Unduh dokumen di bawah untuk ditinjau.",
   "아직 발급되지 않았습니다 · not issued":"Belum diterbitkan · not issued",
   "안읽음":"Belum dibaca",
@@ -2230,15 +2251,15 @@ const UI_STRINGS={"무슬림":"Muslim", "임명장(SK)":"SK Penetapan", "교육�
   "증거 사진 최소 2매 · 동영상 업로드 (드래그 앤 드롭 가능)":"Foto bukti minimal 2 lembar · Unggah video (bisa seret & lepas)",
   "증거 업로드":"Unggah Bukti",
   "증거 없음":"Tidak Ada Bukti",
-  "증빙 드롭 업로드 ·":" 증빙 드롭 업로드 ·",
+  "증빙 드롭 업로드 ·":"Unggah Bukti (seret) ·",
   "증빙 보유":"Memiliki Bukti",
   "증빙 항목 없음":"Tidak Ada Item Bukti",
   "증빙이 필요한 항목이 있습니다.":"Ada item yang memerlukan bukti.",
-  "지역·캐파·승인·배정":" 지역 · 캐파 · 승인 · 배정",
+  "지역·캐파·승인·배정":"Wilayah · Kapasitas · Persetujuan · Penugasan",
   "지우기":"Hapus",
-  "지원 · Support":" 지원 · Support",
+  "지원 · Support":"Dukungan · Support",
   "지원 이메일":"Email Dukungan",
-  "지적 내용 · Finding":" 지적 내용 · Finding",
+  "지적 내용 · Finding":"Isi Temuan · Finding",
   "지적사항":"Temuan",
   "지적사항 Findings":"Temuan · Findings",
   "지적사항 없음":"Tidak Ada Temuan",
@@ -2889,7 +2910,7 @@ const UI_STRINGS={"무슬림":"Muslim", "임명장(SK)":"SK Penetapan", "교육�
   "매칭 후보 없음":"Tidak Ada Calon Pemadu",
   "메뉴 열기 · Open menu":"Buka Menu·Open menu",
   "미입력=전액":"Tidak Diisi=Seluruhnya",
-  "변경영향 ·":"변경 영향 ·",
+  "변경영향 ·":"Dampak Perubahan ·",
   "실패 ·":"Gagal ·",
   "심사·판정 · Audit":"Audit · Penilaian",
   "심사원명":"Nama Peninjau",
@@ -3872,7 +3893,7 @@ async function applyView(){
     try{document.getElementById("pgHost").innerHTML=await renderCaseDetail(DETAIL.id,DETAIL.tab);
       document.getElementById("pgHost").insertAdjacentHTML("afterbegin",warnBanner());}
     catch(err){document.getElementById("pgHost").innerHTML=errCard(err);}
-    localizeUI();window.scrollTo(0,0);return;
+    localizeUI();markDateInputs();window.scrollTo(0,0);return;
   }
   document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("active",a.dataset.id===CUR));
   const n=NAV.find(x=>x[0]===CUR);
@@ -3891,7 +3912,7 @@ async function applyView(){
   }catch(err){host.innerHTML=pageHead(CUR)+errCard(err);}
   if(AFTER_RENDER){const f=AFTER_RENDER;AFTER_RENDER=null;try{f();}catch(_){}}
   try{renderRightPanel();}catch(_){}
-  localizeUI();window.scrollTo(0,0);
+  localizeUI();markDateInputs();window.scrollTo(0,0);
 }
 let AFTER_RENDER=null;
 async function loadDocPreview(docId){
@@ -5237,7 +5258,7 @@ SCREEN.application=async()=>{
             <button class="btn" onclick="labelOcr('${id}')">📷 OCR</button>
             <button class="btn" onclick="screenText('${id}')">${T('🔤 성분 텍스트 스크리닝')}</button></div>
           <div class="dropzone" style="margin:0 0 8px" ondrop="handleDrop(event,'${id}')" ondragover="dzOver(event)" ondragleave="dzLeave(event)" onclick="document.getElementById('dzFile_${id}').click()">📎 ZIP 파일을 여기에 드래그 · 또는 클릭하여 선택</div>
-          <input type="file" id="dzFile_${id}" accept=".zip" style="display:none" onchange="handleDropInput(this,'${id}')">
+          <input type="file" id="dzFile_${id}" accept=".zip,.rar,.7z" style="display:none" onchange="handleDropInput(this,'${id}')">
           <div id="intakeOut_${id}" class="small" style="margin-bottom:6px">${INTAKE_OUT[id]||''}</div>`:''}
           <div id="intakeOut" class="small">${INTAKE_OUT[id]||(()=>{
             const files=(chk.checklist||[]).flatMap(x=>(x.files||[]).map(f=>({fn:f.filename,dt:x.doc_type_ko||x.doc_type})));
@@ -5809,16 +5830,68 @@ async function screenText(id){
   try{const r=await API("/ai/screen-text",{method:"POST",body:JSON.stringify({text:f.text,case_id:id})});toast("스크리닝 완료 · "+(r.status||r.result||"OK"));applyView();}
   catch(e){toast("스크리닝 실패");}
 }
+/* 인테이크 스트리밍 소비 — 서버는 파일마다 진행상황을 흘려보내는데(NDJSON) 화면이
+   응답 전체를 기다렸다 한 번에 읽고 있었다. 그래서 몇 분간 아무 변화가 없어 멈춘 것처럼
+   보였다. 이제 한 줄 들어올 때마다 그 파일의 분류 결과를 바로 띄운다. */
+async function streamIntake(id, b64, out){
+  const paint=(n,total,list)=>{ if(!out) return;
+    const pct=total?Math.round(n*100/total):0;
+    out.innerHTML=`<div style="font-weight:600;margin-bottom:4px">${T('인테이크 진행 중…')} ${n}/${total||'?'} (${pct}%)</div>`+
+      `<div style="height:6px;background:var(--line2);border-radius:4px;overflow:hidden;margin-bottom:6px">`+
+      `<div style="height:100%;width:${pct}%;background:var(--accent);transition:width .3s"></div></div>`+
+      list.slice(-8).map(x=>`<div class="muted" style="font-size:11.5px">✓ ${esc(x.file)} <span style="color:var(--ok)">→ ${esc(x.type)}</span></div>`).join('');
+  };
+  const r=await fetch(`/cases/${id}/intake-zip-stream`,{method:'POST',
+    headers:Object.assign({'Content-Type':'application/json'},token()?{Authorization:'Bearer '+token()}:{}),
+    body:JSON.stringify({zip_b64:b64})});
+  if(r.status===401){logout();return {ok:false,logout:true};}
+  let res=null,errMsg=null,total=0,done=0;const list=[];
+  paint(0,0,list);
+  if(!r.body||!r.body.getReader){            // 스트림 미지원 브라우저 — 예전처럼 통째로
+    const text=await r.text();
+    text.split('\n').forEach(l=>{l=l.trim();if(l.startsWith('data:'))l=l.slice(5).trim();
+      if(!l)return;try{const o=JSON.parse(l);
+      if(o.type==='result')res=o; if(o.type==='error')errMsg=o.message;}catch(_){}});
+    return {ok:r.ok,res,errMsg,status:r.status};
+  }
+  const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
+  for(;;){
+    const {done:fin,value}=await reader.read();
+    if(fin)break;
+    buf+=dec.decode(value,{stream:true});
+    let nl;
+    while((nl=buf.indexOf('\n'))>=0){
+      let line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);   // data: 접두를 떼므로 let
+      if(!line)continue;
+      // SSE 프레이밍 — 'data: {json}'. 프록시가 통과시키는 형식이라 이걸 쓴다.
+      if(line.startsWith('data:'))line=line.slice(5).trim();
+      if(!line||line.startsWith(':'))continue;
+      let o=null; try{o=JSON.parse(line)}catch(_){continue}
+      if(o.type==='start'){total=o.total||0;paint(0,total,list);}
+      else if(o.type==='progress'){done=o.done||done+1;
+        list.push({file:o.file||'',type:o.doc_type_ko||''});paint(done,total||o.total||0,list);}
+      else if(o.type==='result'){res=o;}
+      else if(o.type==='error'){errMsg=o.message;}
+    }
+  }
+  return {ok:r.ok,res,errMsg,status:r.status};
+}
 async function handleDrop(ev,id){
   ev.preventDefault();ev.currentTarget.classList.remove('drag');
   const f=(ev.dataTransfer&&ev.dataTransfer.files||[])[0];if(!f)return;
-  if(!(f.name||'').toLowerCase().endsWith('.zip')){toast('ZIP 파일을 드래그하세요 · 개별 서류는 ZIP으로 묶어주세요');return;}
+  // 업체는 RAR·7z 로도 보낸다. 확장자로 조용히 되돌리면 사용자는 왜 아무 일도 안 일어나는지 모른다.
+  if(!/\.(zip|rar|7z)$/i.test(f.name||'')){toast(T('ZIP·RAR·7z 압축파일만 됩니다 — 개별 서류는 하나로 묶어주세요'));return;}
   toast('업로드 중…');const b64=await fileB64(f);
-  const out=document.getElementById('intakeOut_'+id);if(out)out.innerHTML='<span class="muted">인테이크 진행 중…</span>';
-  try{const r=await fetch(`/cases/${id}/intake-zip-stream`,{method:'POST',headers:Object.assign({'Content-Type':'application/json'},token()?{Authorization:'Bearer '+token()}:{}),body:JSON.stringify({zip_b64:b64})});
-    if(r.status===401){logout();return;}
-    if(!r.ok){toast('인테이크 실패');if(out)out.innerHTML='<span class="bad">인테이크 실패</span>';return;}
-    await r.text();toast('✅ 업로드·자동분류 완료');if(out)out.innerHTML='<span class="ok">완료</span>';await loadCases(true);applyView();
+  const out=document.getElementById('intakeOut_'+id);if(out)out.innerHTML='<span class="muted">'+T('인테이크 진행 중…')+'</span>';
+  try{const rr=await streamIntake(id,b64,out);
+    if(rr&&rr.logout)return;
+    const res=rr&&rr.res,errMsg=rr&&rr.errMsg;
+    // 결과가 없으면 실패다 — 예전에는 응답만 받고 무조건 '완료'라고 표시했다.
+    if(!rr||!rr.ok||!res){const m=errMsg||(!rr||!rr.ok?('HTTP '+((rr&&rr.status)||'?')):T('인테이크에 실패했습니다 — 파일을 확인해 주세요'));
+      toast('⚠ '+m);if(out)out.innerHTML='<span class="bad">'+esc(m)+'</span>';return;}
+    toast('✅ '+T('업로드·자동분류 완료'));
+    if(out)out.innerHTML='<span class="ok">'+(res.file_count||0)+T('개 파일 분류')+'</span>';
+    await loadCases(true);applyView();
   }catch(e){toast('인테이크 실패 · '+(e&&e.code?e.code:''));}
 }
 function dzOver(ev){ev.preventDefault();ev.currentTarget.classList.add('drag');}
@@ -5831,7 +5904,7 @@ async function autoLinkMaterials(id){
   }catch(e){toast("자동연결 실패 · "+(e&&e.code?e.code:""));}
 }
 function intakeZip(id){
-  const inp=document.createElement("input");inp.type="file";inp.accept=".zip";
+  const inp=document.createElement("input");inp.type="file";inp.accept=".zip,.rar,.7z";
   inp.onchange=async()=>{const file=inp.files[0];if(!file)return;
     toast("업로드 중…");const b64=await fileB64(file);
     const out=document.getElementById("intakeOut");if(out)out.innerHTML='<span class="muted">인테이크 진행 중…</span>';
@@ -5842,8 +5915,13 @@ function intakeZip(id){
       if(r.status===401){logout();return;}
       const text=await r.text();
       if(!r.ok){toast("인테이크 실패");if(out)out.innerHTML='<span class="bad">인테이크 실패</span>';return;}
-      let res=null;
-      text.split("\n").forEach(line=>{line=line.trim();if(!line)return;try{const o=JSON.parse(line);if(o.type==='result')res=o;}catch(_){}});
+      let res=null,errMsg=null;
+      text.split("\n").forEach(line=>{line=line.trim();if(!line)return;try{const o=JSON.parse(line);
+        if(o.type==='result')res=o; if(o.type==='error')errMsg=o.message;}catch(_){}});
+      // 결과 없이 끝나면 실패다. 예전에는 이 경우에도 '완료' 토스트가 떠서
+      // 서류 0건인데 성공한 줄 알고 넘어갔다(실측: RAR 업로드).
+      if(!res){const m=errMsg||T('인테이크에 실패했습니다 — 파일을 확인해 주세요');
+        toast('⚠ '+m); if(out)out.innerHTML='<span class="bad">'+esc(m)+'</span>'; return;}
       const ap=(res&&res.applied)||{};
       const summary=res?`✅ ${res.file_count||0} ${T('파일 분류')} · ${T('제품')} +${ap.products||0} · ${T('원재료')} +${ap.materials||0}${ap.company_set?' · '+T('회사명 채움'):''}${ap.nib_set?' · '+T('NIB 채움'):''}${(res.missing&&res.missing.length)?' · '+T('누락문서')+' '+res.missing.length:''}`:'✅ 인테이크 완료';
       INTAKE_OUT[id]=summary;
