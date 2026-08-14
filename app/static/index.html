@@ -740,6 +740,14 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+ "부록별 도면 배치":"Figure placement by appendix",
+ "삽입 위치":"Placed at","삽입 문서":"Document inserted","결정":"Decided by",
+ "사람 지정":"Set by reviewer","AI 추정":"AI suggestion","비움":"Leave empty",
+ "지정":"set","자동":"auto",
+ "전부 자동 추정으로 되돌리기":"Reset all to AI suggestion",
+ "배치 저장됨":"Placement saved","자동 추정으로 되돌림":"Reset to AI suggestion",
+ "사람이 지정한 배치를 모두 지우고 AI 추정으로 되돌립니다. 계속할까요?":"This clears every placement you set and reverts to the AI suggestion. Continue?",
+ "아래 문서가 그대로 매뉴얼의 해당 부록에 삽입됩니다. AI 추정은 초안이므로 생성 전에 확인하세요 — 바꾸면 사람 지정으로 기록되고 이후 생성에 계속 적용됩니다.":"The documents below are inserted into the matching appendix of the manual as-is. An AI suggestion is only a draft, so check it before generating — a change is recorded as your decision and applies to every later generation.",
  "업로드에 실패해 다시 시도합니다":"Upload failed — retrying",
  "AI 추출 중… 잠시 기다려 주세요":"AI extraction in progress… please wait",
  "감사로그 검증 통과":"Audit log verification passed",
@@ -1006,6 +1014,14 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 const UI_STRINGS={
  "업로드에 실패해 다시 시도합니다":"Unggah gagal — mencoba lagi",
  "ZIP·RAR·7z 압축파일만 됩니다 — 개별 서류는 하나로 묶어주세요":"Hanya arsip ZIP·RAR·7z — mohon satukan dokumen menjadi satu berkas",
+ "부록별 도면 배치":"Penempatan gambar per lampiran",
+ "삽입 위치":"Ditempatkan di","삽입 문서":"Dokumen yang disisipkan","결정":"Ditentukan oleh",
+ "사람 지정":"Ditetapkan pemeriksa","AI 추정":"Dugaan AI","비움":"Dikosongkan",
+ "지정":"ditetapkan","자동":"otomatis",
+ "전부 자동 추정으로 되돌리기":"Kembalikan semua ke dugaan AI",
+ "배치 저장됨":"Penempatan tersimpan","자동 추정으로 되돌림":"Dikembalikan ke dugaan AI",
+ "사람이 지정한 배치를 모두 지우고 AI 추정으로 되돌립니다. 계속할까요?":"Semua penempatan yang Anda tetapkan akan dihapus dan dikembalikan ke dugaan AI. Lanjutkan?",
+ "아래 문서가 그대로 매뉴얼의 해당 부록에 삽입됩니다. AI 추정은 초안이므로 생성 전에 확인하세요 — 바꾸면 사람 지정으로 기록되고 이후 생성에 계속 적용됩니다.":"Dokumen di bawah ini disisipkan apa adanya ke lampiran manual yang sesuai. Dugaan AI hanyalah draf, jadi periksa sebelum membuat dokumen — perubahan tercatat sebagai keputusan Anda dan berlaku untuk pembuatan berikutnya.",
  "⚠ 의심(Mushbooh) — 유래(동물/식물)에 따라 할랄 여부가 갈림":"⚠ Syubhat (Mushbooh) — status halal bergantung pada asalnya (hewani/nabati)",
  "빈 칸만 채웁니다 · 여권 표기와 다를 수 있으니 확인 후 저장하세요":"Hanya mengisi kolom kosong · dapat berbeda dari paspor, periksa sebelum menyimpan",
  "승인자 · 도장":"Penyetuju · Stempel",
@@ -7901,6 +7917,9 @@ SCREEN.manualBuilder=async()=>{
   const _org=await API(`/cases/${id}/halal-org`).catch(()=>deriveHalalOrg(_oc,_opens));
   /* 회의 2026-07-10: 할랄 기본문구·선언서(꾸란 전문 포함)는 클라이언트가 작성 불가 항목 —
      입력 카드에서 제거하고 시스템 자동 채움으로 표시. 빌더에는 사용자 입력 필요 섹션만 노출 */
+  /* 도면 배치: 어느 첨부가 어느 부록에 들어가는지 — AI 추정을 감추지 않고 내보인다 */
+  const P=await API(`/cases/${id}/manual-placement?lang=${["en","ko","id"][LANG]||"ko"}`)
+    .catch(()=>({slots:[],candidates:[]}));
   const AUTO_KEYS=new Set(["halal_policy","halal_declaration"]);
   const autoSecs=secs.filter(s=>AUTO_KEYS.has(s.key));
   const inputSecs=secs.filter(s=>!AUTO_KEYS.has(s.key));
@@ -7939,6 +7958,7 @@ SCREEN.manualBuilder=async()=>{
     <div class="muted small">${pct}%</div></div></div>
   <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">${cards}</div>
   ${mbSignerCard(L,id)}
+  ${mbPlacementCard(P,id,canEdit)}
   <div class="card"><h3>${T('매뉴얼 생성')} <span class="en">· Generate</span></h3><div class="body">
     ${warn}
     <div class="btnrow">${genBtn}
@@ -7948,6 +7968,57 @@ SCREEN.manualBuilder=async()=>{
       ${canEdit?`<button class="btn" onclick="mbSaveLayout('${id}')">${T('💾 임시저장')}</button>`:''}
     </div></div></div>`;
 };
+/* 부록별 도면 배치 — 무엇이 어디에 들어가는지 눈으로 확인하고 고치는 자리.
+   파일명·유형으로 추정한 결과를 조용히 문서에 넣으면 틀려도 아무도 모른다(실측:
+   할랄 방침문 자리에 교육 포스터가 들어감). 근거를 붙여 내보이고, 사람이 정한 값이
+   자동 추정을 이긴다. '비움'을 고르면 그 자리는 비운 채로 나간다. */
+function mbPlacementCard(P,cid,canEdit){
+  const slots=(P&&P.slots)||[]; if(!slots.length) return '';
+  const cands=(P&&P.candidates)||[];
+  const manual=slots.filter(s=>s.decided_by==='manual').length;
+  const rows=slots.map(s=>{
+    const src=s.decided_by==='manual'
+      ? `<span class="pill ok">👤 ${T('사람 지정')}</span>`
+      : (s.decided_by==='auto'?`<span class="pill warn">🤖 ${T('AI 추정')}</span>`
+                              :`<span class="pill">— ${T('비움')}</span>`);
+    const opts=[`<option value="">— ${T('비움')} —</option>`].concat(
+      cands.map(d=>`<option value="${esc(d.document_id)}"${d.document_id===s.document_id?' selected':''}>${esc(d.filename)}</option>`)).join('');
+    const pick=canEdit
+      ? `<select class="in" style="max-width:340px" onchange="mbPlacementSet('${cid}','${s.slot}',this.value)">${opts}</select>`
+      : `<b>${esc(s.filename||T('비움'))}</b>`;
+    const hint=s.decided_by==='manual'&&s.auto_suggestion&&s.auto_suggestion.document_id!==s.document_id
+      ? `<div class="muted small">${T('AI 추정')}: ${esc(s.auto_suggestion.filename)}</div>`:'';
+    return `<tr><td style="white-space:nowrap"><b>${esc(s.label)}</b><div class="muted small">${esc(s.anchor)}</div></td>
+      <td>${pick}${hint}</td>
+      <td style="white-space:nowrap">${src}<div class="muted small">${esc(s.reason||'')}</div></td></tr>`;
+  }).join('');
+  return `<div class="card" style="margin-bottom:16px"><h3>🖼 ${T('부록별 도면 배치')} <span class="en">· Figure placement</span>
+    ${tag(manual?'ok':'warn',`${T('지정')} ${manual} · ${T('자동')} ${slots.length-manual}`)}</h3><div class="body">
+    <div class="muted small" style="margin-bottom:10px">${T('아래 문서가 그대로 매뉴얼의 해당 부록에 삽입됩니다. AI 추정은 초안이므로 생성 전에 확인하세요 — 바꾸면 사람 지정으로 기록되고 이후 생성에 계속 적용됩니다.')}</div>
+    <table class="tbl"><thead><tr><th>${T('삽입 위치')}</th><th>${T('삽입 문서')}</th><th>${T('결정')}</th></tr></thead><tbody>${rows}</tbody></table>
+    ${canEdit?`<div class="btnrow" style="margin-top:10px"><button class="btn ghost" onclick="mbPlacementReset('${cid}')">↺ ${T('전부 자동 추정으로 되돌리기')}</button></div>`:''}
+  </div></div>`;
+}
+async function mbPlacementSet(cid,slot,docId){
+  try{
+    /* 저장은 전체 교체(latest-wins)다 — 한 칸만 보내면 앞서 지정한 다른 칸이 지워진다.
+       현재 지정 내역을 읽어 합친 뒤 보낸다. */
+    const cur=await API(`/cases/${cid}/manual-placement`);
+    const slots={};
+    (cur.slots||[]).forEach(s=>{if(s.decided_by==='manual')slots[s.slot]=s.document_id||null;});
+    slots[slot]=docId||null;
+    await API(`/cases/${cid}/manual-placement`,{method:"PUT",
+      body:JSON.stringify({slots})});
+    toast(T('배치 저장됨'));applyView();
+  }catch(e){toast((e&&e.message)||'저장 실패');}
+}
+async function mbPlacementReset(cid){
+  if(!confirm(T('사람이 지정한 배치를 모두 지우고 AI 추정으로 되돌립니다. 계속할까요?')))return;
+  try{
+    await API(`/cases/${cid}/manual-placement`,{method:"PUT",body:JSON.stringify({slots:{}})});
+    toast(T('자동 추정으로 되돌림'));applyView();
+  }catch(e){toast((e&&e.message)||'저장 실패');}
+}
 function mbDragStart(ev,key){MB_DRAG=key;try{ev.dataTransfer.effectAllowed='move';ev.dataTransfer.setData('text/plain',key);}catch(_){}}
 function mbDragEnd(){MB_DRAG=null;}
 function mbDragOver(ev){if(MB_DRAG)ev.preventDefault();}

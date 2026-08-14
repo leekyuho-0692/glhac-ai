@@ -4088,6 +4088,78 @@ def _sjph_manual_layout_view(db, case_id, role=None):
             "signers": signers, "signer_slots": signer_meta}
 
 
+@app.get("/cases/{case_id}/manual-placement")
+def get_manual_placement(case_id: str, lang: str = Query("ko"),
+                         user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """매뉴얼 도면 배치 내역 — 어느 문서가 어느 자리에 들어가는지, 누가 정했는지.
+
+    자동 추정을 감추지 않는다. 슬롯마다 '사람 지정'인지 'AI 추정'인지와 그 근거를 함께
+    돌려주고, 바꿔 넣을 수 있는 후보도 같이 준다. 심사자가 눈으로 확인하고 고치는 것이
+    전제다 — 조용히 추측해 넣고 틀려도 모르는 구조가 문제였다."""
+    _get_case(db, case_id, user)
+    li = {"ko": 0, "en": 1, "id": 2}.get((lang or "ko").lower(), 0)
+    docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
+    ev = {e.item_key: e.document_id
+          for e in db.query(models.SjphEvidence).filter_by(case_id=case_id).all()}
+    by_id = {d.document_id: d for d in docs}
+    override = _sjph_placement_override(db, case_id)
+    # 후보: 이미지이거나 PDF — 도면으로 넣을 수 있는 것만
+    cands = [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type}
+             for d in docs
+             if (d.content_type or "").startswith("image/")
+             or (d.filename or "").lower().endswith(".pdf")]
+    slots = []
+    for key in _SJPH_DOC_FALLBACK:
+        auto, why = _sjph_pick_for_slot(db, case_id, key, docs, ev, by_id)
+        manual = key in override
+        chosen = by_id.get(override[key]) if (manual and override[key]) else (
+            None if manual else auto)
+        slots.append({
+            "slot": key,
+            "label": SJPH_SLOT_LABELS.get(key, (key, key, key))[li],
+            "anchor": _SJPH_DOC_FALLBACK[key][0],
+            "document_id": chosen.document_id if chosen else None,
+            "filename": chosen.filename if chosen else None,
+            "decided_by": "manual" if manual else ("auto" if chosen else "none"),
+            "auto_suggestion": {"document_id": auto.document_id,
+                                "filename": auto.filename} if auto else None,
+            "reason": why,
+        })
+    return {"slots": slots, "candidates": cands}
+
+
+@app.put("/cases/{case_id}/manual-placement")
+def set_manual_placement(case_id: str, body: dict = None,
+                         user=Depends(auth.require_roles("consultant", "auditor",
+                                                         "operator", "admin")),
+                         db: Session = Depends(get_db)):
+    """배치 지정 저장 — {slots: {슬롯: 문서id | null}}. null 은 '비움'(자동으로 되돌리지 않음).
+
+    지정하지 않은 슬롯은 자동 추정을 그대로 쓴다. 누가 무엇을 어디에 넣었는지 이력이
+    남아야 하므로 워크플로 이벤트와 감사로그 양쪽에 기록한다."""
+    c = _get_case(db, case_id, user)
+    raw = ((body or {}).get("slots") or {})
+    ids = {d.document_id for d in
+           db.query(models.DocumentAsset).filter_by(case_id=case_id).all()}
+    slots = {}
+    for k, v in raw.items():
+        if k not in _SJPH_DOC_FALLBACK:
+            continue                       # 모르는 슬롯은 조용히 버린다(계약 유지)
+        if v in (None, "", False):
+            slots[k] = None
+        elif str(v) in ids:
+            slots[k] = str(v)
+        else:
+            raise HTTPException(422, {"code": "DOCUMENT_NOT_IN_CASE", "slot": k,
+                                      "document_id": str(v)})
+    sm.record_event(db, c, c.status, c.status, SJPH_PLACEMENT_ACTION,
+                    user["role"], user["uid"], {"slots": slots})
+    _audit(db, user, "sjph.placement.set", "case", case_id, case_id=case_id,
+           meta={"slots": slots}, commit=False)
+    db.commit()
+    return {"ok": True, "slots": slots}
+
+
 @app.get("/cases/{case_id}/sjph-manual/layout")
 def get_sjph_manual_layout(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """할랄매뉴얼 빌더 상태(섹션 순서·이미지 삽입) 조회 — 없으면 기본 순서."""
@@ -5996,6 +6068,21 @@ def _sjph_insert_layout_images(doc, db, case_id):
 # 빌더에서 드롭하지 않아도, 업체가 올린 파일이 있으면 그 자리에 넣는다.
 # ZIP·RAR 로 한꺼번에 올린 업체는 빌더를 거치지 않는다 — 그러면 매뉴얼의 공정도·배치도
 # 자리가 제목만 남아 빈다. 파일이 있는데 비워 두는 건 매뉴얼로서 의미가 없다.
+# 부록·본문 도면 자리(슬롯) — 어떤 문서가 어디로 가는지의 정의. 자동 추정은 '초안'이고
+# 사람이 지정한 값이 언제나 이긴다. 조용히 추측해 넣고 틀려도 아무도 모르는 구조를
+# 없애기 위해, 슬롯마다 무엇이 왜 선택됐는지 화면에 내보낸다.
+SJPH_SLOT_LABELS = {
+    "halal_policy": ("할랄 방침문", "Halal policy statement", "Pernyataan kebijakan halal"),
+    "halal_training": ("할랄 교육자료", "Halal training material", "Materi pelatihan halal"),
+    "facility_layout": ("시설 배치도(부록 9)", "Facility layout (Appendix 9)",
+                        "Denah fasilitas (Lampiran 9)"),
+    "material_process": ("제조공정도(부록 11)", "Process flowchart (Appendix 11)",
+                         "Diagram alir proses (Lampiran 11)"),
+    "body_layout": ("시설 배치도(본문)", "Facility layout (body)", "Denah fasilitas (isi)"),
+    "body_process": ("제조공정도(본문)", "Process flowchart (body)", "Diagram alir (isi)"),
+}
+SJPH_PLACEMENT_ACTION = "sjph_manual.placement"
+
 _SJPH_DOC_FALLBACK = {
     # 부록 1은 '할랄 방침문'(대표 서명본), 부록 3은 '할랄 교육자료'다. 둘 다 파일명이
     # Halal_ 로 시작해 헷갈리기 쉬운데 서류로서 전혀 다르다 — 방침문이 아무 데도 안 들어가고
@@ -6020,10 +6107,49 @@ _SJPH_DOC_FALLBACK = {
 }
 
 
+def _sjph_placement_override(db, case_id):
+    """사람이 지정한 배치(slot → document_id). latest-wins. 없으면 빈 dict."""
+    e = (db.query(models.WorkflowEvent)
+         .filter(models.WorkflowEvent.case_id == case_id,
+                 models.WorkflowEvent.action == SJPH_PLACEMENT_ACTION)
+         .order_by(models.WorkflowEvent.created_at.desc()).first())
+    raw = ((e.payload or {}).get("slots") if e else None) or {}
+    return {k: v for k, v in raw.items() if k in _SJPH_DOC_FALLBACK}
+
+
+def _sjph_pick_for_slot(db, case_id, key, docs=None, ev=None, by_id=None):
+    """슬롯에 들어갈 문서와 그 근거 — (문서, 근거) 또는 (None, 사유)."""
+    from . import domain_dict as _dd2
+    spec = _SJPH_DOC_FALLBACK.get(key)
+    if not spec:
+        return None, "unknown_slot"
+    _anchor, kind, want, _cap = spec
+    docs = docs if docs is not None else \
+        db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
+    if ev is None:
+        ev = {e.item_key: e.document_id
+              for e in db.query(models.SjphEvidence).filter_by(case_id=case_id).all()}
+    by_id = by_id if by_id is not None else {d.document_id: d for d in docs}
+    if kind == "doc_type":
+        d = next((x for x in docs if x.doc_type == want), None)
+        return d, ("doc_type=%s" % want)
+    if kind == "term":
+        for x in docs:
+            base = re.sub(r"\.[A-Za-z0-9]{2,5}$", "", x.filename or "")
+            if _dd2.lookup(base) == want:
+                return x, ("사전 %s" % want)
+        return None, ("사전 %s" % want)
+    return by_id.get(ev.get(want)), ("증빙 %s" % want)
+
+
 def _sjph_insert_uploaded_images(doc, db, case_id, already):
-    """업로드된 서류에서 도면·사진을 찾아 해당 부록 자리에 넣는다(빌더 삽입이 없을 때만)."""
+    """업로드된 서류에서 도면·사진을 찾아 해당 부록 자리에 넣는다.
+
+    우선순위: 빌더 삽입 > 사람이 지정한 배치 > 자동 추정. 사람이 '비움'으로 지정하면
+    자동 추정으로 되돌아가지 않는다 — 지운 걸 다시 채워 넣으면 지정한 의미가 없다."""
     import io as _io
     from docx.shared import Inches
+    override = _sjph_placement_override(db, case_id)
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     ev = {e.item_key: e.document_id
           for e in db.query(models.SjphEvidence).filter_by(case_id=case_id).all()}
@@ -6031,20 +6157,15 @@ def _sjph_insert_uploaded_images(doc, db, case_id, already):
     for key, (anchor, kind, want, caption) in _SJPH_DOC_FALLBACK.items():
         if key in already:
             continue          # 빌더에서 직접 넣은 게 있으면 그쪽이 우선
-        d = None
-        if kind == "doc_type":
-            d = next((x for x in docs if x.doc_type == want), None)
-        elif kind == "term":
-            # 파일명을 도메인 사전으로 판별 — 'Halal_Policy' 처럼 유형(doc_type)만으로는
-            # 구분되지 않는 문서를 표준 키로 집어낸다.
-            from . import domain_dict as _dd2
-            for x in docs:
-                base = re.sub(r"\.[A-Za-z0-9]{2,5}$", "", x.filename or "")
-                if _dd2.lookup(base) == want:
-                    d = x
-                    break
+        if key in override:
+            oid = override[key]
+            if not oid:
+                continue                      # 사람이 '비움'으로 지정
+            d = by_id.get(oid)
+            if d is None:
+                continue                      # 지정한 문서가 사라짐 — 자동으로 덮지 않는다
         else:
-            d = by_id.get(ev.get(want))
+            d, _why = _sjph_pick_for_slot(db, case_id, key, docs, ev, by_id)
         img = _doc_image_bytes(d)
         if not img:
             continue
