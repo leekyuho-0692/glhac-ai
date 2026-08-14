@@ -349,12 +349,68 @@ def _startup():
         threading.Thread(target=_notify_worker_loop, daemon=True).start()
 
 
+# 인증기관 측 역할 — 회사가 아니라 인증기관에 속한다. 조직 경계로 막으면 안 된다.
+# (실측: 신규 가입 업체는 자기 org 를 갖는데 샤리아·최고운영자가 org_demo 라 ORG_FORBIDDEN
+#  으로 막혀, 가입한 업체가 인증서까지 갈 수 없었다.)
+CERTIFIER_ROLES = {"admin", "operator", "fatwa_liaison"}
+# 배정받은 케이스만 보는 역할 — 남의 회사 서류를 전부 열어볼 이유는 없다.
+ASSIGNED_ROLES = {"auditor", "consultant"}
+CONSULTANT_ASSIGN_ACTION = "ops.consultant_assigned"
+
+
+def _assigned_staff(db, case_id):
+    """이 케이스에 배정된 심사자 uid 집합(오디터·컨설턴트). latest-wins 가 아니라
+    '배정된 적이 있으면 접근 가능'으로 본다 — 교체돼도 이전 담당자의 조회 이력은 남는다."""
+    out = set()
+    for e in (db.query(models.WorkflowEvent)
+              .filter(models.WorkflowEvent.case_id == case_id,
+                      models.WorkflowEvent.action.in_(("ops.auditor_assigned",
+                                                       CONSULTANT_ASSIGN_ACTION))).all()):
+        p = e.payload or {}
+        for k in ("auditor_id", "consultant_id", "user_id", "uid"):
+            if p.get(k):
+                out.add(str(p[k]))
+    return out
+
+
+def _assigned_case_ids(db, uid):
+    """이 사용자가 배정받은 케이스 id — 목록 필터용."""
+    out = set()
+    for e in (db.query(models.WorkflowEvent)
+              .filter(models.WorkflowEvent.action.in_(("ops.auditor_assigned",
+                                                       CONSULTANT_ASSIGN_ACTION))).all()):
+        p = e.payload or {}
+        for k in ("auditor_id", "consultant_id", "user_id", "uid"):
+            if p.get(k) and str(p[k]) == str(uid):
+                out.add(e.case_id)
+    return out
+
+
+def _assert_case_access(db, user, c):
+    """케이스 접근 판정 — 조직 격리는 유지하되 인증기관 역할과 배정을 인정한다.
+
+    · 인증기관(관리자·최고운영자·샤리아): 전 케이스. 심사·판정이 이들의 업무다.
+    · 오디터·컨설턴트: 자기 조직 + 배정받은 케이스.
+    · 그 외(신청기업·할랄감독자·동반자): 자기 조직만.
+    """
+    role = user.get("role")
+    if role in CERTIFIER_ROLES:
+        return
+    if c.org_id == user.get("org_id"):
+        return
+    if role in ASSIGNED_ROLES and str(user.get("uid")) in _assigned_staff(db, c.case_id):
+        return
+    raise HTTPException(403, {"code": "ORG_FORBIDDEN", "case_org": c.org_id,
+                              "user_org": user.get("org_id"),
+                              "hint": "배정되지 않은 케이스입니다"})
+
+
 def _get_case(db, case_id, user=None) -> models.CaseApplication:
     c = db.get(models.CaseApplication, case_id)
     if not c:
         raise HTTPException(404, {"code": "CASE_NOT_FOUND", "case_id": case_id})
     if user:
-        auth.check_org(user, c)
+        _assert_case_access(db, user, c)
     return c
 
 
@@ -1634,9 +1690,17 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
                limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
     """케이스 목록(§8.1 페이징). total 포함 봉투 — 클라이언트가 페이지 순회로 전량 적재.
     기존 default 500·no-total은 500건 초과 조직에서 조용히 누락됐음."""
+    # 목록도 상세와 같은 규칙을 쓴다 — 목록에 안 보이는데 상세만 열리면 쓸모가 없고,
+    # 목록에 보이는데 상세가 403 이면 더 나쁘다.
     q = db.query(models.CaseApplication)
-    if user["role"] != "admin":
-        q = q.filter_by(org_id=user["org_id"])
+    if user["role"] not in CERTIFIER_ROLES:
+        own = models.CaseApplication.org_id == user["org_id"]
+        if user["role"] in ASSIGNED_ROLES:
+            ids = _assigned_case_ids(db, user["uid"])
+            q = q.filter(or_(own, models.CaseApplication.case_id.in_(ids))
+                         if ids else own)
+        else:
+            q = q.filter(own)
     total = q.count()
     rows = (q.order_by(models.CaseApplication.created_at.desc())
             .offset(offset).limit(limit).all())
@@ -3486,6 +3550,33 @@ def select_facilities(case_id: str, body: schemas.FacilitySelectReq,
     c.facility_ids = [fid for fid in (body.facility_ids or []) if fid in valid]
     db.commit()
     return {"facility_ids": c.facility_ids}
+
+
+@app.post("/cases/{case_id}/assign-consultant")
+def assign_consultant(case_id: str, body: dict = None,
+                      user=Depends(auth.require_roles("operator", "admin")),
+                      db: Session = Depends(get_db)):
+    """컨설턴트 배정 — 신규 가입 업체를 담당자에게 넘기는 유일한 경로.
+
+    지금까지 컨설턴트 배정 개념이 없어서, 자기 조직이 아닌 신규 업체는 컨설턴트가
+    아예 볼 수 없었다(가입 → 자체 org). 배정 기록이 있어야 접근이 열린다."""
+    c = _get_case(db, case_id, user)
+    b = body or {}
+    uid = (b.get("consultant_id") or "").strip()
+    if not uid:
+        raise HTTPException(422, {"code": "CONSULTANT_REQUIRED"})
+    u = db.query(models.User).filter(
+        or_(models.User.user_id == uid, models.User.username == uid)).first()
+    if not u or u.role != "consultant":
+        raise HTTPException(404, {"code": "CONSULTANT_NOT_FOUND", "given": uid})
+    sm.record_event(db, c, c.status, c.status, CONSULTANT_ASSIGN_ACTION,
+                    user["role"], user["uid"],
+                    {"consultant_id": u.user_id, "consultant_name": u.username,
+                     "reason": (b.get("reason") or "").strip() or None})
+    _audit(db, user, "case.assign_consultant", "case", case_id, case_id=case_id,
+           meta={"consultant_id": u.user_id, "consultant_name": u.username}, commit=False)
+    db.commit()
+    return {"ok": True, "consultant_id": u.user_id, "consultant_name": u.username}
 
 
 @app.get("/cases/{case_id}/company-check")
