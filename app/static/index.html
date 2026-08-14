@@ -740,6 +740,7 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+ "업로드에 실패해 다시 시도합니다":"Upload failed — retrying",
  "AI 추출 중… 잠시 기다려 주세요":"AI extraction in progress… please wait",
  "감사로그 검증 통과":"Audit log verification passed",
  "감사로그 위조 감지":"Audit log tampering detected",
@@ -1003,6 +1004,7 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+ "업로드에 실패해 다시 시도합니다":"Unggah gagal — mencoba lagi",
  "ZIP·RAR·7z 압축파일만 됩니다 — 개별 서류는 하나로 묶어주세요":"Hanya arsip ZIP·RAR·7z — mohon satukan dokumen menjadi satu berkas",
  "⚠ 의심(Mushbooh) — 유래(동물/식물)에 따라 할랄 여부가 갈림":"⚠ Syubhat (Mushbooh) — status halal bergantung pada asalnya (hewani/nabati)",
  "빈 칸만 채웁니다 · 여권 표기와 다를 수 있으니 확인 후 저장하세요":"Hanya mengisi kolom kosong · dapat berbeda dari paspor, periksa sebelum menyimpan",
@@ -5910,10 +5912,39 @@ async function screenText(id){
 /* 인테이크 스트리밍 소비 — 서버는 파일마다 진행상황을 흘려보내는데(NDJSON) 화면이
    응답 전체를 기다렸다 한 번에 읽고 있었다. 그래서 몇 분간 아무 변화가 없어 멈춘 것처럼
    보였다. 이제 한 줄 들어올 때마다 그 파일의 분류 결과를 바로 띄운다. */
-async function streamIntake(id, b64, out){
+/* 업로드는 한 번 튕기면 6분을 다시 기다려야 한다. 그래서 자동으로 다시 시도한다.
+   다만 서버는 분류를 다 끝낸 뒤에야 문서를 저장하므로, '클라이언트만 끊기고 서버는
+   끝낸' 경우가 있다(실측: 터널이 요청 하나를 튕겼는데 서버는 계속 처리했다).
+   그대로 재시도하면 문서가 두 벌 들어간다 — 그래서 재시도 전에 문서 수를 다시 세고,
+   늘었으면 성공으로 보고 멈춘다. */
+async function _docCount(id){
+  try{const r=await API(`/cases/${id}/documents`);return (r||[]).length;}catch(_){return -1;}
+}
+async function streamIntake(id, b64, out, tries){
+  tries=tries||3;
+  const before=await _docCount(id);
+  let last=null;
+  for(let attempt=1; attempt<=tries; attempt++){
+    try{
+      const r=await _intakeOnce(id,b64,out,attempt,tries);
+      if(r&&(r.logout||r.res)) return r;        // 로그아웃이거나 결과를 받았으면 끝
+      last=r;
+    }catch(e){ last={ok:false,errMsg:(e&&e.message)||String(e)}; }
+    const now=await _docCount(id);              // 서버가 끝냈는지 확인
+    if(now>before&&now>0) return {ok:true,res:null,recovered:true,count:now};
+    if(attempt<tries){
+      if(out)out.innerHTML=`<span class="muted">${T('업로드에 실패해 다시 시도합니다')} `+
+        `(${attempt+1}/${tries})…</span>`;
+      await new Promise(r2=>setTimeout(r2,3000));
+    }
+  }
+  return last||{ok:false};
+}
+async function _intakeOnce(id, b64, out, attempt, tries){
   const paint=(n,total,list)=>{ if(!out) return;
     const pct=total?Math.round(n*100/total):0;
-    out.innerHTML=`<div style="font-weight:600;margin-bottom:4px">${T('인테이크 진행 중…')} ${n}/${total||'?'} (${pct}%)</div>`+
+    const tag=(attempt&&attempt>1)?` <span class="muted">(${attempt}/${tries})</span>`:'';
+    out.innerHTML=`<div style="font-weight:600;margin-bottom:4px">${T('인테이크 진행 중…')} ${n}/${total||'?'} (${pct}%)${tag}</div>`+
       `<div style="height:6px;background:var(--line2);border-radius:4px;overflow:hidden;margin-bottom:6px">`+
       `<div style="height:100%;width:${pct}%;background:var(--accent);transition:width .3s"></div></div>`+
       list.slice(-8).map(x=>`<div class="muted" style="font-size:11.5px">✓ ${esc(x.file)} <span style="color:var(--ok)">→ ${esc(x.type)}</span></div>`).join('');
@@ -5963,6 +5994,10 @@ async function handleDrop(ev,id){
   try{const rr=await streamIntake(id,b64,out);
     if(rr&&rr.logout)return;
     const res=rr&&rr.res,errMsg=rr&&rr.errMsg;
+    if(rr&&rr.recovered){    // 연결만 끊겼고 서버는 끝냈다 — 문서 수로 확인됨
+      toast('✅ '+T('업로드·자동분류 완료'));
+      if(out)out.innerHTML=`<span class="ok">${rr.count}${T('개 파일 분류')}</span>`;
+      await loadCases(true);applyView();return;}
     // 결과가 없으면 실패다 — 예전에는 응답만 받고 무조건 '완료'라고 표시했다.
     if(!rr||!rr.ok||!res){const m=errMsg||(!rr||!rr.ok?('HTTP '+((rr&&rr.status)||'?')):T('인테이크에 실패했습니다 — 파일을 확인해 주세요'));
       toast('⚠ '+m);if(out)out.innerHTML='<span class="bad">'+esc(m)+'</span>';return;}
