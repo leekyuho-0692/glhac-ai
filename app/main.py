@@ -8559,8 +8559,24 @@ def reject_request(approval_id: str, body: schemas.ApprovalDecisionReq = schemas
     return {"approval_id": ar.id, "status": "rejected", "reason": ar.decision_reason}
 
 
+def _issue_ready_states():
+    """인증서 발급이 정당한 직전 상태 — 전이표에서 끌어온다(표가 바뀌면 같이 따라간다)."""
+    return {frm for frm, tos in sm.TRANSITIONS.items() if "certificate_issued" in tos}
+
+
 def _issue_guards(db, c, case_id):
-    """인증서 발급 사전조건(§4.2) — fatwa 승인·스코프 동결·결제완료·미해결 Major NC 없음·문서 all-approved. 위반 시 409."""
+    """인증서 발급 사전조건(§4.2) — 심사 단계 도달·fatwa 승인·스코프 동결·결제완료·
+    미해결 Major NC 없음·문서 all-approved. 위반 시 409.
+
+    상태 검사가 빠져 있었다. 그래서 현장심사를 거치지 않은 케이스에도 인증서가 나갔고
+    (실측: consultant_review 상태에서 발급됨), 발급 함수의 상태 전이는 조용히 건너뛰어져
+    '인증서는 있는데 진행 단계는 심사 중'인 케이스가 남았다. 인증기관 제품에서 이건
+    서류상 앞뒤가 안 맞는 상태다."""
+    ready = _issue_ready_states()
+    if c.status not in ready and c.status != "certificate_issued":
+        raise HTTPException(409, {"code": "STATE_NOT_READY", "status": c.status,
+                                  "need": sorted(ready),
+                                  "hint": "심사·판정 단계를 마쳐야 발급할 수 있습니다"})
     if c.fatwa_status != "approved":
         raise HTTPException(409, {"code": "FATWA_NOT_APPROVED"})
     if not c.scope_frozen:

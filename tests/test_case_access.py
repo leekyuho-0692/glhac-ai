@@ -113,3 +113,63 @@ def test_assigned_case_ids_are_scoped_to_the_user(tmp_path):
     _assign(db, "c_new", "ops.auditor_assigned", "auditor_id", "aud1")
     assert m._assigned_case_ids(db, "aud1") == {"c_new"}
     assert m._assigned_case_ids(db, "aud2") == set()
+
+
+# ── 인증서 발급 사전조건 ─────────────────────────────────────────────────
+# 발급 가드에 상태 검사가 없어 현장심사를 건너뛴 케이스에도 인증서가 나갔다(실측:
+# consultant_review 에서 발급). 게다가 발급 함수의 상태 전이는 조용히 건너뛰어져
+# '인증서는 있는데 진행 단계는 심사 중'인 케이스가 남았다.
+
+def _case(db, status, **kw):
+    c = models.CaseApplication(case_id="c_iss", org_id=OWN, company_name="발급 검증",
+                               status=status, fatwa_status=kw.get("fatwa", "approved"),
+                               scope_frozen=kw.get("frozen", True))
+    db.add(c)
+    db.commit()
+    return c
+
+
+def test_issue_blocked_before_review_is_done(tmp_path):
+    """심사 단계를 마치지 않은 케이스는 발급되지 않는다."""
+    db = _db(tmp_path)
+    c = _case(db, "consultant_review")
+    with pytest.raises(HTTPException) as e:
+        m._issue_guards(db, c, c.case_id)
+    assert e.value.detail["code"] == "STATE_NOT_READY"
+    assert e.value.detail["status"] == "consultant_review"
+
+
+@pytest.mark.parametrize("status", ["fatwa_approved", "committee_verification"])
+def test_issue_allowed_from_legitimate_states(tmp_path, status):
+    """정규(파트와 승인)·자기선언(위원회 검증) 두 경로 모두에서 발급이 열린다."""
+    db = _db(tmp_path)
+    c = _case(db, status)
+    m._issue_guards(db, c, c.case_id)      # 예외가 없으면 통과
+
+
+def test_ready_states_come_from_the_transition_table(tmp_path):
+    """발급 가능 상태를 손으로 적지 않는다 — 전이표가 바뀌면 가드도 따라가야 한다."""
+    import app.state_machine as sm2
+    assert m._issue_ready_states() == {
+        f for f, tos in sm2.TRANSITIONS.items() if "certificate_issued" in tos}
+
+
+def test_already_issued_case_is_not_blocked(tmp_path):
+    """이미 발급된 케이스는 상태 검사로 막지 않는다 — 재조회가 실패하면 안 된다."""
+    db = _db(tmp_path)
+    c = _case(db, "certificate_issued")
+    m._issue_guards(db, c, c.case_id)
+
+
+def test_fatwa_and_scope_guards_still_apply(tmp_path):
+    """상태가 맞아도 파트와 승인·범위 동결이 없으면 발급되지 않는다(기존 가드 유지)."""
+    db = _db(tmp_path)
+    c = _case(db, "fatwa_approved", fatwa="provisional")
+    with pytest.raises(HTTPException) as e:
+        m._issue_guards(db, c, c.case_id)
+    assert e.value.detail["code"] == "FATWA_NOT_APPROVED"
+    c.fatwa_status, c.scope_frozen = "approved", False
+    db.commit()
+    with pytest.raises(HTTPException) as e2:
+        m._issue_guards(db, c, c.case_id)
+    assert e2.value.detail["code"] == "SCOPE_NOT_FROZEN"
