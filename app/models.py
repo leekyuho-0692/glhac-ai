@@ -307,6 +307,10 @@ class DocumentAsset(Base):
     confidence = Column(Float)
     fields = Column(JSON)
     text_excerpt = Column(Text)
+    ocr_lines = Column(JSON)       # OCR 인식 라인+좌표 캐시 — 같은 사진을 두 번 읽지 않는다.
+    # 기록물 사진의 수량·날짜·담당자는 그 사진 안에만 있어 매뉴얼·현장심사 보고서를 만들
+    # 때마다 다시 OCR했다(사진 5장 ≈ 40초, 생성·미리보기마다 반복). 인테이크에서 이미
+    # 읽은 결과를 두면 될 일이다. 좌표를 함께 남기는 이유는 열이 섞인 표의 행 복원 때문.
     review_status = Column(String, default="pending")  # pending|approved|rejected|rework
     translations = Column(JSON)   # {lang: 번역문} 온디맨드 캐시(예: {"id": "..."}) — 조회시점 번역
     content_b64 = Column(EncryptedType)    # 원본 파일 base64(암호화 저장) — 조회/다운로드용

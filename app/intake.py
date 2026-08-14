@@ -241,15 +241,21 @@ _OCR_MIN_CONF = float(os.environ.get("GLHAC_OCR_MIN_CONF", "0.5"))
 _OCR_DPI = int(os.environ.get("GLHAC_OCR_DPI", "140"))   # 깨끗한 스캔은 140이 충분(측정), 저품질만 env 상향
 
 
-def _ocr_bytes(data, ext):
+def _ocr_bytes(data, ext, sink=None):
     """OS 독립 임시파일 OCR. confidence 낮은(오인식) 라인 제거로 품질↑.
-    (LLM 한글교정은 qwen2.5 테스트 결과 성분명 환각으로 더 악화 → 미채택, 할랄 안전)."""
+    (LLM 한글교정은 qwen2.5 테스트 결과 성분명 환각으로 더 악화 → 미채택, 할랄 안전)
+
+    sink 를 주면 인식 라인(좌표 포함)을 그대로 담아준다 — 표 사진의 행 복원은 좌표가
+    있어야 하고, 없으면 나중에 같은 사진을 또 OCR하게 된다."""
     import tempfile
     fd, path = tempfile.mkstemp(suffix="." + ext)
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
         lines = ai_local.ocr_image(path).get("lines", [])
+        if sink is not None:
+            sink.extend(lines[:4000])     # 병적으로 큰 스캔본 방어
+
         kept = [l["text"] for l in lines if l.get("confidence", 1) >= _OCR_MIN_CONF]
         if not kept and lines:            # 전부 저confidence면 폴백(빈 텍스트 방지)
             kept = [l["text"] for l in lines]
@@ -268,6 +274,56 @@ def _ocr_bytes(data, ext):
 # 인접 셀 병합) LLM이 오분류한다. 표 구조 그대로 제품명(시트 상단)·원재료(원료명 열)를 결정론적 추출.
 _ING_HDR_RE = re.compile(r"원료\s*명|ingredient\s*name")
 _ING_SKIP_RE = re.compile(r"^(원료\s*명|INS|용도|1차|2차|3차|ingredient|function|no\.?)$", re.I)
+
+# 인니어 원재료 목록(Daftar Bahan): 헤더가 'Nama'/'Nama Bahan' 이라 위 한국어 규칙에
+# 걸리지 않았다. 그 결과 136행짜리 표를 청크 LLM으로 다시 읽었고 — 87초를 쓰고 134개만
+# 건졌다(실측). 표에 그대로 있는 값을 결정론적으로 읽는다.
+_ID_NAME_HDR_RE = re.compile(r"^\s*nama(\s*bahan)?\s*$", re.I)
+# 원재료표임을 뒷받침하는 이웃 헤더 — 'Nama' 한 단어만으로 판단하면 아무 표나 걸린다.
+_ID_ATTR_HDR_RE = re.compile(
+    r"jenis\s*bahan|produsen|negara|supplier|pemasok|lembaga|sertifikat|no\.?\s*sert", re.I)
+# 제품×원재료 매트릭스 표시값 — 이런 열이 이어지면 목록이 아니라 매트릭스다.
+_MATRIX_MARK_RE = re.compile(r"^[vV✓xX✔○●\-–—]$")
+
+
+def _looks_like_matrix(rows, hdr, name_col):
+    """제품×원재료 매트릭스인가 — 목록과 같은 헤더를 쓰지만 성격이 다르다.
+
+    'Bahan vs Produk matriks.xlsx' 는 'Nama Bahan' 헤더를 쓰면서 오른쪽이 전부 제품 열이고
+    칸은 V 표시다. 이걸 원재료표로 읽으면 doc_type 이 product_list 에서 material_list 로
+    뒤집혀 제품 목록이 사라진다. 표시값 열이 3개 이상이면 매트릭스로 본다."""
+    body = rows[hdr + 1:hdr + 12]
+    width = max((len(r) for r in body), default=0)
+    marks = 0
+    for j in range(name_col + 1, min(name_col + 12, width)):
+        vals = [str(r[j]).strip() for r in body
+                if j < len(r) and r[j] is not None and str(r[j]).strip()]
+        if vals and all(_MATRIX_MARK_RE.match(v) for v in vals):
+            marks += 1
+    return marks >= 3
+
+
+def _id_material_rows(rows):
+    """인니어 원재료 목록 시트면 원재료명 리스트, 아니면 None."""
+    for i, row in enumerate(rows[:8]):
+        cols = [j for j, c in enumerate(row) if c and _ID_NAME_HDR_RE.match(str(c))]
+        if not cols:
+            continue
+        attrs = sum(1 for c in row if c and _ID_ATTR_HDR_RE.search(str(c)))
+        if attrs < 2:            # 이웃 헤더가 없으면 원재료표라고 볼 근거가 없다
+            continue
+        name_col = cols[0]
+        if _looks_like_matrix(rows, i, name_col):
+            return None
+        out = []
+        for row2 in rows[i + 1:]:
+            if name_col >= len(row2) or not row2[name_col]:
+                continue
+            v = str(row2[name_col]).strip()
+            if v and not _ING_SKIP_RE.match(v) and not _ID_NAME_HDR_RE.match(v) and v not in out:
+                out.append(v)
+        return out or None
+    return None
 
 
 def _xlsx_ingredient_table(wb):
@@ -288,7 +344,15 @@ def _xlsx_ingredient_table(wb):
                 name_cols, hdr = cols, i
                 break
         if hdr is None:
-            continue   # 이 시트는 전성분표 구조 아님
+            # 인니어 원재료 목록(Nama + Jenis Bahan/Produsen/…). 제품명은 없다 —
+            # 시트 1행은 표 제목('Daftar Bahan Halal …')이라 제품으로 쓰면 안 된다.
+            id_mats = _id_material_rows(rows)
+            if id_mats:
+                detected = True
+                for v in id_mats:
+                    if v not in materials:
+                        materials.append(v)
+            continue   # 이 시트는 (한국어) 전성분표 구조 아님
         detected = True
         prod = next((str(c).strip() for c in rows[0] if c and str(c).strip()), None)
         if prod and prod not in products:
@@ -304,15 +368,19 @@ def _xlsx_ingredient_table(wb):
     return products, materials
 
 
-def parse_file(name, data, dpi=None):
+def parse_file(name, data, dpi=None, ocr_sink=None):
     """확장자별 텍스트 추출 — OS 독립. 이미지/스캔PDF=OCR, PDF=fitz, docx/xlsx/txt.
-    dpi 지정 시 스캔 렌더 해상도 오버라이드(고해상도 재처리용, 기본 _OCR_DPI)."""
+    dpi 지정 시 스캔 렌더 해상도 오버라이드(고해상도 재처리용, 기본 _OCR_DPI).
+
+    ocr_sink 를 주면 OCR 라인(좌표 포함)을 담아준다 — 재-OCR을 막는 캐시용. 단일 이미지에만
+    채운다. 스캔 PDF는 페이지마다 좌표계가 새로 시작해 여러 페이지를 한 목록에 담으면 서로
+    다른 페이지의 행이 같은 y 값으로 겹친다 — 표 행 복원이 조용히 틀어지느니 캐시하지 않는다."""
     ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
     _dpi = int(dpi) if dpi else _OCR_DPI
     _dpi = max(72, min(600, _dpi))   # 안전 범위
     try:
         if ext in _IMG:
-            return _ocr_bytes(data, ext)
+            return _ocr_bytes(data, ext, ocr_sink)
         if ext == "pdf":
             import fitz
             doc = fitz.open(stream=data, filetype="pdf")
@@ -622,6 +690,16 @@ def classify(name, text):
     if dt_by_name in _NAME_DECIDES:
         return {"doc_type": dt_by_name, "confidence": 0.9, "fields": {},
                 "decided_by": "filename", "reason": why}
+    # 사전이 '운영 기록물'(구매·생산·재고·검사 기록)로 확정한 문서는 LLM을 부르지 않는다.
+    # 불러봐야 뽑은 값이 전부 버려진다 — other 는 _APPLICANT_DOCS·_PRODUCT_SRC·
+    # _MATERIAL_SRC 어디에도 없어 aggregate_fields 가 회사정보·제품·원재료를 모두
+    # 무시하고, _process_doc 도 다루지 않는다(실측: 기록 사진 6장에서 cert_no 는 전부
+    # None, 나머지 필드는 집계 진입조차 못 함). 파일당 15~20초를 그렇게 썼다.
+    # dt_by_name 이 'other' 인 경우는 사전이 아는 문서뿐이다 — doc_type_of 는 모르는
+    # 이름에 None 을 준다. 따라서 미지 문서의 LLM 판정을 뺏지 않는다.
+    if dt_by_name == "other" and why:
+        return {"doc_type": "other", "confidence": 0.9, "fields": {},
+                "decided_by": "filename", "reason": why}
     r = ai_local.llm_json(_CLASSIFY_SYS, "파일명: %s\n본문 발췌:\n%s" % (name, text[:2000]))
     if not isinstance(r, dict) or "doc_type" not in r:
         r = {"doc_type": "other", "confidence": 0.0, "fields": {}}
@@ -830,9 +908,11 @@ def intake_zip_iter(data, limit=200):
     docs = []
     yield ("start", {"total": total})
     for i, (name, raw) in enumerate(files[:limit], 1):
-        text = parse_file(name, raw)
+        _lines = []                       # 여기서 읽은 OCR을 버리지 않고 넘긴다
+        text = parse_file(name, raw, ocr_sink=_lines)
         cl = classify(name, text)
         d = {"filename": os.path.basename(name), "doc_type": cl["doc_type"],
+             "ocr_lines": _lines or None,
              "doc_type_ko": DOC_KO.get(cl["doc_type"], cl["doc_type"]),
              "confidence": cl.get("confidence", 0.0), "fields": cl.get("fields", {}),
              "text_len": len(text), "excerpt": text[:300],

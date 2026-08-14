@@ -3277,7 +3277,8 @@ def _apply_intake_autofill(db, c, res):
             _seen_n.add(_nm)
         db.add(models.DocumentAsset(case_id=c.case_id, filename=_nm, filename_en=_fn_en(_nm), doc_type=d["doc_type"],
                                     confidence=float(d.get("confidence") or 0), fields=d.get("fields"),
-                                    text_excerpt=d.get("excerpt"), content_b64=d.get("content_b64"),
+                                    text_excerpt=d.get("excerpt"), ocr_lines=d.get("ocr_lines"),
+                                    content_b64=d.get("content_b64"),
                                     content_type=d.get("content_type"), file_hash=_h))
     agg = res.get("extracted", {})
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": [],
@@ -6331,16 +6332,23 @@ def _sjph_photo_records(db, case_id):
         if not d or not d.content_b64 or not (d.content_type or "").startswith("image/"):
             continue
         try:
-            raw = base64.b64decode(str(d.content_b64).split(",")[-1])
-            ext = "." + (d.filename or "x.png").rsplit(".", 1)[-1].lower()
-            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
-                f.write(raw)
-                path = f.name
-            try:
-                res = _ai.ocr_image(path, "korean")
-                parsed = _rf.parse_rows(key, res.get("lines") or [])
-            finally:
-                os.unlink(path)
+            # 인테이크에서 이미 읽어둔 게 있으면 그걸 쓴다 — 같은 사진을 매번 다시
+            # OCR하느라 매뉴얼 한 번 만들 때마다 사진당 8~12초를 썼다.
+            lines = d.ocr_lines
+            if not lines:
+                raw = base64.b64decode(str(d.content_b64).split(",")[-1])
+                ext = "." + (d.filename or "x.png").rsplit(".", 1)[-1].lower()
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                    f.write(raw)
+                    path = f.name
+                try:
+                    lines = _ai.ocr_image(path, "korean").get("lines") or []
+                finally:
+                    os.unlink(path)
+                if lines:            # 다음 생성부터는 읽지 않도록 남겨둔다
+                    d.ocr_lines = lines[:4000]
+                    db.commit()
+            parsed = _rf.parse_rows(key, lines or [])
             if parsed:
                 out[key] = parsed
         except Exception as e:  # noqa: BLE001
