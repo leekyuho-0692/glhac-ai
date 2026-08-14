@@ -2196,6 +2196,21 @@ def timeline(case_id: str, user=Depends(auth.get_current_user), db: Session = De
                         "actor": e.actor_type, "hash": (e.row_hash or "")[:12]} for e in evs]}
 
 
+@app.get("/materials/{material_id}/auditor-note")
+def material_auditor_note(material_id: str, lang: str = Query("ko"),
+                          user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """오디터 심사 참고 의견 — 왜 걸렸는지·언제 예외인지·이 건의 근거·확인할 것.
+
+    판정을 바꾸지 않는다. 오디터는 '걸린 목록'만으로 서명할 수 없어서, 근거와 확인 사항을
+    한자리에 모아 준다. 인증번호가 있어도 자동으로 풀지 않는 이유(대조는 사람이 한다)도
+    여기서 설명된다."""
+    m = db.get(models.Material, material_id)
+    if not m:
+        raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
+    _get_case(db, m.case_id, user)     # 조직 격리
+    return screening.auditor_note(m, (lang or "ko").lower())
+
+
 @app.get("/cases/{case_id}/materials")
 def list_materials(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)

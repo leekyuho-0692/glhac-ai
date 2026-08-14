@@ -350,6 +350,8 @@ _EVID_ID = {
 }
 # 대체재 — 한국어로 적힌 값만 옮긴다(영문·화학명은 그대로 두는 것이 정확하다).
 _ALT_EN = {
+    "할랄 전용 라인·세척(사무) 절차로 관리 — 제품 성분이 아님":
+        "Managed by a dedicated halal line and cleaning (sanitation) procedure — not a product ingredient",
     "HPMC 식물성 캡슐": "HPMC plant capsule", "PG 캐리어 향료": "PG-carrier flavor",
     "광물 인산염": "mineral phosphate", "미생물 rennet whey": "microbial-rennet whey",
     "식물성": "plant-based", "식물성 E471": "plant-based E471",
@@ -363,6 +365,8 @@ _ALT_EN = {
     "합성 glycine": "synthetic glycine", "활성탄": "activated carbon", "효모 유래": "yeast-derived",
 }
 _ALT_ID = {
+    "할랄 전용 라인·세척(사무) 절차로 관리 — 제품 성분이 아님":
+        "Dikelola melalui lini khusus halal dan prosedur pembersihan (sanitasi) — bukan bahan produk",
     "HPMC 식물성 캡슐": "kapsul nabati HPMC", "PG 캐리어 향료": "perisa berpembawa PG",
     "광물 인산염": "fosfat mineral", "미생물 rennet whey": "whey renet mikroba",
     "식물성": "nabati", "식물성 E471": "E471 nabati", "식물성 carbon": "karbon nabati",
@@ -440,12 +444,32 @@ _L10N_TABLES = {
 }
 
 
+# 한국어 증빙 표기 — 영어·인니어는 있는데 한국어만 비어 있어서 화면에 코드가 그대로
+# 노출됐다('halal_slaughter_cert'). 오디터가 읽을 말로 적는다.
+_EVID_KO = {
+    "alcohol_carrier_check": "알코올 캐리어 확인",
+    "animal_source_declaration": "동물 유래 선언서",
+    "bone_char_free_declaration": "골탄(骨炭) 미사용 선언서",
+    "carrier_check": "캐리어 확인", "carrier_declaration": "캐리어 선언서",
+    "composition_breakdown": "성분 조성 내역",
+    "enzyme_source_declaration": "효소 유래 선언서",
+    "halal_cert": "할랄 인증서",
+    "halal_slaughter_cert": "할랄 도축 증명서",
+    "halal_slaughter_certificate": "할랄 도축 증명서",
+    "process_declaration": "공정 선언서", "reformulation": "배합 변경(대체)",
+    "rennet_source_declaration": "레닛 유래 선언서",
+    "residual_alcohol_test": "잔류 알코올 시험성적서",
+    "source_declaration": "유래 선언서",
+    "supplier_halal_cert": "공급사 할랄 인증서",
+}
+
+
 def _explain_l10n(lang):
     """(문장번역기, 카테고리, 상태, 유래, 증빙, 대체재) — 미지원 언어는 한국어 표를 돌려준다."""
     lang = (lang or "ko").lower()
     tabs = _L10N_TABLES.get(lang)
     if not tabs:
-        return (lambda s: s), _CAT_KO, _STATUS_KO, _SOURCE_KO, {}, {}
+        return (lambda s: s), _CAT_KO, _STATUS_KO, _SOURCE_KO, _EVID_KO, {}
     sent = _EXPLAIN_L10N.get(lang, {})
     return ((lambda s: sent.get(s, s)),) + tabs
 
@@ -504,3 +528,143 @@ def explain(name, e_number=None, source=None, cert_no=None, note="", lang="ko"):
             "required_evidence": (it.required_evidence if it else []) or [],
             "alternatives": (it.alternatives if it else []) or [],
             "explanation": "\n".join(lines)}
+
+
+# ── 오디터 심사 참고 의견 ────────────────────────────────────────────────
+# 오디터는 '걸린 목록'만으로는 판단할 수 없다. 왜 걸렸는지, 어떤 조건이면 예외로 볼 수
+# 있는지, 이 건이 그 조건에 해당하는지를 함께 봐야 서명할 수 있다. 판정을 바꾸지는 않는다 —
+# 판단은 사람이 하고, 여기서는 근거와 확인할 것만 정리해 준다.
+
+_BPJPH_NO = re.compile(r"^ID\d{8,}$", re.I)          # BPJPH 할랄 인증번호 형식
+_MUI_NO = re.compile(r"^\d{8,}$")                    # LPPOM MUI 계열 번호
+
+_NOTE_L10N = {
+    "ko": {
+        "why": "걸린 이유", "exempt": "예외로 볼 수 있는 조건", "this": "이 건의 근거",
+        "action": "오디터 확인 사항", "draft": "AI 초안 — 판단은 오디터가 합니다",
+        "cert_ok": "공급사 할랄 인증번호 %s (%s) 보유 — 번호가 유효하면 유래 증빙을 갈음할 수 있습니다.",
+        "cert_unknown": "인증번호 %s 보유 — 발급기관을 확인해야 효력을 판단할 수 있습니다.",
+        "no_cert": "이 재료에 제출된 인증번호가 없습니다.",
+        "evidence_yes": "증빙 파일이 제출되어 있습니다.",
+        "evidence_no": "증빙 파일은 아직 없습니다.",
+        "act_verify": "인증번호를 발급기관 조회로 대조하고, 유효하면 증빙으로 등록해 해제하세요.",
+        "act_collect": "필요 증빙을 받아 등록하면 자동으로 해제됩니다.",
+        "act_block": "금지 성분입니다. 대체재로 바꾸지 않으면 인증할 수 없습니다.",
+        "act_none": "추가 조치 없이 통과 상태입니다.",
+        "why_unmatched": "사전에 없는 재료라 안전측으로 증빙필요로 두었습니다(모르는 것을 통과시키지 않습니다).",
+    },
+    "en": {
+        "why": "Why it was flagged", "exempt": "When an exception applies",
+        "this": "Evidence on this case", "action": "For the auditor to check",
+        "draft": "AI draft — the auditor decides",
+        "cert_ok": "Supplier halal certificate no. %s (%s) on file — a valid number can stand in for origin evidence.",
+        "cert_unknown": "Certificate no. %s on file — the issuing body must be confirmed.",
+        "no_cert": "No certificate number submitted for this material.",
+        "evidence_yes": "An evidence file has been submitted.",
+        "evidence_no": "No evidence file yet.",
+        "act_verify": "Verify the number with the issuing body; if valid, register it as evidence to clear.",
+        "act_collect": "Collect and register the required evidence to clear automatically.",
+        "act_block": "Forbidden ingredient — certification is impossible without substitution.",
+        "act_none": "No further action; already passing.",
+        "why_unmatched": "Not in the dictionary, so it was kept as 'evidence required' on the safe side.",
+    },
+    "id": {
+        "why": "Alasan ditandai", "exempt": "Kapan pengecualian berlaku",
+        "this": "Bukti pada kasus ini", "action": "Yang perlu diperiksa auditor",
+        "draft": "Draf AI — keputusan ada pada auditor",
+        "cert_ok": "Nomor sertifikat halal pemasok %s (%s) tersedia — nomor yang sah dapat menggantikan bukti asal-usul.",
+        "cert_unknown": "Nomor sertifikat %s tersedia — lembaga penerbit perlu dipastikan.",
+        "no_cert": "Tidak ada nomor sertifikat untuk bahan ini.",
+        "evidence_yes": "Berkas bukti sudah diunggah.",
+        "evidence_no": "Belum ada berkas bukti.",
+        "act_verify": "Cocokkan nomor dengan lembaga penerbit; bila sah, daftarkan sebagai bukti untuk melepas status.",
+        "act_collect": "Kumpulkan dan daftarkan bukti yang diperlukan agar status terlepas otomatis.",
+        "act_block": "Bahan haram — sertifikasi tidak mungkin tanpa penggantian.",
+        "act_none": "Tidak perlu tindakan; sudah lolos.",
+        "why_unmatched": "Tidak ada di kamus, jadi tetap 'perlu bukti' demi keamanan.",
+    },
+}
+
+
+def _by_uid(uid):
+    """ingredient_uid 로 온톨로지 항목을 찾는다 — 판정 시점의 매칭을 그대로 재사용."""
+    if not uid:
+        return None
+    for it in (_CACHE.get("items") or []):
+        if getattr(it, "ingredient_uid", None) == uid:
+            return it
+    for it in (_CACHE.get("by_alias") or {}).values():
+        if getattr(it, "ingredient_uid", None) == uid:
+            return it
+    return None
+
+
+def _issuer_of(cert_no):
+    """인증번호 형식으로 발급기관 추정 — 확실하지 않으면 None(지어내지 않는다)."""
+    v = (cert_no or "").strip().replace(" ", "")
+    if not v or v == "-":
+        return None
+    if _BPJPH_NO.match(v):
+        return "BPJPH"
+    if _MUI_NO.match(v):
+        return "LPPOM MUI"
+    return None
+
+
+def auditor_note(material, lang="ko"):
+    """오디터용 심사 참고 의견 — 왜 걸렸는지·언제 예외인지·이 건은 어떤지·무엇을 할지.
+
+    판정을 바꾸지 않는다. 오디터가 근거를 보고 스스로 판단하도록 정리만 한다."""
+    L = _NOTE_L10N.get((lang or "ko").lower(), _NOTE_L10N["ko"])
+    _S, _CAT, _STAT, _SRC, EVID, ALT = _explain_l10n(lang)
+    name = getattr(material, "name", "") or ""
+    result = getattr(material, "screen_result", None)
+    cert_no = (getattr(material, "cert_no", None) or "").strip()
+    ev_done = bool(getattr(material, "evidence_provided", False))
+    # 판정 당시 매칭된 항목을 그대로 쓴다 — 이름으로 다시 맞추면 그때와 달라질 수 있고,
+    # 실제로 매칭된 재료를 '사전에 없다'고 잘못 적었다.
+    uid = getattr(material, "matched_uid", None)
+    it = _by_uid(uid) or _match(name, getattr(material, "e_number", None))
+
+    # 설명은 판정 당시 매칭된 성분명으로 뽑는다. 제품 표기('DAGING POTONG 1 KG BRAVOO')로
+    # 다시 맞추면 사전에 없다고 나와 '미등재'라는 틀린 이유가 붙는다(실측).
+    ex = explain(it.canonical_name if it else name,
+                 getattr(material, "e_number", None),
+                 getattr(material, "source", None), cert_no or None,
+                 getattr(material, "note", "") or "", lang)
+    why = [x for x in (ex.get("explanation") or "").split("\n") if x.strip()]
+    if not it and not why:
+        why = [L["why_unmatched"]]
+    elif not it:
+        why.append(L["why_unmatched"])
+    exempt = []
+    if it and it.required_evidence:
+        exempt.append(", ".join(EVID.get(x, x) for x in it.required_evidence))
+    if it and it.alternatives:
+        exempt += [ALT.get(a, a) for a in it.alternatives]
+
+    this = []
+    issuer = _issuer_of(cert_no)
+    if cert_no and issuer:
+        this.append(L["cert_ok"] % (cert_no, issuer))
+    elif cert_no:
+        this.append(L["cert_unknown"] % cert_no)
+    else:
+        this.append(L["no_cert"])
+    this.append(L["evidence_yes"] if ev_done else L["evidence_no"])
+
+    if result == "BLOCK":
+        action = L["act_block"]
+    elif result in ("PASS", "CLEARED"):
+        action = L["act_none"]
+    elif cert_no and issuer:
+        action = L["act_verify"]
+    else:
+        action = L["act_collect"]
+
+    return {"draft_notice": L["draft"],
+            "why": {"label": L["why"], "text": [x for x in why if x]},
+            "exemption": {"label": L["exempt"], "text": exempt},
+            "this_case": {"label": L["this"], "text": this},
+            "action": {"label": L["action"], "text": action},
+            "cert_issuer": issuer, "cert_no": cert_no or None}
