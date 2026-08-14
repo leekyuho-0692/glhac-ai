@@ -506,12 +506,163 @@ def _case_dict(c):
             "profile_ext": c.profile_ext or {}, "facility_ids": c.facility_ids or []}
 
 
-def _notify(db, case, event_type, title, body="", channels=None, role=None):
-    """이벤트 알림을 큐(unsent)에 적재. 실제 발송은 비동기 워커(drain)가 처리 — Rizky #5."""
+# ── 알림 문구 카탈로그 ────────────────────────────────────────────────────
+# 알림은 한국어 문장으로 만들어져 그대로 저장·표시됐다. 인니 심사자·업체가 보는 화면에
+# 한국어가 그대로 떴다(실측: 인니어 화면 잔여 한글의 최대 덩어리).
+#
+# 문구를 키+파라미터로 남겨 읽는 사람의 언어로 다시 조립한다. 저장되는 title/body 는
+# 한국어 그대로 둔다 — SMS·WhatsApp 발송과 이미 쌓인 알림이 그대로 동작해야 한다.
+# 사람이 직접 쓴 본문(보완 사유·코멘트)은 번역하지 않는다. 남의 글을 기계가 바꿔 쓰면
+# 심사 기록이 원문과 달라진다.
+NOTIFY_MSG = {
+    "application.submitted": {
+        "ko": ("신청서 작성완료 제출", "{company} 신청서가 제출되었습니다. 경로판정(자기선언/정규) 확정 대기."),
+        "en": ("Application submitted", "{company} has submitted its application. Awaiting pathway decision (self-declare / regular)."),
+        "id": ("Permohonan telah dikirim", "{company} telah mengirimkan permohonan. Menunggu penetapan jalur (self-declare / reguler)."),
+    },
+    "audit_closed": {
+        "ko": ("심사 완료", "{company} — 현장심사가 종결되었습니다."),
+        "en": ("Audit closed", "{company} — the on-site audit has been closed."),
+        "id": ("Audit selesai", "{company} — audit lapangan telah ditutup."),
+    },
+    "audit_scheduled": {
+        "ko": ("심사 일정", "{company} — 현장심사가 예정되었습니다."),
+        "en": ("Audit scheduled", "{company} — an on-site audit has been scheduled."),
+        "id": ("Jadwal audit", "{company} — audit lapangan telah dijadwalkan."),
+    },
+    "audit_scheduled.lph": {
+        "ko": ("심사 일정 · LPH 배정", "{company} — {lph} 배정, 현장심사가 예정되었습니다."),
+        "en": ("Audit scheduled · LPH assigned", "{company} — {lph} assigned; an on-site audit has been scheduled."),
+        "id": ("Jadwal audit · LPH ditetapkan", "{company} — {lph} ditetapkan; audit lapangan telah dijadwalkan."),
+    },
+    "audit_scheduled.slots": {
+        "ko": ("현장심사 가능일 제시", "{company} — 클라이언트가 방문 가능일 {count}개를 제시했습니다."),
+        "en": ("Proposed audit dates", "{company} — the client proposed {count} possible visit dates."),
+        "id": ("Usulan tanggal audit", "{company} — klien mengusulkan {count} tanggal kunjungan."),
+    },
+    "certificate_issued": {
+        "ko": ("인증서 발급", "{company} — 할랄 인증서 {cert_no} 발급 완료."),
+        "en": ("Certificate issued", "{company} — halal certificate {cert_no} has been issued."),
+        "id": ("Sertifikat diterbitkan", "{company} — sertifikat halal {cert_no} telah diterbitkan."),
+    },
+    "document_requested": {
+        "ko": ("문서 요청", "{company} — 사전심사 문서 제출이 요청되었습니다."),
+        "en": ("Documents requested", "{company} — documents have been requested for the pre-assessment."),
+        "id": ("Dokumen diminta", "{company} — dokumen diminta untuk pra-penilaian."),
+    },
+    "fatwa_approved": {
+        "ko": ("파트와 최종 승인", "{company} — 파트와 위원회 최종 승인 완료. 인증서 발급 가능."),
+        "en": ("Fatwa final approval", "{company} — the fatwa committee has given final approval. The certificate can now be issued."),
+        "id": ("Persetujuan akhir fatwa", "{company} — komisi fatwa telah memberikan persetujuan akhir. Sertifikat dapat diterbitkan."),
+    },
+    "contract.request": {
+        "ko": ("새 계약 신청 · {company}", "관리자 승인·계약서 발송이 필요합니다."),
+        "en": ("New contract request · {company}", "Administrator approval and contract dispatch are required."),
+        "id": ("Permintaan kontrak baru · {company}", "Perlu persetujuan administrator dan pengiriman kontrak."),
+    },
+    "contract.approve": {
+        "ko": ("계약서 도착 · {contract_no}", "계약서를 접수·확인해 주세요."),
+        "en": ("Contract received · {contract_no}", "Please receive and review the contract."),
+        "id": ("Kontrak diterima · {contract_no}", "Mohon terima dan periksa kontrak."),
+    },
+    "contract.receive": {
+        "ko": ("계약 서명 요청 대기 · {company}", "클라이언트 접수 완료 — 서명 요청이 가능합니다."),
+        "en": ("Awaiting signature request · {company}", "The client has received it — you can now request signatures."),
+        "id": ("Menunggu permintaan tanda tangan · {company}", "Klien telah menerimanya — permintaan tanda tangan dapat dikirim."),
+    },
+    "contract.sign_request": {
+        "ko": ("계약 서명 요청 · {company}", "계약서에 전자 서명해 주세요."),
+        "en": ("Signature requested · {company}", "Please sign the contract."),
+        "id": ("Permintaan tanda tangan · {company}", "Mohon tanda tangani kontrak."),
+    },
+    "contract.signed": {
+        "ko": ("양자 서명 완료 · {contract_no}", "관리자 최종 확인이 필요합니다."),
+        "en": ("Both parties signed · {contract_no}", "Final confirmation by the administrator is required."),
+        "id": ("Kedua pihak telah menandatangani · {contract_no}", "Perlu konfirmasi akhir dari administrator."),
+    },
+    "contract.confirm": {
+        "ko": ("계약 최종 확인 완료 · {contract_no}", "청구서가 곧 생성됩니다."),
+        "en": ("Contract confirmed · {contract_no}", "An invoice will be generated shortly."),
+        "id": ("Kontrak dikonfirmasi · {contract_no}", "Faktur akan segera dibuat."),
+    },
+    "mock_audit.assigned": {
+        "ko": ("모의심사 대상 배정", "결제 확정으로 모의심사 대상으로 배정되었습니다."),
+        "en": ("Assigned to mock audit", "Payment confirmed — the case has been assigned to a mock audit."),
+        "id": ("Ditetapkan untuk audit simulasi", "Pembayaran dikonfirmasi — kasus ditetapkan untuk audit simulasi."),
+    },
+    "ops.company_approved": {
+        "ko": ("신규 업체 승인", "최고운영자가 신규 업체 등록을 승인했습니다."),
+        "en": ("New company approved", "The chief operations officer approved the new company registration."),
+        "id": ("Perusahaan baru disetujui", "Kepala operasional telah menyetujui pendaftaran perusahaan baru."),
+    },
+    "ops.auditor_assigned": {
+        "ko": ("오디터 배정 — 수락/거절 필요", "{auditor} 님이 심사 담당으로 배정되었습니다. 배정함에서 수락 또는 거절해 주세요."),
+        "en": ("Auditor assigned — accept or decline", "{auditor} has been assigned as the auditor. Accept or decline it in your assignment inbox."),
+        "id": ("Auditor ditetapkan — terima atau tolak", "{auditor} ditetapkan sebagai auditor. Terima atau tolak di kotak penetapan Anda."),
+    },
+    # 본문이 사람이 쓴 글인 알림 — 제목만 번역하고 본문은 원문 그대로 둔다.
+    "preassess.doc_request": {
+        "ko": ("사전심사 추가서류 요청", None),
+        "en": ("Pre-assessment: additional documents requested", None),
+        "id": ("Pra-penilaian: dokumen tambahan diminta", None),
+    },
+    "preassess.resubmit": {
+        "ko": ("사전심사 재제출", None),
+        "en": ("Pre-assessment resubmitted", None),
+        "id": ("Pra-penilaian dikirim ulang", None),
+    },
+}
+
+
+def notify_text(n, lang="ko"):
+    """알림을 읽는 사람의 언어로 조립 — (제목, 본문).
+
+    payload 가 없으면(예전에 쌓인 알림, 카탈로그에 없는 이벤트) 저장된 한국어를 그대로 쓴다.
+    본문 템플릿이 None 이면 사람이 쓴 원문을 그대로 둔다."""
+    lang = lang if lang in ("ko", "en", "id") else "ko"
+    pl = n.payload if isinstance(n.payload, dict) else None
+    tmpl = NOTIFY_MSG.get((pl or {}).get("key") or "", {}).get(lang)
+    if not tmpl:
+        return n.title, n.body
+    params = (pl or {}).get("params") or {}
+    try:
+        title = tmpl[0].format(**params)
+    except (KeyError, IndexError, ValueError):
+        title = n.title
+    body = n.body
+    if tmpl[1]:
+        try:
+            body = tmpl[1].format(**params)
+        except (KeyError, IndexError, ValueError):
+            body = n.body
+    return title, body
+
+
+def _notify(db, case, event_type, title=None, body="", channels=None, role=None, msg=None):
+    """이벤트 알림을 큐(unsent)에 적재. 실제 발송은 비동기 워커(drain)가 처리 — Rizky #5.
+
+    msg=(문구키, params) 를 주면 한국어 문구를 카탈로그에서 만들어 저장하고, 키·파라미터를
+    payload 에 남긴다 — 읽는 사람의 언어로 다시 조립하기 위해서다. title/body 를 직접 주면
+    종전과 똑같이 동작한다(카탈로그에 없는 알림은 그대로 둔다)."""
+    payload = None
+    if msg:
+        key, params = msg[0], (msg[1] or {})
+        payload = {"key": key, "params": params}
+        ko = NOTIFY_MSG.get(key, {}).get("ko")
+        if ko:
+            try:
+                title = ko[0].format(**params)
+            except (KeyError, IndexError, ValueError):
+                title = title or key
+            if ko[1]:
+                try:
+                    body = ko[1].format(**params)
+                except (KeyError, IndexError, ValueError):
+                    pass
     n = models.Notification(
         org_id=(case.org_id if case else None), case_id=(case.case_id if case else None),
         role=role, event_type=event_type, channels=channels or ["inapp"],
-        title=title, body=body, status="unsent")
+        title=title, body=body, payload=payload, status="unsent")
     db.add(n)
     return n
 
@@ -1731,10 +1882,16 @@ def _my_notifs(db, user):
 
 
 @app.get("/notifications")
-def list_notifications(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    return [{"id": n.notification_id, "case_id": n.case_id, "event_type": n.event_type,
-             "title": n.title, "body": n.body, "read": bool(n.read), "status": n.status,
-             "channels": n.channels, "created_at": str(n.created_at)} for n in _my_notifs(db, user)]
+def list_notifications(lang: str = Query("ko"), user=Depends(auth.get_current_user),
+                       db: Session = Depends(get_db)):
+    """읽는 사람의 언어로 알림을 돌려준다 — 저장은 한국어라 그대로 주면 인니어 화면에 한글이 뜬다."""
+    out = []
+    for n in _my_notifs(db, user):
+        title, body = notify_text(n, lang)
+        out.append({"id": n.notification_id, "case_id": n.case_id, "event_type": n.event_type,
+                    "title": title, "body": body, "read": bool(n.read), "status": n.status,
+                    "channels": n.channels, "created_at": str(n.created_at)})
+    return out
 
 
 @app.get("/notifications/unread-count")
@@ -1773,7 +1930,7 @@ def admin_drain_notifications(user=Depends(auth.require_roles("operator")),
 
 
 @app.get("/admin/notifications")
-def admin_list_notifications(status: str = None, limit: int = 100,
+def admin_list_notifications(status: str = None, limit: int = 100, lang: str = Query("ko"),
                              user=Depends(auth.require_roles("operator")),
                              db: Session = Depends(get_db)):
     """알림 발송 현황 — 상태별 집계 + 목록(관리자). 실발송 가시성."""
@@ -1788,11 +1945,67 @@ def admin_list_notifications(status: str = None, limit: int = 100,
     if status:
         fq = fq.filter(models.Notification.status == status)
     rows = fq.order_by(models.Notification.created_at.desc()).limit(min(int(limit), 500)).all()
-    items = [{"id": n.notification_id, "event_type": n.event_type, "title": n.title,
+    items = [{"id": n.notification_id, "event_type": n.event_type,
+              "title": notify_text(n, lang)[0],
               "channels": n.channels, "status": n.status, "attempts": n.attempts,
               "last_error": n.last_error, "role": n.role, "case_id": n.case_id,
               "created_at": str(n.created_at)} for n in rows]
     return {"counts": counts, "total": len(items), "items": items}
+
+
+def _notify_backfill_params(key, title, body):
+    """저장된 한국어 문구를 카탈로그 템플릿과 정확히 맞춰 파라미터를 되뽑는다.
+
+    한 글자라도 어긋나면 포기한다(None). 추측으로 채우면 업체명 자리에 엉뚱한 값이 들어가
+    알림이 조용히 틀려진다 — 못 맞추면 한국어 그대로 두는 편이 정직하다."""
+    ko = NOTIFY_MSG.get(key, {}).get("ko")
+    if not ko:
+        return None
+    out = {}
+    for tmpl, val in ((ko[0], title or ""), (ko[1], body or "")):
+        if not tmpl:
+            continue
+        names = re.findall(r"\{(\w+)\}", tmpl)
+        pat = "^" + "".join(
+            ("(?P<%s>.+?)" % p[1:-1]) if re.fullmatch(r"\{\w+\}", p) else re.escape(p)
+            for p in re.split(r"(\{\w+\})", tmpl)) + "$"
+        mm = re.match(pat, val, re.S)
+        if not mm:
+            return None
+        for nm in names:
+            got = mm.group(nm)
+            if nm in out and out[nm] != got:
+                return None          # 제목과 본문의 같은 자리 값이 다르면 잘못 맞춘 것
+            out[nm] = got
+    return out
+
+
+@app.post("/admin/notifications/backfill-i18n")
+def backfill_notification_i18n(dry_run: bool = True,
+                               user=Depends(auth.require_roles("operator", "admin")),
+                               db: Session = Depends(get_db)):
+    """payload 없이 쌓인 기존 알림에 문구키·파라미터를 되채운다 — 그래야 인니어로 읽힌다.
+
+    저장된 한국어가 카탈로그 문구와 정확히 일치하는 것만 채운다. 못 맞춘 알림은 손대지
+    않고 한국어 그대로 둔다. dry_run=true 가 기본 — 무엇이 바뀌는지 먼저 보고 정한다."""
+    rows = (db.query(models.Notification)
+              .filter(models.Notification.payload.is_(None)).all())
+    filled, skipped = [], {}
+    for n in rows:
+        params = _notify_backfill_params(n.event_type, n.title, n.body)
+        if params is None:
+            skipped[n.event_type] = skipped.get(n.event_type, 0) + 1
+            continue
+        filled.append({"id": n.notification_id, "event_type": n.event_type, "params": params})
+        if not dry_run:
+            n.payload = {"key": n.event_type, "params": params}
+    if not dry_run:
+        db.commit()
+        _audit(db, user, "notification.backfill_i18n", "notification", None,
+               meta={"filled": len(filled)})
+        db.commit()
+    return {"dry_run": dry_run, "candidates": len(rows), "filled": len(filled),
+            "skipped_by_event": skipped, "samples": filled[:8]}
 
 
 @app.get("/admin/notify-channels")
@@ -3772,9 +3985,8 @@ def submit_application(case_id: str, user=Depends(auth.require_roles("applicant"
     c.draft_state = "completed"
     c.return_reason = None
     sm.record_event(db, c, prev, c.status, "application.submit", user["role"], user["uid"])
-    _notify(db, c, "application.submitted", "신청서 작성완료 제출",
-            "%s 신청서가 제출되었습니다. 경로판정(자기선언/정규) 확정 대기." % (c.company_name or c.case_id),
-            role="consultant")
+    _notify(db, c, "application.submitted", role="consultant",
+            msg=("application.submitted", {"company": c.company_name or c.case_id}))
     db.commit()
     return _case_dict(c)
 
@@ -4111,7 +4323,7 @@ def get_manual_placement(case_id: str, lang: str = Query("ko"),
              or (d.filename or "").lower().endswith(".pdf")]
     slots = []
     for key in _SJPH_DOC_FALLBACK:
-        auto, why = _sjph_pick_for_slot(db, case_id, key, docs, ev, by_id)
+        auto, why = _sjph_pick_for_slot(db, case_id, key, docs, ev, by_id, lang)
         manual = key in override
         chosen = by_id.get(override[key]) if (manual and override[key]) else (
             None if manual else auto)
@@ -4882,8 +5094,8 @@ def contract_request(case_id: str, user=Depends(auth.require_roles("applicant", 
         ct.status = "requested"
     _audit(db, user, "contract.request", "contract", ct.contract_id, case_id, {}, commit=False)
     sm.record_event(db, c, c.status, c.status, "contract.request", user["role"], user["uid"], {})
-    _notify(db, c, "contract.request", "새 계약 신청 · " + (c.company_name or case_id[:8]),
-            "관리자 승인·계약서 발송이 필요합니다.", role="operator")
+    _notify(db, c, "contract.request", role="operator",
+            msg=("contract.request", {"company": c.company_name or case_id[:8]}))
     db.commit()
     return {"status": ct.status}
 
@@ -4896,8 +5108,8 @@ def contract_approve(case_id: str, body: dict = None, user=Depends(auth.require_
     _audit(db, user, "contract.approve", "contract", contract.contract_id, case_id, {}, commit=False)
     sm.record_event(db, c, c.status, c.status, "contract.approve", user["role"], user["uid"],
                     {"contract_no": contract.contract_no})
-    _notify(db, c, "contract.approve", "계약서 도착 · " + (contract.contract_no or ""),
-            "계약서를 접수·확인해 주세요.", role="client")
+    _notify(db, c, "contract.approve", role="client",
+            msg=("contract.approve", {"contract_no": contract.contract_no or ""}))
     db.commit()
     return {"contract_id": contract.contract_id, "contract_no": contract.contract_no, "status": contract.status}
 
@@ -4912,8 +5124,8 @@ def contract_receive(case_id: str, user=Depends(auth.require_roles("applicant", 
     ct.status = "received"
     _audit(db, user, "contract.receive", "contract", ct.contract_id, case_id, {}, commit=False)
     sm.record_event(db, c, c.status, c.status, "contract.receive", user["role"], user["uid"], {})
-    _notify(db, c, "contract.receive", "계약 서명 요청 대기 · " + (c.company_name or ""),
-            "클라이언트 접수 완료 — 서명 요청이 가능합니다.", role="auditor")
+    _notify(db, c, "contract.receive", role="auditor",
+            msg=("contract.receive", {"company": c.company_name or ""}))
     db.commit()
     return {"status": ct.status}
 
@@ -4928,8 +5140,8 @@ def contract_request_signature(case_id: str, user=Depends(auth.require_roles("au
     ct.status = "signing"
     _audit(db, user, "contract.request_signature", "contract", ct.contract_id, case_id, {}, commit=False)
     sm.record_event(db, c, c.status, c.status, "contract.request_signature", user["role"], user["uid"], {})
-    _notify(db, c, "contract.sign_request", "계약 서명 요청 · " + (c.company_name or ""),
-            "계약서에 전자 서명해 주세요.", role="client")
+    _notify(db, c, "contract.sign_request", role="client",
+            msg=("contract.sign_request", {"company": c.company_name or ""}))
     db.commit()
     return {"status": ct.status}
 
@@ -5164,8 +5376,8 @@ def sign_contract(contract_id: str, party: str = "A", name: str = "",
         ct.status = "signed"
         _sc = db.query(models.CaseApplication).filter_by(case_id=ct.case_id).first()
         if _sc:
-            _notify(db, _sc, "contract.signed", "양자 서명 완료 · " + (ct.contract_no or ""),
-                    "관리자 최종 확인이 필요합니다.", role="operator")
+            _notify(db, _sc, "contract.signed", role="operator",
+                    msg=("contract.signed", {"contract_no": ct.contract_no or ""}))
     # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op·기존 서명/응답 완전 불변). 내부 서명은 위에서 병행.
     if _psre_config()["configured"]:
         import types as _t, hashlib as _h, json as _j
@@ -5192,8 +5404,8 @@ def confirm_contract(case_id: str, user=Depends(auth.require_roles("operator")),
     _audit(db, user, "contract.confirm", "contract", ct.contract_id, case_id, {}, commit=False)
     sm.record_event(db, c, c.status, c.status, "contract.confirm", user["role"], user["uid"],
                     {"contract_id": ct.contract_id})
-    _notify(db, c, "contract.confirm", "계약 최종 확인 완료 · " + (ct.contract_no or ""),
-            "청구서가 곧 생성됩니다.", role="client")
+    _notify(db, c, "contract.confirm", role="client",
+            msg=("contract.confirm", {"contract_no": ct.contract_no or ""}))
     db.commit()
     return {"contract_id": ct.contract_id, "status": ct.status}
 
@@ -6118,8 +6330,8 @@ def _sjph_placement_override(db, case_id):
     return {k: v for k, v in raw.items() if k in _SJPH_DOC_FALLBACK}
 
 
-def _sjph_pick_for_slot(db, case_id, key, docs=None, ev=None, by_id=None):
-    """슬롯에 들어갈 문서와 그 근거 — (문서, 근거) 또는 (None, 사유)."""
+def _sjph_pick_for_slot(db, case_id, key, docs=None, ev=None, by_id=None, lang="ko"):
+    """슬롯에 들어갈 문서와 그 근거 — (문서, 근거) 또는 (None, 사유). 근거는 lang 을 따른다."""
     from . import domain_dict as _dd2
     spec = _SJPH_DOC_FALLBACK.get(key)
     if not spec:
@@ -6131,16 +6343,21 @@ def _sjph_pick_for_slot(db, case_id, key, docs=None, ev=None, by_id=None):
         ev = {e.item_key: e.document_id
               for e in db.query(models.SjphEvidence).filter_by(case_id=case_id).all()}
     by_id = by_id if by_id is not None else {d.document_id: d for d in docs}
+    # 근거 앞머리는 심사자가 읽는 문구다 — 화면 언어를 따르지 않으면 인니어 화면에 한글이 뜬다
+    li = {"ko": 0, "en": 1, "id": 2}.get((lang or "ko").lower(), 0)
+    why = {"doc_type": ("문서유형", "doc type", "jenis dokumen"),
+           "term": ("사전", "dictionary", "kamus"),
+           "evidence": ("증빙", "evidence", "bukti")}
     if kind == "doc_type":
         d = next((x for x in docs if x.doc_type == want), None)
-        return d, ("doc_type=%s" % want)
+        return d, ("%s=%s" % (why["doc_type"][li], want))
     if kind == "term":
         for x in docs:
             base = re.sub(r"\.[A-Za-z0-9]{2,5}$", "", x.filename or "")
             if _dd2.lookup(base) == want:
-                return x, ("사전 %s" % want)
-        return None, ("사전 %s" % want)
-    return by_id.get(ev.get(want)), ("증빙 %s" % want)
+                return x, ("%s %s" % (why["term"][li], want))
+        return None, ("%s %s" % (why["term"][li], want))
+    return by_id.get(ev.get(want)), ("%s %s" % (why["evidence"][li], want))
 
 
 def _sjph_insert_uploaded_images(doc, db, case_id, already):
@@ -8754,9 +8971,10 @@ def _do_issue_certificate(db, c, user, reason=None):
     mat_ids = [m.material_id for m in db.query(models.Material).filter_by(case_id=case_id)]
     cert.frozen_product_ids = prod_ids
     cert.frozen_material_ids = mat_ids
-    _notify(db, c, "certificate_issued", "인증서 발급",
-            "%s — 할랄 인증서 %s 발급 완료." % (c.company_name or "", cert.certificate_no),
-            channels=["inapp", "sms", "kakao", "whatsapp"], role="applicant")
+    _notify(db, c, "certificate_issued",
+            channels=["inapp", "sms", "kakao", "whatsapp"], role="applicant",
+            msg=("certificate_issued", {"company": c.company_name or "",
+                                        "cert_no": cert.certificate_no}))
     try:
         db.commit()
     except IntegrityError:   # 동시 발급 경합 — 부분 유니크가 이중 활성 인증서 차단
@@ -10370,9 +10588,8 @@ def fatwa_final_approve(case_id: str, user=Depends(rbac.require_action("fatwa.ap
     if c.status == "fatwa_review" and sm.allowed(c.status, "fatwa_approved"):
         c.status = "fatwa_approved"
     sm.record_event(db, c, frm, c.status, "fatwa.final_approve", user["role"], user["uid"], {})
-    _notify(db, c, "fatwa_approved", "파트와 최종 승인",
-            "%s — 파트와 위원회 최종 승인 완료. 인증서 발급 가능." % (c.company_name or ""),
-            channels=["inapp"], role="applicant")
+    _notify(db, c, "fatwa_approved", channels=["inapp"], role="applicant",
+            msg=("fatwa_approved", {"company": c.company_name or ""}))
     db.commit()
     return {"ok": True, "fatwa_status": "approved", "final_approved_at": str(fd.final_approved_at)}
 
@@ -10573,8 +10790,8 @@ def _on_invoice_paid(db, c, user):
     # 모의심사 담당자 배정 태스크(배정 전용 모델 부재 → 이벤트로 기록) + 알림
     sm.record_event(db, c, target, target, "mock_audit.task_created",
                     "system", None, {"assigned_role": "auditor"})
-    _notify(db, c, "mock_audit.assigned", "모의심사 대상 배정",
-            body="결제 확정으로 모의심사 대상으로 배정되었습니다.", role="auditor")
+    _notify(db, c, "mock_audit.assigned", role="auditor",
+            msg=("mock_audit.assigned", {}))
     return target
 
 
@@ -11967,8 +12184,8 @@ def ops_company_approve(case_id: str, user=Depends(auth.require_roles("operator"
         transitioned = target
     sm.record_event(db, c, frm, c.status, "ops.company_approved", user["role"], user["uid"],
                     {"transitioned_to": transitioned})
-    _notify(db, c, "ops.company_approved", "신규 업체 승인",
-            body="최고운영자가 신규 업체 등록을 승인했습니다.", role="consultant")
+    _notify(db, c, "ops.company_approved", role="consultant",
+            msg=("ops.company_approved", {"company": c.company_name or ""}))
     db.commit()
     return {"ok": True, "transitioned_to": transitioned, "blockers": ([] if ok else blk)}
 
@@ -12077,9 +12294,9 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
     sm.record_event(db, c, c.status, c.status, "ops.auditor_assigned", user["role"], user["uid"],
                     {"auditor_id": au.user_id, "auditor_name": au.username})
-    _notify(db, c, "ops.auditor_assigned", "오디터 배정 — 수락/거절 필요",
-            body="%s 님이 심사 담당으로 배정되었습니다. 배정함에서 수락 또는 거절해 주세요." % au.username,
-            role="auditor")
+    _notify(db, c, "ops.auditor_assigned", role="auditor",
+            msg=("ops.auditor_assigned", {"company": c.company_name or "",
+                                          "auditor": au.username}))
     db.commit()
     cases = _ops_cases(db, user)
     assignments = _ops_latest_assignment(db, [x.case_id for x in cases])
@@ -12140,10 +12357,15 @@ def get_enums(user=Depends(auth.get_current_user)):
 @app.post("/ai/explain")
 def explain_ingredient(body: schemas.ExplainReq, user=Depends(auth.get_current_user)):
     """성분 설명 — 온톨로지 근거(판정 이유·대체재·증빙) + gemma3 자연어 해설(옵션). 전 역할 허용."""
-    exp = screening.explain(body.name, e_number=body.e_number, source=body.source, note=body.note or "")
+    lang = (body.lang or "ko").lower()
+    lang = lang if lang in ("ko", "en", "id") else "ko"
+    exp = screening.explain(body.name, e_number=body.e_number, source=body.source,
+                            note=body.note or "", lang=lang)
     if body.llm:
+        # 해설도 화면 언어를 따른다 — 판정문만 인니어이고 해설은 한국어면 읽는 사람이 반쪽만 본다.
+        _in = {"ko": "한국어", "en": "English", "id": "Bahasa Indonesia"}[lang]
         sysmsg = ("당신은 식품 성분 사전입니다. 주어진 성분이 무엇이고 식품에서 어떤 용도로 쓰이는지 "
-                  "한국어 2~3문장으로 설명하세요. 할랄/하람 판정은 하지 말고 성분 자체 설명만 하세요.")
+                  "%s로 2~3문장으로 설명하세요. 할랄/하람 판정은 하지 말고 성분 자체 설명만 하세요." % _in)
         exp["ai_description"] = ai_local.llm_text(sysmsg, body.name) or ""
     return exp
 
@@ -13292,7 +13514,8 @@ def preassess_doc_request(case_id: str, body: schemas.PreassessDocRequestReq,
     msg = (body.message or "").strip()
     sm.record_event(db, c, c.status, c.status, "preassess.doc_request", user["role"], user["uid"],
                     {"items": items, "message": msg, "round": rnd})
-    _notify(db, c, "preassess.doc_request", "사전심사 추가서류 요청", body=msg, role="applicant")
+    _notify(db, c, "preassess.doc_request", body=msg, role="applicant",
+            msg=("preassess.doc_request", {}))
     db.commit()
     return {"ok": True, "round": rnd, "items": len(items)}
 
@@ -13309,7 +13532,8 @@ def preassess_resubmit(case_id: str, body: schemas.PreassessResubmitReq,
     sm.record_event(db, c, c.status, c.status, "preassess.resubmit", user["role"], user["uid"],
                     {"round": rnd, "note": note})
     _auto_advance(db, c, "supplementation_submitted", user, "preassess.resubmit.auto")   # P2 훅: 보완 재제출→제출 상태
-    _notify(db, c, "preassess.resubmit", "사전심사 재제출", body=note, role="auditor")
+    _notify(db, c, "preassess.resubmit", body=note, role="auditor",
+            msg=("preassess.resubmit", {}))
     db.commit()
     return {"ok": True, "round": rnd}
 
@@ -13536,12 +13760,13 @@ def transition(case_id: str, body: schemas.TransitionReq,
     c.status = body.to_state
     obs.inc("glhac_state_transition_total", {"to": body.to_state})
     sm.record_event(db, c, frm, body.to_state, body.action or "transition", user["role"], user["uid"])
-    _NOTIFY_ON = {"audit_closed": ("audit_closed", "심사 완료", "현장심사가 종결되었습니다."),
-                  "document_pre_audit_requested": ("document_requested", "문서 요청", "사전심사 문서 제출이 요청되었습니다."),
-                  "onsite_audit_scheduled": ("audit_scheduled", "심사 일정", "현장심사가 예정되었습니다.")}
+    # 상태 전이에 딸린 알림 — 문구는 카탈로그(NOTIFY_MSG)에서 읽는 사람 언어로 조립된다
+    _NOTIFY_ON = {"audit_closed": "audit_closed",
+                  "document_pre_audit_requested": "document_requested",
+                  "onsite_audit_scheduled": "audit_scheduled"}
     if body.to_state in _NOTIFY_ON:
-        ev, ti, bo = _NOTIFY_ON[body.to_state]
-        _notify(db, c, ev, ti, "%s — %s" % (c.company_name or "", bo),
+        ev = _NOTIFY_ON[body.to_state]
+        _notify(db, c, ev, msg=(ev, {"company": c.company_name or ""}),
                 channels=["inapp", "sms"], role="applicant")
     db.commit()
     return {"from": frm, "to": body.to_state, "case": _case_dict(c)}

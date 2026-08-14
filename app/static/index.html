@@ -740,6 +740,21 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+ "최고 업무운영자":"Ops (Final)", "ITO 관리자":"ITO Admin", "클라이언트":"Client", "샤리아":"Sharia",
+ "그룹 통째 배정":"Assign whole group", "더블클릭/드래그로 배정":"Double-click or drag to assign",
+ "내 메뉴 설정":"My menu settings", "역할 기본값으로 초기화":"Reset to role default",
+ "생성된 문서 없음":"No generated documents", "할랄 감독자":"Halal supervisor",
+ "동반자 워크스페이스":"Pendamping workspace", "메뉴 배정 관리":"Menu assignment",
+ "심사 완료":"Review complete", "컴플라이언스":"Compliance",
+ "기업명(영문)":"Company name (English)", "대표자(영문)":"Representative (English)",
+ "법인등록번호":"Corporate registration no.", "주소":"Address", "연락처":"Phone", "이메일":"Email",
+ "원본을 최신 AI로 재추출·재분류(OCR)":"Re-extract and re-classify the original with the latest AI (OCR)",
+ "스캔을 고해상도(300dpi)로 재OCR — 오독 완화":"Re-OCR the scan at high resolution (300dpi) to reduce misreads",
+ "변경영향 분석 이력 없음 — \"변경영향 분석\" 실행 시 기록됩니다":"No change-impact analysis yet — a record appears once you run it",
+ "高·고위험":"High risk", "中·중위험":"Medium risk", "低·저위험":"Low risk",
+ "차단(하람)":"Blocked (haram)", "증빙 필요":"Evidence required", "할랄 허용":"Halal cleared",
+ "의심":"Doubtful (mushbooh)",
+ "선택 케이스 해제":"Clear selected case", "알림 없음":"No notifications",
  "부록별 도면 배치":"Figure placement by appendix",
  "삽입 위치":"Placed at","삽입 문서":"Document inserted","결정":"Decided by",
  "사람 지정":"Set by reviewer","AI 추정":"AI suggestion","비움":"Leave empty",
@@ -1012,6 +1027,21 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+ "최고 업무운영자":"Kepala Operasional", "ITO 관리자":"Admin ITO", "클라이언트":"Klien", "샤리아":"Syariah", "오디터":"Auditor", "컨설턴트":"Konsultan",
+ "그룹 통째 배정":"Tetapkan seluruh grup", "더블클릭/드래그로 배정":"Klik dua kali atau seret untuk menetapkan",
+ "내 메뉴 설정":"Pengaturan menu saya", "역할 기본값으로 초기화":"Kembalikan ke bawaan peran",
+ "생성된 문서 없음":"Belum ada dokumen yang dibuat", "할랄 감독자":"Penyelia Halal",
+ "동반자 워크스페이스":"Ruang kerja Pendamping", "메뉴 배정 관리":"Pengelolaan penetapan menu",
+ "심사 완료":"Peninjauan selesai", "컴플라이언스":"Kepatuhan",
+ "기업명(영문)":"Nama perusahaan (Inggris)", "대표자(영문)":"Penanggung jawab (Inggris)",
+ "법인등록번호":"Nomor registrasi badan hukum", "주소":"Alamat", "연락처":"Telepon", "이메일":"Surel",
+ "원본을 최신 AI로 재추출·재분류(OCR)":"Ekstrak dan klasifikasikan ulang berkas asli dengan AI terbaru (OCR)",
+ "스캔을 고해상도(300dpi)로 재OCR — 오독 완화":"OCR ulang hasil pindaian pada resolusi tinggi (300dpi) untuk mengurangi salah baca",
+ "변경영향 분석 이력 없음 — \"변경영향 분석\" 실행 시 기록됩니다":"Belum ada riwayat analisis dampak perubahan — tercatat setelah Anda menjalankannya",
+ "高·고위험":"Risiko tinggi", "中·중위험":"Risiko sedang", "低·저위험":"Risiko rendah",
+ "차단(하람)":"Diblokir (haram)", "증빙 필요":"Perlu bukti", "할랄 허용":"Halal (lolos)",
+ "의심":"Syubhat (mushbooh)",
+ "선택 케이스 해제":"Hapus pilihan kasus", "알림 없음":"Tidak ada notifikasi",
  "업로드에 실패해 다시 시도합니다":"Unggah gagal — mencoba lagi",
  "ZIP·RAR·7z 압축파일만 됩니다 — 개별 서류는 하나로 묶어주세요":"Hanya arsip ZIP·RAR·7z — mohon satukan dokumen menjadi satu berkas",
  "부록별 도면 배치":"Penempatan gambar per lampiran",
@@ -3971,7 +4001,7 @@ async function applyView(){
   }
   document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("active",a.dataset.id===CUR));
   const n=NAV.find(x=>x[0]===CUR);
-  document.getElementById("crumb").innerHTML=n?`<b>${n[2]}</b> · ${n[3]}`:`<b>${esc(dynMenuInfo(CUR).name)}</b>`;
+  document.getElementById("crumb").innerHTML=n?`<b>${T(n[2])}</b> · ${n[3]}`:`<b>${esc(dynMenuInfo(CUR).name)}</b>`;
   pages.innerHTML=`<div class="content show" id="pgHost">${pageHead(CUR)}<div class="card"><div class="body muted">불러오는 중… · loading</div></div></div>`;
   const host=document.getElementById("pgHost");
   try{
@@ -4109,15 +4139,15 @@ async function renderRightPanel(){
   const id=CURCASE;
   if(!id){el.innerHTML='<div class="muted small" style="padding:14px">케이스를 선택하면 상태·알림·논의가 표시됩니다.</div>';return;}
   const c=curCaseObj()||await API(`/cases/${id}`).catch(()=>({}));
-  let notifs=[];try{notifs=await API("/notifications");}catch(_){}
+  let notifs=[];try{notifs=await API("/notifications?lang="+RPT_LANG());}catch(_){}
   let disc=[];try{disc=await API(`/cases/${id}/discussions`);}catch(_){}
   el.innerHTML=`
-   <div class="rpsec"><div class="rptitle">상태 · Status</div>
+   <div class="rpsec"><div class="rptitle">${T('상태 · Status')}</div>
      <div style="margin-bottom:8px">${bSpan(c.status||"—")}</div>
      <div style="overflow-x:auto">${progressBar(c.status||"onboarding")}</div></div>
-   <div class="rpsec"><div class="rptitle">알림 · Notifications <span class="muted small">${notifs.filter(n=>!n.read).length} unread</span></div>
+   <div class="rpsec"><div class="rptitle">${T('알림 · Notifications')} <span class="muted small">${notifs.filter(n=>!n.read).length} unread</span></div>
      ${notifs.slice(0,5).map(n=>`<div class="rpnote ${n.read?"":"unread"}"${n.case_id?` style="cursor:pointer" onclick="openNotif('${n.id}','${esc(n.case_id)}')" title="${T('클릭 → 케이스로 이동')}"`:''}><b>${esc(T(n.title||n.event_type||""))}</b><div class="muted small">${esc((n.body||"").slice(0,70))}${n.case_id?' <span class="go-arrow">→</span>':''}</div></div>`).join("")||'<div class="muted small">알림 없음</div>'}</div>
-   <div class="rpsec" style="border-bottom:none"><div class="rptitle">논의 · Discussion</div>
+   <div class="rpsec" style="border-bottom:none"><div class="rptitle">${T('논의 · Discussion')}</div>
      <div class="rpdisc">${disc.slice(-8).map(d=>`<div class="rpmsg"><b class="small">${esc(d.author||d.author_role||"")}</b>${discRole(d.author_role)} <span class="muted small">${esc(String(d.created_at||"").slice(5,16))}</span><div class="small">${esc(d.text||"")}</div></div>`).join("")||'<div class="muted small">'+T('아직 논의 없음')+'</div>'}</div>
      <div class="btnrow" style="margin-top:8px"><input class="v" id="rpDiscInput" placeholder="${T('메시지 입력…')}" style="flex:1;font-size:12px" onkeydown="if(event.key===\'Enter\')postDiscussion(\'${id}\')"><button class="btn pri" style="padding:5px 10px" onclick="postDiscussion(\'${id}\')">${T('전송')}</button></div></div>`;
 }
@@ -4390,8 +4420,8 @@ async function toggleNotif(){
   const p=document.getElementById("notifPanel");
   if(p.classList.contains("open")){p.classList.remove("open");return;}
   p.innerHTML='<div class="muted small" style="padding:12px">불러오는 중…</div>';p.classList.add("open");
-  try{const ns=await API("/notifications");
-    p.innerHTML=`<div style="display:flex;align-items:center;padding:8px 11px 4px"><b style="font-size:12.5px;flex:1">알림 · Notifications</b><a onclick="notifReadAll()" style="font-size:11px;color:var(--accent);cursor:pointer">모두 읽음</a></div>`
+  try{const ns=await API("/notifications?lang="+RPT_LANG());
+    p.innerHTML=`<div style="display:flex;align-items:center;padding:8px 11px 4px"><b style="font-size:12.5px;flex:1">${T('알림 · Notifications')}</b><a onclick="notifReadAll()" style="font-size:11px;color:var(--accent);cursor:pointer">${T('모두 읽음')}</a></div>`
       +(ns.length?ns.map(n=>`<div class="notif-item ${n.read?'':'unread'}" onclick="openNotif('${n.id}','${n.case_id||''}')">
         <span class="nic">${NOTIF_ICON[n.event_type]||"🔔"}</span>
         <div style="flex:1"><b>${esc(T(n.title))}</b><div>${esc(n.body||"")}</div>
@@ -4893,7 +4923,7 @@ const NC_ICON={"certificate_issued":["ok","🏅"],"audit_scheduled":["info","�
   "application.submitted":["info","📝"],"document_requested":["warn","📄"],"audit_closed":["ok","🏭"],
   "mock_audit.task_created":["info","🧷"]};
 SCREEN.notifCenter=async()=>{
-  const list=await API("/notifications").catch(()=>[]);
+  const list=await API("/notifications?lang="+RPT_LANG()).catch(()=>[]);
   const types=[...new Set(list.map(n=>n.event_type).filter(Boolean))];
   const filtered=NOTIF_FILTER==="all"?list:(NOTIF_FILTER==="unread"?list.filter(n=>!n.read):list.filter(n=>n.event_type===NOTIF_FILTER));
   const unread=list.filter(n=>!n.read).length;
@@ -5005,7 +5035,7 @@ SCREEN.preassess=async()=>{
     const compCard=`<div class="card"><h3>🏢 ${T('기업 정보')} <span class="en">· Company</span>${co.pathway?`<span class="r">${bTag(co.pathway==='self_declare'?'info':'mute',co.pathway)}</span>`:''}</h3>
       <div class="body">
         ${kv('기업명',co.company_name)}${kv('기업명(영문)',(co.profile_ext||{}).company_name_en)}${kv('NIB',co.nib)}${kv('대표·책임자',co.responsible_person)}${kv('대표자(영문)',(co.profile_ext||{}).responsible_person_en)}
-        ${kv('할랄 감독자',co.halal_supervisor)}${kv('주소',co.address)}${kv('연락처',co.phone)}${kv('이메일',co.email)}
+        ${kv(T('할랄 감독자'),co.halal_supervisor)}${kv(T('주소'),co.address)}${kv(T('연락처'),co.phone)}${kv(T('이메일'),co.email)}
         ${kv('위험등급',co.risk_category)}${kv('신청일',co.created_at)}${kv('법인등록번호',px.corporate_reg_no)}${kv('개업일',px.establishment_date)}
         <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:700;font-size:12.5px">${T('업체 상세 정보')} <span class="en">· Details</span></summary>
           <div style="padding-top:6px">
@@ -5655,7 +5685,7 @@ async function exportMaterialsXlsx(id){
 async function explainMaterial(){
   const nm=(document.getElementById("explInput").value||"").trim();if(!nm){toast("원재료명 입력");return}
   const o=document.getElementById("explOut");o.textContent="gemma3 생성 중… (수초)";
-  try{const r=await API("/ai/explain",{method:"POST",body:JSON.stringify({name:nm,llm:true})});
+  try{const r=await API("/ai/explain",{method:"POST",body:JSON.stringify({name:nm,llm:true,lang:RPT_LANG()})});
     o.innerHTML='<div class="divide"></div><b>🤖 '+esc(r.verdict||r.status||nm)+(r.severity?' · '+esc(r.severity):'')+'</b><div style="white-space:pre-wrap;margin-top:4px;color:var(--ink2)">'+esc(r.explanation||"(설명 없음)")+'</div>'+((r.sources&&r.sources.length)?'<div class="muted" style="margin-top:6px">근거: '+esc(r.sources.slice(0,3).join(", "))+'</div>':'');
   }catch(e){o.textContent="해설 실패 · "+(e&&e.code?e.code:"");}
 }
@@ -5681,9 +5711,9 @@ async function dedupMaterials(id){
 async function matLoadDetail(mid,name){
   const box=document.getElementById("matDet_"+mid);if(!box)return;
   try{
-    const r=await API("/ai/explain",{method:"POST",body:JSON.stringify({name})});
+    const r=await API("/ai/explain",{method:"POST",body:JSON.stringify({name,lang:RPT_LANG()})});
     const vc=r.verdict==="BLOCK"?"bad":(r.verdict==="NEEDS_EVIDENCE"?"warn":(r.verdict?"ok":"mute"));
-    const vk={BLOCK:"차단(하람)",NEEDS_EVIDENCE:"증빙 필요",CLEARED:"할랄 허용",PASS:"할랄 허용",HALAL:"할랄 허용",HARAM:"차단(하람)",MUSHBOOH:"의심"}[r.verdict]||r.verdict||T('미판정');
+    const vk={BLOCK:T("차단(하람)"),NEEDS_EVIDENCE:T("증빙 필요"),CLEARED:T("할랄 허용"),PASS:T("할랄 허용"),HALAL:T("할랄 허용"),HARAM:T("차단(하람)"),MUSHBOOH:T("의심")}[r.verdict]||r.verdict||T('미판정');
     box.classList.remove("muted");
     box.innerHTML=`<div style="padding-top:6px">${bTag(vc,T(vk))}${r.category?` <span class="chip">${esc(r.category)}</span>`:''}${r.najis?` <span class="tag t-bad">najis</span>`:''}${r.severity?` <span class="muted small">· ${esc(r.severity)}</span>`:''}
       <div style="white-space:pre-wrap;color:var(--ink2);margin-top:6px">${esc(r.explanation||T('상세 설명 없음'))}</div>
@@ -6072,7 +6102,7 @@ async function genDocsCard(id,docType,title,genFn,canApprove){
           <button class="btn" style="padding:3px 8px;font-size:11px" onclick="serverPdf('/gen-docs/${g.gen_doc_id}/pdf','${docType}_v${g.version}.pdf')">📄 PDF</button>
           <button class="btn" style="padding:3px 8px;font-size:11px" onclick="printGenDoc('${g.gen_doc_id}')">${T('🖨 인쇄')}</button>
           <button class="btn" style="padding:3px 8px;font-size:11px" onclick="dlGenDoc('${g.gen_doc_id}')">⬇ txt</button>
-          ${canApprove&&g.status!=='approved'?`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="approveGenDoc('${g.gen_doc_id}')">${T('승인')}</button>`:''}</td></tr>`).join(""):`<tr><td colspan="4" class="muted" style="text-align:center;padding:14px">생성된 문서 없음</td></tr>`}</tbody></table></div>
+          ${canApprove&&g.status!=='approved'?`<button class="btn ok" style="padding:3px 8px;font-size:11px" onclick="approveGenDoc('${g.gen_doc_id}')">${T('승인')}</button>`:''}</td></tr>`).join(""):`<tr><td colspan="4" class="muted" style="text-align:center;padding:14px">${T('생성된 문서 없음')}</td></tr>`}</tbody></table></div>
     <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn pri" onclick="${genFn}">＋ 새 버전 생성 · Generate</button></div></div>`;
 }
 async function printGenDoc(gid){try{const g=await API(`/gen-docs/${gid}`);const w=window.open("","_blank");if(!w){toast("팝업 차단");return;}
@@ -9926,12 +9956,12 @@ SCREEN.myMenu=async()=>{
   MA_MASTER=cfg.master||[];
   MA_ASSIGN=(cfg.assigned||[]).map(g=>({menuId:g.menuId,menuName:g.menuName,icon:g.icon,
     children:(g.children||[]).map(c=>({menuId:c.menuId,menuName:c.menuName,icon:c.icon}))}));
-  return `<div class="card"><h3>⚙ 내 메뉴 설정 <span class="en">· My Menu</span></h3>
+  return `<div class="card"><h3>⚙ ${T('내 메뉴 설정')} <span class="en">· My Menu</span></h3>
     <div class="body">
       <div class="muted small" style="margin-bottom:10px">${T('내가 쓰는 좌측 메뉴의 구성과 순서를 직접 정합니다. 저장하면 내 화면에 바로 반영됩니다.')}</div>
       <div class="btnrow" style="gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
         <input class="box" placeholder="${T('🔍 메뉴명·코드 검색')}" style="flex:1;min-width:150px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
-        <button class="btn" onclick="myMenuReset()" title="역할 기본값으로 초기화">↺ ${T('기본값')}</button>
+        <button class="btn" onclick="myMenuReset()" title="${T('역할 기본값으로 초기화')}">↺ ${T('기본값')}</button>
         <button class="btn pri" onclick="maSave()">💾 ${T('저장')}</button></div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">
         <div><div class="muted small" style="margin-bottom:4px">${T('전체 메뉴')} — 드래그/더블클릭 → 추가</div>
@@ -9986,7 +10016,7 @@ function maLeftHTML(){
     if(q&&!gmatch&&!kids.length)return "";
     const show=q?kids:(g.children||[]);
     return `<div style="margin-bottom:8px"><div style="font-weight:700;font-size:12px;padding:2px 0">${g.icon||"📂"} ${esc(g.menuName)} <span class="muted small">${esc(g.menuCode||"")}</span>
-        <button class="btn" style="padding:0 6px;font-size:11px" onclick="maAdd('${g.menuId}')" title="그룹 통째 배정">${T('＋그룹')}</button></div>
+        <button class="btn" style="padding:0 6px;font-size:11px" onclick="maAdd('${g.menuId}')" title="${T('그룹 통째 배정')}">${T('＋그룹')}</button></div>
       ${show.map(c=>{
         const me=MA_MODE==="me", dis=me&&c.allowed===false;   // 개인화: 역할 밖 = 사용불가(비활성)
         const badge=me
@@ -9994,7 +10024,7 @@ function maLeftHTML(){
              : asg.has(c.menuId)?` <span class="tag" style="background:#dcfce7;color:#166534">${T('사용중')}</span>`
              : ` <span class="tag" style="background:#f1f5f9;color:#64748b">${T('미사용')}</span>`)
           : `${c.useYn===false?' <span class="tag t-bad">중지</span>':""}${c.requiredYn?' <span class="tag">필수</span>':""}${c.systemAdminYn?' <span class="tag">관리자</span>':""}`;
-        return `<div ${dis?"":'draggable="true"'} ${dis?"":`ondragstart="maDrag(event,'${c.menuId}')" ondblclick="maAdd('${c.menuId}')"`} title="${dis?T('사용 권한이 없는 메뉴입니다'):'더블클릭/드래그로 배정'}"
+        return `<div ${dis?"":'draggable="true"'} ${dis?"":`ondragstart="maDrag(event,'${c.menuId}')" ondblclick="maAdd('${c.menuId}')"`} title="${dis?T('사용 권한이 없는 메뉴입니다'):T('더블클릭/드래그로 배정')}"
         style="padding:4px 8px;margin:2px 0 2px 14px;border:1px solid var(--line);border-radius:6px;cursor:${dis?"not-allowed":"grab"};font-size:12px;opacity:${dis?"0.55":"1"};background:${dis?"#f5f5f5":(asg.has(c.menuId)?"#eef7f0":"#fff")}">
         ⠿ ${c.icon||""} ${esc(c.menuName)}${badge}</div>`;
       }).join("")}</div>`;
@@ -10356,7 +10386,7 @@ async function boot(){
   BROLE=br;   // 원본 백엔드 역할 보존(전용 메뉴 판정)
   ROLE=BR2ROLE[br]||"client";
   try{const rb=await API("/rbac/actions");RBAC_ACTIONS=rb.actions||{};}catch(_){RBAC_ACTIONS={};}  // 단일 매트릭스 파생
-  document.getElementById("userPill").innerHTML=`👤 <b>${esc(me.username||localStorage.getItem("glhac_user")||"")}</b> · ${esc(ROLE_DEF[ROLE].ko)}`;
+  document.getElementById("userPill").innerHTML=`👤 <b>${esc(me.username||localStorage.getItem("glhac_user")||"")}</b> · ${esc(T(ROLE_DEF[ROLE].ko))}`;
   document.getElementById("loginView").style.display="none";
   document.getElementById("appView").style.display="flex";
   CASES_CACHE=[];await loadCases(true);

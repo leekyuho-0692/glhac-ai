@@ -173,6 +173,7 @@ class ExplainReq(BaseModel):
     source: Optional[str] = None
     note: Optional[str] = None
     llm: Optional[bool] = False
+    lang: Optional[str] = "ko"   # ko|en|id — 안 보내면 인니어 화면에 한국어 판정문이 뜬다
 
 
 class MaterialEvidenceReq(BaseModel):
