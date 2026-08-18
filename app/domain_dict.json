@@ -8823,5 +8823,1122 @@
    "glhac"
   ],
   "status": "approved"
+ },
+ {
+  "id": "XFIELD_COMPANY_NAME",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "회사명 · 상호",
+   "en": "Company name",
+   "id": "Nama perusahaan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "company_name"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_7D005B96",
+  "axis": "EXTRACT_SRC",
+  "labels": {
+   "ko": "사업자등록증(NIB)",
+   "en": "Business licence (NIB)",
+   "id": "Izin usaha (NIB)"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_0560C7D2",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "법인/상호명",
+   "en": "Legal/trade name",
+   "id": "Nama badan hukum/dagang"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_NIB",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "NIB · 사업자등록번호",
+   "en": "NIB · Business registration no.",
+   "id": "NIB · Nomor izin usaha"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "nib"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_F5C81634",
+  "axis": "EXTRACT_SRC",
+  "labels": {
+   "ko": "사업자등록증",
+   "en": "Business licence",
+   "id": "Izin usaha"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_F7797D0C",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "13자리 숫자",
+   "en": "13-digit number",
+   "id": "Angka 13 digit"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_ADDRESS",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "회사 주소",
+   "en": "Company address",
+   "id": "Alamat perusahaan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "address"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_C1982087",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "전체 주소",
+   "en": "Full address",
+   "id": "Alamat lengkap"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_CITY",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "회사 소재 도시",
+   "en": "City",
+   "id": "Kota"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "city"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_0765F39F",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "도시명",
+   "en": "City name",
+   "id": "Nama kota"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_COUNTRY",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "국가",
+   "en": "Country",
+   "id": "Negara"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "country"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_DD527C25",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "국가명",
+   "en": "Country name",
+   "id": "Nama negara"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_ZIP",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "우편번호",
+   "en": "Postal code",
+   "id": "Kode pos"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "zip"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_CD21379E",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "우편번호",
+   "en": "Postal code",
+   "id": "Kode pos"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_FACTORY_ADDRESS",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "공장 주소",
+   "en": "Factory address",
+   "id": "Alamat pabrik"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "factory_address"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_BB9E3F08",
+  "axis": "EXTRACT_SRC",
+  "labels": {
+   "ko": "공장등록증",
+   "en": "Factory registration",
+   "id": "Registrasi pabrik"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_49482837",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "공장 소재지",
+   "en": "Factory location",
+   "id": "Lokasi pabrik"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_FACTORY_CITY",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "공장 도시",
+   "en": "Factory city",
+   "id": "Kota pabrik"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "factory_city"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_FACTORY_COUNTRY",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "공장 국가",
+   "en": "Factory country",
+   "id": "Negara pabrik"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "factory_country"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_FACTORY_ZIP",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "공장 우편번호",
+   "en": "Factory postal code",
+   "id": "Kode pos pabrik"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "factory_zip"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_RESPONSIBLE_PERSON",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "대표자 · 책임자",
+   "en": "Representative · Person in charge",
+   "id": "Perwakilan · Penanggung jawab"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "responsible_person"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_9724A9C8",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "성명",
+   "en": "Full name",
+   "id": "Nama lengkap"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_FACTORY_REG_NO",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "공장등록번호",
+   "en": "Factory registration no.",
+   "id": "Nomor registrasi pabrik"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "factory_reg_no"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_97E4462E",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "등록번호",
+   "en": "Registration number",
+   "id": "Nomor registrasi"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_PRODUCT_NAMES",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "제품명 목록",
+   "en": "Product list",
+   "id": "Daftar produk"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "product_names"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_94FAE914",
+  "axis": "EXTRACT_SRC",
+  "labels": {
+   "ko": "제품 목록·매트릭스",
+   "en": "Product list / matrix",
+   "id": "Daftar produk / matriks"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_5CD0698D",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "제품명 배열",
+   "en": "List of product names",
+   "id": "Daftar nama produk"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_MATERIAL_NAMES",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "원재료명 목록",
+   "en": "Raw material list",
+   "id": "Daftar bahan baku"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "material_names"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_B7062FD7",
+  "axis": "EXTRACT_SRC",
+  "labels": {
+   "ko": "원재료 목록",
+   "en": "Raw material list",
+   "id": "Daftar bahan baku"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_431363FD",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "원재료명 배열",
+   "en": "List of material names",
+   "id": "Daftar nama bahan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_CERT_NO",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "인증번호",
+   "en": "Certificate no.",
+   "id": "Nomor sertifikat"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "cert_no"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_88532B62",
+  "axis": "EXTRACT_SRC",
+  "labels": {
+   "ko": "할랄/품질 인증서",
+   "en": "Halal / quality certificate",
+   "id": "Sertifikat halal / mutu"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_D2A9729B",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "인증번호",
+   "en": "Certificate number",
+   "id": "Nomor sertifikat"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_ISSUER",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "발급기관",
+   "en": "Issuing body",
+   "id": "Lembaga penerbit"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "issuer"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_23D55D60",
+  "axis": "EXTRACT_SRC",
+  "labels": {
+   "ko": "인증서",
+   "en": "Certificate",
+   "id": "Sertifikat"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_7EEF12F0",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "기관명",
+   "en": "Issuing body name",
+   "id": "Nama lembaga penerbit"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_EXPIRY_DATE",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "만료일",
+   "en": "Expiry date",
+   "id": "Tanggal kedaluwarsa"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "expiry_date"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_D3F8F7B8",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "YYYY-MM-DD",
+   "en": "YYYY-MM-DD",
+   "id": "YYYY-MM-DD"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "XFIELD_PROCESS_STEPS",
+  "axis": "EXTRACT_FIELD",
+  "labels": {
+   "ko": "공정 단계",
+   "en": "Process steps",
+   "id": "Tahapan proses"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "extract_field": "process_steps"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_A9185CE0",
+  "axis": "EXTRACT_SRC",
+  "labels": {
+   "ko": "공정 흐름도",
+   "en": "Process flowchart",
+   "id": "Diagram alir proses"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXTRAC_C5565194",
+  "axis": "EXTRACT_FMT",
+  "labels": {
+   "ko": "단계 순서 배열",
+   "en": "Ordered list of steps",
+   "id": "Daftar urutan tahapan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SIGNER_CEO",
+  "axis": "SIGNER",
+  "labels": {
+   "ko": "대표자 · 책임자",
+   "en": "CEO / Responsible Person",
+   "id": "Direktur · Penanggung jawab"
+  },
+  "context": [
+   "HPAS",
+   "REPORT"
+  ],
+  "actions": {
+   "signer": "ceo"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SIGNER_HALAL_SUPERVISOR",
+  "axis": "SIGNER",
+  "labels": {
+   "ko": "할랄 감독관",
+   "en": "Halal Supervisor",
+   "id": "Penyelia Halal"
+  },
+  "context": [
+   "HPAS",
+   "REPORT"
+  ],
+  "actions": {
+   "signer": "halal_supervisor"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SIGNER_GLHAC_AUDITOR",
+  "axis": "SIGNER",
+  "labels": {
+   "ko": "GL-HAC 심사원",
+   "en": "GL-HAC Halal Auditor",
+   "id": "Auditor Halal GL-HAC"
+  },
+  "context": [
+   "HPAS",
+   "REPORT"
+  ],
+  "actions": {
+   "signer": "glhac_auditor"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SIGNER_GLHAC_SHARIA",
+  "axis": "SIGNER",
+  "labels": {
+   "ko": "GL-HAC 샤리아 위원",
+   "en": "GL-HAC Sharia Board",
+   "id": "Dewan Syariah GL-HAC"
+  },
+  "context": [
+   "HPAS",
+   "REPORT"
+  ],
+  "actions": {
+   "signer": "glhac_sharia"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_HALAL_POLICY",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "할랄 정책 문서",
+   "en": "Halal policy document",
+   "id": "Dokumen kebijakan halal"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "halal_policy"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_ORGANIZATIONAL_STRUCTURE",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "조직 구조",
+   "en": "Organizational structure",
+   "id": "Struktur organisasi"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "organizational_structure"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_TRAINING_RECORDS",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "교육 기록",
+   "en": "Training records",
+   "id": "Catatan pelatihan"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "training_records"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_RAW_MATERIAL_CONTROL",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "원재료 관리",
+   "en": "Raw material control",
+   "id": "Pengendalian bahan baku"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "raw_material_control"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_SUPPLIER_EVALUATION",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "공급업체 평가",
+   "en": "Supplier evaluation",
+   "id": "Evaluasi pemasok"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "supplier_evaluation"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_STORAGE_FACILITY",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "보관 시설",
+   "en": "Storage facility",
+   "id": "Fasilitas penyimpanan"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "storage_facility"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_PRODUCTION_EQUIPMENT",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "생산 설비",
+   "en": "Production equipment",
+   "id": "Peralatan produksi"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "production_equipment"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_CLEANING_SANITATION",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "세척·위생",
+   "en": "Cleaning & sanitation",
+   "id": "Pembersihan & sanitasi"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "cleaning_sanitation"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_PRODUCTION_PROCESS",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "생산 공정",
+   "en": "Production process",
+   "id": "Proses produksi"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "production_process"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_CONTAMINATION_PREVENTION",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "교차오염 방지",
+   "en": "Cross-contamination prevention",
+   "id": "Pencegahan kontaminasi silang"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "contamination_prevention"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_PRODUCT_LABELING",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "제품 라벨링",
+   "en": "Product labelling",
+   "id": "Pelabelan produk"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "product_labeling"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_PACKAGING_MATERIAL",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "포장재",
+   "en": "Packaging material",
+   "id": "Bahan kemasan"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "packaging_material"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_PRODUCT_TRACEABILITY",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "제품 추적성",
+   "en": "Product traceability",
+   "id": "Ketertelusuran produk"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "product_traceability"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_INTERNAL_AUDIT",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "내부 심사",
+   "en": "Internal audit",
+   "id": "Audit internal"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "internal_audit"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_CORRECTIVE_ACTION_SYSTEM",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "시정조치 체계",
+   "en": "Corrective action system",
+   "id": "Sistem tindakan korektif"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "corrective_action_system"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ONSITE_CONTINUOUS_IMPROVEMENT",
+  "axis": "ONSITE_ITEM",
+  "labels": {
+   "ko": "지속 개선",
+   "en": "Continuous improvement",
+   "id": "Perbaikan berkelanjutan"
+  },
+  "context": [
+   "AUDIT"
+  ],
+  "actions": {
+   "onsite_item": "continuous_improvement"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
  }
 ]

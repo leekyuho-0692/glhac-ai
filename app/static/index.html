@@ -740,6 +740,16 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+ "적합후보":"Likely compliant", "보완":"Needs work", "부적합":"Non-compliant",
+ "위원장 · Head":"Head", "간사":"Secretary", "완료도":"Completion",
+ "불러오는 중… · loading":"Loading…", "사전심사":"Pre-assessment",
+ "SJPH/HPAS 평가":"SJPH/HPAS evaluation", "AI 어시스턴트":"AI assistant",
+ "처리 필요한 알림 없음":"No notifications need attention",
+ "검출":"Detected", "검출된 필드만":"Detected fields only", "관련 필드만":"related fields only",
+ "미검출":"Not detected", "에서 제공됩니다":" provides this", "이 문서에서 찾지 못함":"Not found in this document",
+ "진행률":"Progress", "섹션":"sections", "외":"more", "이 문서 유형":"This document type",
+ "알림 없음":"No notifications", "불러오는 중…":"Loading…", "메뉴 배정 관리":"Menu assignment",
+ "노출 역할 · Roles":"Visible to roles", "원재료":"Raw materials",
  "페이지":"Page", "총":"total", "배정 심사 관리":"Assigned audit management",
  "드래그/더블클릭 → 배정":"Drag or double-click to assign",
  "드래그/더블클릭 → 추가":"Drag or double-click to add",
@@ -1031,12 +1041,22 @@ function pageHead(id){
   return `<div class="page-h"><span style="font-size:22px">${n[1]}</span>
     <h1>${n[2]}</h1><span class="en">· ${n[3]}</span>
     <span class="scope-pill">👁 ${T(scopeLabel())}</span></div>
-    <div class="roles">노출 역할 · Roles &nbsp;<b>${roleNames}</b></div>`;
+    <div class="roles">${T('노출 역할 · Roles')} &nbsp;<b>${roleNames}</b></div>`;
 }
 function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="margin-bottom:14px">⚠ 일부 데이터를 불러오지 못했습니다 (${FETCH_ERRORS}${T('건')} 실패) — 표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.</div>`:"";}
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+ "적합후보":"Kemungkinan sesuai", "보완":"Perlu perbaikan", "부적합":"Tidak sesuai",
+ "위원장 · Head":"Ketua", "간사":"Sekretaris", "완료도":"Kelengkapan",
+ "불러오는 중… · loading":"Memuat…", "사전심사":"Pra-penilaian",
+ "SJPH/HPAS 평가":"Evaluasi SJPH/HPAS", "AI 어시스턴트":"Asisten AI",
+ "처리 필요한 알림 없음":"Tidak ada notifikasi yang perlu ditangani",
+ "검출":"Terdeteksi", "검출된 필드만":"Hanya kolom yang terdeteksi", "관련 필드만":"kolom terkait saja",
+ "미검출":"Tidak terdeteksi", "에서 제공됩니다":" menyediakannya", "이 문서에서 찾지 못함":"Tidak ditemukan pada dokumen ini",
+ "진행률":"Kemajuan", "섹션":"bagian", "외":"lainnya", "이 문서 유형":"Jenis dokumen ini",
+ "알림 없음":"Tidak ada notifikasi", "불러오는 중…":"Memuat…", "메뉴 배정 관리":"Pengelolaan penetapan menu",
+ "노출 역할 · Roles":"Peran yang melihat", "원재료":"Bahan baku",
  "페이지":"Halaman", "총":"total", "배정 심사 관리":"Pengelolaan audit yang ditetapkan",
  "드래그/더블클릭 → 배정":"Seret atau klik dua kali untuk menetapkan",
  "드래그/더블클릭 → 추가":"Seret atau klik dua kali untuk menambah",
@@ -4166,7 +4186,7 @@ async function renderRightPanel(){
      <div style="margin-bottom:8px">${bSpan(c.status||"—")}</div>
      <div style="overflow-x:auto">${progressBar(c.status||"onboarding")}</div></div>
    <div class="rpsec"><div class="rptitle">${T('알림 · Notifications')} <span class="muted small">${notifs.filter(n=>!n.read).length} unread</span></div>
-     ${notifs.slice(0,5).map(n=>`<div class="rpnote ${n.read?"":"unread"}"${n.case_id?` style="cursor:pointer" onclick="openNotif('${n.id}','${esc(n.case_id)}')" title="${T('클릭 → 케이스로 이동')}"`:''}><b>${esc(T(n.title||n.event_type||""))}</b><div class="muted small">${esc((n.body||"").slice(0,70))}${n.case_id?' <span class="go-arrow">→</span>':''}</div></div>`).join("")||'<div class="muted small">알림 없음</div>'}</div>
+     ${notifs.slice(0,5).map(n=>`<div class="rpnote ${n.read?"":"unread"}"${n.case_id?` style="cursor:pointer" onclick="openNotif('${n.id}','${esc(n.case_id)}')" title="${T('클릭 → 케이스로 이동')}"`:''}><b>${esc(T(n.title||n.event_type||""))}</b><div class="muted small">${esc((n.body||"").slice(0,70))}${n.case_id?' <span class="go-arrow">→</span>':''}</div></div>`).join("")||'<div class="muted small">'+T('알림 없음')+'</div>'}</div>
    <div class="rpsec" style="border-bottom:none"><div class="rptitle">${T('논의 · Discussion')}</div>
      <div class="rpdisc">${disc.slice(-8).map(d=>`<div class="rpmsg"><b class="small">${esc(d.author||d.author_role||"")}</b>${discRole(d.author_role)} <span class="muted small">${esc(String(d.created_at||"").slice(5,16))}</span><div class="small">${esc(d.text||"")}</div></div>`).join("")||'<div class="muted small">'+T('아직 논의 없음')+'</div>'}</div>
      <div class="btnrow" style="margin-top:8px"><input class="v" id="rpDiscInput" placeholder="${T('메시지 입력…')}" style="flex:1;font-size:12px" onkeydown="if(event.key===\'Enter\')postDiscussion(\'${id}\')"><button class="btn pri" style="padding:5px 10px" onclick="postDiscussion(\'${id}\')">${T('전송')}</button></div></div>`;
@@ -4452,22 +4472,22 @@ function extractFieldsTable(fields,docType){
   const rows=ent.slice(0,18).map(([k,v])=>{
     const meta=EXTRACT_FIELD_META[k]||{ko:k,src:'',fmt:''};
     const empty=(v==null||v===''||v==='null'||(Array.isArray(v)&&!v.length));
-    const val=Array.isArray(v)?(v.length+'건: '+v.slice(0,6).map(esc).join(', ')+(v.length>6?' 외 '+(v.length-6):'')):esc(String(v));
+    const val=Array.isArray(v)?(v.length+T('건')+': '+v.slice(0,6).map(esc).join(', ')+(v.length>6?' '+T('외')+' '+(v.length-6):'')):esc(String(v));
     return `<tr style="vertical-align:top">
-      <td style="white-space:nowrap;padding:3px 8px 3px 0"><b style="color:var(--ink2)">${esc(meta.ko)}</b><div class="muted" style="font-size:9.5px">${esc(k)}</div></td>
+      <td style="white-space:nowrap;padding:3px 8px 3px 0"><b style="color:var(--ink2)">${esc(LBL('extract_field',k,{})||meta.ko)}</b><div class="muted" style="font-size:9.5px">${esc(k)}</div></td>
       <td style="padding:3px 0">${empty
-        ?`<span class="t-warn" style="font-weight:600">⚠ 미검출</span> <span class="muted small">— 이 문서에서 찾지 못함.${meta.src?' <b>'+esc(meta.src)+'</b>에서 제공됩니다':''}${meta.fmt?' · 기대형식: '+esc(meta.fmt):''}</span>`
-        :`<b>${val}</b>${meta.fmt&&!Array.isArray(v)?` <span class="muted" style="font-size:9.5px">(${esc(meta.fmt)})</span>`:''}`}</td></tr>`;
+        ?`<span class="t-warn" style="font-weight:600">⚠ ${T('미검출')}</span> <span class="muted small">— ${T('이 문서에서 찾지 못함')}.${meta.src?' <b>'+esc(T(meta.src))+'</b>'+T('에서 제공됩니다'):''}${meta.fmt?' · 기대형식: '+esc(meta.fmt):''}</span>`
+        :`<b>${val}</b>${meta.fmt&&!Array.isArray(v)?` <span class="muted" style="font-size:9.5px">(${esc(T(meta.fmt))})</span>`:''}`}</td></tr>`;
   }).join('');
   const filled=ent.filter(([k,v])=>!(v==null||v===''||v==='null'||(Array.isArray(v)&&!v.length))).length;
-  const scopeNote=rel?`이 문서 유형(${esc(LBL('doc',docType,DOC_KO_LABEL)||'')}) 관련 필드만`:'검출된 필드만';
-  return `<div style="margin-bottom:6px"><b>${T('AI 추출 필드')}</b> <span class="muted small">— ${scopeNote} · 검출 ${filled}/${ent.length}</span>
+  const scopeNote=rel?T('이 문서 유형')+`(${esc(LBL('doc',docType,DOC_KO_LABEL)||'')}) `+T('관련 필드만'):T('검출된 필드만');
+  return `<div style="margin-bottom:6px"><b>${T('AI 추출 필드')}</b> <span class="muted small">— ${scopeNote} · ${T('검출')} ${filled}/${ent.length}</span>
     <table style="font-size:11.5px;width:100%;margin-top:4px"><tbody>${rows}</tbody></table></div>`;
 }
 async function toggleNotif(){
   const p=document.getElementById("notifPanel");
   if(p.classList.contains("open")){p.classList.remove("open");return;}
-  p.innerHTML='<div class="muted small" style="padding:12px">불러오는 중…</div>';p.classList.add("open");
+  p.innerHTML='<div class="muted small" style="padding:12px">'+T('불러오는 중…')+'</div>';p.classList.add("open");
   try{const ns=await API("/notifications?lang="+RPT_LANG());
     p.innerHTML=`<div style="display:flex;align-items:center;padding:8px 11px 4px"><b style="font-size:12.5px;flex:1">${T('알림 · Notifications')}</b><a onclick="notifReadAll()" style="font-size:11px;color:var(--accent);cursor:pointer">${T('모두 읽음')}</a></div>`
       +(ns.length?ns.map(n=>`<div class="notif-item ${n.read?'':'unread'}" onclick="openNotif('${n.id}','${n.case_id||''}')">
@@ -4663,7 +4683,7 @@ SCREEN.dashboard=async()=>{
   <div class="grid side">
     <div class="card"><h3>${T('알림·공지')} <span class="en">· Notifications</span><span class="r">${alerts.length}${T('건')}</span></h3>
       <div class="body">
-        ${notif.length?notif.map(([cl,ic,tx,cid])=>`<div class="banner ${cl} clickable" style="margin-bottom:10px" onclick="openCase('${cid}')">${ic} ${esc(tx)} <span class="go-arrow">→</span></div>`).join(""):'<div class="banner ok">✓ 처리 필요한 알림 없음</div>'}
+        ${notif.length?notif.map(([cl,ic,tx,cid])=>`<div class="banner ${cl} clickable" style="margin-bottom:10px" onclick="openCase('${cid}')">${ic} ${esc(tx)} <span class="go-arrow">→</span></div>`).join(""):'<div class="banner ok">✓ '+T('처리 필요한 알림 없음')+'</div>'}
         <div class="divide"></div>
         <div class="small" style="font-weight:700;margin-bottom:6px">🌐 ${T('수출대상국 인증 매핑')} <span class="en">· World overlay</span></div>
         <table style="font-size:11.5px;width:100%"><thead><tr><th>${T('대상국')}</th><th>${T('인증기관')}</th><th>BPJPH ${T('상호인정')}</th></tr></thead><tbody>
@@ -5069,7 +5089,7 @@ SCREEN.preassess=async()=>{
        하단(1분할 전체폭): AI 리포트 — 문서분석·재료분석 파일별 접이식, 부정 항목 우선 ── */
   if(isAud){   /* auditor·sharia·ops·admin — 위 isAud와 같은 집합을 쓴다.
                   admin이 빠져 있어 관리자에게만 '사전심사 보고서(워드 출력)' 카드가 사라졌다. */
-    const dos=await API(`/cases/${id}/preassess/dossier`).catch(()=>null);
+    const dos=await API(`/cases/${id}/preassess/dossier?lang=${RPT_LANG()}`).catch(()=>null);
     if(!dos)return `<div class="card"><div class="body muted">${T('심사 데이터를 불러오지 못했습니다.')}</div></div>`;
     const audStage=pre.reviewed?4:(as?3:2);
     const audSteps=[['신청중','Submitted'],['AR 분석중','AI Report'],['오디터 검사중','Reviewing'],['리포트 도착','Delivered']];
@@ -5152,7 +5172,7 @@ SCREEN.preassess=async()=>{
           <button class="btn" onclick="pdfPreview('/cases/${id}/preassess-report.pdf?lang='+RPT_LANG(),'${T('사전심사 보고서')} · '+short(id),'preassess_${short(id)}.pdf')">👁 ${T('미리보기')}</button>
           <button class="btn pri" onclick="serverPdf('/cases/${id}/preassess-report.docx?lang='+RPT_LANG(),'preassess_${short(id)}.docx')">📝 ${T('워드(.docx) 다운로드')}</button>
           <button class="btn" onclick="materialReport('${id}')">🔬 ${T('성분 리포트')}</button>
-          <button class="btn" onclick="serverPdf('/cases/${id}/material-report.pdf','material_report.pdf')">⬇ ${T('성분 PDF')}</button>
+          <button class="btn" onclick="serverPdf('/cases/${id}/material-report.pdf?lang='+RPT_LANG(),'material_report.pdf')">⬇ ${T('성분 PDF')}</button>
         </div></div></div>`;
 
     /* ③ 하단 1분할: AI 리포트 — 문서분석 / 재료분석 (부정 우선 · 파일별 접이식) */
@@ -5972,7 +5992,7 @@ function matCriteriaTable(materials){
 }
 async function materialReport(id){
   try{
-    const r=await API(`/cases/${id}/material-report`);
+    const r=await API(`/cases/${id}/material-report?lang=${RPT_LANG()}`);
     const s=r.summary||{};
     const vColor=v=>v==="BLOCK"?"bad":(v==="NEEDS_EVIDENCE"?"warn":"ok");
     const cards=`<div class="btnrow" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">
@@ -5992,7 +6012,7 @@ async function materialReport(id){
     // P3: 정량 측정값이 응답에 있으면 실측 표(quantTable), 없으면 legacy 정성표 폴백
     const quantHtml=(r.quantitative&&r.quantitative.length)?quantTable(r,id):matCriteriaTable(r.materials||[]);
     document.getElementById("reportBody").innerHTML=cards+catHtml+rows+quantHtml+snapBtn+`<div class="muted small" style="margin-top:10px">${T('※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.')}</div>`;
-    document.getElementById("reportPdfBtn").onclick=()=>serverPdf(`/cases/${id}/material-report.pdf`,"material_report.pdf");
+    document.getElementById("reportPdfBtn").onclick=()=>serverPdf(`/cases/${id}/material-report.pdf?lang=${RPT_LANG()}`,"material_report.pdf");
     document.getElementById("reportOverlay").style.display="grid";
     localizeUI(document.getElementById("reportBody"));
   }catch(e){toast("보고서 실패 · "+(e&&e.code?e.code:""));}
@@ -6712,7 +6732,7 @@ SCREEN.audit=async()=>{
   const onsiteMockup=await onsiteAuditView(id,true);
   const [find,onsite,lph,pool,plans,cars,arep]=await Promise.all([
     API(`/cases/${id}/findings`).catch(()=>[]),
-    API(`/cases/${id}/onsite-checklist`).catch(()=>({items:[],completion:0})),
+    API(`/cases/${id}/onsite-checklist?lang=${RPT_LANG()}`).catch(()=>({items:[],completion:0})),
     API(`/cases/${id}/lph-assignment`).catch(()=>[]),
     API(`/cases/${id}/auditor-pool`).catch(()=>[]),
     API(`/cases/${id}/audit-plans`).catch(()=>[]),
@@ -6753,7 +6773,7 @@ SCREEN.audit=async()=>{
   ${onsiteMockup}
   ${carHtml}
   <div class="grid side" style="margin-bottom:16px">
-    <div class="card"><h3>${T('LPH 배정·현장심사')} <span class="en">· On-site</span><span class="r">완료도 ${onsite.completion||0}%</span></h3>
+    <div class="card"><h3>${T('LPH 배정·현장심사')} <span class="en">· On-site</span><span class="r">${T('완료도')} ${onsite.completion||0}%</span></h3>
       <div class="list" style="margin:0 -1px">${lphHtml}</div>
       <div class="body" style="border-top:1px solid var(--line)">
         <div class="small" style="font-weight:600;margin-bottom:6px">현장심사 일정 · Schedule (${plans.length})</div>
@@ -7460,7 +7480,7 @@ function psreSigNote(){
 async function onsiteReviewerView(id){
   if(!id)return `<div class="card"><div class="body muted">${T('케이스를 선택하세요')}</div></div>`;
   const [checklist,hpas,docs,sign,ops,opinion]=await Promise.all([
-    API(`/cases/${id}/onsite-checklist`).catch(()=>({items:[],comply:0,nonconformity:0,total:0,completion:0})),
+    API(`/cases/${id}/onsite-checklist?lang=${RPT_LANG()}`).catch(()=>({items:[],comply:0,nonconformity:0,total:0,completion:0})),
     API(`/cases/${id}/hpas-auto?lang=${RPT_LANG()}`).catch(()=>({elements:[]})),
     API(`/cases/${id}/documents?lang=${RPT_LANG()}`).catch(()=>[]),
     API(`/cases/${id}/onsite/sign`).catch(()=>({auditor:null,supervisor:null})),
@@ -7563,7 +7583,7 @@ async function onsiteAuditView(id,editable){
   editable=editable!==false;
   if(!id) return `<div class="card"><div class="body muted">${T('케이스를 선택하세요')} · Select a case.</div></div>`;
   const [checklist,hpas,plans,pool,docs,sign]=await Promise.all([
-    API(`/cases/${id}/onsite-checklist`).catch(()=>({items:[],comply:0,nonconformity:0,total:0,completion:0})),
+    API(`/cases/${id}/onsite-checklist?lang=${RPT_LANG()}`).catch(()=>({items:[],comply:0,nonconformity:0,total:0,completion:0})),
     API(`/cases/${id}/hpas-auto?lang=${RPT_LANG()}`).catch(()=>({elements:[],auto_completion:0})),
     API(`/cases/${id}/audit-plans`).catch(()=>[]),
     API(`/cases/${id}/auditor-pool`).catch(()=>[]),
@@ -7796,7 +7816,7 @@ SCREEN.evaluation=async()=>{
     </div>`).join("")||'<div class="muted small">증빙 항목 없음</div>';
   const canVerdict=["auditor","ops","admin"].includes(ROLE);   // 오디터 원클릭 판정 권한
   const s3of=e=>e.state3||(e.status==="ok"?"good":"gap");
-  const B3={good:["ok","적합후보"],gap:["warn","보완"],fail:["bad","부적합"]};   // 3-state 배지
+  const B3={good:["ok",T("적합후보")],gap:["warn",T("보완")],fail:["bad",T("부적합")]};   // 3-state 배지
   const rows=els.map(e=>{const b=B3[s3of(e)]||B3.gap;
     return `<tr><td><b>${esc(e.label||e.element)}</b><div class="muted small">${esc(e.reason||"")}</div></td>
       <td>${tag(b[0],b[1])}</td>
@@ -8031,7 +8051,7 @@ SCREEN.manualBuilder=async()=>{
   <div class="banner info" style="margin-bottom:16px">ⓘ ${T('순서: 증빙 업로드')} → <b>SJPH ${T('매뉴얼 생성')}</b> → ${T('담당 오디터 검토·서명')}. ${canEdit?T('입력이 필요한 섹션(조직도·공정도 등)만 채우면 되며, 기본문구·선언서는 자동 채움됩니다.'):''} ${T('미리보기는 다운로드 없이 화면에서 기준 양식(KO·EN)에 실데이터가 채워진 문서를 표시합니다.')}</div>
   ${autoCard}
   <div class="card" style="margin-bottom:16px"><div class="body" style="display:flex;align-items:center;gap:14px">
-    <div style="font-weight:800;white-space:nowrap">진행률 ${L.done} / ${L.total} 섹션</div>
+    <div style="font-weight:800;white-space:nowrap">${T('진행률')} ${L.done} / ${L.total} ${T('섹션')}</div>
     <div class="bar" style="flex:1"><i style="width:${pct}%"></i></div>
     <div class="muted small">${pct}%</div></div></div>
   <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">${cards}</div>
@@ -8129,7 +8149,7 @@ function mbSignerCard(L,cid){
       ? `<button class="btn" onclick="mbStampUpload('${cid}','${key}')">🔏 ${T('도장 업로드')}</button> <button class="btn" onclick="mbSignerSave('${cid}','${key}')">💾 ${T('저장')}</button>`
       : '';
     return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--line)">
-      <span style="flex:0 0 160px"><strong>${esc(T(slot.ko))}</strong><br><span class="en">${esc(slot.en)}</span></span>
+      <span style="flex:0 0 160px"><strong>${esc(LANG===2?(slot.id||slot.en):(LANG===0?slot.en:slot.ko))}</strong><br><span class="en">${esc(slot.en)}</span></span>
       ${nameField}
       ${posField}
       <span style="flex:0 0 160px">${stampHtml}</span>
@@ -9407,7 +9427,7 @@ async function fatwaCommitteeAdvanced(id){
       <div class="body">
         <div class="banner ${stageBanner[0]==='mute'?'info':stageBanner[0]}" style="margin-bottom:12px">${stageBanner[1]}${fd.decision_no?" · "+esc(fd.decision_no):""}${fd.final_approved_at?" · 최종 "+esc(String(fd.final_approved_at).slice(0,16)):""}</div>
         <div class="field"><label>심의 요지 · Note</label><div class="v small">${esc(fd.committee_note||"—")}</div></div>
-        <div class="field"><label>위원장 · Head</label><div class="v small">${esc(fd.committee_head||"—")} / 간사 ${esc(fd.committee_secretary||"—")}</div></div>
+        <div class="field"><label>${T('위원장 · Head')}</label><div class="v small">${esc(fd.committee_head||"—")} / ${T('간사')} ${esc(fd.committee_secretary||"—")}</div></div>
         <div class="divide"></div>
         <div style="font-size:12.5px;margin-bottom:8px"><b>승인 단계 · 2-stage approval</b></div>
         ${canProvisional&&!isFinal?`<div class="field"><label>① 샤리아 가승인 · Provisional</label>
@@ -9829,7 +9849,7 @@ function dataList(cfg){
   AFTER_RENDER=function(){if(prev)try{prev()}catch(_){} const ids=_DL_PENDING;_DL_PENDING=[];ids.forEach(dataListRender);};
   return `<div class="dl" id="${esc(cfg.id)}">
     <div class="dl-bar">${cfg.search!==false?`<input class="v" aria-label="검색" placeholder="🔍 검색 · Search" onkeydown="if(event.key==='Enter')dlSearch('${cfg.id}',this.value)" onchange="dlSearch('${cfg.id}',this.value)">`:''}${cfg.csv?`<button class="btn" onclick="dlCsv('${cfg.id}')">⬇ CSV</button>`:''}</div>
-    <div class="dl-body"><div class="muted small">불러오는 중… · loading</div></div>
+    <div class="dl-body"><div class="muted small">${T('불러오는 중… · loading')}</div></div>
     <div class="dl-foot"></div></div>`;
 }
 async function dataListRender(id){
@@ -9983,7 +10003,7 @@ SCREEN.menuAssign=async()=>{
     : `<select class="v" style="width:auto" onchange="maChangeTarget(this.value)">${MA_ROLES.map(([r,n])=>`<option value="${r}"${r===MA_ROLE?" selected":""}>${esc(n)}</option>`).join("")}</select>`;
   const tLabel=MA_MODE==="user"?((MA_USERS.find(u=>u.user_id===MA_USER)||{}).username||MA_USER||"사용자")
     :MA_MODE==="org"?((MA_ORGS.find(o=>o.org_id===MA_ORG)||{}).name||MA_ORG||"기관"):MA_ROLE;
-  return `<div class="card"><h3>🗂 메뉴 배정 관리 <span class="en">· Menu Assignment</span></h3>
+  return `<div class="card"><h3>🗂 ${T('메뉴 배정 관리')} <span class="en">· Menu Assignment</span></h3>
     <div class="body">
       <div class="btnrow" style="gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">${T('배정 기준')} ${modeSel} ${targetSel}
         <input class="box" placeholder="${T('🔍 메뉴명·코드 검색')}" style="flex:1;min-width:150px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
@@ -10142,7 +10162,7 @@ SCREEN.system=async()=>{
   const oRows=(orgs||[]).map(o=>`<tr><td><b>${esc(o.name||o.org_id)}</b></td><td class="muted small">${esc(o.org_id)}</td><td>${o.case_count==null?(o.cases==null?"—":o.cases):o.case_count}</td><td style="white-space:nowrap"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="tenantPanel('${esc(o.org_id)}')">🌐 ${T('도메인·브랜딩')}</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
   return `
   <div class="grid three">
-    <div class="card"><h3>🗂 메뉴 배정 관리 <span class="en">· Menu Assignment</span></h3>
+    <div class="card"><h3>🗂 ${T('메뉴 배정 관리')} <span class="en">· Menu Assignment</span></h3>
       <div class="body btnrow" style="align-items:center;gap:10px"><button class="btn pri" onclick="go('menuAssign')">${T('🗂 메뉴 배정 관리 열기')}</button>
         <span class="muted small">${T('역할별 메뉴 노출·순서를 드래그로 관리 (설계서 §6.1)')}</span></div></div>
     <div class="card"><h3>${T('사용자')} <span class="en">· Users</span><span class="r">${users.length}</span></h3>

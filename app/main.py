@@ -2032,6 +2032,9 @@ _UI_LABEL_AXES = {
     "hpas_element": ("HPAS_ELEMENT", "hpas_element"),
     "material_cat": ("MATERIAL_CAT", "screen_category"),
     "source": ("SOURCE", "screen_source"),
+    "extract_field": ("EXTRACT_FIELD", "extract_field"),
+    "onsite_item": ("ONSITE_ITEM", "onsite_item"),
+    "signer": ("SIGNER", "signer"),
 }
 
 
@@ -4342,7 +4345,10 @@ def _sjph_manual_layout_view(db, case_id, role=None):
                          "complete": complete, "auto": auto})
     done = sum(1 for s in sections if s["complete"])
     signers = _sjph_norm_signers(saved.get("signers"))
-    signer_meta = [{"key": s[0], "ko": s[1], "en": s[2], "default_position": s[3],
+    # 서명란 이름은 인니 업체가 읽는다 — 한국어·영어만 주면 인니어 화면에 한글이 남는다.
+    _sg_id = _dd_mod.code_labels("SIGNER", "signer", "id")
+    signer_meta = [{"key": s[0], "ko": s[1], "en": s[2], "id": _sg_id.get(s[0], s[2]),
+                    "default_position": s[3],
                     "value": signers.get(s[0]) or {},
                     "can_edit": bool(role) and role in SJPH_SIGNER_ROLES.get(s[0], set())}
                    for s in SJPH_SIGNERS]
@@ -8151,11 +8157,14 @@ ONSITE_ITEMS = [
 
 
 @app.get("/cases/{case_id}/onsite-checklist")
-def get_onsite_checklist(case_id: str, user=Depends(auth.get_current_user),
+def get_onsite_checklist(case_id: str, lang: str = Query("ko"),
+                         user=Depends(auth.get_current_user),
                          db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     rows = {r.item_key: r for r in db.query(models.OnsiteChecklist).filter_by(case_id=case_id).all()}
-    items = [{"item_key": k, "label": ko,
+    # 현장에서 오디터가 읽는 목록이다 — 인니 심사자에게 한국어로 주면 못 읽는다.
+    _oi = _dd_mod.code_labels("ONSITE_ITEM", "onsite_item", lang)
+    items = [{"item_key": k, "label": _oi.get(k, ko),
               "result": rows[k].result if k in rows else "not_checked",
               "note": rows[k].note if k in rows else None} for k, ko in ONSITE_ITEMS]
     comply = sum(1 for x in items if x["result"] == "comply")
@@ -12524,13 +12533,15 @@ def _preassess_dossier(db, c, lang="ko"):
 
 
 @app.get("/cases/{case_id}/preassess/dossier")
-def get_preassess_dossier(case_id: str,
+def get_preassess_dossier(case_id: str, lang: str = Query("ko"),
                           user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
                                                           "consultant")),
                           db: Session = Depends(get_db)):
-    """사전심사 심사자 뷰(오디터·샤리아·운영자·컨설턴트) 종합 데이터."""
+    """사전심사 심사자 뷰(오디터·샤리아·운영자·컨설턴트) 종합 데이터.
+
+    lang 을 안 받으면 성분 판정문이 한국어로 나간다 — 오디터가 읽는 핵심 내용이다."""
     c = _get_case(db, case_id, user)
-    return _preassess_dossier(db, c)
+    return _preassess_dossier(db, c, lang=lang)
 
 
 def _fn_en(name):
@@ -12895,22 +12906,24 @@ def _material_report(db, c, lang="ko"):
 
 
 @app.get("/cases/{case_id}/material-report")
-def material_report(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+def material_report(case_id: str, lang: str = Query("ko"),
+                    user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """성분 AI 분석 보고서 — 원재료 전수 온톨로지 판정·근거·대체재·증빙 집계."""
     c = _get_case(db, case_id, user)
-    rep = _material_report(db, c)
+    rep = _material_report(db, c, lang=lang)
     _audit(db, user, "material_report.view", "case", case_id)
     db.commit()
     return rep
 
 
 @app.get("/cases/{case_id}/material-report.pdf")
-def material_report_pdf(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+def material_report_pdf(case_id: str, lang: str = Query("ko"),
+                        user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """성분 AI 분석 보고서 PDF."""
     from fastapi.responses import Response
     from urllib.parse import quote
     c = _get_case(db, case_id, user)
-    rep = _material_report(db, c)
+    rep = _material_report(db, c, lang=lang)
     s = rep["summary"]
     L = ["[요약]",
          "총 원재료: %d건" % s["total"],

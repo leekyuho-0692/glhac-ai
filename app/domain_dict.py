@@ -65,6 +65,11 @@ _DISPLAY_ONLY_AXES = {
     "INTAKE_ERROR",     # 인테이크 오류
     "GATE",             # 게이트 차단 사유
     "GEN_DOC",          # 생성 문서 종류
+    "EXTRACT_FIELD",    # AI 추출 필드 라벨
+    "EXTRACT_SRC",      # 그 필드가 나오는 서류
+    "EXTRACT_FMT",      # 기대 형식
+    "SIGNER",           # 서명·도장 슬롯 이름
+    "ONSITE_ITEM",      # 현장 체크리스트 항목
 }
 
 
