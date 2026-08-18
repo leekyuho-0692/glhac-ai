@@ -2009,6 +2009,44 @@ def backfill_notification_i18n(dry_run: bool = True,
             "skipped_by_event": skipped, "samples": filled[:8]}
 
 
+# 프런트가 라벨을 서버에서 받아 쓰게 하는 통로. 같은 표를 프런트가 또 들고 있으면
+# 한쪽만 고쳐진다 — 실제로 서류명 12개 중 6개, 증빙 9개 중 7개가 서로 달랐다
+# ('할랄 인증서' vs '공급사 할랄 인증서'처럼 뜻이 갈리는 차이도 있었다).
+_UI_LABEL_AXES = {
+    "enum": ("ENUM", "enum_code"),
+    "doc": ("DOC", None),                       # 서류명은 doc_labels 로
+    "evidence": ("EVIDENCE", "evidence_code"),
+    "severity": ("SEVERITY", "severity"),
+    "blocker": ("BLOCKER", "blocker_code"),
+    "ws_stage": ("WS_STAGE", "ws_stage"),
+    "vault_doc": ("VAULT_DOC", "vault_doc"),
+    "org_div": ("ORG_DIV", "org_div"),
+    "org_role": ("ORG_ROLE", "org_role"),
+    "reg_state": ("REG_STATE", "reg_state"),
+    "intake_error": ("INTAKE_ERROR", "intake_error"),
+    "gate": ("GATE", "gate_code"),
+    "gen_doc": ("GEN_DOC", "gen_doc"),
+    "verdict": ("VERDICT", "verdict"),
+    "billing_service": ("BILLING_SERVICE", "billing_service"),
+    "sjph_evidence": ("SJPH_EVIDENCE", "sjph_evidence"),
+    "hpas_element": ("HPAS_ELEMENT", "hpas_element"),
+    "material_cat": ("MATERIAL_CAT", "screen_category"),
+    "source": ("SOURCE", "screen_source"),
+}
+
+
+@app.get("/i18n/labels")
+def i18n_labels(lang: str = Query("ko")):
+    """화면 라벨 묶음 — 코드값을 읽는 사람 언어의 문구로. 인증 없이 연다(로그인 화면도 쓴다)."""
+    lg = (lang or "ko").lower()
+    lg = lg if lg in ("ko", "en", "id") else "ko"
+    out = {}
+    for name, (axis, action) in _UI_LABEL_AXES.items():
+        out[name] = (_dd_mod.doc_labels(lg) if action is None
+                     else _dd_mod.code_labels(axis, action, lg))
+    return {"lang": lg, "labels": out}
+
+
 @app.get("/admin/notify-channels")
 def admin_notify_channels(user=Depends(auth.require_roles("operator"))):
     """알림봇 채널 설정·구현 상태(읽기전용, 스키마 무변경).
@@ -4145,9 +4183,8 @@ def review_document(document_id: str, body: schemas.DocReviewReq,
 
 
 HPAS_ELEMENTS = ["commitment", "materials", "process", "product", "monitoring"]
-HPAS_KO = {"commitment": "책임과 약속", "materials": "원재료", "process": "할랄제품공정",
-           "product": "제품", "monitoring": "모니터링·평가"}
-
+# HPAS 5요소 표기 — 사전에서. 전에는 여기와 사전에 같은 값이 따로 있었다.
+HPAS_KO = _dd_mod.code_labels("HPAS_ELEMENT", "hpas_element", "ko")
 
 def _ensure_hpas(db, case_id):
     have = {h.element: h for h in db.query(models.HpasEvaluation).filter_by(case_id=case_id)}
@@ -4496,9 +4533,12 @@ def _form_halal_persons(db, c, include_extra=True):
     return persons
 
 
-_ORG_ROLE_KO = {"top_management": "경영책임자", "halal_supervisor": "할랄감독자",
-                "coordinator": "실무담당(PIC)", "liaison": "대외연락(CP)", "member": "부서 대표"}
+# 할랄팀 역할 — 신청기업이 자기 조직도에서 읽는 값이라 인니어가 있어야 한다.
+_ORG_ROLE_KO = _dd_mod.code_labels("ORG_ROLE", "org_role", "ko")
 
+
+def org_role_label(code, lang="ko"):
+    return _dd_mod.code_labels("ORG_ROLE", "org_role", lang).get(code, code)
 
 def _reconcile_org(persons, ocr_text):
     """신청서 담당자를 OCR 조직도 텍스트와 대조 → matched / mismatches / summary."""
@@ -5803,8 +5843,8 @@ def _get_factory_audit_pdf_legacy(case_id, user, db):
     pen = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").first()
     lph = db.query(models.LphAssignment).filter_by(case_id=case_id).first()
     photos = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
-    HPAS_KO = {"commitment": "① 경영책임·서약", "materials": "② 원료", "process": "③ 생산공정",
-               "product": "④ 제품", "monitoring": "⑤ 모니터링"}
+    # 문서용 장 제목은 화면 표기와 다르다(번호가 붙는다) — 사전에 별도 축으로 둔다.
+    HPAS_KO = _dd_mod.code_labels("HPAS_CHAPTER", "hpas_chapter", "ko")
 
     def cnc(m):
         return "NC" if (m.screen_result in ("BLOCK", "NEEDS_EVIDENCE")) else "C"
@@ -11906,9 +11946,12 @@ BILLING_DEFAULTS_ACTION = "billing.defaults"
 BILLING_SERVICE_TYPES = ("pre_audit", "onsite", "certification", "renewal", "surveillance")
 BILLING_FALLBACK = {"pre_audit": 6500000, "onsite": 12000000, "certification": 5000000,
                     "renewal": 8000000, "surveillance": 3000000}
-BILLING_SERVICE_KO = {"pre_audit": "사전심사", "onsite": "현장심사", "certification": "인증 심사",
-                      "renewal": "갱신 심사", "surveillance": "사후관리 심사"}
+# 청구 서비스 유형 — 인보이스에 찍힌다.
+BILLING_SERVICE_KO = _dd_mod.code_labels("BILLING_SERVICE", "billing_service", "ko")
 
+
+def billing_service_label(code, lang="ko"):
+    return _dd_mod.code_labels("BILLING_SERVICE", "billing_service", lang).get(code, code)
 
 def _billing_shim(org_id):
     import types
@@ -12380,8 +12423,12 @@ def explain_ingredient(body: schemas.ExplainReq, user=Depends(auth.get_current_u
     return exp
 
 
-_VERDICT_KO = {"CLEARED": "할랄 허용", "NEEDS_EVIDENCE": "증빙 필요", "BLOCK": "차단(하람)"}
+# 스크리닝 판정 — 오디터가 보는 결론.
+_VERDICT_KO = _dd_mod.code_labels("VERDICT", "verdict", "ko")
 
+
+def verdict_label(code, lang="ko"):
+    return _dd_mod.code_labels("VERDICT", "verdict", lang).get(code, code)
 
 def _material_source_docs(db, case_id):
     """M2: 성분별 소스 증빙문서 매핑 material_id → [{document_id, filename}]."""

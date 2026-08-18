@@ -51,6 +51,20 @@ _DISPLAY_ONLY_AXES = {
     "HPAS_ELEMENT",     # HPAS 5요소 이름
     "HPAS_REASON",      # HPAS 판정 근거
     "DOC_REQUIREMENT",  # 서류 요건 설명
+    "ORG_ROLE",         # 할랄팀 역할 표기
+    "BILLING_SERVICE",  # 청구 서비스 유형
+    "VERDICT",          # 스크리닝 판정
+    "HPAS_CHAPTER",     # SJPH 매뉴얼 장 제목
+    "AUDITOR_NOTE",     # 오디터 근거 메모 라벨
+    "BLOCKER",          # 자가진단 차단 사유
+    "WS_STAGE",         # 워크스페이스 단계
+    "VAULT_DOC",        # 자료함 문서 종류
+    "ORG_DIV",          # 조직 부서
+    "REG_STATE",        # 규정 상태
+    "SEVERITY",         # 위험등급
+    "INTAKE_ERROR",     # 인테이크 오류
+    "GATE",             # 게이트 차단 사유
+    "GEN_DOC",          # 생성 문서 종류
 }
 
 

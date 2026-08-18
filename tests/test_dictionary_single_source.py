@@ -30,7 +30,12 @@ LANGS = ("ko", "en", "id")
 def _js_table(name):
     """index.html 의 const XXX={...} 를 파이썬 dict 로."""
     s = open(INDEX, encoding="utf-8").read()
-    i = s.index("const %s=" % name)
+    for decl in ("const %s=" % name, "var %s=" % name, "let %s=" % name):
+        if decl in s:
+            i = s.index(decl)
+            break
+    else:
+        raise AssertionError("표를 못 찾음: %s" % name)
     i = s.index("{", i)
     depth, j = 0, i
     while True:
@@ -124,3 +129,60 @@ def test_ocr_pipeline_and_screening_agree():
     assert op._srcs("ko") == sc._SOURCE_KO
     assert op._evs("ko") == sc._EVID_KO
     assert op._sts("ko") == sc._STATUS_KO
+
+
+# ── 프런트 폴백표는 사전의 사본이다 ─────────────────────────────────────
+# 화면 라벨은 서버(/i18n/labels)에서 받는다. 프런트 표는 서버를 못 받았을 때의
+# 폴백으로만 남는다. 사본이 정본과 갈라지면 폴백이 틀린 값을 내므로 여기서 막는다.
+# 실측: 서류명 12개 중 6개, 증빙 9개 중 7개가 서로 달랐고 '할랄 인증서' vs
+# '공급사 할랄 인증서'처럼 뜻이 갈리는 차이도 있었다.
+
+FALLBACK_TABLES = [
+    ("DOC_KO_LABEL", "DOC", None),
+    ("EVID_KO", "EVIDENCE", "evidence_code"),
+    ("BLOCKER_KO", "BLOCKER", "blocker_code"),
+    ("WS_STAGE_KO", "WS_STAGE", "ws_stage"),
+    ("VAULT_GD_LABEL", "VAULT_DOC", "vault_doc"),
+    ("_ORG_DIV_KO", "ORG_DIV", "org_div"),
+    ("REG_STATE_KO", "REG_STATE", "reg_state"),
+    ("SEV_KO", "SEVERITY", "severity"),
+    ("INTAKE_KO", "INTAKE_ERROR", "intake_error"),
+    ("GATE_KO", "GATE", "gate_code"),
+    ("GENDOC_KO", "GEN_DOC", "gen_doc"),
+]
+
+
+@pytest.mark.parametrize("table,axis,action", FALLBACK_TABLES)
+def test_frontend_fallback_matches_the_dictionary(table, axis, action):
+    """폴백표의 모든 코드가 사전에 있고 한국어 표기가 같아야 한다."""
+    front = _js_table(table)
+    book = dd.doc_labels("ko") if action is None else dd.code_labels(axis, action, "ko")
+    diff = {k: (v, book.get(k)) for k, v in front.items() if book.get(k) != v}
+    assert diff == {}, "%s 와 사전이 다름: %s" % (table, list(diff.items())[:4])
+
+
+@pytest.mark.parametrize("table,axis,action", FALLBACK_TABLES)
+def test_every_fallback_code_has_indonesian(table, axis, action):
+    """폴백표에 있는 코드는 인니어 표기가 있어야 한다 — 없으면 그 화면에 한글이 남는다."""
+    front = set(_js_table(table))
+    book = dd.doc_labels("id") if action is None else dd.code_labels(axis, action, "id")
+    missing = sorted(c for c in front if not book.get(c))
+    assert missing == [], "%s: 인니어 없는 코드 %s" % (table, missing)
+
+
+def test_label_endpoint_serves_every_ui_group():
+    """/i18n/labels 가 화면이 쓰는 묶음을 모두 내려주는가."""
+    import app.main as m
+    used = {"enum", "doc", "evidence", "severity", "blocker", "ws_stage", "vault_doc",
+            "org_div", "reg_state", "intake_error", "gate", "gen_doc"}
+    assert used <= set(m._UI_LABEL_AXES), sorted(used - set(m._UI_LABEL_AXES))
+
+
+def test_label_endpoint_returns_three_languages():
+    """세 언어 모두 응답한다 — 한 언어가 비면 그 화면 전체가 코드값으로 나간다."""
+    import app.main as m
+    for lg in LANGS:
+        out = m.i18n_labels(lang=lg)
+        assert out["lang"] == lg
+        assert out["labels"]["enum"].get("certificate_issued")
+        assert out["labels"]["doc"].get("sjph_manual")

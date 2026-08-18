@@ -295,64 +295,9 @@ _ALT_ID = _dd.axis_text_map("ALTERNATIVE", "id")
 # 필요 증빙 코드 — 심사자가 실제로 요구하는 서류명이라 언어별 표기가 필요하다.
 # 대체재 — 한국어로 적힌 값만 옮긴다(영문·화학명은 그대로 두는 것이 정확하다).
 # 템플릿 문장 — 한국어 원문을 키로 쓴다(프런트 T()·보고서 라벨과 같은 방식).
-_EXPLAIN_L10N = {
-    "en": {
-        "‘%s’은(는) %s 계열 성분이며, 기본 할랄 상태는 %s입니다. (주요 유래: %s)":
-            "'%s' belongs to the %s category; its baseline halal status is %s. (Main sources: %s)",
-        "• 부정물(najis) 위험 성분 — 설비·공정의 할랄 전용/세척(사무 khusus) 이슈가 동반됩니다.":
-            "• Najis-risk ingredient — requires dedicated halal lines or ritual cleansing (samak) "
-            "of equipment and process.",
-        "• 캐리어/용매 점검 대상(%s) — 향료·색소 등의 용매로 알코올/젤라틴이 쓰였는지 확인 필요.":
-            "• Carrier/solvent check required (%s) — verify that alcohol or gelatin is not used "
-            "as a solvent for flavors or colorants.",
-        "→ 판정: 금지(haram). 사용 시 인증 불가 — 대체재로 재설계가 필요합니다.":
-            "→ Verdict: haram. Cannot be certified while in use — reformulation with an "
-            "alternative is required.",
-        "→ 판정: 증빙 필요 — 유래(동물/식물)에 따라 할랄 여부가 갈립니다. 아래 증빙 제출 시 CLEARED로 전환됩니다.":
-            "→ Verdict: evidence required — halal status depends on the source (animal/plant). "
-            "It becomes CLEARED once the evidence below is submitted.",
-        "→ 판정: 할랄 허용(추가 증빙 불요 또는 확보됨).":
-            "→ Verdict: halal (no further evidence needed, or already secured).",
-        "• 필요 증빙: ": "• Required evidence: ",
-        "• 할랄 대체재: ": "• Halal alternatives: ",
-        "‘%s’은(는) 온톨로지 정식 등재 성분이 아니며, v1 규칙/키워드 기반으로 ‘%s’ 판정되었습니다.":
-            "'%s' is not formally registered in the ontology; the verdict '%s' comes from the "
-            "v1 rule/keyword screen.",
-        "• v1 위험도: ": "• v1 risk level: ",
-        "• 미등재 성분은 할랄로 간주하지 않습니다 — 유래·조성 확인 후 판정합니다.":
-            "• An ingredient absent from the ontology is not treated as halal — the verdict "
-            "follows verification of its source and composition.",
-        "미상": "unknown",
-    },
-    "id": {
-        "‘%s’은(는) %s 계열 성분이며, 기본 할랄 상태는 %s입니다. (주요 유래: %s)":
-            "'%s' termasuk kategori %s; status halal dasarnya %s. (Sumber utama: %s)",
-        "• 부정물(najis) 위험 성분 — 설비·공정의 할랄 전용/세척(사무 khusus) 이슈가 동반됩니다.":
-            "• Bahan berisiko najis — memerlukan lini khusus halal atau pencucian (samak) pada "
-            "peralatan dan proses.",
-        "• 캐리어/용매 점검 대상(%s) — 향료·색소 등의 용매로 알코올/젤라틴이 쓰였는지 확인 필요.":
-            "• Perlu pemeriksaan pembawa/pelarut (%s) — pastikan alkohol atau gelatin tidak "
-            "dipakai sebagai pelarut perisa atau pewarna.",
-        "→ 판정: 금지(haram). 사용 시 인증 불가 — 대체재로 재설계가 필요합니다.":
-            "→ Putusan: haram. Tidak dapat disertifikasi selama digunakan — perlu reformulasi "
-            "dengan bahan alternatif.",
-        "→ 판정: 증빙 필요 — 유래(동물/식물)에 따라 할랄 여부가 갈립니다. 아래 증빙 제출 시 CLEARED로 전환됩니다.":
-            "→ Putusan: perlu bukti — status halal bergantung pada sumber (hewani/nabati). "
-            "Akan menjadi CLEARED setelah bukti di bawah diserahkan.",
-        "→ 판정: 할랄 허용(추가 증빙 불요 또는 확보됨).":
-            "→ Putusan: halal (tanpa bukti tambahan, atau bukti sudah tersedia).",
-        "• 필요 증빙: ": "• Bukti yang diperlukan: ",
-        "• 할랄 대체재: ": "• Alternatif halal: ",
-        "‘%s’은(는) 온톨로지 정식 등재 성분이 아니며, v1 규칙/키워드 기반으로 ‘%s’ 판정되었습니다.":
-            "'%s' belum terdaftar resmi dalam ontologi; putusan '%s' berasal dari aturan/kata "
-            "kunci v1.",
-        "• v1 위험도: ": "• Tingkat risiko v1: ",
-        "• 미등재 성분은 할랄로 간주하지 않습니다 — 유래·조성 확인 후 판정합니다.":
-            "• Bahan yang belum terdaftar dalam ontologi tidak dianggap halal — putusan "
-            "ditetapkan setelah sumber dan komposisinya diverifikasi.",
-        "미상": "tidak diketahui",
-    },
-}
+# 판정 설명 문장 — 한국어 문장이 키다. 사전 LABEL 축에서 꺼낸다.
+_EXPLAIN_L10N = {lg: _dd.axis_text_map("LABEL", lg) for lg in ("en", "id")}
+
 _L10N_TABLES = {
     "en": (_CAT_EN, _STATUS_EN, _SOURCE_EN, _EVID_EN, _ALT_EN),
     "id": (_CAT_ID, _STATUS_ID, _SOURCE_ID, _EVID_ID, _ALT_ID),
@@ -435,53 +380,9 @@ def explain(name, e_number=None, source=None, cert_no=None, note="", lang="ko"):
 _BPJPH_NO = re.compile(r"^ID\d{8,}$", re.I)          # BPJPH 할랄 인증번호 형식
 _MUI_NO = re.compile(r"^\d{8,}$")                    # LPPOM MUI 계열 번호
 
-_NOTE_L10N = {
-    "ko": {
-        "why": "걸린 이유", "exempt": "예외로 볼 수 있는 조건", "this": "이 건의 근거",
-        "action": "오디터 확인 사항", "draft": "AI 초안 — 판단은 오디터가 합니다",
-        "cert_ok": "공급사 할랄 인증번호 %s (%s) 보유 — 번호가 유효하면 유래 증빙을 갈음할 수 있습니다.",
-        "cert_unknown": "인증번호 %s 보유 — 발급기관을 확인해야 효력을 판단할 수 있습니다.",
-        "no_cert": "이 재료에 제출된 인증번호가 없습니다.",
-        "evidence_yes": "증빙 파일이 제출되어 있습니다.",
-        "evidence_no": "증빙 파일은 아직 없습니다.",
-        "act_verify": "인증번호를 발급기관 조회로 대조하고, 유효하면 증빙으로 등록해 해제하세요.",
-        "act_collect": "필요 증빙을 받아 등록하면 자동으로 해제됩니다.",
-        "act_block": "금지 성분입니다. 대체재로 바꾸지 않으면 인증할 수 없습니다.",
-        "act_none": "추가 조치 없이 통과 상태입니다.",
-        "why_unmatched": "사전에 없는 재료라 안전측으로 증빙필요로 두었습니다(모르는 것을 통과시키지 않습니다).",
-    },
-    "en": {
-        "why": "Why it was flagged", "exempt": "When an exception applies",
-        "this": "Evidence on this case", "action": "For the auditor to check",
-        "draft": "AI draft — the auditor decides",
-        "cert_ok": "Supplier halal certificate no. %s (%s) on file — a valid number can stand in for origin evidence.",
-        "cert_unknown": "Certificate no. %s on file — the issuing body must be confirmed.",
-        "no_cert": "No certificate number submitted for this material.",
-        "evidence_yes": "An evidence file has been submitted.",
-        "evidence_no": "No evidence file yet.",
-        "act_verify": "Verify the number with the issuing body; if valid, register it as evidence to clear.",
-        "act_collect": "Collect and register the required evidence to clear automatically.",
-        "act_block": "Forbidden ingredient — certification is impossible without substitution.",
-        "act_none": "No further action; already passing.",
-        "why_unmatched": "Not in the dictionary, so it was kept as 'evidence required' on the safe side.",
-    },
-    "id": {
-        "why": "Alasan ditandai", "exempt": "Kapan pengecualian berlaku",
-        "this": "Bukti pada kasus ini", "action": "Yang perlu diperiksa auditor",
-        "draft": "Draf AI — keputusan ada pada auditor",
-        "cert_ok": "Nomor sertifikat halal pemasok %s (%s) tersedia — nomor yang sah dapat menggantikan bukti asal-usul.",
-        "cert_unknown": "Nomor sertifikat %s tersedia — lembaga penerbit perlu dipastikan.",
-        "no_cert": "Tidak ada nomor sertifikat untuk bahan ini.",
-        "evidence_yes": "Berkas bukti sudah diunggah.",
-        "evidence_no": "Belum ada berkas bukti.",
-        "act_verify": "Cocokkan nomor dengan lembaga penerbit; bila sah, daftarkan sebagai bukti untuk melepas status.",
-        "act_collect": "Kumpulkan dan daftarkan bukti yang diperlukan agar status terlepas otomatis.",
-        "act_block": "Bahan haram — sertifikasi tidak mungkin tanpa penggantian.",
-        "act_none": "Tidak perlu tindakan; sudah lolos.",
-        "why_unmatched": "Tidak ada di kamus, jadi tetap 'perlu bukti' demi keamanan.",
-    },
-}
-
+# 오디터 근거 메모 라벨 — 사전에서(코드값 키).
+_NOTE_L10N = {lg: _dd.code_labels("AUDITOR_NOTE", "note_key", lg)
+              for lg in ("ko", "en", "id")}
 
 def _by_uid(uid):
     """ingredient_uid 로 온톨로지 항목을 찾는다 — 판정 시점의 매칭을 그대로 재사용."""

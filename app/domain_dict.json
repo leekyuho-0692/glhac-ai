@@ -6791,5 +6791,2037 @@
    "glhac"
   ],
   "status": "approved"
+ },
+ {
+  "id": "ORGROLE_TOP_MANAGEMENT",
+  "axis": "ORG_ROLE",
+  "labels": {
+   "ko": "경영책임자",
+   "en": "Top management",
+   "id": "Manajemen puncak"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_role": "top_management"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGROLE_HALAL_SUPERVISOR",
+  "axis": "ORG_ROLE",
+  "labels": {
+   "ko": "할랄감독자",
+   "en": "Halal supervisor",
+   "id": "Penyelia Halal"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_role": "halal_supervisor"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGROLE_COORDINATOR",
+  "axis": "ORG_ROLE",
+  "labels": {
+   "ko": "실무담당(PIC)",
+   "en": "Coordinator (PIC)",
+   "id": "Koordinator (PIC)"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_role": "coordinator"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGROLE_LIAISON",
+  "axis": "ORG_ROLE",
+  "labels": {
+   "ko": "대외연락(CP)",
+   "en": "Liaison (CP)",
+   "id": "Narahubung (CP)"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_role": "liaison"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGROLE_MEMBER",
+  "axis": "ORG_ROLE",
+  "labels": {
+   "ko": "부서 대표",
+   "en": "Team member",
+   "id": "Anggota tim"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_role": "member"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BILL_PRE_AUDIT",
+  "axis": "BILLING_SERVICE",
+  "labels": {
+   "ko": "사전심사",
+   "en": "Pre-assessment",
+   "id": "Pra-penilaian"
+  },
+  "context": [
+   "BILLING"
+  ],
+  "actions": {
+   "billing_service": "pre_audit"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BILL_ONSITE",
+  "axis": "BILLING_SERVICE",
+  "labels": {
+   "ko": "현장심사",
+   "en": "On-site audit",
+   "id": "Audit lapangan"
+  },
+  "context": [
+   "BILLING"
+  ],
+  "actions": {
+   "billing_service": "onsite"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BILL_CERTIFICATION",
+  "axis": "BILLING_SERVICE",
+  "labels": {
+   "ko": "인증 심사",
+   "en": "Certification review",
+   "id": "Peninjauan sertifikasi"
+  },
+  "context": [
+   "BILLING"
+  ],
+  "actions": {
+   "billing_service": "certification"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BILL_RENEWAL",
+  "axis": "BILLING_SERVICE",
+  "labels": {
+   "ko": "갱신 심사",
+   "en": "Renewal review",
+   "id": "Peninjauan perpanjangan"
+  },
+  "context": [
+   "BILLING"
+  ],
+  "actions": {
+   "billing_service": "renewal"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BILL_SURVEILLANCE",
+  "axis": "BILLING_SERVICE",
+  "labels": {
+   "ko": "사후관리 심사",
+   "en": "Surveillance audit",
+   "id": "Audit surveilans"
+  },
+  "context": [
+   "BILLING"
+  ],
+  "actions": {
+   "billing_service": "surveillance"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VERDICT_CLEARED",
+  "axis": "VERDICT",
+  "labels": {
+   "ko": "할랄 허용",
+   "en": "Halal cleared",
+   "id": "Halal (lolos)"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "verdict": "CLEARED"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VERDICT_NEEDS_EVIDENCE",
+  "axis": "VERDICT",
+  "labels": {
+   "ko": "증빙 필요",
+   "en": "Evidence required",
+   "id": "Perlu bukti"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "verdict": "NEEDS_EVIDENCE"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VERDICT_BLOCK",
+  "axis": "VERDICT",
+  "labels": {
+   "ko": "차단(하람)",
+   "en": "Blocked (haram)",
+   "id": "Diblokir (haram)"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "verdict": "BLOCK"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASCH_COMMITMENT",
+  "axis": "HPAS_CHAPTER",
+  "labels": {
+   "ko": "① 경영책임·서약",
+   "en": "1. Management commitment",
+   "id": "1. Komitmen manajemen"
+  },
+  "context": [
+   "HPAS",
+   "REPORT"
+  ],
+  "actions": {
+   "hpas_chapter": "commitment"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASCH_MATERIALS",
+  "axis": "HPAS_CHAPTER",
+  "labels": {
+   "ko": "② 원료",
+   "en": "2. Materials",
+   "id": "2. Bahan"
+  },
+  "context": [
+   "HPAS",
+   "REPORT"
+  ],
+  "actions": {
+   "hpas_chapter": "materials"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASCH_PROCESS",
+  "axis": "HPAS_CHAPTER",
+  "labels": {
+   "ko": "③ 생산공정",
+   "en": "3. Production process",
+   "id": "3. Proses produksi"
+  },
+  "context": [
+   "HPAS",
+   "REPORT"
+  ],
+  "actions": {
+   "hpas_chapter": "process"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASCH_PRODUCT",
+  "axis": "HPAS_CHAPTER",
+  "labels": {
+   "ko": "④ 제품",
+   "en": "4. Product",
+   "id": "4. Produk"
+  },
+  "context": [
+   "HPAS",
+   "REPORT"
+  ],
+  "actions": {
+   "hpas_chapter": "product"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASCH_MONITORING",
+  "axis": "HPAS_CHAPTER",
+  "labels": {
+   "ko": "⑤ 모니터링",
+   "en": "5. Monitoring",
+   "id": "5. Pemantauan"
+  },
+  "context": [
+   "HPAS",
+   "REPORT"
+  ],
+  "actions": {
+   "hpas_chapter": "monitoring"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_WHY",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "걸린 이유",
+   "en": "Why it was flagged",
+   "id": "Alasan ditandai"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "why"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_EXEMPT",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "예외로 볼 수 있는 조건",
+   "en": "When an exception applies",
+   "id": "Kapan pengecualian berlaku"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "exempt"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_THIS",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "이 건의 근거",
+   "en": "Evidence on this case",
+   "id": "Bukti pada kasus ini"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "this"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_ACTION",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "오디터 확인 사항",
+   "en": "For the auditor to check",
+   "id": "Yang perlu diperiksa auditor"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "action"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_DRAFT",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "AI 초안 — 판단은 오디터가 합니다",
+   "en": "AI draft — the auditor decides",
+   "id": "Draf AI — keputusan ada pada auditor"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "draft"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_CERT_OK",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "공급사 할랄 인증번호 %s (%s) 보유 — 번호가 유효하면 유래 증빙을 갈음할 수 있습니다.",
+   "en": "Supplier halal certificate no. %s (%s) on file — a valid number can stand in for origin evidence.",
+   "id": "Nomor sertifikat halal pemasok %s (%s) tersedia — nomor yang sah dapat menggantikan bukti asal-usul."
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "cert_ok"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_CERT_UNKNOWN",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "인증번호 %s 보유 — 발급기관을 확인해야 효력을 판단할 수 있습니다.",
+   "en": "Certificate no. %s on file — the issuing body must be confirmed.",
+   "id": "Nomor sertifikat %s tersedia — lembaga penerbit perlu dipastikan."
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "cert_unknown"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_NO_CERT",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "이 재료에 제출된 인증번호가 없습니다.",
+   "en": "No certificate number submitted for this material.",
+   "id": "Tidak ada nomor sertifikat untuk bahan ini."
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "no_cert"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_EVIDENCE_YES",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "증빙 파일이 제출되어 있습니다.",
+   "en": "An evidence file has been submitted.",
+   "id": "Berkas bukti sudah diunggah."
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "evidence_yes"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_EVIDENCE_NO",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "증빙 파일은 아직 없습니다.",
+   "en": "No evidence file yet.",
+   "id": "Belum ada berkas bukti."
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "evidence_no"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_ACT_VERIFY",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "인증번호를 발급기관 조회로 대조하고, 유효하면 증빙으로 등록해 해제하세요.",
+   "en": "Verify the number with the issuing body; if valid, register it as evidence to clear.",
+   "id": "Cocokkan nomor dengan lembaga penerbit; bila sah, daftarkan sebagai bukti untuk melepas status."
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "act_verify"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_ACT_COLLECT",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "필요 증빙을 받아 등록하면 자동으로 해제됩니다.",
+   "en": "Collect and register the required evidence to clear automatically.",
+   "id": "Kumpulkan dan daftarkan bukti yang diperlukan agar status terlepas otomatis."
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "act_collect"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_ACT_BLOCK",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "금지 성분입니다. 대체재로 바꾸지 않으면 인증할 수 없습니다.",
+   "en": "Forbidden ingredient — certification is impossible without substitution.",
+   "id": "Bahan haram — sertifikasi tidak mungkin tanpa penggantian."
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "act_block"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_ACT_NONE",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "추가 조치 없이 통과 상태입니다.",
+   "en": "No further action; already passing.",
+   "id": "Tidak perlu tindakan; sudah lolos."
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "act_none"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "NOTE_WHY_UNMATCHED",
+  "axis": "AUDITOR_NOTE",
+  "labels": {
+   "ko": "사전에 없는 재료라 안전측으로 증빙필요로 두었습니다(모르는 것을 통과시키지 않습니다).",
+   "en": "Not in the dictionary, so it was kept as 'evidence required' on the safe side.",
+   "id": "Tidak ada di kamus, jadi tetap 'perlu bukti' demi keamanan."
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "note_key": "why_unmatched"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_5955CB1AC9",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "‘%s’은(는) %s 계열 성분이며, 기본 할랄 상태는 %s입니다. (주요 유래: %s)",
+   "en": "'%s' belongs to the %s category; its baseline halal status is %s. (Main sources: %s)",
+   "id": "'%s' termasuk kategori %s; status halal dasarnya %s. (Sumber utama: %s)"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_4CEB2F957B",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "• 부정물(najis) 위험 성분 — 설비·공정의 할랄 전용/세척(사무 khusus) 이슈가 동반됩니다.",
+   "en": "• Najis-risk ingredient — requires dedicated halal lines or ritual cleansing (samak) of equipment and process.",
+   "id": "• Bahan berisiko najis — memerlukan lini khusus halal atau pencucian (samak) pada peralatan dan proses."
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_3F69BC6FEF",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "• 캐리어/용매 점검 대상(%s) — 향료·색소 등의 용매로 알코올/젤라틴이 쓰였는지 확인 필요.",
+   "en": "• Carrier/solvent check required (%s) — verify that alcohol or gelatin is not used as a solvent for flavors or colorants.",
+   "id": "• Perlu pemeriksaan pembawa/pelarut (%s) — pastikan alkohol atau gelatin tidak dipakai sebagai pelarut perisa atau pewarna."
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_BD4DF5FB4A",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "→ 판정: 금지(haram). 사용 시 인증 불가 — 대체재로 재설계가 필요합니다.",
+   "en": "→ Verdict: haram. Cannot be certified while in use — reformulation with an alternative is required.",
+   "id": "→ Putusan: haram. Tidak dapat disertifikasi selama digunakan — perlu reformulasi dengan bahan alternatif."
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_3B4FB0B531",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "→ 판정: 증빙 필요 — 유래(동물/식물)에 따라 할랄 여부가 갈립니다. 아래 증빙 제출 시 CLEARED로 전환됩니다.",
+   "en": "→ Verdict: evidence required — halal status depends on the source (animal/plant). It becomes CLEARED once the evidence below is submitted.",
+   "id": "→ Putusan: perlu bukti — status halal bergantung pada sumber (hewani/nabati). Akan menjadi CLEARED setelah bukti di bawah diserahkan."
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_B2823FB7DC",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "→ 판정: 할랄 허용(추가 증빙 불요 또는 확보됨).",
+   "en": "→ Verdict: halal (no further evidence needed, or already secured).",
+   "id": "→ Putusan: halal (tanpa bukti tambahan, atau bukti sudah tersedia)."
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_0679EF6880",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "• 필요 증빙: ",
+   "en": "• Required evidence: ",
+   "id": "• Bukti yang diperlukan: "
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_FD895BDDB3",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "• 할랄 대체재: ",
+   "en": "• Halal alternatives: ",
+   "id": "• Alternatif halal: "
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_DD47C85035",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "‘%s’은(는) 온톨로지 정식 등재 성분이 아니며, v1 규칙/키워드 기반으로 ‘%s’ 판정되었습니다.",
+   "en": "'%s' is not formally registered in the ontology; the verdict '%s' comes from the v1 rule/keyword screen.",
+   "id": "'%s' belum terdaftar resmi dalam ontologi; putusan '%s' berasal dari aturan/kata kunci v1."
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_AAFCC48037",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "• v1 위험도: ",
+   "en": "• v1 risk level: ",
+   "id": "• Tingkat risiko v1: "
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_2FD63A334B",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "• 미등재 성분은 할랄로 간주하지 않습니다 — 유래·조성 확인 후 판정합니다.",
+   "en": "• An ingredient absent from the ontology is not treated as halal — the verdict follows verification of its source and composition.",
+   "id": "• Bahan yang belum terdaftar dalam ontologi tidak dianggap halal — putusan ditetapkan setelah sumber dan komposisinya diverifikasi."
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXPL_714DBF1AEC",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "미상",
+   "en": "unknown",
+   "id": "tidak diketahui"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_SLAUGHTER_CERT",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "도축증명(할랄 도축)",
+   "en": "Slaughter certificate (halal slaughter)",
+   "id": "Sertifikat penyembelihan (halal)"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "slaughter_cert"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_ORIGIN_PROOF",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "원산지 증빙",
+   "en": "Proof of origin",
+   "id": "Bukti asal"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "origin_proof"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_COA",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "시험성적서(CoA)",
+   "en": "Certificate of Analysis (CoA)",
+   "id": "Sertifikat analisis (CoA)"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "coa"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_MSDS",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "MSDS",
+   "en": "MSDS",
+   "id": "MSDS"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "msds"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_FLOW_CHART",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "제조공정도",
+   "en": "Process flowchart",
+   "id": "Diagram alir proses"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "flow_chart"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_RISK_NOT_LOW",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "위험도 Low 아님",
+   "en": "Risk level is not Low",
+   "id": "Tingkat risiko bukan Rendah"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "RISK_NOT_LOW"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_NOT_MSME",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "MSME(소상공인) 아님",
+   "en": "Not an MSME",
+   "id": "Bukan UMKM"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "NOT_MSME"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_HAS_CRITICAL_MATERIAL",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "중대(critical) 원재료 포함",
+   "en": "Contains critical raw materials",
+   "id": "Mengandung bahan kritis"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "HAS_CRITICAL_MATERIAL"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_REVENUE_OVER",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "연매출 기준 초과",
+   "en": "Annual revenue over the limit",
+   "id": "Omzet tahunan melebihi batas"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "REVENUE_OVER"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_OUTLETS_OVER",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "매장 수 기준 초과",
+   "en": "Number of outlets over the limit",
+   "id": "Jumlah gerai melebihi batas"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "OUTLETS_OVER"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_NO_PENDAMPING",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "동반자(PPH) 미지정",
+   "en": "No pendamping (PPH) assigned",
+   "id": "Pendamping (PPH) belum ditetapkan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "NO_PENDAMPING"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_PATHWAY_FIXED",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "경로가 이미 확정됨",
+   "en": "Pathway already fixed",
+   "id": "Jalur sudah ditetapkan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "PATHWAY_FIXED"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_SCOPE_FROZEN",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "인증 범위 동결됨",
+   "en": "Scope is frozen",
+   "id": "Ruang lingkup telah dikunci"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "SCOPE_FROZEN"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_NO_PRODUCT",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "제품 미등록",
+   "en": "No products registered",
+   "id": "Belum ada produk terdaftar"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "NO_PRODUCT"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_NO_MATERIAL",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "원재료 미등록",
+   "en": "No raw materials registered",
+   "id": "Belum ada bahan baku terdaftar"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "NO_MATERIAL"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_DOC_INCOMPLETE",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "필수 서류 미비",
+   "en": "Required documents incomplete",
+   "id": "Dokumen wajib belum lengkap"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "DOC_INCOMPLETE"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "BLOCKER_SELF_DECLARE_ONLY",
+  "axis": "BLOCKER",
+  "labels": {
+   "ko": "자기선언 전용 항목",
+   "en": "Self-declare only",
+   "id": "Khusus self-declare"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "blocker_code": "SELF_DECLARE_ONLY"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_SIGNUP",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "회원가입",
+   "en": "Sign-up",
+   "id": "Pendaftaran"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "signup"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_APPLICATION",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "신청",
+   "en": "Application",
+   "id": "Permohonan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "application"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_PREASSESS",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "사전검토",
+   "en": "Pre-assessment",
+   "id": "Pra-penilaian"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "preassess"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_CONTRACT",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "계약",
+   "en": "Contract",
+   "id": "Kontrak"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "contract"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_PAYMENT",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "입금확인",
+   "en": "Payment confirmation",
+   "id": "Konfirmasi pembayaran"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "payment"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_MOCK_AUDIT",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "모의실사",
+   "en": "Mock audit",
+   "id": "Audit simulasi"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "mock_audit"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_ONSITE",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "현장실사",
+   "en": "On-site audit",
+   "id": "Audit lapangan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "onsite"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_EVALUATION",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "평가",
+   "en": "Evaluation",
+   "id": "Evaluasi"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "evaluation"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_FATWA",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "파트와",
+   "en": "Fatwa",
+   "id": "Fatwa"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "fatwa"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_CERTIFICATE",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "인증서",
+   "en": "Certificate",
+   "id": "Sertifikat"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "certificate"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_MONITORING",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "사후관리",
+   "en": "Post-certification monitoring",
+   "id": "Pemantauan pasca-sertifikasi"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "monitoring"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VAULT_COMPANY_INFO",
+  "axis": "VAULT_DOC",
+  "labels": {
+   "ko": "기업정보",
+   "en": "Company information",
+   "id": "Informasi perusahaan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "vault_doc": "company_info"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VAULT_CONTRACT",
+  "axis": "VAULT_DOC",
+  "labels": {
+   "ko": "계약서",
+   "en": "Contract",
+   "id": "Kontrak"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "vault_doc": "contract"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VAULT_SJPH_MANUAL",
+  "axis": "VAULT_DOC",
+  "labels": {
+   "ko": "SJPH 매뉴얼",
+   "en": "SJPH manual",
+   "id": "Manual SJPH"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "vault_doc": "sjph_manual"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VAULT_AUDIT_REPORT",
+  "axis": "VAULT_DOC",
+  "labels": {
+   "ko": "현장심사 보고서",
+   "en": "On-site audit report",
+   "id": "Laporan audit lapangan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "vault_doc": "audit_report"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VAULT_PREASSESS_REPORT",
+  "axis": "VAULT_DOC",
+  "labels": {
+   "ko": "사전심사 보고서",
+   "en": "Pre-assessment report",
+   "id": "Laporan pra-penilaian"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "vault_doc": "preassess_report"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VAULT_CERTIFICATE",
+  "axis": "VAULT_DOC",
+  "labels": {
+   "ko": "인증서",
+   "en": "Certificate",
+   "id": "Sertifikat"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "vault_doc": "certificate"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VAULT_INVOICE",
+  "axis": "VAULT_DOC",
+  "labels": {
+   "ko": "청구서",
+   "en": "Invoice",
+   "id": "Faktur"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "vault_doc": "invoice"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VAULT_FATWA_DECISION",
+  "axis": "VAULT_DOC",
+  "labels": {
+   "ko": "파트와 결정문",
+   "en": "Fatwa decision",
+   "id": "Keputusan fatwa"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "vault_doc": "fatwa_decision"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VAULT_SELF_DECLARATION",
+  "axis": "VAULT_DOC",
+  "labels": {
+   "ko": "자기선언서",
+   "en": "Self-declaration",
+   "id": "Deklarasi mandiri"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "vault_doc": "self_declaration"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "VAULT_OTHER",
+  "axis": "VAULT_DOC",
+  "labels": {
+   "ko": "기타",
+   "en": "Other",
+   "id": "Lainnya"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "vault_doc": "other"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGDIV_PRODUKSI",
+  "axis": "ORG_DIV",
+  "labels": {
+   "ko": "생산",
+   "en": "Production",
+   "id": "Produksi"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_div": "produksi"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGDIV_QC",
+  "axis": "ORG_DIV",
+  "labels": {
+   "ko": "QC",
+   "en": "QC",
+   "id": "QC"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_div": "qc"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGDIV_PURCHASING",
+  "axis": "ORG_DIV",
+  "labels": {
+   "ko": "구매",
+   "en": "Purchasing",
+   "id": "Pembelian"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_div": "purchasing"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGDIV_GUDANG",
+  "axis": "ORG_DIV",
+  "labels": {
+   "ko": "창고",
+   "en": "Warehouse",
+   "id": "Gudang"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_div": "gudang"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGDIV_RND",
+  "axis": "ORG_DIV",
+  "labels": {
+   "ko": "R&D",
+   "en": "R&D",
+   "id": "R&D"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_div": "rnd"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGDIV_OTHER",
+  "axis": "ORG_DIV",
+  "labels": {
+   "ko": "기타",
+   "en": "Other",
+   "id": "Lainnya"
+  },
+  "context": [
+   "ORG"
+  ],
+  "actions": {
+   "org_div": "other"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "REGSTATE_DRAFT",
+  "axis": "REG_STATE",
+  "labels": {
+   "ko": "초안",
+   "en": "Draft",
+   "id": "Draf"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "reg_state": "draft"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "REGSTATE_REVIEW",
+  "axis": "REG_STATE",
+  "labels": {
+   "ko": "검토중",
+   "en": "Under review",
+   "id": "Sedang ditinjau"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "reg_state": "review"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "REGSTATE_EFFECTIVE",
+  "axis": "REG_STATE",
+  "labels": {
+   "ko": "발효",
+   "en": "In effect",
+   "id": "Berlaku"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "reg_state": "effective"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "REGSTATE_RETIRED",
+  "axis": "REG_STATE",
+  "labels": {
+   "ko": "폐지",
+   "en": "Retired",
+   "id": "Dicabut"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "reg_state": "retired"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SEV_HIGH",
+  "axis": "SEVERITY",
+  "labels": {
+   "ko": "高·고위험",
+   "en": "High",
+   "id": "Tinggi"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "severity": "high"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SEV_MEDIUM",
+  "axis": "SEVERITY",
+  "labels": {
+   "ko": "中·중위험",
+   "en": "Medium",
+   "id": "Sedang"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "severity": "medium"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SEV_LOW",
+  "axis": "SEVERITY",
+  "labels": {
+   "ko": "低·저위험",
+   "en": "Low",
+   "id": "Rendah"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "severity": "low"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "INTAKEERR_COMPANY_NAME_MISSING",
+  "axis": "INTAKE_ERROR",
+  "labels": {
+   "ko": "회사명 미입력",
+   "en": "Company name missing",
+   "id": "Nama perusahaan kosong"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "intake_error": "COMPANY_NAME_MISSING"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "INTAKEERR_NIB_MISSING",
+  "axis": "INTAKE_ERROR",
+  "labels": {
+   "ko": "NIB 미입력",
+   "en": "NIB missing",
+   "id": "NIB kosong"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "intake_error": "NIB_MISSING"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "INTAKEERR_NO_PRODUCT",
+  "axis": "INTAKE_ERROR",
+  "labels": {
+   "ko": "제품 미등록",
+   "en": "No products registered",
+   "id": "Belum ada produk"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "intake_error": "NO_PRODUCT"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "GATE_REPORT_NOT_APPROVED",
+  "axis": "GATE",
+  "labels": {
+   "ko": "보고서 승인 필요",
+   "en": "Report approval required",
+   "id": "Perlu persetujuan laporan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "gate_code": "REPORT_NOT_APPROVED"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "GATE_AUDITOR_SIGN_REQUIRED",
+  "axis": "GATE",
+  "labels": {
+   "ko": "오디터 서명 필요",
+   "en": "Auditor signature required",
+   "id": "Perlu tanda tangan auditor"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "gate_code": "AUDITOR_SIGN_REQUIRED"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "GATE_SJPH_INCOMPLETE",
+  "axis": "GATE",
+  "labels": {
+   "ko": "SJPH 미완성",
+   "en": "SJPH incomplete",
+   "id": "SJPH belum lengkap"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "gate_code": "SJPH_INCOMPLETE"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "GENDOC_SJPH_MANUAL",
+  "axis": "GEN_DOC",
+  "labels": {
+   "ko": "SJPH 매뉴얼",
+   "en": "SJPH manual",
+   "id": "Manual SJPH"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "gen_doc": "sjph_manual"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "GENDOC_AUDIT_REPORT",
+  "axis": "GEN_DOC",
+  "labels": {
+   "ko": "현장심사 보고서",
+   "en": "On-site audit report",
+   "id": "Laporan audit lapangan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "gen_doc": "audit_report"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_HALAL_MANUAL",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "할랄매뉴얼",
+   "en": "Halal manual",
+   "id": "Manual halal"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "halal_manual"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WSSTAGE_AUDIT_REPORT",
+  "axis": "WS_STAGE",
+  "labels": {
+   "ko": "오디터리포트",
+   "en": "Audit report",
+   "id": "Laporan audit"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "ws_stage": "audit_report"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ORGDIV_UMUM",
+  "axis": "ORG_DIV",
+  "labels": {
+   "ko": "일반"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "org_div": "umum"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
  }
 ]
