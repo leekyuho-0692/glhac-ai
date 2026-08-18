@@ -10,33 +10,44 @@ _EXTRACT_SYS = (
 )
 
 # 결정적 설명 — ontology 사실에서 생성(LLM 환각 차단). 설계 원칙: 판정·설명=결정적.
-_SRC_KO = {"animal": "동물성", "plant": "식물성", "microbial": "미생물", "synthetic": "합성",
-           "insect": "곤충", "ferment": "발효", "mineral": "광물", "soy": "대두", "egg": "난류",
-           "fish": "어류", "yeast": "효모", "unknown": "출처불명"}
-_EV_KO = {"halal_cert": "할랄 인증서", "animal_source_declaration": "동물 출처 선언",
-          "source_declaration": "출처 선언", "alcohol_carrier_check": "알코올 캐리어(용매) 점검",
-          "composition_breakdown": "성분 조성 명세", "process_declaration": "공정 선언",
-          "halal_slaughter_cert": "할랄 도축 증명", "reformulation": "재배합(대체) 필요",
-          "carrier_check": "캐리어 점검", "rennet_source_declaration": "레닛 출처 선언",
-          "enzyme_source_declaration": "효소 출처 선언", "bone_char_free_declaration": "골탄 비사용 선언"}
-_STATUS_KO = {"haram": "금지(haram)", "mushbooh": "의심(mushbooh)", "halal": "허용(halal)"}
+#
+# 유래·증빙·판정 표기는 여기 따로 두지 않고 도메인 사전에서 꺼낸다. 표를 두 벌 두었더니
+# 같은 코드가 화면마다 다른 이름으로 나왔다(실측: animal 이 '동물'과 '동물성', unknown 이
+# '미상'과 '출처불명', 증빙 12개 중 11개가 다른 표기). 심사 화면에서 같은 개념이 다르게
+# 불리면 심사자가 다른 것으로 읽는다.
+from . import domain_dict as _dd
+
+
+def _srcs(lang="ko"):
+    return _dd.code_labels("SOURCE", "screen_source", lang)
+
+
+def _evs(lang="ko"):
+    return _dd.code_labels("EVIDENCE", "evidence_code", lang)
+
+
+def _sts(lang="ko"):
+    return _dd.code_labels("STATUS", "screen_status", lang)
 
 
 def _ko(items, mapping):
     return ", ".join(mapping.get(x, x) for x in (items or []))
 
 
-def build_explanation(criticals):
+def build_explanation(criticals, lang="ko"):
     """ontology 사실(출처·등급·증빙·대체재)로 결정적 설명 생성 — 환각 없음."""
+    L = _dd.text_fn(lang)
+    src_t, ev_t, st_t = _srcs(lang), _evs(lang), _sts(lang)
     lines = []
     for j in criticals:
-        srcs = _ko(j.get("sources"), _SRC_KO) or "출처 불명"
-        evs = _ko(j.get("required_evidence"), _EV_KO) or "성분 조성 명세"
-        alts = ", ".join(j.get("alternatives") or []) or "—"
-        st = _STATUS_KO.get(j.get("status"), "판정필요")
-        carrier = " · 알코올 캐리어(용매) 점검 필요" if j.get("carrier_check") == "alcohol" else ""
-        lines.append(f"· {j['name']}: {srcs} 유래 가능 ({st}, 위험 {j['severity']}){carrier}. "
-                     f"필요 증빙: {evs}. 대체재: {alts}.")
+        srcs = _ko(j.get("sources"), src_t) or L("미상")
+        evs = _ko(j.get("required_evidence"), ev_t) or ev_t.get("composition_breakdown",
+                                                                "composition_breakdown")
+        alts = ", ".join(_dd.text(a, lang) for a in (j.get("alternatives") or [])) or "—"
+        st = st_t.get(j.get("status")) or L("미판정")
+        carrier = (" · " + L("알코올 캐리어(용매) 점검 필요")) if j.get("carrier_check") == "alcohol" else ""
+        lines.append(f"· {j['name']}: {srcs} {L('유래 가능')} ({st}, {L('위험')} {j['severity']}){carrier}. "
+                     f"{L('필요 증빙')}: {evs}. {L('대체재')}: {alts}.")
     return "\n".join(lines)
 
 

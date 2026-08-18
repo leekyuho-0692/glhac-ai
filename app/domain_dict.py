@@ -37,6 +37,23 @@ def normalize(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
+# 표기 전용 축 — 화면 문구를 담을 뿐 이름 매칭에 쓰지 않는다.
+# 여기에 축을 추가할 때는 "이 말로 문서를 찾을 일이 있는가"를 먼저 답해야 한다.
+# 답이 아니오면 표기 전용이다.
+_DISPLAY_ONLY_AXES = {
+    "LABEL",            # 보고서·화면 문장
+    "MATERIAL_CAT",     # 성분 분류 표기
+    "SOURCE",           # 유래 표기
+    "EVIDENCE",         # 증빙 코드 표기
+    "ALTERNATIVE",      # 대체재 문구
+    "ENUM",             # 상태·판정 등 enum 표기
+    "SJPH_EVIDENCE",    # SJPH 증빙 항목 이름
+    "HPAS_ELEMENT",     # HPAS 5요소 이름
+    "HPAS_REASON",      # HPAS 판정 근거
+    "DOC_REQUIREMENT",  # 서류 요건 설명
+}
+
+
 def load(path=None):
     """사전 적재. 서버 기동·리로드 시 1회. 같은 표면형이 두 키에 걸리면 먼저 온 쪽을 둔다
     (중복은 사전 오류이므로 조용히 덮어쓰지 않는다)."""
@@ -52,9 +69,14 @@ def load(path=None):
         ko = (t.get("labels") or {}).get("ko")
         if ko:
             label_ko.setdefault(ko, key)      # 한국어 원문 → 키(보고서 문구 조회용)
-        if t.get("axis") == "LABEL":
-            # 보고서 문구는 문장이라 표면형 색인에 넣으면 lookup의 포함매칭을 오염시킨다.
-            # 정확일치 표(label_ko)로만 쓴다.
+        if t.get("axis") in _DISPLAY_ONLY_AXES:
+            # 표기 전용 항목은 표면형 색인에 넣지 않는다.
+            #
+            # 두 종류가 한 사전에 산다. (1) 매칭용 — 문서·성분 이름을 표준 키로 잇는다.
+            # (2) 표기용 — 코드값을 화면 문구로 바꾼다. 표기용을 매칭 색인에 넣으면
+            # '식품첨가물'·'할랄' 같은 말이 두 키에 걸려 조회가 갈리고, 문서 분류가
+            # 흔들린다(실측: UI 라벨을 사전에 옮기자 표면형 중복 54건이 터졌다).
+            # 표기용은 정확일치 표(label_ko)와 code_labels 로만 쓴다.
             continue
         cands = [t["id"]]
         for v in (t.get("labels") or {}).values():
@@ -263,6 +285,42 @@ def missing_protected(src, out, lang="id"):
     lo_src, lo_out = (src or "").lower(), (out or "").lower()
     return [t for t in protected_terms(lang)
             if t.lower() in lo_src and t.lower() not in lo_out]
+
+
+_CODE_LABEL_CACHE = {}
+
+
+def code_labels(axis, action_key, lang="ko"):
+    """축의 항목을 {코드: 표기} 표로 — actions[action_key] 값이 코드다.
+
+    코드값(halal·animal_protein·halal_cert)을 화면 문구로 바꾸는 표를 코드에 세 벌씩
+    두던 것을 사전 한 곳에서 꺼낸다. 표가 쪼개져 있으면 한쪽만 고쳐진다 — 실측으로
+    유래(_SOURCE) 표에서 한국어만 7개 비어 화면에 코드값이 그대로 나오고 있었다."""
+    ck = (axis, action_key, (lang or "ko").lower())
+    if ck not in _CODE_LABEL_CACHE:
+        _ensure()
+        out = {}
+        for k in by_axis(axis):
+            code = (actions(k) or {}).get(action_key)
+            if not code:
+                continue
+            v = (term(k).get("labels") or {}).get(ck[2])
+            if v:
+                out[code] = v
+        _CODE_LABEL_CACHE[ck] = out
+    return dict(_CODE_LABEL_CACHE[ck])
+
+
+def axis_text_map(axis, lang):
+    """한국어 문구를 키로 쓰는 축(LABEL 등)의 {한국어: 해당언어} 표."""
+    _ensure()
+    out = {}
+    for k in by_axis(axis):
+        lb = term(k).get("labels") or {}
+        ko, v = lb.get("ko"), lb.get((lang or "ko").lower())
+        if ko and v:
+            out[ko] = v
+    return out
 
 
 def stats():

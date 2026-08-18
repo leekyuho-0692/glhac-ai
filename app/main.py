@@ -23,6 +23,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from .db import Base, engine, get_db, SessionLocal
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from . import observability as obs
+from . import domain_dict as _dd_mod
 from .ontology_seed import seed
 
 app = FastAPI(title="GL-HAC AI Dual-Pathway API", version="0.2.0")
@@ -11415,22 +11416,17 @@ def add_discussion(case_id: str, body: schemas.DiscussionReq,
     return {"id": d.id}
 
 
-_STATE_KO = {
-    "onboarding": "온보딩", "application_draft": "신청서 작성",
-    "ai_pre_assessment_ready": "AI 사전평가 준비", "ai_pre_assessment_running": "AI 사전평가 진행",
-    "pathway_determination": "경로 판정", "self_declare_eligible": "자기선언 적격",
-    "sjph_lite_prepared": "간이 SJPH 준비", "pendamping_verification": "동반자 검증",
-    "self_declaration_submitted": "자기선언 제출", "committee_verification": "위원회 확인",
-    "supplementation_required": "보완 요청", "supplementation_submitted": "보완 제출",
-    "consultant_review": "컨설턴트 검토", "document_pre_audit_requested": "문서 사전심사 요청",
-    "document_pre_audit_in_review": "문서 사전심사 검토", "document_pre_audit_approved": "문서 사전심사 승인",
-    "lph_assignment": "LPH 배정", "onsite_audit_scheduled": "현장심사 예정",
-    "onsite_audit_in_progress": "현장심사 진행", "corrective_action_required": "시정조치 요청",
-    "corrective_action_submitted": "시정조치 제출", "audit_closed": "심사 종결",
-    "hpas_evaluation_ready": "HPAS 평가", "final_package_preparation": "최종 패키지 준비",
-    "fatwa_review": "파트와 검토", "fatwa_approved": "파트와 승인", "certificate_issued": "인증서 발급",
-    "post_certification_monitoring": "사후 모니터링", "change_impact": "변경 영향", "renewal_preparation": "갱신 준비",
-}
+# 케이스 상태 표기 — 사전(ENUM 축)에서 꺼낸다. 같은 상태 이름을 서버와 프런트가
+# 따로 갖고 있었다. 지금은 값이 같지만 한쪽만 고쳐지는 건 시간 문제다
+# (실측: 유래 표는 이미 그렇게 갈라져 한국어만 7개가 비어 있었다).
+_STATE_KO = _dd_mod.code_labels("ENUM", "enum_code", "ko")
+
+
+def state_label(code, lang="ko"):
+    """상태 코드 → 표기. 모르는 코드는 코드 그대로 — 지어내지 않는다."""
+    return _dd_mod.code_labels("ENUM", "enum_code", lang).get(code, code)
+
+
 _WF_COMMON = [("prep", "신청서 작성", ["onboarding", "application_draft"]),
               ("assess", "AI 사전평가", ["ai_pre_assessment_ready", "ai_pre_assessment_running"]),
               ("pathway", "경로 판정", ["pathway_determination"])]
@@ -12518,15 +12514,10 @@ def _fn_show(d, lang):
 
 # 사전심사 체크리스트에서 조립되는 짧은 문구 — 표 밖에서 문자열로 만들어져
 # 번역을 못 받고 있었다. %d 는 인증번호 건수(언어마다 자리가 달라 문장째 둔다).
-_CHECKLIST_L10N = {
-    "업로드 파일": {"ko": "업로드 파일", "en": "Uploaded file", "id": "Berkas unggahan"},
-    "생성 문서": {"ko": "생성 문서", "en": "Generated document", "id": "Dokumen hasil sistem"},
-    "공급사 인증번호 확보 — 원본 서류 미제출(번호 대조는 오디터)": {
-        "ko": "공급사 인증번호 %d건 확보 — 원본 서류 미제출(번호 대조는 오디터)",
-        "en": "%d supplier certificate numbers on file — original documents not submitted (the auditor verifies the numbers)",
-        "id": "%d nomor sertifikat pemasok tersedia — dokumen asli belum diunggah (auditor yang mencocokkan nomor)"},
-}
-
+# 체크리스트에서 조립되는 짧은 문구 — 사전에서 꺼낸다.
+_CHECKLIST_L10N = {ko: {lg: _dd_mod.text(ko, lg) for lg in ("ko", "en", "id")}
+                   for ko in ("업로드 파일", "생성 문서",
+                              "공급사 인증번호 확보 — 원본 서류 미제출(번호 대조는 오디터)")}
 
 def _intake_doc_names(lang):
     """서류명 표 — 지원 언어면 그 표를, 아니면 한국어 표를 돌려준다(빈칸 방지)."""
@@ -13003,19 +12994,9 @@ SJPH_EVIDENCE_ITEMS = [
 ]
 # 증빙 항목 이름은 업체가 무엇을 올려야 하는지 보는 문구다 — 한국어만 두면 인니 업체가
 # 무슨 서류인지 알 수 없다.
-SJPH_EVIDENCE_L10N = {
-    "en": {"halal_supervisor": "Halal supervisor appointment letter", "training": "Halal training record",
-           "facility_layout": "Facility layout", "production_flow": "Production process flowchart",
-           "purchase_log": "Purchase record", "receiving_log": "Incoming goods record",
-           "usage_log": "Usage record", "production_log": "Production record",
-           "distribution_log": "Outgoing goods record", "internal_audit": "Internal audit record"},
-    "id": {"halal_supervisor": "Surat penetapan penyelia halal", "training": "Bukti pelatihan halal",
-           "facility_layout": "Denah fasilitas", "production_flow": "Diagram alir proses produksi",
-           "purchase_log": "Catatan pembelian", "receiving_log": "Catatan penerimaan barang",
-           "usage_log": "Catatan penggunaan", "production_log": "Catatan hasil produksi",
-           "distribution_log": "Catatan pengeluaran barang", "internal_audit": "Catatan audit internal"},
-}
-
+# 증빙 항목 이름은 업체가 무엇을 올려야 하는지 보는 문구다 — 사전 한 곳에서 꺼낸다.
+SJPH_EVIDENCE_L10N = {lg: _dd_mod.code_labels("SJPH_EVIDENCE", "sjph_evidence", lg)
+                      for lg in ("en", "id")}
 
 def _evidence_label(key, ko, lang="ko"):
     return (SJPH_EVIDENCE_L10N.get((lang or "ko").lower()) or {}).get(key) or ko
@@ -13023,26 +13004,17 @@ def _evidence_label(key, ko, lang="ko"):
 
 # HPAS 5요소 — 이름과 '왜 이 판정인지'를 함께 현지화한다. 판정 근거가 한국어로 남으면
 # 인니 심사자는 결과만 보고 이유를 못 읽는다.
-_HPAS_L10N = {
-    "ko": {"commitment": "책임과 약속", "materials": "원재료", "process": "할랄제품공정",
-           "product": "제품", "monitoring": "모니터링·평가",
-           "r_commitment": "할랄감독자 지정+교육 증빙", "r_materials": "임계원재료 %d건",
-           "r_process": "공정 흐름도 증빙", "r_product": "제품 %d·사진 %d",
-           "r_monitoring": "내부 심사 기록"},
-    "en": {"commitment": "Commitment & responsibility", "materials": "Raw materials",
-           "process": "Halal production process", "product": "Product",
-           "monitoring": "Monitoring & evaluation",
-           "r_commitment": "Supervisor appointment + training evidence",
-           "r_materials": "%d critical raw materials", "r_process": "Process flowchart evidence",
-           "r_product": "%d products · %d photos", "r_monitoring": "Internal audit record"},
-    "id": {"commitment": "Komitmen & tanggung jawab", "materials": "Bahan baku",
-           "process": "Proses produksi halal", "product": "Produk",
-           "monitoring": "Pemantauan & evaluasi",
-           "r_commitment": "Penetapan penyelia + bukti pelatihan",
-           "r_materials": "%d bahan kritis", "r_process": "Bukti diagram alir proses",
-           "r_product": "%d produk · %d foto", "r_monitoring": "Catatan audit internal"},
-}
+# HPAS 5요소 — 이름과 '왜 이 판정인지'를 함께 사전에서. 판정 근거가 한국어로 남으면
+# 인니 심사자는 결과만 보고 이유를 못 읽는다.
+def _hpas_l10n(lang):
+    el = _dd_mod.code_labels("HPAS_ELEMENT", "hpas_element", lang)
+    rsn = _dd_mod.code_labels("HPAS_REASON", "hpas_reason", lang)
+    out = dict(el)
+    out.update({"r_" + k: v for k, v in rsn.items()})
+    return out
 
+
+_HPAS_L10N = {lg: _hpas_l10n(lg) for lg in ("ko", "en", "id")}
 
 # 본문까지 열어볼 문서 유형 — 유형이 이미 특정된 문서는 여기서 제외한다.
 _BODY_PARSE_TYPES = {"other", "sjph_manual", "sjph_evidence"}

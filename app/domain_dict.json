@@ -859,9 +859,9 @@
   "id": "STATUS_HALAL",
   "axis": "STATUS",
   "labels": {
-   "id": "Halal",
+   "id": "halal (diperbolehkan)",
    "ko": "할랄(허용)",
-   "en": "Halal (permitted)"
+   "en": "halal (permitted)"
   },
   "surface": {
    "id": [
@@ -892,9 +892,9 @@
   "id": "STATUS_HARAM",
   "axis": "STATUS",
   "labels": {
-   "id": "Haram",
+   "id": "haram (dilarang)",
    "ko": "금지(하람)",
-   "en": "Haram (prohibited)"
+   "en": "haram (prohibited)"
   },
   "surface": {
    "id": [
@@ -927,9 +927,9 @@
   "id": "STATUS_SYUBHAT",
   "axis": "STATUS",
   "labels": {
-   "id": "Syubhat",
-   "ko": "의심(무슈부흐)",
-   "en": "Doubtful (mushbooh)"
+   "id": "syubhat (mushbooh)",
+   "ko": "의심(mushbooh/샤부하)",
+   "en": "doubtful (mushbooh)"
   },
   "surface": {
    "id": [
@@ -3307,6 +3307,3488 @@
   "authority": "UU 33/2014 · PP 39/2021",
   "source": [
    "BPJPH"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_ACID",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "산도조절제",
+   "en": "acidity regulator",
+   "id": "pengatur keasaman"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "acid"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_ADDITIVE",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "식품첨가물",
+   "en": "additive",
+   "id": "bahan tambahan pangan"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "additive"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_ALCOHOL",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "알코올",
+   "en": "alcohol",
+   "id": "alkohol"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "alcohol"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_ANIMAL_FAT",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "동물성 지방",
+   "en": "animal fat",
+   "id": "lemak hewani"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "animal_fat"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_ANIMAL_PROTEIN",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "동물성 단백질",
+   "en": "animal protein",
+   "id": "protein hewani"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "animal_protein"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_BASE",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "기초 원료",
+   "en": "base material",
+   "id": "bahan dasar"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "base"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_CARBOHYDRATE",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "탄수화물/당류",
+   "en": "carbohydrate/sugar",
+   "id": "karbohidrat/gula"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "carbohydrate"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_COLORANT",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "색소",
+   "en": "colorant",
+   "id": "pewarna"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "colorant"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_EMULSIFIER",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "유화제",
+   "en": "emulsifier",
+   "id": "pengemulsi"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "emulsifier"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_ENZYME",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "효소",
+   "en": "enzyme",
+   "id": "enzim"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "enzyme"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_FERMENT",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "발효산물",
+   "en": "fermentation product",
+   "id": "produk fermentasi"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "ferment"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_FLAVOR",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "향료",
+   "en": "flavor",
+   "id": "perisa"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "flavor"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_FLAVOR_ENHANCER",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "향미증진제",
+   "en": "flavor enhancer",
+   "id": "penguat rasa"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "flavor_enhancer"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_GELATIN",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "젤라틴",
+   "en": "gelatin",
+   "id": "gelatin"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "gelatin"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_GLAZING",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "피막제",
+   "en": "glazing agent",
+   "id": "bahan pelapis"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "glazing"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_MINERAL",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "광물/무기질",
+   "en": "mineral",
+   "id": "mineral"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "mineral"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_OTHER",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "기타",
+   "en": "other",
+   "id": "lainnya"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "other"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_PRESERVATIVE",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "보존료",
+   "en": "preservative",
+   "id": "pengawet"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "preservative"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_PROCESSING_AID",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "가공보조제",
+   "en": "processing aid",
+   "id": "bahan penolong"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "processing_aid"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_SWEETENER",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "감미료",
+   "en": "sweetener",
+   "id": "pemanis"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "sweetener"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CAT_VITAMIN",
+  "axis": "MATERIAL_CAT",
+  "labels": {
+   "ko": "비타민",
+   "en": "vitamin",
+   "id": "vitamin"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_category": "vitamin"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_ANIMAL",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "동물",
+   "en": "animal",
+   "id": "hewani"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "animal"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_DAIRY",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "유제품",
+   "en": "dairy",
+   "id": "susu"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "dairy"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_FERMENT",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "발효",
+   "en": "fermentation",
+   "id": "fermentasi"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "ferment"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_HUMAN",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "인체 유래",
+   "en": "human",
+   "id": "manusia"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "human"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_INSECT",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "곤충",
+   "en": "insect",
+   "id": "serangga"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "insect"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_MARINE",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "해양 생물",
+   "en": "marine",
+   "id": "laut"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "marine"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_MICROBE",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "미생물",
+   "en": "microbial",
+   "id": "mikroba"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "microbe"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_MICROBIAL",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "미생물",
+   "en": "microbial",
+   "id": "mikroba"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "microbial"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_MINERAL",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "광물",
+   "en": "mineral",
+   "id": "mineral"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "mineral"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_PETROCHEMICAL",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "석유화학",
+   "en": "petrochemical",
+   "id": "petrokimia"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "petrochemical"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_PLANT",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "식물",
+   "en": "plant",
+   "id": "nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "plant"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_SYNTHETIC",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "합성",
+   "en": "synthetic",
+   "id": "sintetis"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "synthetic"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_UNKNOWN",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "미상",
+   "en": "unknown",
+   "id": "tidak diketahui"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "unknown"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_ALCOHOL_CARRIER_CHECK",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "알코올 캐리어 확인",
+   "en": "alcohol carrier check",
+   "id": "pemeriksaan pembawa alkohol"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "alcohol_carrier_check"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_ANIMAL_SOURCE_DECLARATION",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "동물 유래 선언서",
+   "en": "animal source declaration",
+   "id": "deklarasi sumber hewani"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "animal_source_declaration"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_BONE_CHAR_FREE_DECLARATION",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "골탄(骨炭) 미사용 선언서",
+   "en": "bone-char-free declaration",
+   "id": "deklarasi bebas arang tulang"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "bone_char_free_declaration"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_CARRIER_CHECK",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "캐리어 확인",
+   "en": "carrier check",
+   "id": "pemeriksaan bahan pembawa"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "carrier_check"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_CARRIER_DECLARATION",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "캐리어 선언서",
+   "en": "carrier declaration",
+   "id": "deklarasi bahan pembawa"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "carrier_declaration"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_COMPOSITION_BREAKDOWN",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "성분 조성 내역",
+   "en": "composition breakdown",
+   "id": "rincian komposisi"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "composition_breakdown"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_ENZYME_SOURCE_DECLARATION",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "효소 유래 선언서",
+   "en": "enzyme source declaration",
+   "id": "deklarasi sumber enzim"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "enzyme_source_declaration"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_HALAL_CERT",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "할랄 인증서",
+   "en": "halal certificate",
+   "id": "sertifikat halal"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "halal_cert"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_HALAL_SLAUGHTER_CERT",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "할랄 도축 증명서",
+   "en": "halal slaughter certificate",
+   "id": "sertifikat penyembelihan halal"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "halal_slaughter_cert"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_HALAL_SLAUGHTER_CERTIFICATE",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "할랄 도축 증명서",
+   "en": "halal slaughter certificate",
+   "id": "sertifikat penyembelihan halal"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "halal_slaughter_certificate"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_PROCESS_DECLARATION",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "공정 선언서",
+   "en": "process declaration",
+   "id": "deklarasi proses"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "process_declaration"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_REFORMULATION",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "배합 변경(대체)",
+   "en": "reformulation",
+   "id": "reformulasi"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "reformulation"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_RENNET_SOURCE_DECLARATION",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "레닛 유래 선언서",
+   "en": "rennet source declaration",
+   "id": "deklarasi sumber renet"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "rennet_source_declaration"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_RESIDUAL_ALCOHOL_TEST",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "잔류 알코올 시험성적서",
+   "en": "residual alcohol test",
+   "id": "uji residu alkohol"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "residual_alcohol_test"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_SOURCE_DECLARATION",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "유래 선언서",
+   "en": "source declaration",
+   "id": "deklarasi sumber"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "source_declaration"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EVID_SUPPLIER_HALAL_CERT",
+  "axis": "EVIDENCE",
+  "labels": {
+   "ko": "공급사 할랄 인증서",
+   "en": "supplier halal certificate",
+   "id": "sertifikat halal pemasok"
+  },
+  "context": [
+   "MATERIAL",
+   "AUDIT"
+  ],
+  "actions": {
+   "evidence_code": "supplier_halal_cert"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_A6EF8C90EE",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "HPMC 식물성 캡슐",
+   "en": "HPMC plant capsule",
+   "id": "kapsul nabati HPMC"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_A92AA2E9BE",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "PG 캐리어 향료",
+   "en": "PG-carrier flavor",
+   "id": "perisa berpembawa PG"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_272815F8E0",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "광물 인산염",
+   "en": "mineral phosphate",
+   "id": "fosfat mineral"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_B9C8CE976A",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "미생물 rennet whey",
+   "en": "microbial-rennet whey",
+   "id": "whey renet mikroba"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_85705C62AE",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성",
+   "en": "plant-based",
+   "id": "nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_3206B1EA62",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성 E471",
+   "en": "plant-based E471",
+   "id": "E471 nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_1DD13F3AF7",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성 carbon",
+   "en": "plant-based carbon",
+   "id": "karbon nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_E8D480768C",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성 색소",
+   "en": "plant-based colorant",
+   "id": "pewarna nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_7CD22FB989",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성 쇼트닝",
+   "en": "plant-based shortening",
+   "id": "shortening nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_BFF521B09E",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성 스테아르산",
+   "en": "plant-based stearic acid",
+   "id": "asam stearat nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_96D94D6053",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성 왁스",
+   "en": "plant wax",
+   "id": "lilin nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_C60F398C12",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성 지방산",
+   "en": "plant fatty acid",
+   "id": "asam lemak nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_6691E11896",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성 캐리어 카로틴",
+   "en": "plant-carrier carotene",
+   "id": "karoten berpembawa nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_3556FD760E",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성 코팅",
+   "en": "plant-based coating",
+   "id": "pelapis nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_6EDEB5AF05",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성/합성 글리세린",
+   "en": "plant/synthetic glycerin",
+   "id": "gliserin nabati/sintetis"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_4FE2CEE544",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "식물성유",
+   "en": "vegetable oil",
+   "id": "minyak nabati"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_F3289C0328",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "알코올프리 바닐라",
+   "en": "alcohol-free vanilla",
+   "id": "vanila bebas alkohol"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_AEC9D68997",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "알코올프리 향료",
+   "en": "alcohol-free flavor",
+   "id": "perisa bebas alkohol"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_905CF64B0C",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "카나우바 왁스",
+   "en": "carnauba wax",
+   "id": "lilin karnauba"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_A68C9A27C8",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "할랄 전용 라인·세척(사무) 절차로 관리 — 제품 성분이 아님",
+   "en": "Managed by a dedicated halal line and cleaning (sanitation) procedure — not a product ingredient",
+   "id": "Dikelola melalui lini khusus halal dan prosedur pembersihan (sanitasi) — bukan bahan produk"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_A9CB3A429A",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "합성 cysteine",
+   "en": "synthetic cysteine",
+   "id": "sistein sintetis"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_03181BEAFE",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "합성 glycine",
+   "en": "synthetic glycine",
+   "id": "glisin sintetis"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_6C4CC3AA60",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "활성탄",
+   "en": "activated carbon",
+   "id": "karbon aktif"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ALT_C84E265BDA",
+  "axis": "ALTERNATIVE",
+  "labels": {
+   "ko": "효모 유래",
+   "en": "yeast-derived",
+   "id": "berasal dari ragi"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_SOY",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "대두",
+   "en": "soy",
+   "id": "kedelai"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "soy"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_EGG",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "난류",
+   "en": "egg",
+   "id": "telur"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "egg"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_FISH",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "어류",
+   "en": "fish",
+   "id": "ikan"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "fish"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SRC_YEAST",
+  "axis": "SOURCE",
+  "labels": {
+   "ko": "효모",
+   "en": "yeast",
+   "id": "ragi"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {
+   "screen_source": "yeast"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_6F8050329E",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "미판정",
+   "en": "Not assessed",
+   "id": "Belum dinilai"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_02BDCB1730",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "유래 가능",
+   "en": "possible origin",
+   "id": "kemungkinan asal"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_504B38324D",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "위험",
+   "en": "risk",
+   "id": "risiko"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "LBL_04A931AADA",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "알코올 캐리어(용매) 점검 필요",
+   "en": "alcohol carrier (solvent) check required",
+   "id": "perlu pemeriksaan pembawa (pelarut) alkohol"
+  },
+  "context": [
+   "MATERIAL"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_ACTIVE",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "활성",
+   "en": "Active",
+   "id": "Aktif"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "active"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_AI_PRE_ASSESSMENT_READY",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "AI 사전평가 준비",
+   "en": "AI Pre-Assessment Ready",
+   "id": "Pra-penilaian AI siap"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "ai_pre_assessment_ready"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_AI_PRE_ASSESSMENT_RUNNING",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "AI 사전평가 진행",
+   "en": "AI Pre-Assessment Running",
+   "id": "Pra-penilaian AI berjalan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "ai_pre_assessment_running"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_ANGGOTA",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "팀원",
+   "en": "Team Member",
+   "id": "Anggota"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "anggota"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_APPLICATION_DRAFT",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "신청서 작성",
+   "en": "Application Draft",
+   "id": "Draf aplikasi"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "application_draft"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_APPROVED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "승인",
+   "en": "Approved",
+   "id": "Disetujui"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "approved"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_AUDIT_CLOSED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "심사 종결",
+   "en": "Audit Closed",
+   "id": "Audit ditutup"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "audit_closed"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_BLOCKED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "차단",
+   "en": "Blocked",
+   "id": "Terblokir"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "blocked"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_CERTIFICATE_ISSUED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "인증서 발급",
+   "en": "Certificate Issued",
+   "id": "Sertifikat diterbitkan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "certificate_issued"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_CERTIFICATION",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "인증심사",
+   "en": "Certification Audit",
+   "id": "Sertifikasi"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "certification"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_CHANGE_IMPACT",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "변경 영향",
+   "en": "Change Impact",
+   "id": "Dampak perubahan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "change_impact"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_CLOSED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "종결",
+   "en": "Closed",
+   "id": "Selesai"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "closed"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_COMMITTEE_VERIFICATION",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "위원회 확인",
+   "en": "Committee Verification",
+   "id": "Verifikasi komite"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "committee_verification"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_COMPLY",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "충족",
+   "en": "Comply",
+   "id": "Sesuai"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "comply"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_CONDITIONAL",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "조건부",
+   "en": "Conditional",
+   "id": "Bersyarat"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "conditional"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_CONSULTANT_REVIEW",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "컨설턴트 검토",
+   "en": "Consultant Review",
+   "id": "Tinjauan konsultan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "consultant_review"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_CORRECTIVE_ACTION_REQUIRED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "시정조치 요청",
+   "en": "Corrective Action Required",
+   "id": "Tindakan korektif diperlukan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "corrective_action_required"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_CORRECTIVE_ACTION_SUBMITTED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "시정조치 제출",
+   "en": "Corrective Action Submitted",
+   "id": "Tindakan korektif diajukan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "corrective_action_submitted"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_CRITICAL",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "치명",
+   "en": "Critical",
+   "id": "Kritis"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "critical"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_DOCUMENT_PRE_AUDIT_APPROVED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "문서 사전심사 승인",
+   "en": "Document Pre-audit Approved",
+   "id": "Pra-audit dokumen disetujui"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "document_pre_audit_approved"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_DOCUMENT_PRE_AUDIT_IN_REVIEW",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "문서 사전심사 검토",
+   "en": "Document Pre-audit In Review",
+   "id": "Pra-audit dokumen ditinjau"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "document_pre_audit_in_review"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_DOCUMENT_PRE_AUDIT_REQUESTED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "문서 사전심사 요청",
+   "en": "Document Pre-audit Requested",
+   "id": "Pra-audit dokumen diminta"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "document_pre_audit_requested"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_FATWA_APPROVED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "파트와 승인",
+   "en": "Fatwa Approved",
+   "id": "Fatwa disetujui"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "fatwa_approved"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_FATWA_REVIEW",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "파트와 검토",
+   "en": "Fatwa Review",
+   "id": "Tinjauan fatwa"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "fatwa_review"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_FINAL_PACKAGE_PREPARATION",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "최종 패키지 준비",
+   "en": "Final Package Preparation",
+   "id": "Persiapan paket akhir"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "final_package_preparation"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_GAP",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "보완",
+   "en": "Gap",
+   "id": "Kurang"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "gap"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_HALAL",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "할랄",
+   "en": "Halal",
+   "id": "Halal"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "halal"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_HARAM",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "하람",
+   "en": "Haram",
+   "id": "Haram"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "haram"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_HPAS_EVALUATION_READY",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "HPAS 평가",
+   "en": "HPAS Evaluation",
+   "id": "Evaluasi HPAS"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "hpas_evaluation_ready"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_INACTIVE",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "비활성",
+   "en": "Inactive",
+   "id": "Nonaktif"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "inactive"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_KETUA",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "팀장",
+   "en": "Team Leader",
+   "id": "Ketua"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "ketua"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_LPH_ASSIGNMENT",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "LPH 배정",
+   "en": "LPH Assignment",
+   "id": "Penugasan LPH"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "lph_assignment"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_MAJOR",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "중대",
+   "en": "Major",
+   "id": "Mayor"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "major"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_MINOR",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "경미",
+   "en": "Minor",
+   "id": "Minor"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "minor"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_MUSHBOOH",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "의심",
+   "en": "Mushbooh",
+   "id": "Meragukan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "mushbooh"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_NONCONFORMITY",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "부적합",
+   "en": "Non-conformity",
+   "id": "Ketidaksesuaian"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "nonconformity"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_NONE",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "없음",
+   "en": "None",
+   "id": "Tidak ada"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "none"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_NOT_CHECKED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "미확인",
+   "en": "Not Checked",
+   "id": "Belum dicek"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "not_checked"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_NOT_READY",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "미준비",
+   "en": "Not Ready",
+   "id": "Belum siap"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "not_ready"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_OBSERVATION",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "관찰",
+   "en": "Observation",
+   "id": "Observasi"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "observation"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_OK",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "양호",
+   "en": "OK",
+   "id": "Baik"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "ok"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_ONBOARDING",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "온보딩",
+   "en": "Onboarding",
+   "id": "Pendaftaran"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "onboarding"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_ONSITE",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "현장심사",
+   "en": "On-site Audit",
+   "id": "Lapangan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "onsite"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_ONSITE_AUDIT_IN_PROGRESS",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "현장심사 진행",
+   "en": "On-site Audit In Progress",
+   "id": "Audit lapangan berlangsung"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "onsite_audit_in_progress"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_ONSITE_AUDIT_SCHEDULED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "현장심사 예정",
+   "en": "On-site Audit Scheduled",
+   "id": "Audit lapangan dijadwalkan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "onsite_audit_scheduled"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_OPEN",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "미해결",
+   "en": "Open",
+   "id": "Terbuka"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "open"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_PAID",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "결제완료",
+   "en": "Paid",
+   "id": "Lunas"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "paid"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_PATHWAY_DETERMINATION",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "경로 판정",
+   "en": "Pathway Determination",
+   "id": "Penentuan jalur"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "pathway_determination"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_PENDAMPING_VERIFICATION",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "동반자 검증",
+   "en": "Pendamping Verification",
+   "id": "Verifikasi pendamping"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "pendamping_verification"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_PENDING",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "대기",
+   "en": "Pending",
+   "id": "Menunggu"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "pending"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_POST_CERTIFICATION_MONITORING",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "사후 모니터링",
+   "en": "Post-certification Monitoring",
+   "id": "Pemantauan pasca-sertifikasi"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "post_certification_monitoring"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_PRE_AUDIT",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "사전심사",
+   "en": "Pre-assessment",
+   "id": "Pra-audit"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "pre_audit"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_PROVISIONAL",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "가승인",
+   "en": "Provisional",
+   "id": "Persetujuan awal"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "provisional"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_READY",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "준비완료",
+   "en": "Ready",
+   "id": "Siap"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "ready"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_REGULER",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "정규",
+   "en": "Regular",
+   "id": "Reguler"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "reguler"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_REJECTED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "반려",
+   "en": "Rejected",
+   "id": "Ditolak"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "rejected"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_RENEWAL_PREPARATION",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "갱신 준비",
+   "en": "Renewal Preparation",
+   "id": "Persiapan perpanjangan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "renewal_preparation"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_REWORK",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "재작업",
+   "en": "Rework",
+   "id": "Perbaikan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "rework"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_SELF_DECLARATION_SUBMITTED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "자기선언 제출",
+   "en": "Self-Declaration Submitted",
+   "id": "Self-declare diajukan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "self_declaration_submitted"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_SELF_DECLARE",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "자기선언",
+   "en": "Self-Declaration",
+   "id": "Self-declare"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "self_declare"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_SELF_DECLARE_ELIGIBLE",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "자기선언 적격",
+   "en": "Self-Declare Eligible",
+   "id": "Layak self-declare"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "self_declare_eligible"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_SJPH_LITE_PREPARED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "간이 SJPH 준비",
+   "en": "SJPH Lite Prepared",
+   "id": "SJPH ringkas disiapkan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "sjph_lite_prepared"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_SUBMITTED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "제출됨",
+   "en": "Submitted",
+   "id": "Diajukan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "submitted"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_SUBMITTED_BY_APPLICANT",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "신청자 제출",
+   "en": "Submitted by Applicant",
+   "id": "Diajukan pemohon"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "submitted_by_applicant"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_SUPERVISION",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "감독",
+   "en": "Supervision",
+   "id": "Pengawasan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "supervision"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_SUPPLEMENTATION_REQUIRED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "보완 요청",
+   "en": "Supplementation Required",
+   "id": "Perlu pelengkapan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "supplementation_required"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_SUPPLEMENTATION_SUBMITTED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "보완 제출",
+   "en": "Supplementation Submitted",
+   "id": "Pelengkapan diajukan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "supplementation_submitted"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_UNDETERMINED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "미정",
+   "en": "Undetermined",
+   "id": "Belum ditentukan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "undetermined"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_UNPAID",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "미결제",
+   "en": "Unpaid",
+   "id": "Belum bayar"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "unpaid"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_VERIFIED",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "검증완료",
+   "en": "Verified",
+   "id": "Terverifikasi"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "verified"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "ENUM_WARN",
+  "axis": "ENUM",
+  "labels": {
+   "ko": "주의",
+   "en": "Caution",
+   "id": "Perhatian"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "enum_code": "warn"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPHEV_HALAL_SUPERVISOR",
+  "axis": "SJPH_EVIDENCE",
+  "labels": {
+   "ko": "할랄감독자 지정서",
+   "en": "Halal supervisor appointment letter",
+   "id": "Surat penetapan penyelia halal"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "sjph_evidence": "halal_supervisor"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPHEV_TRAINING",
+  "axis": "SJPH_EVIDENCE",
+  "labels": {
+   "ko": "할랄 교육 이수",
+   "en": "Halal training record",
+   "id": "Bukti pelatihan halal"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "sjph_evidence": "training"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPHEV_FACILITY_LAYOUT",
+  "axis": "SJPH_EVIDENCE",
+  "labels": {
+   "ko": "시설 배치도",
+   "en": "Facility layout",
+   "id": "Denah fasilitas"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "sjph_evidence": "facility_layout"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPHEV_PRODUCTION_FLOW",
+  "axis": "SJPH_EVIDENCE",
+  "labels": {
+   "ko": "생산 공정 흐름도",
+   "en": "Production process flowchart",
+   "id": "Diagram alir proses produksi"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "sjph_evidence": "production_flow"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPHEV_PURCHASE_LOG",
+  "axis": "SJPH_EVIDENCE",
+  "labels": {
+   "ko": "구매 기록",
+   "en": "Purchase record",
+   "id": "Catatan pembelian"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "sjph_evidence": "purchase_log"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPHEV_RECEIVING_LOG",
+  "axis": "SJPH_EVIDENCE",
+  "labels": {
+   "ko": "입고 기록",
+   "en": "Incoming goods record",
+   "id": "Catatan penerimaan barang"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "sjph_evidence": "receiving_log"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPHEV_USAGE_LOG",
+  "axis": "SJPH_EVIDENCE",
+  "labels": {
+   "ko": "사용 기록",
+   "en": "Usage record",
+   "id": "Catatan penggunaan"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "sjph_evidence": "usage_log"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPHEV_PRODUCTION_LOG",
+  "axis": "SJPH_EVIDENCE",
+  "labels": {
+   "ko": "생산 기록",
+   "en": "Production record",
+   "id": "Catatan hasil produksi"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "sjph_evidence": "production_log"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPHEV_DISTRIBUTION_LOG",
+  "axis": "SJPH_EVIDENCE",
+  "labels": {
+   "ko": "출고 기록",
+   "en": "Outgoing goods record",
+   "id": "Catatan pengeluaran barang"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "sjph_evidence": "distribution_log"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "SJPHEV_INTERNAL_AUDIT",
+  "axis": "SJPH_EVIDENCE",
+  "labels": {
+   "ko": "내부 심사 기록",
+   "en": "Internal audit record",
+   "id": "Catatan audit internal"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "sjph_evidence": "internal_audit"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASEL_COMMITMENT",
+  "axis": "HPAS_ELEMENT",
+  "labels": {
+   "ko": "책임과 약속",
+   "en": "Commitment & responsibility",
+   "id": "Komitmen & tanggung jawab"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_element": "commitment"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASRSN_COMMITMENT",
+  "axis": "HPAS_REASON",
+  "labels": {
+   "ko": "할랄감독자 지정+교육 증빙",
+   "en": "Supervisor appointment + training evidence",
+   "id": "Penetapan penyelia + bukti pelatihan"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_reason": "commitment"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASEL_MATERIALS",
+  "axis": "HPAS_ELEMENT",
+  "labels": {
+   "ko": "원재료",
+   "en": "Raw materials",
+   "id": "Bahan baku"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_element": "materials"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASRSN_MATERIALS",
+  "axis": "HPAS_REASON",
+  "labels": {
+   "ko": "임계원재료 %d건",
+   "en": "%d critical raw materials",
+   "id": "%d bahan kritis"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_reason": "materials"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASEL_PROCESS",
+  "axis": "HPAS_ELEMENT",
+  "labels": {
+   "ko": "할랄제품공정",
+   "en": "Halal production process",
+   "id": "Proses produksi halal"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_element": "process"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASRSN_PROCESS",
+  "axis": "HPAS_REASON",
+  "labels": {
+   "ko": "공정 흐름도 증빙",
+   "en": "Process flowchart evidence",
+   "id": "Bukti diagram alir proses"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_reason": "process"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASEL_PRODUCT",
+  "axis": "HPAS_ELEMENT",
+  "labels": {
+   "ko": "제품",
+   "en": "Product",
+   "id": "Produk"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_element": "product"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASRSN_PRODUCT",
+  "axis": "HPAS_REASON",
+  "labels": {
+   "ko": "제품 %d·사진 %d",
+   "en": "%d products · %d photos",
+   "id": "%d produk · %d foto"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_reason": "product"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASEL_MONITORING",
+  "axis": "HPAS_ELEMENT",
+  "labels": {
+   "ko": "모니터링·평가",
+   "en": "Monitoring & evaluation",
+   "id": "Pemantauan & evaluasi"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_element": "monitoring"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "HPASRSN_MONITORING",
+  "axis": "HPAS_REASON",
+  "labels": {
+   "ko": "내부 심사 기록",
+   "en": "Internal audit record",
+   "id": "Catatan audit internal"
+  },
+  "context": [
+   "HPAS"
+  ],
+  "actions": {
+   "hpas_reason": "monitoring"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOCREQ_NIB_BUSINESS_LICENSE",
+  "axis": "DOC_REQUIREMENT",
+  "labels": {
+   "ko": "사업자등록증(NIB) 스캔본 — 회사명·NIB 번호·사업장 주소가 판독 가능해야 함",
+   "en": "Scan of the business licence (NIB) — company name, NIB number and business address must be legible",
+   "id": "Pindaian izin usaha (NIB) — nama perusahaan, nomor NIB, dan alamat usaha harus terbaca"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {
+   "doc_requirement": "nib_business_license"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOCREQ_FACTORY_REGISTRATION",
+  "axis": "DOC_REQUIREMENT",
+  "labels": {
+   "ko": "공장등록증 — 공장 등록번호와 공장 소재지 주소 포함",
+   "en": "Factory registration — must include the factory registration number and the factory address",
+   "id": "Registrasi pabrik — memuat nomor registrasi pabrik dan alamat lokasi pabrik"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {
+   "doc_requirement": "factory_registration"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOCREQ_PRODUCT_LIST",
+  "axis": "DOC_REQUIREMENT",
+  "labels": {
+   "ko": "인증 대상 전(全) 제품 목록 — 제품명·분류·등록유형(신규/기존 등)",
+   "en": "Full list of products to be certified — product name, category and registration type (new/existing)",
+   "id": "Daftar lengkap produk yang disertifikasi — nama produk, kategori, dan jenis pendaftaran (baru/lama)"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {
+   "doc_requirement": "product_list"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOCREQ_PROCESS_FLOW",
+  "axis": "DOC_REQUIREMENT",
+  "labels": {
+   "ko": "제조 공정 흐름도 — 원료입고→배합→가열→충전→포장 등 단계 순서",
+   "en": "Production process flowchart — the sequence of steps: material intake → mixing → heating → filling → packaging, etc.",
+   "id": "Diagram alir proses produksi — urutan tahapan: penerimaan bahan → pencampuran → pemanasan → pengisian → pengemasan, dll."
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {
+   "doc_requirement": "process_flow"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOCREQ_MATERIAL_LIST",
+  "axis": "DOC_REQUIREMENT",
+  "labels": {
+   "ko": "전(全) 원재료 목록 — 원재료명·공급사·할랄 상태(인증/선언)",
+   "en": "Full list of raw materials — material name, supplier and halal status (certified/declared)",
+   "id": "Daftar lengkap bahan baku — nama bahan, pemasok, dan status halal (bersertifikat/deklarasi)"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {
+   "doc_requirement": "material_list"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOCREQ_HALAL_CERTIFICATE",
+  "axis": "DOC_REQUIREMENT",
+  "labels": {
+   "ko": "임계 원재료 공급사가 받은 할랄 인증서 사본 — 이 플랫폼이 발급하는 인증서가 아니라 신청자가 제출하는 입력 서류다(해당 원재료가 있는 경우)",
+   "en": "Copies of the halal certificates held by the suppliers of critical raw materials — these are documents the applicant submits, not certificates this platform issues (only where such materials exist)",
+   "id": "Salinan sertifikat halal yang dimiliki pemasok bahan kritis — ini dokumen yang diunggah pemohon, bukan sertifikat yang diterbitkan platform ini (hanya bila bahan tersebut ada)"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {
+   "doc_requirement": "halal_certificate"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "DOCREQ_SJPH_MANUAL",
+  "axis": "DOC_REQUIREMENT",
+  "labels": {
+   "ko": "SJPH 매뉴얼 — 5요소(경영약속·원재료·공정·제품·모니터링) 포함",
+   "en": "SJPH manual — must cover all five elements (management commitment, materials, process, product, monitoring)",
+   "id": "Manual SJPH — mencakup lima elemen (komitmen manajemen, bahan, proses, produk, pemantauan)"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {
+   "doc_requirement": "sjph_manual"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXEMPT_24A44A15C5",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "소규모 자기선언 — NIB로 갈음(별도 공장등록증 요구 없음)",
+   "en": "Small-scale self-declare — covered by the NIB (no separate factory registration required)",
+   "id": "Self-declare skala kecil — dicakup oleh NIB (tidak perlu registrasi pabrik terpisah)"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXEMPT_7E15B5FB4F",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "인도네시아 소규모 사업자 — NIB가 시설 등록을 겸함(별도 공장등록증 제도 없음)",
+   "en": "Indonesian micro/small business — the NIB also serves as facility registration (no separate factory registration scheme)",
+   "id": "Usaha mikro/kecil Indonesia — NIB sekaligus berfungsi sebagai registrasi fasilitas (tidak ada skema registrasi pabrik terpisah)"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "EXEMPT_A5686377EC",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "인도네시아 자기선언 경로 — 공급사 인증번호로 갈음(BPJPH 대조)",
+   "en": "Indonesian self-declare pathway — satisfied by the supplier certificate numbers (verified against BPJPH)",
+   "id": "Jalur self-declare Indonesia — dipenuhi dengan nomor sertifikat pemasok (dicocokkan dengan BPJPH)"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CHK_EBF07ABA2F",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "업로드 파일",
+   "en": "Uploaded file",
+   "id": "Berkas unggahan"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CHK_488BD0FD1E",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "생성 문서",
+   "en": "Generated document",
+   "id": "Dokumen hasil sistem"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "CHK_FF662AB95C",
+  "axis": "LABEL",
+  "labels": {
+   "ko": "공급사 인증번호 %d건 확보 — 원본 서류 미제출(번호 대조는 오디터)",
+   "en": "%d supplier certificate numbers on file — original documents not submitted (the auditor verifies the numbers)",
+   "id": "%d nomor sertifikat pemasok tersedia — dokumen asli belum diunggah (auditor yang mencocokkan nomor)"
+  },
+  "context": [
+   "DOC"
+  ],
+  "actions": {},
+  "source": [
+   "glhac"
   ],
   "status": "approved"
  }

@@ -264,121 +264,36 @@ def screen_text(text):
             "verdict": "high" if (haram or risk == "high") else risk}
 
 # ===================== 성분 설명 (판정 근거 + 해설) =====================
-_CAT_KO = {
-    "animal_protein": "동물성 단백질", "animal_fat": "동물성 지방", "alcohol": "알코올",
-    "emulsifier": "유화제", "gelatin": "젤라틴", "enzyme": "효소", "flavor": "향료",
-    "colorant": "색소", "sweetener": "감미료", "acid": "산도조절제", "preservative": "보존료",
-    "carbohydrate": "탄수화물/당류", "mineral": "광물/무기질", "vitamin": "비타민", "other": "기타",
-    # 아래 6종은 DB에 실제로 쓰이는데 표에 없어 영문 코드가 그대로 인쇄되고 있었다
-    # (보고서에 "‘…’은(는) additive 계열 성분이며" 형태로 노출).
-    "additive": "식품첨가물", "base": "기초 원료", "ferment": "발효산물",
-    "flavor_enhancer": "향미증진제", "glazing": "피막제", "processing_aid": "가공보조제",
-}
-_STATUS_KO = {"halal": "할랄(허용)", "haram": "금지(하람)", "mushbooh": "의심(mushbooh/샤부하)"}
-_SOURCE_KO = {"animal": "동물", "plant": "식물", "ferment": "발효", "synthetic": "합성",
-              "mineral": "광물", "microbial": "미생물"}
+# 코드값 → 화면 표기. 표를 코드에 세 벌 두지 않고 도메인 사전 한 곳에서 꺼낸다.
+#
+# 왜 옮겼나(실측): 같은 개념의 번역이 _CAT_KO/_CAT_EN/_CAT_ID 처럼 세 표에 흩어져 있어
+# 한쪽만 고쳐졌다. 유래(_SOURCE)는 한국어만 7개가 비어 화면에 'dairy'·'unknown' 같은
+# 코드값이 그대로 나왔고, 판정 상태는 사전과 코드가 서로 다른 값을 갖고 있었다.
+# 사전에는 세 언어가 한 항목에 붙어 있어 한 언어만 빠지면 눈에 띈다.
+from . import domain_dict as _dd   # noqa: E402
+
+_CAT_KO = _dd.code_labels("MATERIAL_CAT", "screen_category", "ko")
+_CAT_EN = _dd.code_labels("MATERIAL_CAT", "screen_category", "en")
+_CAT_ID = _dd.code_labels("MATERIAL_CAT", "screen_category", "id")
+_STATUS_KO = _dd.code_labels("STATUS", "screen_status", "ko")
+_STATUS_EN = _dd.code_labels("STATUS", "screen_status", "en")
+_STATUS_ID = _dd.code_labels("STATUS", "screen_status", "id")
+_SOURCE_KO = _dd.code_labels("SOURCE", "screen_source", "ko")
+_SOURCE_EN = _dd.code_labels("SOURCE", "screen_source", "en")
+_SOURCE_ID = _dd.code_labels("SOURCE", "screen_source", "id")
+_EVID_KO = _dd.code_labels("EVIDENCE", "evidence_code", "ko")
+_EVID_EN = _dd.code_labels("EVIDENCE", "evidence_code", "en")
+_EVID_ID = _dd.code_labels("EVIDENCE", "evidence_code", "id")
+# 대체재는 키가 한국어 문구다(코드값이 아니다) — 문구→표기 표로 꺼낸다.
+_ALT_EN = _dd.axis_text_map("ALTERNATIVE", "en")
+_ALT_ID = _dd.axis_text_map("ALTERNATIVE", "id")
 
 # --- 다국어 서술 ---------------------------------------------------------
 # 판정 근거는 366항목마다 쓰인 글이 아니라 템플릿 문장 + 아래 조회표로 조립된다.
 # 따라서 항목별 번역문이 아니라 이 표와 문장만 언어별로 갖추면 된다.
 # 미등록 키는 원문(영문 코드 또는 한국어)을 그대로 내보낸다 — 빈칸이 생기지 않게.
-_CAT_EN = {
-    "animal_protein": "animal protein", "animal_fat": "animal fat", "alcohol": "alcohol",
-    "emulsifier": "emulsifier", "gelatin": "gelatin", "enzyme": "enzyme", "flavor": "flavor",
-    "colorant": "colorant", "sweetener": "sweetener", "acid": "acidity regulator",
-    "preservative": "preservative", "carbohydrate": "carbohydrate/sugar",
-    "mineral": "mineral", "vitamin": "vitamin", "other": "other", "additive": "additive",
-    "base": "base material", "ferment": "fermentation product",
-    "flavor_enhancer": "flavor enhancer", "glazing": "glazing agent",
-    "processing_aid": "processing aid",
-}
-_CAT_ID = {
-    "animal_protein": "protein hewani", "animal_fat": "lemak hewani", "alcohol": "alkohol",
-    "emulsifier": "pengemulsi", "gelatin": "gelatin", "enzyme": "enzim", "flavor": "perisa",
-    "colorant": "pewarna", "sweetener": "pemanis", "acid": "pengatur keasaman",
-    "preservative": "pengawet", "carbohydrate": "karbohidrat/gula", "mineral": "mineral",
-    "vitamin": "vitamin", "other": "lainnya", "additive": "bahan tambahan pangan",
-    "base": "bahan dasar", "ferment": "produk fermentasi",
-    "flavor_enhancer": "penguat rasa", "glazing": "bahan pelapis",
-    "processing_aid": "bahan penolong",
-}
-_STATUS_EN = {"halal": "halal (permitted)", "haram": "haram (prohibited)",
-              "mushbooh": "doubtful (mushbooh)"}
-_STATUS_ID = {"halal": "halal (diperbolehkan)", "haram": "haram (dilarang)",
-              "mushbooh": "syubhat (mushbooh)"}
-_SOURCE_EN = {"animal": "animal", "plant": "plant", "ferment": "fermentation",
-              "synthetic": "synthetic", "mineral": "mineral", "microbial": "microbial",
-              "dairy": "dairy", "marine": "marine", "insect": "insect", "human": "human",
-              "petrochemical": "petrochemical", "unknown": "unknown", "microbe": "microbial"}
-_SOURCE_ID = {"animal": "hewani", "plant": "nabati", "ferment": "fermentasi",
-              "synthetic": "sintetis", "mineral": "mineral", "microbial": "mikroba",
-              "dairy": "susu", "marine": "laut", "insect": "serangga", "human": "manusia",
-              "petrochemical": "petrokimia", "unknown": "tidak diketahui", "microbe": "mikroba"}
 # 필요 증빙 코드 — 심사자가 실제로 요구하는 서류명이라 언어별 표기가 필요하다.
-_EVID_EN = {
-    "alcohol_carrier_check": "alcohol carrier check",
-    "animal_source_declaration": "animal source declaration",
-    "bone_char_free_declaration": "bone-char-free declaration",
-    "carrier_check": "carrier check", "carrier_declaration": "carrier declaration",
-    "composition_breakdown": "composition breakdown",
-    "enzyme_source_declaration": "enzyme source declaration",
-    "halal_cert": "halal certificate",
-    "halal_slaughter_cert": "halal slaughter certificate",
-    "halal_slaughter_certificate": "halal slaughter certificate",
-    "process_declaration": "process declaration", "reformulation": "reformulation",
-    "rennet_source_declaration": "rennet source declaration",
-    "residual_alcohol_test": "residual alcohol test",
-    "source_declaration": "source declaration",
-    "supplier_halal_cert": "supplier halal certificate",
-}
-_EVID_ID = {
-    "alcohol_carrier_check": "pemeriksaan pembawa alkohol",
-    "animal_source_declaration": "deklarasi sumber hewani",
-    "bone_char_free_declaration": "deklarasi bebas arang tulang",
-    "carrier_check": "pemeriksaan bahan pembawa",
-    "carrier_declaration": "deklarasi bahan pembawa",
-    "composition_breakdown": "rincian komposisi",
-    "enzyme_source_declaration": "deklarasi sumber enzim",
-    "halal_cert": "sertifikat halal",
-    "halal_slaughter_cert": "sertifikat penyembelihan halal",
-    "halal_slaughter_certificate": "sertifikat penyembelihan halal",
-    "process_declaration": "deklarasi proses", "reformulation": "reformulasi",
-    "rennet_source_declaration": "deklarasi sumber renet",
-    "residual_alcohol_test": "uji residu alkohol",
-    "source_declaration": "deklarasi sumber",
-    "supplier_halal_cert": "sertifikat halal pemasok",
-}
 # 대체재 — 한국어로 적힌 값만 옮긴다(영문·화학명은 그대로 두는 것이 정확하다).
-_ALT_EN = {
-    "할랄 전용 라인·세척(사무) 절차로 관리 — 제품 성분이 아님":
-        "Managed by a dedicated halal line and cleaning (sanitation) procedure — not a product ingredient",
-    "HPMC 식물성 캡슐": "HPMC plant capsule", "PG 캐리어 향료": "PG-carrier flavor",
-    "광물 인산염": "mineral phosphate", "미생물 rennet whey": "microbial-rennet whey",
-    "식물성": "plant-based", "식물성 E471": "plant-based E471",
-    "식물성 carbon": "plant-based carbon", "식물성 색소": "plant-based colorant",
-    "식물성 쇼트닝": "plant-based shortening", "식물성 스테아르산": "plant-based stearic acid",
-    "식물성 왁스": "plant wax", "식물성 지방산": "plant fatty acid",
-    "식물성 캐리어 카로틴": "plant-carrier carotene", "식물성 코팅": "plant-based coating",
-    "식물성/합성 글리세린": "plant/synthetic glycerin", "식물성유": "vegetable oil",
-    "알코올프리 바닐라": "alcohol-free vanilla", "알코올프리 향료": "alcohol-free flavor",
-    "카나우바 왁스": "carnauba wax", "합성 cysteine": "synthetic cysteine",
-    "합성 glycine": "synthetic glycine", "활성탄": "activated carbon", "효모 유래": "yeast-derived",
-}
-_ALT_ID = {
-    "할랄 전용 라인·세척(사무) 절차로 관리 — 제품 성분이 아님":
-        "Dikelola melalui lini khusus halal dan prosedur pembersihan (sanitasi) — bukan bahan produk",
-    "HPMC 식물성 캡슐": "kapsul nabati HPMC", "PG 캐리어 향료": "perisa berpembawa PG",
-    "광물 인산염": "fosfat mineral", "미생물 rennet whey": "whey renet mikroba",
-    "식물성": "nabati", "식물성 E471": "E471 nabati", "식물성 carbon": "karbon nabati",
-    "식물성 색소": "pewarna nabati", "식물성 쇼트닝": "shortening nabati",
-    "식물성 스테아르산": "asam stearat nabati", "식물성 왁스": "lilin nabati",
-    "식물성 지방산": "asam lemak nabati", "식물성 캐리어 카로틴": "karoten berpembawa nabati",
-    "식물성 코팅": "pelapis nabati", "식물성/합성 글리세린": "gliserin nabati/sintetis",
-    "식물성유": "minyak nabati", "알코올프리 바닐라": "vanila bebas alkohol",
-    "알코올프리 향료": "perisa bebas alkohol", "카나우바 왁스": "lilin karnauba",
-    "합성 cysteine": "sistein sintetis", "합성 glycine": "glisin sintetis",
-    "활성탄": "karbon aktif", "효모 유래": "berasal dari ragi",
-}
 # 템플릿 문장 — 한국어 원문을 키로 쓴다(프런트 T()·보고서 라벨과 같은 방식).
 _EXPLAIN_L10N = {
     "en": {
@@ -446,24 +361,6 @@ _L10N_TABLES = {
 
 # 한국어 증빙 표기 — 영어·인니어는 있는데 한국어만 비어 있어서 화면에 코드가 그대로
 # 노출됐다('halal_slaughter_cert'). 오디터가 읽을 말로 적는다.
-_EVID_KO = {
-    "alcohol_carrier_check": "알코올 캐리어 확인",
-    "animal_source_declaration": "동물 유래 선언서",
-    "bone_char_free_declaration": "골탄(骨炭) 미사용 선언서",
-    "carrier_check": "캐리어 확인", "carrier_declaration": "캐리어 선언서",
-    "composition_breakdown": "성분 조성 내역",
-    "enzyme_source_declaration": "효소 유래 선언서",
-    "halal_cert": "할랄 인증서",
-    "halal_slaughter_cert": "할랄 도축 증명서",
-    "halal_slaughter_certificate": "할랄 도축 증명서",
-    "process_declaration": "공정 선언서", "reformulation": "배합 변경(대체)",
-    "rennet_source_declaration": "레닛 유래 선언서",
-    "residual_alcohol_test": "잔류 알코올 시험성적서",
-    "source_declaration": "유래 선언서",
-    "supplier_halal_cert": "공급사 할랄 인증서",
-}
-
-
 def _explain_l10n(lang):
     """(문장번역기, 카테고리, 상태, 유래, 증빙, 대체재) — 미지원 언어는 한국어 표를 돌려준다."""
     lang = (lang or "ko").lower()
