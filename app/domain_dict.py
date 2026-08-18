@@ -228,6 +228,43 @@ def forbidden_translations(lang):
     return out
 
 
+# 번역이 바꾸면 안 되는 도메인 고유명사 — 기관·직책·제도 이름.
+#
+# 왜 필요한가(실측): 같은 문장을 3회 번역시켰더니 1회에서 'penyelia halal'(할랄감독자)이
+# 'pemegang kehalalan'이라는 없는 말로 바뀌었다. 대문자 약어(BPJPH·SJPH·SIHALAL)는
+# 살아남는데, 소문자 복합어인 직책·제도 이름이 번역 대상으로 오인돼 창작된다.
+# 심사 문서에서 직책명이 바뀌면 그 문서는 틀린 문서다.
+#
+# 사전의 표기형(surface)은 건드리지 않는다 — 거기에 손대면 서류 분류 매칭이 흔들린다.
+# 보호 목록은 라벨에서 파생하고, 사전에 항목이 없는 제도 약어만 여기에 더한다.
+_PROTECTED_AXES = ("ORG", "ROLE", "HPAS", "PROCESS", "FATWA")
+_PROTECTED_EXTRA = ("BPJPH", "LPPOM MUI", "LPH", "PPH", "SJPH", "SIHALAL", "SEHATI",
+                    "HAS 23000", "KMA 1360", "MUI", "Halal", "Haram", "Syubhat", "Najis")
+
+
+def protected_terms(lang="id"):
+    """해당 언어 번역문에 그대로 남아야 하는 용어들(긴 것부터)."""
+    _ensure()
+    lg = (lang or "id").lower()
+    out = set(_PROTECTED_EXTRA)
+    for t in _STATE["terms"].values():
+        if t.get("axis") in _PROTECTED_AXES:
+            v = (t.get("labels") or {}).get(lg)
+            if v and len(v) >= 3:
+                out.add(v)
+    # 긴 용어가 짧은 용어를 포함할 수 있다(MUI 이 LPPOM MUI 안에) — 긴 것부터 본다
+    return sorted(out, key=lambda x: (-len(x), x.lower()))
+
+
+def missing_protected(src, out, lang="id"):
+    """원문에 있었는데 번역문에서 사라진 보호 용어 — 재시도 판단용.
+
+    원문에 없던 용어까지 요구하지 않는다(없는 말을 넣으라는 뜻이 되면 더 나쁘다)."""
+    lo_src, lo_out = (src or "").lower(), (out or "").lower()
+    return [t for t in protected_terms(lang)
+            if t.lower() in lo_src and t.lower() not in lo_out]
+
+
 def stats():
     _ensure()
     return {"terms": len(_STATE["terms"]), "surface_forms": len(_STATE["surface"]),

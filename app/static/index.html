@@ -740,6 +740,16 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+ "페이지":"Page", "총":"total", "배정 심사 관리":"Assigned audit management",
+ "드래그/더블클릭 → 배정":"Drag or double-click to assign",
+ "드래그/더블클릭 → 추가":"Drag or double-click to add",
+ "알림 없음":"No notifications", "— ↑↓ 순서, × 제거":"— ↑↓ reorder, × remove",
+ "배정 메뉴 — ↑↓ 순서, × 제거":"Assigned menus — ↑↓ reorder, × remove",
+ "개업일":"Business start date", "보고서":"Report", "심사 일정":"Audit schedule",
+ "메뉴 배정 관리":"Menu assignment", "기업":"Company", "상태":"Status", "경로":"Pathway",
+ "파트와":"Fatwa", "조직":"Organization", "(한국·KR)":"(Korea·KR)",
+ "에 쓰이는 원재료도 반드시 등록하세요 — 누락 시 사전심사·현장심사에서 보완 요청이 발생합니다.":" — register the raw materials used here as well; anything missing triggers a correction request at pre-assessment or the on-site audit.",
+ "— 자기선언(SEHATI) 자격(연매출·매장 수 기준)을 즉시 자가진단합니다. 정식 심사 전 무료.":"— Instantly self-check your self-declare (SEHATI) eligibility by annual revenue and number of outlets. Free, before formal review.",
  "최고 업무운영자":"Ops (Final)", "ITO 관리자":"ITO Admin", "클라이언트":"Client", "샤리아":"Sharia",
  "그룹 통째 배정":"Assign whole group", "더블클릭/드래그로 배정":"Double-click or drag to assign",
  "내 메뉴 설정":"My menu settings", "역할 기본값으로 초기화":"Reset to role default",
@@ -751,7 +761,7 @@ var EN_STRINGS={
  "원본을 최신 AI로 재추출·재분류(OCR)":"Re-extract and re-classify the original with the latest AI (OCR)",
  "스캔을 고해상도(300dpi)로 재OCR — 오독 완화":"Re-OCR the scan at high resolution (300dpi) to reduce misreads",
  "변경영향 분석 이력 없음 — \"변경영향 분석\" 실행 시 기록됩니다":"No change-impact analysis yet — a record appears once you run it",
- "高·고위험":"High risk", "中·중위험":"Medium risk", "低·저위험":"Low risk",
+ "高·고위험":"High", "中·중위험":"Medium", "低·저위험":"Low",
  "차단(하람)":"Blocked (haram)", "증빙 필요":"Evidence required", "할랄 허용":"Halal cleared",
  "의심":"Doubtful (mushbooh)",
  "선택 케이스 해제":"Clear selected case", "알림 없음":"No notifications",
@@ -848,7 +858,7 @@ let PAGES={};
 function pageSlice(key,arr,per){per=per||10;const max=Math.max(0,Math.ceil(arr.length/per)-1);const cur=Math.min(PAGES[key]||0,max);PAGES[key]=cur;return {items:arr.slice(cur*per,cur*per+per),cur,max,total:arr.length,per};}
 function pager(key,m){if(m.total<=m.per)return"";return `<div class="pager">
   <button class="btn" ${m.cur<=0?'disabled':''} onclick="gotoPage('${key}',${m.cur-1})">${T('← 이전')}</button>
-  <span class="muted small">${m.cur+1} / ${m.max+1} 페이지 · 총 ${m.total}${T('건')}</span>
+  <span class="muted small">${T('페이지')} ${m.cur+1} / ${m.max+1} · ${T('총')} ${m.total}${T('건')}</span>
   <button class="btn" ${m.cur>=m.max?'disabled':''} onclick="gotoPage('${key}',${m.cur+1})">${T('다음 →')}</button></div>`;}
 function gotoPage(key,idx){PAGES[key]=Math.max(0,idx);applyView();}
 
@@ -1027,6 +1037,16 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+ "페이지":"Halaman", "총":"total", "배정 심사 관리":"Pengelolaan audit yang ditetapkan",
+ "드래그/더블클릭 → 배정":"Seret atau klik dua kali untuk menetapkan",
+ "드래그/더블클릭 → 추가":"Seret atau klik dua kali untuk menambah",
+ "— ↑↓ 순서, × 제거":"— ↑↓ urutkan, × hapus",
+ "배정 메뉴 — ↑↓ 순서, × 제거":"Menu yang ditetapkan — ↑↓ urutkan, × hapus",
+ "개업일":"Tanggal mulai usaha", "보고서":"Laporan", "심사 일정":"Jadwal audit",
+ "메뉴 배정 관리":"Pengelolaan penetapan menu", "기업":"Perusahaan", "상태":"Status",
+ "경로":"Jalur", "파트와":"Fatwa", "조직":"Organisasi", "(한국·KR)":"(Korea·KR)",
+ "에 쓰이는 원재료도 반드시 등록하세요 — 누락 시 사전심사·현장심사에서 보완 요청이 발생합니다.":" — daftarkan juga bahan baku yang dipakai di sini; yang terlewat akan memicu permintaan perbaikan pada pra-penilaian atau audit lapangan.",
+ "— 자기선언(SEHATI) 자격(연매출·매장 수 기준)을 즉시 자가진단합니다. 정식 심사 전 무료.":"— Periksa sendiri kelayakan self-declare (SEHATI) berdasarkan omzet tahunan dan jumlah gerai. Gratis, sebelum penilaian resmi.",
  "최고 업무운영자":"Kepala Operasional", "ITO 관리자":"Admin ITO", "클라이언트":"Klien", "샤리아":"Syariah", "오디터":"Auditor", "컨설턴트":"Konsultan",
  "그룹 통째 배정":"Tetapkan seluruh grup", "더블클릭/드래그로 배정":"Klik dua kali atau seret untuk menetapkan",
  "내 메뉴 설정":"Pengaturan menu saya", "역할 기본값으로 초기화":"Kembalikan ke bawaan peran",
@@ -1038,7 +1058,7 @@ const UI_STRINGS={
  "원본을 최신 AI로 재추출·재분류(OCR)":"Ekstrak dan klasifikasikan ulang berkas asli dengan AI terbaru (OCR)",
  "스캔을 고해상도(300dpi)로 재OCR — 오독 완화":"OCR ulang hasil pindaian pada resolusi tinggi (300dpi) untuk mengurangi salah baca",
  "변경영향 분석 이력 없음 — \"변경영향 분석\" 실행 시 기록됩니다":"Belum ada riwayat analisis dampak perubahan — tercatat setelah Anda menjalankannya",
- "高·고위험":"Risiko tinggi", "中·중위험":"Risiko sedang", "低·저위험":"Risiko rendah",
+ "高·고위험":"Tinggi", "中·중위험":"Sedang", "低·저위험":"Rendah",
  "차단(하람)":"Diblokir (haram)", "증빙 필요":"Perlu bukti", "할랄 허용":"Halal (lolos)",
  "의심":"Syubhat (mushbooh)",
  "선택 케이스 해제":"Hapus pilihan kasus", "알림 없음":"Tidak ada notifikasi",
@@ -4280,6 +4300,15 @@ function sjphStage(id,ko,en,desc,types,chk){
 const EVID_KO={composition_breakdown:'성분 조성표',source_declaration:'원산지·유래 선언',
   alcohol_carrier_check:'알코올 캐리어 확인',halal_cert:'공급사 할랄인증서',slaughter_cert:'도축증명(할랄 도축)',
   origin_proof:'원산지 증빙',coa:'시험성적서(CoA)',msds:'MSDS',flow_chart:'제조공정도'};
+/* 저장된 메모는 '발급기관 BPJPH' 처럼 한국어 라벨 + 값으로 쌓여 있다(DB 41건).
+   값은 기관명이라 번역 대상이 아니고, 앞의 라벨만 읽는 사람 언어로 바꾼다.
+   데이터를 고쳐 쓰지 않고 보여줄 때만 바꾼다 — 원문 기록은 그대로 남아야 한다. */
+const NOTE_LABELS=['발급기관','인증번호','만료일','비고'];
+function noteLabelT(s){
+  s=String(s||'');
+  for(const k of NOTE_LABELS){ if(s.startsWith(k)) return T(k)+s.slice(k.length); }
+  return s;
+}
 const SEV_KO={high:'高·고위험',medium:'中·중위험',low:'低·저위험'};
 /* 원재료 판정 근거·분석 — 위험등급·판정근거·유형·필요증빙을 상세히 노출(오디터 심사용) */
 function matBasis(m){
@@ -4303,7 +4332,7 @@ function matBasis(m){
   if(m.e_number) parts.push(T('E번호')+' '+esc(m.e_number));
   const ev=m.required_evidence||[];
   if(ev.length) parts.push(T('필요증빙')+': '+ev.map(e=>T(EVID_KO[e]||e)).join(', '));
-  if(m.note) parts.push(esc(m.note));
+  if(m.note) parts.push(esc(noteLabelT(m.note)));
   return parts.join(' · ')||'—';
 }
 function matRiskCell(m){
@@ -4693,7 +4722,7 @@ SCREEN.caseList=async()=>{
       <option value="due"${CASE_SORT==='due'?' selected':''}>${T('정렬: 기한 우선')}</option></select>
     ${FILTERS.q?`<span class="fchip">검색: ${esc(FILTERS.q)} <b onclick="delete FILTERS.q;applyView()">✕</b></span>`:''}
   </div>
-  <div class="card"><h3>${T('케이스 테이블')} <span class="en">· Case table</span><span class="r">${ROLE==='auditor'?'배정 심사 관리':'row 클릭 → 상세'}</span></h3>
+  <div class="card"><h3>${T('케이스 테이블')} <span class="en">· Case table</span><span class="r">${ROLE==='auditor'?T('배정 심사 관리'):T('row 클릭 → 상세')}</span></h3>
     <div class="body tight"><table>
       <thead><tr><th>번호 · ID</th><th>기업 · Company</th><th>${T('경로')}</th><th>상태 · Status</th><th>담당 · Auditor</th><th>기한 · Due</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
@@ -4953,7 +4982,7 @@ SCREEN.preassess=async()=>{
   if(!id)return '<div class="card"><div class="body muted">케이스를 먼저 선택하세요.</div></div>';
   const c=await API(`/cases/${id}`).catch(()=>({}));
   const [chk,mats,prods,matrix,pre]=await Promise.all([
-    API(`/cases/${id}/doc-checklist`).catch(()=>({checklist:[],missing:[],complete:false})),
+    API(`/cases/${id}/doc-checklist?lang=${RPT_LANG()}`).catch(()=>({checklist:[],missing:[],complete:false})),
     API(`/cases/${id}/materials`).catch(()=>[]),
     API(`/cases/${id}/products`).catch(()=>[]),
     API(`/cases/${id}/matrix`).catch(()=>({links:[]})),
@@ -5323,7 +5352,7 @@ SCREEN.application=async()=>{
   const pe=c.profile_ext||{};
   const _horg=await API(`/cases/${id}/halal-org`).catch(()=>({top_mgmt:{},penyelia:[],members:[]}));
   const [chk,mats,prods,matrix]=await Promise.all([
-    API(`/cases/${id}/doc-checklist`).catch(()=>({checklist:[]})),
+    API(`/cases/${id}/doc-checklist?lang=${RPT_LANG()}`).catch(()=>({checklist:[]})),
     API(`/cases/${id}/materials`).catch(()=>[]),
     API(`/cases/${id}/products`).catch(()=>[]),
     API(`/cases/${id}/matrix`).catch(()=>({links:[]}))]);
@@ -5964,7 +5993,7 @@ async function screenText(id){
    그대로 재시도하면 문서가 두 벌 들어간다 — 그래서 재시도 전에 문서 수를 다시 세고,
    늘었으면 성공으로 보고 멈춘다. */
 async function _docCount(id){
-  try{const r=await API(`/cases/${id}/documents`);return (r||[]).length;}catch(_){return -1;}
+  try{const r=await API(`/cases/${id}/documents?lang=${RPT_LANG()}`);return (r||[]).length;}catch(_){return -1;}
 }
 async function streamIntake(id, b64, out, tries){
   tries=tries||3;
@@ -6293,7 +6322,7 @@ async function genSjph(id){try{const r=await API(`/cases/${id}/sjph/manual`,{met
 /* 7) Documents */
 SCREEN.documents=async()=>{
   const id=CURCASE;
-  const [docsRaw,chk]=await Promise.all([API(`/cases/${id}/documents`).catch(()=>[]),API(`/cases/${id}/doc-checklist`).catch(()=>({checklist:[],missing:[]}))]);
+  const [docsRaw,chk]=await Promise.all([API(`/cases/${id}/documents?lang=${RPT_LANG()}`).catch(()=>[]),API(`/cases/${id}/doc-checklist?lang=${RPT_LANG()}`).catch(()=>({checklist:[],missing:[]}))]);
   // 중복 파일명 표시 + 확인 필요(저신뢰/파일없음) 우선 정렬
   const nameCount={}; (docsRaw||[]).forEach(d=>{const k=(d.filename||'').toLowerCase();nameCount[k]=(nameCount[k]||0)+1;});
   const needAttn=d=>(d.confidence!=null&&d.confidence<0.85)||!d.has_file||(nameCount[(d.filename||'').toLowerCase()]>1)||!d.review_status||d.review_status==='pending';
@@ -6367,7 +6396,7 @@ const VAULT_GD_LABEL={company_info:'기업정보',contract:'계약서',sjph_manu
 SCREEN.vault=async()=>{
   const id=CURCASE;
   const [docs,gens,mats,cert]=await Promise.all([
-    API(`/cases/${id}/documents`).catch(()=>[]),
+    API(`/cases/${id}/documents?lang=${RPT_LANG()}`).catch(()=>[]),
     API(`/cases/${id}/gen-docs`).catch(()=>[]),
     API(`/cases/${id}/materials`).catch(()=>[]),
     API(`/cases/${id}/certificate`).catch(()=>({issued:false}))]);
@@ -7413,8 +7442,8 @@ async function onsiteReviewerView(id){
   if(!id)return `<div class="card"><div class="body muted">${T('케이스를 선택하세요')}</div></div>`;
   const [checklist,hpas,docs,sign,ops,opinion]=await Promise.all([
     API(`/cases/${id}/onsite-checklist`).catch(()=>({items:[],comply:0,nonconformity:0,total:0,completion:0})),
-    API(`/cases/${id}/hpas-auto`).catch(()=>({elements:[]})),
-    API(`/cases/${id}/documents`).catch(()=>[]),
+    API(`/cases/${id}/hpas-auto?lang=${RPT_LANG()}`).catch(()=>({elements:[]})),
+    API(`/cases/${id}/documents?lang=${RPT_LANG()}`).catch(()=>[]),
     API(`/cases/${id}/onsite/sign`).catch(()=>({auditor:null,supervisor:null})),
     API(`/cases/${id}/onsite/reviewer-opinions`).catch(()=>({items:{},negative:0})),
     API(`/cases/${id}/onsite-opinion`).catch(()=>({opinion:''}))
@@ -7516,10 +7545,10 @@ async function onsiteAuditView(id,editable){
   if(!id) return `<div class="card"><div class="body muted">${T('케이스를 선택하세요')} · Select a case.</div></div>`;
   const [checklist,hpas,plans,pool,docs,sign]=await Promise.all([
     API(`/cases/${id}/onsite-checklist`).catch(()=>({items:[],comply:0,nonconformity:0,total:0,completion:0})),
-    API(`/cases/${id}/hpas-auto`).catch(()=>({elements:[],auto_completion:0})),
+    API(`/cases/${id}/hpas-auto?lang=${RPT_LANG()}`).catch(()=>({elements:[],auto_completion:0})),
     API(`/cases/${id}/audit-plans`).catch(()=>[]),
     API(`/cases/${id}/auditor-pool`).catch(()=>[]),
-    API(`/cases/${id}/documents`).catch(()=>[]),
+    API(`/cases/${id}/documents?lang=${RPT_LANG()}`).catch(()=>[]),
     API(`/cases/${id}/onsite/sign`).catch(()=>({auditor:null,supervisor:null}))
   ]);
   const items=checklist.items||[];
@@ -7738,7 +7767,7 @@ function onsiteClearSig(id,party){
 /* 10) Evaluation */
 SCREEN.evaluation=async()=>{
   const id=CURCASE;
-  const [h,sev]=await Promise.all([API(`/cases/${id}/hpas-auto`).catch(()=>({elements:[]})),API(`/cases/${id}/sjph-evidence`).catch(()=>({items:[]}))]);
+  const [h,sev]=await Promise.all([API(`/cases/${id}/hpas-auto?lang=${RPT_LANG()}`).catch(()=>({elements:[]})),API(`/cases/${id}/sjph-evidence?lang=${RPT_LANG()}`).catch(()=>({items:[]}))]);
   const els=h.elements||[];
   const canSev=["client","consultant","admin"].includes(ROLE);
   const sevHtml=(sev.items||[]).map(it=>`<div class="check"${canSev?` ondragover="event.preventDefault();this.style.background='var(--accent-soft)'" ondragleave="this.style.background=''" ondrop="this.style.background='';dropSjphEvidence(event,'${id}','${it.item_key}')" title="${T('파일을 드롭하여 업로드')}"`:''}>
@@ -8453,7 +8482,7 @@ SCREEN.consultation = async () => {
 SCREEN.invoice=async()=>{
   const id=CURCASE;const inv=await API(`/cases/${id}/invoices`).catch(()=>[]);
   const pays=await API(`/cases/${id}/payments`).catch(()=>[]);
-  const docs=await API(`/cases/${id}/documents`).catch(()=>[]);
+  const docs=await API(`/cases/${id}/documents?lang=${RPT_LANG()}`).catch(()=>[]);
   const dproofs=(docs||[]).filter(d=>d.doc_type==='deposit_proof');  // P2-2: 입금증빙
   const canMark=["client","consultant"].includes(ROLE);  // pay: applicant·consultant (백엔드 RBAC)
   const ipg=pageSlice("invoice",inv,10);
@@ -8494,7 +8523,7 @@ SCREEN.invoice=async()=>{
   ${await contractStageCard(id)}
   ${await contractQueueCard(id)}
   <div class="grid side">
-    <div class="card"><h3>${T('청구서 목록')} <span class="en">· Invoices</span><span class="r">${inv.length}${T('건')} · row 클릭 → 상세</span></h3>
+    <div class="card"><h3>${T('청구서 목록')} <span class="en">· Invoices</span><span class="r">${inv.length}${T('건')} · ${T('row 클릭 → 상세')}</span></h3>
       <div class="body tight"><table><thead><tr><th>${T('청구번호')}</th><th>${T('서비스')}</th><th>금액 · IDR</th><th>${T('상태')}</th></tr></thead><tbody>${rows}</tbody></table></div>
       ${pager("invoice",ipg)}
       <div class="body btnrow" style="border-top:1px solid var(--line)">
@@ -9941,7 +9970,7 @@ SCREEN.menuAssign=async()=>{
         <input class="box" placeholder="${T('🔍 메뉴명·코드 검색')}" style="flex:1;min-width:150px" value="${esc(MA_SEARCH)}" oninput="MA_SEARCH=this.value;document.getElementById('maLeft').innerHTML=maLeftHTML()">
         <button class="btn pri" onclick="maSave()">💾 ${T('저장')}</button></div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">
-        <div><div class="muted small" style="margin-bottom:4px">${T('전체 메뉴')} — 드래그/더블클릭 → 배정</div>
+        <div><div class="muted small" style="margin-bottom:4px">${T('전체 메뉴')} — ${T('드래그/더블클릭 → 배정')}</div>
           <div id="maLeft" style="max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">${maLeftHTML()}</div></div>
         <div><div class="muted small" style="margin-bottom:4px"><b>${esc(tLabel)}</b> 배정 메뉴 — ↑↓ 순서, × 제거</div>
           <div id="maRight" style="max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px" ondragover="event.preventDefault()" ondrop="maDrop(event)">${maRightHTML()}</div></div>
@@ -9964,7 +9993,7 @@ SCREEN.myMenu=async()=>{
         <button class="btn" onclick="myMenuReset()" title="${T('역할 기본값으로 초기화')}">↺ ${T('기본값')}</button>
         <button class="btn pri" onclick="maSave()">💾 ${T('저장')}</button></div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:14px">
-        <div><div class="muted small" style="margin-bottom:4px">${T('전체 메뉴')} — 드래그/더블클릭 → 추가</div>
+        <div><div class="muted small" style="margin-bottom:4px">${T('전체 메뉴')} — ${T('드래그/더블클릭 → 추가')}</div>
           <div id="maLeft" style="max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">${maLeftHTML()}</div></div>
         <div><div class="muted small" style="margin-bottom:4px"><b>${T('내 메뉴')}</b> — ↑↓ 순서, × 제거</div>
           <div id="maRight" style="max-height:480px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px" ondragover="event.preventDefault()" ondrop="maDrop(event)">${maRightHTML()}</div></div>
@@ -10346,7 +10375,7 @@ async function renderCaseDetail(id, tab){
       <div class="body tight"><table><thead><tr><th>${T('원재료')}</th><th>${T('상태')}</th><th>${T('증빙')}</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="CURCASE='${id}';go('materials')">${T('원재료 화면 열기 →')}</button></div></div>`;
   } else if(tab==="documents"){
-    const docs=await API(`/cases/${id}/documents`).catch(()=>[]);
+    const docs=await API(`/cases/${id}/documents?lang=${RPT_LANG()}`).catch(()=>[]);
     panel=`<div class="card"><h3>${T('첨부 문서')} <span class="en">· Attachments</span><span class="r">클릭 → 원본</span></h3>
       <div class="body"><div class="filegrid">${docs.length?docs.map(d=>`<div class="filecard" onclick="viewDoc('${d.document_id}')">
         <div class="fico">${/png|jpg|jpeg|img/i.test(d.filename||"")?'🖼':'📄'}</div>

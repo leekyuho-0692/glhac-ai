@@ -122,6 +122,55 @@ DOC_REQUIREMENT = {
     "sjph_manual": "SJPH 매뉴얼 — 5요소(경영약속·원재료·공정·제품·모니터링) 포함",
 }
 
+# 서류 요건 설명 — 인니 신청기업·심사자가 읽는 문구다. 한국어만 두면 인니어 화면에
+# 그대로 뜬다(실측: 사전심사 화면 잔여 한글의 최대 덩어리).
+DOC_REQUIREMENT_L10N = {
+    "en": {
+        "nib_business_license": "Scan of the business licence (NIB) — company name, NIB number and business address must be legible",
+        "factory_registration": "Factory registration — must include the factory registration number and the factory address",
+        "product_list": "Full list of products to be certified — product name, category and registration type (new/existing)",
+        "process_flow": "Production process flowchart — the sequence of steps: material intake → mixing → heating → filling → packaging, etc.",
+        "material_list": "Full list of raw materials — material name, supplier and halal status (certified/declared)",
+        "halal_certificate": "Copies of the halal certificates held by the suppliers of critical raw materials — these are documents the applicant submits, not certificates this platform issues (only where such materials exist)",
+        "sjph_manual": "SJPH manual — must cover all five elements (management commitment, materials, process, product, monitoring)",
+    },
+    "id": {
+        "nib_business_license": "Pindaian izin usaha (NIB) — nama perusahaan, nomor NIB, dan alamat usaha harus terbaca",
+        "factory_registration": "Registrasi pabrik — memuat nomor registrasi pabrik dan alamat lokasi pabrik",
+        "product_list": "Daftar lengkap produk yang disertifikasi — nama produk, kategori, dan jenis pendaftaran (baru/lama)",
+        "process_flow": "Diagram alir proses produksi — urutan tahapan: penerimaan bahan → pencampuran → pemanasan → pengisian → pengemasan, dll.",
+        "material_list": "Daftar lengkap bahan baku — nama bahan, pemasok, dan status halal (bersertifikat/deklarasi)",
+        "halal_certificate": "Salinan sertifikat halal yang dimiliki pemasok bahan kritis — ini dokumen yang diunggah pemohon, bukan sertifikat yang diterbitkan platform ini (hanya bila bahan tersebut ada)",
+        "sjph_manual": "Manual SJPH — mencakup lima elemen (komitmen manajemen, bahan, proses, produk, pemantauan)",
+    },
+}
+
+# 면제·갈음 사유 — 왜 이 서류를 안 내도 되는지. 심사자가 읽고 판단하는 문장이다.
+_EXEMPT_L10N = {
+    "소규모 자기선언 — NIB로 갈음(별도 공장등록증 요구 없음)": {
+        "en": "Small-scale self-declare — covered by the NIB (no separate factory registration required)",
+        "id": "Self-declare skala kecil — dicakup oleh NIB (tidak perlu registrasi pabrik terpisah)"},
+    "인도네시아 소규모 사업자 — NIB가 시설 등록을 겸함(별도 공장등록증 제도 없음)": {
+        "en": "Indonesian micro/small business — the NIB also serves as facility registration (no separate factory registration scheme)",
+        "id": "Usaha mikro/kecil Indonesia — NIB sekaligus berfungsi sebagai registrasi fasilitas (tidak ada skema registrasi pabrik terpisah)"},
+    "인도네시아 자기선언 경로 — 공급사 인증번호로 갈음(BPJPH 대조)": {
+        "en": "Indonesian self-declare pathway — satisfied by the supplier certificate numbers (verified against BPJPH)",
+        "id": "Jalur self-declare Indonesia — dipenuhi dengan nomor sertifikat pemasok (dicocokkan dengan BPJPH)"},
+}
+
+
+def requirement_text(doc_type, lang="ko"):
+    """서류 요건 설명 — 해당 언어가 없으면 한국어로 물러선다(빈칸보다 낫다)."""
+    tbl = DOC_REQUIREMENT_L10N.get((lang or "ko").lower())
+    return (tbl or {}).get(doc_type) or DOC_REQUIREMENT.get(doc_type, "")
+
+
+def exempt_text(ko, lang="ko"):
+    """면제·갈음 사유 문구를 해당 언어로."""
+    if (lang or "ko").lower() == "ko":
+        return ko
+    return (_EXEMPT_L10N.get(ko) or {}).get((lang or "").lower(), ko)
+
 _IMG = ("png", "jpg", "jpeg", "bmp", "tiff", "tif", "webp")
 
 

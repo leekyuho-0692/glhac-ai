@@ -3253,18 +3253,30 @@ def _translate_text(text, lang, src=None):
         return (text or "").strip()
     tgt = _LANG_EN.get(lang, _LANG_NAME.get(lang, lang))
     srcname = {"ko": "Korean", "id": "Indonesian (Bahasa Indonesia)", "en": "English"}.get(src, "Korean")
+    # 도메인 고유명사는 번역하지 말라고 이름을 대준다. "proper nouns"만으로는 부족했다
+    # — 실측에서 'penyelia halal'(할랄감독자)이 'pemegang kehalalan'이라는 없는 말로
+    # 바뀌었다. 심사 문서에서 직책·기관 이름이 바뀌면 그 문서는 틀린 문서가 된다.
+    from . import domain_dict as _dd
+    _keep = _dd.protected_terms(lang)
+    _keepmsg = (" NEVER translate or alter these terms — copy them exactly: %s."
+                % ", ".join(_keep[:24])) if _keep else ""
     sysmsg = ("You are a professional document translator. Translate the given %s text into "
-              "%s. Keep proper nouns, registration/business numbers, dates, and figures as-is. "
+              "%s. Keep proper nouns, registration/business numbers, dates, and figures as-is.%s "
               "Preserve line breaks. Output ONLY the translation — no %s characters, "
-              "no explanations, no preamble." % (srcname, tgt, srcname))
+              "no explanations, no preamble." % (srcname, tgt, _keepmsg, srcname))
     out = []
     for i in range(0, len(text), 1500):
         ch = text[i:i + 1500]
         if not ch.strip():
             continue
         res = ai_local.llm_text(sysmsg, ch, model=_TRANSLATE_MODEL) or ""
-        # 한국어 원문일 때만 한글 잔존을 실패 신호로 본다(인니·영문 원문엔 해당 없음)
-        if src == "ko" and _hangul_ratio(res) > 0.15:
+        # 재시도 신호 둘: (1) 한국어 원문인데 한글이 남았다 (2) 보호 용어가 사라졌다.
+        # 둘 다 조용한 오역이라 결과만 보면 알 수 없다. 재시도해도 안 되면 그대로 둔다
+        # — 지어낸 번역을 계속 굴리는 것보다 한 번 더 시도하고 멈추는 편이 낫다.
+        _lost = _dd.missing_protected(ch, res, lang)
+        if (src == "ko" and _hangul_ratio(res) > 0.15) or _lost:
+            if _lost:
+                log.info("번역 보호용어 소실 재시도: %s", ", ".join(_lost[:5]))
             res = ai_local.llm_text(sysmsg, ch, model=_TRANSLATE_MODEL) or res
         out.append(res)
     return "\n".join(out).strip()
@@ -4079,9 +4091,10 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
 
 
 @app.get("/cases/{case_id}/documents")
-def list_documents(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+def list_documents(case_id: str, lang: str = Query("ko"),
+                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
-    from .intake import DOC_KO
+    DOC_KO = _intake_doc_names(lang)   # 표는 있는데 늘 한국어를 골랐다 — 읽는 사람 언어로
     rows = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     return [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
              "doc_type_ko": DOC_KO.get(d.doc_type, d.doc_type),
@@ -12346,9 +12359,10 @@ _ENUMS = {
 
 
 @app.get("/meta/enums")
-def get_enums(user=Depends(auth.get_current_user)):
+def get_enums(lang: str = Query("ko"), user=Depends(auth.get_current_user)):
     """전 enum 단일 소스 (프론트 select 데이터연결·드리프트 차단) — 설계 §11.2."""
-    from .intake import DOC_TYPES, DOC_KO
+    from .intake import DOC_TYPES
+    DOC_KO = _intake_doc_names(lang)
     out = {k: [{"value": v, "label": lab} for v, lab in items] for k, items in _ENUMS.items()}
     out["doc_type"] = [{"value": d, "label": DOC_KO.get(d, d)} for d in DOC_TYPES]
     return out
@@ -12500,6 +12514,18 @@ def _fn_show(d, lang):
         return nm
     en = d.get("filename_en") if isinstance(d, dict) else getattr(d, "filename_en", None)
     return en or _fn_en(nm) or nm
+
+
+# 사전심사 체크리스트에서 조립되는 짧은 문구 — 표 밖에서 문자열로 만들어져
+# 번역을 못 받고 있었다. %d 는 인증번호 건수(언어마다 자리가 달라 문장째 둔다).
+_CHECKLIST_L10N = {
+    "업로드 파일": {"ko": "업로드 파일", "en": "Uploaded file", "id": "Berkas unggahan"},
+    "생성 문서": {"ko": "생성 문서", "en": "Generated document", "id": "Dokumen hasil sistem"},
+    "공급사 인증번호 확보 — 원본 서류 미제출(번호 대조는 오디터)": {
+        "ko": "공급사 인증번호 %d건 확보 — 원본 서류 미제출(번호 대조는 오디터)",
+        "en": "%d supplier certificate numbers on file — original documents not submitted (the auditor verifies the numbers)",
+        "id": "%d nomor sertifikat pemasok tersedia — dokumen asli belum diunggah (auditor yang mencocokkan nomor)"},
+}
 
 
 def _intake_doc_names(lang):
@@ -12975,6 +13001,47 @@ SJPH_EVIDENCE_ITEMS = [
     ("purchase_log", "구매 기록"), ("receiving_log", "입고 기록"), ("usage_log", "사용 기록"),
     ("production_log", "생산 기록"), ("distribution_log", "출고 기록"), ("internal_audit", "내부 심사 기록"),
 ]
+# 증빙 항목 이름은 업체가 무엇을 올려야 하는지 보는 문구다 — 한국어만 두면 인니 업체가
+# 무슨 서류인지 알 수 없다.
+SJPH_EVIDENCE_L10N = {
+    "en": {"halal_supervisor": "Halal supervisor appointment letter", "training": "Halal training record",
+           "facility_layout": "Facility layout", "production_flow": "Production process flowchart",
+           "purchase_log": "Purchase record", "receiving_log": "Incoming goods record",
+           "usage_log": "Usage record", "production_log": "Production record",
+           "distribution_log": "Outgoing goods record", "internal_audit": "Internal audit record"},
+    "id": {"halal_supervisor": "Surat penetapan penyelia halal", "training": "Bukti pelatihan halal",
+           "facility_layout": "Denah fasilitas", "production_flow": "Diagram alir proses produksi",
+           "purchase_log": "Catatan pembelian", "receiving_log": "Catatan penerimaan barang",
+           "usage_log": "Catatan penggunaan", "production_log": "Catatan hasil produksi",
+           "distribution_log": "Catatan pengeluaran barang", "internal_audit": "Catatan audit internal"},
+}
+
+
+def _evidence_label(key, ko, lang="ko"):
+    return (SJPH_EVIDENCE_L10N.get((lang or "ko").lower()) or {}).get(key) or ko
+
+
+# HPAS 5요소 — 이름과 '왜 이 판정인지'를 함께 현지화한다. 판정 근거가 한국어로 남으면
+# 인니 심사자는 결과만 보고 이유를 못 읽는다.
+_HPAS_L10N = {
+    "ko": {"commitment": "책임과 약속", "materials": "원재료", "process": "할랄제품공정",
+           "product": "제품", "monitoring": "모니터링·평가",
+           "r_commitment": "할랄감독자 지정+교육 증빙", "r_materials": "임계원재료 %d건",
+           "r_process": "공정 흐름도 증빙", "r_product": "제품 %d·사진 %d",
+           "r_monitoring": "내부 심사 기록"},
+    "en": {"commitment": "Commitment & responsibility", "materials": "Raw materials",
+           "process": "Halal production process", "product": "Product",
+           "monitoring": "Monitoring & evaluation",
+           "r_commitment": "Supervisor appointment + training evidence",
+           "r_materials": "%d critical raw materials", "r_process": "Process flowchart evidence",
+           "r_product": "%d products · %d photos", "r_monitoring": "Internal audit record"},
+    "id": {"commitment": "Komitmen & tanggung jawab", "materials": "Bahan baku",
+           "process": "Proses produksi halal", "product": "Produk",
+           "monitoring": "Pemantauan & evaluasi",
+           "r_commitment": "Penetapan penyelia + bukti pelatihan",
+           "r_materials": "%d bahan kritis", "r_process": "Bukti diagram alir proses",
+           "r_product": "%d produk · %d foto", "r_monitoring": "Catatan audit internal"},
+}
 
 
 # 본문까지 열어볼 문서 유형 — 유형이 이미 특정된 문서는 여기서 제외한다.
@@ -13055,10 +13122,11 @@ def autofile_sjph_evidence(case_id: str,
 
 
 @app.get("/cases/{case_id}/sjph-evidence")
-def list_sjph_evidence(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+def list_sjph_evidence(case_id: str, lang: str = Query("ko"),
+                       user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     have = {e.item_key: e for e in db.query(models.SjphEvidence).filter_by(case_id=case_id)}
-    items = [{"item_key": k, "label": ko, "uploaded": k in have,
+    items = [{"item_key": k, "label": _evidence_label(k, ko, lang), "uploaded": k in have,
               "filename": have[k].filename if k in have else None,
               "document_id": have[k].document_id if k in have else None} for k, ko in SJPH_EVIDENCE_ITEMS]
     up = sum(1 for i in items if i["uploaded"])
@@ -13117,7 +13185,8 @@ def _eval_verdicts(db, case_id):
 
 
 @app.get("/cases/{case_id}/hpas-auto")
-def hpas_auto(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+def hpas_auto(case_id: str, lang: str = Query("ko"),
+              user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """HPAS 5요소 자동 증빙 유도 (업로드/원재료/제품/매트릭스/SJPH증빙에서) — 설계 G3.
     P2-5: status(ok/gap 하위호환 유지)에 더해 3-state(state3: good/gap/fail, 오디터 판정 우선),
     항목별 증거카운트(evidence_docs 📎 / evidence_media 🎥) 제공."""
@@ -13153,12 +13222,14 @@ def hpas_auto(case_id: str, user=Depends(auth.get_current_user), db: Session = D
             return v
         return "good" if det == "ok" else "gap"
 
+    # HPAS 5요소 라벨·판정근거 — 심사자가 화면에서 읽는 문구다.
+    _hl = _HPAS_L10N.get((lang or "ko").lower()) or _HPAS_L10N["ko"]
     base = [
-        ("commitment", "책임과 약속", st(pen and "halal_supervisor" in sev), "할랄감독자 지정+교육 증빙"),
-        ("materials", "원재료", st(bool(mats) and not bad), "임계원재료 %d건" % len(bad)),
-        ("process", "할랄제품공정", st("production_flow" in sev), "공정 흐름도 증빙"),
-        ("product", "제품", st(prods > 0 and photos > 0), "제품 %d·사진 %d" % (prods, photos)),
-        ("monitoring", "모니터링·평가", st("internal_audit" in sev), "내부 심사 기록"),
+        ("commitment", _hl["commitment"], st(pen and "halal_supervisor" in sev), _hl["r_commitment"]),
+        ("materials", _hl["materials"], st(bool(mats) and not bad), _hl["r_materials"] % len(bad)),
+        ("process", _hl["process"], st("production_flow" in sev), _hl["r_process"]),
+        ("product", _hl["product"], st(prods > 0 and photos > 0), _hl["r_product"] % (prods, photos)),
+        ("monitoring", _hl["monitoring"], st("internal_audit" in sev), _hl["r_monitoring"]),
     ]
     elements = [{"element": el, "label": lab, "status": det, "reason": rsn,
                  "state3": merge3(el, det), "verdict": verdicts.get(el),
@@ -13222,9 +13293,13 @@ def evaluation_verdict(case_id: str, body: dict = None,
 
 
 @app.get("/cases/{case_id}/doc-checklist")
-def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+def doc_checklist(case_id: str, lang: str = Query("ko"),
+                  user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
-    from .intake import REQUIRED_DOCS, DOC_KO, DOC_REQUIREMENT, doc_requirements
+    from .intake import REQUIRED_DOCS, doc_requirements, requirement_text, exempt_text
+    # 서류명·요건·면제사유를 읽는 사람 언어로. 표는 있었는데 늘 한국어를 골랐다.
+    DOC_KO = _intake_doc_names(lang)
+    _L = lambda k: _CHECKLIST_L10N.get(k, {}).get((lang or "ko").lower(), k)
     # 필수 서류는 신청 경로와 관할·규모에 따라 다르다. 목록에서 빼더라도 행은 남겨
     # '해당 없음'으로 사유와 함께 보여준다 — 조용히 사라지면 심사자가 빠뜨린 것인지
     # 면제인지 구분할 수 없다.
@@ -13247,20 +13322,20 @@ def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session
         files = by_type.get(dt, [])
         non_rejected = [x for x in files if x["review_status"] != "rejected"]
         satisfied = bool(non_rejected)
-        source = "업로드 파일" if satisfied else None
+        source = _L("업로드 파일") if satisfied else None
         g = gen.get(dt)
         if not satisfied and g is not None:
             satisfied = True
-            source = "생성 문서 v%s · %s" % (g.version, g.status)
+            source = "%s v%s · %s" % (_L("생성 문서"), g.version, g.status)
         # 미제출(파일 없음) vs 반려(제출됐으나 전부 반려=내용 부족) 구분
         status = "ok" if satisfied else ("rejected" if files else "missing")
         row = {"doc_type": dt, "doc_type_ko": DOC_KO[dt], "satisfied": satisfied,
                "files": files, "file_count": len(files), "status": status,
                "source": source, "applicable": True,
-               "requirement": DOC_REQUIREMENT.get(dt, ""), "required": dt in _req}
+               "requirement": requirement_text(dt, lang), "required": dt in _req}
         if dt in _na:                       # 이 경로에서 요구되지 않는 서류
             row.update({"applicable": False, "status": "not_applicable",
-                        "required": False, "na_reason": _na[dt]})
+                        "required": False, "na_reason": exempt_text(_na[dt], lang)})
         checklist.append(row)
     # 필수 외 실제 업로드된 문서 유형(기타·공급사선언·성적서 등)도 포함 — 전체 파일 표출
     for dt, files in by_type.items():
@@ -13268,7 +13343,7 @@ def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session
             continue
         checklist.append({"doc_type": dt, "doc_type_ko": DOC_KO.get(dt, dt), "satisfied": True,
                           "files": files, "file_count": len(files), "status": "ok",
-                          "requirement": DOC_REQUIREMENT.get(dt, ""), "required": False})
+                          "requirement": requirement_text(dt, lang), "required": False})
     # 공급사 할랄 인증서는 '원본 서류'가 없어도 인증번호는 확보돼 있을 수 있다.
     # 오디터가 대조할 대상이 몇 건인지 함께 보여야 '자료가 전무하다'는 오해가 안 생긴다.
     _cn = (db.query(models.Material)
@@ -13277,7 +13352,7 @@ def doc_checklist(case_id: str, user=Depends(auth.get_current_user), db: Session
     for _c in checklist:
         if _c["doc_type"] == "halal_certificate" and _cn:
             _c["cert_no_on_file"] = _cn
-            _c["note"] = "공급사 인증번호 %d건 확보 — 원본 서류 미제출(번호 대조는 오디터)" % _cn
+            _c["note"] = _L("공급사 인증번호 확보 — 원본 서류 미제출(번호 대조는 오디터)") % _cn
             # 자기선언 경로는 인증번호 자체가 제출물이다(BPJPH가 직접 대조).
             # 무엇으로 갈음했는지 source에 남겨 업로드 충족과 구분한다.
             _a = _alt.get("halal_certificate")
