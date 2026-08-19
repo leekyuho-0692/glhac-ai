@@ -374,6 +374,33 @@ def _assigned_staff(db, case_id):
     return out
 
 
+def _org_access_ok(db, user, org_id):
+    """이 사용자가 이 조직의 정보를 볼 수 있는가 — 자기 조직이거나, 배정받은 케이스의 조직.
+
+    케이스 접근은 배정을 인정하는데(_assert_case_access) 조직 자원은 org_id 를 직접
+    비교해 막고 있었다. 그래서 배정된 컨설턴트가 담당 업체의 케이스는 여는데 그 업체의
+    할랄감독자·시설·SIHALAL 신원은 못 봤다(실측 403). 심사에 필요한 정보다.
+    인증기관 역할(관리자·최고운영자·샤리아)은 조직을 넘어 본다 — 판정이 업무다."""
+    if not org_id:
+        return False
+    if user.get("role") in CERTIFIER_ROLES:
+        return True
+    if org_id == user.get("org_id"):
+        return True
+    ids = _assigned_case_ids(db, user.get("uid"))
+    if not ids:
+        return False
+    return db.query(models.CaseApplication).filter(
+        models.CaseApplication.case_id.in_(ids),
+        models.CaseApplication.org_id == org_id).count() > 0
+
+
+def _assert_org_access(db, user, org_id, code="FORBIDDEN_ORG"):
+    if not _org_access_ok(db, user, org_id):
+        raise HTTPException(403, {"code": code, "org_id": org_id,
+                                  "hint": "배정되지 않은 조직입니다"})
+
+
 def _assigned_case_ids(db, uid):
     """이 사용자가 배정받은 케이스 id — 목록 필터용."""
     out = set()
@@ -13930,8 +13957,7 @@ def add_penyelia(org_id: str, body: schemas.PenyeliaCreate,
 
 @app.get("/orgs/{org_id}/penyelia")
 def list_penyelia(org_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
-    if user["role"] != "admin" and org_id != user["org_id"]:  # P0-2 조직격리
-        raise HTTPException(403, {"code": "FORBIDDEN_ORG"})
+    _assert_org_access(db, user, org_id)
     rows = db.query(models.PenyeliaHalal).filter_by(org_id=org_id).all()
     return {"active_count": sum(1 for r in rows if r.status == "active"),
             "items": [{"penyelia_id": r.penyelia_id, "name": r.name, "status": r.status} for r in rows]}
@@ -14168,8 +14194,7 @@ def sihalal_verify(eid: str, body: schemas.SihalalVerify,
     ei = db.get(models.ExternalIdentity, eid)
     if not ei:
         raise HTTPException(404, {"code": "IDENTITY_NOT_FOUND"})
-    if user["role"] != "admin" and ei.org_id != user["org_id"]:  # P0-2 조직격리
-        raise HTTPException(403, {"code": "FORBIDDEN_ORG"})
+    _assert_org_access(db, user, ei.org_id)   # 배정된 컨설턴트도 검증할 수 있어야 한다
     stored = (ei.external_email or ei.external_username or "").strip().lower()
     match = bool(stored) and body.expected_identifier.strip().lower() == stored
     ei.identifier_match = match
@@ -14675,8 +14700,8 @@ def _facilities_for_case(db, c):
 def list_facilities(org_id: str, case_id: str = Query(None),
                     user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     # 타 조직 조회 차단 — org_id는 URL에서 오므로 검사 없이는 남의 회사 공장이 열린다.
-    if user["role"] != "admin" and org_id != user["org_id"]:
-        raise HTTPException(403, {"code": "ORG_FORBIDDEN", "org_id": org_id})
+    # 조회는 배정을 인정한다 — 담당 업체의 시설을 못 보면 심사가 안 된다.
+    _assert_org_access(db, user, org_id)
     if case_id:   # 케이스 문맥이 있으면 그 회사의 자산만
         rows = _facilities_for_case(db, _get_case(db, case_id, user))
     else:

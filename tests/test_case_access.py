@@ -173,3 +173,62 @@ def test_fatwa_and_scope_guards_still_apply(tmp_path):
     with pytest.raises(HTTPException) as e2:
         m._issue_guards(db, c, c.case_id)
     assert e2.value.detail["code"] == "SCOPE_NOT_FROZEN"
+
+
+# ── 조직 자원 접근 — 케이스가 열리면 그 업체 정보도 열려야 한다 ──────────
+# 배경(리허설 실측): 배정된 컨설턴트가 케이스 상세는 200 인데 같은 업체의 할랄감독자·
+# 시설·SIHALAL 신원은 403 이었다. 케이스 접근은 배정을 인정하는데 조직 자원은 org_id 를
+# 직접 비교했기 때문이다. 그 결과 신규 가입 업체는 정규 경로(SIHALAL 신원 확인 필요)로
+# 진행할 수 없었다.
+
+def _org_ok(db, user, org):
+    return m._org_access_ok(db, user, org)
+
+
+def test_own_org_is_always_visible(tmp_path):
+    db = _db(tmp_path)
+    assert _org_ok(db, _user("consultant"), OWN)
+
+
+@pytest.mark.parametrize("role", ["admin", "operator", "fatwa_liaison"])
+def test_certifier_roles_see_every_org(tmp_path, role):
+    """인증기관 역할은 조직을 넘어 본다 — 판정이 업무다."""
+    db = _db(tmp_path)
+    assert _org_ok(db, _user(role), OTHER)
+
+
+def test_assignment_opens_the_company_behind_the_case(tmp_path):
+    """배정받으면 그 케이스의 업체 정보도 열린다 — 이게 막혀 심사가 멈췄다."""
+    db = _db(tmp_path)
+    u = _user("consultant", "con1")
+    assert not _org_ok(db, u, OTHER)
+    _assign(db, "c_new", m.CONSULTANT_ASSIGN_ACTION, "consultant_id", "con1")
+    assert _org_ok(db, u, OTHER)
+
+
+def test_assignment_does_not_open_unrelated_orgs(tmp_path):
+    """배정은 그 케이스의 조직만 연다 — 전체 개방이 되면 안 된다."""
+    db = _db(tmp_path)
+    db.add(models.CaseApplication(case_id="c_third", org_id="org_third",
+                                  company_name="제3의 업체"))
+    db.commit()
+    _assign(db, "c_new", m.CONSULTANT_ASSIGN_ACTION, "consultant_id", "con1")
+    u = _user("consultant", "con1")
+    assert _org_ok(db, u, OTHER)
+    assert not _org_ok(db, u, "org_third")
+
+
+def test_auditor_assignment_also_opens_the_org(tmp_path):
+    """오디터도 마찬가지 — 현장심사에 업체 시설 정보가 필요하다."""
+    db = _db(tmp_path)
+    u = _user("auditor", "aud1")
+    assert not _org_ok(db, u, OTHER)
+    _assign(db, "c_new", "ops.auditor_assigned", "auditor_id", "aud1")
+    assert _org_ok(db, u, OTHER)
+
+
+def test_empty_org_is_refused(tmp_path):
+    """org_id 가 비면 통과시키지 않는다 — 빈 값이 만능 열쇠가 되면 안 된다."""
+    db = _db(tmp_path)
+    assert not _org_ok(db, _user("admin"), "")
+    assert not _org_ok(db, _user("consultant"), None)
