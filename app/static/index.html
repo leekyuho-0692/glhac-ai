@@ -740,6 +740,26 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+ "조직 · Org":"Organization", "매출 · Revenue":"Revenue", "사용자":"Users", "인증서":"Certificates",
+ "문서 안의 삽입 위치 문구(원문)":"Insertion anchor text inside the document (original)",
+ "조직":"Organization", "기업":"Company", "상태":"Status", "경로":"Pathway", "파트와":"Fatwa",
+ "케이스":"Cases", "테넌트":"Tenant", "조직명":"Organization name", "역할":"Role",
+ "위원이 없습니다.":"No committee members.",
+ "일부 데이터를 불러오지 못했습니다":"Some data could not be loaded", "실패":"failed",
+ "표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.":"The view may be incomplete — refresh or check the console.",
+ "데이터를 불러오지 못했습니다":"Could not load data", "진행 정보를 불러오지 못했습니다.":"Could not load progress information.",
+ "이 형식은 인라인 미리보기를 지원하지 않습니다":"This format cannot be previewed inline",
+ "파일 내려받기":"Download file", "요소":"elements",
+ "부적합 항목 있음 — 시정조치 필요":"Non-conformities found — corrective action required",
+ "상정 기준 충족":"Meets submission criteria", "보완 항목 확인":"Check items needing work",
+ "파트와 화면으로 · To Fatwa":"To Fatwa", "원재료 목록":"Raw material list", "기권":"Abstain",
+ "충족":"Met", "미확인":"Not checked", "클릭 순환":"click to cycle",
+ "기업 · Company":"Company", "번호 · ID":"ID", "상태 · Status":"Status",
+ "담당 · Auditor":"Auditor", "기한 · Due":"Due",
+ "SJPH 매뉴얼 생성":"Generate SJPH manual", "모든 섹션 완료 필요":"All sections must be complete",
+ "클릭→필터":"click to filter", "가결":"Approved", "심의중":"Under deliberation",
+ "찬성":"For", "반대":"Against", "기권":"Abstain", "정족수":"Quorum",
+ "식품":"Food", "화장품":"Cosmetics", "의약":"Pharmaceutical", "읽기전용":"Read-only",
  "적합후보":"Likely compliant", "보완":"Needs work", "부적합":"Non-compliant",
  "위원장 · Head":"Head", "간사":"Secretary", "완료도":"Completion",
  "불러오는 중… · loading":"Loading…", "사전심사":"Pre-assessment",
@@ -974,7 +994,7 @@ function buildNav(){
      (2026-07-10 비노출 결정 → 재노출) */
   const NAV_HIDDEN=new Set();
   const allow=id=>byId[id]&&menuAllowed(id)&&!NAV_HIDDEN.has(id);
-  const link=([id,ic,ko,en])=>`<a data-id="${id}" role="link" tabindex="0" onclick="go('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}"><span aria-hidden="true">${ic}</span><span>${LANG===2?(NAV_ID[id]||ko):ko}</span><span class="en">${en}</span></a>`;
+  const link=([id,ic,ko,en])=>`<a data-id="${id}" role="link" tabindex="0" onclick="go('${id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();go('${id}')}"><span aria-hidden="true">${ic}</span><span>${navName(id,ko)}</span><span class="en">${en}</span></a>`;
   const grp=(label,ids2,list)=>{const op=ids2.includes(CUR);return `<div class="nav-group${op?' open':''}"><div class="nav-group-label" onclick="toggleNavGroup(this)">${label}<span class="nav-caret">▸</span></div><div class="nav-group-items">${list.join("")}</div></div>`;};
   let html="", shown=0;
   NAV_GROUPS.forEach(g=>{
@@ -1033,20 +1053,47 @@ window.addEventListener("popstate",e=>{
   DETAIL=s.detail?{id:s.detail,tab:s.tab||"overview"}:null;
   applyView();
 });
+/* 메뉴 이름 — 좌측 메뉴와 페이지 헤더가 같은 규칙을 따라야 한다.
+   전에는 메뉴만 인니어로 바뀌고 헤더는 한국어로 남아 한 화면에 두 언어가 섞였다. */
+function navName(id, ko){
+  if(LANG===2) return NAV_ID[id]||T(ko)||ko;
+  if(LANG===0){ const n=NAV.find(x=>x[0]===id); return (n&&n[3])||ko; }
+  return ko;
+}
 function pageHead(id){
   const n=NAV.find(x=>x[0]===id);
   if(!n){const d=dynMenuInfo(id);return `<div class="page-h"><span style="font-size:22px">${d.icon}</span>
     <h1>${esc(d.name)}</h1><span class="scope-pill">👁 ${T(scopeLabel())}</span></div>`;}
   const roleNames=(MENU_ACCESS[id]||[]).map(r=>T(ROLE_DEF[r].ko)).join(" · ");
   return `<div class="page-h"><span style="font-size:22px">${n[1]}</span>
-    <h1>${n[2]}</h1><span class="en">· ${n[3]}</span>
+    <h1>${esc(navName(id,n[2]))}</h1><span class="en">· ${n[3]}</span>
     <span class="scope-pill">👁 ${T(scopeLabel())}</span></div>
     <div class="roles">${T('노출 역할 · Roles')} &nbsp;<b>${roleNames}</b></div>`;
 }
-function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="margin-bottom:14px">⚠ 일부 데이터를 불러오지 못했습니다 (${FETCH_ERRORS}${T('건')} 실패) — 표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.</div>`:"";}
+function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="margin-bottom:14px">⚠ ${T('일부 데이터를 불러오지 못했습니다')} (${FETCH_ERRORS}${T('건')} ${T('실패')}) — ${T('표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.')}</div>`:"";}
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+ "조직 · Org":"Organisasi", "매출 · Revenue":"Pendapatan", "사용자":"Pengguna", "인증서":"Sertifikat",
+ "문서 안의 삽입 위치 문구(원문)":"Teks penanda posisi di dalam dokumen (asli)",
+ "조직":"Organisasi", "기업":"Perusahaan", "상태":"Status", "경로":"Jalur", "파트와":"Fatwa",
+ "케이스":"Kasus", "테넌트":"Tenant", "조직명":"Nama organisasi", "역할":"Peran",
+ "위원이 없습니다.":"Belum ada anggota komite.",
+ "일부 데이터를 불러오지 못했습니다":"Sebagian data gagal dimuat", "실패":"gagal",
+ "표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.":"Tampilan mungkin tidak lengkap — muat ulang atau periksa konsol.",
+ "데이터를 불러오지 못했습니다":"Gagal memuat data", "진행 정보를 불러오지 못했습니다.":"Gagal memuat informasi kemajuan.",
+ "이 형식은 인라인 미리보기를 지원하지 않습니다":"Format ini tidak dapat dipratinjau langsung",
+ "파일 내려받기":"Unduh berkas", "요소":"elemen",
+ "부적합 항목 있음 — 시정조치 필요":"Ada ketidaksesuaian — perlu tindakan korektif",
+ "상정 기준 충족":"Memenuhi kriteria pengajuan", "보완 항목 확인":"Periksa item yang perlu diperbaiki",
+ "파트와 화면으로 · To Fatwa":"Ke layar Fatwa", "원재료 목록":"Daftar bahan baku", "기권":"Abstain",
+ "충족":"Terpenuhi", "미확인":"Belum diperiksa", "클릭 순환":"klik untuk mengganti",
+ "기업 · Company":"Perusahaan", "번호 · ID":"ID", "상태 · Status":"Status",
+ "담당 · Auditor":"Auditor", "기한 · Due":"Tenggat",
+ "SJPH 매뉴얼 생성":"Buat manual SJPH", "모든 섹션 완료 필요":"Semua bagian harus lengkap",
+ "클릭→필터":"klik untuk memfilter", "가결":"Disetujui", "심의중":"Sedang dibahas",
+ "찬성":"Setuju", "반대":"Menolak", "기권":"Abstain", "정족수":"Kuorum",
+ "식품":"Pangan", "화장품":"Kosmetik", "의약":"Farmasi", "읽기전용":"Hanya baca",
  "적합후보":"Kemungkinan sesuai", "보완":"Perlu perbaikan", "부적합":"Tidak sesuai",
  "위원장 · Head":"Ketua", "간사":"Sekretaris", "완료도":"Kelengkapan",
  "불러오는 중… · loading":"Memuat…", "사전심사":"Pra-penilaian",
@@ -4041,7 +4088,7 @@ async function applyView(){
   }
   document.querySelectorAll("#nav a").forEach(a=>a.classList.toggle("active",a.dataset.id===CUR));
   const n=NAV.find(x=>x[0]===CUR);
-  document.getElementById("crumb").innerHTML=n?`<b>${T(n[2])}</b> · ${n[3]}`:`<b>${esc(dynMenuInfo(CUR).name)}</b>`;
+  document.getElementById("crumb").innerHTML=n?`<b>${esc(navName(CUR,n[2]))}</b> · ${n[3]}`:`<b>${esc(dynMenuInfo(CUR).name)}</b>`;
   pages.innerHTML=`<div class="content show" id="pgHost">${pageHead(CUR)}<div class="card"><div class="body muted">불러오는 중… · loading</div></div></div>`;
   const host=document.getElementById("pgHost");
   try{
@@ -4067,7 +4114,7 @@ async function loadDocPreview(docId){
     const blob=await r.blob();const ct=(blob.type||"").toLowerCase();
     if(ct.includes("pdf")){const url=URL.createObjectURL(blob);box.innerHTML=`<iframe src="${url}" title="PDF" sandbox style="width:100%;height:540px;border:1px solid var(--line);border-radius:10px;background:#fff"></iframe>`;setTimeout(()=>URL.revokeObjectURL(url),120000);}
     else if(ct.startsWith("image/")&&ct!=="image/svg+xml"){const url=URL.createObjectURL(blob);box.innerHTML=`<img src="${url}" alt="preview" style="max-width:100%;border:1px solid var(--line);border-radius:10px">`;setTimeout(()=>URL.revokeObjectURL(url),120000);}
-    else{box.innerHTML=`<div class="banner info">이 형식은 인라인 미리보기를 지원하지 않습니다 · <a href="#" onclick="viewDoc('${esc(docId)}');return false" style="color:inherit;text-decoration:underline">파일 내려받기 ↓</a></div>`;}
+    else{box.innerHTML=`<div class="banner info">${T('이 형식은 인라인 미리보기를 지원하지 않습니다')} · <a href="#" onclick="viewDoc('${esc(docId)}');return false" style="color:inherit;text-decoration:underline">${T('파일 내려받기')} ↓</a></div>`;}
   }catch(e){box.innerHTML='<div class="muted small">미리보기 실패</div>';}
 }
 /* 사전심사 심사자 뷰 — 문서 원문 인라인 뷰어 모달(loadDocPreview와 동일 보안 패턴: sandbox iframe·blob·SVG 차단) */
@@ -4096,7 +4143,7 @@ async function docViewer(docId,title){
 }
 function errCard(err){
   const code=(err&&(err.code||err.detail))||(typeof err==="string"?err:"오류");
-  return `<div class="card"><div class="body"><div class="banner bad">⛔ 데이터를 불러오지 못했습니다 · ${esc(typeof code==="object"?JSON.stringify(code):code)}</div></div></div>`;
+  return `<div class="card"><div class="body"><div class="banner bad">⛔ ${T('데이터를 불러오지 못했습니다')} · ${esc(typeof code==="object"?JSON.stringify(code):code)}</div></div></div>`;
 }
 
 /* ---- filter chips (dashboard→caseList) ---- */
@@ -4539,7 +4586,7 @@ async function loadJourney(id){
     const stages=(r&&r.stages)||[];
     if(!stages.length){ el.innerHTML='<div class="muted small">진행 정보 없음</div>'; return; }
     el.innerHTML=renderJourney(stages);
-  }catch(e){ const el=document.getElementById('journeyBar'); if(el)el.innerHTML='<div class="muted small">진행 정보를 불러오지 못했습니다.</div>'; }
+  }catch(e){ const el=document.getElementById('journeyBar'); if(el)el.innerHTML='<div class="muted small">'+T('진행 정보를 불러오지 못했습니다.')+'</div>'; }
 }
 function renderJourney(stages){
   let html='<div class="stepbar" style="overflow-x:auto">';
@@ -4698,7 +4745,7 @@ SCREEN.dashboard=async()=>{
       <div class="list">${evHtml}</div></div>
   </div>
   ${rdRows?`<div class="card" style="margin-top:16px"><h3>${T('케이스 준비도 비교')} <span class="en">· Readiness</span><span class="r">상위 ${(sum.readiness||[]).length}${T('건')} · 클릭→상세</span></h3>
-    <div class="body tight"><table><thead><tr><th>기업 · Company</th><th>${T('준비도')}</th><th>${T('밴드')}</th><th>${T('경로')}</th></tr></thead><tbody>${rdRows}</tbody></table></div></div>`:''}
+    <div class="body tight"><table><thead><tr><th>${T('기업 · Company')}</th><th>${T('준비도')}</th><th>${T('밴드')}</th><th>${T('경로')}</th></tr></thead><tbody>${rdRows}</tbody></table></div></div>`:''}
   ${analytics?`<div class="card" style="margin-top:16px"><h3>${T('운영 분석')} <span class="en">· Analytics</span><span class="r">operator · 매출·추이</span></h3>
     <div class="body">
       <div class="grid three" style="gap:10px;margin-bottom:14px">
@@ -4763,7 +4810,7 @@ SCREEN.caseList=async()=>{
   </div>
   <div class="card"><h3>${T('케이스 테이블')} <span class="en">· Case table</span><span class="r">${ROLE==='auditor'?T('배정 심사 관리'):T('row 클릭 → 상세')}</span></h3>
     <div class="body tight"><table>
-      <thead><tr><th>번호 · ID</th><th>기업 · Company</th><th>${T('경로')}</th><th>상태 · Status</th><th>담당 · Auditor</th><th>기한 · Due</th></tr></thead>
+      <thead><tr><th>${T('번호 · ID')}</th><th>${T('기업 · Company')}</th><th>${T('경로')}</th><th>${T('상태 · Status')}</th><th>${T('담당 · Auditor')}</th><th>${T('기한 · Due')}</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     ${pager("caseList",pg)}
     <div class="body btnrow" style="border-top:1px solid var(--line)">
@@ -5714,7 +5761,7 @@ SCREEN.materials=async()=>{
   return `
   ${matCategoryChecklist(mats)}
   <div class="grid side">
-    <div class="card"><h3>원재료 목록 <span class="en">· Materials</span><span class="r">${mats.length}${T('건')}${canMatWrite?'':' · 읽기전용'}</span></h3>
+    <div class="card"><h3>${T('원재료 목록')} <span class="en">· Materials</span><span class="r">${mats.length}${T('건')}${canMatWrite?'':' · '+T('읽기전용')}</span></h3>
       <div class="body tight"><table>
         <thead><tr><th>원재료 · Material</th><th>상태</th><th>심각도</th><th>증빙</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div>
@@ -6787,15 +6834,15 @@ SCREEN.audit=async()=>{
       </div>
       <div class="body btnrow" style="border-top:1px solid var(--line)">
         ${canTeam?`<button class="btn pri" onclick="addLph('${id}')">LPH 배정 · Assign</button>`:'<span class="chip">🔒 LPH 배정 — 샤리아·최고운영자</span>'}</div></div>
-    <div class="card"><h3>${T('현장 체크리스트')} <span class="en">· Onsite</span><span class="r">${onsite.comply||0}/${onsite.total||0} 충족${canEdit?' · 클릭 순환':''}</span></h3>
+    <div class="card"><h3>${T('현장 체크리스트')} <span class="en">· Onsite</span><span class="r">${onsite.comply||0}/${onsite.total||0} ${T('충족')}${canEdit?' · '+T('클릭 순환'):''}</span></h3>
       <div class="body">
-        <div class="scorebox" style="margin-bottom:8px"><span class="big" style="color:var(--accent)">${onsite.completion||0}</span><span class="muted">% · 부적합 ${onsite.nonconformity||0}</span></div>
+        <div class="scorebox" style="margin-bottom:8px"><span class="big" style="color:var(--accent)">${onsite.completion||0}</span><span class="muted">% · ${T('부적합')} ${onsite.nonconformity||0}</span></div>
         <div class="bar" style="margin-bottom:12px"><i style="width:${onsite.completion||0}%"></i></div>
         <div style="max-height:240px;overflow:auto">${(onsite.items||[]).map(it=>{
           const cbx=it.result==='comply'?'on':it.result==='nonconformity'?'no':'';const mk=it.result==='comply'?'✓':it.result==='nonconformity'?'✕':'';
           return `<div class="check" ${canEdit?`style="cursor:pointer" onclick="cycleOnsite('${id}','${it.item_key}','${it.result}')"`:''}>
             <div class="cbox ${cbx}">${mk}</div><b style="flex:1">${esc(it.label)}</b>
-            <span class="muted small">${it.result==='comply'?'충족':it.result==='nonconformity'?'부적합':'미확인'}</span></div>`;}).join("")||'<div class="muted small">항목 없음</div>'}</div>
+            <span class="muted small">${it.result==='comply'?T('충족'):it.result==='nonconformity'?T('부적합'):T('미확인')}</span></div>`;}).join("")||'<div class="muted small">항목 없음</div>'}</div>
       </div></div>
   </div>
   <div class="card"><h3>${T('지적사항 Findings')} <span class="en">· CRUD</span><span class="r">${canEdit?'편집 가능':'🔒 읽기전용'}</span></h3>
@@ -7828,14 +7875,14 @@ SCREEN.evaluation=async()=>{
   const failc=els.filter(e=>s3of(e)==="fail").length;
   return `
   <div class="grid side">
-    <div class="card"><h3>${T('HPAS 자동 평가')} <span class="en">· HPAS auto</span><span class="r">${okc}/${els.length} 적합후보${failc?` · ${failc} 부적합`:''}</span></h3>
+    <div class="card"><h3>${T('HPAS 자동 평가')} <span class="en">· HPAS auto</span><span class="r">${okc}/${els.length} ${T('적합후보')}${failc?` · ${failc} ${T('부적합')}`:''}</span></h3>
       <div class="body tight"><table><thead><tr><th>평가 항목 · Item</th><th>${T('판정')}</th><th>${T('증거')}</th><th>${canVerdict?'오디터 판정':'—'}</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="body btnrow" style="border-top:1px solid var(--line)"><button class="btn" onclick="applyView()">🔄 HPAS 재판정 · Re-evaluate</button></div></div>
     ${(canVerdict||ROLE==="sharia")?`<div class="card"><h3>${T('파트와 상정 준비')} <span class="en">· To Fatwa</span></h3>
       <div class="body">
-        <div class="scorebox" style="margin-bottom:14px"><span class="big" style="color:var(--ok)">${okc}</span><span class="muted">/ ${els.length} 요소 적합후보</span></div>
-        <div class="banner ${failc?'bad':(okc===els.length&&els.length?'ok':'info')}" style="margin-bottom:12px">${failc?'⛔ 부적합 항목 있음 — 시정조치 필요':(okc===els.length&&els.length?'✓ 상정 기준 충족':'ℹ 보완 항목 확인')}</div>
-        <button class="btn gold" onclick="go('fatwa')">파트와 화면으로 · To Fatwa →</button></div></div>`
+        <div class="scorebox" style="margin-bottom:14px"><span class="big" style="color:var(--ok)">${okc}</span><span class="muted">/ ${els.length} ${T('요소')} ${T('적합후보')}</span></div>
+        <div class="banner ${failc?'bad':(okc===els.length&&els.length?'ok':'info')}" style="margin-bottom:12px">${failc?'⛔ '+T('부적합 항목 있음 — 시정조치 필요'):(okc===els.length&&els.length?'✓ '+T('상정 기준 충족'):'ℹ '+T('보완 항목 확인'))}</div>
+        <button class="btn gold" onclick="go('fatwa')">${T('파트와 화면으로 · To Fatwa')} →</button></div></div>`
       /* 회의 2026-07-10: 클라이언트 뷰에서 '파트와 상정 준비' 삭제 — 평가 내용은 오디터가 확인 후 상정 */
       :`<div class="card"><h3>${T('진행 안내')} <span class="en">· Next</span></h3>
       <div class="body"><div class="banner info">ℹ 평가 결과는 담당 오디터가 확인하며, 이상이 없으면 오디터가 파트와 심의로 상정합니다.</div></div></div>`}
@@ -8044,8 +8091,8 @@ SCREEN.manualBuilder=async()=>{
   const pct=L.total?Math.round((L.done/L.total)*100):0;
   const ready=!!L.ready;
   const genBtn=ready
-    ? `<button class="btn pri" onclick="mbGenerate('${id}')">📄 SJPH 매뉴얼 생성 (${L.done}/${L.total})</button>`
-    : `<button class="btn" disabled style="opacity:.5" title="모든 섹션 완료 필요">📄 SJPH 매뉴얼 생성 (${L.done}/${L.total})</button>`;
+    ? `<button class="btn pri" onclick="mbGenerate('${id}')">📄 ${T('SJPH 매뉴얼 생성')} (${L.done}/${L.total})</button>`
+    : `<button class="btn" disabled style="opacity:.5" title="${T('모든 섹션 완료 필요')}">📄 ${T('SJPH 매뉴얼 생성')} (${L.done}/${L.total})</button>`;
   const warn=ready?'':`<div class="banner warn" style="margin-bottom:12px">${T('⚠️ 미완료 섹션 있음 — 이미지 삽입이 필요한 섹션(조직도 등)을 완료하면 매뉴얼 생성이 활성화됩니다.')}</div>`;
   return `
   <div class="banner info" style="margin-bottom:16px">ⓘ ${T('순서: 증빙 업로드')} → <b>SJPH ${T('매뉴얼 생성')}</b> → ${T('담당 오디터 검토·서명')}. ${canEdit?T('입력이 필요한 섹션(조직도·공정도 등)만 채우면 되며, 기본문구·선언서는 자동 채움됩니다.'):''} ${T('미리보기는 다운로드 없이 화면에서 기준 양식(KO·EN)에 실데이터가 채워진 문서를 표시합니다.')}</div>
@@ -8086,7 +8133,7 @@ function mbPlacementCard(P,cid,canEdit){
       : `<b>${esc(s.filename||T('비움'))}</b>`;
     const hint=s.decided_by==='manual'&&s.auto_suggestion&&s.auto_suggestion.document_id!==s.document_id
       ? `<div class="muted small">${T('AI 추정')}: ${esc(s.auto_suggestion.filename)}</div>`:'';
-    return `<tr><td style="white-space:nowrap"><b>${esc(s.label)}</b><div class="muted small">${esc(s.anchor)}</div></td>
+    return `<tr><td style="white-space:nowrap"><b>${esc(s.label)}</b><div class="muted small" title="${T('문서 안의 삽입 위치 문구(원문)')}">${esc(s.anchor)}</div></td>
       <td>${pick}${hint}</td>
       <td style="white-space:nowrap">${src}<div class="muted small">${esc(s.reason||'')}</div></td></tr>`;
   }).join('');
@@ -8686,7 +8733,7 @@ async function fbSetStatus(id,status){try{await API(`/feedback/${id}`,{method:"P
 async function fbComment(id){const el=document.getElementById("fbCm_"+id);const body=el?el.value:"";if(!body.trim()){toast(T('답변을 입력하세요'));return;}
   try{await API(`/feedback/${id}/comments`,{method:"POST",body:JSON.stringify({body})});toast(T('답변 등록'));applyView();}catch(e){toast(T('실패')+" · "+(e&&e.code?e.code:""));}}
 SCREEN.notifyLog=async()=>{
-  const d=await API("/admin/notifications").catch(()=>({counts:{},items:[]}));
+  const d=await API("/admin/notifications?lang="+RPT_LANG()).catch(()=>({counts:{},items:[]}));
   const chd=await API("/admin/notify-channels").catch(()=>({channels:{}}));
   const cc=d.counts||{}, items=d.items||[];
   const card=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:22px;color:var(--${c})">${n||0}</span><span class="l">${l}</span></div></div>`;
@@ -8798,7 +8845,7 @@ function opsAuditorCards(auds){
         <div><b>${esc(a.username)}</b>${rec}</div>
         <button class="btn xs ghost" title="${T('프로필 편집')}" onclick="opsAuditorProfile('${esc(a.user_id)}')">✎</button>
       </div>
-      <div class="muted small" style="margin:4px 0">${a.specialty?('🎯 '+esc(a.specialty)):('<span class="muted">'+T('전문분야 미설정')+'</span>')}</div>
+      <div class="muted small" style="margin:4px 0">${a.specialty?('🎯 '+esc(String(a.specialty).split(',').map(x=>T(x.trim())).join(', '))):('<span class="muted">'+T('전문분야 미설정')+'</span>')}</div>
       <div style="margin:2px 0 6px">${opsLangChips(a.languages)}</div>
       <div class="small" style="display:flex;justify-content:space-between"><span class="muted">${T('담당')} <b>${a.load||0}</b> / ${a.capacity||0}</span><span style="color:${col}">${pct}%</span></div>
       <div style="height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin:4px 0 8px"><i style="display:block;height:100%;width:${Math.min(100,pct)}%;background:${col}"></i></div>
@@ -8957,7 +9004,7 @@ function gateCell(g){g=g||{};const dot=(v,ko)=>{const c=v==="ok"?"ok":v==="wait"
   return `<span class="tag t-${c}" title="${esc(ko)}" style="padding:2px 7px">${ic} ${esc(ko)}</span>`;};
   return `<span style="display:inline-flex;gap:4px;flex-wrap:wrap">${dot(g.payment,T('결제'))}${dot(g.ai_report,T('AI평가'))}${dot(g.fatwa,T('파트와'))}</span>`;}
 SCREEN.workflowMonitor=async()=>{
-  const d=await API("/admin/workflow-monitor").catch(()=>({cases:[],pipeline:[],gates_summary:{},totals:{}}));
+  const d=await API("/admin/workflow-monitor?lang="+RPT_LANG()).catch(()=>({cases:[],pipeline:[],gates_summary:{},totals:{}}));
   const all=d.cases||[], pipe=d.pipeline||[], gs=d.gates_summary||{}, tot=d.totals||{};
   const rowsAll=WFMON_STAGE?all.filter(r=>r.phase_key===WFMON_STAGE):all;
   // KPI: 전체·병목(차단)·결제 대기·파트와 대기
@@ -8969,7 +9016,7 @@ SCREEN.workflowMonitor=async()=>{
     ${kpi((gs.fatwa&&gs.fatwa.wait)||0,T('파트와 심의 대기'),'gold')}</div>`;
   // 파이프라인 뷰 — 단계별 케이스 수(클릭 → 표 필터)
   const maxc=Math.max(1,...pipe.map(p=>p.count),1);
-  const pipeBars=pipe.length?pipe.map(p=>`<div class="sb clickable" onclick="wfmonFilter('${esc(p.key)}')" title="${esc(p.label)} · 클릭→필터" style="cursor:pointer${WFMON_STAGE===p.key?';font-weight:800':''}">
+  const pipeBars=pipe.length?pipe.map(p=>`<div class="sb clickable" onclick="wfmonFilter('${esc(p.key)}')" title="${esc(p.label)} · ${T('클릭→필터')}" style="cursor:pointer${WFMON_STAGE===p.key?';font-weight:800':''}">
       <span>${esc(p.label)}${WFMON_STAGE===p.key?' ◀':''}</span><div class="bar"><i style="width:${Math.round(p.count/maxc*100)}%"></i></div><b>${p.count}</b></div>`).join(""):'<div class="muted small">진행 중 케이스 없음</div>';
   // 게이트 상태(집계) — 결제→모의심사·AI 사전평가·파트와 정족수
   const gbar=(ko,g)=>{g=g||{ok:0,wait:0};const tt=(g.ok||0)+(g.wait||0);const pct=tt?Math.round((g.ok||0)/tt*100):0;
@@ -9448,14 +9495,14 @@ async function fatwaCommitteeAdvanced(id){
         ${[["위원 구성",members.length>0],["심의 요지 작성",!!fd.committee_note],["결정",!!(fd.decision&&fd.decision!=='pending')],["결정문 생성",!!fd.decision_no]].map(([t,ok])=>`<div class="check"><div class="cbox ${ok?'on':''}">${ok?'✓':''}</div><b style="flex:1">${t}</b><span class="muted small">${ok?'완료':'대기'}</span></div>`).join("")}
       </div></div>
   </div>
-  ${voteTally?`<div class="card" style="margin-top:16px"><h3>${T('위원회 투표')} <span class="en">· Committee vote</span><span class="r">${voteTally.result==='passed'?'✅ 가결':'심의중'} · 찬성 ${voteTally.approve}/${voteTally.members}</span></h3>
+  ${voteTally?`<div class="card" style="margin-top:16px"><h3>${T('위원회 투표')} <span class="en">· Committee vote</span><span class="r">${voteTally.result==='passed'?'✅ '+T('가결'):T('심의중')} · ${T('찬성')} ${voteTally.approve}/${voteTally.members}</span></h3>
     <div class="body">
-      <div class="banner ${voteTally.quorum_met?(voteTally.result==='passed'?'ok':'info'):'warn'}" style="margin-bottom:10px">정족수 ${voteTally.votes_cast}/${voteTally.quorum_need} · 찬성 ${voteTally.approve} · 반대 ${voteTally.reject} · 기권 ${voteTally.abstain} → <b>${voteTally.result==='passed'?'가결':'심의중'}</b></div>
+      <div class="banner ${voteTally.quorum_met?(voteTally.result==='passed'?'ok':'info'):'warn'}" style="margin-bottom:10px">${T('정족수')} ${voteTally.votes_cast}/${voteTally.quorum_need} · ${T('찬성')} ${voteTally.approve} · ${T('반대')} ${voteTally.reject} · ${T('기권')} ${voteTally.abstain} → <b>${voteTally.result==='passed'?T('가결'):T('심의중')}</b></div>
       ${CAN("fatwa.propose")?(Array.isArray(members)?members:[]).map(m=>{const nm=typeof m==="string"?m:(m.name||"");const cur=((voteTally.ballots||[]).find(b=>b.member===nm)||{}).vote;
         return `<div class="row" style="justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--line)"><b>${esc(nm)}</b><span class="btnrow">
-          <button class="btn ok" style="padding:3px 9px" data-m="${esc(nm)}" data-v="approve" onclick="fatwaVoteBtn(this,'${id}')">${cur==='approve'?'✓ ':''}찬성</button>
-          <button class="btn bad" style="padding:3px 9px" data-m="${esc(nm)}" data-v="reject" onclick="fatwaVoteBtn(this,'${id}')">${cur==='reject'?'✓ ':''}반대</button>
-          <button class="btn" style="padding:3px 9px" data-m="${esc(nm)}" data-v="abstain" onclick="fatwaVoteBtn(this,'${id}')">${cur==='abstain'?'✓ ':''}기권</button></span></div>`;}).join("")||'<span class="muted small">위원이 없습니다.</span>'
+          <button class="btn ok" style="padding:3px 9px" data-m="${esc(nm)}" data-v="approve" onclick="fatwaVoteBtn(this,'${id}')">${cur==='approve'?'✓ ':''}${T('찬성')}</button>
+          <button class="btn bad" style="padding:3px 9px" data-m="${esc(nm)}" data-v="reject" onclick="fatwaVoteBtn(this,'${id}')">${cur==='reject'?'✓ ':''}${T('반대')}</button>
+          <button class="btn" style="padding:3px 9px" data-m="${esc(nm)}" data-v="abstain" onclick="fatwaVoteBtn(this,'${id}')">${cur==='abstain'?'✓ ':''}${T('기권')}</button></span></div>`;}).join("")||'<span class="muted small">'+T('위원이 없습니다.')+'</span>'
         :'<span class="muted small">투표 상세·행사는 샤리아 위원 전용입니다.</span>'}
     </div></div>`:''}</details>`;
 }
@@ -9860,7 +9907,7 @@ async function dataListRender(id){
     const res=await API(`${cfg.endpoint}?${qs}`);
     const items=res.items||[], total=res.total||0; st._items=items;
     const th=cfg.columns.map(c=>{const on=st.sort===c.key, ar=on?(st.dir==='asc'?' ▲':' ▼'):'';const s=c.sortable!==false;
-      return `<th class="${s?'sortable':''}"${s?` onclick="dlSort('${id}','${c.key}')"`:''}>${esc(c.label)}${c.en?` <span class="en">${esc(c.en)}</span>`:''}${ar}</th>`;}).join("");
+      return `<th class="${s?'sortable':''}"${s?` onclick="dlSort('${id}','${c.key}')"`:''}>${esc(T(c.label))}${c.en?` <span class="en">${esc(c.en)}</span>`:''}${ar}</th>`;}).join("");
     const rows=items.length?items.map(r=>`<tr>${cfg.columns.map(c=>`<td>${c.render?c.render(r):esc(r[c.key]==null?'':r[c.key])}</td>`).join("")}</tr>`).join("")
       :`<tr><td colspan="${cfg.columns.length}" class="muted" style="text-align:center;padding:16px">${st.q?'검색 결과 없음 · no match':'데이터 없음 · empty'}</td></tr>`;
     body.innerHTML=`<table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table>`;
@@ -10209,7 +10256,7 @@ SCREEN.system=async()=>{
         {key:"org_id",label:"조직",en:"Org"}
       ]})}</div></div>
   ${ovs.length?`<div class="card" style="margin-top:16px"><h3>${T('조직별 개요')} <span class="en">· Multi-tenant overview</span><span class="r">${ovs.length}${T('개')} ${T('조직')}</span></h3>
-    <div class="body tight"><table><thead><tr><th>조직 · Org</th><th>${T('케이스')}</th><th>${T('사용자')}</th><th>${T('인증서')}</th><th>매출 · Revenue</th></tr></thead><tbody>
+    <div class="body tight"><table><thead><tr><th>${T('조직 · Org')}</th><th>${T('케이스')}</th><th>${T('사용자')}</th><th>${T('인증서')}</th><th>${T('매출 · Revenue')}</th></tr></thead><tbody>
     ${ovs.map(o=>`<tr><td><b>${esc(o.org_id)}</b></td><td>${o.cases}</td><td>${o.users}</td><td>${o.certificates}</td><td>${fmtIDR(o.revenue_paid)}</td></tr>`).join("")}
     </tbody></table></div></div>`:''}`;
 };

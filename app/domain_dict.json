@@ -9940,5 +9940,271 @@
    "glhac"
   ],
   "status": "approved"
+ },
+ {
+  "id": "WFPHASE_PREP",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "신청서 작성",
+   "en": "Application draft",
+   "id": "Draf permohonan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "prep"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_ASSESS",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "AI 사전평가",
+   "en": "AI pre-assessment",
+   "id": "Pra-penilaian AI"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "assess"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_PATHWAY",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "경로 판정",
+   "en": "Pathway decision",
+   "id": "Penentuan jalur"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "pathway"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_BRANCH",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "경로 결정 대기",
+   "en": "Awaiting pathway decision",
+   "id": "Menunggu penentuan jalur"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "branch"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_SD_SJPH",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "SJPH·동반자 검증",
+   "en": "SJPH & pendamping verification",
+   "id": "Verifikasi SJPH & pendamping"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "sd_sjph"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_SD_SUBMIT",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "자기선언 제출",
+   "en": "Self-declaration submitted",
+   "id": "Deklarasi mandiri dikirim"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "sd_submit"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_SD_COMMITTEE",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "위원회 확인",
+   "en": "Committee verification",
+   "id": "Verifikasi komite"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "sd_committee"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_RG_SUPPL",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "보완·컨설팅",
+   "en": "Supplementation & consulting",
+   "id": "Pelengkapan & konsultasi"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "rg_suppl"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_RG_DOC",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "문서 사전심사",
+   "en": "Document pre-audit",
+   "id": "Pra-audit dokumen"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "rg_doc"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_RG_AUDIT",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "LPH·현장심사",
+   "en": "LPH & on-site audit",
+   "id": "LPH & audit lapangan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "rg_audit"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_RG_HPAS",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "HPAS·최종패키지",
+   "en": "HPAS & final package",
+   "id": "HPAS & paket akhir"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "rg_hpas"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_RG_FATWA",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "파트와 결정",
+   "en": "Fatwa decision",
+   "id": "Keputusan fatwa"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "rg_fatwa"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_ISSUE",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "인증서 발급",
+   "en": "Certificate issuance",
+   "id": "Penerbitan sertifikat"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "issue"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
+ },
+ {
+  "id": "WFPHASE_POST",
+  "axis": "WF_PHASE",
+  "labels": {
+   "ko": "사후 관리·갱신",
+   "en": "Monitoring & renewal",
+   "id": "Pemantauan & perpanjangan"
+  },
+  "context": [
+   "UI"
+  ],
+  "actions": {
+   "wf_phase": "post"
+  },
+  "source": [
+   "glhac"
+  ],
+  "status": "approved"
  }
 ]

@@ -581,6 +581,11 @@ NOTIFY_MSG = {
         "en": ("Both parties signed · {contract_no}", "Final confirmation by the administrator is required."),
         "id": ("Kedua pihak telah menandatangani · {contract_no}", "Perlu konfirmasi akhir dari administrator."),
     },
+    "contract.return": {
+        "ko": ("계약 반려 · {company}", None),
+        "en": ("Contract returned · {company}", None),
+        "id": ("Kontrak dikembalikan · {company}", None),
+    },
     "contract.confirm": {
         "ko": ("계약 최종 확인 완료 · {contract_no}", "청구서가 곧 생성됩니다."),
         "en": ("Contract confirmed · {contract_no}", "An invoice will be generated shortly."),
@@ -1993,13 +1998,23 @@ def backfill_notification_i18n(dry_run: bool = True,
               .filter(models.Notification.payload.is_(None)).all())
     filled, skipped = [], {}
     for n in rows:
-        params = _notify_backfill_params(n.event_type, n.title, n.body)
+        # 한 event_type 에 문구 변종이 여럿인 경우가 있다(audit_scheduled 는 기본·LPH배정·
+        # 가능일제시 셋). 정확히 맞는 변종을 찾을 때까지 후보를 다 시도한다.
+        cands = [n.event_type] + sorted(k for k in NOTIFY_MSG
+                                        if k.startswith(n.event_type + "."))
+        key = params = None
+        for cand in cands:
+            got = _notify_backfill_params(cand, n.title, n.body)
+            if got is not None:
+                key, params = cand, got
+                break
         if params is None:
             skipped[n.event_type] = skipped.get(n.event_type, 0) + 1
             continue
-        filled.append({"id": n.notification_id, "event_type": n.event_type, "params": params})
+        filled.append({"id": n.notification_id, "event_type": n.event_type,
+                       "key": key, "params": params})
         if not dry_run:
-            n.payload = {"key": n.event_type, "params": params}
+            n.payload = {"key": key, "params": params}
     if not dry_run:
         db.commit()
         _audit(db, user, "notification.backfill_i18n", "notification", None,
@@ -2035,6 +2050,7 @@ _UI_LABEL_AXES = {
     "extract_field": ("EXTRACT_FIELD", "extract_field"),
     "onsite_item": ("ONSITE_ITEM", "onsite_item"),
     "signer": ("SIGNER", "signer"),
+    "wf_phase": ("WF_PHASE", "wf_phase"),
 }
 
 
@@ -5232,9 +5248,11 @@ def contract_return(case_id: str, body: dict = None,
            {"from": frm, "to": prev, "reason": reason}, commit=False)
     sm.record_event(db, c, c.status, c.status, "contract.return", user["role"], user["uid"],
                     {"from": frm, "to": prev, "reason": reason})
-    _notify(db, c, "contract.return", "계약 반려 · " + (c.company_name or ""),
-            ("반려 사유: " + reason) if reason else "계약이 이전 단계로 반려되었습니다.",
-            role=_CONTRACT_QUEUE_OWNER.get(prev, "operator"))
+    # 반려 사유는 사람이 쓴 글이라 번역하지 않는다 — 제목만 카탈로그로 간다.
+    _notify(db, c, "contract.return",
+            body=("반려 사유: " + reason) if reason else "계약이 이전 단계로 반려되었습니다.",
+            role=_CONTRACT_QUEUE_OWNER.get(prev, "operator"),
+            msg=("contract.return", {"company": c.company_name or ""}))
     db.commit()
     return {"status": ct.status, "from": frm, "reason": reason}
 
@@ -8499,9 +8517,9 @@ def add_lph(case_id: str, body: schemas.LphAssignReq,
     db.add(x)
     sm.record_event(db, c, c.status, c.status, "audit.lph.assign", user["role"], user["uid"],
                     {"lph": body.lph_name})
-    _notify(db, c, "audit_scheduled", "심사 일정 · LPH 배정",
-            "%s — %s 배정, 현장심사가 예정되었습니다." % (c.company_name or "", body.lph_name),
-            channels=["inapp", "sms"], role="applicant")
+    _notify(db, c, "audit_scheduled", channels=["inapp", "sms"], role="applicant",
+            msg=("audit_scheduled.lph", {"company": c.company_name or "",
+                                         "lph": body.lph_name}))
     db.commit()
     return {"lph_assignment_id": x.lph_assignment_id}
 
@@ -8636,9 +8654,9 @@ def onsite_schedule_propose(case_id: str, body: dict = None,
                "note": str(body.get("note") or "")}
     sm.record_event(db, c, c.status, c.status, "onsite_schedule.propose",
                     user["role"], user["uid"], payload)
-    _notify(db, c, "audit_scheduled", "현장심사 가능일 제시",
-            "%s — 클라이언트가 방문 가능일 %d개를 제시했습니다." % (c.company_name or "", len(dates)),
-            channels=["inapp"], role="auditor")
+    _notify(db, c, "audit_scheduled", channels=["inapp"], role="auditor",
+            msg=("audit_scheduled.slots", {"company": c.company_name or "",
+                                           "count": len(dates)}))
     db.commit()
     return _onsite_sched_state(db, case_id)
 
@@ -11624,10 +11642,14 @@ _STAGE_OWNER = {
 
 
 @app.get("/admin/workflow-monitor")
-def admin_workflow_monitor(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
+def admin_workflow_monitor(lang: str = Query("ko"),
+                           user=Depends(auth.require_roles("fatwa_liaison", "operator")),
                            db: Session = Depends(get_db)):
     """관리자·운영자 워크플로우 모니터 — 전 케이스의 현재단계·다음전이·차단·핸드오프(대기 역할)·
     주요 게이트(결제/AI 사전평가/파트와) 통과·대기를 단일 집약(읽기전용). 신규 쓰기·스키마 변경 없음."""
+    # 상태·단계 표기는 현황판을 보는 사람의 언어로 — 코드 그대로 두면 한국어가 남는다.
+    _st = _dd_mod.code_labels("ENUM", "enum_code", lang) or _STATE_KO
+    _wfp = _dd_mod.code_labels("WF_PHASE", "wf_phase", lang)
     q = db.query(models.CaseApplication)
     if user["role"] != "admin":
         q = q.filter_by(org_id=user["org_id"])
@@ -11650,7 +11672,8 @@ def admin_workflow_monitor(user=Depends(auth.require_roles("fatwa_liaison", "ope
         phases = _wf_phases(c.pathway)
         cur_idx = next((i for i, (k, ko, ss) in enumerate(phases) if cur in ss), None)
         phase_key = phases[cur_idx][0] if cur_idx is not None else "branch"
-        phase_label = phases[cur_idx][1] if cur_idx is not None else "경로 결정 대기"
+        phase_label = (_wfp.get(phases[cur_idx][0]) or phases[cur_idx][1]) \
+            if cur_idx is not None else (_wfp.get("branch") or "경로 결정 대기")
         pipeline[phase_key] = pipeline.get(phase_key, 0) + 1
         nxt = sorted(sm.TRANSITIONS.get(cur, set()))
         next_state = nxt[0] if nxt else None
@@ -11671,18 +11694,21 @@ def admin_workflow_monitor(user=Depends(auth.require_roles("fatwa_liaison", "ope
             if gv in ("ok", "wait"):
                 gate_sum[key][gv] += 1
         rows.append({"case_id": c.case_id, "company": c.company_name, "pathway": c.pathway,
-                     "status": cur, "status_label": _STATE_KO.get(cur, cur),
+                     "status": cur, "status_label": _st.get(cur, cur),
                      "phase_key": phase_key, "phase_label": phase_label,
                      "owner": _STAGE_OWNER.get(cur, "ops"),
                      "next_state": next_state,
-                     "next_label": _STATE_KO.get(next_state, next_state) if next_state else None,
+                     "next_label": _st.get(next_state, next_state) if next_state else None,
                      "blockers": blockers, "blocker_count": len(blockers),
                      "due_date": c.due_date,
                      "gates": {"payment": g_pay, "ai_report": g_ai, "fatwa": g_fatwa}})
     _porder = ["prep", "assess", "pathway", "branch", "sd_sjph", "sd_submit", "sd_committee",
                "rg_suppl", "rg_doc", "rg_audit", "rg_hpas", "rg_fatwa", "issue", "post"]
+    # 단계명은 운영자·심사자가 현황판에서 읽는다 — 화면 언어를 따른다.
     _plabel = {seg[0]: seg[1] for seg in (_WF_COMMON + _WF_SEHATI + _WF_REGULER + _WF_POST)}
     _plabel["branch"] = "경로 결정 대기"
+    _plabel.update({k: v for k, v in
+                    _dd_mod.code_labels("WF_PHASE", "wf_phase", lang).items() if v})
     pipeline_out = [{"key": k, "label": _plabel.get(k, k), "count": pipeline[k]}
                     for k in _porder if pipeline.get(k)]
     return {"cases": rows, "pipeline": pipeline_out, "gates_summary": gate_sum,
@@ -12844,6 +12870,10 @@ def save_material_report_snapshot(case_id, body: dict = None, user=Depends(auth.
 def _material_report(db, c, lang="ko"):
     """케이스 원재료 전수를 온톨로지로 분석해 종합 보고서 데이터로 집계 (설계 C·v2 이관).
     lang은 판정 근거 서술의 언어만 바꾼다 — 판정 값 자체는 언어와 무관하다."""
+    # 증빙코드·대체재·판정 표기는 읽는 사람 언어로 — 코드값 그대로 내보내면
+    # 인니 심사자 화면에 한국어가 남는다.
+    _evt, _altt = screening.term_tables(lang)
+    _vk = _dd_mod.code_labels("VERDICT", "verdict", lang) or _VERDICT_KO
     mats = db.query(models.Material).filter_by(case_id=c.case_id).order_by(models.Material.name).all()
     _src = _material_source_docs(db, c.case_id)  # M2: 성분별 소스문서(고유번호·위치)
     rows, summary = [], {"total": 0, "cleared": 0, "needs_evidence": 0, "blocked": 0,
@@ -12871,10 +12901,14 @@ def _material_report(db, c, lang="ko"):
         if exp.get("najis"):
             summary["najis"] += 1
         rows.append({"material_id": m.material_id, "name": m.name, "e_number": m.e_number,
-                     "verdict": v, "verdict_ko": _VERDICT_KO.get(v, v), "severity": exp.get("severity"),
+                     "verdict": v,
+                     # 판정·증빙·대체재 표기는 읽는 사람 언어로. verdict(코드)는 그대로 둔다
+                     # — 프런트가 코드로 분기하므로 계약을 바꾸면 안 된다.
+                     "verdict_ko": _vk.get(v, v), "severity": exp.get("severity"),
                      "category": exp.get("category"), "najis": exp.get("najis"),
-                     "required_evidence": exp.get("required_evidence") or [],
-                     "alternatives": exp.get("alternatives") or [],
+                     "required_evidence": [_evt.get(x, x)
+                                           for x in (exp.get("required_evidence") or [])],
+                     "alternatives": [_altt.get(x, x) for x in (exp.get("alternatives") or [])],
                      "evidence_count": m.evidence_count if hasattr(m, "evidence_count") else None,
                      "source_docs": _src.get(m.material_id) or [],  # M2: 문서 고유번호·위치→뷰어링크
                      # 공급사 할랄 인증번호 — 오디터가 발급기관에 대조할 값

@@ -70,6 +70,7 @@ _DISPLAY_ONLY_AXES = {
     "EXTRACT_FMT",      # 기대 형식
     "SIGNER",           # 서명·도장 슬롯 이름
     "ONSITE_ITEM",      # 현장 체크리스트 항목
+    "WF_PHASE",         # 워크플로 파이프라인 단계
 }
 
 
