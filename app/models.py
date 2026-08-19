@@ -381,6 +381,11 @@ class Org(Base):
     name = Column(String)
     address = Column(EncryptedType)      # 회사 주소(암호화) — Phase 1
     profile_ext = Column(JSON)    # Company Info 상세 — Phase 1
+    # 담당 컨설턴트 — 영업으로 이 업체를 데려온 사람. 케이스별 배정과 성격이 다르다.
+    # 오디터는 심사기관이 케이스마다 배정하지만, 컨설턴트는 업체가 들어올 때 이미
+    # 관계가 있다. 그래서 케이스가 아니라 조직에 붙는다.
+    consultant_id = Column(String, index=True)
+    consultant_linked_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -791,3 +796,66 @@ class ApprovalRequest(Base):
     result = Column(JSON)                          # 실행 결과(certificate_no 등)
     created_at = Column(DateTime, default=datetime.utcnow)
     decided_at = Column(DateTime)
+
+
+class ConsultantInvite(Base):
+    """컨설턴트 초대 코드 — 영업한 업체를 자기 담당으로 들이는 통로.
+
+    컨설턴트가 클라이언트 계정을 대신 만들면 남의 자격증명을 다루게 된다. 코드를 주고
+    업체가 직접 가입하면 그 문제가 없고, '누가 누구를 데려왔는지'가 기록으로 남는다."""
+    __tablename__ = "consultant_invite"
+    invite_id = Column(String, primary_key=True, default=uid)
+    code = Column(String, unique=True, index=True, nullable=False)
+    consultant_id = Column(String, index=True, nullable=False)
+    company_name = Column(String)      # 영업 대상 업체명(참고용) — 가입 시 업체가 정정 가능
+    note = Column(Text)
+    max_uses = Column(Integer, default=1)
+    used_count = Column(Integer, default=0)
+    expires_at = Column(DateTime)
+    revoked_at = Column(DateTime)      # 회수된 코드는 다시 쓸 수 없다
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ConsultantProfile(Base):
+    """컨설턴트 정보 — 영업 인센티브 정산에 필요한 신원·연락처·계좌.
+
+    수수료율은 기본값을 두지 않는다. 계약마다 다를 수 있고, 시스템이 임의로 정한 숫자로
+    돈이 나가면 안 된다. 운영자가 명시적으로 넣어야 실적이 금액으로 환산된다."""
+    __tablename__ = "consultant_profile"
+    consultant_id = Column(String, primary_key=True)     # app_user.user_id
+    display_name = Column(String)          # 대외 표기명(개인 또는 법인)
+    company_name = Column(String)          # 소속 컨설팅사(개인이면 비움)
+    biz_reg_no = Column(EncryptedType)     # 사업자등록번호 — 세금계산서·정산
+    phone = Column(EncryptedType)
+    email = Column(EncryptedType)
+    address = Column(EncryptedType)
+    bank_name = Column(String)
+    bank_account = Column(EncryptedType)   # 계좌번호 — 지급 대상
+    account_holder = Column(String)
+    commission_rate = Column(Float)        # % — 운영자가 설정. 비면 금액 환산 안 함
+    contract_note = Column(Text)           # 정산 조건 메모(지급주기·예외 등)
+    status = Column(String, default="active")   # active|suspended
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime)
+
+
+class ConsultantPayout(Base):
+    """수수료 지급 기록 — 언제 얼마를 무엇에 대해 지급했는가.
+
+    실적은 결제 완료된 인보이스에서 그때그때 계산한다(규칙이 바뀌어도 과거가 흔들리지
+    않게). 반면 '지급했다'는 사실은 계산이 아니라 기록이라 남긴다."""
+    __tablename__ = "consultant_payout"
+    payout_id = Column(String, primary_key=True, default=uid)
+    consultant_id = Column(String, index=True, nullable=False)
+    period_from = Column(String)      # ISO date — 정산 대상 기간
+    period_to = Column(String)
+    base_amount = Column(Float)       # 정산 근거 매출 합계
+    rate = Column(Float)              # 적용 수수료율(%) — 지급 시점 값을 박아둔다
+    amount = Column(Float)            # 실지급액
+    currency = Column(String, default="IDR")
+    invoice_ids = Column(JSON)        # 어느 인보이스가 근거인지 — 되짚을 수 있어야 한다
+    status = Column(String, default="pending")   # pending|paid|cancelled
+    paid_at = Column(DateTime)
+    note = Column(Text)
+    created_by = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)

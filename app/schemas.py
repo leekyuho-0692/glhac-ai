@@ -305,6 +305,7 @@ class RegisterReq(BaseModel):
     username: str
     password: str
     company_name: Optional[str] = None
+    invite_code: Optional[str] = None   # 컨설턴트 초대 코드 — 유치 관계·수수료 근거
     # 회원가입 AI OCR 자동추출 프로필(Rizky #1) — 초기 케이스에 프리필
     nib: Optional[str] = None
     responsible_person: Optional[str] = None
@@ -548,3 +549,54 @@ class ApprovalDecisionReq(BaseModel):   # 2인 승인 결정 — 설계서 보�
 class CommitteeDecisionReq(BaseModel):   # 자기선언 위원회 검증 결정(SEHATI)
     decision: str                           # approve | reject
     reason: Optional[str] = None            # 결정 근거(반려 시 필수)
+
+
+# ── 컨설턴트(영업) ────────────────────────────────────────────────────────
+class ConsultantCreate(BaseModel):
+    username: str
+    password: str
+    display_name: Optional[str] = None
+    company_name: Optional[str] = None
+    biz_reg_no: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account: Optional[str] = None
+    account_holder: Optional[str] = None
+    commission_rate: Optional[float] = None
+    contract_note: Optional[str] = None
+
+
+class ConsultantProfileReq(BaseModel):
+    display_name: Optional[str] = None
+    company_name: Optional[str] = None
+    biz_reg_no: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account: Optional[str] = None
+    account_holder: Optional[str] = None
+    commission_rate: Optional[float] = None   # 운영자만 변경 가능
+    contract_note: Optional[str] = None
+    status: Optional[str] = None
+
+
+class InviteCreate(BaseModel):
+    company_name: Optional[str] = None    # 영업 대상 업체명(참고)
+    note: Optional[str] = None
+    max_uses: Optional[int] = 1
+    expires_days: Optional[int] = 30
+
+
+class OrgConsultantReq(BaseModel):
+    consultant_id: str        # user_id 또는 username
+    reason: Optional[str] = None
+
+
+class PayoutCreate(BaseModel):
+    consultant_id: str
+    period_from: str
+    period_to: str
+    note: Optional[str] = None

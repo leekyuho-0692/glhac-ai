@@ -374,6 +374,22 @@ def _assigned_staff(db, case_id):
     return out
 
 
+def _is_my_client_org(db, user, org_id):
+    """내가 영업으로 데려온 업체인가 — 컨설턴트 전용.
+
+    오디터는 심사기관이 케이스마다 배정하지만, 컨설턴트는 업체가 들어올 때 이미 관계가
+    있다(초대 코드 또는 운영자 지정). 그 관계가 곧 접근 근거이자 수수료 근거다."""
+    if user.get("role") != "consultant" or not org_id:
+        return False
+    o = db.get(models.Org, org_id)
+    return bool(o and o.consultant_id and o.consultant_id == user.get("uid"))
+
+
+def _my_client_org_ids(db, uid):
+    """내가 담당하는 업체들 — 목록 필터용."""
+    return {o.org_id for o in db.query(models.Org).filter_by(consultant_id=uid).all()}
+
+
 def _org_access_ok(db, user, org_id):
     """이 사용자가 이 조직의 정보를 볼 수 있는가 — 자기 조직이거나, 배정받은 케이스의 조직.
 
@@ -386,6 +402,9 @@ def _org_access_ok(db, user, org_id):
     if user.get("role") in CERTIFIER_ROLES:
         return True
     if org_id == user.get("org_id"):
+        return True
+    # 영업으로 데려온 업체는 배정을 기다리지 않는다 — 컨설턴트는 오디터와 성격이 다르다.
+    if _is_my_client_org(db, user, org_id):
         return True
     ids = _assigned_case_ids(db, user.get("uid"))
     if not ids:
@@ -418,13 +437,19 @@ def _assert_case_access(db, user, c):
     """케이스 접근 판정 — 조직 격리는 유지하되 인증기관 역할과 배정을 인정한다.
 
     · 인증기관(관리자·최고운영자·샤리아): 전 케이스. 심사·판정이 이들의 업무다.
-    · 오디터·컨설턴트: 자기 조직 + 배정받은 케이스.
+    · 컨설턴트: 자기 조직 + 영업으로 데려온 업체 + 배정받은 케이스.
+      유치 관계를 먼저 보는 이유 — 컨설턴트는 오디터와 성격이 다르다. 오디터는 심사기관이
+      케이스마다 배정하지만, 컨설턴트는 업체가 들어올 때 이미 관계가 있다. 배정을 기다리게
+      하면 자기가 데려온 고객을 못 본다.
+    · 오디터: 자기 조직 + 배정받은 케이스.
     · 그 외(신청기업·할랄감독자·동반자): 자기 조직만.
     """
     role = user.get("role")
     if role in CERTIFIER_ROLES:
         return
     if c.org_id == user.get("org_id"):
+        return
+    if _is_my_client_org(db, user, c.org_id):
         return
     if role in ASSIGNED_ROLES and str(user.get("uid")) in _assigned_staff(db, c.case_id):
         return
@@ -1210,6 +1235,21 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     if db.query(models.User).filter_by(username=body.username).first():
         raise HTTPException(409, {"code": "DUPLICATE_ACCOUNT"})
     company_name = (body.company_name or "").strip()
+    # 컨설턴트 초대 코드 — 영업으로 데려온 업체임을 밝힌다. 코드가 잘못됐으면 가입 자체를
+    # 막지 않고 관계만 붙이지 않는다(업체가 가입을 못 하는 게 더 나쁘다). 다만 왜 안 붙었는지
+    # 응답에 남겨 화면이 안내할 수 있게 한다.
+    inv, invite_note = None, None
+    if (body.invite_code or "").strip():
+        code = body.invite_code.strip().upper()
+        inv = db.query(models.ConsultantInvite).filter_by(code=code).first()
+        if not inv:
+            invite_note = "NOT_FOUND"
+        elif inv.revoked_at:
+            invite_note, inv = "REVOKED", None
+        elif inv.expires_at and inv.expires_at <= datetime.utcnow():
+            invite_note, inv = "EXPIRED", None
+        elif inv.used_count >= inv.max_uses:
+            invite_note, inv = "USED_UP", None
     # 회사1:직원N — 소속회사명으로 기존 org(Company) 매핑 (Phase 2)
     existing = db.query(models.Org).filter(models.Org.name == company_name).first() if company_name else None
     if existing:
@@ -1218,7 +1258,13 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     else:
         org = "org_" + models.uid()[:8]
         company_role = "client_admin"    # 새 회사 첫 가입자 = 기업업무 관리자
-        db.add(models.Org(org_id=org, name=company_name or "My Company", address=body.address))
+        _o = models.Org(org_id=org, name=company_name or "My Company", address=body.address)
+        if inv:
+            _o.consultant_id = inv.consultant_id      # 누가 데려왔는지 — 수수료 근거
+            _o.consultant_linked_at = datetime.utcnow()
+        db.add(_o)
+    if inv:
+        inv.used_count = (inv.used_count or 0) + 1
     u = models.User(username=body.username, password_hash=auth.hash_pw(body.password),
                     role="applicant", org_id=org, company_role=company_role)
     db.add(u)
@@ -1232,7 +1278,16 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         db.flush()
         sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id)
     db.commit()
+    _ref = None
+    if inv:
+        _cp = db.get(models.ConsultantProfile, inv.consultant_id)
+        _cu = db.get(models.User, inv.consultant_id)
+        _ref = {"consultant": (_cp.display_name if _cp and _cp.display_name
+                               else (_cu.username if _cu else None))}
+    elif invite_note:
+        _ref = {"invite_error": invite_note}
     return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username,
+            "referral": _ref,
             "company_role": company_role}
 
 
@@ -1881,6 +1936,11 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
         own = models.CaseApplication.org_id == user["org_id"]
         if user["role"] in ASSIGNED_ROLES:
             ids = _assigned_case_ids(db, user["uid"])
+            # 영업으로 데려온 업체의 케이스도 내 목록에 있어야 한다.
+            _mine = _my_client_org_ids(db, user["uid"])
+            if _mine:
+                ids = set(ids) | {c.case_id for c in db.query(models.CaseApplication)
+                                  .filter(models.CaseApplication.org_id.in_(_mine)).all()}
             q = q.filter(or_(own, models.CaseApplication.case_id.in_(ids))
                          if ids else own)
         else:
@@ -2178,6 +2238,378 @@ def admin_purge_orphan_orgs(body: dict = None, user=Depends(auth.require_roles("
     db.commit()
     out["deleted"] = [i["org_id"] for i in plan]
     return out
+
+
+# ── 컨설턴트(영업) ────────────────────────────────────────────────────────
+# 컨설턴트는 오디터와 성격이 다르다. 오디터는 심사기관이 케이스마다 배정하지만,
+# 컨설턴트는 영업으로 업체를 데려온 사람이라 업체가 들어올 때 이미 관계가 있다.
+# 그래서 관계는 케이스가 아니라 조직(Org.consultant_id)에 붙는다. 이 관계가
+# 접근 권한이자 수수료 정산의 근거가 된다.
+
+def _consultant_public(u, prof):
+    """화면·정산에 쓰는 컨설턴트 표기. 계좌·사업자번호는 운영자만 본다."""
+    return {"consultant_id": u.user_id, "username": u.username,
+            "display_name": (prof.display_name if prof else None) or u.username,
+            "company_name": prof.company_name if prof else None,
+            "status": (prof.status if prof else "active")}
+
+
+def _consultant_full(u, prof):
+    if not prof:
+        return {**_consultant_public(u, None), "profile": None}
+    return {**_consultant_public(u, prof),
+            "profile": {"biz_reg_no": prof.biz_reg_no, "phone": prof.phone,
+                        "email": prof.email, "address": prof.address,
+                        "bank_name": prof.bank_name, "bank_account": prof.bank_account,
+                        "account_holder": prof.account_holder,
+                        "commission_rate": prof.commission_rate,
+                        "contract_note": prof.contract_note}}
+
+
+def _resolve_consultant(db, ident):
+    """user_id 또는 username 으로 컨설턴트를 찾는다."""
+    u = db.get(models.User, ident) if ident else None
+    if not u:
+        u = db.query(models.User).filter(models.User.username == ident).first()
+    if not u or u.role != "consultant":
+        raise HTTPException(404, {"code": "CONSULTANT_NOT_FOUND", "id": ident})
+    return u
+
+
+@app.post("/admin/consultants")
+def create_consultant(body: schemas.ConsultantCreate,
+                      user=Depends(auth.require_roles("operator", "admin")),
+                      db: Session = Depends(get_db)):
+    """컨설턴트 계정 등록 — 영업 담당자를 시스템에 들인다(운영자가 만든다).
+
+    자체 가입을 열지 않는 이유: 컨설턴트는 남의 업체 정보를 보고 수수료를 받는
+    자리라, 누가 컨설턴트인지는 인증기관이 정해야 한다."""
+    if db.query(models.User).filter_by(username=body.username).first():
+        raise HTTPException(409, {"code": "DUPLICATE_ACCOUNT"})
+    u = models.User(username=body.username, password_hash=auth.hash_pw(body.password),
+                    role="consultant", org_id=user.get("org_id") or "org_demo")
+    db.add(u)
+    db.flush()
+    prof = models.ConsultantProfile(
+        consultant_id=u.user_id, display_name=body.display_name or body.username,
+        company_name=body.company_name, biz_reg_no=body.biz_reg_no, phone=body.phone,
+        email=body.email, address=body.address, bank_name=body.bank_name,
+        bank_account=body.bank_account, account_holder=body.account_holder,
+        commission_rate=body.commission_rate, contract_note=body.contract_note)
+    db.add(prof)
+    _audit(db, user, "consultant.created", "consultant", u.user_id,
+           meta={"username": u.username}, commit=False)
+    db.commit()
+    return _consultant_full(u, prof)
+
+
+@app.get("/admin/consultants")
+def list_consultants(user=Depends(auth.require_roles("operator", "admin")),
+                     db: Session = Depends(get_db)):
+    """컨설턴트 목록 — 유치 업체 수와 실적 근거를 함께 준다."""
+    profs = {p.consultant_id: p for p in db.query(models.ConsultantProfile).all()}
+    orgs = {}
+    for o in db.query(models.Org).filter(models.Org.consultant_id.isnot(None)).all():
+        orgs.setdefault(o.consultant_id, []).append(o)
+    out = []
+    for u in db.query(models.User).filter_by(role="consultant").all():
+        mine = orgs.get(u.user_id) or []
+        out.append({**_consultant_full(u, profs.get(u.user_id)),
+                    "client_count": len(mine),
+                    "clients": [{"org_id": o.org_id, "name": o.name} for o in mine[:20]]})
+    return {"items": sorted(out, key=lambda x: -x["client_count"])}
+
+
+@app.get("/consultant/me")
+def get_my_consultant_profile(user=Depends(auth.require_roles("consultant")),
+                              db: Session = Depends(get_db)):
+    u = db.get(models.User, user["uid"])
+    prof = db.get(models.ConsultantProfile, user["uid"])
+    orgs = db.query(models.Org).filter_by(consultant_id=user["uid"]).all()
+    return {**_consultant_full(u, prof),
+            "clients": [{"org_id": o.org_id, "name": o.name,
+                         "linked_at": str(o.consultant_linked_at or "")} for o in orgs]}
+
+
+@app.put("/consultant/me")
+def update_my_consultant_profile(body: schemas.ConsultantProfileReq,
+                                 user=Depends(auth.require_roles("consultant")),
+                                 db: Session = Depends(get_db)):
+    """본인 정보 수정 — 수수료율·상태는 손대지 못한다(돈과 자격은 인증기관이 정한다)."""
+    prof = db.get(models.ConsultantProfile, user["uid"])
+    if not prof:
+        prof = models.ConsultantProfile(consultant_id=user["uid"])
+        db.add(prof)
+    for f in ("display_name", "company_name", "biz_reg_no", "phone", "email", "address",
+              "bank_name", "bank_account", "account_holder"):
+        v = getattr(body, f, None)
+        if v is not None:
+            setattr(prof, f, v)
+    prof.updated_at = datetime.utcnow()
+    _audit(db, user, "consultant.profile.updated", "consultant", user["uid"], commit=False)
+    db.commit()
+    return _consultant_full(db.get(models.User, user["uid"]), prof)
+
+
+@app.put("/admin/consultants/{consultant_id}")
+def update_consultant(consultant_id: str, body: schemas.ConsultantProfileReq,
+                      user=Depends(auth.require_roles("operator", "admin")),
+                      db: Session = Depends(get_db)):
+    """운영자의 컨설턴트 정보 수정 — 수수료율·활성 상태를 여기서 정한다."""
+    u = _resolve_consultant(db, consultant_id)
+    prof = db.get(models.ConsultantProfile, u.user_id)
+    if not prof:
+        prof = models.ConsultantProfile(consultant_id=u.user_id)
+        db.add(prof)
+    changed = {}
+    for f in ("display_name", "company_name", "biz_reg_no", "phone", "email", "address",
+              "bank_name", "bank_account", "account_holder", "commission_rate",
+              "contract_note", "status"):
+        v = getattr(body, f, None)
+        if v is not None:
+            if f in ("commission_rate", "status"):
+                changed[f] = v
+            setattr(prof, f, v)
+    prof.updated_at = datetime.utcnow()
+    _audit(db, user, "consultant.updated", "consultant", u.user_id,
+           meta=changed or None, commit=False)
+    db.commit()
+    return _consultant_full(u, prof)
+
+
+# ── 초대 코드 ─────────────────────────────────────────────────────────────
+def _new_invite_code(db):
+    """읽어 부르기 쉬운 코드 — 혼동되는 글자(0/O, 1/I)는 뺀다."""
+    import secrets
+    abc = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    for _ in range(20):
+        code = "-".join("".join(secrets.choice(abc) for _ in range(4)) for _ in range(2))
+        if not db.query(models.ConsultantInvite).filter_by(code=code).first():
+            return code
+    raise HTTPException(500, {"code": "CODE_GENERATION_FAILED"})
+
+
+@app.post("/consultant/invites")
+def create_invite(body: schemas.InviteCreate,
+                  user=Depends(auth.require_roles("consultant", "operator", "admin")),
+                  db: Session = Depends(get_db)):
+    """초대 코드 발급 — 영업한 업체에 건네면 그 업체가 내 담당으로 들어온다."""
+    from datetime import timedelta
+    days = int(body.expires_days or 30)
+    inv = models.ConsultantInvite(
+        code=_new_invite_code(db), consultant_id=user["uid"],
+        company_name=body.company_name, note=body.note,
+        max_uses=max(1, int(body.max_uses or 1)),
+        expires_at=datetime.utcnow() + timedelta(days=max(1, min(365, days))))
+    db.add(inv)
+    _audit(db, user, "consultant.invite.created", "invite", inv.invite_id,
+           meta={"code": inv.code, "company_name": inv.company_name}, commit=False)
+    db.commit()
+    return {"invite_id": inv.invite_id, "code": inv.code,
+            "company_name": inv.company_name, "max_uses": inv.max_uses,
+            "used_count": inv.used_count, "expires_at": str(inv.expires_at)}
+
+
+@app.get("/consultant/invites")
+def list_invites(user=Depends(auth.require_roles("consultant", "operator", "admin")),
+                 db: Session = Depends(get_db)):
+    q = db.query(models.ConsultantInvite)
+    if user["role"] == "consultant":
+        q = q.filter_by(consultant_id=user["uid"])
+    rows = q.order_by(models.ConsultantInvite.created_at.desc()).limit(200).all()
+    now = datetime.utcnow()
+    return {"items": [{
+        "invite_id": i.invite_id, "code": i.code, "company_name": i.company_name,
+        "note": i.note, "max_uses": i.max_uses, "used_count": i.used_count,
+        "expires_at": str(i.expires_at or ""), "revoked": bool(i.revoked_at),
+        "usable": bool(not i.revoked_at and i.used_count < i.max_uses
+                       and (not i.expires_at or i.expires_at > now)),
+        "created_at": str(i.created_at)} for i in rows]}
+
+
+@app.post("/consultant/invites/{invite_id}/revoke")
+def revoke_invite(invite_id: str,
+                  user=Depends(auth.require_roles("consultant", "operator", "admin")),
+                  db: Session = Depends(get_db)):
+    """코드 회수 — 잘못 나간 코드로 남이 들어오면 관계와 수수료가 틀어진다."""
+    inv = db.get(models.ConsultantInvite, invite_id)
+    if not inv:
+        raise HTTPException(404, {"code": "INVITE_NOT_FOUND"})
+    if user["role"] == "consultant" and inv.consultant_id != user["uid"]:
+        raise HTTPException(403, {"code": "NOT_YOUR_INVITE"})
+    inv.revoked_at = datetime.utcnow()
+    _audit(db, user, "consultant.invite.revoked", "invite", invite_id, commit=False)
+    db.commit()
+    return {"ok": True, "revoked_at": str(inv.revoked_at)}
+
+
+@app.get("/invites/{code}/check")
+def check_invite(code: str, db: Session = Depends(get_db)):
+    """가입 화면이 코드를 확인한다 — 누구 담당으로 들어가는지 미리 보여준다.
+
+    인증 없이 연다(가입 전이다). 컨설턴트의 표기명만 돌려주고 연락처·계좌는 주지 않는다."""
+    inv = db.query(models.ConsultantInvite).filter_by(code=(code or "").strip().upper()).first()
+    if not inv:
+        return {"valid": False, "reason": "NOT_FOUND"}
+    if inv.revoked_at:
+        return {"valid": False, "reason": "REVOKED"}
+    if inv.expires_at and inv.expires_at <= datetime.utcnow():
+        return {"valid": False, "reason": "EXPIRED"}
+    if inv.used_count >= inv.max_uses:
+        return {"valid": False, "reason": "USED_UP"}
+    u = db.get(models.User, inv.consultant_id)
+    prof = db.get(models.ConsultantProfile, inv.consultant_id)
+    return {"valid": True, "company_name": inv.company_name,
+            "consultant": (prof.display_name if prof and prof.display_name
+                           else (u.username if u else None))}
+
+
+# ── 유치 관계 ─────────────────────────────────────────────────────────────
+@app.put("/admin/orgs/{org_id}/consultant")
+def set_org_consultant(org_id: str, body: schemas.OrgConsultantReq,
+                       user=Depends(auth.require_roles("operator", "admin")),
+                       db: Session = Depends(get_db)):
+    """업체의 담당 컨설턴트 지정·변경 — 초대 코드 없이 들어온 업체나 담당 교체용."""
+    o = db.get(models.Org, org_id)
+    if not o:
+        raise HTTPException(404, {"code": "ORG_NOT_FOUND"})
+    c = _resolve_consultant(db, body.consultant_id)
+    before = o.consultant_id
+    o.consultant_id = c.user_id
+    o.consultant_linked_at = datetime.utcnow()
+    _audit(db, user, "org.consultant.set", "org", org_id,
+           meta={"before": before, "after": c.user_id, "reason": body.reason}, commit=False)
+    db.commit()
+    return {"org_id": org_id, "consultant_id": c.user_id, "username": c.username,
+            "linked_at": str(o.consultant_linked_at)}
+
+
+@app.delete("/admin/orgs/{org_id}/consultant")
+def clear_org_consultant(org_id: str,
+                         user=Depends(auth.require_roles("operator", "admin")),
+                         db: Session = Depends(get_db)):
+    o = db.get(models.Org, org_id)
+    if not o:
+        raise HTTPException(404, {"code": "ORG_NOT_FOUND"})
+    before = o.consultant_id
+    o.consultant_id = None
+    o.consultant_linked_at = None
+    _audit(db, user, "org.consultant.cleared", "org", org_id,
+           meta={"before": before}, commit=False)
+    db.commit()
+    return {"ok": True}
+
+
+# ── 실적·수수료 ───────────────────────────────────────────────────────────
+def _commission_base(db, consultant_id, date_from=None, date_to=None):
+    """실적 근거 — 담당 업체 케이스의 '결제 완료' 인보이스.
+
+    수수료를 미리 계산해 저장하지 않는다. 규칙(요율)이 바뀌면 과거까지 흔들리기 때문에,
+    근거가 되는 인보이스를 그때그때 모아 계산한다. 지급했다는 사실만 따로 기록한다."""
+    org_ids = [o.org_id for o in
+               db.query(models.Org).filter_by(consultant_id=consultant_id).all()]
+    if not org_ids:
+        return [], 0.0
+    cases = {c.case_id: c for c in db.query(models.CaseApplication)
+             .filter(models.CaseApplication.org_id.in_(org_ids)).all()}
+    if not cases:
+        return [], 0.0
+    q = db.query(models.Invoice).filter(models.Invoice.case_id.in_(list(cases)))
+    rows, total = [], 0.0
+    for iv in q.all():
+        if (iv.status or "") != "paid":
+            continue
+        if date_from and str(iv.created_at or "")[:10] < date_from:
+            continue
+        if date_to and str(iv.created_at or "")[:10] > date_to:
+            continue
+        amt = float(iv.amount or 0)      # 부가세 제외 공급가 기준
+        total += amt
+        c = cases.get(iv.case_id)
+        rows.append({"invoice_id": iv.invoice_id, "invoice_no": iv.invoice_no,
+                     "case_id": iv.case_id,
+                     "company_name": c.company_name if c else None,
+                     "service_type": iv.service_type, "amount": amt,
+                     "created_at": str(iv.created_at or "")})
+    return rows, total
+
+
+@app.get("/consultant/commission")
+def my_commission(date_from: str = Query(None), date_to: str = Query(None),
+                  user=Depends(auth.require_roles("consultant")),
+                  db: Session = Depends(get_db)):
+    return _commission_report(db, user["uid"], date_from, date_to)
+
+
+@app.get("/admin/consultants/{consultant_id}/commission")
+def consultant_commission(consultant_id: str, date_from: str = Query(None),
+                          date_to: str = Query(None),
+                          user=Depends(auth.require_roles("operator", "admin")),
+                          db: Session = Depends(get_db)):
+    return _commission_report(db, _resolve_consultant(db, consultant_id).user_id,
+                              date_from, date_to)
+
+
+def _commission_report(db, consultant_id, date_from, date_to):
+    prof = db.get(models.ConsultantProfile, consultant_id)
+    rows, base = _commission_base(db, consultant_id, date_from, date_to)
+    rate = prof.commission_rate if prof and prof.commission_rate is not None else None
+    paid = [{"payout_id": p.payout_id, "period": "%s ~ %s" % (p.period_from, p.period_to),
+             "amount": p.amount, "status": p.status, "paid_at": str(p.paid_at or "")}
+            for p in db.query(models.ConsultantPayout)
+            .filter_by(consultant_id=consultant_id)
+            .order_by(models.ConsultantPayout.created_at.desc()).limit(50).all()]
+    return {"consultant_id": consultant_id,
+            "period": {"from": date_from, "to": date_to},
+            "client_count": db.query(models.Org).filter_by(
+                consultant_id=consultant_id).count(),
+            "base_amount": round(base, 2), "invoice_count": len(rows),
+            "commission_rate": rate,
+            # 요율이 없으면 금액을 지어내지 않는다 — 운영자가 정해야 나온다.
+            "commission_amount": (round(base * rate / 100.0, 2)
+                                  if rate is not None else None),
+            "invoices": rows, "payouts": paid}
+
+
+@app.post("/admin/consultants/payouts")
+def create_payout(body: schemas.PayoutCreate,
+                  user=Depends(auth.require_roles("operator", "admin")),
+                  db: Session = Depends(get_db)):
+    """수수료 지급 기록 — 계산이 아니라 '지급했다'는 사실을 남긴다."""
+    c = _resolve_consultant(db, body.consultant_id)
+    prof = db.get(models.ConsultantProfile, c.user_id)
+    rate = prof.commission_rate if prof else None
+    if rate is None:
+        raise HTTPException(400, {"code": "RATE_NOT_SET",
+                                  "hint": "수수료율을 먼저 설정해야 지급액을 낼 수 있다"})
+    rows, base = _commission_base(db, c.user_id, body.period_from, body.period_to)
+    p = models.ConsultantPayout(
+        consultant_id=c.user_id, period_from=body.period_from, period_to=body.period_to,
+        base_amount=round(base, 2), rate=rate, amount=round(base * rate / 100.0, 2),
+        invoice_ids=[r["invoice_id"] for r in rows], note=body.note,
+        created_by=user["uid"])
+    db.add(p)
+    _audit(db, user, "consultant.payout.created", "consultant", c.user_id,
+           meta={"period": [body.period_from, body.period_to], "amount": p.amount},
+           commit=False)
+    db.commit()
+    return {"payout_id": p.payout_id, "base_amount": p.base_amount, "rate": p.rate,
+            "amount": p.amount, "invoice_count": len(rows), "status": p.status}
+
+
+@app.post("/admin/consultants/payouts/{payout_id}/paid")
+def mark_payout_paid(payout_id: str,
+                     user=Depends(auth.require_roles("operator", "admin")),
+                     db: Session = Depends(get_db)):
+    p = db.get(models.ConsultantPayout, payout_id)
+    if not p:
+        raise HTTPException(404, {"code": "PAYOUT_NOT_FOUND"})
+    p.status = "paid"
+    p.paid_at = datetime.utcnow()
+    _audit(db, user, "consultant.payout.paid", "consultant", p.consultant_id,
+           meta={"payout_id": payout_id, "amount": p.amount}, commit=False)
+    db.commit()
+    return {"ok": True, "paid_at": str(p.paid_at)}
 
 
 @app.get("/admin/notify-channels")
