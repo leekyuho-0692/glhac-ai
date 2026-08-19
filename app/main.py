@@ -2093,6 +2093,93 @@ def i18n_labels(lang: str = Query("ko")):
     return {"lang": lg, "labels": out}
 
 
+def _org_scoped_models():
+    """org_id 를 가진 모델 — 감사로그·조직 본체·케이스는 제외.
+
+    감사로그를 조직과 함께 지우면 HMAC 체인이 끊긴다(케이스 초기화와 같은 이유).
+    케이스가 남아 있는 조직은 애초에 삭제 대상이 아니므로 CaseApplication 도 뺀다."""
+    out = []
+    for name in dir(models):
+        m = getattr(models, name)
+        t = getattr(m, "__table__", None)
+        if t is None or name.startswith("_"):
+            continue
+        if ("org_id" in t.columns and m is not models.AuditLog
+                and m is not models.CaseApplication and m is not models.Org):
+            out.append((t.name, m))
+    return sorted(out)
+
+
+@app.post("/admin/orgs/purge-orphans")
+def admin_purge_orphan_orgs(body: dict = None, user=Depends(auth.require_roles("admin")),
+                            db: Session = Depends(get_db)):
+    """케이스도 사용자도 없는 조직을 정리한다 — 테스트·리허설이 남긴 빈 껍데기.
+
+    지우지 않는 것
+      · 케이스가 하나라도 있는 조직 — 업무 데이터가 딸려 있다.
+      · 사용자가 있는 조직 — 지우면 그 계정이 소속 없는 상태가 된다. 계정을 먼저
+        정리할지는 사람이 판단할 일이다.
+      · 감사로그 — 조직이 사라져도 '있었다는 사실'은 남아야 한다.
+
+    기본은 dry_run 미리보기. 실삭제는 confirm='PURGE' 와 사유가 있어야 한다."""
+    if not auth.dev_mode():
+        raise HTTPException(403, {"code": "PURGE_DISABLED", "hint": "GLHAC_DEV=1 에서만 허용"})
+    b = body or {}
+    dry = b.get("dry_run", True)
+    only = set(b.get("org_ids") or [])          # 주면 그 조직만 대상으로 좁힌다
+
+    with_cases = {r[0] for r in db.query(models.CaseApplication.org_id).distinct().all() if r[0]}
+    with_users = {r[0] for r in db.query(models.User.org_id).distinct().all() if r[0]}
+    scoped = _org_scoped_models()
+
+    plan, skipped = [], []
+    for o in db.query(models.Org).all():
+        if only and o.org_id not in only:
+            continue
+        if o.org_id in with_cases:
+            skipped.append({"org_id": o.org_id, "name": o.name, "reason": "케이스 있음"})
+            continue
+        if o.org_id in with_users:
+            skipped.append({"org_id": o.org_id, "name": o.name, "reason": "사용자 있음"})
+            continue
+        counts = {}
+        for tname, m in scoped:
+            n = db.query(m).filter(m.org_id == o.org_id).count()
+            if n:
+                counts[tname] = n
+        plan.append({"org_id": o.org_id, "name": o.name, "rows": counts,
+                     "audit_log_preserved": db.query(models.AuditLog)
+                     .filter(models.AuditLog.org_id == o.org_id).count()})
+
+    out = {"dry_run": bool(dry), "delete_count": len(plan), "cases": plan,
+           "skipped": skipped,
+           "note": "audit_log는 삭제하지 않는다(체인 보존). 삭제 사실은 감사로그에 남는다."}
+    if dry:
+        return out
+    if b.get("confirm") != "PURGE":
+        raise HTTPException(400, {"code": "CONFIRM_REQUIRED", "hint": "confirm='PURGE'"})
+    if not (b.get("reason") or "").strip():
+        raise HTTPException(400, {"code": "REASON_REQUIRED", "hint": "사유는 감사로그에 남는다"})
+    if b.get("expect_delete") is not None and b["expect_delete"] != len(plan):
+        raise HTTPException(409, {"code": "COUNT_MISMATCH", "expected": b["expect_delete"],
+                                  "actual": len(plan),
+                                  "hint": "dry_run 결과와 다르다 — 데이터가 그새 바뀌었다"})
+
+    # 삭제 '전에' 기록한다 — 도중에 실패해도 착수 사실은 남아야 한다.
+    _audit(db, user, "admin.orgs.purge_orphans", "system", None, None,
+           {"reason": b.get("reason"), "orgs": [i["org_id"] for i in plan]}, commit=False)
+    db.commit()
+    for item in plan:
+        oid = item["org_id"]
+        for tname, m in scoped:
+            db.query(m).filter(m.org_id == oid).delete(synchronize_session=False)
+        db.query(models.Org).filter(models.Org.org_id == oid).delete(
+            synchronize_session=False)
+    db.commit()
+    out["deleted"] = [i["org_id"] for i in plan]
+    return out
+
+
 @app.get("/admin/notify-channels")
 def admin_notify_channels(user=Depends(auth.require_roles("operator"))):
     """알림봇 채널 설정·구현 상태(읽기전용, 스키마 무변경).
