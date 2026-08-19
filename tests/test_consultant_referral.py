@@ -204,3 +204,66 @@ def test_payout_refuses_without_a_rate(db):
                         user={"uid": "ops", "role": "operator", "org_id": "org_demo"},
                         db=db)
     assert e.value.detail["code"] == "RATE_NOT_SET"
+
+
+# ── 화면이 쓰는 조회 경로 ────────────────────────────────────────────────
+# 화면은 API 로만 데이터를 얻는다. 권한이나 응답 모양이 어긋나면 화면이 조용히 빈다
+# (실측: 업체별 담당 표가 '업체가 없습니다'로 비고 경고 배너가 떴다 — /admin/orgs 가
+# 관리자 전용인데 이 화면은 최고운영자도 쓴다).
+
+def test_client_list_is_open_to_operator(db):
+    """컨설턴트 관리 화면은 최고운영자도 쓴다 — 관리자 전용 경로를 쓰면 화면이 빈다."""
+    r = m.list_consultant_clients(user={"uid": "ops", "role": "operator",
+                                        "org_id": "org_demo"}, db=db)
+    ids = {x["org_id"] for x in r["items"]}
+    assert CLIENT_ORG in ids and "org_walkin" in ids
+
+
+def test_client_list_shows_who_referred(db):
+    """누가 데려온 업체인지 화면에서 보여야 한다 — 수수료 근거다."""
+    r = m.list_consultant_clients(user={"uid": "ops", "role": "operator",
+                                        "org_id": "org_demo"}, db=db)
+    row = next(x for x in r["items"] if x["org_id"] == CLIENT_ORG)
+    assert row["consultant_id"] == CON and row["consultant_name"] == "김영업"
+
+
+def test_unassigned_companies_come_first(db):
+    """담당 없는 업체가 위로 — 조치가 필요한 곳이 먼저 보여야 한다."""
+    r = m.list_consultant_clients(user={"uid": "ops", "role": "operator",
+                                        "org_id": "org_demo"}, db=db)
+    first = r["items"][0]
+    assert first["consultant_id"] is None
+
+
+def test_consultant_list_counts_clients(db):
+    """운영자 목록에 유치 업체 수가 나온다."""
+    r = m.list_consultants(user={"uid": "ops", "role": "operator", "org_id": "org_demo"},
+                           db=db)
+    kim = next(x for x in r["items"] if x["consultant_id"] == CON)
+    assert kim["client_count"] == 1
+
+
+def test_consultant_list_hides_nothing_from_operator(db):
+    """운영자는 정산에 필요한 정보를 본다 — 요율·계좌가 가려지면 정산을 못 한다."""
+    r = m.list_consultants(user={"uid": "ops", "role": "operator", "org_id": "org_demo"},
+                           db=db)
+    kim = next(x for x in r["items"] if x["consultant_id"] == CON)
+    assert kim["profile"]["commission_rate"] == 10.0
+
+
+def test_dashboard_flags_clients_without_a_consultant(db):
+    """대시보드가 담당 없는 업체를 짚어준다 — 수수료 귀속처가 비어 있다는 신호다."""
+    cases = db.query(models.CaseApplication).all()
+    r = m._ops_unassigned_clients(db, cases)
+    ids = {x["org_id"] for x in r["items"]}
+    assert "org_walkin" in ids and CLIENT_ORG not in ids
+    assert r["count"] >= 1
+
+
+def test_dashboard_puts_active_companies_first(db):
+    """케이스가 도는 업체를 위로 — 일이 이미 진행 중인 곳이 급하다."""
+    db.add(models.Org(org_id="org_quiet", name="조용한 업체"))
+    db.commit()
+    r = m._ops_unassigned_clients(db, db.query(models.CaseApplication).all())
+    assert r["items"][0]["cases"] >= r["items"][-1]["cases"]
+    assert r["with_cases"] >= 1

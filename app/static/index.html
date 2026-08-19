@@ -353,6 +353,10 @@
     <div style="display:flex;gap:6px;margin-bottom:11px"><input id="regUser" placeholder="아이디 · Username" autocomplete="username" style="flex:1;margin-bottom:0"><button type="button" class="btn" onclick="checkUsername()">중복확인</button></div>
     <input id="regPass" type="password" placeholder="비밀번호 · Password" autocomplete="new-password">
     <input id="regPass2" type="password" placeholder="비밀번호 확인 · Confirm password" autocomplete="new-password">
+    <!-- 컨설턴트 초대 코드 — 영업으로 데려온 업체임을 밝힌다. 없어도 가입은 된다. -->
+    <input id="regInvite" placeholder="초대 코드 · Invite code (선택)" autocomplete="off"
+           oninput="regCheckInvite()" style="text-transform:uppercase;letter-spacing:1px">
+    <div id="regInviteMsg" class="small" style="margin:-6px 0 11px 2px;min-height:15px"></div>
     <div style="border:1px dashed var(--line2);border-radius:9px;padding:10px;margin-bottom:11px">
       <div style="font-size:12px;color:var(--ink3);margin-bottom:6px">📄 사업자·공장 등록증 → AI 자동추출 (Rizky #1)</div>
       <button type="button" class="btn" style="width:100%;justify-content:center" onclick="regOcrPick()">🤖 등록증 업로드·AI 추출</button>
@@ -441,7 +445,9 @@ const NAV = [
   ["application","📝","신청","Application","신청·Intake"],
   ["assignments","📬","배정함","Assignments","수락·거절"],   // 오디터 배정 수락/거절 루프
   ["auditorWork","🧑‍⚖️","오디터 업무 현황","Auditor Workload","배정 판단·개별 내역"],
-  ["pendamping","🤝","동반자 워크스페이스","Pendamping Workspace","SEHATI 배정·검증"],   // Layer A: PPH 동반자 전용 인박스
+  ["pendamping","🤝","동반자 워크스페이스","Pendamping Workspace","SEHATI 배정·검증"],
+  ["consultantSales","🤝","내 영업·고객","My Sales","유치·실적"],
+  ["consultantAdmin","💼","컨설턴트 관리","Consultants","등록·요율·정산"],   // Layer A: PPH 동반자 전용 인박스
   ["notifCenter","🔔","알림 센터","Notifications","내 알림·읽음관리"],   // C13 클라이언트 알림 센터
   ["preassess","🔍","사전심사","Pre-assessment","AI 판정·Assess"],
   ["materials","🧪","원재료","Materials","스크리닝·Screen"],
@@ -497,6 +503,8 @@ const BR2ROLE = {applicant:"client", consultant:"consultant", auditor:"auditor",
   penyelia_halal:"client", pendamping_pph:"client"};
 const MENU_ACCESS = {
   caseList: ["client","consultant","auditor","sharia","ops","admin"],
+  consultantSales:["consultant"],        // 영업(유치)·실적 — 컨설턴트 본인만
+  consultantAdmin:["ops","admin"],       // 컨설턴트 등록·요율·정산 — 인증기관
   dashboard:[], workflow:[],  // 개요 통합: 케이스 디테일(renderCaseDetail)로 흡수 — 메뉴 비노출
   application:["client","consultant","admin"],
   preassess:["client","consultant","auditor","sharia","ops","admin"],   // 심사자 뷰: 오디터·샤리아(열람)·최고운영자   // 오디터 사전심사 뷰(3분할 회신루프)는 기구현 — 메뉴 접근 누락 수정(2026-07-10)
@@ -652,13 +660,44 @@ async function doRegister(e){
   const username=v("regUser"),password=v("regPass"),password2=v("regPass2"),company_name=v("regCompany");
   if(!username||!password){toast("아이디·비밀번호를 입력하세요");return;}
   if(password!==password2){toast("비밀번호가 일치하지 않습니다");return;}  // P2-3: 비밀번호 확인
-  const body={username,password,company_name,nib:v("regNib"),responsible_person:v("regResp"),address:v("regAddr"),factory_address:v("regFactory")};
+  const body={username,password,company_name,nib:v("regNib"),responsible_person:v("regResp"),address:v("regAddr"),factory_address:v("regFactory"),
+              invite_code:(v("regInvite")||"").trim().toUpperCase()||null};
   try{
     const j=await API("/auth/register",{method:"POST",body:JSON.stringify(body)});
     localStorage.setItem(TK,j.token);localStorage.setItem("glhac_role",j.role);
     localStorage.setItem("glhac_org",j.org_id||"");localStorage.setItem("glhac_user",j.username||username);
-    toast("가입 완료 · 로그인됨");boot();
+    // 코드가 잘못돼도 가입은 된다 — 관계만 안 붙는다. 그 사실을 숨기지 않는다.
+    const ref=j.referral||{};
+    if(ref.consultant) toast(T('가입 완료')+" · "+T('담당 컨설턴트')+": "+ref.consultant);
+    else if(ref.invite_error) toast(T('가입은 되었지만 초대 코드가 적용되지 않았습니다')+" ("+ref.invite_error+")");
+    else toast("가입 완료 · 로그인됨");
+    boot();
   }catch(err){toast("가입 실패 · "+(err&&err.code?err.code:"중복 아이디?"));}
+}
+
+let _inviteTimer=null;
+/* 초대 코드 확인 — 가입 전에 '누구 담당으로 들어가는지'를 보여준다.
+   업체가 엉뚱한 코드로 가입해 담당이 잘못 붙으면 수수료까지 틀어진다. */
+function regCheckInvite(){
+  const el=document.getElementById("regInvite"), msg=document.getElementById("regInviteMsg");
+  if(!el||!msg)return;
+  const code=(el.value||"").trim().toUpperCase();
+  el.value=code;
+  clearTimeout(_inviteTimer);
+  if(code.length<4){msg.textContent="";msg.className="small";return;}
+  _inviteTimer=setTimeout(async()=>{
+    try{
+      const r=await fetch(`/invites/${encodeURIComponent(code)}/check`).then(x=>x.json());
+      if(r.valid){
+        msg.className="small"; msg.style.color="var(--ok)";
+        msg.textContent="✓ "+T('담당 컨설턴트')+": "+(r.consultant||"—")+(r.company_name?" · "+r.company_name:"");
+      }else{
+        const why={NOT_FOUND:T('없는 코드입니다'),EXPIRED:T('기간이 지난 코드입니다'),
+                   REVOKED:T('회수된 코드입니다'),USED_UP:T('이미 사용된 코드입니다')}[r.reason]||r.reason;
+        msg.className="small"; msg.style.color="var(--bad)"; msg.textContent="✕ "+why;
+      }
+    }catch(_){ msg.textContent=""; }
+  }, 350);
 }
 
 /* ---- helpers ---- */
@@ -706,7 +745,7 @@ const ID_LABEL={
   ketua:"Ketua",anggota:"Anggota",halal:"Halal",haram:"Haram",mushbooh:"Meragukan",
   pre_audit:"Pra-audit",onsite:"Lapangan",certification:"Sertifikasi",supervision:"Pengawasan",
 };
-const NAV_ID={"feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
+const NAV_ID={"consultantSales":"Penjualan Saya","consultantAdmin":"Konsultan","feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
   integration:"Integrasi",documents:"Dokumen",audit:"Audit",onsiteCalendar:"현장심사 캘린더",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
   invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",opsDashboard:"Operasional",workflowMonitor:"워크플로우 모니터",regulations:"Regulasi & Hukum",auditReport:"Laporan Audit",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",aiExtractions:"Antrian Tinjau AI",auditLog:"Log Audit",compliance:"Kepatuhan",system:"Sistem"};
 /* 영어 enum 라벨 — EN 모드에서 raw 코드(consultant_review 등) 대신 표기 */
@@ -740,6 +779,99 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+ "컨설턴트 미지정":"No consultant assigned", "담당 컨설턴트 미지정":"Clients without a consultant",
+ "모든 업체에 담당 컨설턴트가 지정되어 있습니다":"Every company has a consultant assigned",
+ "케이스가 진행 중인데 담당 컨설턴트가 없습니다 — 영업 실적이 어디로 갈지 정해지지 않은 상태입니다.":"Work is under way but no consultant is assigned — it is undecided whose sales record this counts toward.",
+ "코드 없이 들어왔거나 담당이 해제된 업체입니다. 지정해야 수수료 귀속처가 정해집니다.":"These companies signed up without a code, or their consultant was cleared. Assigning one decides where the commission goes.",
+ "가입 시 업체가 정정할 수 있습니다":"The company can correct this at sign-up",
+ "결제 건":"Paid invoices",
+ "결제 완료된 청구가 없습니다":"No paid invoices yet",
+ "계좌번호":"Account number",
+ "기간":"Period",
+ "내 고객":"My clients",
+ "내 실적":"My commission",
+ "내 정보":"My profile",
+ "내 정보 수정":"Edit my profile",
+ "담당 교체 사유 등 — 기록에 남습니다":"Reason for the change — this is recorded",
+ "담당 없음":"Unassigned",
+ "담당 지정":"Assign",
+ "담당 지정됨":"Consultant assigned",
+ "담당 컨설턴트 지정":"Assign consultant",
+ "담당 해제됨":"Consultant cleared",
+ "대상 업체":"Target company",
+ "등록되었습니다":"Registered",
+ "등록된 컨설턴트가 없습니다":"No consultants registered",
+ "만료·소진":"Expired / used up",
+ "발급 실패":"Could not issue",
+ "발급한 코드가 없습니다":"No codes issued yet",
+ "복사":"Copy",
+ "사업자등록번호":"Business registration no.",
+ "사용":"Used",
+ "사용 가능":"Usable",
+ "소속":"Affiliation",
+ "소속 컨설팅사":"Consulting firm",
+ "수수료":"Commission",
+ "수수료 정산":"Commission settlement",
+ "수수료율":"Commission rate",
+ "수수료율(%)":"Commission rate (%)",
+ "수수료율을 먼저 설정하세요":"Set the commission rate first",
+ "실적 근거":"Basis",
+ "실적 근거 청구서":"Invoices behind the figure",
+ "실적 근거(결제 완료 합계)":"Basis (paid total)",
+ "아이디·비밀번호는 필수입니다":"Username and password are required",
+ "아직 유치한 고객이 없습니다":"No clients brought in yet",
+ "어디서 만난 업체인지 등":"Where you met them, etc.",
+ "업체가 없습니다":"No companies",
+ "업체별 담당":"Client assignment",
+ "연결일":"Linked on",
+ "영업 대상 업체명":"Prospect company name",
+ "영업한 업체에 초대 코드를 건네면, 그 업체가 가입할 때 자동으로 내 담당이 됩니다. 담당 업체의 케이스는 별도 배정 없이 바로 보입니다.":"Give your invite code to a company you brought in — they become your client the moment they sign up. Their cases are visible to you without a separate assignment.",
+ "예금주":"Account holder",
+ "요율 미설정":"Rate not set",
+ "요율 미설정 — 계산 불가":"Rate not set — cannot compute",
+ "요율이 설정되면 계산됩니다":"Computed once a rate is set",
+ "운영자가 설정해야 금액이 계산됩니다":"An operator must set it before amounts are computed",
+ "유치 업체":"Clients",
+ "유효기간(일)":"Valid for (days)",
+ "은행":"Bank",
+ "이 코드를 회수합니다. 아직 가입하지 않은 업체는 이 코드로 들어올 수 없습니다. 계속할까요?":"This revokes the code. A company that has not signed up yet cannot use it. Continue?",
+ "이미 있는 아이디입니다":"That username is taken",
+ "정산":"Settle",
+ "정산 계좌":"Payout account",
+ "정산 기간을 입력하세요":"Enter the settlement period",
+ "정산 기록되었습니다":"Settlement recorded",
+ "정산 시작일":"Period start",
+ "정산 실패":"Settlement failed",
+ "정산 조건 메모":"Settlement terms note",
+ "정산 종료일":"Period end",
+ "중지":"Suspended",
+ "지급 내역":"Payouts",
+ "지급 내역이 없습니다":"No payouts yet",
+ "지급 대기":"Pending",
+ "지급 완료":"Paid",
+ "지급 완료로 표시할까요?":"Mark as paid?",
+ "지급액":"Payout",
+ "지급일":"Paid on",
+ "지정 실패":"Assignment failed",
+ "초대 코드":"Invite codes",
+ "초대 코드 발급":"Issue invite code",
+ "컨설턴트 등록":"Register consultant",
+ "컨설턴트 수정":"Edit consultant",
+ "컨설턴트 정보를 불러오지 못했습니다.":"Could not load consultant information.",
+ "컨설턴트는 영업으로 데려온 업체를 배정 없이 바로 담당합니다. 수수료율은 여기서만 설정할 수 있으며, 설정 전에는 실적이 금액으로 계산되지 않습니다.":"A consultant handles the companies they brought in without a separate assignment. The commission rate can only be set here; until it is, results are not converted into amounts.",
+ "코드":"Code",
+ "코드 발급":"Issue code",
+ "코드 발급됨":"Code issued",
+ "코드 복사됨":"Code copied",
+ "코드 회수됨":"Code revoked",
+ "표기명":"Display name",
+ "회수":"Revoke",
+ "회수 실패":"Could not revoke",
+ "회수됨":"Revoked",
+ "담당 컨설턴트":"Consultant in charge", "가입 완료":"Registered",
+ "가입은 되었지만 초대 코드가 적용되지 않았습니다":"Registered, but the invite code was not applied",
+ "없는 코드입니다":"Unknown code", "기간이 지난 코드입니다":"This code has expired",
+ "회수된 코드입니다":"This code was revoked", "이미 사용된 코드입니다":"This code was already used",
  "조직 · Org":"Organization", "매출 · Revenue":"Revenue", "사용자":"Users", "인증서":"Certificates",
  "문서 안의 삽입 위치 문구(원문)":"Insertion anchor text inside the document (original)",
  "조직":"Organization", "기업":"Company", "상태":"Status", "경로":"Pathway", "파트와":"Fatwa",
@@ -1074,6 +1206,99 @@ function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="marg
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+ "컨설턴트 미지정":"Tanpa konsultan", "담당 컨설턴트 미지정":"Klien tanpa konsultan",
+ "모든 업체에 담당 컨설턴트가 지정되어 있습니다":"Semua perusahaan sudah memiliki konsultan",
+ "케이스가 진행 중인데 담당 컨설턴트가 없습니다 — 영업 실적이 어디로 갈지 정해지지 않은 상태입니다.":"Pekerjaan sedang berjalan tetapi belum ada konsultan — belum ditentukan kepada siapa hasil penjualan ini dihitung.",
+ "코드 없이 들어왔거나 담당이 해제된 업체입니다. 지정해야 수수료 귀속처가 정해집니다.":"Perusahaan ini mendaftar tanpa kode, atau konsultannya telah dihapus. Penetapan menentukan ke mana komisi diberikan.",
+ "가입 시 업체가 정정할 수 있습니다":"Perusahaan dapat memperbaikinya saat mendaftar",
+ "결제 건":"Faktur terbayar",
+ "결제 완료된 청구가 없습니다":"Belum ada faktur yang terbayar",
+ "계좌번호":"Nomor rekening",
+ "기간":"Periode",
+ "내 고객":"Klien saya",
+ "내 실적":"Komisi saya",
+ "내 정보":"Profil saya",
+ "내 정보 수정":"Ubah profil saya",
+ "담당 교체 사유 등 — 기록에 남습니다":"Alasan perubahan — dicatat",
+ "담당 없음":"Belum ditetapkan",
+ "담당 지정":"Tetapkan",
+ "담당 지정됨":"Konsultan ditetapkan",
+ "담당 컨설턴트 지정":"Tetapkan konsultan",
+ "담당 해제됨":"Penetapan dihapus",
+ "대상 업체":"Perusahaan sasaran",
+ "등록되었습니다":"Terdaftar",
+ "등록된 컨설턴트가 없습니다":"Belum ada konsultan terdaftar",
+ "만료·소진":"Kedaluwarsa / habis",
+ "발급 실패":"Gagal menerbitkan",
+ "발급한 코드가 없습니다":"Belum ada kode diterbitkan",
+ "복사":"Salin",
+ "사업자등록번호":"Nomor izin usaha",
+ "사용":"Terpakai",
+ "사용 가능":"Dapat dipakai",
+ "소속":"Afiliasi",
+ "소속 컨설팅사":"Perusahaan konsultan",
+ "수수료":"Komisi",
+ "수수료 정산":"Penyelesaian komisi",
+ "수수료율":"Tarif komisi",
+ "수수료율(%)":"Tarif komisi (%)",
+ "수수료율을 먼저 설정하세요":"Tetapkan tarif komisi terlebih dahulu",
+ "실적 근거":"Dasar perhitungan",
+ "실적 근거 청구서":"Faktur yang mendasari",
+ "실적 근거(결제 완료 합계)":"Dasar (total terbayar)",
+ "아이디·비밀번호는 필수입니다":"Nama pengguna dan kata sandi wajib diisi",
+ "아직 유치한 고객이 없습니다":"Belum ada klien yang dibawa masuk",
+ "어디서 만난 업체인지 등":"Di mana Anda bertemu, dll.",
+ "업체가 없습니다":"Tidak ada perusahaan",
+ "업체별 담당":"Penetapan klien",
+ "연결일":"Terhubung pada",
+ "영업 대상 업체명":"Nama perusahaan prospek",
+ "영업한 업체에 초대 코드를 건네면, 그 업체가 가입할 때 자동으로 내 담당이 됩니다. 담당 업체의 케이스는 별도 배정 없이 바로 보입니다.":"Berikan kode undangan Anda kepada perusahaan yang Anda bawa — mereka menjadi klien Anda begitu mendaftar. Kasus mereka langsung terlihat tanpa penetapan terpisah.",
+ "예금주":"Nama pemilik rekening",
+ "요율 미설정":"Tarif belum ditetapkan",
+ "요율 미설정 — 계산 불가":"Tarif belum ditetapkan — tidak dapat dihitung",
+ "요율이 설정되면 계산됩니다":"Dihitung setelah tarif ditetapkan",
+ "운영자가 설정해야 금액이 계산됩니다":"Operator harus menetapkannya sebelum jumlah dihitung",
+ "유치 업체":"Klien",
+ "유효기간(일)":"Berlaku (hari)",
+ "은행":"Bank",
+ "이 코드를 회수합니다. 아직 가입하지 않은 업체는 이 코드로 들어올 수 없습니다. 계속할까요?":"Ini mencabut kode. Perusahaan yang belum mendaftar tidak dapat memakainya. Lanjutkan?",
+ "이미 있는 아이디입니다":"Nama pengguna sudah dipakai",
+ "정산":"Selesaikan",
+ "정산 계좌":"Rekening pembayaran",
+ "정산 기간을 입력하세요":"Masukkan periode penyelesaian",
+ "정산 기록되었습니다":"Penyelesaian tercatat",
+ "정산 시작일":"Mulai periode",
+ "정산 실패":"Penyelesaian gagal",
+ "정산 조건 메모":"Catatan syarat penyelesaian",
+ "정산 종료일":"Akhir periode",
+ "중지":"Ditangguhkan",
+ "지급 내역":"Pembayaran",
+ "지급 내역이 없습니다":"Belum ada pembayaran",
+ "지급 대기":"Menunggu",
+ "지급 완료":"Dibayar",
+ "지급 완료로 표시할까요?":"Tandai sebagai dibayar?",
+ "지급액":"Pembayaran",
+ "지급일":"Dibayar pada",
+ "지정 실패":"Penetapan gagal",
+ "초대 코드":"Kode undangan",
+ "초대 코드 발급":"Terbitkan kode undangan",
+ "컨설턴트 등록":"Daftarkan konsultan",
+ "컨설턴트 수정":"Ubah konsultan",
+ "컨설턴트 정보를 불러오지 못했습니다.":"Gagal memuat informasi konsultan.",
+ "컨설턴트는 영업으로 데려온 업체를 배정 없이 바로 담당합니다. 수수료율은 여기서만 설정할 수 있으며, 설정 전에는 실적이 금액으로 계산되지 않습니다.":"Konsultan menangani perusahaan yang mereka bawa tanpa penetapan terpisah. Tarif komisi hanya dapat ditetapkan di sini; sebelum itu, hasil tidak dikonversi menjadi jumlah.",
+ "코드":"Kode",
+ "코드 발급":"Terbitkan kode",
+ "코드 발급됨":"Kode diterbitkan",
+ "코드 복사됨":"Kode disalin",
+ "코드 회수됨":"Kode dicabut",
+ "표기명":"Nama tampilan",
+ "회수":"Cabut",
+ "회수 실패":"Gagal mencabut",
+ "회수됨":"Dicabut",
+ "담당 컨설턴트":"Konsultan penanggung jawab", "가입 완료":"Pendaftaran selesai",
+ "가입은 되었지만 초대 코드가 적용되지 않았습니다":"Pendaftaran berhasil, tetapi kode undangan tidak diterapkan",
+ "없는 코드입니다":"Kode tidak ditemukan", "기간이 지난 코드입니다":"Kode sudah kedaluwarsa",
+ "회수된 코드입니다":"Kode telah dicabut", "이미 사용된 코드입니다":"Kode sudah digunakan",
  "조직 · Org":"Organisasi", "매출 · Revenue":"Pendapatan", "사용자":"Pengguna", "인증서":"Sertifikat",
  "문서 안의 삽입 위치 문구(원문)":"Teks penanda posisi di dalam dokumen (asli)",
  "조직":"Organisasi", "기업":"Perusahaan", "상태":"Status", "경로":"Jalur", "파트와":"Fatwa",
@@ -8870,6 +9095,7 @@ SCREEN.opsDashboard=async()=>{
   if(!d)return `<div class="card"><div class="body muted">${T('운영현황을 불러오지 못했습니다.')}</div></div>`;
   OPS_DATA=d;
   const rg=d.regions||{regions:[]}, cap=d.capacity||{}, pend=d.pending_companies||{items:[]}, aud=d.auditors||{};
+  const noCon=d.unassigned_clients||{count:0,with_cases:0,items:[]};   // 담당 컨설턴트 미지정
   const kpi=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:26px;color:var(--${c})">${n}</span><span class="l">${l}</span></div></div>`;
   const bl=cap.backlog||{};
   const weekOnsite=weekEventCount((cal&&cal.events)||[]);   // M7: 이번 주(월~일) 예정 현장실사
@@ -8878,7 +9104,8 @@ SCREEN.opsDashboard=async()=>{
     ${kpi(pend.count||0,T('신규 업체 승인 대기'),(pend.count?'warn':'ink3'))}
     ${kpi(weekOnsite,T('이번 주 현장실사'),(weekOnsite?'accent':'ink3'))}
     ${kpi((bl.doc_audit_wait||0)+(bl.onsite_wait||0),T('심사·현장 적체'),(((bl.doc_audit_wait||0)+(bl.onsite_wait||0))?'gold':'ink3'))}
-    ${kpi((aud.unassigned||[]).length,T('오디터 미배정'),(((aud.unassigned||[]).length)?'bad':'ink3'))}</div>`;
+    ${kpi((aud.unassigned||[]).length,T('오디터 미배정'),(((aud.unassigned||[]).length)?'bad':'ink3'))}
+    ${kpi(noCon.count||0,T('컨설턴트 미지정'),(noCon.with_cases?'bad':(noCon.count?'warn':'ink3')))}</div>`;
   /* ① 지역별 현황 — 집계표 + 클릭 드릴다운 */
   const regions=rg.regions||[]; const maxr=Math.max(1,...regions.map(r=>r.count));
   const regBars=regions.length?regions.map(r=>`<div class="sb clickable" onclick="opsRegionSel('${esc(r.province)}')" title="${esc(r.province)} · ${T('클릭→케이스 목록')}" style="cursor:pointer${OPS_REGION===r.province?';font-weight:800':''}">
@@ -8913,6 +9140,19 @@ SCREEN.opsDashboard=async()=>{
       <td><button class="btn xs" onclick="opsApprove('${esc(p.case_id)}')">✅ ${T('승인')}</button> <button class="btn xs ghost" onclick="opsReject('${esc(p.case_id)}')">⛔ ${T('거절')}</button></td></tr>`).join("")}</tbody></table>`:`<div class="muted small">${T('승인 대기 중인 신규 업체가 없습니다.')}</div>`;
   const pendPanel=`<div class="card"><h3>🆕 ${T('신규 업체 승인/거절')} <span class="en">· Onboarding</span><span class="r">${pitems.length}${T('건')}</span></h3>
     <div class="body tight"><div class="banner info" style="margin-bottom:10px">ℹ ${T('신규업체는 승인 전까지 오디터에게 노출되지 않습니다. 승인 시 진행업체로 편입됩니다.')}</div>${pendTbl}</div></div>`;   // M6(미구현 내역 2026-07-10): 승인 전 오디터 미노출 안내 배너
+  /* ④-2 담당 컨설턴트 미지정 — 수수료 귀속처가 비어 있는 업체 */
+  const ncItems=noCon.items||[];
+  const ncTbl=ncItems.length?`<table><thead><tr><th>${T('업체')}</th><th>${T('케이스')}</th><th>${T('처리')}</th></tr></thead>
+    <tbody>${ncItems.map(o=>`<tr><td><b>${esc(o.name||o.org_id)}</b><div class="muted" style="font-size:10px">${esc(o.org_id)}</div></td>
+      <td>${o.cases?`<b>${o.cases}</b>`:'<span class="muted">0</span>'}</td>
+      <td><button class="btn xs" onclick="caSetOrg('${esc(o.org_id)}')">${T('담당 지정')}</button></td></tr>`).join("")}</tbody></table>`
+    :`<div class="muted small" style="padding:10px">✓ ${T('모든 업체에 담당 컨설턴트가 지정되어 있습니다')}</div>`;
+  const noConPanel=`<div class="card" style="margin-bottom:16px"><h3>🤝 ${T('담당 컨설턴트 미지정')} <span class="en">· Unassigned clients</span>
+      <span class="r">${noCon.count||0}${T('건')}${noCon.with_cases?` · ${T('진행 중')} ${noCon.with_cases}`:''}</span></h3>
+    <div class="body tight"><div class="banner ${noCon.with_cases?'warn':'info'}" style="margin-bottom:10px">
+      ${noCon.with_cases?`⚠ ${T('케이스가 진행 중인데 담당 컨설턴트가 없습니다 — 영업 실적이 어디로 갈지 정해지지 않은 상태입니다.')}`
+                        :`ℹ ${T('코드 없이 들어왔거나 담당이 해제된 업체입니다. 지정해야 수수료 귀속처가 정해집니다.')}`}</div>
+      ${ncTbl}</div></div>`;
   /* ④ 오디터 배정 */
   const unas=aud.unassigned||[];
   const unTbl=unas.length?`<table><thead><tr><th>${T('업체')}</th><th>${T('단계')}</th><th>${T('배정')}</th></tr></thead>
@@ -8947,6 +9187,7 @@ SCREEN.opsDashboard=async()=>{
   ${kpis}
   <div class="grid side" style="margin-bottom:16px">${regPanel}${capPanel}</div>
   <div class="grid side" style="margin-bottom:16px">${pendPanel}${audPanel}</div>
+  ${noConPanel}
   ${respPanel}`;
 };
 /* ===== P1-#5 관리자 종합 캘린더 — 전 케이스 현장실사 일정 집약(월그리드+리스트). 백엔드 GET /ops/calendar. ===== */
@@ -10064,6 +10305,237 @@ SCREEN.menuAssign=async()=>{
     </div></div>`;
 };
 /* 내 메뉴 설정(개인화) — 각 사용자가 자기 좌측 메뉴 구성·순서를 직접 관리. maLeft/maRight 드래그 UI 재활용(MA_MODE="me"). */
+/* ── 컨설턴트 영업(유치) ────────────────────────────────────────────────
+   컨설턴트는 오디터와 다르다. 오디터는 케이스마다 배정받지만 컨설턴트는 자기가 영업해
+   데려온 업체가 곧 담당이다. 이 화면은 그 관계를 만들고(초대 코드) 실적을 확인한다. */
+SCREEN.consultantSales=async()=>{
+  const [me,inv,com]=await Promise.all([
+    API('/consultant/me').catch(()=>null),
+    API('/consultant/invites').catch(()=>({items:[]})),
+    API('/consultant/commission').catch(()=>null)]);
+  if(!me) return `<div class="card"><div class="body muted">${T('컨설턴트 정보를 불러오지 못했습니다.')}</div></div>`;
+  const p=me.profile||{};
+  const rateTxt = (p.commission_rate==null)
+    ? `<span class="tag t-warn">${T('요율 미설정')}</span> <span class="muted small">${T('운영자가 설정해야 금액이 계산됩니다')}</span>`
+    : `<b>${p.commission_rate}%</b>`;
+  const invRows=(inv.items||[]).map(i=>`<tr${i.usable?'':' style="opacity:.45"'}>
+      <td><code style="font-size:13px;font-weight:700;letter-spacing:.5px">${esc(i.code)}</code></td>
+      <td>${esc(i.company_name||'—')}</td>
+      <td class="muted small">${esc(i.note||'')}</td>
+      <td style="white-space:nowrap">${i.used_count}/${i.max_uses}</td>
+      <td class="muted small">${esc((i.expires_at||'').slice(0,10))}</td>
+      <td>${i.revoked?tag('bad',T('회수됨')):(i.usable?tag('ok',T('사용 가능')):tag('mute',T('만료·소진')))}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn xs" onclick="csCopy('${esc(i.code)}')">📋 ${T('복사')}</button>
+        ${i.usable?`<button class="btn xs ghost" onclick="csRevoke('${esc(i.invite_id)}')">${T('회수')}</button>`:''}</td></tr>`).join('')
+    || `<tr><td colspan="7" class="muted" style="text-align:center;padding:14px">${T('발급한 코드가 없습니다')}</td></tr>`;
+  const clientRows=(me.clients||[]).map(c=>`<tr>
+      <td><b>${esc(c.name||'—')}</b><div class="muted" style="font-size:10px">${esc(c.org_id)}</div></td>
+      <td class="muted small">${esc((c.linked_at||'').slice(0,10))}</td></tr>`).join('')
+    || `<tr><td colspan="2" class="muted" style="text-align:center;padding:14px">${T('아직 유치한 고객이 없습니다')}</td></tr>`;
+  const invoiceRows=((com&&com.invoices)||[]).slice(0,20).map(v=>`<tr>
+      <td>${esc(v.company_name||'—')}</td>
+      <td class="muted small">${esc(v.invoice_no||v.invoice_id.slice(0,8))}</td>
+      <td class="muted small">${LBL('billing_service',v.service_type,{})}</td>
+      <td style="text-align:right">${fmtIDR(v.amount)}</td>
+      <td class="muted small">${esc((v.created_at||'').slice(0,10))}</td></tr>`).join('')
+    || `<tr><td colspan="5" class="muted" style="text-align:center;padding:14px">${T('결제 완료된 청구가 없습니다')}</td></tr>`;
+  const payoutRows=((com&&com.payouts)||[]).map(x=>`<tr>
+      <td class="muted small">${esc(x.period)}</td>
+      <td style="text-align:right">${fmtIDR(x.amount)}</td>
+      <td>${x.status==='paid'?tag('ok',T('지급 완료')):tag('warn',T('지급 대기'))}</td>
+      <td class="muted small">${esc((x.paid_at||'').slice(0,10))}</td></tr>`).join('')
+    || `<tr><td colspan="4" class="muted" style="text-align:center;padding:14px">${T('지급 내역이 없습니다')}</td></tr>`;
+  return `
+  <div class="banner info" style="margin-bottom:16px">ⓘ ${T('영업한 업체에 초대 코드를 건네면, 그 업체가 가입할 때 자동으로 내 담당이 됩니다. 담당 업체의 케이스는 별도 배정 없이 바로 보입니다.')}</div>
+  <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
+    <div class="card"><h3>👤 ${T('내 정보')} <span class="en">· Profile</span></h3><div class="body">
+      <div class="field"><label>${T('표기명')}</label><div class="v">${esc(me.display_name||'—')}</div></div>
+      <div class="field"><label>${T('소속')}</label><div class="v">${esc(me.company_name||'—')}</div></div>
+      <div class="field"><label>${T('연락처')}</label><div class="v">${esc(p.phone||'—')}</div></div>
+      <div class="field"><label>${T('정산 계좌')}</label><div class="v">${esc(p.bank_name||'—')} ${esc(p.bank_account||'')}</div></div>
+      <div class="field"><label>${T('수수료율')}</label><div class="v">${rateTxt}</div></div>
+      <div class="btnrow"><button class="btn" onclick="csEditProfile()">✎ ${T('내 정보 수정')}</button></div>
+    </div></div>
+    <div class="card"><h3>💰 ${T('내 실적')} <span class="en">· Commission</span></h3><div class="body">
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px">
+        <div class="scorebox"><span class="big">${(com&&com.client_count)||0}</span><span class="muted">${T('유치 업체')}</span></div>
+        <div class="scorebox"><span class="big">${(com&&com.invoice_count)||0}</span><span class="muted">${T('결제 건')}</span></div>
+      </div>
+      <div class="field" style="margin-top:10px"><label>${T('실적 근거(결제 완료 합계)')}</label>
+        <div class="v"><b>${fmtIDR(com&&com.base_amount)}</b></div></div>
+      <div class="field"><label>${T('수수료')}</label><div class="v">${
+        (com&&com.commission_amount!=null)?`<b style="color:var(--ok);font-size:17px">${fmtIDR(com.commission_amount)}</b>`
+        :`<span class="muted">${T('요율이 설정되면 계산됩니다')}</span>`}</div></div>
+    </div></div>
+  </div>
+  <div class="card" style="margin-bottom:16px"><h3>🎫 ${T('초대 코드')} <span class="en">· Invite codes</span>
+      <span class="r"><button class="btn pri" onclick="csNewInvite()">+ ${T('코드 발급')}</button></span></h3>
+    <div class="body tight"><table><thead><tr>
+      <th>${T('코드')}</th><th>${T('대상 업체')}</th><th>${T('메모')}</th><th>${T('사용')}</th>
+      <th>${T('만료')}</th><th>${T('상태')}</th><th></th></tr></thead><tbody>${invRows}</tbody></table></div></div>
+  <div class="grid" style="grid-template-columns:1fr 1fr;margin-bottom:16px">
+    <div class="card"><h3>🏢 ${T('내 고객')} <span class="en">· My clients</span><span class="r">${(me.clients||[]).length}</span></h3>
+      <div class="body tight"><table><thead><tr><th>${T('업체')}</th><th>${T('연결일')}</th></tr></thead><tbody>${clientRows}</tbody></table></div></div>
+    <div class="card"><h3>🧾 ${T('지급 내역')} <span class="en">· Payouts</span></h3>
+      <div class="body tight"><table><thead><tr><th>${T('기간')}</th><th style="text-align:right">${T('금액')}</th>
+        <th>${T('상태')}</th><th>${T('지급일')}</th></tr></thead><tbody>${payoutRows}</tbody></table></div></div>
+  </div>
+  <div class="card"><h3>📄 ${T('실적 근거 청구서')} <span class="en">· Paid invoices</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('업체')}</th><th>${T('청구번호')}</th><th>${T('서비스')}</th>
+      <th style="text-align:right">${T('금액')}</th><th>${T('일자')}</th></tr></thead><tbody>${invoiceRows}</tbody></table></div></div>`;
+};
+function csCopy(code){
+  try{navigator.clipboard.writeText(code);toast(T('코드 복사됨')+': '+code);}
+  catch(_){toast(code);}
+}
+async function csNewInvite(){
+  const r=await dialog(T('초대 코드 발급'),[
+    {key:'company',label:T('영업 대상 업체명'),placeholder:T('가입 시 업체가 정정할 수 있습니다')},
+    {key:'note',label:T('메모'),type:'textarea',placeholder:T('어디서 만난 업체인지 등')},
+    {key:'days',label:T('유효기간(일)'),type:'number',value:30}]);
+  if(!r)return;
+  try{
+    const inv=await API('/consultant/invites',{method:'POST',body:JSON.stringify({
+      company_name:(r.company||'').trim()||null, note:(r.note||'').trim()||null,
+      expires_days:parseInt(r.days||'30',10)||30})});
+    toast(T('코드 발급됨')+': '+inv.code);applyView();
+  }catch(e){toast((e&&e.code)||T('발급 실패'));}
+}
+async function csRevoke(id){
+  if(!confirm(T('이 코드를 회수합니다. 아직 가입하지 않은 업체는 이 코드로 들어올 수 없습니다. 계속할까요?')))return;
+  try{await API(`/consultant/invites/${id}/revoke`,{method:'POST',body:'{}'});
+    toast(T('코드 회수됨'));applyView();}
+  catch(e){toast((e&&e.code)||T('회수 실패'));}
+}
+async function csEditProfile(){
+  const me=await API('/consultant/me').catch(()=>null); if(!me)return;
+  const p=me.profile||{};
+  const r=await dialog(T('내 정보 수정'),[
+    {key:'display_name',label:T('표기명'),value:me.display_name||''},
+    {key:'company_name',label:T('소속 컨설팅사'),value:me.company_name||''},
+    {key:'phone',label:T('연락처'),value:p.phone||''},
+    {key:'email',label:T('이메일'),value:p.email||''},
+    {key:'biz_reg_no',label:T('사업자등록번호'),value:p.biz_reg_no||''},
+    {key:'bank_name',label:T('은행'),value:p.bank_name||''},
+    {key:'bank_account',label:T('계좌번호'),value:p.bank_account||''},
+    {key:'account_holder',label:T('예금주'),value:p.account_holder||''}]);
+  if(!r)return;
+  try{await API('/consultant/me',{method:'PUT',body:JSON.stringify(r)});
+    toast(T('저장되었습니다'));applyView();}
+  catch(e){toast((e&&e.code)||T('저장 실패'));}
+}
+
+/* ── 운영자: 컨설턴트 관리 ─────────────────────────────────────────────
+   컨설턴트 계정을 만들고, 수수료율을 정하고, 업체별 담당을 지정하고, 정산한다.
+   요율과 자격은 인증기관이 정한다 — 컨설턴트 본인은 못 바꾼다. */
+SCREEN.consultantAdmin=async()=>{
+  const [list,orgs]=await Promise.all([
+    API('/admin/consultants').catch(()=>({items:[]})),
+    API('/admin/consultant-clients').catch(()=>({items:[]}))]);
+  const rows=(list.items||[]).map(c=>{
+    const p=c.profile||{};
+    const rate=(p.commission_rate==null)
+      ? `<span class="tag t-warn">${T('미설정')}</span>` : `<b>${p.commission_rate}%</b>`;
+    return `<tr>
+      <td><b>${esc(c.display_name||c.username)}</b><div class="muted" style="font-size:10px">${esc(c.username)}</div></td>
+      <td class="muted small">${esc(c.company_name||'—')}</td>
+      <td>${c.client_count}</td>
+      <td>${rate}</td>
+      <td>${c.status==='active'?tag('ok',T('활성')):tag('mute',T('중지'))}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn xs" onclick="caEdit('${esc(c.consultant_id)}')">✎ ${T('수정')}</button>
+        <button class="btn xs" onclick="caCommission('${esc(c.consultant_id)}')">💰 ${T('정산')}</button></td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="muted" style="text-align:center;padding:14px">${T('등록된 컨설턴트가 없습니다')}</td></tr>`;
+  const orgList=Array.isArray(orgs)?orgs:(orgs.items||[]);
+  const orgRows=orgList.map(o=>`<tr>
+      <td><b>${esc(o.name||o.org_id)}</b><div class="muted" style="font-size:10px">${esc(o.org_id)}</div></td>
+      <td class="muted small">${o.cases||0}</td>
+      <td>${o.consultant_name?esc(o.consultant_name):`<span class="tag t-warn">${T('담당 없음')}</span>`}</td>
+      <td style="text-align:right"><button class="btn xs" onclick="caSetOrg('${esc(o.org_id)}')">${T('담당 지정')}</button></td></tr>`).join('')
+    || `<tr><td colspan="4" class="muted" style="text-align:center;padding:14px">${T('업체가 없습니다')}</td></tr>`;
+  return `
+  <div class="banner info" style="margin-bottom:16px">ⓘ ${T('컨설턴트는 영업으로 데려온 업체를 배정 없이 바로 담당합니다. 수수료율은 여기서만 설정할 수 있으며, 설정 전에는 실적이 금액으로 계산되지 않습니다.')}</div>
+  <div class="card" style="margin-bottom:16px"><h3>💼 ${T('컨설턴트')} <span class="en">· Consultants</span>
+      <span class="r"><button class="btn pri" onclick="caNew()">+ ${T('컨설턴트 등록')}</button></span></h3>
+    <div class="body tight"><table><thead><tr>
+      <th>${T('이름')}</th><th>${T('소속')}</th><th>${T('유치 업체')}</th><th>${T('수수료율')}</th>
+      <th>${T('상태')}</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>
+  <div class="card"><h3>🏢 ${T('업체별 담당')} <span class="en">· Client assignment</span></h3>
+    <div class="body tight"><table><thead><tr><th>${T('업체')}</th><th>${T('케이스')}</th>
+      <th>${T('담당 컨설턴트')}</th><th></th></tr></thead>
+      <tbody>${orgRows}</tbody></table></div></div>`;
+};
+async function caNew(){
+  const r=await dialog(T('컨설턴트 등록'),[
+    {key:'username',label:T('아이디')},{key:'password',label:T('비밀번호'),type:'password'},
+    {key:'display_name',label:T('표기명')},{key:'company_name',label:T('소속 컨설팅사')},
+    {key:'phone',label:T('연락처')},{key:'commission_rate',label:T('수수료율(%)'),type:'number'}]);
+  if(!r||!r.username||!r.password){if(r)toast(T('아이디·비밀번호는 필수입니다'));return;}
+  try{
+    const body={username:r.username,password:r.password,display_name:r.display_name||null,
+      company_name:r.company_name||null,phone:r.phone||null,
+      commission_rate:r.commission_rate?parseFloat(r.commission_rate):null};
+    await API('/admin/consultants',{method:'POST',body:JSON.stringify(body)});
+    toast(T('등록되었습니다'));applyView();
+  }catch(e){toast((e&&e.code)===('DUPLICATE_ACCOUNT')?T('이미 있는 아이디입니다'):((e&&e.code)||T('등록 실패')));}
+}
+async function caEdit(cid){
+  const l=await API('/admin/consultants').catch(()=>({items:[]}));
+  const c=(l.items||[]).find(x=>x.consultant_id===cid); if(!c)return;
+  const p=c.profile||{};
+  const r=await dialog(T('컨설턴트 수정')+' · '+(c.display_name||c.username),[
+    {key:'display_name',label:T('표기명'),value:c.display_name||''},
+    {key:'company_name',label:T('소속'),value:c.company_name||''},
+    {key:'commission_rate',label:T('수수료율(%)'),type:'number',value:p.commission_rate==null?'':p.commission_rate},
+    {key:'contract_note',label:T('정산 조건 메모'),type:'textarea',value:p.contract_note||''},
+    {key:'status',label:T('상태'),type:'select',value:c.status||'active',
+     options:[{value:'active',label:T('활성')},{value:'suspended',label:T('중지')}]}]);
+  if(!r)return;
+  try{
+    await API(`/admin/consultants/${cid}`,{method:'PUT',body:JSON.stringify({
+      display_name:r.display_name||null, company_name:r.company_name||null,
+      commission_rate:(r.commission_rate===''||r.commission_rate==null)?null:parseFloat(r.commission_rate),
+      contract_note:r.contract_note||null, status:r.status||null})});
+    toast(T('저장되었습니다'));applyView();
+  }catch(e){toast((e&&e.code)||T('저장 실패'));}
+}
+async function caSetOrg(orgId){
+  const l=await API('/admin/consultants').catch(()=>({items:[]}));
+  const opts=[{value:'',label:'— '+T('담당 없음')+' —'}].concat((l.items||[]).map(c=>({
+    value:c.consultant_id,label:(c.display_name||c.username)+(c.company_name?' ('+c.company_name+')':'')})));
+  const r=await dialog(T('담당 컨설턴트 지정'),[
+    {key:'cid',label:T('컨설턴트'),type:'select',options:opts},
+    {key:'reason',label:T('사유'),placeholder:T('담당 교체 사유 등 — 기록에 남습니다')}]);
+  if(!r)return;
+  try{
+    if(!r.cid){ await API(`/admin/orgs/${orgId}/consultant`,{method:'DELETE'}); toast(T('담당 해제됨')); }
+    else{ await API(`/admin/orgs/${orgId}/consultant`,{method:'PUT',
+      body:JSON.stringify({consultant_id:r.cid,reason:r.reason||null})}); toast(T('담당 지정됨')); }
+    applyView();
+  }catch(e){toast((e&&e.code)||T('지정 실패'));}
+}
+async function caCommission(cid){
+  const r=await API(`/admin/consultants/${cid}/commission`).catch(()=>null); if(!r)return;
+  const rate=(r.commission_rate==null)?T('미설정'):r.commission_rate+'%';
+  const amt=(r.commission_amount==null)?T('요율 미설정 — 계산 불가'):fmtIDR(r.commission_amount);
+  const ok=await dialog(T('수수료 정산'),[
+    {key:'_info',label:T('실적 근거'),value:fmtIDR(r.base_amount)+' ('+r.invoice_count+T('건')+')'},
+    {key:'_rate',label:T('수수료율'),value:rate},
+    {key:'_amt',label:T('수수료'),value:amt},
+    {key:'period_from',label:T('정산 시작일'),type:'date'},
+    {key:'period_to',label:T('정산 종료일'),type:'date'}]);
+  if(!ok)return;
+  if(!ok.period_from||!ok.period_to){toast(T('정산 기간을 입력하세요'));return;}
+  try{
+    const p=await API('/admin/consultants/payouts',{method:'POST',body:JSON.stringify({
+      consultant_id:cid,period_from:ok.period_from,period_to:ok.period_to})});
+    if(confirm(T('지급액')+' '+fmtIDR(p.amount)+'\n'+T('지급 완료로 표시할까요?')))
+      await API(`/admin/consultants/payouts/${p.payout_id}/paid`,{method:'POST',body:'{}'});
+    toast(T('정산 기록되었습니다'));applyView();
+  }catch(e){toast((e&&e.code)==='RATE_NOT_SET'?T('수수료율을 먼저 설정하세요'):((e&&e.code)||T('정산 실패')));}
+}
+
 SCREEN.myMenu=async()=>{
   const lang=["en","ko","id"][LANG]||"en";
   MA_MODE="me"; MA_SEARCH="";

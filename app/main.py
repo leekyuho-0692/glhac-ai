@@ -1408,6 +1408,18 @@ def admin_list_orgs(user=Depends(auth.require_roles()), db: Session = Depends(ge
         orgs.setdefault(u.org_id, {"org_id": u.org_id, "name": None, "users": 0, "cases": 0})["users"] += 1
     for c in db.query(models.CaseApplication).all():
         orgs.setdefault(c.org_id, {"org_id": c.org_id, "name": None, "users": 0, "cases": 0})["cases"] += 1
+    # 담당 컨설턴트 — 누가 이 업체를 데려왔는지. 수수료 정산의 근거라 화면에 보여야 한다.
+    prof = {p.consultant_id: p for p in db.query(models.ConsultantProfile).all()}
+    unames = {u.user_id: u.username for u in db.query(models.User).all()}
+    for o in db.query(models.Org).filter(models.Org.consultant_id.isnot(None)).all():
+        row = orgs.get(o.org_id)
+        if not row:
+            continue
+        pr = prof.get(o.consultant_id)
+        row["consultant_id"] = o.consultant_id
+        row["consultant_name"] = ((pr.display_name if pr and pr.display_name else None)
+                                  or unames.get(o.consultant_id))
+        row["consultant_linked_at"] = str(o.consultant_linked_at or "")
     return list(orgs.values())
 
 
@@ -2318,6 +2330,33 @@ def list_consultants(user=Depends(auth.require_roles("operator", "admin")),
                     "client_count": len(mine),
                     "clients": [{"org_id": o.org_id, "name": o.name} for o in mine[:20]]})
     return {"items": sorted(out, key=lambda x: -x["client_count"])}
+
+
+@app.get("/admin/consultant-clients")
+def list_consultant_clients(user=Depends(auth.require_roles("operator", "admin")),
+                            db: Session = Depends(get_db)):
+    """업체별 담당 컨설턴트 현황 — 누가 어느 업체를 데려왔는지, 담당 없는 업체는 어디인지.
+
+    /admin/orgs 를 쓰지 않는 이유: 그쪽은 관리자 전용인데 이 화면은 최고운영자도 쓴다.
+    필요한 것도 다르다 — 여기서는 케이스 수와 담당 컨설턴트만 보면 된다."""
+    prof = {p.consultant_id: p for p in db.query(models.ConsultantProfile).all()}
+    unames = {u.user_id: u.username for u in db.query(models.User).all()}
+    cases = {}
+    for c in db.query(models.CaseApplication).all():
+        cases[c.org_id] = cases.get(c.org_id, 0) + 1
+    out = []
+    for o in db.query(models.Org).all():
+        pr = prof.get(o.consultant_id) if o.consultant_id else None
+        out.append({
+            "org_id": o.org_id, "name": o.name, "cases": cases.get(o.org_id, 0),
+            "consultant_id": o.consultant_id,
+            "consultant_name": (((pr.display_name if pr and pr.display_name else None)
+                                 or unames.get(o.consultant_id)) if o.consultant_id else None),
+            "linked_at": str(o.consultant_linked_at or "")})
+    # 담당 없는 업체를 위로 — 여기가 조치가 필요한 곳이다.
+    out.sort(key=lambda x: (x["consultant_id"] is not None, -(x["cases"] or 0),
+                            (x["name"] or "")))
+    return {"items": out}
 
 
 @app.get("/consultant/me")
@@ -12480,6 +12519,23 @@ def _ops_auditors_data(db, user, cases=None):
     return {"auditors": auditors, "unassigned": unassigned, "assigned": assigned}
 
 
+def _ops_unassigned_clients(db, cases):
+    """담당 컨설턴트가 없는 업체 — 수수료 귀속처가 비어 있다는 뜻이다.
+
+    코드 없이 들어왔거나 담당이 해제된 업체다. 운영자가 지정해야 영업 실적이 어디로
+    갈지 정해진다. 케이스가 있는 업체를 먼저 보여준다 — 일이 이미 돌고 있는 곳이다."""
+    with_case = {}
+    for c in cases:
+        with_case[c.org_id] = with_case.get(c.org_id, 0) + 1
+    rows = []
+    for o in db.query(models.Org).filter(models.Org.consultant_id.is_(None)).all():
+        n = with_case.get(o.org_id, 0)
+        rows.append({"org_id": o.org_id, "name": o.name, "cases": n})
+    rows.sort(key=lambda x: (-(x["cases"] or 0), (x["name"] or "")))
+    return {"count": len(rows), "with_cases": sum(1 for r in rows if r["cases"]),
+            "items": rows[:50]}
+
+
 @app.get("/ops/dashboard")
 def ops_dashboard(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
     """M01 최고운영자 운영현황 — 지역/처리캐파/신규업체승인/오디터배정 단일 집약(읽기전용)."""
@@ -12503,6 +12559,7 @@ def ops_dashboard(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
             "capacity": _ops_capacity_data(db, user, cases),
             "pending_companies": _ops_pending_data(db, user, cases, fac_map),
             "auditors": _ops_auditors_data(db, user, cases),
+            "unassigned_clients": _ops_unassigned_clients(db, cases),
             "assignment_rejected": rejected, "assignment_awaiting": awaiting}
 
 
@@ -15303,6 +15360,44 @@ def _ensure_menu_assign(db):
     db.commit()
 
 
+def _ensure_consultant_menus(db):
+    """영업 화면 2개 — 컨설턴트의 '내 영업'과 운영자의 '컨설턴트 관리'(idempotent).
+
+    컨설턴트는 자기가 유치한 고객과 실적을 보고, 운영자는 컨설턴트를 등록하고 요율을
+    정하고 수수료를 정산한다. 서로 보는 것이 달라 화면을 나눈다."""
+    SPEC = [
+        # (코드, 그룹, 라우트, 아이콘, 정렬, 역할, 이름)
+        ("CONSULTANT_SALES", "GRP_3", "consultantSales", "🤝", 7, ("consultant",),
+         [("ko", "내 영업·고객"), ("en", "My Sales"), ("id", "Penjualan Saya")]),
+        ("CONSULTANT_ADMIN", "GRP_ADMIN", "consultantAdmin", "💼", 7, ("ops", "admin"),
+         [("ko", "컨설턴트 관리"), ("en", "Consultants"), ("id", "Konsultan")]),
+    ]
+    changed = False
+    for code, gcode, route, icon, sort, roles, names in SPEC:
+        row = db.query(models.SysMenu).filter_by(menu_code=code).first()
+        if not row:
+            grp = db.query(models.SysMenu).filter_by(menu_code=gcode).first()
+            if not grp:
+                continue
+            mid = models.uid()
+            db.add(models.SysMenu(menu_id=mid, menu_code=code, parent_menu_id=grp.menu_id,
+                                  menu_depth=2, menu_type="screen", route_path=route,
+                                  icon_name=icon, default_sort_order=sort))
+            for lang, name in names:
+                db.add(models.SysMenuI18n(menu_id=mid, language_code=lang, menu_name=name))
+            changed = True
+        else:
+            mid = row.menu_id
+        have = {rm.role_id for rm in
+                db.query(models.SysRoleMenu).filter_by(menu_id=mid).all()}
+        for r in roles:
+            if r not in have:
+                db.add(models.SysRoleMenu(role_id=r, menu_id=mid, sort_order=sort))
+                changed = True
+    if changed:
+        db.commit()
+
+
 def _ensure_my_menu(db):
     """'내 메뉴 설정'(개인화) 사이드바 노출 + 전체 역할 배정(idempotent).
     각 사용자가 자기 좌측 메뉴 구성·순서를 본인 계정에서 개별 관리 → sys_user_menu(본인 id)."""
@@ -15386,6 +15481,7 @@ def seed_menus(db):
         _ensure_my_menu(db)       # '내 메뉴 설정'(개인화) 보강
         _ensure_approvals_menu(db)  # '승인함'(2인 승인) 보강
         _fix_report_route(db)     # '보고서' 메뉴가 파트와로 가던 라우팅 교정
+        _ensure_consultant_menus(db)   # 영업(유치)·컨설턴트 관리 화면
         return
     path = os.path.join(os.path.dirname(__file__), "menu_seed.json")
     if not os.path.exists(path):
@@ -15414,6 +15510,7 @@ def seed_menus(db):
     _ensure_my_menu(db)       # '내 메뉴 설정'(개인화) 사이드바 노출
     _ensure_approvals_menu(db)  # '승인함'(2인 승인) 사이드바 노출
     _fix_report_route(db)
+    _ensure_consultant_menus(db)
 
 
 _BR2ROLE_MENU = {"applicant": "client", "consultant": "consultant", "auditor": "auditor",
