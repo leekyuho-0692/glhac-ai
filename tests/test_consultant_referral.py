@@ -267,3 +267,49 @@ def test_dashboard_puts_active_companies_first(db):
     r = m._ops_unassigned_clients(db, db.query(models.CaseApplication).all())
     assert r["items"][0]["cases"] >= r["items"][-1]["cases"]
     assert r["with_cases"] >= 1
+
+
+# ── 컨설턴트 삭제 ───────────────────────────────────────────────────────
+# 담당 업체를 남긴 채 지우면 업체는 담당 없는 상태가 되는데 화면에는 사라진 사람
+# 이름만 남는다. 정산 이력도 함부로 지울 것이 아니다.
+
+OPS = {"uid": "ops", "role": "operator", "org_id": "org_demo", "username": "ops"}
+
+
+def test_delete_refuses_while_clients_remain(db):
+    """담당 업체가 있으면 못 지운다 — 먼저 넘기거나 해제해야 한다."""
+    with pytest.raises(HTTPException) as e:
+        m.delete_consultant(CON, force=False, user=OPS, db=db)
+    assert e.value.detail["code"] == "HAS_CLIENTS"
+
+
+def test_delete_refuses_while_payouts_remain(db):
+    """정산 이력이 있으면 기본적으로 못 지운다 — 지급 사실이 사라지면 안 된다."""
+    db.get(models.Org, CLIENT_ORG).consultant_id = None
+    db.add(models.ConsultantPayout(consultant_id=CON, amount=100.0, rate=10.0))
+    db.commit()
+    with pytest.raises(HTTPException) as e:
+        m.delete_consultant(CON, force=False, user=OPS, db=db)
+    assert e.value.detail["code"] == "HAS_PAYOUTS"
+
+
+def test_delete_removes_the_account_and_its_codes(db, monkeypatch):
+    """담당도 이력도 없으면 계정과 초대 코드가 함께 사라진다."""
+    monkeypatch.setattr(m.auth, "dev_mode", lambda: True)
+    _invite(db, consultant_id=OTHER, code="CCCC-DDDD")
+    m.delete_consultant(OTHER, force=False, user=OPS, db=db)
+    db.expire_all()   # 세션에 남은 객체가 아니라 DB 를 본다
+    assert db.query(models.User).filter_by(user_id=OTHER).count() == 0
+    assert db.query(models.ConsultantProfile).filter_by(consultant_id=OTHER).count() == 0
+    assert db.query(models.ConsultantInvite).filter_by(consultant_id=OTHER).count() == 0
+
+
+def test_force_is_dev_only(db, monkeypatch):
+    """force 는 개발·리허설 정리용이다 — 운영에서 열리면 안 된다."""
+    monkeypatch.setattr(m.auth, "dev_mode", lambda: False)
+    db.get(models.Org, CLIENT_ORG).consultant_id = None
+    db.add(models.ConsultantPayout(consultant_id=CON, amount=100.0, rate=10.0))
+    db.commit()
+    with pytest.raises(HTTPException) as e:
+        m.delete_consultant(CON, force=True, user=OPS, db=db)
+    assert e.value.detail["code"] == "FORCE_DISABLED"

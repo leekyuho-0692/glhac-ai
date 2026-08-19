@@ -2359,6 +2359,45 @@ def list_consultant_clients(user=Depends(auth.require_roles("operator", "admin")
     return {"items": out}
 
 
+@app.delete("/admin/consultants/{consultant_id}")
+def delete_consultant(consultant_id: str, force: bool = Query(False),
+                      user=Depends(auth.require_roles("operator", "admin")),
+                      db: Session = Depends(get_db)):
+    """컨설턴트 삭제 — 담당 업체가 남아 있으면 거부한다.
+
+    담당을 먼저 다른 사람에게 넘기거나 해제해야 한다. 그러지 않고 지우면 업체는
+    담당 없는 상태로 남는데, 화면에서는 사라진 사람 이름만 보이게 된다.
+
+    지급 기록은 '지급했다는 사실'이라 함부로 지우지 않는다. 다만 테스트·리허설 정리
+    (force, GLHAC_DEV 전용)에서는 근거 케이스가 이미 사라졌으므로 함께 지운다 —
+    감사로그에는 지급 사실이 남아 있다."""
+    u = _resolve_consultant(db, consultant_id)
+    uid, uname = u.user_id, u.username     # 삭제 후에는 객체 속성을 읽을 수 없다
+    clients = db.query(models.Org).filter_by(consultant_id=uid).count()
+    if clients:
+        raise HTTPException(409, {"code": "HAS_CLIENTS", "clients": clients,
+                                  "hint": "담당 업체를 먼저 넘기거나 해제해야 한다"})
+    payouts = db.query(models.ConsultantPayout).filter_by(consultant_id=uid).count()
+    if payouts and not force:
+        raise HTTPException(409, {"code": "HAS_PAYOUTS", "payouts": payouts,
+                                  "hint": "정산 이력이 있다 — 지우려면 force=true"})
+    if force and not auth.dev_mode():
+        raise HTTPException(403, {"code": "FORCE_DISABLED", "hint": "GLHAC_DEV=1 에서만 허용"})
+    _audit(db, user, "consultant.deleted", "consultant", uid,
+           meta={"username": uname, "payouts": payouts, "force": bool(force)},
+           commit=False)
+    db.query(models.ConsultantInvite).filter_by(consultant_id=uid).delete(
+        synchronize_session=False)
+    if force:
+        db.query(models.ConsultantPayout).filter_by(consultant_id=uid).delete(
+            synchronize_session=False)
+    db.query(models.ConsultantProfile).filter_by(consultant_id=uid).delete(
+        synchronize_session=False)
+    db.query(models.User).filter_by(user_id=uid).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True, "deleted": uname}
+
+
 @app.get("/consultant/me")
 def get_my_consultant_profile(user=Depends(auth.require_roles("consultant")),
                               db: Session = Depends(get_db)):
