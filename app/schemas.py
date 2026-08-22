@@ -336,6 +336,10 @@ class AdminOrgReq(BaseModel):
     name: Optional[str] = None
 
 
+class OrgRenameReq(BaseModel):
+    name: str      # 경로에 org_id 가 있으므로 이름만 받는다
+
+
 class SeedResetReq(BaseModel):
     confirm: str   # "RESET" 필요
 

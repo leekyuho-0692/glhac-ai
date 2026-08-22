@@ -2182,6 +2182,29 @@ def _org_scoped_models():
     return sorted(out)
 
 
+@app.patch("/admin/orgs/{org_id}")
+def admin_rename_org(org_id: str, body: schemas.OrgRenameReq,
+                     user=Depends(auth.require_roles("operator", "admin")),
+                     db: Session = Depends(get_db)):
+    """조직 이름 변경 — 표기만 바꾼다(org_id·소속·케이스는 그대로).
+
+    이름이 틀리면 화면에서 다른 것으로 읽힌다. 실제로 심사기관 직원들이 속한 조직에
+    특정 신청업체 이름이 붙어 있어, 담당 지정 화면에서 개별 업체처럼 보였다. 그대로
+    담당을 지정했다면 그 조직의 케이스 전부가 한 컨설턴트에게 귀속될 뻔했다."""
+    o = db.get(models.Org, org_id)
+    if not o:
+        raise HTTPException(404, {"code": "ORG_NOT_FOUND", "org_id": org_id})
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, {"code": "NAME_REQUIRED"})
+    before = o.name
+    o.name = name
+    _audit(db, user, "org.renamed", "org", org_id,
+           meta={"before": before, "after": name}, commit=False)
+    db.commit()
+    return {"org_id": org_id, "name": name, "before": before}
+
+
 @app.post("/admin/orgs/purge-orphans")
 def admin_purge_orphan_orgs(body: dict = None, user=Depends(auth.require_roles("admin")),
                             db: Session = Depends(get_db)):

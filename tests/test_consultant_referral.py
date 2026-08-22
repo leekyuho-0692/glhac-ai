@@ -313,3 +313,33 @@ def test_force_is_dev_only(db, monkeypatch):
     with pytest.raises(HTTPException) as e:
         m.delete_consultant(CON, force=True, user=OPS, db=db)
     assert e.value.detail["code"] == "FORCE_DISABLED"
+
+
+# ── 조직 이름 ───────────────────────────────────────────────────────────
+# 이름이 틀리면 화면에서 다른 것으로 읽힌다. 심사기관 직원들이 속한 조직(org_demo)에
+# 특정 신청업체 이름('Buzzup Co., Ltd.')이 붙어 있어 담당 지정 화면에서 개별 업체처럼
+# 보였다. 그대로 지정했다면 그 조직의 케이스 6건 전부가 한 컨설턴트에게 귀속됐다.
+
+def test_rename_changes_only_the_label(db):
+    """이름만 바꾼다 — org_id·소속·케이스는 그대로여야 한다."""
+    before_cases = db.query(models.CaseApplication).filter_by(org_id=CLIENT_ORG).count()
+    r = m.admin_rename_org(CLIENT_ORG, body=type("B", (), {"name": "새 이름"})(),
+                           user=OPS, db=db)
+    assert r["before"] == "PT. KLIEN" and r["name"] == "새 이름"
+    assert db.get(models.Org, CLIENT_ORG).consultant_id == CON
+    assert db.query(models.CaseApplication).filter_by(org_id=CLIENT_ORG).count() == before_cases
+
+
+def test_rename_refuses_empty_name(db):
+    """빈 이름으로 지우지 못한다 — 이름 없는 조직은 화면에서 식별 불가다."""
+    with pytest.raises(HTTPException) as e:
+        m.admin_rename_org(CLIENT_ORG, body=type("B", (), {"name": "  "})(),
+                           user=OPS, db=db)
+    assert e.value.detail["code"] == "NAME_REQUIRED"
+
+
+def test_rename_refuses_unknown_org(db):
+    with pytest.raises(HTTPException) as e:
+        m.admin_rename_org("org_nope", body=type("B", (), {"name": "x"})(),
+                           user=OPS, db=db)
+    assert e.value.detail["code"] == "ORG_NOT_FOUND"
