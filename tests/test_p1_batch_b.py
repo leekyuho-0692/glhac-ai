@@ -53,17 +53,26 @@ def test_a_ops_calendar_operator_aggregates_all_cases():
         cal = c.get("/ops/calendar", headers=_h(op))
         assert cal.status_code == 200, cal.text
         body = cal.json()
-        dates = {e["date"]: e for e in body["events"]}
-        assert "2026-08-12" in dates and "2026-08-20" in dates, body
-        assert dates["2026-08-12"]["company_name"] == "AlphaFoods"
-        assert dates["2026-08-12"]["source"] == "audit_plan"
-        assert dates["2026-08-20"]["company_name"] == "BetaFoods"
-        assert dates["2026-08-20"]["source"] == "onsite_schedule"
-        assert dates["2026-08-20"]["status"] == "confirmed"
-        assert dates["2026-08-20"]["time"] == "10:00"
+        # 캘린더는 '전 케이스' 집약이라 같은 날짜에 다른 케이스 일정이 있을 수 있다
+        # (같은 프로세스의 앞선 테스트가 남긴 것 포함) → 날짜를 키로 하나만 집으면
+        # 마지막 것이 이겨서 역순 실행에서만 깨진다. 날짜별 목록에서 내 것을 찾는다.
+        by_date = {}
+        for e in body["events"]:
+            by_date.setdefault(e["date"], []).append(e)
+        assert "2026-08-12" in by_date and "2026-08-20" in by_date, body
+        e1 = next((e for e in by_date["2026-08-12"] if e["case_id"] == cid1), None)
+        assert e1 is not None, by_date["2026-08-12"]
+        assert e1["company_name"] == "AlphaFoods"
+        assert e1["source"] == "audit_plan"
+        e2 = next((e for e in by_date["2026-08-20"] if e["case_id"] == cid2), None)
+        assert e2 is not None, by_date["2026-08-20"]
+        assert e2["company_name"] == "BetaFoods"
+        assert e2["source"] == "onsite_schedule"
+        assert e2["status"] == "confirmed"
+        assert e2["time"] == "10:00"
         # by_date 그룹 + 집계 카운트
         assert body["count"] >= 2 and body["case_count"] >= 2
-        assert body["by_date"]["2026-08-12"][0]["case_id"] == cid1
+        assert cid1 in [x["case_id"] for x in body["by_date"]["2026-08-12"]]
         # admin 도 통과(require_roles admin bypass)
         assert c.get("/ops/calendar", headers=_h(admin)).status_code == 200
 

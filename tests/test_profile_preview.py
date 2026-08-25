@@ -57,7 +57,16 @@ def test_profile_preview_and_pdf():
         form = r.json()
         vals = _all_values(form)
         assert "Preview Co Ltd" in vals, "회사명이 미리보기 rows에 없음"
-        assert "Hong Gil-dong" in vals and "Jakarta" in vals and "Supervisor Kim" in vals
+        assert "Hong Gil-dong" in vals and "Jakarta" in vals
+        # 할랄감독자는 '정식 등록된 penyelia 우선, 없으면 신청서 입력값'이 제품 규칙이다.
+        # penyelia는 org 단위라 같은 프로세스의 앞선 테스트가 org_demo에 남길 수 있다
+        # → 입력값이 나온다고 못박으면 전체 실행에서만 깨진다. 규칙 그대로 기대값을 세운다.
+        _p = c.get("/orgs/org_demo/penyelia", headers=_h(atok)).json()
+        _items = _p.get("items", _p) if isinstance(_p, dict) else _p
+        _expect_sup = _items[0]["name"] if _items else "Supervisor Kim"
+        _sup_rows = [r["value"] for s in form["sections"] for r in s["rows"]
+                     if r["label_en"] == "Halal Supervisor"]
+        assert _sup_rows == [_expect_sup], (_sup_rows, _expect_sup)
         # 라벨(EN/KO 병기) 존재 확인
         labels = [(row["label_en"], row["label_ko"]) for s in form["sections"] for row in s["rows"]]
         assert ("Client Organization / Company Name", "고객 기관/회사 이름") in labels
@@ -77,7 +86,8 @@ def test_profile_preview_and_pdf():
         fform = r.json()
         fvals = _all_values(fform)
         assert "Preview Factory" in fvals and "FAC-REG-99" in fvals and "Bekasi" in fvals
-        assert "Supervisor Kim" in fvals, "케이스 기준 할랄감독자가 공장 폼에 반영 안됨"
+        # 공장 폼도 같은 규칙(등록 penyelia 우선) — 업체 폼과 동일 기대값을 쓴다.
+        assert _expect_sup in fvals, "할랄감독자가 공장 폼에 반영 안됨"
 
         # 4) 두 .pdf 라우트 — 200 + PDF 바이트
         for url in (f"/cases/{cid}/docs/company-info.pdf",

@@ -86,8 +86,14 @@ def test_reconcile_endpoint_with_chart_200():
         j = r.json()
         assert j["document_id"] == docid
         assert set(j) >= {"matched", "mismatches", "summary", "ocr_available"}
-        # 담당자 5명(대표·할랄감독자·penyelia·PIC·CP) 전원 대조 대상
-        assert j["summary"]["total"] == 5, j["summary"]
+        # penyelia는 org 단위라 같은 프로세스의 앞선 테스트가 org_demo에 더 남길 수 있고,
+        # 대조 목록은 (이름, 역할)로 중복이 접힌다 → 절대 수치로는 판정할 수 없다.
+        # 이 테스트의 주장은 "이 케이스가 신고한 담당자 전원이 대조 대상에 든다"이므로
+        # 이름으로 확인한다(전체 실행에서만 깨지던 원인).
+        _names = {m.get("name") for m in j["mismatches"]} | {m.get("name") for m in j["matched"]}
+        for _n in ("홍길동", "김철수", "최지훈", "이영희", "박민수"):
+            assert _n in _names, (_n, sorted(x for x in _names if x))
+        assert j["summary"]["total"] >= 5, j["summary"]
 
 
 if __name__ == "__main__":

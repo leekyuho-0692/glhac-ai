@@ -11,6 +11,7 @@ os.environ["GLHAC_DB_URL"] = "sqlite:///./glhac_wfmon_test.db"
 os.environ["GLHAC_DEV"] = "1"
 
 from fastapi.testclient import TestClient  # noqa: E402
+from conftest import app_db_file  # noqa: E402
 from app.main import app  # noqa: E402
 
 
@@ -62,7 +63,7 @@ def test_workflow_monitor_shape_and_fold():
 def test_workflow_monitor_gate_wait_on_fatwa_stage():
     """게이트 판단 fold: fatwa_review 단계면 파트와 게이트가 'wait'로 잡혀야 함(read-only 추론)."""
     import sqlite3
-    dbfile = os.environ["GLHAC_DB_URL"].replace("sqlite:///", "")
+    dbfile = app_db_file()   # 환경변수가 아니라 앱 엔진이 단일 출처(conftest 주석 참조)
     with TestClient(app) as c:
         adm = _tok(c, "admin", "admin")
         cid = c.post("/cases", json={"company_name": "GateCo", "org_id": "org_demo"},

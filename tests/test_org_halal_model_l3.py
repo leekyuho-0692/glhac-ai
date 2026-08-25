@@ -85,12 +85,15 @@ def test_extra_member_included_in_reconcile():
                    headers=h).json()
         c.post(f"/cases/{cid}/sjph-manual/layout",
                json={"inserts": {"org_chart": {"document_id": d["document_id"], "filename": "org.png"}}}, headers=h)
+        # penyelia는 org 단위라 같은 프로세스의 앞선 테스트가 org_demo에 더 남겼을 수 있다.
+        # 이 테스트의 주장은 '몇 명인가'가 아니라 '부서대표를 더하면 대조 대상도 하나 는다'이므로
+        # 절대 수치가 아니라 증분으로 판정한다(전체 실행에서만 깨지던 원인).
         base = c.post(f"/cases/{cid}/halal-org/reconcile", json={}, headers=h).json()["summary"]["total"]
-        assert base == 5
+        assert base >= 5, "대표·할랄감독자·penyelia·PIC·CP 최소 5명이 대조 대상"
         c.put(f"/cases/{cid}/halal-org",
               json={"members": [{"name": "홍부장", "role": "qc"}]}, headers=h)
         after = c.post(f"/cases/{cid}/halal-org/reconcile", json={}, headers=h).json()["summary"]["total"]
-        assert after == 6, "추가 부서대표가 L2 대조 대상에 포함되어야 함"
+        assert after == base + 1, "추가 부서대표가 L2 대조 대상에 포함되어야 함"
 
 
 if __name__ == "__main__":

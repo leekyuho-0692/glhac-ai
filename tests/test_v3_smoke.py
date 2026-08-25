@@ -9,6 +9,7 @@ os.environ.setdefault("GLHAC_DB_URL", "sqlite:///./glhac_v3_test.db")
 os.environ.setdefault("GLHAC_DEV", "1")   # 데모 계정 시드(테스트 전용)
 
 from fastapi.testclient import TestClient  # noqa: E402
+from conftest import app_db_file  # noqa: E402
 from app.main import app  # noqa: E402
 
 
@@ -169,7 +170,7 @@ def test_permission_transfer_cert_issue():
 def test_transition_bypass_blocked():
     """P0-1: applicant가 /transition으로 승인·발급 상태 직접 진입 차단(403)."""
     import sqlite3
-    dbfile = os.environ["GLHAC_DB_URL"].replace("sqlite:///", "")
+    dbfile = app_db_file()   # 환경변수가 아니라 앱 엔진이 단일 출처(conftest 주석 참조)
     with TestClient(app) as c:
         adm = _tok(c, "admin", "admin")
         ap = _tok(c, "applicant1", "pw")
@@ -273,7 +274,7 @@ def test_mockaudit_reject_transitions_to_corrective():
     """② 상태전이: onsite_audit_in_progress에서 reject → corrective_action_required 전이."""
     import os
     import sqlite3
-    dbfile = os.environ["GLHAC_DB_URL"].replace("sqlite:///", "")
+    dbfile = app_db_file()   # 환경변수가 아니라 앱 엔진이 단일 출처(conftest 주석 참조)
     with TestClient(app) as c:
         adm = _tok(c, "admin", "admin")
         cid = c.post("/cases", json={"company_name": "MT", "org_id": "org_demo"},

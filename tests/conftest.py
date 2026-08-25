@@ -42,6 +42,21 @@ os.environ.setdefault("GLHAC_DEV", "1")                     # 데모 계정 시�
 os.environ.setdefault("GLHAC_SECRET", "test-" + "x" * 36)   # 기본시크릿 부팅차단 회피
 
 
+def app_db_file():
+    """앱이 '실제로' 붙어 있는 SQLite 파일 경로.
+
+    함정: 여러 테스트 파일이 import 시점에 os.environ["GLHAC_DB_URL"]을 자기 경로로
+    덮어쓴다. 그러나 app/db.py의 engine은 최초 import 때 한 번만 만들어지므로, 두 번째
+    파일부터는 환경변수만 바뀌고 앱은 여전히 첫 DB를 쓴다. 그 상태에서 환경변수로
+    경로를 유도해 sqlite3로 직접 열면 존재하지 않는 파일을 열어 'no such table'이 난다
+    (한 프로세스로 전체 실행할 때만 터지고, 파일별 실행에서는 숨는다).
+
+    그래서 경로의 단일 출처는 환경변수가 아니라 엔진이다.
+    """
+    from app.db import engine
+    return engine.url.database
+
+
 def pytest_sessionfinish(session, exitstatus):
     """세션 종료 시 임시 DB + 레포에 남은 상대 테스트 DB 정리(레포 청결 유지)."""
     shutil.rmtree(_TMPDIR, ignore_errors=True)
