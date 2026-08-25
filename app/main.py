@@ -6466,6 +6466,138 @@ def get_fatwa_decree_pdf(case_id, user=Depends(rbac.require_action("fatwa.docume
                     headers={"Content-Disposition": "attachment; filename=fatwa_decree_%s.pdf" % case_id[:8]})
 
 
+# ── 심사원 배정 양식 (Audit Team Deployment Form) ────────────────────────
+# 심사기관이 어느 심사팀을 어느 업체에 보내는지 확정하는 문서다. 이해충돌 고지가
+# 붙어 있어(최근 2년 내 SJPH/HPAS 컨설팅 접촉 시 교체) 서명 전에 심사원이 읽어야 한다.
+#
+# 서명자는 설정값으로 둔다 — 담당자가 바뀔 때 코드를 고치지 않게. 기본값은 현행 양식.
+DEPLOY_SIGNERS = [
+    {"key": "coordinator",
+     "name": os.environ.get("GLHAC_DEPLOY_COORDINATOR", "Hadiputra Rizky"),
+     "title": os.environ.get("GLHAC_DEPLOY_COORDINATOR_TITLE", "Halal Auditor Coordinator")},
+    {"key": "impartiality",
+     "name": os.environ.get("GLHAC_DEPLOY_IMPARTIALITY", "Park Kyung Mi"),
+     "title": os.environ.get("GLHAC_DEPLOY_IMPARTIALITY_TITLE", "Impartiality Committee")},
+]
+
+DEPLOY_NOTICE = ("If you have had any contact with the Company in relation to SJPH/HPAS "
+                 "consultancy in the last two years, please notify your supervisor "
+                 "immediately to be replaced by another Auditor.")
+
+_DEPLOY_POSITION = {"ketua": "Lead Auditor", "anggota": "Auditor",
+                    "observer": "Observer", "expert": "Technical Expert"}
+
+
+def _deploy_form_data(db, c):
+    """양식에 들어갈 값 — 없는 값은 빈칸으로 둔다.
+
+    지어내지 않는다. 심사원이 서명하는 문서에 시스템이 만든 값이 들어가면, 틀려도
+    아무도 모른 채 확정된다. 비어 있으면 사람이 채우거나 데이터를 고치면 된다."""
+    pe = c.profile_ext or {}
+    prods = db.query(models.Product).filter_by(case_id=c.case_id).all()
+    kinds = []
+    for pr in prods:
+        k = (pr.category or "").strip()
+        if k and k not in kinds:
+            kinds.append(k)
+    # 제품 유형(category)이 비면 제품명으로 대신하지 않는다 — 다른 개념이다.
+    plan = (db.query(models.AuditPlan).filter_by(case_id=c.case_id)
+            .order_by(models.AuditPlan.created_at.desc()).first())
+    pool = (db.query(models.AuditorPool).filter_by(case_id=c.case_id)
+            .order_by(models.AuditorPool.assigned_at).all())
+    team = [{"no": i, "name": a.name or "",
+             "position": _DEPLOY_POSITION.get((a.role_in_team or "").lower(),
+                                              a.role_in_team or ""),
+             "cert_no": a.cert_no or ""}
+            for i, a in enumerate(pool, 1)]
+    if not team and plan and isinstance(plan.auditors, list):
+        # 심사원 풀이 비어 있어도 배정 계획에 이름이 잡혀 있으면 그것을 쓴다.
+        # 직책은 계획에 없으므로 비운다 — 없는 값을 만들지 않는다.
+        team = [{"no": i, "name": str(nm), "position": "", "cert_no": ""}
+                for i, nm in enumerate([x for x in plan.auditors if x], 1)]
+    if not team:
+        # 마지막 소스 — 운영자가 배정한 오디터(ops.auditor_assigned). 배정이 곧 파견이다.
+        asg = _ops_latest_assignment(db, [c.case_id]).get(c.case_id) or {}
+        if asg.get("auditor_name"):
+            team = [{"no": 1, "name": asg["auditor_name"],
+                     "position": _DEPLOY_POSITION["ketua"], "cert_no": ""}]
+    audit_date = str(plan.scheduled_date)[:10] if plan and plan.scheduled_date else ""
+    if not audit_date:
+        # 일정 조율로 확정된 날짜(onsite_schedule.confirm)도 정식 심사일이다.
+        audit_date = ((_onsite_sched_state(db, c.case_id).get("confirmed") or {})
+                      .get("date") or "")
+    return {
+        "id_no": c.nib or "",                       # NIB — 업체 식별번호
+        "company_name": c.company_name or "",
+        "office_address": c.address or pe.get("address") or "",
+        "factory_address": c.factory_address or pe.get("factory_address") or "",
+        # 제품에 유형이 안 잡혀 있으면 업체가 신고한 제품유형을 쓴다(같은 개념).
+        "product_service": ", ".join(kinds) or (pe.get("product_type") or "").strip(),
+        "trademark": (pe.get("trademark") or "").strip(),
+        "audit_date": str(audit_date)[:10],
+        "lph_name": (plan.lph_name if plan else "") or "",
+        "team": team,
+    }
+
+
+def _deploy_form_blocks(d):
+    # 라벨은 번역하지 않는다 — LPH에 제출하는 영문 정식 양식이다.
+    kv = lambda label, val: {"type": "kv", "label": label, "value": val or ""}   # noqa: E731
+    blocks = [   # 제목은 _render_pdf_rich 머리말이 이미 찍는다 — 여기서 또 찍지 않는다.
+        kv("ID No.", d["id_no"]),
+        kv("Company Name", d["company_name"]),
+        kv("Office Address", d["office_address"]),
+        kv("Factory Address / place of business", d["factory_address"]),
+        kv("Type of Product / Service", d["product_service"]),
+        kv("Trademark", d["trademark"]),
+        kv("Audit Date", d["audit_date"]),
+        {"type": "spacer", "h": 8},
+        {"type": "table", "headers": ["No", "Name", "Position"],
+         "widths": [0.1, 0.5, 0.4],
+         # 정식 양식의 3칸을 그대로 유지 — 모자란 줄은 비워 손으로 채울 수 있게 둔다.
+         "rows": ([[str(t["no"]), t["name"], t["position"]] for t in d["team"]]
+                  + [[str(i), "", ""] for i in range(len(d["team"]) + 1, 4)])},
+        {"type": "spacer", "h": 10},
+        {"type": "para", "text": DEPLOY_NOTICE},
+        {"type": "spacer", "h": 14},
+        {"type": "signature",
+         "slots": [{"role": "%s · %s" % (s0["name"], s0["title"]), "name": "", "signed": False}
+                   for s0 in DEPLOY_SIGNERS]},
+    ]
+    return blocks
+
+
+@app.get("/cases/{case_id}/audit-deployment")
+def audit_deployment_data(case_id: str,
+                          user=Depends(auth.require_roles("auditor", "fatwa_liaison",
+                                                          "operator", "admin", "consultant")),
+                          db: Session = Depends(get_db)):
+    """배정 양식에 들어갈 값 — 화면이 미리 보고 빈칸을 채울 수 있게."""
+    c = _get_case(db, case_id, user)
+    d = _deploy_form_data(db, c)
+    missing = [k for k in ("id_no", "company_name", "office_address", "factory_address",
+                           "product_service", "trademark", "audit_date") if not d.get(k)]
+    return {**d, "missing": missing, "signers": DEPLOY_SIGNERS, "notice": DEPLOY_NOTICE}
+
+
+@app.get("/cases/{case_id}/audit-deployment.pdf")
+def audit_deployment_pdf(case_id: str,
+                         user=Depends(auth.require_roles("auditor", "fatwa_liaison",
+                                                         "operator", "admin", "consultant")),
+                         db: Session = Depends(get_db)):
+    """심사원 배정 양식 PDF — 서명해서 보관하는 문서."""
+    from fastapi.responses import Response
+    c = _get_case(db, case_id, user)
+    d = _deploy_form_data(db, c)
+    pdf = _render_pdf_rich("Audit Team Deployment Form", _deploy_form_blocks(d),
+                           subtitle=d["company_name"] or None,
+                           footer="GL-HAC · Audit Team Deployment")
+    _audit(db, user, "audit_deployment.download", "case", case_id, case_id)
+    fn = "audit_deployment_%s.pdf" % (case_id[:8])
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="%s"' % fn})
+
+
 @app.get("/cases/{case_id}/factory-audit.docx")
 def get_factory_audit_docx(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
     """현장심사 보고서 — 기준 템플릿 그대로의 편집 가능한 docx."""
@@ -8377,16 +8509,20 @@ def _render_pdf_rich(title, blocks, subtitle=None, footer=None):
             # 라벨이 길면 값과 겹침(내장 CJK 폰트가 라틴도 전각폭 취급) — 실폭 상한(글자수×fs)으로 값 시작점 보정
             label_s = str(label) + ": "
             lw = max(fitz.get_text_length(label_s, fontname=font, fontsize=fs), len(label_s) * fs * 0.95)
-            val_x = margin + max(140, min(lw + 6, maxw * 0.55))
+            # 상한을 넘길 만큼 라벨이 길면 겹쳐 찍지 말고 값을 다음 줄로 내린다.
+            stacked = lw + 6 > maxw * 0.55
+            val_x = margin + (16 if stacked else max(140, min(lw + 6, maxw * 0.55)))
             val_w = W - margin - val_x
             if val_w < 20:
                 val_w = maxw / 2
             val_lines = wrap(value, fs, val_w)
-            need(max(len(val_lines), 1) * lh + 4)
+            nl = max(len(val_lines), 1)
+            need((nl + (1 if stacked else 0)) * lh + 4)
             pg.insert_text((margin, y + fs), str(label) + ": ", fontname=font, fontsize=fs, color=(0.45, 0.45, 0.45))
+            y0 = y + (lh if stacked else 0)
             for i, vl in enumerate(val_lines):
-                pg.insert_text((val_x, y + fs + i * lh), vl, fontname=font, fontsize=fs)
-            y += max(len(val_lines), 1) * lh + 4
+                pg.insert_text((val_x, y0 + fs + i * lh), vl, fontname=font, fontsize=fs)
+            y += (nl + (1 if stacked else 0)) * lh + 4
         elif t == "spacer":
             h = int(block.get("h", 0))
             need(h)

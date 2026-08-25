@@ -927,6 +927,19 @@ var EN_STRINGS={
  "차단(하람)":"Blocked (haram)", "증빙 필요":"Evidence required", "할랄 허용":"Halal cleared",
  "의심":"Doubtful (mushbooh)",
  "선택 케이스 해제":"Clear selected case", "알림 없음":"No notifications",
+ "심사원 배정 양식":"Audit Team Deployment Form",
+ "심사팀":"Audit team",
+ "배정된 심사원 없음":"No auditor assigned",
+ "빈칸":"blank",
+ "빈칸은 양식에도 빈칸으로 나갑니다":"Blank fields stay blank on the form",
+ "📄 배정 양식 PDF":"📄 Deployment form PDF",
+ "정식 양식":"Official forms",
+ "LPH 제출용 정식 서식입니다. 아래 AI 생성본은 이 서식을 채우기 위한 초안입니다.":"Official forms for submission to the LPH. The AI-generated text below is a draft for filling these in.",
+ "📄 현장심사 보고서 (ON-SITE AUDIT REPORT)":"📄 ON-SITE AUDIT REPORT",
+ "⬇ DOCX":"⬇ DOCX",
+ "📄 심사원 배정 양식":"📄 Audit Team Deployment Form",
+ "상표 · Trademark":"Trademark",
+ "심사원 배정 양식에 사용":"Used on the audit team deployment form",
  "부록별 도면 배치":"Figure placement by appendix",
  "삽입 위치":"Placed at","삽입 문서":"Document inserted","결정":"Decided by",
  "사람 지정":"Set by reviewer","AI 추정":"AI suggestion","비움":"Leave empty",
@@ -1356,6 +1369,19 @@ const UI_STRINGS={
  "선택 케이스 해제":"Hapus pilihan kasus", "알림 없음":"Tidak ada notifikasi",
  "업로드에 실패해 다시 시도합니다":"Unggah gagal — mencoba lagi",
  "ZIP·RAR·7z 압축파일만 됩니다 — 개별 서류는 하나로 묶어주세요":"Hanya arsip ZIP·RAR·7z — mohon satukan dokumen menjadi satu berkas",
+ "심사원 배정 양식":"Formulir Penugasan Tim Auditor",
+ "심사팀":"Tim auditor",
+ "배정된 심사원 없음":"Belum ada auditor yang ditugaskan",
+ "빈칸":"kosong",
+ "빈칸은 양식에도 빈칸으로 나갑니다":"Kolom kosong tetap kosong pada formulir",
+ "📄 배정 양식 PDF":"📄 PDF formulir penugasan",
+ "정식 양식":"Formulir resmi",
+ "LPH 제출용 정식 서식입니다. 아래 AI 생성본은 이 서식을 채우기 위한 초안입니다.":"Formulir resmi untuk diserahkan ke LPH. Teks hasil AI di bawah adalah draf untuk mengisinya.",
+ "📄 현장심사 보고서 (ON-SITE AUDIT REPORT)":"📄 LAPORAN AUDIT LAPANGAN",
+ "⬇ DOCX":"⬇ DOCX",
+ "📄 심사원 배정 양식":"📄 Formulir Penugasan Tim Auditor",
+ "상표 · Trademark":"Merek · Trademark",
+ "심사원 배정 양식에 사용":"Dipakai pada formulir penugasan tim auditor",
  "부록별 도면 배치":"Penempatan gambar per lampiran",
  "삽입 위치":"Ditempatkan di","삽입 문서":"Dokumen yang disisipkan","결정":"Ditentukan oleh",
  "사람 지정":"Ditetapkan pemeriksa","AI 추정":"Dugaan AI","비움":"Dikosongkan",
@@ -5760,7 +5786,8 @@ SCREEN.application=async()=>{
           <div class="field"><label>${T('SIHALAL 여부')}</label><select class="v" id="peSiHalal">${["","Yes","No"].map(o=>`<option${(pe.si_halal||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>제품유형 · Product Type</label><input class="v" id="peProdType" value="${esc(pe.product_type||"")}"></div>
-          <div class="field"><label>마케팅유형 · Marketing</label><input class="v" id="peMktType" value="${esc(pe.marketing_type||"")}" placeholder="retail/non-retail"></div></div>
+          <div class="field"><label>마케팅유형 · Marketing</label><input class="v" id="peMktType" value="${esc(pe.marketing_type||"")}" placeholder="retail/non-retail"></div>
+          <div class="field"><label>상표 · Trademark</label><input class="v" id="peTrademark" value="${esc(pe.trademark||"")}" placeholder="${T('심사원 배정 양식에 사용')}"></div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>총 직원수 · Employees</label><input class="v" id="peEmp" value="${esc(pe.total_employee||"")}"></div>
           <div class="field"><label>생산능력 · Capacity</label><input class="v" id="peCap" value="${esc(pe.production_capacity||"")}"></div></div>
@@ -5863,7 +5890,7 @@ async function fillRomanized(){
 async function saveProfile(id,silent){
   const cel=document.getElementById("apConsent");
   const pe={};
-  [["peCompanyEn","company_name_en"],["peRespEn","responsible_person_en"],["peTaxId","tax_id"],["peCorpRegNo","corporate_reg_no"],["peEstDate","establishment_date"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peEmp","total_employee"],["peCap","production_capacity"],["peRevenue","annual_revenue"],["peOutlet","outlet_count"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["peSupEn","halal_supervisor_en"],["pePicNameEn","pic_name_en"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
+  [["peCompanyEn","company_name_en"],["peRespEn","responsible_person_en"],["peTaxId","tax_id"],["peCorpRegNo","corporate_reg_no"],["peEstDate","establishment_date"],["peBizType","business_type"],["peRegType","registration_type"],["peAppType","application_type"],["peRegStatus","registration_status"],["peSiHalal","si_halal"],["peProdType","product_type"],["peMktType","marketing_type"],["peTrademark","trademark"],["peEmp","total_employee"],["peCap","production_capacity"],["peRevenue","annual_revenue"],["peOutlet","outlet_count"],["peCity","city"],["peCountry","country"],["peZip","zip"],["peOffice","office_phone"],["peSupEn","halal_supervisor_en"],["pePicNameEn","pic_name_en"],["pePicName","pic_name"],["pePicTitle","pic_title"],["pePicPhone","pic_phone"],["pePicEmail","pic_email"],["peCpName","cp_name"],["peCpTitle","cp_title"],["peCpPhone","cp_phone"],["peCpEmail","cp_email"]].forEach(([eid,k])=>{const el=document.getElementById(eid);if(el)pe[k]=el.value;});
   const body={company_name:v("apCompany"),nib:v("apNib"),responsible_person:v("apResp"),halal_supervisor:v("apSup"),address:v("peAddress"),email:v("peEmail"),due_date:v("apDue"),phone:v("apPhone"),notify_consent:cel?cel.checked:undefined,profile_ext:pe};
   try{await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});delete REGION_CACHE[id];await loadCases(true);applyView();if(!silent)alert("✅ 저장이 완료되었습니다 · Saved");}
   catch(e){toast("저장 실패 · "+(e&&e.code?e.code:"권한 확인"));}
@@ -6990,6 +7017,15 @@ SCREEN.auditReport=async()=>{
     fatwa_gate:{ready:false,missing:[]},sent_fatwa:false}));
   // 제목은 셸이 메뉴명으로 그린다 — 화면이 h1을 또 넣으면 제목이 두 번 보인다.
   return `<div class="banner info" style="margin-bottom:14px">${T('현장심사 결과를 보고서로 만들고, 서명 후 파트와 위원회에 상정합니다.')}</div>
+  <div class="card" style="margin-bottom:16px"><h3>${T('정식 양식')} <span class="en">· Official forms</span></h3>
+    <div class="body">
+      <div class="muted small" style="margin-bottom:8px">${T('LPH 제출용 정식 서식입니다. 아래 AI 생성본은 이 서식을 채우기 위한 초안입니다.')}</div>
+      <div class="btnrow">
+        <button class="btn pri" onclick="serverPdf('/cases/${id}/factory-audit.pdf','onsite_audit_report.pdf')">${T('📄 현장심사 보고서 (ON-SITE AUDIT REPORT)')}</button>
+        <button class="btn" onclick="serverPdf('/cases/${id}/factory-audit.docx','onsite_audit_report.docx')">${T('⬇ DOCX')}</button>
+        <button class="btn" onclick="serverPdf('/cases/${id}/audit-deployment.pdf','audit_deployment.pdf')">${T('📄 심사원 배정 양식')}</button>
+      </div>
+    </div></div>
   ${await genDocsCard(id,"audit_report","현장심사 보고서 · Audit Report","genAuditReport('"+id+"')",["auditor","ops","admin"].includes(ROLE))}
   ${auditReportLoopCard(id,arep)}`;
 };
@@ -7010,6 +7046,7 @@ SCREEN.audit=async()=>{
     API(`/cases/${id}/audit-plans`).catch(()=>[]),
     API(`/cases/${id}/corrective-actions`).catch(()=>[]),
     API(`/cases/${id}/audit-report/status`).catch(()=>({report:{approved:false},signed:null,latest_return:null,latest_resubmit:null,latest_reconfirm:null,fatwa_gate:{ready:false,missing:[]},sent_fatwa:false}))]);
+  const deploy=await API(`/cases/${id}/audit-deployment`).catch(()=>null);
   const canEdit=["auditor","sharia","ops","admin"].includes(ROLE);
   const canPlan=["auditor","ops","consultant","admin"].includes(ROLE);   // audit-plan
   const canCar=["client","consultant","sharia","admin"].includes(ROLE);  // CAR 제출(applicant·consultant·penyelia)
@@ -7057,6 +7094,7 @@ SCREEN.audit=async()=>{
         ${poolHtml}
         ${canPool?`<div class="btnrow" style="margin-top:8px"><input class="v" id="apoolName" placeholder="${T('심사원명')}" style="flex:1"><button class="btn" onclick="addAuditorPool('${id}')">${T('＋ 심사원')}</button></div>`:''}
       </div>
+      ${deployFormBlock(id,deploy)}
       <div class="body btnrow" style="border-top:1px solid var(--line)">
         ${canTeam?`<button class="btn pri" onclick="addLph('${id}')">LPH 배정 · Assign</button>`:'<span class="chip">🔒 LPH 배정 — 샤리아·최고운영자</span>'}</div></div>
     <div class="card"><h3>${T('현장 체크리스트')} <span class="en">· Onsite</span><span class="r">${onsite.comply||0}/${onsite.total||0} ${T('충족')}${canEdit?' · '+T('클릭 순환'):''}</span></h3>
@@ -7351,6 +7389,30 @@ async function addLph(id){
   if(!r)return;
   try{await API(`/cases/${id}/lph-assignment`,{method:"POST",body:JSON.stringify({lph_name:r.lph_name,auditor_ref:r.auditor_ref||null})});toast("LPH 배정");applyView();}
   catch(e){toast("배정 실패 · "+(e&&e.code?e.code:""));}
+}
+/* 심사원 배정 양식(Audit Team Deployment Form) — 시스템이 채운 값 미리보기 + 정식 PDF.
+   빈칸은 지어내지 않고 그대로 보여준다. 어디를 채워야 하는지 사람이 알아야 하기 때문이다. */
+const DEPLOY_FIELDS=[["id_no","ID No."],["company_name","Company Name"],["office_address","Office Address"],
+  ["factory_address","Factory Address"],["product_service","Type of Product / Service"],
+  ["trademark","Trademark"],["audit_date","Audit Date"]];
+function deployFormBlock(id,d){
+  if(!d) return '';
+  const miss=d.missing||[];
+  const rows=DEPLOY_FIELDS.map(([k,lb])=>{
+    const val=d[k]||'';
+    return `<div style="display:flex;gap:8px;padding:2px 0"><span class="muted small" style="flex:0 0 44%">${esc(lb)}</span>`
+      + (val?`<span class="small" style="flex:1">${esc(val)}</span>`
+            :`<span class="small" style="flex:1;color:var(--warn)">${T('빈칸')}</span>`)+`</div>`;
+  }).join('');
+  const team=(d.team||[]);
+  return `<div class="body" style="border-top:1px solid var(--line)">
+    <div class="small" style="font-weight:600;margin-bottom:6px">${T('심사원 배정 양식')} <span class="en">· Audit Team Deployment Form</span></div>
+    ${rows}
+    <div style="display:flex;gap:8px;padding:2px 0"><span class="muted small" style="flex:0 0 44%">${T('심사팀')}</span>
+      <span class="small" style="flex:1">${team.length?team.map(t=>esc(t.name)+(t.position?' <span class="muted">('+esc(t.position)+')</span>':'')).join(', '):`<span style="color:var(--warn)">${T('배정된 심사원 없음')}</span>`}</span></div>
+    ${miss.length?`<div class="banner warn small" style="margin-top:8px">${T('빈칸은 양식에도 빈칸으로 나갑니다')} · ${miss.length}${T('개')}</div>`:''}
+    <div class="btnrow" style="margin-top:8px"><button class="btn" onclick="serverPdf('/cases/${id}/audit-deployment.pdf','audit_deployment.pdf')">${T('📄 배정 양식 PDF')}</button></div>
+  </div>`;
 }
 async function addAuditorPool(id){const name=v("apoolName");if(!name){toast("심사원명 입력");return}try{await API(`/cases/${id}/auditor-pool`,{method:"POST",body:JSON.stringify({name})});toast("심사원 추가");applyView();}catch(e){toast("추가 실패 · "+(e&&e.code?e.code:""));}}
 async function delAuditorPool(id,poolId){if(!confirm("심사원을 제거할까요?"))return;try{await API(`/cases/${id}/auditor-pool/${poolId}`,{method:"DELETE"});toast("제거됨");applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
@@ -7759,6 +7821,8 @@ async function onsiteReviewerView(id){
     API(`/cases/${id}/onsite/reviewer-opinions`).catch(()=>({items:{},negative:0})),
     API(`/cases/${id}/onsite-opinion`).catch(()=>({opinion:''}))
   ]);
+  // 배정 양식은 운영자에게도 보여야 한다 — 빈칸(심사원·심사일)을 채우는 사람이 운영자다.
+  const deploy=await API(`/cases/${id}/audit-deployment`).catch(()=>null);
   const items=checklist.items||[];
   const myOps=ops.items||{};
   const byKey={};
@@ -7811,6 +7875,7 @@ async function onsiteReviewerView(id){
   return `
   <div class="banner info" style="margin-bottom:14px">👁 <b>${T('열람·의견 전용')}</b> — ${T('오디터가 현장에서 수집한 증거를 확인하고 항목별 의견(적합/부적합)과 코멘트만 기록합니다. 체크리스트·서명은 수정할 수 없습니다.')}</div>
   ${negOps?`<div class="banner bad" style="margin-bottom:14px">⛔ ${T('부적합 의견')} <b>${negOps}${T('건')}</b></div>`:''}
+  ${deploy?`<div class="card" style="margin-bottom:16px"><h3>🧑‍⚖️ ${T('심사원 배정 양식')} <span class="en">· Deployment</span></h3>${deployFormBlock(id,deploy)}</div>`:''}
   <div class="grid side" style="margin-bottom:16px">
     <div class="card"><h3>📋 ${T('현장심사 요약')} <span class="en">· Summary</span></h3>
       <div class="body">
