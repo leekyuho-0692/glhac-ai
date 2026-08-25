@@ -7,6 +7,8 @@
 """
 import glob
 import os
+
+import pytest
 import shutil
 import tempfile
 
@@ -55,6 +57,41 @@ def app_db_file():
     """
     from app.db import engine
     return engine.url.database
+
+
+@pytest.fixture(autouse=True, scope="module")
+def fresh_db_per_module():
+    """테스트 '파일' 경계마다 앱 DB를 비운다 — 한 프로세스 실행을 파일별 실행과 같게.
+
+    배경: 25개 파일이 import 시점에 GLHAC_DB_URL을 자기 경로로 덮어쓰지만 app/db.py의
+    engine은 최초 import 때 한 번만 만들어진다. 즉 한 프로세스에서는 모든 파일이 '한' DB를
+    공유하고, 앞 파일이 남긴 org_demo penyelia·케이스·일정이 다음 파일의 전제를 깬다.
+    파일별 실행(run_isolated.sh)에서는 숨고 전체 실행·무작위 순서에서만 터졌다.
+
+    파일 경계에서 테이블을 지우면 다음 파일의 첫 `with TestClient(app)`이 startup 훅에서
+    create_all·_migrate·seed를 다시 돌려 신선한 상태로 시작한다(훅은 멱등).
+    자기 엔진을 따로 만드는 테스트(tmp_path 등)는 이 엔진을 쓰지 않으므로 영향 없다.
+    """
+    from app.db import engine, Base
+    import app.models  # noqa: F401  — Base.metadata 채우기
+    import app.screening as _screening
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    # 온톨로지 캐시는 지워진 행을 붙들고 있다 — 아래 기동의 load_ontology가 다시 채운다.
+    for _attr in ("_ONTOLOGY", "_ontology", "ONTOLOGY"):
+        if hasattr(_screening, _attr):
+            try:
+                getattr(_screening, _attr).clear()
+            except Exception:  # noqa: BLE001
+                pass
+    # 여기서 앱을 한 번 기동해 시드(데모 계정·메뉴·온톨로지)까지 끝내 둔다.
+    # 여러 테스트가 첫 TestClient 진입 '전에' SessionLocal로 DB를 직접 읽는다
+    # (예: 오디터 계정 조회) — 비운 채로 넘기면 그 테스트가 파일 첫 순서일 때만 죽는다.
+    from fastapi.testclient import TestClient
+    from app.main import app
+    with TestClient(app):
+        pass
+    yield
 
 
 def pytest_sessionfinish(session, exitstatus):
