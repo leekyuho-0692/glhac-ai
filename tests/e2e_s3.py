@@ -22,8 +22,10 @@ HO = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
 HF = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
       json={"username": "fatwa1", "password": "pw"}).json()["token"]}
 
+# is_msme — 뒤(S3-3)에서 자기선언 경로로 전진시켜야 인증서 발급 가드를 통과한다.
 cid = httpx.post(f"{B}/cases", headers=HC,
-                 json={"company_name": "S3Test", "org_id": "org_demo"}).json()["case_id"]
+                 json={"company_name": "S3Test", "is_msme": True,
+                       "org_id": "org_demo"}).json()["case_id"]
 print(f"공용 케이스: {cid[:8]}...")
 
 # ── S3-1: 현장 체크리스트 16항목 ────────────────────────────
@@ -69,6 +71,34 @@ ok("product_scope 제품 포함", pid in (fw.get("product_scope") or []), fw.get
 
 # ── S3-3: 인증서 발급 → 동결 → 언락 ───────────────────────
 print(f"\n=== S3-3 인증서 동결/언락 (case={cid[:8]}) ===")
+# 인증서는 현장심사(또는 자기선언 위원회확인)를 거친 케이스에만 나간다 — 2026-08-14 발급 가드.
+# 이 시나리오가 검증하려는 것은 동결/언락이므로, 자기선언 경로로 케이스를 정상 전진시켜 놓는다.
+#   (종전에는 onboarding 상태로 곧장 발급을 시도해 STATE_NOT_READY 로 막혔다.)
+httpx.post(f"{B}/orgs/org_demo/penyelia", headers=HC,
+           json={"name": "Budi", "training_cert": "PH-1"})
+httpx.post(f"{B}/cases/{cid}/materials", headers=HC, json={"name": "citric acid"})
+_ei = httpx.post(f"{B}/cases/{cid}/sihalal/identity/link", headers=HC,
+                 json={"external_email": "s3@x.com"}).json()
+httpx.post(f"{B}/sihalal/identity/{_ei['external_identity_id']}/verify", headers=HC,
+           json={"expected_identifier": "s3@x.com"})
+httpx.patch(f"{B}/cases/{cid}/profile", headers=HC, json={"nib": "9876543210987"})
+httpx.post(f"{B}/cases/{cid}/submit-application", headers=HC)
+httpx.post(f"{B}/cases/{cid}/pathway/assess", headers=HC)
+httpx.post(f"{B}/cases/{cid}/pathway/confirm", headers=HC, json={"pathway": "self_declare"})
+httpx.post(f"{B}/cases/{cid}/transition", headers=HC, json={"to_state": "sjph_lite_prepared"})
+_users = httpx.get(f"{B}/admin/users", headers=HA).json()
+_pp = next(u["user_id"] for u in _users if u["username"] == "pendamping1")
+httpx.post(f"{B}/cases/{cid}/pendamping/assign", headers=HC, json={"pendamping_id": _pp})
+httpx.post(f"{B}/cases/{cid}/transition", headers=HC, json={"to_state": "pendamping_verification"})
+HP = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
+      json={"username": "pendamping1", "password": "pw"}).json()["token"]}
+httpx.post(f"{B}/cases/{cid}/pendamping/verify", headers=HP, json={"decision": "verified"})
+httpx.post(f"{B}/cases/{cid}/transition", headers=HO, json={"to_state": "committee_verification"})
+httpx.post(f"{B}/cases/{cid}/committee/decide", headers=HF,
+           json={"decision": "approve", "reason": "S3 동결 검증용"})
+ok("발급 전 상태 = committee_verification",
+   httpx.get(f"{B}/cases/{cid}", headers=HC).json().get("status") == "committee_verification",
+   httpx.get(f"{B}/cases/{cid}", headers=HC).json().get("status"))
 # 2단계 파트와: PATCH(approved)=가승인(provisional) → operator 최종승인 후에야 발급 가능
 r_fa = httpx.post(f"{B}/cases/{cid}/fatwa/final-approve", headers=HO).json()
 ok("파트와 최종승인(operator)", r_fa.get("fatwa_status") == "approved", r_fa)

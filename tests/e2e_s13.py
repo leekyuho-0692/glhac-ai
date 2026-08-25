@@ -167,6 +167,10 @@ if PID:
 r_fa = httpx.post(f"{B}/cases/{CID}/fatwa/final-approve", headers=HA)
 ok("파트와 최종승인 → 200", r_fa.status_code == 200, r_fa.json() if r_fa.status_code != 200 else 200)
 
+# 발급 가드는 상태(committee_verification)를 먼저 본다 — 2026-08-14 추가된 조건.
+# 여기서 보려는 것은 '문서 가드'이므로, 상태 조건은 충족시켜 놓고 문서 가드만 남긴다.
+force_status(CID, "committee_verification")
+
 # 발급 가드: rejected/rework 문서가 남아있으면 409 DOCUMENTS_NOT_APPROVED
 r_blocked = httpx.post(f"{B}/cases/{CID}/certificate/issue", headers=HA)
 ok("미승인 문서 잔존 → 발급 409", r_blocked.status_code == 409 and
