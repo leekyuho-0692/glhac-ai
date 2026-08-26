@@ -1,5 +1,7 @@
 """임계원재료 ontology seed — 설계 24.13/24.13.8 (illustrative, 전문가 검수 전).
 carrier_check: 'alcohol'(향료 등 알코올 용매 점검) | 'gelatin'(카로틴 등 젤라틴 캐리어 점검)."""
+from sqlalchemy.orm.attributes import flag_modified
+
 from .models import IngredientOntology, RuleVersion
 
 # 내부 초안 룰셋 — BPJPH/MUI 공식 고시를 그대로 옮긴 것이 아니라 전문가 검수 전 예시다.
@@ -582,6 +584,33 @@ def seed(db):
         _legacy.status = "draft"
     existing = {u for (u,) in db.query(IngredientOntology.ingredient_uid).all()}
     added = 0
+    # 별칭은 '추가만' 동기화한다. uid 미존재분만 넣는 종전 방식으로는 데이터셋에 표기를
+    # 보강해도 이미 심긴 DB에 영원히 반영되지 않았다(실측: ing.water 에 'air pam'을 넣어도
+    # 라이브는 여전히 못 잡아 수돗물이 mushbooh로 남았다). 지우지는 않으므로 현장에서
+    # 손본 별칭은 그대로 살아 있는다.
+    if existing:
+        by_uid = {r.ingredient_uid: r for r in db.query(IngredientOntology).all()}
+        for row in _load_ontology():
+            it = by_uid.get(row.get("ingredient_uid"))
+            src = row.get("aliases") or {}
+            if not it or not isinstance(src, dict):
+                continue
+            cur = dict(it.aliases or {})
+            changed = False
+            for lg, vals in src.items():
+                have = list(cur.get(lg) or [])
+                low = {str(x).strip().lower() for x in have}
+                for v in (vals if isinstance(vals, list) else [vals]):
+                    v = str(v).strip()
+                    if v and v.lower() not in low:
+                        have.append(v)
+                        low.add(v.lower())
+                        changed = True
+                if changed:
+                    cur[lg] = have
+            if changed:
+                it.aliases = cur
+                flag_modified(it, "aliases")   # JSON 컬럼 in-place 변경 감지
     for row in _load_ontology():
         uid = row.get("ingredient_uid")
         if not uid or uid in existing:

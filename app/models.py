@@ -123,7 +123,8 @@ class Material(Base):
     # v1 상속 필드
     mat_type = Column(String)   # raw|additive|processing_aid|packaging|lubricant|sanitizer
     source = Column(String)     # animal|plant|microbial|synthetic|mineral|unknown
-    supplier = Column(String)
+    supplier = Column(String)   # 공급사(Pemasok) — 사오는 곳
+    manufacturer = Column(String)   # 제조사(Produsen) — 만드는 곳. 공급사와 다를 수 있다
     origin = Column(String)     # 원산지(국가) — SJPH Appendix.4 'Negara/Country' 칸에 인쇄된다
     cert = Column(String)       # certified|exempt|unknown
     cert_no = Column(String)

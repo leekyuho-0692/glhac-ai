@@ -3193,20 +3193,67 @@ def material_auditor_note(material_id: str, lang: str = Query("ko"),
     return screening.auditor_note(m, (lang or "ko").lower())
 
 
+# 원재료 유형(Jenis Bahan) — 서류에는 'BAHAN BAKU'·'CLEANING AGENT'처럼 제각각 적힌다.
+# 사전 MATERIAL 축의 표기 목록으로 표준 코드에 붙이고, 화면 표기도 사전에서 꺼낸다.
+def _mat_type_code(raw):
+    """서류 표기 → 표준 코드. 못 알아보면 None(지어내지 않는다)."""
+    if not raw:
+        return None
+    key, _ = _dd_mod.material_type(raw)
+    if key:
+        return (_dd_mod.actions(key) or {}).get("material_type")
+    v = str(raw).strip().lower().replace(" ", "_").replace("-", "_")
+    known = {"raw", "additive", "processing_aid", "preservative",
+             "cleaning", "lubricant", "packaging"}
+    if v in known:
+        return v
+    return {"sanitizer": "cleaning", "cleaning_agent": "cleaning",
+            "raw_material": "raw"}.get(v)
+
+
+def _mat_type_label(raw, lang="ko"):
+    """표준 코드의 화면 표기. 표준화가 안 되면 서류에 적힌 값을 그대로 보여준다 —
+    임의로 비우면 서류에 있던 정보가 화면에서 사라진다."""
+    if not raw:
+        return ""
+    key, _ = _dd_mod.material_type(raw)
+    if key:
+        return _dd_mod.label(key, lang) or str(raw)
+    code = _mat_type_code(raw)
+    if code:
+        for k in _dd_mod.by_axis("MATERIAL"):
+            if (_dd_mod.actions(k) or {}).get("material_type") == code:
+                return _dd_mod.label(k, lang) or code
+    return str(raw)
+
+
 @app.get("/cases/{case_id}/materials")
-def list_materials(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+def list_materials(case_id: str, lang: str = Query("ko"),
+                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     rows = db.query(models.Material).filter_by(case_id=case_id).all()
-    ev = dict(db.query(models.DocumentAsset.material_id, func.count(models.DocumentAsset.document_id))
+    ev = {}
+    for d in (db.query(models.DocumentAsset)
               .filter(models.DocumentAsset.case_id == case_id,
-                      models.DocumentAsset.material_id.isnot(None))
-              .group_by(models.DocumentAsset.material_id).all())
+                      models.DocumentAsset.material_id.isnot(None)).all()):
+        ev.setdefault(d.material_id, []).append(
+            {"document_id": d.document_id, "filename": d.filename,
+             "evidence_type": d.doc_type, "review_status": d.review_status,
+             "has_file": bool(d.content_b64)})
     return [{"material_id": m.material_id, "name": m.name, "e_number": m.e_number,
              "mat_type": m.mat_type, "source": m.source, "supplier": m.supplier,
+             # 제조사가 비면 공급사를 보여준다 — 서류에 한 칸만 있는 경우가 흔하고,
+             # 빈칸으로 두면 화면에서 '정보가 없다'로 읽혀 오디터가 다시 묻는다.
+             "manufacturer": m.manufacturer or m.supplier or "",
+             "manufacturer_is_supplier": bool(not m.manufacturer and m.supplier),
+             "mat_type_code": _mat_type_code(m.mat_type),
+             "mat_type_label": _mat_type_label(m.mat_type, lang),
              "origin": m.origin,
              "cert": m.cert, "cert_no": m.cert_no, "v1_risk": m.v1_risk, "note": m.note,
              "result": m.screen_result, "status": m.screen_status, "severity": m.screen_severity,
-             "matched_uid": m.matched_uid, "evidence_count": ev.get(m.material_id, 0)} for m in rows]
+             "matched_uid": m.matched_uid,
+             "evidence_count": len(ev.get(m.material_id) or []),
+             "evidence": ev.get(m.material_id) or []} for m in rows]
 
 
 # ---------- products / materials ----------
@@ -3232,6 +3279,7 @@ def add_material(case_id: str, body: schemas.MaterialCreate,
                                 bool(body.evidence_provided), sk, body.note or "")
     m = models.Material(case_id=case_id, name=body.name, e_number=body.e_number,
                         mat_type=body.mat_type, source=body.source, supplier=body.supplier,
+                        manufacturer=body.manufacturer, origin=body.origin,
                         cert=r.get("v1_cert"), cert_no=body.cert_no, note=body.note,
                         v1_risk=r.get("v1_risk"), evidence_provided=bool(body.evidence_provided),
                         source_known=sk, screen_result=r["result"], screen_status=r["status"],
@@ -3257,6 +3305,47 @@ def delete_material(material_id: str,
         db.delete(m)
         db.commit()
     return {"deleted": material_id}
+
+
+@app.patch("/materials/{material_id}")
+def patch_material(material_id: str, body: schemas.MaterialPatch,
+                   user=Depends(rbac.require_action("material.add")),
+                   db: Session = Depends(get_db)):
+    """원재료 속성 수정(제조사·유형·인증번호 등) → 즉시 재판정.
+
+    할랄 인증서 번호를 넣으면 의심(mushbooh)이 할랄로 올라간다. 무엇을 근거로 올렸는지
+    감사기록에 남긴다 — 번호만 적힌 것과 증빙으로 해소된 것은 다르고, 오디터는 그 번호를
+    발급기관 목록과 대조해야 한다."""
+    m = db.get(models.Material, material_id)
+    if not m:
+        raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
+    _get_case(db, m.case_id, user)
+    before = {"status": m.screen_status, "result": m.screen_result,
+              "cert_no": m.cert_no, "manufacturer": m.manufacturer,
+              "supplier": m.supplier, "mat_type": m.mat_type}
+    changed = {}
+    for f in ("mat_type", "source", "supplier", "manufacturer", "origin", "cert", "cert_no", "note"):
+        v = getattr(body, f, None)
+        if v is not None and (v or "") != (getattr(m, f) or ""):
+            setattr(m, f, v or None)
+            changed[f] = v
+    if not changed:
+        return {"material_id": material_id, "changed": {}, "screen": None}
+    r = screening.screen_merged(m.name, m.e_number, m.source, m.cert_no,
+                                bool(m.evidence_provided),
+                                True if m.source_known is None else bool(m.source_known),
+                                m.note or "")
+    m.cert = r.get("v1_cert")
+    m.v1_risk = r.get("v1_risk")
+    m.screen_result, m.screen_status = r["result"], r["status"]
+    m.screen_severity, m.matched_uid = r["severity"], r.get("matched_uid")
+    _audit(db, user, "material.update", "material", material_id, m.case_id,
+           {"name": m.name, "changed": changed, "before": before,
+            "after": {"status": m.screen_status, "result": m.screen_result},
+            "decision_by": r.get("decision_by"),
+            "cert_promoted": bool(r.get("cert_promoted"))}, commit=False)
+    db.commit()
+    return {"material_id": material_id, "changed": changed, "screen": r}
 
 
 @app.patch("/materials/{material_id}/rename")
@@ -13194,8 +13283,16 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
 
 
 _ENUMS = {
-    "material_type": [("raw", "원료"), ("additive", "첨가물"), ("processing_aid", "가공보조제"),
-                      ("packaging", "포장재"), ("lubricant", "윤활제"), ("sanitizer", "세정/살균제")],
+    # 원재료 유형 — 라벨은 사전(MATERIAL 축)이 정본이다. 여기서 코드 순서만 정한다.
+    # 종전 'sanitizer'는 사전의 'cleaning'(세척제)과 같은 것이라 코드를 사전에 맞췄다.
+    "material_type": [(c, _dd_mod.label(k, "ko"))
+                      for k, c in (("MATERIAL_RAW", "raw"),
+                                   ("MATERIAL_ADDITIVE", "additive"),
+                                   ("MATERIAL_PROCESSING_AID", "processing_aid"),
+                                   ("MATERIAL_PRESERVATIVE", "preservative"),
+                                   ("MATERIAL_CLEANING", "cleaning"),
+                                   ("MATERIAL_LUBRICANT", "lubricant"),
+                                   ("MATERIAL_PACKAGING", "packaging"))],
     "material_source": [("animal", "동물"), ("plant", "식물"), ("microbial", "미생물"),
                         ("synthetic", "합성"), ("mineral", "광물"), ("unknown", "미상")],
     "material_cert": [("certified", "인증됨"), ("exempt", "면제"), ("unknown", "미상")],

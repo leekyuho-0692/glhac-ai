@@ -773,7 +773,11 @@ function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k]
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
 /* 전역 상태→색상(원재료 판정) — 렌더 함수 밖(아코디언 등 전역 함수)에서도 사용. */
-function scol(s){return ({halal:'ok',haram:'bad',mushbooh:'warn',pass:'ok',needs_evidence:'warn',block:'bad',najis:'bad'}[String(s||'').toLowerCase()]||'mute');}
+function scol(s){return ({halal:'ok',haram:'bad',mushbooh:'warn',pass:'ok',needs_evidence:'warn',cleared:'ok',block:'bad',najis:'bad'}[String(s||'').toLowerCase()]||'mute');}
+/* 위험도(Risk Level)는 상태와 색 규칙이 다르다 — 高 빨강 / 中 노랑 / 低 초록.
+   종전에는 상태색을 그대로 썼다: 인증서로 halal이 된 고위험 성분이 초록으로 보여
+   '위험하지 않다'로 읽혔다. 위험도는 판정과 별개로 그 성분이 원래 얼마나 위험한지다. */
+function rcol(s){return ({high:'bad',medium:'warn',low:'ok'}[String(s||'').toLowerCase()]||'mute');}
 function toast(m){const t=document.getElementById("toast");t.textContent=(LANG===2&&typeof UI_STRINGS!=="undefined"&&UI_STRINGS[String(m).trim()])||m;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),2600);}
 /* 병기 "한글 · English" → {ko,en} 분리(뒤부분이 라틴·앞부분에 한글일 때만). 언어별 렌더용. */
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
@@ -940,6 +944,30 @@ var EN_STRINGS={
  "📄 심사원 배정 양식":"📄 Audit Team Deployment Form",
  "상표 · Trademark":"Trademark",
  "심사원 배정 양식에 사용":"Used on the audit team deployment form",
+ "유형":"Type",
+ "제조사":"Manufacturer",
+ "위험도":"Risk",
+ "증빙":"Evidence",
+ "공급사":"supplier",
+ "제조사 칸이 비어 공급사를 표시":"Manufacturer field is empty — showing the supplier",
+ "인증번호로 할랄 처리 — 오디터 대조 필요":"Cleared by certificate number — auditor must verify",
+ "할랄 인증번호":"Halal certificate no.",
+ "제조사·유형·인증번호":"Manufacturer, type, certificate no.",
+ "원재료 정보 수정":"Edit material details",
+ "제조사 · Manufacturer":"Manufacturer",
+ "유형 · Type":"Type",
+ "할랄 인증번호 · Halal Certificate No.":"Halal Certificate No.",
+ "인증번호 확인 — 할랄로 변경":"Certificate number recorded — changed to halal",
+ "저장 완료":"Saved",
+ "저장 실패":"Save failed",
+ "증빙 문서":"Supporting evidence",
+ "증빙 조회 실패":"Could not load evidence",
+ "첨부된 증빙 없음":"No evidence attached",
+ "증빙 유형":"Evidence type",
+ "검수":"Review",
+ "열기":"Open",
+ "파일 없음":"No file",
+ "문서":"Document",
  "부록별 도면 배치":"Figure placement by appendix",
  "삽입 위치":"Placed at","삽입 문서":"Document inserted","결정":"Decided by",
  "사람 지정":"Set by reviewer","AI 추정":"AI suggestion","비움":"Leave empty",
@@ -1382,6 +1410,23 @@ const UI_STRINGS={
  "📄 심사원 배정 양식":"📄 Formulir Penugasan Tim Auditor",
  "상표 · Trademark":"Merek · Trademark",
  "심사원 배정 양식에 사용":"Dipakai pada formulir penugasan tim auditor",
+ "제조사 칸이 비어 공급사를 표시":"Kolom produsen kosong — menampilkan pemasok",
+ "인증번호로 할랄 처리 — 오디터 대조 필요":"Dinyatakan halal dari nomor sertifikat — auditor wajib memverifikasi",
+ "할랄 인증번호":"No. sertifikat halal",
+ "원재료 정보 수정":"Ubah data bahan",
+ "제조사 · Manufacturer":"Produsen",
+ "유형 · Type":"Jenis",
+ "할랄 인증번호 · Halal Certificate No.":"No. Sertifikat Halal",
+ "인증번호 확인 — 할랄로 변경":"Nomor sertifikat tercatat — diubah menjadi halal",
+ "저장 완료":"Tersimpan",
+ "저장 실패":"Gagal menyimpan",
+ "증빙 문서":"Dokumen bukti",
+ "증빙 조회 실패":"Gagal memuat bukti",
+ "첨부된 증빙 없음":"Belum ada bukti terlampir",
+ "증빙 유형":"Jenis bukti",
+ "파일 없음":"Tidak ada berkas",
+ "제조사":"Produsen",
+ "제조사·유형·인증번호":"Produsen, jenis, no. sertifikat",
  "부록별 도면 배치":"Penempatan gambar per lampiran",
  "삽입 위치":"Ditempatkan di","삽입 문서":"Dokumen yang disisipkan","결정":"Ditentukan oleh",
  "사람 지정":"Ditetapkan pemeriksa","AI 추정":"Dugaan AI","비움":"Dikosongkan",
@@ -5995,19 +6040,23 @@ SCREEN.materials=async()=>{
   const id=CURCASE;const mats=await API(`/cases/${id}/materials`);
   const canMatWrite=["client","admin"].includes(ROLE);  // applicant·penyelia·admin (auditor 읽기전용)
   const enums=canMatWrite?await ENUMS():{};
+  MAT_TYPE_OPTS=(enums.material_type||[]).map(o=>({value:o.value,label:o.label}));
   const mpg=pageSlice("materials",mats,12);
   const rows=mpg.items.length?mpg.items.map(m=>{
-    const cl=statusColor(m.status||m.result); const op=MAT_OPEN.has(m.material_id);
+    const cl=scol(m.status||m.result); const op=MAT_OPEN.has(m.material_id);   // 상태색: halal 초록 · mushbooh 노랑 · haram 빨강
     return `<tr class="clickable" onclick="matToggle('${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})"><td><b>${esc(m.name)}</b>${m.e_number?` <span class="chip">${esc(m.e_number)}</span>`:""} <span class="muted small" id="matArrow_${m.material_id}">${op?'▲':'▼'}</span></td>
-      <td>${bTag(cl,m.status||m.result)}</td>
-      <td>${m.severity?bTag(cl,m.severity):'<span class="muted">-</span>'}</td>
-      <td class="small">${m.evidence_count?`✓ ${m.evidence_count}`:'<span class="muted">없음</span>'}</td>
+      <td class="small" style="white-space:nowrap">${m.mat_type_label?esc(m.mat_type_label):'<span class="muted">-</span>'}</td>
+      <td class="small" style="min-width:140px"${m.manufacturer_is_supplier?` title="${T('제조사 칸이 비어 공급사를 표시')}"`:''}>${m.manufacturer?esc(m.manufacturer):'<span class="muted">-</span>'}</td>
+      <td style="white-space:nowrap">${bTag(cl,m.status||m.result)}${m.cert_no?`<span class="chip" style="margin-left:4px;font-size:10px" title="${T('인증번호')}: ${esc(m.cert_no)} — ${T('인증번호로 할랄 처리 — 오디터 대조 필요')}">${T('인증번호')}</span>`:''}</td>
+      <td style="white-space:nowrap">${m.severity?bTag(rcol(m.severity),m.severity):'<span class="muted">-</span>'}</td>
+      <td class="small" style="white-space:nowrap" onclick="event.stopPropagation()">${(m.evidence||[]).length?`<button class="btn" style="padding:2px 7px;font-size:11px" onclick="matEvidenceList('${id}','${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})">✓ ${m.evidence.length}</button>`:'<span class="muted">'+T('없음')+'</span>'}</td>
       <td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()">${canMatWrite?`
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="renameMaterial('${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})" title="${T('OCR 오독 교정')}">✎</button>
+        <button class="btn" style="padding:3px 7px;font-size:11px" onclick='editMaterial("${m.material_id}",${JSON.stringify({manufacturer:m.manufacturer||"",mat_type_code:m.mat_type_code||"",cert_no:m.cert_no||""}).replace(/'/g,"&#39;")})' title="${T('제조사·유형·인증번호')}">ℹ</button>
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="attachEvidence('${id}','${m.material_id}')">증빙</button>
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="rescreen('${m.material_id}')">재스크</button>
-        <button class="btn bad" style="padding:3px 7px;font-size:11px" onclick="delMaterial('${m.material_id}')">✕</button>`:''}</td></tr><tr id="matRow_${m.material_id}" style="display:${op?'':'none'}"><td colspan="5" style="background:var(--bg);padding:0 12px 12px"><div id="matDet_${m.material_id}" class="small muted">${T('불러오는 중…')}</div></td></tr>`;}).join("")
-    : `<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">원재료 없음 · 라벨 OCR·ZIP 인테이크로 추가</td></tr>`;
+        <button class="btn bad" style="padding:3px 7px;font-size:11px" onclick="delMaterial('${m.material_id}')">✕</button>`:''}</td></tr><tr id="matRow_${m.material_id}" style="display:${op?'':'none'}"><td colspan="7" style="background:var(--bg);padding:0 12px 12px"><div id="matDet_${m.material_id}" class="small muted">${T('불러오는 중…')}</div></td></tr>`;}).join("")
+    : `<tr><td colspan="7" class="muted" style="text-align:center;padding:20px">원재료 없음 · 라벨 OCR·ZIP 인테이크로 추가</td></tr>`;
   if(MAT_OPEN.size){AFTER_RENDER=()=>{MAT_OPEN.forEach((name,mid)=>{const b=document.getElementById("matDet_"+mid);if(b&&!b.dataset.loaded){b.dataset.loaded="1";matLoadDetail(mid,name);}});};}
   const bad=mats.filter(m=>statusColor(m.status||m.result)==="bad");
   return `
@@ -6015,7 +6064,7 @@ SCREEN.materials=async()=>{
   <div class="grid side">
     <div class="card"><h3>${T('원재료 목록')} <span class="en">· Materials</span><span class="r">${mats.length}${T('건')}${canMatWrite?'':' · '+T('읽기전용')}</span></h3>
       <div class="body tight"><table>
-        <thead><tr><th>원재료 · Material</th><th>상태</th><th>심각도</th><th>증빙</th><th></th></tr></thead>
+        <thead><tr><th>원재료 · Material</th><th style="white-space:nowrap">${T('유형')}</th><th style="white-space:nowrap">${T('제조사')}</th><th style="white-space:nowrap">${T('상태')}</th><th style="white-space:nowrap">${T('위험도')}</th><th style="white-space:nowrap">${T('증빙')}</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div>
       ${pager("materials",mpg)}
       <div class="body btnrow" style="border-top:1px solid var(--line)">
@@ -6028,6 +6077,8 @@ SCREEN.materials=async()=>{
         <button class="btn" onclick="screenText('${id}')">🔤 텍스트 스크리닝</button></div>
       ${canMatWrite?`<div class="body" style="border-top:1px solid var(--line)">
         <div class="btnrow"><input class="v" id="newMatName" list="ingList" placeholder="${T('원재료명 (자동완성)')}" style="flex:1" oninput="suggestIngredient()">
+          <input class="v" id="newMatMaker" placeholder="${T('제조사')}" style="width:150px">
+          <input class="v" id="newMatCert" placeholder="${T('할랄 인증번호')}" style="width:160px">
           <datalist id="ingList"></datalist>
           <select class="v" id="newMatType" style="width:auto">${(enums.material_type||[]).map(o=>`<option value="${o.value}">${esc(o.label)}</option>`).join("")||'<option value="">유형</option>'}</select>
           <button class="btn pri" onclick="addMaterial('${id}')">${T('＋ 추가')}</button></div></div>`:''}</div>
@@ -6055,6 +6106,22 @@ async function explainMaterial(){
   try{const r=await API("/ai/explain",{method:"POST",body:JSON.stringify({name:nm,llm:true,lang:RPT_LANG()})});
     o.innerHTML='<div class="divide"></div><b>🤖 '+esc(r.verdict||r.status||nm)+(r.severity?' · '+esc(r.severity):'')+'</b><div style="white-space:pre-wrap;margin-top:4px;color:var(--ink2)">'+esc(r.explanation||"(설명 없음)")+'</div>'+((r.sources&&r.sources.length)?'<div class="muted" style="margin-top:6px">근거: '+esc(r.sources.slice(0,3).join(", "))+'</div>':'');
   }catch(e){o.textContent="해설 실패 · "+(e&&e.code?e.code:"");}
+}
+/* 증빙 목록 — 개수만 보이면 무엇을 냈는지 알 수 없다. 실제 문서를 열어 확인하게 한다. */
+async function matEvidenceList(cid,mid,name){
+  let rows=[];
+  try{rows=await API(`/cases/${cid}/materials/${mid}/evidence`);}catch(e){toast(T('증빙 조회 실패'));return;}
+  if(!rows.length){toast(T('첨부된 증빙 없음'));return;}
+  const html=`<div style="max-height:60vh;overflow:auto">
+    <table><thead><tr><th>${T('문서')}</th><th>${T('증빙 유형')}</th><th>${T('검수')}</th><th></th></tr></thead>
+    <tbody>${rows.map(d=>`<tr>
+      <td><b>${esc(d.filename||'—')}</b></td>
+      <td class="small" style="white-space:nowrap">${esc(LBL('doc',d.evidence_type,LBL('evidence',d.evidence_type,d.evidence_type||'—')))}</td>
+      <td style="white-space:nowrap">${bTag(d.review_status==='approved'?'ok':d.review_status==='rejected'?'bad':'mute',d.review_status||'pending')}</td>
+      <td style="text-align:right;white-space:nowrap">
+        ${d.has_file?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="docViewer('${d.document_id}',${JSON.stringify(d.filename||'').replace(/"/g,'&quot;')})">${T('열기')}</button>`
+                    :`<span class="muted small">${T('파일 없음')}</span>`}</td></tr>`).join('')}</tbody></table></div>`;
+  showGuide(T('증빙 문서')+' · '+name, html);
 }
 const MAT_OPEN=new Map();
 /* 원재료 행 펼침/접힘 — 전체 재렌더(applyView) 대신 해당 행만 토글해 화면 깜빡임 제거.
@@ -6491,7 +6558,26 @@ async function attachEvidence(cid,mid){
 }
 async function rescreen(mid){try{const r=await API(`/materials/${mid}/screen`,{method:"POST",body:"{}"});toast("재스크리닝 · "+(r.status||r.result||"완료"));applyView();}catch(e){toast("실패 · "+(e&&e.code?e.code:""));}}
 async function suggestIngredient(){const el=document.getElementById("newMatName");const q=(el&&el.value||"").trim();if(q.length<2)return;try{const s=await API(`/meta/ingredient-suggest?q=${encodeURIComponent(q)}`);const dl=document.getElementById("ingList");if(dl)dl.innerHTML=(s||[]).map(x=>`<option value="${esc(x.canonical_name)}">${esc(x.e_number||"")} · ${esc(x.category||"")}</option>`).join("");}catch(_){}}
-async function addMaterial(id){const name=v("newMatName");if(!name){toast("원재료명 입력");return}try{await API(`/cases/${id}/materials`,{method:"POST",body:JSON.stringify({name,mat_type:v("newMatType")})});toast("원재료 추가");applyView();}catch(e){toast("추가 실패 · "+(e&&e.code?e.code:""));}}
+async function addMaterial(id){const name=v("newMatName");if(!name){toast("원재료명 입력");return}
+  const body={name,mat_type:v("newMatType"),manufacturer:v("newMatMaker")||null,cert_no:v("newMatCert")||null};
+  try{await API(`/cases/${id}/materials`,{method:"POST",body:JSON.stringify(body)});toast("원재료 추가");applyView();}catch(e){toast("추가 실패 · "+(e&&e.code?e.code:""));}}
+/* 제조사·유형·인증번호 수정 — 심사 중 뒤늦게 확인되는 값들이다.
+   인증번호를 넣으면 서버가 의심→할랄로 올리고 감사기록을 남긴다(위험도는 그대로). */
+async function editMaterial(mid,cur){
+  const opts=(MAT_TYPE_OPTS||[]).map(o=>({value:o.value,label:o.label}));
+  const r=await dialog(T('원재료 정보 수정'),[
+    {key:"manufacturer",label:T('제조사 · Manufacturer'),value:cur.manufacturer||""},
+    {key:"mat_type",label:T('유형 · Type'),type:"select",value:cur.mat_type_code||"",
+     options:[{value:"",label:T('선택')}].concat(opts)},
+    {key:"cert_no",label:T('할랄 인증번호 · Halal Certificate No.'),value:cur.cert_no||""}]);
+  if(!r)return;
+  try{const res=await API(`/materials/${mid}`,{method:"PATCH",body:JSON.stringify(r)});
+    const sc=res.screen||{};
+    toast(sc.cert_promoted?T('인증번호 확인 — 할랄로 변경'):T('저장 완료'));
+    applyView();}
+  catch(e){toast(T('저장 실패')+' · '+(e&&e.code?e.code:''));}
+}
+let MAT_TYPE_OPTS=[];
 async function delMaterial(mid){if(!confirm("이 원재료를 삭제할까요?"))return;try{await API(`/materials/${mid}`,{method:"DELETE"});toast("원재료 삭제");applyView();}catch(e){toast("삭제 실패 · "+(e&&e.code?e.code:""));}}
 async function renameMaterial(mid,cur){
   const r=await dialog(T('원재료명 교정 · Rename'),[{key:"name",label:T('정확한 원재료명(OCR 오독 교정)'),value:cur||"",required:true}]);

@@ -248,6 +248,16 @@ def screen_merged(name, e_number=None, source=None, cert_no=None,
                "alternatives": [],
                "decision_by": "v1_rule" if v1risk in ("high", "medium") or cert == "exempt"
                else "unmatched_default"}
+    # 할랄 인증서 번호가 적혀 있으면 의심(mushbooh)을 할랄로 올린다.
+    # 위험도(severity)는 건드리지 않는다 — 무엇을 근거로 올렸는지, 원래 얼마나 위험한
+    # 성분인지는 그대로 남아야 오디터가 인증서 진위를 대조할 수 있다.
+    # cert_promoted 플래그로 '증빙으로 해소된 것'과 '번호만 적힌 것'을 구분한다.
+    out["cert_promoted"] = False
+    if cert_no and str(cert_no).strip() and out.get("status") == "mushbooh":
+        out["status"] = "halal"
+        out["result"] = "CLEARED"
+        out["cert_promoted"] = True
+        out["decision_by"] = "cert_no"
     out["v1_risk"] = v1risk
     out["v1_cert"] = cert
     out["source"] = source

@@ -25,13 +25,27 @@ class ProductUpdate(BaseModel):
 class MaterialCreate(BaseModel):
     name: str
     e_number: Optional[str] = None
-    mat_type: Optional[str] = None      # raw|additive|processing_aid|packaging|lubricant|sanitizer
+    mat_type: Optional[str] = None      # raw|additive|processing_aid|preservative|cleaning|lubricant|packaging
     source: Optional[str] = None        # animal|plant|microbial|synthetic|mineral|unknown
     supplier: Optional[str] = None
+    manufacturer: Optional[str] = None  # 제조사(Produsen)
+    origin: Optional[str] = None
     cert_no: Optional[str] = None
     note: Optional[str] = None
     evidence_provided: Optional[bool] = False
     source_known: Optional[bool] = True
+
+
+class MaterialPatch(BaseModel):
+    """원재료 속성 수정 — 심사 중 제조사·인증번호가 뒤늦게 확인되는 일이 흔하다."""
+    mat_type: Optional[str] = None
+    source: Optional[str] = None
+    supplier: Optional[str] = None
+    manufacturer: Optional[str] = None
+    origin: Optional[str] = None
+    cert: Optional[str] = None
+    cert_no: Optional[str] = None
+    note: Optional[str] = None
 
 
 class TextScreenReq(BaseModel):
