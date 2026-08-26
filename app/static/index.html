@@ -944,11 +944,6 @@ var EN_STRINGS={
  "📄 심사원 배정 양식":"📄 Audit Team Deployment Form",
  "상표 · Trademark":"Trademark",
  "심사원 배정 양식에 사용":"Used on the audit team deployment form",
- "유형":"Type",
- "제조사":"Manufacturer",
- "위험도":"Risk",
- "증빙":"Evidence",
- "공급사":"supplier",
  "제조사 칸이 비어 공급사를 표시":"Manufacturer field is empty — showing the supplier",
  "인증번호로 할랄 처리 — 오디터 대조 필요":"Cleared by certificate number — auditor must verify",
  "할랄 인증번호":"Halal certificate no.",
@@ -964,10 +959,12 @@ var EN_STRINGS={
  "증빙 조회 실패":"Could not load evidence",
  "첨부된 증빙 없음":"No evidence attached",
  "증빙 유형":"Evidence type",
- "검수":"Review",
- "열기":"Open",
  "파일 없음":"No file",
- "문서":"Document",
+ "제조사":"Manufacturer",
+ "👁 미리보기":"👁 Preview",
+ "⬇ 다운로드":"⬇ Download",
+ "이 원재료에는 아직 올라온 증빙 문서가 없습니다.":"No supporting evidence has been uploaded for this material yet.",
+ "원재료 목록의 [증빙] 버튼으로 CoA·MSDS·할랄 인증서를 첨부하면 여기에 나타납니다.":"Attach a CoA, MSDS or halal certificate with the [Evidence] button in the materials list and it will appear here.",
  "부록별 도면 배치":"Figure placement by appendix",
  "삽입 위치":"Placed at","삽입 문서":"Document inserted","결정":"Decided by",
  "사람 지정":"Set by reviewer","AI 추정":"AI suggestion","비움":"Leave empty",
@@ -1427,6 +1424,10 @@ const UI_STRINGS={
  "파일 없음":"Tidak ada berkas",
  "제조사":"Produsen",
  "제조사·유형·인증번호":"Produsen, jenis, no. sertifikat",
+ "👁 미리보기":"👁 Pratinjau",
+ "⬇ 다운로드":"⬇ Unduh",
+ "이 원재료에는 아직 올라온 증빙 문서가 없습니다.":"Belum ada dokumen bukti yang diunggah untuk bahan ini.",
+ "원재료 목록의 [증빙] 버튼으로 CoA·MSDS·할랄 인증서를 첨부하면 여기에 나타납니다.":"Lampirkan CoA, MSDS atau sertifikat halal melalui tombol [Bukti] pada daftar bahan, dan akan muncul di sini.",
  "부록별 도면 배치":"Penempatan gambar per lampiran",
  "삽입 위치":"Ditempatkan di","삽입 문서":"Dokumen yang disisipkan","결정":"Ditentukan oleh",
  "사람 지정":"Ditetapkan pemeriksa","AI 추정":"Dugaan AI","비움":"Dikosongkan",
@@ -6111,7 +6112,11 @@ async function explainMaterial(){
 async function matEvidenceList(cid,mid,name){
   let rows=[];
   try{rows=await API(`/cases/${cid}/materials/${mid}/evidence`);}catch(e){toast(T('증빙 조회 실패'));return;}
-  if(!rows.length){toast(T('첨부된 증빙 없음'));return;}
+  if(!rows.length){
+    showGuide(T('증빙 문서')+' · '+name,
+      `<div class="banner info">${T('이 원재료에는 아직 올라온 증빙 문서가 없습니다.')}</div>
+       <div class="small muted" style="margin-top:8px">${T('원재료 목록의 [증빙] 버튼으로 CoA·MSDS·할랄 인증서를 첨부하면 여기에 나타납니다.')}</div>`);
+    return;}
   const html=`<div style="max-height:60vh;overflow:auto">
     <table><thead><tr><th>${T('문서')}</th><th>${T('증빙 유형')}</th><th>${T('검수')}</th><th></th></tr></thead>
     <tbody>${rows.map(d=>`<tr>
@@ -6119,9 +6124,10 @@ async function matEvidenceList(cid,mid,name){
       <td class="small" style="white-space:nowrap">${esc(LBL('doc',d.evidence_type,LBL('evidence',d.evidence_type,d.evidence_type||'—')))}</td>
       <td style="white-space:nowrap">${bTag(d.review_status==='approved'?'ok':d.review_status==='rejected'?'bad':'mute',d.review_status||'pending')}</td>
       <td style="text-align:right;white-space:nowrap">
-        ${d.has_file?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="docViewer('${d.document_id}',${JSON.stringify(d.filename||'').replace(/"/g,'&quot;')})">${T('열기')}</button>`
+        ${d.has_file?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="docViewer('${d.document_id}',${JSON.stringify(d.filename||'').replace(/"/g,'&quot;')})">${T('👁 미리보기')}</button>
+                      <button class="btn" style="padding:3px 8px;font-size:11px" onclick="viewDoc('${d.document_id}')">${T('⬇ 다운로드')}</button>`
                     :`<span class="muted small">${T('파일 없음')}</span>`}</td></tr>`).join('')}</tbody></table></div>`;
-  showGuide(T('증빙 문서')+' · '+name, html);
+  showGuide(T('증빙 문서')+' · '+name, html, 920);
 }
 const MAT_OPEN=new Map();
 /* 원재료 행 펼침/접힘 — 전체 재렌더(applyView) 대신 해당 행만 토글해 화면 깜빡임 제거.
@@ -7008,10 +7014,11 @@ async function serverPdf(url,name){
   catch(e){toast("PDF 실패");}
 }
 /* P3: 가이드 뷰어 — toast 스텁이던 '가이드 보기'를 실제 콘텐츠 모달로 대체 */
-function showGuide(title, html){
+function showGuide(title, html, maxw){
+  // maxw: 표가 들어가는 창은 640px로는 파일명이 네 줄로 접힌다 — 호출부가 넓힐 수 있게.
   const ov=document.createElement("div");
   ov.style.cssText="position:fixed;inset:0;background:rgba(12,22,16,.55);z-index:9000;display:flex;align-items:center;justify-content:center;padding:22px";
-  ov.innerHTML=`<div class="modalbox" style="max-width:640px;width:100%;max-height:86vh;overflow:auto">
+  ov.innerHTML=`<div class="modalbox" style="max-width:${maxw||640}px;width:100%;max-height:86vh;overflow:auto">
     <h3 style="display:flex;align-items:center;justify-content:space-between">❔ ${esc(title)} <button class="btn" data-act="x">✕ ${T('닫기')}</button></h3>
     <div style="font-size:13.5px;line-height:1.75;padding:4px 2px">${html}</div></div>`;
   ov.addEventListener("click",e=>{if(e.target===ov)ov.remove();});

@@ -221,3 +221,41 @@ def test_남의_케이스_원재료는_수정할_수_없다():
         other = _tok(c, "auditor1", "pw")     # 배정도 없는 오디터
         r = c.patch(f"/materials/{mid}", json={"cert_no": "X"}, headers=other)
         assert r.status_code in (401, 403), r.status_code
+
+
+# ── 증빙 미리보기·다운로드 (오디터 포함) ────────────────────────────────
+def test_오디터도_증빙_파일을_받을_수_있다():
+    """오디터는 원재료를 못 고치지만(읽기전용) 증빙은 봐야 판단한다."""
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = _case(c, h)
+        mid = c.post(f"/cases/{cid}/materials", json={"name": "Pewarna"},
+                     headers=h).json()["material_id"]
+        c.post(f"/cases/{cid}/materials/{mid}/evidence",
+               json={"evidence_type": "halal_certificate", "filename": "c.pdf",
+                     "file_b64": "aGVsbG8="}, headers=h)
+        did = c.get(f"/cases/{cid}/materials", headers=h).json()[0]["evidence"][0]["document_id"]
+        aud = _tok(c, "auditor1", "pw")
+        assert c.get(f"/cases/{cid}/materials", headers=aud).status_code == 200
+        r = c.get(f"/documents/{did}/file", headers=aud)
+        assert r.status_code == 200, r.status_code
+        assert r.content == b"hello"          # 미리보기·다운로드가 같은 이 파일을 쓴다
+
+
+def test_파일이_없는_증빙은_그렇다고_알린다():
+    """행은 있는데 파일이 없으면 버튼을 내주면 안 된다 — 눌러도 안 열린다."""
+    import app.models as models
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = _case(c, h)
+        mid = c.post(f"/cases/{cid}/materials", json={"name": "Perisa"},
+                     headers=h).json()["material_id"]
+        db = m.SessionLocal()
+        try:
+            db.add(models.DocumentAsset(case_id=cid, material_id=mid, filename="empty.pdf",
+                                        doc_type="halal_certificate", content_b64=None))
+            db.commit()
+        finally:
+            db.close()
+        row = c.get(f"/cases/{cid}/materials", headers=h).json()[0]
+        assert row["evidence"][0]["has_file"] is False
