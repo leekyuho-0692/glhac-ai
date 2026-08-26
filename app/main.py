@@ -3660,19 +3660,64 @@ def update_product(case_id: str, product_id: str, body: schemas.ProductUpdate,
             "registration_type": p.registration_type, "description": p.description}
 
 
+@app.delete("/cases/{case_id}/products/{product_id}/photos/{document_id}")
+def delete_product_photo(case_id: str, product_id: str, document_id: str,
+                         user=Depends(auth.require_roles("applicant", "consultant",
+                                                         "operator", "admin")),
+                         db: Session = Depends(get_db)):
+    """제품 사진 삭제 — 잘못 올린 사진이 현장심사 보고서에 그대로 인쇄되기 때문이다.
+
+    이 사진은 LPH가 보는 보고서의 제품표에 들어간다. 지우는 통로가 없으면 틀린 사진을
+    되돌릴 방법이 없다. 무엇을 지웠는지는 감사기록에 남긴다."""
+    _get_case(db, case_id, user)
+    d = db.get(models.DocumentAsset, document_id)
+    if (not d or d.case_id != case_id or d.product_id != product_id
+            or d.doc_type != "product_photo"):
+        raise HTTPException(404, {"code": "PHOTO_NOT_FOUND"})
+    _audit(db, user, "product.photo.delete", "document", document_id, case_id,
+           {"product_id": product_id, "filename": d.filename}, commit=False)
+    db.delete(d)
+    db.commit()
+    return {"deleted": document_id}
+
+
 @app.delete("/cases/{case_id}/products/{product_id}")
-def delete_product(case_id: str, product_id: str,
+def delete_product(case_id: str, product_id: str, force: bool = False,
                    user=Depends(auth.require_roles("applicant", "consultant", "operator", "admin")),
                    db: Session = Depends(get_db)):
-    """제품 삭제(오분류·중복 정리) — 제품 + 원재료 연결(ProductMaterial) 제거. 조직격리."""
+    """제품 삭제(오분류·중복 정리) — 제품 + 원재료 연결(ProductMaterial) 제거. 조직격리.
+
+    발급된 인증서의 동결 범위(frozen_product_ids)에 든 제품은 그냥 지우지 않는다.
+    인증서는 '이 제품들을 인증한다'는 문서다. 제품 행만 사라지면 인증서가 없는 것을
+    가리키고, 그 사실이 아무 데도 남지 않는다. force=true 로 지울 때는 동결 목록에서도
+    빼고 무엇을 왜 뺐는지 감사기록에 남긴다(운영자·관리자만)."""
     _get_case(db, case_id, user)
     p = db.get(models.Product, product_id)
     if not p or p.case_id != case_id:
         raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
+    certs = [ct for ct in db.query(models.HalalCertificate).filter_by(case_id=case_id).all()
+             if product_id in (ct.frozen_product_ids or [])]
+    if certs and not force:
+        raise HTTPException(409, {"code": "CERT_SCOPE_FROZEN",
+                                  "certificates": [ct.certificate_no for ct in certs],
+                                  "hint": "인증서 동결 범위에 든 제품입니다. "
+                                          "force=true 로 지우면 동결 목록에서도 빠집니다."})
+    if certs and user["role"] not in ("operator", "admin"):
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED",
+                                  "need": ["operator", "admin"], "have": user["role"]})
+    for ct in certs:
+        ct.frozen_product_ids = [x for x in (ct.frozen_product_ids or []) if x != product_id]
+        flag_modified(ct, "frozen_product_ids")   # JSON 컬럼 in-place 변경 감지
+    _audit(db, user, "product.delete", "product", product_id, case_id,
+           {"name": p.name, "description": p.description,
+            "material_links": db.query(models.ProductMaterial)
+                                .filter_by(product_id=product_id).count(),
+            "removed_from_certificates": [ct.certificate_no for ct in certs]}, commit=False)
     db.query(models.ProductMaterial).filter_by(product_id=product_id).delete()
     db.delete(p)
     db.commit()
-    return {"deleted": product_id}
+    return {"deleted": product_id,
+            "removed_from_certificates": [ct.certificate_no for ct in certs]}
 
 
 def _exif_gps(b64_or_bytes):

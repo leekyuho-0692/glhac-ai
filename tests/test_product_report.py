@@ -165,3 +165,99 @@ def test_제품_수만큼_행이_맞춰진다():
         t = _prod_table(doc)
         assert len(t.rows) == 5                      # 머리 1 + 제품 4
         assert [r.cells[0].text.strip() for r in t.rows[1:]] == ["1", "2", "3", "4"]
+
+
+# ── 제품 삭제와 인증서 동결 범위 ────────────────────────────────────────
+def _issue_frozen_cert(cid, pids):
+    """이 케이스에 제품 범위를 동결한 인증서가 있는 상태를 만든다."""
+    import app.models as models
+    db = m.SessionLocal()
+    try:
+        db.add(models.HalalCertificate(case_id=cid, certificate_no="HC-TEST-1",
+                                       status="active", frozen_product_ids=list(pids)))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_인증서에_동결된_제품은_그냥_지워지지_않는다():
+    """인증서는 '이 제품들을 인증한다'는 문서다. 제품만 사라지면 없는 것을 가리킨다."""
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = _case(c, h)
+        pid = c.post(f"/cases/{cid}/products", json={"name": "Bumbu F"},
+                     headers=h).json()["product_id"]
+        _issue_frozen_cert(cid, [pid])
+        r = c.delete(f"/cases/{cid}/products/{pid}", headers=h)
+        assert r.status_code == 409, r.status_code
+        d = r.json()["detail"]
+        assert d["code"] == "CERT_SCOPE_FROZEN"
+        assert "HC-TEST-1" in d["certificates"]        # 어느 인증서인지 알려준다
+        assert c.get(f"/cases/{cid}/products", headers=h).json(), "제품이 지워졌다"
+
+
+def test_동결된_제품_강제삭제는_운영자만():
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = _case(c, h)
+        pid = c.post(f"/cases/{cid}/products", json={"name": "Bumbu G"},
+                     headers=h).json()["product_id"]
+        _issue_frozen_cert(cid, [pid])
+        assert c.delete(f"/cases/{cid}/products/{pid}?force=true",
+                        headers=h).status_code == 403
+
+
+def test_강제삭제하면_인증서_동결목록에서도_빠진다():
+    import app.models as models
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = _case(c, h)
+        keep = c.post(f"/cases/{cid}/products", json={"name": "Keep"},
+                      headers=h).json()["product_id"]
+        drop = c.post(f"/cases/{cid}/products", json={"name": "Drop"},
+                      headers=h).json()["product_id"]
+        _issue_frozen_cert(cid, [keep, drop])
+        op = _tok(c, "operator1", "pw")
+        r = c.delete(f"/cases/{cid}/products/{drop}?force=true", headers=op)
+        assert r.status_code == 200, r.text
+        assert r.json()["removed_from_certificates"] == ["HC-TEST-1"]
+        db = m.SessionLocal()
+        try:
+            ct = db.query(models.HalalCertificate).filter_by(case_id=cid).first()
+            assert ct.frozen_product_ids == [keep]     # 남은 제품만
+        finally:
+            db.close()
+
+
+def test_제품_삭제가_감사기록에_남는다():
+    """무엇을 지웠는지 남지 않으면 되짚을 수 없다 — 인증 범위가 조용히 줄어든다."""
+    import app.models as models
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = _case(c, h)
+        pid = c.post(f"/cases/{cid}/products",
+                     json={"name": "Daftar Bahan Halal"}, headers=h).json()["product_id"]
+        c.delete(f"/cases/{cid}/products/{pid}", headers=h)
+        db = m.SessionLocal()
+        try:
+            logs = [a for a in db.query(models.AuditLog).all()
+                    if a.action == "product.delete" and a.resource_id == pid]
+            assert logs, "감사기록 없음"
+            assert (logs[-1].meta or {}).get("name") == "Daftar Bahan Halal"
+        finally:
+            db.close()
+
+
+def test_제품_사진을_지울_수_있다():
+    """잘못 올린 사진이 그대로 보고서에 인쇄된다 — 되돌릴 통로가 있어야 한다."""
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = _case(c, h)
+        pid = c.post(f"/cases/{cid}/products", json={"name": "Bumbu H"},
+                     headers=h).json()["product_id"]
+        c.post(f"/cases/{cid}/products/{pid}/photo",
+               json={"file_b64": _png(), "filename": "wrong.png"}, headers=h)
+        did = c.get(f"/cases/{cid}/products/{pid}/photos", headers=h).json()[0]["document_id"]
+        assert c.delete(f"/cases/{cid}/products/{pid}/photos/{did}",
+                        headers=h).status_code == 200
+        assert c.get(f"/cases/{cid}/products", headers=h).json()[0]["photo_count"] == 0
