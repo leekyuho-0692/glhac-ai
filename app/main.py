@@ -3263,6 +3263,7 @@ def add_product(case_id: str, body: schemas.ProductCreate,
                 db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     p = models.Product(case_id=case_id, name=body.name, category=body.category,
+                       description=body.description,
                        registration_type=body.registration_type, status="draft")
     db.add(p)
     db.commit()
@@ -3603,9 +3604,15 @@ def list_products(case_id: str, user=Depends(auth.get_current_user), db: Session
         if mstat.get(lk.material_id) in ("haram", "mushbooh"):
             risk[lk.product_id] = risk.get(lk.product_id, 0) + 1
     return [{"product_id": p.product_id, "name": p.name, "category": p.category,
+             "description": p.description or "",
              "registration_type": p.registration_type, "status": p.status or "draft",
              "material_count": mc.get(p.product_id, 0), "risk_count": risk.get(p.product_id, 0),
-             "photo_count": ph.get(p.product_id, 0)} for p in rows]
+             "photo_count": ph.get(p.product_id, 0),
+             # 현장심사 보고서 제품표에 그대로 실리는 두 칸 — 비면 보고서도 빈칸으로 나간다
+             "report_ready": bool((p.description or "").strip()) and bool(ph.get(p.product_id, 0)),
+             "missing_for_report": ([] if (p.description or "").strip() else ["description"])
+                                   + ([] if ph.get(p.product_id, 0) else ["photo"])}
+            for p in rows]
 
 
 @app.get("/cases/{case_id}/products/{product_id}")
@@ -3620,6 +3627,7 @@ def get_product(case_id: str, product_id: str, user=Depends(auth.get_current_use
     mats = (db.query(models.Material).filter(models.Material.material_id.in_(lmids)).all() if lmids else [])
     cert = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
     return {"product_id": p.product_id, "name": p.name, "category": p.category,
+            "description": p.description or "",
             "registration_type": p.registration_type, "status": p.status or "draft",
             "certificate_no": cert.certificate_no if cert else None,
             "expiry_date": cert.expiry_date if cert else None,
@@ -3641,12 +3649,15 @@ def update_product(case_id: str, product_id: str, body: schemas.ProductUpdate,
         raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
     if body.category is not None:
         p.category = body.category
+    if body.description is not None:
+        p.description = body.description
     if body.registration_type is not None:
         p.registration_type = body.registration_type
     if body.status is not None:
         p.status = body.status
     db.commit()
-    return {"product_id": p.product_id, "status": p.status, "registration_type": p.registration_type}
+    return {"product_id": p.product_id, "status": p.status,
+            "registration_type": p.registration_type, "description": p.description}
 
 
 @app.delete("/cases/{case_id}/products/{product_id}")
@@ -7749,6 +7760,63 @@ def _fa_insert_images(doc, db, c):
         anchor._p.addnext(note._p)
 
 
+def _fa_fill_products(doc, db, c, prods):
+    """제품표(No / Name / Image) — 제품명·설명과 업체가 올린 제품 사진을 넣는다.
+
+    LPH가 보는 보고서에서 '무엇을 심사했는가'를 보여주는 자리다. 사진 없이 이름만 있으면
+    심사 대상이 특정되지 않는다. 없는 것은 지어내지 않고 '미제출'로 남긴다 —
+    빈칸으로 두면 누락인지 원래 없는 것인지 구분되지 않는다."""
+    import io as _io
+    from docx.shared import Inches as _In
+
+    tbl = next((t for t in doc.tables
+                if len(t.columns) == 3 and t.rows
+                and t.rows[0].cells[0].text.strip().lower() == "no"
+                and t.rows[0].cells[2].text.strip().lower().startswith("image")), None)
+    if tbl is None or not prods:
+        return
+    photos = {}
+    for d in (db.query(models.DocumentAsset)
+              .filter(models.DocumentAsset.case_id == c.case_id,
+                      models.DocumentAsset.doc_type == "product_photo",
+                      models.DocumentAsset.product_id.isnot(None))
+              .order_by(models.DocumentAsset.created_at.asc()).all()):
+        photos.setdefault(d.product_id, []).append(d)
+
+    first, last = 1, len(tbl.rows) - 1
+    slots = last - first + 1
+    if len(prods) > slots:
+        _sjph_clone_rows(tbl, first, last, len(prods) - slots)
+    for i, p in enumerate(prods):
+        ri = first + i
+        if ri >= len(tbl.rows):
+            break
+        cells = tbl.rows[ri].cells
+        desc = (p.description or "").strip()
+        name = p.name or ""
+        _sjph_docx_cell_set(cells[0], str(i + 1))
+        # 템플릿 실측: 이름 아래 줄에 설명이 붙는다("YUMTEA … / Vitamin Ion powder …")
+        _sjph_docx_cell_set(cells[1], (name + ("\n" + desc if desc else "")))
+        # 첫 장이 깨져 있으면(전송 중 잘린 파일 등) 다음 장을 쓴다 —
+        # 사진은 여러 장 올라오는데 한 장 실패로 '미제출'이 되면 낸 것이 없어진 것처럼 보인다.
+        placed = False
+        for d in photos.get(p.product_id, []):
+            img = _doc_image_bytes(d)
+            if not img:
+                continue
+            try:
+                _sjph_docx_cell_set(cells[2], "")
+                _sjph_cell_stamp(cells[2], img, width_in=1.9)
+                placed = True
+                break
+            except Exception as e:  # noqa: BLE001
+                log.warning("제품 사진 삽입 실패 %s (%s): %s", name, d.filename, e)
+        if not placed:
+            _sjph_docx_cell_set(cells[2], "사진 미제출 · No photo")
+    if len(prods) < slots:
+        _sjph_drop_rows(tbl, first + len(prods), last)
+
+
 def _factory_audit_docx_bytes(db, c):
     """현장심사 보고서 — 기준 템플릿(Factory Audit Template.docx)에 실데이터를 병합.
 
@@ -7827,6 +7895,7 @@ def _factory_audit_docx_bytes(db, c):
                          or (m.screen_status or ""), note])
         _sjph_records_into(mt, proto, last, rows)
 
+    _fa_fill_products(doc, db, c, prods)   # 제품표(No·제품명+설명·사진)
     _fa_insert_images(doc, db, c)          # 제조공정도·시설배치도·현장 사진
 
     # ── 서명란 — 오디터 / 할랄 감독자 ─────────────────────────────────

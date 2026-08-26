@@ -101,6 +101,9 @@ class Product(Base):
     org_id = Column(String, index=True)   # 회사 카탈로그화 준비 — Phase 1
     name = Column(String, nullable=False)
     category = Column(String)
+    # 제품 설명 — 현장심사 보고서 제품표의 'Name' 칸에 제품명과 함께 인쇄된다
+    # (템플릿 실측: "YUMTEA PEACHXSHOT / Vitamin Ion powder ..."처럼 이름 + 설명).
+    description = Column(Text)
     registration_type = Column(String)   # new|renewal|material_change (Rizky: Product Detail)
     status = Column(String, default="draft")   # draft|under_review|certified|expired
 

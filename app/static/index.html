@@ -965,6 +965,18 @@ var EN_STRINGS={
  "⬇ 다운로드":"⬇ Download",
  "이 원재료에는 아직 올라온 증빙 문서가 없습니다.":"No supporting evidence has been uploaded for this material yet.",
  "원재료 목록의 [증빙] 버튼으로 CoA·MSDS·할랄 인증서를 첨부하면 여기에 나타납니다.":"Attach a CoA, MSDS or halal certificate with the [Evidence] button in the materials list and it will appear here.",
+ "✎ 설명 작성":"✎ Write description",
+ "미작성":"not written",
+ "보고서 미비":"report incomplete",
+ "보고서 준비":"report ready",
+ "제품 설명":"Product description",
+ "사진":"photo",
+ "설명":"description",
+ "📷 제품 사진 올리기":"📷 Upload product photo",
+ "👁 사진 보기":"👁 View photos",
+ "현장심사 보고서용":"For the site-audit report",
+ "제품 설명 · Product description":"Product description",
+ "현장심사 보고서 제품표에 제품명과 함께 인쇄됩니다":"Printed in the product table of the site-audit report, next to the product name",
  "부록별 도면 배치":"Figure placement by appendix",
  "삽입 위치":"Placed at","삽입 문서":"Document inserted","결정":"Decided by",
  "사람 지정":"Set by reviewer","AI 추정":"AI suggestion","비움":"Leave empty",
@@ -1428,6 +1440,18 @@ const UI_STRINGS={
  "⬇ 다운로드":"⬇ Unduh",
  "이 원재료에는 아직 올라온 증빙 문서가 없습니다.":"Belum ada dokumen bukti yang diunggah untuk bahan ini.",
  "원재료 목록의 [증빙] 버튼으로 CoA·MSDS·할랄 인증서를 첨부하면 여기에 나타납니다.":"Lampirkan CoA, MSDS atau sertifikat halal melalui tombol [Bukti] pada daftar bahan, dan akan muncul di sini.",
+ "✎ 설명 작성":"✎ Tulis deskripsi",
+ "미작성":"belum ditulis",
+ "보고서 미비":"laporan belum lengkap",
+ "보고서 준비":"siap untuk laporan",
+ "제품 설명":"Deskripsi produk",
+ "사진":"foto",
+ "설명":"deskripsi",
+ "📷 제품 사진 올리기":"📷 Unggah foto produk",
+ "👁 사진 보기":"👁 Lihat foto",
+ "현장심사 보고서용":"Untuk laporan audit lapangan",
+ "제품 설명 · Product description":"Deskripsi produk",
+ "현장심사 보고서 제품표에 제품명과 함께 인쇄됩니다":"Dicetak pada tabel produk laporan audit lapangan, bersama nama produk",
  "부록별 도면 배치":"Penempatan gambar per lampiran",
  "삽입 위치":"Ditempatkan di","삽입 문서":"Dokumen yang disisipkan","결정":"Ditentukan oleh",
  "사람 지정":"Ditetapkan pemeriksa","AI 추정":"Dugaan AI","비움":"Dikosongkan",
@@ -4744,8 +4768,9 @@ function productAccordion(id,prods){
     return `<div class="pacc" data-pid="${p.product_id}">
       <div onclick="toggleProdAcc('${id}','${p.product_id}',this)" style="display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;border-top:1px solid var(--line);user-select:none">
         <span class="pacc-ar" style="color:var(--ink3);font-size:10px;width:11px;display:inline-block">▶</span>
-        <b style="flex:1;font-size:12.5px">${esc(p.name)}</b>
+        <b style="flex:1;font-size:12.5px">${esc(p.name)}${p.description?`<span class="muted" style="font-weight:400"> · ${esc(String(p.description).slice(0,60))}</span>`:''}</b>
         ${tag(rc,T('원재료')+' '+(p.material_count||0))}${p.risk_count>0?tag('bad','⚠ '+T('위험')+' '+p.risk_count):''}
+        ${(p.missing_for_report||[]).length?tag('warn','⚠ '+T('보고서 미비')+' '+(p.missing_for_report||[]).map(k=>T(k==='photo'?'사진':'설명')).join('·')):tag('ok','✓ '+T('보고서 준비'))}
       </div>
       <div class="pacc-b" style="display:none;padding:2px 11px 10px 32px;background:var(--panel2,#f7f9fc)"></div>
     </div>`;
@@ -4758,12 +4783,23 @@ async function toggleProdAcc(id,pid,h){
   if(b.dataset.loaded)return;
   b.innerHTML='<div class="muted small" style="padding:6px">불러오는 중…</div>';
   try{const d=await API(`/cases/${id}/products/${pid}`);const ms=d.materials||[];
-    b.innerHTML=ms.length?`<table style="font-size:11px;width:100%"><tbody>${ms.map(m=>`<tr style="vertical-align:top">
+    /* 현장심사 보고서 제품표(No·제품명+설명·사진)에 그대로 실리는 두 칸 —
+       여기서 채우지 않으면 LPH에 나가는 보고서가 빈칸으로 간다. */
+    const canEdit=["client","consultant","admin"].includes(ROLE);
+    const head=`<div style="border-bottom:1px solid var(--line);padding:2px 0 8px;margin-bottom:8px">
+      <div class="small" style="font-weight:600;margin-bottom:4px">${T('현장심사 보고서용')} <span class="en">· for the site-audit report</span></div>
+      <div class="small" style="margin-bottom:5px"><span class="muted">${T('제품 설명')}: </span>${d.description?esc(d.description):`<span style="color:var(--warn)">${T('미작성')}</span>`}</div>
+      <div class="btnrow">
+        ${canEdit?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="editProductDesc('${id}','${pid}',${JSON.stringify(d.description||'').replace(/"/g,'&quot;')})">${T('✎ 설명 작성')}</button>
+        <button class="btn" style="padding:3px 8px;font-size:11px" onclick="uploadProductPhoto('${id}','${pid}')">${T('📷 제품 사진 올리기')}</button>`:''}
+        <button class="btn" style="padding:3px 8px;font-size:11px" onclick="viewProductPhotos('${id}','${pid}')">${T('👁 사진 보기')}</button>
+      </div></div>`;
+    b.innerHTML=head+(ms.length?`<table style="font-size:11px;width:100%"><tbody>${ms.map(m=>`<tr style="vertical-align:top">
       <td style="padding:3px 4px 3px 0"><b>${esc(m.name)}</b></td>
       <td style="white-space:nowrap;padding:3px 6px">${bTag(scol(m.screen_status||m.result),m.screen_status||m.result||'—')}</td>
       <td style="white-space:nowrap;padding:3px 6px">${matVerifyTag(m)}</td>
       <td class="small" style="line-height:1.4;color:var(--ink3)">${matBasis(m)}</td></tr>`).join('')}</tbody></table>`
-      :'<div class="muted small" style="padding:6px">'+T('연결된 원재료 없음')+'</div>';
+      :'<div class="muted small" style="padding:6px">'+T('연결된 원재료 없음')+'</div>');
     b.dataset.loaded='1';
   }catch(e){b.innerHTML='<div class="muted small" style="padding:6px">불러오기 실패</div>';}
 }
@@ -6746,6 +6782,16 @@ function evMetaBadge(d){if(!d)return '';const parts=[];
   const gl=geoLink(d);
   if(!parts.length&&!gl)return '';
   return `<div class="muted" style="margin-top:4px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:10.5px;line-height:1.4">${parts.join('')}${gl}</div>`;}
+async function editProductDesc(cid,pid,cur){
+  const r=await dialog(T('제품 설명 · Product description'),
+    [{key:"description",label:T('현장심사 보고서 제품표에 제품명과 함께 인쇄됩니다'),
+      value:cur||"",type:"textarea"}]);
+  if(!r)return;
+  try{await API(`/cases/${cid}/products/${pid}`,{method:"PATCH",
+      body:JSON.stringify({description:r.description||""})});
+    toast(T('저장 완료'));applyView();}
+  catch(e){toast(T('저장 실패')+' · '+(e&&e.code?e.code:''));}
+}
 async function viewProductPhotos(cid,pid){try{const ph=await API(`/cases/${cid}/products/${pid}/photos`);if(!ph.length){toast("사진 없음");return}viewDoc(ph[0].document_id);}catch(e){toast("조회 실패");}}
 async function genSjph(id){try{const r=await API(`/cases/${id}/sjph/manual`,{method:"POST",body:"{}"});toast("SJPH 매뉴얼 v"+r.version+" 생성");applyView();}catch(e){toast("생성 실패 · "+(e&&e.code?e.code:""));}}
 
