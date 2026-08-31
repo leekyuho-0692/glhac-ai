@@ -6744,11 +6744,14 @@ def audit_deployment_pdf(case_id: str,
 
 
 @app.get("/cases/{case_id}/factory-audit.docx")
-def get_factory_audit_docx(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
-    """현장심사 보고서 — 기준 템플릿 그대로의 편집 가능한 docx."""
+def get_factory_audit_docx(case_id, lang: str = Query("ko"),
+                           user=Depends(auth.get_current_user), db=Depends(get_db)):
+    """현장심사 보고서 — 기준 템플릿 그대로의 편집 가능한 docx.
+
+    lang 은 '우리가 채우는 값'의 언어다. 서식 라벨은 템플릿 소유라 그대로 둔다."""
     from fastapi.responses import Response
     c = _get_case(db, case_id, user)
-    data = _factory_audit_docx_bytes(db, c)
+    data = _factory_audit_docx_bytes(db, c, lang)
     _audit(db, user, "document.download", "case", case_id,
            meta={"doc": "factory_audit.docx"})
     db.commit()
@@ -6756,11 +6759,13 @@ def get_factory_audit_docx(case_id, user=Depends(auth.get_current_user), db=Depe
                     media_type="application/vnd.openxmlformats-officedocument."
                                "wordprocessingml.document",
                     headers={"Content-Disposition":
-                             _content_disposition("factory_audit_%s.docx" % case_id[:8])})
+                             _content_disposition("factory_audit_%s_%s.docx"
+                                                  % (case_id[:8], (lang or "ko").lower()))})
 
 
 @app.get("/cases/{case_id}/factory-audit.pdf")
-def get_factory_audit_pdf(case_id, user=Depends(auth.get_current_user), db=Depends(get_db)):
+def get_factory_audit_pdf(case_id, lang: str = Query("ko"),
+                          user=Depends(auth.get_current_user), db=Depends(get_db)):
     """현장심사 보고서 PDF — 기준 템플릿(Factory Audit Template.docx)을 채워 변환한다.
 
     예전에는 블록을 코드로 그려 양식이 오디터가 쓰는 서식과 달랐다. 이제 템플릿이 정본이고
@@ -6768,13 +6773,14 @@ def get_factory_audit_pdf(case_id, user=Depends(auth.get_current_user), db=Depen
     from fastapi.responses import Response
     c0 = _get_case(db, case_id, user)
     try:
-        pdf = _docx_to_pdf_bytes(_factory_audit_docx_bytes(db, c0))
+        pdf = _docx_to_pdf_bytes(_factory_audit_docx_bytes(db, c0, lang))
         _audit(db, user, "document.download", "case", case_id,
-               meta={"doc": "factory_audit.pdf", "source": "template"})
+               meta={"doc": "factory_audit.pdf", "source": "template", "lang": lang})
         db.commit()
         return Response(content=pdf, media_type="application/pdf",
                         headers={"Content-Disposition":
-                                 "attachment; filename=factory_audit_%s.pdf" % case_id[:8]})
+                                 "attachment; filename=factory_audit_%s_%s.pdf"
+                                 % (case_id[:8], (lang or "ko").lower())})
     except Exception as e:  # noqa: BLE001
         log.warning("현장심사 템플릿 PDF 실패 — 기존 렌더러로 폴백: %s", e)
     return _get_factory_audit_pdf_legacy(case_id, user, db)
@@ -7753,7 +7759,7 @@ def _site_photo_docs(db, case_id, exclude_ids=(), limit=4):
     return out
 
 
-def _fa_insert_images(doc, db, c):
+def _fa_insert_images(doc, db, c, lang="ko"):
     """'Manufacturing Process Diagram / 제조공정도' 제목 아래에 실제 도면을 넣는다.
 
     제목만 있고 그림이 없으면 심사 보고서로서 의미가 없다 — 공정 흐름은 그림으로 봐야 한다.
@@ -7762,6 +7768,7 @@ def _fa_insert_images(doc, db, c):
     from docx.enum.text import WD_ALIGN_PARAGRAPH as _AL
     from docx.shared import Inches as _In
 
+    L = _dd_mod.text_fn(lang)
     anchor = next((p for p in doc.paragraphs
                    if p.text.strip().startswith("Manufacturing Process Diagram")), None)
     if anchor is None:
@@ -7773,13 +7780,13 @@ def _fa_insert_images(doc, db, c):
     picks = []
     pf = next((d for d in docs if d.doc_type == "process_flow"), None)
     if pf is not None:
-        picks.append((pf, "제조공정도 · Manufacturing process diagram"))
+        picks.append((pf, L("제조공정도")))
     lay = by_id.get(ev.get("facility_layout"))
     if lay is not None:
-        picks.append((lay, "시설 배치도 · Production facility layout"))
+        picks.append((lay, L("시설 배치도")))
     used = {x.document_id for x, _c in picks}
     for d in _site_photo_docs(db, c.case_id, used, limit=3):
-        picks.append((d, "현장 사진 · Site photo"))
+        picks.append((d, L("현장 사진")))
     cur, added = anchor, 0
     for d, cap in picks:
         img = _doc_image_bytes(d)
@@ -7805,7 +7812,7 @@ def _fa_insert_images(doc, db, c):
         anchor._p.addnext(note._p)
 
 
-def _fa_fill_products(doc, db, c, prods):
+def _fa_fill_products(doc, db, c, prods, lang="ko"):
     """제품표(No / Name / Image) — 제품명·설명과 업체가 올린 제품 사진을 넣는다.
 
     LPH가 보는 보고서에서 '무엇을 심사했는가'를 보여주는 자리다. 사진 없이 이름만 있으면
@@ -7857,12 +7864,12 @@ def _fa_fill_products(doc, db, c, prods):
             except Exception as e:  # noqa: BLE001
                 log.warning("제품 사진 삽입 실패 %s (%s): %s", name, d.filename, e)
         if not placed:
-            _sjph_docx_cell_set(cells[2], "사진 미제출 · No photo")
+            _sjph_docx_cell_set(cells[2], _dd_mod.text("사진 미제출 · No photo", lang))
     if len(prods) < slots:
         _sjph_drop_rows(tbl, first + len(prods), last)
 
 
-def _factory_audit_docx_bytes(db, c):
+def _factory_audit_docx_bytes(db, c, lang="ko"):
     """현장심사 보고서 — 기준 템플릿(Factory Audit Template.docx)에 실데이터를 병합.
 
     예전에는 블록을 코드로 그려 PDF를 만들었다. 그래서 오디터가 쓰는 정식 양식(회사정보
@@ -7871,6 +7878,9 @@ def _factory_audit_docx_bytes(db, c):
     import io as _io
     import docx as _docx
     doc = _docx.Document(FACTORY_AUDIT_TEMPLATE)
+    # 서식 라벨(Company Information 기업정보 …)은 템플릿 소유라 번역하지 않는다.
+    # 우리가 채워 넣는 '값'만 언어를 따른다 — LPH 심사원이 읽는 것은 값이다.
+    L = _dd_mod.text_fn(lang)
     px = c.profile_ext or {}
     today = date.today().isoformat()
 
@@ -7917,7 +7927,7 @@ def _factory_audit_docx_bytes(db, c):
             ("Product Type", pv(px.get("product_type"))),
             ("Product name / Brand name", ", ".join(p.name for p in prods[:6]) or ""),
             ("Product Marketing Type", pv(px.get("marketing_type"))),
-            ("Audit technique", "On-site / 현장"),
+            ("Audit technique", L("현장 심사")),
             ("Laboratory Testing", pv(px.get("lab_testing")) or "N/A"),
             ("Auditor Name", (lph.lph_name if lph else "")),
             ("Observer Name", ""),
@@ -7933,15 +7943,16 @@ def _factory_audit_docx_bytes(db, c):
         rows = []
         for i, m in enumerate(mats):
             cnc = "C" if m.screen_result in ("PASS", "CLEARED") else "NC"
-            note = "증빙 제출" if m.evidence_provided else ""
-            rows.append([str(i + 1), m.name or "", m.mat_type or "",
+            note = L("증빙 제출") if m.evidence_provided else ""
+            rows.append([str(i + 1), m.name or "",
+                         _mat_type_label(m.mat_type, lang) or (m.mat_type or ""),
                          "%s%s" % (m.supplier or "", (" (%s)" % m.origin) if m.origin else ""),
                          cnc, "; ".join(find_by_mat.get(m.name, []))[:120]
                          or (m.screen_status or ""), note])
         _sjph_records_into(mt, proto, last, rows)
 
-    _fa_fill_products(doc, db, c, prods)   # 제품표(No·제품명+설명·사진)
-    _fa_insert_images(doc, db, c)          # 제조공정도·시설배치도·현장 사진
+    _fa_fill_products(doc, db, c, prods, lang)   # 제품표(No·제품명+설명·사진)
+    _fa_insert_images(doc, db, c, lang)          # 제조공정도·시설배치도·현장 사진
 
     # ── 서명란 — 오디터 / 할랄 감독자 ─────────────────────────────────
     for t in doc.tables:

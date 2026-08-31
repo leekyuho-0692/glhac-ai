@@ -10252,5 +10252,107 @@
       "field"
     ],
     "status": "approved"
+  },
+  {
+    "id": "RPT_NO_PHOTO",
+    "axis": "LABEL",
+    "labels": {
+      "ko": "사진 미제출 · No photo",
+      "en": "No photo submitted",
+      "id": "Foto belum diserahkan"
+    },
+    "context": [
+      "AUDIT"
+    ],
+    "actions": {},
+    "source": [
+      "glhac"
+    ],
+    "status": "approved"
+  },
+  {
+    "id": "RPT_EVIDENCE_SUBMITTED",
+    "axis": "LABEL",
+    "labels": {
+      "ko": "증빙 제출",
+      "en": "Evidence submitted",
+      "id": "Bukti diserahkan"
+    },
+    "context": [
+      "AUDIT"
+    ],
+    "actions": {},
+    "source": [
+      "glhac"
+    ],
+    "status": "approved"
+  },
+  {
+    "id": "RPT_ONSITE_TECHNIQUE",
+    "axis": "LABEL",
+    "labels": {
+      "ko": "현장 심사",
+      "en": "On-site audit",
+      "id": "Audit lapangan"
+    },
+    "context": [
+      "AUDIT"
+    ],
+    "actions": {},
+    "source": [
+      "glhac"
+    ],
+    "status": "approved"
+  },
+  {
+    "id": "RPT_PROCESS_DIAGRAM",
+    "axis": "LABEL",
+    "labels": {
+      "ko": "제조공정도",
+      "en": "Manufacturing process diagram",
+      "id": "Diagram alir proses produksi"
+    },
+    "context": [
+      "AUDIT"
+    ],
+    "actions": {},
+    "source": [
+      "glhac"
+    ],
+    "status": "approved"
+  },
+  {
+    "id": "RPT_FACILITY_LAYOUT",
+    "axis": "LABEL",
+    "labels": {
+      "ko": "시설 배치도",
+      "en": "Production facility layout",
+      "id": "Denah fasilitas produksi"
+    },
+    "context": [
+      "AUDIT"
+    ],
+    "actions": {},
+    "source": [
+      "glhac"
+    ],
+    "status": "approved"
+  },
+  {
+    "id": "RPT_SITE_PHOTO",
+    "axis": "LABEL",
+    "labels": {
+      "ko": "현장 사진",
+      "en": "Site photo",
+      "id": "Foto lapangan"
+    },
+    "context": [
+      "AUDIT"
+    ],
+    "actions": {},
+    "source": [
+      "glhac"
+    ],
+    "status": "approved"
   }
 ]

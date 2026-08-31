@@ -261,3 +261,40 @@ def test_제품_사진을_지울_수_있다():
         assert c.delete(f"/cases/{cid}/products/{pid}/photos/{did}",
                         headers=h).status_code == 200
         assert c.get(f"/cases/{cid}/products", headers=h).json()[0]["photo_count"] == 0
+
+
+# ── 언어 ────────────────────────────────────────────────────────────────
+def _tables(cid, lang):
+    import docx
+    c0 = m.SessionLocal().get(m.models.CaseApplication, cid)
+    d = docx.Document(io.BytesIO(m._factory_audit_docx_bytes(m.SessionLocal(), c0, lang)))
+    return d, _prod_table(d), next(t for t in d.tables if len(t.columns) == 7)
+
+
+def test_보고서_값이_언어를_따른다():
+    """LPH 심사원이 읽는 것은 값이다 — 사진 미제출·원재료 유형이 언어별로 나와야 한다."""
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = _case(c, h)
+        c.post(f"/cases/{cid}/products", json={"name": "Bumbu I"}, headers=h)
+        c.post(f"/cases/{cid}/materials",
+               json={"name": "Gula", "mat_type": "BAHAN BAKU"}, headers=h)
+        want = {"ko": ("사진 미제출", "원료"),
+                "id": ("Foto belum diserahkan", "Bahan Baku"),
+                "en": ("No photo submitted", "Raw Material")}
+        for lang, (photo, mtype) in want.items():
+            _, pt, mt = _tables(cid, lang)
+            assert photo in pt.rows[1].cells[2].text, (lang, pt.rows[1].cells[2].text)
+            assert mt.rows[1].cells[2].text.strip() == mtype, (lang, mt.rows[1].cells[2].text)
+
+
+def test_서식_라벨은_언어와_무관하게_그대로다():
+    """표 머리·항목명은 템플릿 소유다. 번역하면 LPH가 받는 서식이 달라진다."""
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = _case(c, h)
+        c.post(f"/cases/{cid}/products", json={"name": "Bumbu J"}, headers=h)
+        for lang in ("ko", "id", "en"):
+            _, pt, mt = _tables(cid, lang)
+            assert [x.text.strip() for x in pt.rows[0].cells] == ["No", "Name", "Image"]
+            assert mt.rows[0].cells[1].text.strip().startswith("Name & Brand")
