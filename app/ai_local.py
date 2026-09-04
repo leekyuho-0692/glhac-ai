@@ -50,13 +50,35 @@ def health():
         return {"ollama": "down", "error": str(e)}
 
 
-def ocr_available():
-    """PaddleOCR 설치 여부 — 무겁게 엔진을 만들지 않고 import 만 본다.
+# PaddleOCR 모델 캐시. 첫 호출 때 여기로 내려받는다(약 230MB, 네트워크 필요).
+# 배포 직후 오프라인이면 패키지는 있는데 추론이 안 된다 — import 만 보면 그걸 놓친다.
+OCR_MODEL_DIR = os.environ.get(
+    "PADDLE_PDX_MODEL_SOURCE_DIR",
+    os.path.join(os.path.expanduser("~"), ".paddlex", "official_models"))
 
-    설치 확인에 엔진을 띄우면 첫 호출이 수십 초 걸린다. 화면 배너용 판단에는
-    모듈이 있는지만 보면 된다."""
+
+def ocr_status():
+    """OCR 준비 상태 — 패키지·모델 캐시를 나눠 본다(엔진은 띄우지 않는다).
+
+    엔진을 만들어 확인하면 배너 한 번 그리는 데 수십 초가 든다. 그래서 설치 여부와
+    모델 캐시 존재만 본다. 모델이 없으면 '첫 문서에서 내려받는다'는 사실을 알려야
+    오프라인 배포에서 조용히 실패하지 않는다."""
     import importlib.util
-    return importlib.util.find_spec("paddleocr") is not None
+    pkg = importlib.util.find_spec("paddleocr") is not None
+    models = []
+    if os.path.isdir(OCR_MODEL_DIR):
+        models = [d for d in os.listdir(OCR_MODEL_DIR)
+                  if os.path.isdir(os.path.join(OCR_MODEL_DIR, d))]
+    return {"installed": pkg, "models_cached": len(models), "model_dir": OCR_MODEL_DIR,
+            "ready": pkg and bool(models),
+            "note": None if (pkg and models) else
+                    ("모델 미다운로드 — 첫 문서 처리 때 약 230MB를 내려받습니다(네트워크 필요)"
+                     if pkg else "paddleocr 미설치")}
+
+
+def ocr_available():
+    """설치 + 모델 캐시까지 준비됐는가(배너·역량 판단용)."""
+    return bool(ocr_status()["ready"])
 
 
 def llm_json(system, user, timeout=90):

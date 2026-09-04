@@ -61,22 +61,23 @@ def test_AI_없이_되는_업무를_함께_알린다(monkeypatch):
         assert len(r["works_without_ai"]) >= 5
 
 
-def test_AI_있으면_배너를_띄우지_않는다(monkeypatch):
+def test_AI_있으면_배너를_띄우지_않는다(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_local, "health",
                         lambda: {"ollama": "up", "models": ["gemma3:12b"],
                                  "configured": "gemma3:12b", "model_ready": True})
-    monkeypatch.setattr(ai_local, "ocr_available", lambda: True)
+    d = tmp_path / "m"; (d / "PP-OCRv5_server_det").mkdir(parents=True)
+    monkeypatch.setattr(ai_local, "OCR_MODEL_DIR", str(d))
     with TestClient(app) as c:
         r = c.get("/system/capabilities").json()
         assert r["ai_ready"] is True and r["mode"] == "full"
         assert r["manual_steps"] == []
 
 
-def test_OCR만_없어도_구분해_알린다(monkeypatch):
+def test_OCR만_없어도_구분해_알린다(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_local, "health",
                         lambda: {"ollama": "up", "models": ["gemma3:12b"],
                                  "configured": "gemma3:12b", "model_ready": True})
-    monkeypatch.setattr(ai_local, "ocr_available", lambda: False)
+    monkeypatch.setattr(ai_local, "OCR_MODEL_DIR", str(tmp_path / "none"))
     with TestClient(app) as c:
         r = c.get("/system/capabilities").json()
         assert r["mode"] == "partial"
@@ -153,3 +154,48 @@ def test_공급사_인증번호가_있어도_체크리스트가_열린다():
             assert r.status_code == 200, (lang, r.status_code)
             note = next((x.get("note") for x in r.json()["checklist"] if x.get("note")), "")
             assert "1" in note, (lang, note)      # 건수가 실제로 들어갔는지
+
+
+# ── OCR 준비 상태 ────────────────────────────────────────────────────────
+def test_패키지만_있고_모델이_없으면_준비된_것이_아니다(monkeypatch, tmp_path):
+    """배포 직후 오프라인이면 import 는 되는데 추론에서 모델을 못 받는다.
+    import 만 보고 '정상'이라 하면 첫 업로드에서야 발견한다."""
+    monkeypatch.setattr(ai_local, "OCR_MODEL_DIR", str(tmp_path / "empty"))
+    st = ai_local.ocr_status()
+    assert st["installed"] is True
+    assert st["models_cached"] == 0
+    assert st["ready"] is False
+    assert "내려받" in (st["note"] or "")        # 무엇을 해야 하는지 말해준다
+
+
+def test_모델이_있으면_준비됨(monkeypatch, tmp_path):
+    d = tmp_path / "models"
+    (d / "PP-OCRv5_server_det").mkdir(parents=True)
+    monkeypatch.setattr(ai_local, "OCR_MODEL_DIR", str(d))
+    st = ai_local.ocr_status()
+    assert st["ready"] is True and st["models_cached"] == 1 and st["note"] is None
+
+
+def test_OCR_미준비면_역량이_partial로_내려간다(monkeypatch, tmp_path):
+    monkeypatch.setattr(ai_local, "health",
+                        lambda: {"ollama": "up", "models": ["gemma3:12b"],
+                                 "configured": "gemma3:12b", "model_ready": True})
+    monkeypatch.setattr(ai_local, "OCR_MODEL_DIR", str(tmp_path / "none"))
+    with TestClient(app) as c:
+        r = c.get("/system/capabilities").json()
+        assert r["mode"] == "partial"
+        assert r["capabilities"]["ocr"]["ok"] is False
+        assert r["capabilities"]["ocr"]["installed"] is True   # 설치와 준비를 구분
+        assert "스캔·사진 서류 글자 인식(OCR)" not in r["works_without_ai"]
+
+
+def test_OCR_준비되면_되는_일_목록에_들어간다(monkeypatch, tmp_path):
+    """고정 목록이면 OCR 이 있으나 없으나 같은 말을 한다."""
+    _no_llm(monkeypatch)
+    d = tmp_path / "m"
+    (d / "PP-OCRv5_server_det").mkdir(parents=True)
+    monkeypatch.setattr(ai_local, "OCR_MODEL_DIR", str(d))
+    with TestClient(app) as c:
+        r = c.get("/system/capabilities").json()
+        assert "스캔·사진 서류 글자 인식(OCR)" in r["works_without_ai"]
+        assert "ocr" not in [s["key"] for s in r["manual_steps"]]

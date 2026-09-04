@@ -1134,11 +1134,17 @@ def system_capabilities():
     손으로 해야 하는 일을 구분해 알려주는 것이 목적이다."""
     h = ai_local.health()
     llm = h.get("ollama") == "up" and bool(h.get("model_ready"))
-    ocr = ai_local.ocr_available()
+    ost = ai_local.ocr_status()
+    ocr = bool(ost["ready"])
     rag = bool((ai_local.context_health() or {}).get("ok"))
     caps = {
         "llm": {"ok": llm, "detail": h.get("configured") if llm else h.get("error") or "모델 없음"},
-        "ocr": {"ok": ocr, "detail": "PaddleOCR" if ocr else "미설치"},
+        # 설치와 모델 캐시를 나눠 보여준다 — 배포 직후 "패키지는 있는데 모델이 없다"를
+        # 첫 업로드에서 발견하면 이미 늦다.
+        "ocr": {"ok": ocr,
+                "detail": ("PaddleOCR · 모델 %d종" % ost["models_cached"]) if ocr
+                          else (ost["note"] or "미설치"),
+                "installed": ost["installed"], "models_cached": ost["models_cached"]},
         "rag": {"ok": rag, "detail": "CHU-1" if rag else "비활성"},
     }
     degraded = []
@@ -1154,14 +1160,15 @@ def system_capabilities():
         "manual_steps": [{"key": k, "feature": _CAP_FALLBACK[k][0],
                           "instead": _CAP_FALLBACK[k][1]} for k in degraded],
         # AI 없이도 되는 일 — '못 쓰는 시스템'으로 읽히지 않게 함께 알린다.
-        "works_without_ai": [
+        # 고정 목록이면 OCR 이 있으나 없으나 같은 말을 한다 → 실제 가용 기능으로 만든다.
+        "works_without_ai": ([
             "회원가입·신청서 작성·제품 등록",
             "서류 업로드(유형은 파일명으로 판정 · 수기 교정 가능)",
             "원재료 판정(온톨로지 사전 — LLM 아님)",
             "증빙 첨부·인증번호 입력·판정 갱신",
             "SJPH 매뉴얼·현장심사 보고서·인증서 생성",
             "일정 조율·계약·청구·입금·발급 승인",
-        ],
+        ] + (["스캔·사진 서류 글자 인식(OCR)"] if ocr else [])),
     }
 
 
