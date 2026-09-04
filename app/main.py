@@ -1138,7 +1138,10 @@ def system_capabilities():
     ocr = bool(ost["ready"])
     rag = bool((ai_local.context_health() or {}).get("ok"))
     caps = {
-        "llm": {"ok": llm, "detail": h.get("configured") if llm else h.get("error") or "모델 없음"},
+        # 어느 공급자로 도는지 화면·배포 점검에서 바로 보이게 한다
+        # (같은 소스로 none/ollama/openai 세 배포가 돌기 때문).
+        "llm": {"ok": llm, "provider": h.get("provider"), "endpoint": h.get("endpoint"),
+                "detail": h.get("configured") if llm else h.get("error") or "모델 없음"},
         # 설치와 모델 캐시를 나눠 보여준다 — 배포 직후 "패키지는 있는데 모델이 없다"를
         # 첫 업로드에서 발견하면 이미 늦다.
         "ocr": {"ok": ocr,
