@@ -1109,6 +1109,62 @@ def ai_health():
     return ai_local.health()
 
 
+# AI가 꺼져 있어도 업무는 돌아야 한다. 다만 '조용히' 돌면 안 된다 —
+# 자동으로 채워질 줄 알았던 칸이 비어 있는데 이유를 아무도 모르는 상태가 제일 나쁘다.
+# 그래서 무엇이 꺼졌고, 그래서 무엇을 손으로 해야 하는지를 한 곳에서 알려준다.
+_CAP_FALLBACK = {
+    "doc_classify": ("서류 유형 자동판정",
+                     "파일명 사전으로 판정합니다. 틀리면 문서 화면에서 유형을 직접 고치세요."),
+    "field_extract": ("서류에서 값 자동추출",
+                      "회사명·NIB·주소는 신청서 화면에서 직접 입력하세요."),
+    "ocr": ("스캔·사진 글자 인식",
+            "이미지로 된 서류는 글자를 읽지 못합니다. 원본 PDF·엑셀로 올리거나 값을 직접 입력하세요."),
+    "explain": ("성분 해설·AI 질의",
+                "판정 근거는 원재료 화면의 매칭 결과와 증빙으로 확인하세요."),
+    "translate": ("자동 번역",
+                  "화면·문서 번역은 사전에 등록된 문구만 나옵니다."),
+}
+
+
+@app.get("/system/capabilities")
+def system_capabilities():
+    """이 서버에서 지금 무엇이 되고 무엇이 안 되는지.
+
+    화면은 이 응답만 보고 배너를 띄운다. AI가 없어도 막히지 않는 일과,
+    손으로 해야 하는 일을 구분해 알려주는 것이 목적이다."""
+    h = ai_local.health()
+    llm = h.get("ollama") == "up" and bool(h.get("model_ready"))
+    ocr = ai_local.ocr_available()
+    rag = bool((ai_local.context_health() or {}).get("ok"))
+    caps = {
+        "llm": {"ok": llm, "detail": h.get("configured") if llm else h.get("error") or "모델 없음"},
+        "ocr": {"ok": ocr, "detail": "PaddleOCR" if ocr else "미설치"},
+        "rag": {"ok": rag, "detail": "CHU-1" if rag else "비활성"},
+    }
+    degraded = []
+    if not llm:
+        degraded += ["doc_classify", "field_extract", "explain", "translate"]
+    if not ocr:
+        degraded.append("ocr")
+    return {
+        "ai_ready": llm and ocr,
+        "mode": "full" if (llm and ocr) else ("manual" if not llm else "partial"),
+        "capabilities": caps,
+        # 꺼진 기능마다 '대신 무엇을 하면 되는지'. 화면이 그대로 보여준다.
+        "manual_steps": [{"key": k, "feature": _CAP_FALLBACK[k][0],
+                          "instead": _CAP_FALLBACK[k][1]} for k in degraded],
+        # AI 없이도 되는 일 — '못 쓰는 시스템'으로 읽히지 않게 함께 알린다.
+        "works_without_ai": [
+            "회원가입·신청서 작성·제품 등록",
+            "서류 업로드(유형은 파일명으로 판정 · 수기 교정 가능)",
+            "원재료 판정(온톨로지 사전 — LLM 아님)",
+            "증빙 첨부·인증번호 입력·판정 갱신",
+            "SJPH 매뉴얼·현장심사 보고서·인증서 생성",
+            "일정 조율·계약·청구·입금·발급 승인",
+        ],
+    }
+
+
 @app.post("/auth/login")
 def login(body: schemas.LoginReq, db: Session = Depends(get_db)):
     rl_key = (body.username or "").lower()
@@ -3947,8 +4003,15 @@ def bulk_reclassify_documents(case_id: str,
 
 @app.patch("/documents/{document_id}/reclassify")
 def reclassify_document(document_id: str, body: schemas.DocTypeReq,
-                        user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
-    """문서 doc_type 수동 (재)분류 — AI 오분류 교정 (설계 P1-#6)."""
+                        user=Depends(auth.require_roles("applicant", "consultant",
+                                                        "operator", "admin")),
+                        db: Session = Depends(get_db)):
+    """문서 doc_type 수동 (재)분류 — AI 오분류 교정 (설계 P1-#6).
+
+    신청기업도 고칠 수 있어야 한다. AI가 없는 환경에서는 유형이 파일명으로만 정해지는데,
+    올린 사람이 그걸 되돌리지 못하면 수기 진행이 성립하지 않는다(무엇을 낸 서류인지는
+    올린 사람이 가장 잘 안다). 누가 무엇을 어떻게 바꿨는지는 그대로 기록된다.
+    조직 경계는 _get_case 가 지킨다 — 남의 케이스 서류는 손대지 못한다."""
     d = db.get(models.DocumentAsset, document_id)
     if not d:
         raise HTTPException(404, {"code": "DOC_NOT_FOUND"})
@@ -13622,9 +13685,12 @@ def _fn_show(d, lang):
 # 사전심사 체크리스트에서 조립되는 짧은 문구 — 표 밖에서 문자열로 만들어져
 # 번역을 못 받고 있었다. %d 는 인증번호 건수(언어마다 자리가 달라 문장째 둔다).
 # 체크리스트에서 조립되는 짧은 문구 — 사전에서 꺼낸다.
+# 사전 키는 '한국어 원문 그대로'다. 건수 자리(%d)가 든 문장은 키에도 %d 가 있어야
+# 조회가 되고, 안 그러면 키가 그대로 돌아와 뒤의 % 서식이 TypeError 로 터진다
+# (실측: 서류 체크리스트가 3개 언어 모두 500. 공급사 인증번호가 있는 케이스 전부).
+_CERT_NO_NOTE = "공급사 인증번호 %d건 확보 — 원본 서류 미제출(번호 대조는 오디터)"
 _CHECKLIST_L10N = {ko: {lg: _dd_mod.text(ko, lg) for lg in ("ko", "en", "id")}
-                   for ko in ("업로드 파일", "생성 문서",
-                              "공급사 인증번호 확보 — 원본 서류 미제출(번호 대조는 오디터)")}
+                   for ko in ("업로드 파일", "생성 문서", _CERT_NO_NOTE)}
 
 def _intake_doc_names(lang):
     """서류명 표 — 지원 언어면 그 표를, 아니면 한국어 표를 돌려준다(빈칸 방지)."""
@@ -14441,7 +14507,7 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
     for _c in checklist:
         if _c["doc_type"] == "halal_certificate" and _cn:
             _c["cert_no_on_file"] = _cn
-            _c["note"] = _L("공급사 인증번호 확보 — 원본 서류 미제출(번호 대조는 오디터)") % _cn
+            _c["note"] = _L(_CERT_NO_NOTE) % _cn
             # 자기선언 경로는 인증번호 자체가 제출물이다(BPJPH가 직접 대조).
             # 무엇으로 갈음했는지 source에 남겨 업로드 충족과 구분한다.
             _a = _alt.get("halal_certificate")

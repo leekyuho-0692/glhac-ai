@@ -977,6 +977,10 @@ var EN_STRINGS={
  "현장심사 보고서용":"For the site-audit report",
  "제품 설명 · Product description":"Product description",
  "현장심사 보고서 제품표에 제품명과 함께 인쇄됩니다":"Printed in the product table of the site-audit report, next to the product name",
+ "AI 미가동 — 수기 진행 모드":"AI unavailable — manual mode",
+ "AI 없이 그대로 되는 업무":"What still works without AI",
+ "사용 불가":"unavailable",
+ "아래 업무는 AI 없이 그대로 됩니다":"The following still work without AI",
  "부록별 도면 배치":"Figure placement by appendix",
  "삽입 위치":"Placed at","삽입 문서":"Document inserted","결정":"Decided by",
  "사람 지정":"Set by reviewer","AI 추정":"AI suggestion","비움":"Leave empty",
@@ -1252,7 +1256,33 @@ function pageHead(id){
     <span class="scope-pill">👁 ${T(scopeLabel())}</span></div>
     <div class="roles">${T('노출 역할 · Roles')} &nbsp;<b>${roleNames}</b></div>`;
 }
-function warnBanner(){return FETCH_ERRORS>0?`<div class="banner bad" style="margin-bottom:14px">⚠ ${T('일부 데이터를 불러오지 못했습니다')} (${FETCH_ERRORS}${T('건')} ${T('실패')}) — ${T('표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.')}</div>`:"";}
+function warnBanner(){return (FETCH_ERRORS>0?`<div class="banner bad" style="margin-bottom:14px">⚠ ${T('일부 데이터를 불러오지 못했습니다')} (${FETCH_ERRORS}${T('건')} ${T('실패')}) — ${T('표시가 불완전할 수 있습니다. 새로고침하거나 콘솔을 확인하세요.')}</div>`:"")+capBanner();}
+/* ── 시스템 역량 배너 — AI가 없어도 업무는 돌아가되, 조용히 돌지는 않게 ──
+   자동으로 채워질 줄 알았던 칸이 비었는데 이유를 모르는 상태가 제일 나쁘다.
+   /system/capabilities 를 한 번만 읽어 무엇이 꺼졌고 대신 무엇을 하면 되는지 알린다. */
+let CAPS=null;
+async function loadCaps(){
+  if(CAPS!==null)return CAPS;
+  try{CAPS=await API("/system/capabilities");}catch(_){CAPS=false;}
+  return CAPS;
+}
+function capBanner(){
+  if(!CAPS||CAPS.ai_ready)return "";
+  const steps=(CAPS.manual_steps||[]);
+  const off=Object.entries(CAPS.capabilities||{}).filter(([,v])=>!v.ok).map(([k])=>k.toUpperCase());
+  /* .banner 는 flex 라 자식이 옆으로 눌린다 — 문장이 여러 줄인 이 배너는 블록으로 흐르게 한다. */
+  return `<div class="banner warn" style="margin-bottom:14px;display:block;line-height:1.7">
+    <div style="font-size:13px"><b>🔌 ${T('AI 미가동 — 수기 진행 모드')}</b>
+      <span class="muted" style="font-weight:400"> · ${esc(off.join(", "))} ${T('사용 불가')}</span></div>
+    <div style="margin-top:7px">${steps.map(s=>
+      `<div style="margin:2px 0">· <b>${esc(s.feature)}</b> — ${esc(s.instead)}</div>`).join("")}</div>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;font-weight:600">${T('AI 없이 그대로 되는 업무')} (${(CAPS.works_without_ai||[]).length})</summary>
+      <div style="margin-top:5px;font-weight:400">${(CAPS.works_without_ai||[]).map(x=>
+        `<div style="margin:2px 0">✓ ${esc(x)}</div>`).join("")}</div>
+    </details>
+  </div>`;
+}
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
@@ -1452,6 +1482,10 @@ const UI_STRINGS={
  "현장심사 보고서용":"Untuk laporan audit lapangan",
  "제품 설명 · Product description":"Deskripsi produk",
  "현장심사 보고서 제품표에 제품명과 함께 인쇄됩니다":"Dicetak pada tabel produk laporan audit lapangan, bersama nama produk",
+ "AI 미가동 — 수기 진행 모드":"AI tidak aktif — mode manual",
+ "AI 없이 그대로 되는 업무":"Yang tetap berjalan tanpa AI",
+ "사용 불가":"tidak tersedia",
+ "아래 업무는 AI 없이 그대로 됩니다":"Berikut tetap berjalan tanpa AI",
  "부록별 도면 배치":"Penempatan gambar per lampiran",
  "삽입 위치":"Ditempatkan di","삽입 문서":"Dokumen yang disisipkan","결정":"Ditentukan oleh",
  "사람 지정":"Ditetapkan pemeriksa","AI 추정":"Dugaan AI","비움":"Dikosongkan",
@@ -4397,6 +4431,7 @@ async function ensureCurCaseValid(){
 async function applyView(){
   const pages=document.getElementById("pages");
   FETCH_ERRORS=0;
+  await loadCaps();
   await refreshCaseSel();
   if(DETAIL){
     document.querySelectorAll("#nav a").forEach(a=>a.classList.remove("active"));

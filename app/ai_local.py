@@ -50,6 +50,15 @@ def health():
         return {"ollama": "down", "error": str(e)}
 
 
+def ocr_available():
+    """PaddleOCR 설치 여부 — 무겁게 엔진을 만들지 않고 import 만 본다.
+
+    설치 확인에 엔진을 띄우면 첫 호출이 수십 초 걸린다. 화면 배너용 판단에는
+    모듈이 있는지만 보면 된다."""
+    import importlib.util
+    return importlib.util.find_spec("paddleocr") is not None
+
+
 def llm_json(system, user, timeout=90):
     """구조화 출력(JSON) — 설계 C.4 계약. 실패 시 {'error':...}."""
     try:
