@@ -1,6 +1,7 @@
 """로컬 AI 어댑터 — Ollama(Qwen2.5) + PaddleOCR. 설계 24.16.
 모델 교체 시 이 파일만 변경. M1에서는 /ai/health 외 호출 없음(추론은 M3)."""
 import os
+import sys
 import json
 import httpx
 
@@ -201,7 +202,19 @@ def llm_text(system, user, timeout=120, model=None):
 
 
 def ocr_image(path, lang="korean"):
-    """PaddleOCR 3.x 추출 — 설계 C.1. 미설치 시 graceful 실패."""
+    """PaddleOCR 추출. 기본은 워커 프로세스에서 돈다(웹이 모델을 이고 있지 않게).
+
+    인테이크(서류 접수)가 이 함수를 쓴다 — 여기가 워커를 안 타면 분리한 의미가 없다."""
+    if OCR_MODE == "inproc":
+        return _ocr_image_inproc(path, lang)
+    r = _worker_call({"op": "ocr_lines", "path": path, "lang": lang})
+    if isinstance(r, dict) and str(r.get("error", "")).startswith("WORKER_FAILED"):
+        return _ocr_image_inproc(path, lang)
+    return r
+
+
+def _ocr_image_inproc(path, lang="korean"):
+    """워커 안에서 실제로 도는 본체(그리고 GLHAC_OCR_MODE=inproc 경로)."""
     global _ocr
     try:
         if _ocr is None:
@@ -241,7 +254,8 @@ _ocr_engines = {}
 
 
 def ocr_image_lang(path, lang):
-    """언어별 엔진 캐시로 OCR(전역 _ocr 미오염). 미설치/실패 시 graceful."""
+    """언어별 엔진 캐시로 OCR(전역 _ocr 미오염). 미설치/실패 시 graceful.
+    워커 프로세스 안에서 호출된다 — 여기서 다시 워커를 부르면 무한 재귀다."""
     try:
         eng = _ocr_engines.get(lang)
         if eng is None:
@@ -265,9 +279,106 @@ def ocr_image_lang(path, lang):
         return {"ok": False, "error": str(e)}
 
 
-def ocr_text_multi(path, langs):
-    """여러 언어로 OCR → 텍스트 병합(중복 라인 제거). 하나라도 성공하면 ok=True.
-    조직도가 인니어(id)·한국어(korean) 혼재여도 인식률↑. langs 예: ['korean','id']."""
+# ── OCR 워커 ────────────────────────────────────────────────────────────
+# 무거운 모델(인니어 정착 2.4GB · 한국어 병용 피크 7.8GB)을 웹 프로세스 밖에 둔다.
+# 상주시켜 묶음 작업의 반복 로딩을 피하되, 유휴가 지나면 종료해 메모리를 반납한다.
+#   GLHAC_OCR_MODE      worker(기본) | inproc      — inproc 는 예전 동작(디버깅용)
+#   GLHAC_OCR_IDLE_SEC  유휴 종료 시간(기본 180초)
+#   GLHAC_OCR_TIMEOUT   한 건 제한시간(기본 180초)
+OCR_MODE = (os.environ.get("GLHAC_OCR_MODE") or "worker").strip().lower()
+OCR_IDLE_SEC = float(os.environ.get("GLHAC_OCR_IDLE_SEC", "180"))
+OCR_TIMEOUT = float(os.environ.get("GLHAC_OCR_TIMEOUT", "180"))
+
+_w = {"proc": None, "last": 0.0, "reaper": None}
+_w_lock = None
+
+
+def _wlock():
+    global _w_lock
+    if _w_lock is None:
+        import threading
+        _w_lock = threading.Lock()
+    return _w_lock
+
+
+def _worker_alive():
+    p = _w["proc"]
+    return p is not None and p.poll() is None
+
+
+def _worker_start():
+    import subprocess
+    import threading
+    import time as _t
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _w["proc"] = subprocess.Popen(
+        [sys.executable, "-m", "app.ocr_worker"], cwd=root,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL, text=True, bufsize=1)
+    _w["last"] = _t.time()
+
+    def reap():
+        while True:
+            _t.sleep(15)
+            with _wlock():
+                if not _worker_alive():
+                    _w["reaper"] = None
+                    return
+                if _t.time() - _w["last"] > OCR_IDLE_SEC:
+                    _worker_stop()
+                    _w["reaper"] = None
+                    return
+    if _w["reaper"] is None:
+        _w["reaper"] = threading.Thread(target=reap, daemon=True)
+        _w["reaper"].start()
+
+
+def _worker_stop():
+    p = _w["proc"]
+    _w["proc"] = None
+    if p is None or p.poll() is not None:
+        return
+    try:
+        p.stdin.close()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        p.wait(timeout=5)
+    except Exception:  # noqa: BLE001
+        p.kill()
+
+
+def ocr_worker_status():
+    """워커 상태 — 진단·테스트용."""
+    import time as _t
+    return {"mode": OCR_MODE, "alive": _worker_alive(),
+            "idle_sec": OCR_IDLE_SEC,
+            "idle_for": round(_t.time() - _w["last"], 1) if _w["last"] else None}
+
+
+def _worker_call(req):
+    """워커에 한 건 보내고 결과를 받는다. 죽어 있으면 띄우고, 실패하면 되살린다."""
+    import json as _j
+    import time as _t
+    with _wlock():
+        if not _worker_alive():
+            _worker_start()
+        p = _w["proc"]
+        try:
+            p.stdin.write(_j.dumps(req, ensure_ascii=False) + "\n")
+            p.stdin.flush()
+            line = p.stdout.readline()
+            if not line:
+                raise RuntimeError("worker closed")
+            _w["last"] = _t.time()
+            return _j.loads(line)
+        except Exception as e:  # noqa: BLE001
+            _worker_stop()
+            return {"ok": False, "error": "WORKER_FAILED: %s" % type(e).__name__}
+
+
+def _ocr_text_multi_inproc(path, langs):
+    """워커 안에서 실제로 도는 본체(그리고 GLHAC_OCR_MODE=inproc 일 때의 경로)."""
     any_ok, seen, out, used = False, set(), [], []
     for lg in (langs or []):
         r = ocr_image_lang(path, lg)
@@ -280,3 +391,22 @@ def ocr_text_multi(path, langs):
                     seen.add(t)
                     out.append(t)
     return {"ok": any_ok, "text": "\n".join(out), "langs_used": used}
+
+
+def ocr_text_multi(path, langs):
+    """여러 언어로 OCR → 텍스트 병합. 기본은 별도 워커 프로세스에서 돈다.
+
+    웹 프로세스가 모델을 이고 있지 않게 하려는 것이다(실측 2.4~7.8GB).
+    워커가 죽거나 못 뜨면 in-process 로 떨어진다 — 서류 접수가 멈추는 것보다 낫다."""
+    if OCR_MODE == "inproc":
+        return _ocr_text_multi_inproc(path, langs)
+    r = _worker_call({"op": "ocr", "path": path, "langs": list(langs or [])})
+    if isinstance(r, dict) and str(r.get("error", "")).startswith("WORKER_FAILED"):
+        log_msg = r.get("error")
+        try:
+            import logging
+            logging.getLogger("glhac").warning("OCR 워커 실패 — in-process 로 대체: %s", log_msg)
+        except Exception:  # noqa: BLE001
+            pass
+        return _ocr_text_multi_inproc(path, langs)
+    return r
