@@ -28,7 +28,9 @@ ok("필수 enum 그룹 존재", need <= groups, "누락=" + str(need - groups))
 src = [x["value"] for x in e["material_source"]]
 ok("material_source에 unknown 포함(P0 버그 수정)", "unknown" in src, src)
 mt = [x["value"] for x in e["material_type"]]
-ok("material_type 정합(processing_aid·sanitizer)", "processing_aid" in mt and "sanitizer" in mt, mt)
+# 'sanitizer' 는 사전의 'cleaning'(세척제)과 같은 것이라 코드를 사전에 맞췄다(단일 출처).
+# 이 단언이 옛 코드를 그대로 들고 있어, 제품이 멀쩡한데 e2e 가 계속 빨갛게 떴다.
+ok("material_type 정합(processing_aid·cleaning)", "processing_aid" in mt and "cleaning" in mt, mt)
 ev = [x["value"] for x in e["evidence_type"]]
 ok("evidence_type(msds/coa/할랄인증서)", {"msds", "coa", "halal_certificate"} <= set(ev))
 
