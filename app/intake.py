@@ -311,7 +311,21 @@ _ING_SKIP_RE = re.compile(r"^(원료\s*명|INS|용도|1차|2차|3차|ingredient|
 # 인니어 원재료 목록(Daftar Bahan): 헤더가 'Nama'/'Nama Bahan' 이라 위 한국어 규칙에
 # 걸리지 않았다. 그 결과 136행짜리 표를 청크 LLM으로 다시 읽었고 — 87초를 쓰고 134개만
 # 건졌다(실측). 표에 그대로 있는 값을 결정론적으로 읽는다.
-_ID_NAME_HDR_RE = re.compile(r"^\s*nama(\s*bahan)?\s*$", re.I)
+# 헤더 셀은 '한 줄 = 한 언어'로 겹쳐 쓰인다("Nama Bahan (Material Name)\n재료명").
+# 예전 규칙은 셀 전체가 정확히 'Nama'/'Nama Bahan' 일 때만 걸려서, GL-HAC 정식 서식
+# Form.5 처럼 괄호 병기·한국어 병기가 붙은 표를 통째로 놓쳤다 — 그 표를 LLM 이 대신
+# 읽었고 45건짜리 목록을 모델마다 39/45/54건으로 다르게 냈다(실측).
+_ID_NAME_HDR_RE = re.compile(
+    r"^\s*(nama(\s*bahan)?|material\s*name|ingredient\s*name|원료\s*명|재료\s*명)\b", re.I)
+# 일련번호 열 — 이 열에 번호가 있는 행만 데이터로 본다(하위헤더·주석·합계행 배제).
+_ID_NO_HDR_RE = re.compile(r"^\s*(no|번호)\.?\s*$", re.I)
+# 이름 열 아래 언어 하위헤더(KOR/ENG). 원재료명으로 새어들면 목록 맨 앞에 박힌다.
+_ID_SUB_HDR_RE = re.compile(r"^(kor|eng|ko|en|한글|영문|국문)$", re.I)
+
+
+def _hdr_first_line(cell):
+    """헤더 셀의 첫 줄 — 병기된 다른 언어 줄에 규칙이 헛걸리지 않게."""
+    return str(cell).splitlines()[0].strip() if cell is not None else ""
 # 원재료표임을 뒷받침하는 이웃 헤더 — 'Nama' 한 단어만으로 판단하면 아무 표나 걸린다.
 _ID_ATTR_HDR_RE = re.compile(
     r"jenis\s*bahan|produsen|negara|supplier|pemasok|lembaga|sertifikat|no\.?\s*sert", re.I)
@@ -347,7 +361,8 @@ def _id_material_rows(rows, seen=None):
     지어낸다(실측: 같은 파일에서 로컬 LLM 이 제품 35건·원재료 21건을 뽑았고
     공급자·실행마다 값이 달랐다)."""
     for i, row in enumerate(rows[:8]):
-        cols = [j for j, c in enumerate(row) if c and _ID_NAME_HDR_RE.match(str(c))]
+        cols = [j for j, c in enumerate(row)
+                if c and _ID_NAME_HDR_RE.match(_hdr_first_line(c))]
         if not cols:
             continue
         name_col = cols[0]
@@ -361,12 +376,30 @@ def _id_material_rows(rows, seen=None):
         attrs = sum(1 for c in row if c and _ID_ATTR_HDR_RE.search(str(c)))
         if attrs < 2:            # 이웃 헤더가 없으면 원재료표라고 볼 근거가 없다
             continue
+        # 일련번호 열이 있으면 그 열이 표의 경계다 — 번호 있는 행만 데이터로 본다.
+        # 이름 열은 하위 언어열(KOR/ENG)로 쪼개져 있을 수 있어, 다음 헤더 열 직전까지를
+        # 한 묶음으로 보고 그 안에서 처음 채워진 값을 쓴다(KOR 비면 ENG).
+        no_col = next((j for j, c in enumerate(row)
+                       if c and _ID_NO_HDR_RE.match(_hdr_first_line(c))), None)
+        nxt = next((j for j, c in enumerate(row)
+                    if j > name_col and c and str(c).strip()), None)
+        span = range(name_col, nxt if nxt is not None else name_col + 1)
         out = []
         for row2 in rows[i + 1:]:
-            if name_col >= len(row2) or not row2[name_col]:
-                continue
-            v = str(row2[name_col]).strip()
-            if v and not _ING_SKIP_RE.match(v) and not _ID_NAME_HDR_RE.match(v) and v not in out:
+            if no_col is not None:
+                seq = row2[no_col] if no_col < len(row2) else None
+                seq = "" if seq is None else str(seq).strip().rstrip(".")
+                if not seq.isdigit():
+                    continue
+                v = next((str(row2[j]).strip() for j in span
+                          if j < len(row2) and row2[j] is not None
+                          and str(row2[j]).strip()), "")
+            else:
+                if name_col >= len(row2) or not row2[name_col]:
+                    continue
+                v = str(row2[name_col]).strip()
+            if (v and not _ING_SKIP_RE.match(v) and not _ID_NAME_HDR_RE.match(v)
+                    and not _ID_SUB_HDR_RE.match(v) and v not in out):
                 out.append(v)
         return out or None
     return None
@@ -544,12 +577,45 @@ _NAME_RULES = [
 ]
 
 
-def refine_doctype_reason(name, llm_type):
-    """(doc_type, 규칙근거) — 파일명 규칙 → 도메인 사전 → LLM 판단 순.
+# 서류 제목으로 볼 만한 줄 — 표지·시트명·머리글. 본문 아무 데나 찾으면 원재료표 안의
+# 한 단어에 걸려 유형이 뒤집힌다. 앞부분의 짧은 줄만 본다.
+_TITLE_MAX_LINES = 12
+_TITLE_MAX_LEN = 90
+_SHEET_MARK_RE = re.compile(r"^\[시트/제품명:\s*(.+?)\]\s*$")
+
+
+def _title_lines(text):
+    """문서가 스스로 밝힌 제목 후보. 시트명 마커는 전부, 본문은 앞쪽 짧은 줄만."""
+    if not text:
+        return []
+    out, plain = [], 0
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        m = _SHEET_MARK_RE.match(ln)
+        if m:
+            out.append(m.group(1).strip())
+            continue
+        if plain >= _TITLE_MAX_LINES:
+            continue
+        plain += 1
+        if len(ln) <= _TITLE_MAX_LEN:
+            out.append(ln)
+    return out
+
+
+def refine_doctype_reason(name, llm_type, text=None):
+    """(doc_type, 규칙근거) — 파일명 규칙 → 사전(파일명) → 사전(제목줄) → LLM 판단 순.
 
     사전 폴백을 둔 이유: 인니어 원문 파일명('Diagram alir proses produksi',
     'Catatan pembelian barang')은 한국어·영어로 짜인 _NAME_RULES에 걸리지 않는다.
-    사전은 세 언어 표면형을 한 표준 키로 모으므로 규칙을 언어마다 늘리지 않아도 된다."""
+    사전은 세 언어 표면형을 한 표준 키로 모으므로 규칙을 언어마다 늘리지 않아도 된다.
+
+    제목줄까지 보는 이유: 파일명은 고객이 마음대로 바꾼다. 'Form 9(피치×샷).xlsx' 는
+    사전이 아무것도 모르지만, 그 안의 시트명은 'Form.9 재료 보관 기록' 이고 사전은
+    그것을 운영 기록물로 정확히 안다. 파일명만 보던 동안 이 서류는 원재료 목록으로
+    분류돼 보관 기록의 입출고 행에서 원재료 42~74건이 지어졌다(모델마다 달랐다)."""
     n = (name or "").lower()
     from .domain_dict import doc_type_of, evidence_key_of, lookup
     base = re.sub(r"\.[a-z0-9]{2,5}$", "", (name or "").strip())
@@ -564,11 +630,18 @@ def refine_doctype_reason(name, llm_type):
         key = lookup(base, axis="DOC")
         ev = evidence_key_of(base)
         return dt, "도메인사전 %s%s" % (key, ("·증빙 " + ev) if ev else "")
+    for title in _title_lines(text):
+        dt = doc_type_of(title)
+        if dt:
+            key = lookup(title, axis="DOC")
+            ev = evidence_key_of(title)
+            return dt, "제목줄 '%s' → 도메인사전 %s%s" % (
+                title[:40], key, ("·증빙 " + ev) if ev else "")
     return llm_type, None
 
 
-def _refine_doctype(name, llm_type):
-    return refine_doctype_reason(name, llm_type)[0]
+def _refine_doctype(name, llm_type, text=None):
+    return refine_doctype_reason(name, llm_type, text)[0]
 
 
 # 리스트형 문서(원재료·제품·공정·성분)는 전체 본문에서 항목을 빠짐없이 추출한다.
@@ -743,17 +816,48 @@ _NAME_DECIDES = {"sjph_manual", "supplier_declaration", "process_flow",
                  "quality_cert", "origin_certificate", "halal_certificate"}
 
 
+def _llm_failure(r):
+    """LLM 호출이 실패했으면 {'llm_error': 사유}, 아니면 {}.
+
+    'AI 없음' 배포(LLM_UNAVAILABLE)는 실패가 아니라 설계된 상태다 — 그 모드에서 모든
+    서류를 확인 대기로 밀어 올리면 대기 목록이 의미를 잃는다."""
+    if not isinstance(r, dict):
+        return {"llm_error": "BAD_RESPONSE"}
+    err = r.get("error")
+    if not err or err == "LLM_UNAVAILABLE":
+        return {}
+    return {"llm_error": str(err)[:200]}
+
+
+def _structural_material_result(ing):
+    """구조 파서가 읽은 전성분표/원재료표 결과 — LLM 이 관여하지 않은 확정값.
+
+    이 목록은 LLM 이 덮지 못한다. 같은 서류가 배포(없음/로컬/원격)마다 다른 원재료를
+    내면 심사 결과가 갈린다."""
+    prods, mats = ing
+    fields = {}
+    if prods:
+        fields["product_names"] = prods     # 시트당 완제품 1개(A1)
+    if mats:
+        fields["material_names"] = mats     # 이름 열 값만
+    _enrich_address(fields)
+    srcs = {k: "structural" for k in ("product_names", "material_names") if fields.get(k)}
+    return {"doc_type": "material_list", "confidence": 0.95, "fields": fields,
+            "decided_by": "structural", "field_sources": srcs,
+            "locked_fields": sorted(srcs)}
+
+
 def classify(name, text):
     if not text.strip():
         # 본문이 비어도(이미지 PDF·OCR 미가동) 파일명이 아는 유형은 살린다.
         # 종전에는 그냥 other 로 떨어뜨려, 파일명 사전이 답을 알고 있는데도 버렸다 —
         # AI 없는 배포에서는 이 경로가 유일한 판정 수단이다.
-        _dt, _why = refine_doctype_reason(name, None)
+        _dt, _why = refine_doctype_reason(name, None, text)
         if _dt and _dt != "other":
             return {"doc_type": _dt, "confidence": 0.6, "fields": {}, "empty": True,
                     "decided_by": "filename", "reason": _why}
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
-    dt_by_name, why = refine_doctype_reason(name, None)
+    dt_by_name, why = refine_doctype_reason(name, None, text)
     if dt_by_name in _NAME_DECIDES:
         return {"doc_type": dt_by_name, "confidence": 0.9, "fields": {},
                 "decided_by": "filename", "reason": why}
@@ -763,35 +867,30 @@ def classify(name, text):
     # 무시하고, _process_doc 도 다루지 않는다(실측: 기록 사진 6장에서 cert_no 는 전부
     # None, 나머지 필드는 집계 진입조차 못 함). 파일당 15~20초를 그렇게 썼다.
     # dt_by_name 이 'other' 인 경우는 사전이 아는 문서뿐이다 — doc_type_of 는 모르는
-    # 이름에 None 을 준다. 따라서 미지 문서의 LLM 판정을 뺏지 않는다.
+    # 이름·제목에 None 을 준다. 따라서 미지 문서의 LLM 판정을 뺏지 않는다.
     if dt_by_name == "other" and why:
         return {"doc_type": "other", "confidence": 0.9, "fields": {},
                 "decided_by": "filename", "reason": why}
+    # 구조 파서가 전성분표/원재료표를 이미 읽었으면 LLM 을 부르지 않는다.
+    # 종전에는 부른 뒤 그 결과를 덮었다 — 목록은 지켜졌지만 서류당 10~90초를 버렸고,
+    # 더 나쁜 건 그 호출이 실패하면 같은 서류가 배포·시점에 따라 다른 상태로 남았다는
+    # 점이다(본문이 마커뿐이라 LLM 이 낼 수 있는 건 지어낸 주소 정도였다).
+    ing = _parse_ingredient_markers(text)
+    if ing is not None:
+        return _structural_material_result(ing)
     r = ai_local.llm_json(_CLASSIFY_SYS, "파일명: %s\n본문 발췌:\n%s" % (name, text[:2000]))
     if not isinstance(r, dict) or "doc_type" not in r:
-        r = {"doc_type": "other", "confidence": 0.0, "fields": {}}
-    r["doc_type"] = _refine_doctype(name, r.get("doc_type"))  # 파일명 규칙 교정
+        # 호출이 실패한 것과 '모델이 보고도 못 찾은 것'은 다르다. 둘 다 other/0.0 으로
+        # 떨어뜨리면 화면에는 똑같이 '분석 완료, 특이사항 없음'으로 보인다 — 실측:
+        # 다른 서비스가 Ollama 를 점유한 동안 서류가 90초 타임아웃으로 줄줄이 빈 결과가
+        # 됐는데 실패한 티가 어디에도 없었다. 실패는 실패라고 남겨 사람이 다시 돌린다.
+        r = {"doc_type": "other", "confidence": 0.0, "fields": {},
+             **_llm_failure(r)}
+    r["doc_type"] = _refine_doctype(name, r.get("doc_type"), text)  # 파일명·제목줄 교정
     if r.get("doc_type") not in DOC_TYPES:
         r["doc_type"] = "other"
     r.setdefault("confidence", 0.0)
     r.setdefault("fields", {})
-    # 근본: 전성분표 구조 마커가 있으면 구조 파서 결과를 신뢰(LLM 목록추출 전면 우회).
-    ing = _parse_ingredient_markers(text)
-    if ing is not None:
-        prods, mats = ing
-        r["doc_type"] = "material_list"
-        r["confidence"] = max(r.get("confidence", 0.0), 0.95)
-        if prods:
-            r["fields"]["product_names"] = prods    # 시트당 완제품 1개(A1)
-        if mats:
-            r["fields"]["material_names"] = mats     # '원료명' 열 값만
-        # 구조 파서가 답을 냈다 — 이 목록은 LLM 이 덮지 못한다.
-        # 같은 서류가 배포(없음/로컬/원격)마다 다른 원재료를 내면 심사 결과가 갈린다.
-        r["field_sources"] = {k: "structural" for k in ("product_names", "material_names")
-                              if r["fields"].get(k)}
-        r["locked_fields"] = sorted(r["field_sources"])
-        _enrich_address(r["fields"])
-        return r
     # 리스트형 문서는 전체 본문에서 목록을 완전 추출(절단 2000자로는 뒤쪽 누락).
     lf = _LIST_FIELDS.get(r["doc_type"])
     if lf and len(text) > 2000:
@@ -877,14 +976,20 @@ def parse_typed(doc_type, filename, data):
     if lf and len(text) > 2500:
         # 리스트형: 전체 본문에서 완전 추출(절단 방지)
         fk, label = lf
-        fields = {fk: _extract_list_complete(filename, text, label)}
+        fields, fail = {fk: _extract_list_complete(filename, text, label)}, {}
     else:
         sys = "문서에서 다음 필드만 추출하세요(없으면 null). 반드시 JSON으로만: " + fmt + " (대상: " + desc + ")"
         r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, text[:2500]))
-        fields = r if isinstance(r, dict) else {}
+        fail = _llm_failure(r)
+        # 실패 응답({'error': ...})을 그대로 필드로 쓰면 error 라는 이름의 값이 저장되고
+        # confidence 0.85 까지 붙는다 — 못 뽑았는데 잘 뽑은 것처럼 기록된다.
+        fields = {} if fail or not isinstance(r, dict) else r
     _enrich_address(fields)   # 도시/국가/우편 보정
-    return {"doc_type": doc_type, "fields": fields, "confidence": 0.85,
-            "text_len": len(text), "excerpt": text[:300]}
+    out = {"doc_type": doc_type, "fields": fields,
+           "confidence": 0.0 if fail else 0.85,
+           "text_len": len(text), "excerpt": text[:300]}
+    out.update(fail)
+    return out
 
 
 _APPLICANT_DOCS = ("nib_business_license", "factory_registration")

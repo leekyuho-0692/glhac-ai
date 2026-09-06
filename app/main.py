@@ -4186,6 +4186,10 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     _fs = r.get("field_sources") or {}
     if _fs:
         fl["_sources"] = _fs
+    # AI 호출이 실패했으면 그 사실을 문서에 남긴다. 남기지 않으면 '분석했는데 아무것도
+    # 없는 서류'와 구분되지 않아, 사람이 다시 돌려야 한다는 걸 알 방법이 없다.
+    if r.get("llm_error"):
+        fl["_llm_error"] = r["llm_error"]
     d.fields = fl
     d.text_excerpt = (text or "")[:300]
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
@@ -4219,6 +4223,21 @@ def _pending_extractions(db, case_id):
     return out
 
 
+def _failed_analyses(db, case_id):
+    """AI 호출이 실패해 분석이 비어 있는 서류 — 재처리가 필요하다는 표시.
+
+    실패를 목록으로 내주지 않으면 화면에서는 '유형 기타·추출 0건'으로 보여, 분석이
+    끝난 평범한 서류와 똑같다. 다시 돌려야 하는 서류를 사람이 골라낼 수 있어야 한다."""
+    out = []
+    for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all():
+        err = (d.fields or {}).get("_llm_error")
+        if err:
+            out.append({"document_id": d.document_id, "filename": d.filename,
+                        "doc_type": d.doc_type, "error": err,
+                        "note": "AI 분석 실패 — 재처리가 필요합니다(분석 결과 아님)."})
+    return out
+
+
 @app.get("/cases/{case_id}/pending-extractions")
 def list_pending_extractions(case_id: str, user=Depends(auth.get_current_user),
                              db: Session = Depends(get_db)):
@@ -4228,7 +4247,9 @@ def list_pending_extractions(case_id: str, user=Depends(auth.get_current_user),
     심사 대상이 달라져, 사람이 한 번 보고 넣기로 했다."""
     _get_case(db, case_id, user)
     items = _pending_extractions(db, case_id)
+    failed = _failed_analyses(db, case_id)
     return {"count": len(items), "items": items,
+            "failed_count": len(failed), "failed": failed,
             "note": "AI 추출값입니다 — 원본 서류와 대조한 뒤 반영하세요."}
 
 
