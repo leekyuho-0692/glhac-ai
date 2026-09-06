@@ -336,18 +336,31 @@ def _looks_like_matrix(rows, hdr, name_col):
     return marks >= 3
 
 
-def _id_material_rows(rows):
-    """인니어 원재료 목록 시트면 원재료명 리스트, 아니면 None."""
+MATRIX_MARK = "[구조:제품×원재료매트릭스]"
+
+
+def _id_material_rows(rows, seen=None):
+    """인니어 원재료 목록 시트면 원재료명 리스트, 아니면 None.
+
+    매트릭스로 판정하면 seen['matrix']=True 로 알린다. 그 사실을 남기지 않으면
+    구조 파서는 '목록 아님'이라고 옳게 판단해 놓고, 같은 본문을 LLM 이 읽어 목록을
+    지어낸다(실측: 같은 파일에서 로컬 LLM 이 제품 35건·원재료 21건을 뽑았고
+    공급자·실행마다 값이 달랐다)."""
     for i, row in enumerate(rows[:8]):
         cols = [j for j, c in enumerate(row) if c and _ID_NAME_HDR_RE.match(str(c))]
         if not cols:
             continue
+        name_col = cols[0]
+        # 매트릭스 검사를 먼저 한다. 이웃 헤더(Jenis/Produsen…) 개수로 먼저 걸러내면
+        # 오른쪽이 전부 '제품 열'인 매트릭스는 attrs=0 이라 검사에 닿지도 못한다
+        # (실측: 'Bahan vs Produk matriks.xlsx' 가 그랬고, 그 사이 LLM 이 목록을 지어냈다).
+        if _looks_like_matrix(rows, i, name_col):
+            if seen is not None:
+                seen["matrix"] = True
+            return None
         attrs = sum(1 for c in row if c and _ID_ATTR_HDR_RE.search(str(c)))
         if attrs < 2:            # 이웃 헤더가 없으면 원재료표라고 볼 근거가 없다
             continue
-        name_col = cols[0]
-        if _looks_like_matrix(rows, i, name_col):
-            return None
         out = []
         for row2 in rows[i + 1:]:
             if name_col >= len(row2) or not row2[name_col]:
@@ -365,6 +378,7 @@ def _xlsx_ingredient_table(wb):
     - 원재료 = '원료명' 헤더가 있는 열들의 데이터 값만(INS No.·용도 열 제외)"""
     products, materials = [], []
     detected = False
+    matrix_seen = False
     for ws in wb.worksheets:
         rows = [list(r) for r in ws.iter_rows(values_only=True)]
         if not rows:
@@ -379,7 +393,10 @@ def _xlsx_ingredient_table(wb):
         if hdr is None:
             # 인니어 원재료 목록(Nama + Jenis Bahan/Produsen/…). 제품명은 없다 —
             # 시트 1행은 표 제목('Daftar Bahan Halal …')이라 제품으로 쓰면 안 된다.
-            id_mats = _id_material_rows(rows)
+            _seen = {}
+            id_mats = _id_material_rows(rows, _seen)
+            if _seen.get("matrix"):
+                matrix_seen = True
             if id_mats:
                 detected = True
                 for v in id_mats:
@@ -396,6 +413,9 @@ def _xlsx_ingredient_table(wb):
                     v = str(row[j]).strip()
                     if v and not _ING_SKIP_RE.match(v) and v not in materials:
                         materials.append(v)
+    if matrix_seen and not detected:
+        # 매트릭스만 있고 목록은 없다 — '아무것도 못 찾음'과 구분해 돌려준다.
+        return "matrix"
     if not detected:
         return None
     return products, materials
@@ -435,6 +455,13 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
             wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
             # 근본 해결: 전성분표 구조면 표를 구조 인식으로 파싱해 명시적 마커로 넘긴다(LLM 우회).
             ing = _xlsx_ingredient_table(wb)
+            if ing == "matrix":
+                # 제품×원재료 매트릭스 — 목록 문서가 아니다. 그 사실을 본문에 남겨
+                # LLM 이 이 표에서 목록을 지어내도 집계가 받지 않게 한다.
+                ing = None
+                matrix_note = MATRIX_MARK
+            else:
+                matrix_note = ""
             if ing:
                 wb.close()
                 prods, mats = ing
@@ -445,7 +472,7 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
                 out.extend(mats)
                 return "\n".join(out)[:60000]
             # 일반 xlsx(전성분표 아님): 기존 flatten
-            out = []
+            out = [matrix_note] if matrix_note else []
             for ws in wb.worksheets:
                 title = (ws.title or "").strip()
                 if title and title.lower() not in ("sheet", "sheet1", "sheet2", "sheet3", "시트1"):
@@ -751,6 +778,11 @@ def classify(name, text):
             r["fields"]["product_names"] = prods    # 시트당 완제품 1개(A1)
         if mats:
             r["fields"]["material_names"] = mats     # '원료명' 열 값만
+        # 구조 파서가 답을 냈다 — 이 목록은 LLM 이 덮지 못한다.
+        # 같은 서류가 배포(없음/로컬/원격)마다 다른 원재료를 내면 심사 결과가 갈린다.
+        r["field_sources"] = {k: "structural" for k in ("product_names", "material_names")
+                              if r["fields"].get(k)}
+        r["locked_fields"] = sorted(r["field_sources"])
         _enrich_address(r["fields"])
         return r
     # 리스트형 문서는 전체 본문에서 목록을 완전 추출(절단 2000자로는 뒤쪽 누락).
@@ -760,6 +792,26 @@ def classify(name, text):
         complete = _extract_list_complete(name, text, label)
         if len(complete) > len(r["fields"].get(fk) or []):
             r["fields"][fk] = complete
+    # 구조 파서가 '이건 목록 문서가 아니다'라고 판정했으면(제품×원재료 매트릭스)
+    # LLM 이 뽑은 목록은 버린다. 구조 판정이 옳고 LLM 이 지어낸 것이다 —
+    # 실측: 같은 매트릭스 파일에서 로컬 LLM 이 제품 35건, GPT 가 원재료 21건을 뽑았고
+    # 실행마다 값이 달라 배포별로 신청서 내용이 갈렸다.
+    if MATRIX_MARK in text:
+        for _lk in ("material_names", "product_names"):
+            r["fields"].pop(_lk, None)
+        r["field_sources"] = {"material_names": "structural_reject",
+                              "product_names": "structural_reject"}
+        r["locked_fields"] = ["material_names", "product_names"]
+        r["reason"] = "제품×원재료 매트릭스 — 목록 문서가 아님"
+        _enrich_address(r["fields"])
+        return r
+    # 구조 파서가 안 걸린 목록은 LLM 이 낸 값이다. 출처를 남겨 두면 화면이
+    # '사람이 확인할 값'으로 표시할 수 있고, 배포별 차이도 추적된다.
+    r.setdefault("field_sources", {})
+    for _lk in ("material_names", "product_names"):
+        if r["fields"].get(_lk) and _lk not in r["field_sources"]:
+            r["field_sources"][_lk] = "llm"
+    r.setdefault("locked_fields", [])
     _enrich_address(r["fields"])   # 도시/국가/우편 보정
     # 시험성적서/성분명세/품질인증 → 정량 측정값 추출(자동 반영용)
     if r["doc_type"] in ("coa_msds", "quality_cert", "supplier_declaration"):
@@ -837,7 +889,10 @@ _MATERIAL_SRC = {"material_list", "coa_msds", "product_label"}
 
 def aggregate_fields(docs):
     """분류 문서들의 추출 필드를 신청서용으로 집계.
-    회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외)."""
+    회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외).
+
+    같은 서류 묶음이면 LLM 공급자(없음·로컬·원격)와 무관하게 같은 결과를 낸다.
+    구조 파서가 원재료·제품 목록을 낸 경우 그 필드는 결정적 값만 받는다."""
     agg = {"company_name": None, "company_name_ko": None, "company_name_en": None,
            "nib": None, "address": None, "factory_address": None,
            "city": None, "province": None, "country": None, "zip": None,
@@ -849,6 +904,14 @@ def aggregate_fields(docs):
            "factory_reg_no": None, "products": [], "materials": [], "certificates": []}
     _pk = set()   # 제품 중복 판정 키(대소문자 무시)
     _mk = set()   # 원재료 중복 판정 키
+    # 결정적 목록이 있으면 그 필드는 LLM 을 받지 않는다(공급자 무관 재현성).
+    _struct_only = {"products": False, "materials": False}
+    for _d in docs:
+        _s = (_d.get("field_sources") or {})
+        if _s.get("product_names") == "structural":
+            _struct_only["products"] = True
+        if _s.get("material_names") == "structural":
+            _struct_only["materials"] = True
     for d in docs:
         f = d.get("fields") or {}
         applicant = d.get("doc_type") in _APPLICANT_DOCS or d.get("doc_type") is None
@@ -905,14 +968,21 @@ def aggregate_fields(docs):
                 agg["corporate_reg_no"] = f["corporate_reg_no"]
         # 제품/원재료명은 해당 카탈로그 문서에서만 수집(기록·타목록의 오염 방지).
         _dt = d.get("doc_type")
+        # 결정적(구조 파서) 목록이 하나라도 있으면 그 필드는 결정적 값만 받는다.
+        # LLM 목록은 공급자(없음·로컬·원격)마다 달라서, 섞으면 같은 서류로 배포마다
+        # 다른 원재료가 잡힌다 — 심사 결과가 배포에 따라 갈리면 안 된다.
+        # (실측: GPT 는 제품×원재료 매트릭스에서 원재료 21건을 뽑았고 로컬·없음은 0건이었다.)
+        _src = (d.get("field_sources") or {})
         if _dt in _PRODUCT_SRC or _dt is None:
-            for p in (f.get("product_names") or []):
-                if p and _norm_key(p) and _norm_key(p) not in _pk:
-                    _pk.add(_norm_key(p)); agg["products"].append(p)
+            if not (_struct_only["products"] and _src.get("product_names") != "structural"):
+                for p in (f.get("product_names") or []):
+                    if p and _norm_key(p) and _norm_key(p) not in _pk:
+                        _pk.add(_norm_key(p)); agg["products"].append(p)
         if _dt in _MATERIAL_SRC or _dt is None:
-            for m in (f.get("material_names") or []):
-                if m and _norm_key(m) and _norm_key(m) not in _mk:
-                    _mk.add(_norm_key(m)); agg["materials"].append(m)
+            if not (_struct_only["materials"] and _src.get("material_names") != "structural"):
+                for m in (f.get("material_names") or []):
+                    if m and _norm_key(m) and _norm_key(m) not in _mk:
+                        _mk.add(_norm_key(m)); agg["materials"].append(m)
         if f.get("cert_no"):
             agg["certificates"].append({"cert_no": f.get("cert_no"), "issuer": f.get("issuer"),
                                         "expiry": f.get("expiry_date")})

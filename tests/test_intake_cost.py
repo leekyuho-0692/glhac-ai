@@ -70,8 +70,14 @@ def test_indonesian_material_list_is_read_from_the_table():
 def test_product_matrix_is_not_a_material_list():
     """제품×원재료 매트릭스는 같은 헤더를 쓰지만 원재료표가 아니다.
 
-    잘못 잡으면 doc_type 이 product_list → material_list 로 뒤집혀 제품 목록이 사라진다."""
-    assert intake._xlsx_ingredient_table(_wb(MATRIX, "Bahan per Produk")) is None
+    잘못 잡으면 doc_type 이 product_list → material_list 로 뒤집혀 제품 목록이 사라진다.
+
+    반환값이 None → "matrix" 로 바뀌었다. 종전에는 '못 찾음'과 '매트릭스라서 안 만든 것'이
+    구분되지 않아, 구조 파서가 옳게 거부해 놓고도 같은 본문을 LLM 이 읽어 목록을 지어냈다.
+    이제 매트릭스임을 밖으로 알려 LLM 목록까지 차단한다."""
+    r = intake._xlsx_ingredient_table(_wb(MATRIX, "Bahan per Produk"))
+    assert r == "matrix", r
+    assert not isinstance(r, tuple)      # 목록을 만들어내지는 않는다
 
 
 def test_material_names_are_deduped():
