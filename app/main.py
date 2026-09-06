@@ -345,6 +345,7 @@ def _startup():
         screening.load_ontology(db)
     finally:
         db.close()
+    _autoparse_start()
     if os.environ.get("GLHAC_NOTIFY_WORKER") == "1":
         import threading
         threading.Thread(target=_notify_worker_loop, daemon=True).start()
@@ -4102,6 +4103,95 @@ def _apply_agg_to_case(db, c, agg):
     return applied
 
 
+# ── 업로드 후 자동 파싱 큐 ──────────────────────────────────────────────
+# 업로드 응답은 즉시 끝나야 한다(OCR 은 10초씩 걸린다). 그렇다고 파싱을 사람이
+# 누를 때까지 미루면, 클라이언트가 혼자 올린 서류는 값이 안 채워진 채 남는다
+# (실측: 업로드 0.0초 · doc_type=other 로 저장만 되고 그대로).
+# 그래서 저장 직후 큐에 넣고 백그라운드에서 처리한다. OCR 은 별도 워커에서 도니
+# 이 스레드는 대기만 하고 웹 메모리를 늘리지 않는다.
+_AUTOPARSE = os.environ.get("GLHAC_AUTOPARSE", "1") == "1"
+_autoparse_q = None
+_autoparse_state = {"queued": 0, "done": 0, "failed": 0, "running": None}
+
+
+def _autoparse_worker():
+    while True:
+        item = _autoparse_q.get()
+        doc_id, keep_dt = item if isinstance(item, tuple) else (item, False)
+        _autoparse_state["running"] = doc_id
+        db = SessionLocal()
+        try:
+            d = db.get(models.DocumentAsset, doc_id)
+            if d is not None and d.content_b64:
+                c = db.get(models.CaseApplication, d.case_id)
+                if c is not None:
+                    _reprocess_doc(db, d, c, keep_doc_type=keep_dt)
+                    _autoparse_state["done"] += 1
+        except Exception as e:  # noqa: BLE001
+            # 자동 파싱이 실패해도 업로드는 유효하다 — 사람이 재처리를 누르면 된다.
+            _autoparse_state["failed"] += 1
+            log.warning("자동 파싱 실패 %s: %s", doc_id, e)
+        finally:
+            db.close()
+            _autoparse_state["running"] = None
+            _autoparse_q.task_done()
+
+
+def autoparse_enqueue(document_id, keep_doc_type=False):
+    """업로드 직후 호출 — 큐가 없으면(비활성) 조용히 넘어간다."""
+    if not _AUTOPARSE or _autoparse_q is None:
+        return False
+    _autoparse_q.put((document_id, keep_doc_type))
+    _autoparse_state["queued"] += 1
+    return True
+
+
+def _autoparse_start():
+    global _autoparse_q
+    if not _AUTOPARSE or _autoparse_q is not None:
+        return
+    import queue
+    import threading
+    _autoparse_q = queue.Queue(maxsize=500)
+    threading.Thread(target=_autoparse_worker, daemon=True).start()
+
+
+@app.get("/system/autoparse")
+def autoparse_status(user=Depends(auth.get_current_user)):
+    """자동 파싱 큐 상태 — 서류를 올렸는데 값이 안 채워질 때 여기부터 본다."""
+    return {"enabled": _AUTOPARSE,
+            "pending": _autoparse_q.qsize() if _autoparse_q else 0,
+            **{k: v for k, v in _autoparse_state.items()}}
+
+
+def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id="auto",
+                   keep_doc_type=False):
+    """문서 1건 재추출·재분류 — 사람이 누른 재처리와 자동 큐가 같은 코드를 쓴다.
+    두 벌로 두면 한쪽만 고쳐져 '수동은 되는데 자동은 안 되는' 상태가 생긴다.
+
+    keep_doc_type=True 면 유형은 그대로 두고 본문·필드만 갱신한다(사용자 지정 존중)."""
+    from .intake import aggregate_fields, classify, parse_file
+    data = base64.b64decode(d.content_b64.split(",")[-1])
+    text = parse_file(d.filename, data, dpi=dpi)
+    r = classify(d.filename, text)
+    prev = d.doc_type
+    if not keep_doc_type:
+        d.doc_type = r.get("doc_type", "other")
+    d.confidence = float(r.get("confidence") or 0)
+    d.fields = r.get("fields") or {}
+    d.text_excerpt = (text or "")[:300]
+    d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
+    applied = (_apply_agg_to_case(db, c, aggregate_fields([{"doc_type": d.doc_type,
+                                                            "fields": d.fields}]))
+               if apply else {"skipped": True})
+    sm.record_event(db, c, c.status, c.status, "documents.reprocess", actor_role, actor_id,
+                    {"document_id": d.document_id, "from": prev, "to": d.doc_type,
+                     "text_len": len(text or ""), "applied": applied})
+    db.commit()
+    return {"document_id": d.document_id, "doc_type": d.doc_type,
+            "confidence": d.confidence, "text_len": len(text or ""), "applied": applied}
+
+
 @app.post("/documents/{document_id}/reprocess")
 def reprocess_document(document_id: str, dpi: int = None, apply: bool = True,
                        user=Depends(auth.require_roles("consultant", "operator")),
@@ -4109,30 +4199,14 @@ def reprocess_document(document_id: str, dpi: int = None, apply: bool = True,
     """저장된 원본을 재추출·재분류 — OCR/의존성 개선 후 구업로드 문서 치유(설계 B).
     dpi 지정 시 스캔 문서를 고해상도로 재OCR(예: dpi=300, confident-misread 완화 시도).
     apply=false면 문서 doc_type·fields만 갱신하고 케이스 제품/원재료 자동채움은 건너뜀(정리된 목록 보존)."""
-    from .intake import parse_file, classify, aggregate_fields
     d = db.get(models.DocumentAsset, document_id)
     if not d:
         raise HTTPException(404, {"code": "DOC_NOT_FOUND"})
     c = _get_case(db, d.case_id, user)
     if not d.content_b64:
         raise HTTPException(422, {"code": "NO_CONTENT", "detail": "원본 미보관 문서는 재처리 불가"})
-    data = base64.b64decode(d.content_b64.split(",")[-1])
-    text = parse_file(d.filename, data, dpi=dpi)
-    r = classify(d.filename, text)
-    prev = d.doc_type
-    d.doc_type = r.get("doc_type", "other")
-    d.confidence = float(r.get("confidence") or 0)
-    d.fields = r.get("fields") or {}
-    d.text_excerpt = (text or "")[:300]
-    d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
-    applied = (_apply_agg_to_case(db, c, aggregate_fields([{"doc_type": d.doc_type, "fields": d.fields}]))
-               if apply else {"skipped": True})
-    sm.record_event(db, c, c.status, c.status, "documents.reprocess", user["role"], user["uid"],
-                    {"document_id": document_id, "from": prev, "to": d.doc_type,
-                     "text_len": len(text or ""), "applied": applied})
-    db.commit()
-    return {"document_id": document_id, "doc_type": d.doc_type, "confidence": d.confidence,
-            "text_len": len(text or ""), "applied": applied}
+    return _reprocess_doc(db, d, c, dpi=dpi, apply=apply,
+                          actor_role=user["role"], actor_id=user["uid"])
 
 
 _LANG_NAME = {"id": "인도네시아어(Bahasa Indonesia)", "en": "영어(English)"}
@@ -8635,8 +8709,15 @@ def upload_case_document(case_id: str, body: dict = None,
     # 증빙 항목에 제자리가 있으면 바로 편철 — 올려두고 어디에도 안 걸리는 문서를 없앤다
     filed = _autofile_evidence(db, case_id, d, user)
     db.commit()
+    # 저장이 끝난 뒤에 큐에 넣는다 — 커밋 전에 넣으면 워커가 아직 없는 행을 찾는다.
+    # 사용자가 doc_type 을 직접 지정해 올린 경우에도 본문 추출(회사명·원재료 등)은
+    # 필요하므로 그대로 큐에 넣는다.
+    # 사람이 유형을 정해 올렸으면 자동 파싱이 그걸 덮지 않는다 — 무엇을 낸 서류인지는
+    # 올린 사람이 안다(모의심사 증거·입금증처럼 본문으로는 알 수 없는 것도 있다).
+    # 본문 추출(회사명·원재료)은 그대로 하고, 유형만 보존한다.
+    queued = autoparse_enqueue(d.document_id, keep_doc_type=bool(b.get("doc_type")))
     return {"document_id": d.document_id, "filename": fn, "doc_type": d.doc_type,
-            "sjph_evidence": filed}
+            "sjph_evidence": filed, "autoparse_queued": queued}
 
 
 @app.get("/cases/{case_id}/gen-docs")

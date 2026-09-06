@@ -745,6 +745,13 @@ _NAME_DECIDES = {"sjph_manual", "supplier_declaration", "process_flow",
 
 def classify(name, text):
     if not text.strip():
+        # 본문이 비어도(이미지 PDF·OCR 미가동) 파일명이 아는 유형은 살린다.
+        # 종전에는 그냥 other 로 떨어뜨려, 파일명 사전이 답을 알고 있는데도 버렸다 —
+        # AI 없는 배포에서는 이 경로가 유일한 판정 수단이다.
+        _dt, _why = refine_doctype_reason(name, None)
+        if _dt and _dt != "other":
+            return {"doc_type": _dt, "confidence": 0.6, "fields": {}, "empty": True,
+                    "decided_by": "filename", "reason": _why}
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
     dt_by_name, why = refine_doctype_reason(name, None)
     if dt_by_name in _NAME_DECIDES:
