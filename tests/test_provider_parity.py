@@ -44,20 +44,27 @@ def test_문서_순서가_바뀌어도_같다():
     assert a["products"] == b["products"]
 
 
-def test_구조_파서가_없으면_LLM_값을_그대로_쓴다():
-    """보장을 세게 걸어 기능을 죽이면 안 된다 — 스캔 PDF 는 LLM 밖에 길이 없다."""
+def test_구조_파서가_없으면_확인_대기로_간다():
+    """정책 변경(사용자 결정): 예전에는 LLM 값을 그대로 반영했다. 이제는 대기로 돌린다.
+    스캔 PDF 는 LLM 밖에 길이 없지만, 그 값이 배포마다 달라 심사 대상이 갈렸다.
+    버리지는 않는다 — 사람이 원본과 대조해 승인하면 들어간다."""
     only = intake.aggregate_fields([LLM])
-    assert only["materials"] == ["LLM 원료 A", "LLM 원료 B"]
+    assert only["materials"] == []
+    assert sorted(p["value"] for p in only["pending"] if p["kind"] == "material_names") \
+        == ["LLM 원료 A", "LLM 원료 B"]
 
 
-def test_필드별로_따로_잠긴다():
-    """원재료만 구조로 나온 문서에서 제품까지 잠기면 제품이 통째로 사라진다."""
+def test_필드별로_따로_판단한다():
+    """원재료는 구조 값이 있어 자동 반영, 제품은 LLM 뿐이라 확인 대기.
+    필드를 뭉뚱그리면 한쪽 때문에 다른 쪽이 통째로 사라진다."""
     half = {"doc_type": "material_list",
             "fields": {"material_names": ["Gula Pasir"]},
             "field_sources": {"material_names": "structural"}}
     agg = intake.aggregate_fields([half, LLM])
     assert agg["materials"] == ["Gula Pasir"]        # 구조가 이긴다
-    assert agg["products"] == ["LLM 제품"]           # 제품은 구조가 없으니 LLM 사용
+    assert agg["products"] == []                     # 제품은 자동 반영하지 않는다
+    assert [p["value"] for p in agg["pending"] if p["kind"] == "product_names"] \
+        == ["LLM 제품"]
 
 
 def test_구조_파서_결과에_출처가_기록된다():
@@ -104,3 +111,43 @@ def test_매트릭스_마커가_있으면_LLM_목록을_버린다():
     agg = intake.aggregate_fields([{"doc_type": r["doc_type"], "fields": f,
                                     "field_sources": r["field_sources"]}])
     assert agg["materials"] == [] and agg["products"] == []
+
+
+# ── LLM 단독 추출은 자동 반영하지 않는다 ────────────────────────────────
+def test_LLM_단독_목록은_자동_반영되지_않는다():
+    """결정: 재현성 > 자동화 편의. LLM 출력은 공급자마다, 같은 모델에서도 실행마다
+    달라서 그대로 넣으면 배포에 따라 심사 대상이 달라진다."""
+    agg = intake.aggregate_fields([LLM])
+    assert agg["materials"] == [] and agg["products"] == []
+    kinds = {p["kind"] for p in agg["pending"]}
+    assert kinds == {"material_names", "product_names"}
+    assert all(p["source"] == "llm" for p in agg["pending"])
+
+
+def test_구조_파서_값은_그대로_자동_반영된다():
+    """확인 대기로 돌리는 건 LLM 값만이다 — 구조 파서까지 막으면 자동화가 죽는다."""
+    agg = intake.aggregate_fields([STRUCT])
+    assert agg["materials"] == ["Gula Pasir", "Garam"]
+    assert agg["pending"] == []
+
+
+def test_매트릭스_거부값은_대기에도_올리지_않는다():
+    """구조 파서가 '목록 아님'이라 판정한 문서다 — 확인 대기에 올리면 사람이
+    지어낸 목록을 승인하게 된다."""
+    rej = {"doc_type": "product_list",
+           "fields": {"material_names": ["환각A"], "product_names": ["환각B"]},
+           "field_sources": {"material_names": "structural_reject",
+                             "product_names": "structural_reject"}}
+    agg = intake.aggregate_fields([rej])
+    assert agg["materials"] == [] and agg["products"] == []
+    assert agg["pending"] == []
+
+
+def test_문서에_저장된_출처로도_판별한다():
+    """재처리 뒤에는 field_sources 가 fields._sources 로 문서에 저장된다."""
+    saved = {"doc_type": "material_list",
+             "fields": {"material_names": ["Gula Pasir"],
+                        "_sources": {"material_names": "structural"}}}
+    agg = intake.aggregate_fields([saved])
+    assert agg["materials"] == ["Gula Pasir"]
+    assert agg["pending"] == []

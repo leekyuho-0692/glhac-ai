@@ -908,9 +908,12 @@ def aggregate_fields(docs):
            "phone": None, "factory_phone": None,
            "business_type": None, "employee_count": None,
            "establishment_date": None, "corporate_reg_no": None,
-           "factory_reg_no": None, "products": [], "materials": [], "certificates": []}
+           "factory_reg_no": None, "products": [], "materials": [], "certificates": [],
+           # LLM 만 뽑은 목록 — 자동 반영하지 않고 사람 확인을 기다린다
+           "pending": []}
     _pk = set()   # 제품 중복 판정 키(대소문자 무시)
     _mk = set()   # 원재료 중복 판정 키
+    _pend_pk, _pend_mk = set(), set()
     # 결정적 목록이 있으면 그 필드는 LLM 을 받지 않는다(공급자 무관 재현성).
     _struct_only = {"products": False, "materials": False}
     for _d in docs:
@@ -979,17 +982,35 @@ def aggregate_fields(docs):
         # LLM 목록은 공급자(없음·로컬·원격)마다 달라서, 섞으면 같은 서류로 배포마다
         # 다른 원재료가 잡힌다 — 심사 결과가 배포에 따라 갈리면 안 된다.
         # (실측: GPT 는 제품×원재료 매트릭스에서 원재료 21건을 뽑았고 로컬·없음은 0건이었다.)
-        _src = (d.get("field_sources") or {})
+        # 출처는 분류 결과(field_sources) 또는 문서에 저장된 fields._sources 에서 온다.
+        _src = (d.get("field_sources") or (f.get("_sources") if isinstance(f, dict) else None) or {})
+
+        def _take(key, bucket, seenset, srcset):
+            """구조 파서 값만 자동 반영. LLM 단독 값은 '확인 대기'로 돌린다.
+
+            LLM 출력은 공급자(없음·로컬·원격)마다, 같은 모델에서도 실행마다 다르다.
+            그대로 신청서에 넣으면 배포에 따라 심사 대상이 달라진다 — 사람이 한 번
+            보고 넣기로 했다(결정: 재현성 > 자동화 편의)."""
+            vals = [v for v in (f.get(key) or []) if v and _norm_key(v)]
+            if not vals:
+                return
+            if _src.get(key) == "structural":
+                for v in vals:
+                    if _norm_key(v) not in seenset:
+                        seenset.add(_norm_key(v)); bucket.append(v)
+            elif _src.get(key) == "structural_reject":
+                return                      # 구조 파서가 '목록 아님'이라 판정한 문서
+            else:
+                for v in vals:
+                    if _norm_key(v) not in srcset:
+                        srcset.add(_norm_key(v))
+                        agg["pending"].append({"kind": key, "value": v,
+                                               "doc_type": _dt, "source": "llm"})
+
         if _dt in _PRODUCT_SRC or _dt is None:
-            if not (_struct_only["products"] and _src.get("product_names") != "structural"):
-                for p in (f.get("product_names") or []):
-                    if p and _norm_key(p) and _norm_key(p) not in _pk:
-                        _pk.add(_norm_key(p)); agg["products"].append(p)
+            _take("product_names", agg["products"], _pk, _pend_pk)
         if _dt in _MATERIAL_SRC or _dt is None:
-            if not (_struct_only["materials"] and _src.get("material_names") != "structural"):
-                for m in (f.get("material_names") or []):
-                    if m and _norm_key(m) and _norm_key(m) not in _mk:
-                        _mk.add(_norm_key(m)); agg["materials"].append(m)
+            _take("material_names", agg["materials"], _mk, _pend_mk)
         if f.get("cert_no"):
             agg["certificates"].append({"cert_no": f.get("cert_no"), "issuer": f.get("issuer"),
                                         "expiry": f.get("expiry_date")})

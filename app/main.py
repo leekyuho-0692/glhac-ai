@@ -4078,7 +4078,8 @@ def _apply_profile_extras(c, agg, force=False):
 
 def _apply_agg_to_case(db, c, agg):
     """추출 필드(회사/NIB/주소/책임자/제품/원재료)를 케이스에 반영 — DocumentAsset 생성은 하지 않음(재처리용)."""
-    applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": []}
+    applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0,
+               "profile": [], "pending": len(agg.get("pending") or [])}
     if agg.get("company_name") and _co_replaceable(db, c):
         c.company_name = agg["company_name"]; applied["company_set"] = True
     if agg.get("nib") and c.nib != agg["nib"]:
@@ -4178,7 +4179,14 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     if not keep_doc_type:
         d.doc_type = r.get("doc_type", "other")
     d.confidence = float(r.get("confidence") or 0)
-    d.fields = r.get("fields") or {}
+    fl = dict(r.get("fields") or {})
+    # 어느 값이 구조 파서에서 나왔고 어느 값이 LLM 에서 나왔는지 문서에 남긴다.
+    # 이게 없으면 나중에 '왜 이 원재료가 자동 반영되지 않았는지' 설명할 수 없다.
+    # 스키마 무변경 — fields 안의 예약 키로 둔다.
+    _fs = r.get("field_sources") or {}
+    if _fs:
+        fl["_sources"] = _fs
+    d.fields = fl
     d.text_excerpt = (text or "")[:300]
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
     applied = (_apply_agg_to_case(db, c, aggregate_fields([{"doc_type": d.doc_type,
@@ -4190,6 +4198,61 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     db.commit()
     return {"document_id": d.document_id, "doc_type": d.doc_type,
             "confidence": d.confidence, "text_len": len(text or ""), "applied": applied}
+
+
+def _pending_extractions(db, case_id):
+    """LLM 만 뽑아 자동 반영하지 않은 목록 — 문서에 남긴 출처(fields._sources)로 되짚는다."""
+    from .intake import _MATERIAL_SRC, _PRODUCT_SRC, aggregate_fields
+    docs = [{"doc_type": d.doc_type, "fields": d.fields or {},
+             "document_id": d.document_id, "filename": d.filename}
+            for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
+            if d.fields]
+    agg = aggregate_fields([{"doc_type": x["doc_type"], "fields": x["fields"]} for x in docs])
+    # 어느 문서에서 나왔는지 붙여 준다 — 확인하는 사람이 원본을 열어봐야 한다
+    out = []
+    for it in (agg.get("pending") or []):
+        src = next((x for x in docs
+                    if it["value"] in ((x["fields"].get(it["kind"]) or []))), None)
+        out.append({**it,
+                    "document_id": src["document_id"] if src else None,
+                    "filename": src["filename"] if src else None})
+    return out
+
+
+@app.get("/cases/{case_id}/pending-extractions")
+def list_pending_extractions(case_id: str, user=Depends(auth.get_current_user),
+                             db: Session = Depends(get_db)):
+    """확인 대기 목록 — AI 가 뽑았지만 자동 반영하지 않은 제품·원재료.
+
+    LLM 출력은 공급자마다, 같은 모델에서도 실행마다 다르다. 그대로 넣으면 배포에 따라
+    심사 대상이 달라져, 사람이 한 번 보고 넣기로 했다."""
+    _get_case(db, case_id, user)
+    items = _pending_extractions(db, case_id)
+    return {"count": len(items), "items": items,
+            "note": "AI 추출값입니다 — 원본 서류와 대조한 뒤 반영하세요."}
+
+
+@app.post("/cases/{case_id}/pending-extractions/apply")
+def apply_pending_extractions(case_id: str, body: dict = None,
+                              user=Depends(rbac.require_action("material.add")),
+                              db: Session = Depends(get_db)):
+    """확인한 항목만 케이스에 반영. body.values 미지정이면 전량 반영.
+
+    누가 무엇을 넣었는지 남긴다 — AI 가 뽑은 값을 사람이 승인한 것이므로
+    나중에 '이 원재료가 어디서 왔나'를 되짚을 수 있어야 한다."""
+    c = _get_case(db, case_id, user)
+    b = body or {}
+    want = set(b.get("values") or [])
+    items = [x for x in _pending_extractions(db, case_id)
+             if not want or x["value"] in want]
+    agg = {"products": [x["value"] for x in items if x["kind"] == "product_names"],
+           "materials": [x["value"] for x in items if x["kind"] == "material_names"]}
+    applied = _apply_agg_to_case(db, c, agg)
+    _audit(db, user, "extraction.apply", "case", case_id, case_id,
+           {"products": agg["products"][:50], "materials": agg["materials"][:50],
+            "source": "llm_confirmed"}, commit=False)
+    db.commit()
+    return {"applied": applied, "count": len(items)}
 
 
 @app.post("/documents/{document_id}/reprocess")
