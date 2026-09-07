@@ -59,6 +59,46 @@ def _password(v):
     return t
 
 
+def _future_date(v, what):
+    """오늘 이후만 허용(오늘 포함). 형식 검사는 _iso_date 가 이미 했다."""
+    t = _iso_date(v, what)
+    if t and _date.fromisoformat(t) < _date.today():
+        raise ValueError("%s은(는) 지난 날짜입니다(받은 값: %s)" % (what, t))
+    return t
+
+
+# 사업자 식별번호 — 이 서비스는 **한국 업체가 인도네시아 할랄 인증을 받는** 흐름이다.
+# 실제 데이터가 그렇다(126-81-67748 같은 한국 사업자등록번호 10자리). 그래서
+# '인니 NIB 13자리'만 받으면 실사용 값이 전부 거부된다.
+#   · 한국 사업자등록번호 10자리 · 인도네시아 NIB 13자리 — 둘 다 받는다.
+# 붙임표는 실측에서 en-dash(–)가 섞여 있었다(PDF 복사). 눈으로는 같아 보여서
+# 대조·중복검사가 조용히 어긋난다 — 저장 전에 보통 붙임표로 통일한다.
+_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\uff0d\u2212"
+NIB_DIGIT_LENGTHS = (10, 13)
+
+
+def normalize_nib(v):
+    """붙임표·공백 정규화. 값 판단은 하지 않는다(조회·대조용 공용 함수)."""
+    if v is None:
+        return None
+    t = str(v).strip()
+    for d in _DASHES:
+        t = t.replace(d, "-")
+    return " ".join(t.split())
+
+
+def _nib(v):
+    if v is None or str(v).strip() == "":
+        return None
+    t = normalize_nib(v)
+    digits = "".join(ch for ch in t if ch.isdigit())
+    if len(digits) not in NIB_DIGIT_LENGTHS:
+        raise ValueError(
+            "사업자 식별번호 자릿수가 맞지 않습니다(받은 값: %s · 숫자 %d자리 · "
+            "허용: 한국 사업자등록번호 10자리 또는 인도네시아 NIB 13자리)" % (t, len(digits)))
+    return t
+
+
 def _material_type(v):
     if v is None or str(v).strip() == "":
         return None
@@ -365,6 +405,11 @@ class CaseProfileReq(BaseModel):
     def _v_company(cls, v):
         return _text_required(v, "기업명")
 
+    @field_validator("nib")
+    @classmethod
+    def _v_nib(cls, v):
+        return _nib(v)
+
     @field_validator("due_date")
     @classmethod
     def _v_due(cls, v):
@@ -452,6 +497,7 @@ class RegisterReq(BaseModel):
     username: str
     password: str
     _pw = field_validator("password")(classmethod(lambda cls, v: _password(v)))
+    _nibv = field_validator("nib")(classmethod(lambda cls, v: _nib(v)))
     company_name: Optional[str] = None
     invite_code: Optional[str] = None   # 컨설턴트 초대 코드 — 유치 관계·수수료 근거
     # 회원가입 AI OCR 자동추출 프로필(Rizky #1) — 초기 케이스에 프리필
@@ -565,7 +611,8 @@ class AuditPlanReq(BaseModel):
     @field_validator("scheduled_date")
     @classmethod
     def _v_date(cls, v):
-        return _iso_date(v, "심사 예정일")
+        # 새 일정은 지난 날짜일 수 없다. 수정(Patch)은 완료 기록 보정에도 쓰이므로 형식만 본다.
+        return _future_date(v, "심사 예정일")
 
 
 class AuditPlanPatchReq(BaseModel):

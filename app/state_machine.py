@@ -1,4 +1,5 @@
 """Dual-Pathway 상태기계 + 가드 — 설계 24.2.6 / 24.11."""
+from datetime import date as _date
 import hashlib
 import json
 from datetime import datetime
@@ -73,8 +74,22 @@ def transition_roles(to_state):
 
 
 # ---- 헬퍼 질의 ----
+def penyelia_state(db, org_id):
+    """(있는가, 자격이 유효한가) — 자격 만료를 '없음'과 구분해 말한다.
+
+    종전에는 active 이기만 하면 통과라, 교육 자격이 만료된 감독자로도 신청이 진행됐다.
+    감독자 자격은 SJPH 의 전제라 만료된 채로 인증서까지 가면 그 인증이 흔들린다."""
+    rows = db.query(PenyeliaHalal).filter_by(org_id=org_id, status="active").all()
+    if not rows:
+        return False, False
+    today = _date.today()
+    valid = any(p.cert_expiry is None or p.cert_expiry >= today for p in rows)
+    return True, valid
+
+
 def has_active_penyelia(db, org_id):
-    return db.query(PenyeliaHalal).filter_by(org_id=org_id, status="active").count() > 0
+    have, valid = penyelia_state(db, org_id)
+    return have and valid
 
 
 def materials(db, case_id):
@@ -120,16 +135,22 @@ def guard_pathway_selfdeclare(db, case):
         g.append({"code": "RISK_NOT_LOW"})
     if not case.is_msme:
         g.append({"code": "NOT_MSME"})
-    # BPJPH: 연매출 ≤ Rp15B (미입력 시 판정 보류 — 하위호환)
-    if case.annual_revenue is not None and case.annual_revenue > SELF_DECLARE_REVENUE_LIMIT:
+    # BPJPH: 연매출 ≤ Rp15B. **모르면 통과가 아니라 차단이다** — 자기선언은 업체가
+    # 자격을 스스로 주장하는 경로라, 근거 없이 통과시키면 그 주장을 우리가 대신 해 주는 셈이
+    # 된다(실측: 케이스 9건 전부 매출·매장수가 비어 있었고 전부 무사통과했다).
+    if case.annual_revenue is None:
+        g.append({"code": "REVENUE_UNKNOWN", "limit": SELF_DECLARE_REVENUE_LIMIT})
+    elif case.annual_revenue > SELF_DECLARE_REVENUE_LIMIT:
         g.append({"code": "REVENUE_EXCEEDS_LIMIT",
                   "limit": SELF_DECLARE_REVENUE_LIMIT, "have": case.annual_revenue})
     # BPJPH: 공장 최대 1개 (이 신청 대상 공장 수)
     fac = len(case.facility_ids or [])
     if fac > SELF_DECLARE_MAX_FACILITIES:
         g.append({"code": "TOO_MANY_FACILITIES", "max": SELF_DECLARE_MAX_FACILITIES, "have": fac})
-    # BPJPH: 매장 최대 1개 (미입력 시 판정 보류)
-    if case.outlet_count is not None and case.outlet_count > SELF_DECLARE_MAX_OUTLETS:
+    # BPJPH: 매장 최대 1개. 여기도 미입력은 판정 불가다.
+    if case.outlet_count is None:
+        g.append({"code": "OUTLETS_UNKNOWN", "max": SELF_DECLARE_MAX_OUTLETS})
+    elif case.outlet_count > SELF_DECLARE_MAX_OUTLETS:
         g.append({"code": "TOO_MANY_OUTLETS", "max": SELF_DECLARE_MAX_OUTLETS, "have": case.outlet_count})
     if len(critical_materials(db, case.case_id)) > 0:
         g.append({"code": "HAS_CRITICAL_MATERIAL"})
@@ -253,8 +274,12 @@ GUARDS = {
 
 def evaluate_blocking(db, case):
     b = []
-    if not has_active_penyelia(db, case.org_id):
+    have, valid = penyelia_state(db, case.org_id)
+    if not have:
         b.append({"code": "PENYELIA_HALAL_MISSING"})
+    elif not valid:
+        # '없음'과 '자격 만료'는 할 일이 다르다 — 지정 vs 재교육
+        b.append({"code": "PENYELIA_CERT_EXPIRED"})
     for m in critical_materials(db, case.case_id):
         code = "HARAM_INGREDIENT" if m.screen_status == "haram" else "CRITICAL_MATERIAL_NO_EVIDENCE"
         b.append({"code": code, "target": m.name})

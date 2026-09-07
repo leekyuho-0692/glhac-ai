@@ -30,7 +30,13 @@ def _walk(client, cid, states):
 def _intake_complete(client, cid, company="ABC"):
     """§5.2 신청완비 가드(ai_pre_assessment_ready 진입) 충족 — 회사명·NIB·제품 최소 1개.
     가드가 전면화(하드닝)되어 raw 전이 전에 이 최소 신청정보가 필요하다."""
-    client.patch(f"/cases/{cid}/profile", json={"company_name": company, "nib": "1234567890"})
+    # 사업자번호는 케이스마다 다르게 만든다 — 회사가 다른데 번호가 같으면 실제로 막힌다
+    # (그게 NIB 중복 검증의 목적이다). 고정값을 쓰면 두 번째 테스트부터 409 가 난다.
+    nib = ("%010d" % (abs(hash(cid)) % 10**10))
+    # 자기선언 임계값(연매출·매장 수)은 '모르면 판정 불가'다 — 신청 완비에 포함한다.
+    client.patch(f"/cases/{cid}/profile", json={
+        "company_name": company, "nib": nib,
+        "profile_ext": {"annual_revenue": 1_000_000, "outlet_count": 1}})
     client.post(f"/cases/{cid}/products", json={"name": "Sample Product", "category": "Food"})
 
 
@@ -54,7 +60,7 @@ def test_self_declare_happy_path():
         assert a["suggested_pathway"] == "self_declare", a
         client.post(f"/cases/{cid}/pathway/confirm", json={"pathway": "self_declare"})
         _walk(client, cid, ["sjph_lite_prepared", "pendamping_verification"])
-        client.post(f"/cases/{cid}/pendamping/assign", json={"pendamping_id": "pp_1"})
+        client.post(f"/cases/{cid}/pendamping/assign", json={"pendamping_id": "pendamping1"})
         client.post(f"/cases/{cid}/pendamping/verify", json={"decision": "verified"})
         # 펜담핑 검증(verified)은 가드 통과 시 self_declaration_submitted로 자동전이(app: pendamping.verify.auto)
         assert client.get(f"/cases/{cid}").json()["status"] == "self_declaration_submitted"
@@ -109,7 +115,7 @@ def test_selfdeclare_submit_blocked_without_sihalal():
                             "ai_pre_assessment_running", "pathway_determination"])
         client.post(f"/cases/{cid}/pathway/confirm", json={"pathway": "self_declare"})
         _walk(client, cid, ["sjph_lite_prepared", "pendamping_verification"])
-        client.post(f"/cases/{cid}/pendamping/assign", json={"pendamping_id": "pp_1"})
+        client.post(f"/cases/{cid}/pendamping/assign", json={"pendamping_id": "pendamping1"})
         client.post(f"/cases/{cid}/pendamping/verify", json={"decision": "verified"})
         # SIHALAL 미연동 → 제출 차단
         r = client.post(f"/cases/{cid}/transition", json={"to_state": "self_declaration_submitted"})

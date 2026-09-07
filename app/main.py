@@ -4829,6 +4829,30 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
                    user=Depends(auth.require_roles("applicant", "consultant")),
                    db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    # 같은 사업자번호를 **다른 업체**가 쓰고 있으면 둘 중 하나는 잘못 적은 것이다.
+    # 같은 업체의 여러 케이스(신규·갱신)는 정상이므로 막지 않는다.
+    #
+    # 판단 기준을 org 로만 두면 안 된다 — 실측: 라이브에서 바이오로제트·질경이·천우건설
+    # 세 회사가 같은 번호(207-81-34847)를 쓰고 있는데 셋 다 org_demo 라 org 기준으로는
+    # 안 걸린다(데모·운영 초기에는 여러 업체가 한 org 에 모인다). 회사명까지 본다.
+    if body.nib:
+        # 비교는 **정규화끼리** 한다. 기존 행에는 en-dash 가 그대로 남아 있어(실측 3건)
+        # SQL 동등비교로는 같은 번호가 안 잡힌다 — 바로 이 검사가 막으려던 그 상황이다.
+        _name = (body.company_name or c.company_name or "").strip()
+        _key = schemas.normalize_nib(body.nib)
+        _cands = [x for x in db.query(models.CaseApplication).filter(
+            models.CaseApplication.nib.isnot(None),
+            models.CaseApplication.case_id != case_id).all()
+            if schemas.normalize_nib(x.nib) == _key]
+        for other in _cands:
+            same_company = (other.org_id == c.org_id
+                            and (other.company_name or "").strip() == _name)
+            if not same_company:
+                raise HTTPException(409, {
+                    "code": "NIB_ALREADY_USED", "nib": body.nib,
+                    "used_by": other.company_name,
+                    "message": "다른 업체(%s)가 사용 중인 사업자 식별번호입니다."
+                               % (other.company_name or "-")})
     for f in ("company_name", "nib", "responsible_person", "halal_supervisor", "email",
               "phone", "address", "factory_reg_no", "factory_address", "due_date"):
         v = getattr(body, f)
@@ -15282,8 +15306,18 @@ def update_penyelia(org_id: str, penyelia_id: str, body: schemas.PenyeliaUpdate,
 @app.post("/cases/{case_id}/pendamping/assign")
 def assign_pendamping(case_id: str, body: schemas.PendampingAssign,
                       user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
+    """동반자(pendamping) 배정.
+
+    배정 대상이 실제로 있는 사람인지, 역할이 맞는지 확인한다. 종전에는 아무 문자열이나
+    받아 저장했다 — 오타난 id 로 배정하면 '배정은 됐는데 아무도 못 보는' 상태가 되고,
+    자기선언 경로의 검증 단계에서야 드러난다(오디터 배정 경로는 이미 확인하고 있었다)."""
     _get_case(db, case_id, user)
-    pa = models.PendampingAssignment(case_id=case_id, pendamping_id=body.pendamping_id)
+    uid = (body.pendamping_id or "").strip()
+    pu = db.query(models.User).filter(
+        or_(models.User.user_id == uid, models.User.username == uid)).first()
+    if not pu or pu.role != "pendamping_pph":
+        raise HTTPException(404, {"code": "PENDAMPING_NOT_FOUND", "given": uid})
+    pa = models.PendampingAssignment(case_id=case_id, pendamping_id=pu.user_id)
     db.add(pa)
     db.commit()
     return {"assignment_id": pa.assignment_id}

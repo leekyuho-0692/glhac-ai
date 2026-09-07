@@ -43,7 +43,7 @@ def test_a_ops_calendar_operator_aggregates_all_cases():
         cid2 = _mkcase(c, admin, "BetaFoods")
         # 케이스1: AuditPlan(LPH 예정일)
         r1 = c.post("/cases/%s/audit-plan" % cid1,
-                    json={"lph_name": "LPPOM MUI", "scheduled_date": "2026-08-12"}, headers=_h(op))
+                    json={"lph_name": "LPPOM MUI", "scheduled_date": "2027-03-12"}, headers=_h(op))
         assert r1.status_code == 200, r1.text
         # 케이스2: onsite_schedule.confirm(오디터/운영자 확정일)
         r2 = c.post("/cases/%s/onsite-schedule/confirm" % cid2,
@@ -59,9 +59,9 @@ def test_a_ops_calendar_operator_aggregates_all_cases():
         by_date = {}
         for e in body["events"]:
             by_date.setdefault(e["date"], []).append(e)
-        assert "2026-08-12" in by_date and "2026-08-20" in by_date, body
-        e1 = next((e for e in by_date["2026-08-12"] if e["case_id"] == cid1), None)
-        assert e1 is not None, by_date["2026-08-12"]
+        assert "2027-03-12" in by_date and "2026-08-20" in by_date, body
+        e1 = next((e for e in by_date["2027-03-12"] if e["case_id"] == cid1), None)
+        assert e1 is not None, by_date["2027-03-12"]
         assert e1["company_name"] == "AlphaFoods"
         assert e1["source"] == "audit_plan"
         e2 = next((e for e in by_date["2026-08-20"] if e["case_id"] == cid2), None)
@@ -72,7 +72,7 @@ def test_a_ops_calendar_operator_aggregates_all_cases():
         assert e2["time"] == "10:00"
         # by_date 그룹 + 집계 카운트
         assert body["count"] >= 2 and body["case_count"] >= 2
-        assert cid1 in [x["case_id"] for x in body["by_date"]["2026-08-12"]]
+        assert cid1 in [x["case_id"] for x in body["by_date"]["2027-03-12"]]
         # admin 도 통과(require_roles admin bypass)
         assert c.get("/ops/calendar", headers=_h(admin)).status_code == 200
 
