@@ -123,3 +123,39 @@ def test_duplicate_product_name_is_rejected():
         # 다른 제품은 정상 등록
         assert c.post("/cases/%s/products" % cid, json={"name": "포도잼"},
                       headers=h).status_code == 200
+
+
+# ── 검증이 화면에 닿는지 — 소스 수준으로 못 박는다 ────────────────────────
+def test_no_screen_shows_a_bare_error_code():
+    """오류 표시에 e.code 를 직접 쓰면 검증 사유가 화면에서 사라진다.
+
+    422 의 detail 은 {code, field, message} 인데 code 만 찍으면 사용자는
+    'VALIDATION_ERROR' 만 보게 된다. EMSG(e) 를 쓰라는 규약을 코드로 강제한다.
+
+    이 규약을 손으로 지키려다 세 번 놓쳤다(변형 10종 · catch 변수명이 err 인 곳 등).
+    비교 용도(e.code === 'X')는 정상이므로 제외한다."""
+    import re
+
+    html = open(os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                             "app/static/index.html"), encoding="utf-8").read()
+    # 표시 목적으로 code 를 꺼내 쓰는 형태: (X && X.code) 뒤에 비교연산자가 없는 것
+    bad = []
+    for m in re.finditer(r"\((\w+)&&\1\.code\)?(?!\s*[=!]==)", html):
+        seg = html[m.start():m.start() + 90]
+        if "EMSG" in seg:
+            continue
+        bad.append(seg.replace("\n", " ")[:70])
+    assert not bad, "오류 코드를 그대로 표시하는 곳 %d곳: %s" % (len(bad), bad[:3])
+
+
+def test_emsg_prefers_the_human_message():
+    """EMSG 의 계약 — 검증 실패는 문장을, 그 밖에는 코드를 낸다."""
+    import re
+
+    html = open(os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                             "app/static/index.html"), encoding="utf-8").read()
+    m = re.search(r"function EMSG\(e\)\{(.*?)\n\}", html, re.S)
+    assert m, "EMSG 헬퍼가 없다"
+    body = m.group(1)
+    assert "e.message" in body and "e.code" in body
+    assert body.index("e.message") < body.index("e.code"), "message 가 code 보다 먼저여야 한다"
