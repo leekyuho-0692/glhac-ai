@@ -1,6 +1,82 @@
-"""요청 스키마 (Pydantic v2)."""
+"""요청 스키마 (Pydantic v2).
+
+## 왜 여기서 막는가
+
+종전에는 입력을 거의 그대로 받고 마지막 상태 전이 가드에서만 걸렀다. 그래서 잘못된 값이
+DB 에 들어간 뒤 한참 지나 다른 화면에서 터지거나, 아예 안 터지고 인증서에 인쇄됐다.
+대표적으로 날짜는 문자열로 그냥 저장돼, 나중에 `date.fromisoformat()` 으로 읽는 쪽이
+죽었다(만료 경보·인증서 유효성 판정). 값이 들어오는 자리에서 막는다.
+
+원재료 유형·출처 코드는 **사전(domain_dict)이 정본**이다. 여기서 목록을 다시 적지 않는다.
+"""
+from datetime import date as _date
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from . import domain_dict as _dd
+
+# ── 공용 검증기 ────────────────────────────────────────────────────────────
+_PW_MIN = 8
+
+
+def _text_required(v, what):
+    """필수 문자열 — 공백만 넣은 것은 안 넣은 것이다."""
+    if v is None:
+        return v
+    t = str(v).strip()
+    if not t:
+        raise ValueError("%s은(는) 비워 둘 수 없습니다" % what)
+    return t
+
+
+def _iso_date(v, what):
+    """ISO 날짜만 통과하고, **저장 형식을 YYYY-MM-DD 로 통일**한다. 빈 값은 미입력.
+
+    파이썬 3.11 의 date.fromisoformat 은 '20260910' 이나 '2026-W37-1' 같은 축약형도
+    받는다(실측). 그대로 저장하면 화면·보고서·엑셀마다 다른 모양이 찍히고, 문자열로
+    비교하는 코드가 조용히 어긋난다. 파싱한 뒤 표준형으로 되돌려 저장한다."""
+    if v is None:
+        return None
+    t = str(v).strip()
+    if not t:
+        return None
+    try:
+        return _date.fromisoformat(t).isoformat()
+    except ValueError:
+        raise ValueError("%s은(는) YYYY-MM-DD 형식이어야 합니다(받은 값: %s)" % (what, t))
+
+
+def _password(v):
+    """최소한의 비밀번호 정책.
+
+    특수문자 강제 같은 규칙은 넣지 않았다 — 인니 중소업체가 쓰는 화면이라 못 외우는 규칙은
+    포스트잇으로 끝난다. 대신 '너무 짧다·한 글자 반복'처럼 명백히 위험한 것만 막는다."""
+    t = str(v or "")
+    if len(t) < _PW_MIN:
+        raise ValueError("비밀번호는 %d자 이상이어야 합니다" % _PW_MIN)
+    if len(set(t)) == 1:
+        raise ValueError("비밀번호가 같은 글자의 반복입니다")
+    return t
+
+
+def _material_type(v):
+    if v is None or str(v).strip() == "":
+        return None
+    code = _dd.material_type_code(v)
+    if not code:
+        raise ValueError("원재료 유형이 올바르지 않습니다(받은 값: %s · 허용: %s)"
+                         % (v, ", ".join(_dd.MATERIAL_TYPE_CODES)))
+    return code
+
+
+def _material_source(v):
+    if v is None or str(v).strip() == "":
+        return None
+    code = _dd.material_source_code(v)
+    if not code:
+        raise ValueError("원재료 출처가 올바르지 않습니다(받은 값: %s · 허용: %s)"
+                         % (v, ", ".join(_dd.MATERIAL_SOURCE_CODES)))
+    return code
 
 
 class CaseCreate(BaseModel):
@@ -15,6 +91,11 @@ class ProductCreate(BaseModel):
     category: Optional[str] = None
     description: Optional[str] = None    # 현장심사 보고서 제품표에 인쇄
     registration_type: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def _v_name(cls, v):
+        return _text_required(v, "제품명")
 
 
 class ProductUpdate(BaseModel):
@@ -37,6 +118,21 @@ class MaterialCreate(BaseModel):
     evidence_provided: Optional[bool] = False
     source_known: Optional[bool] = True
 
+    @field_validator("name")
+    @classmethod
+    def _v_name(cls, v):
+        return _text_required(v, "원재료명")
+
+    @field_validator("mat_type")
+    @classmethod
+    def _v_type(cls, v):
+        return _material_type(v)
+
+    @field_validator("source")
+    @classmethod
+    def _v_source(cls, v):
+        return _material_source(v)
+
 
 class MaterialPatch(BaseModel):
     """원재료 속성 수정 — 심사 중 제조사·인증번호가 뒤늦게 확인되는 일이 흔하다."""
@@ -48,6 +144,16 @@ class MaterialPatch(BaseModel):
     cert: Optional[str] = None
     cert_no: Optional[str] = None
     note: Optional[str] = None
+
+    @field_validator("mat_type")
+    @classmethod
+    def _v_type(cls, v):
+        return _material_type(v)
+
+    @field_validator("source")
+    @classmethod
+    def _v_source(cls, v):
+        return _material_source(v)
 
 
 class TextScreenReq(BaseModel):
@@ -74,6 +180,11 @@ class FindingReq(BaseModel):
     severity: Optional[str] = "minor"   # major|minor|observation
     corrective_action: Optional[str] = None
     due_date: Optional[str] = None
+
+    @field_validator("due_date")
+    @classmethod
+    def _v_due(cls, v):
+        return _iso_date(v, "조치 기한")
 
 
 class FindingStatusReq(BaseModel):
@@ -249,6 +360,16 @@ class CaseProfileReq(BaseModel):
     notify_consent: Optional[bool] = None  # 알림 수신 동의
     profile_ext: Optional[dict] = None  # Company/Facility Info 확장 양식 필드(PIC·CP·등록유형·공장정보 등)
 
+    @field_validator("company_name")
+    @classmethod
+    def _v_company(cls, v):
+        return _text_required(v, "기업명")
+
+    @field_validator("due_date")
+    @classmethod
+    def _v_due(cls, v):
+        return _iso_date(v, "처리 기한")
+
 
 class PathwayConfirm(BaseModel):
     pathway: str  # self_declare | reguler
@@ -266,6 +387,16 @@ class PenyeliaCreate(BaseModel):
     name: str
     training_cert: Optional[str] = None
     cert_expiry: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def _v_name(cls, v):
+        return _text_required(v, "할랄감독자 이름")
+
+    @field_validator("cert_expiry")
+    @classmethod
+    def _v_expiry(cls, v):
+        return _iso_date(v, "자격 만료일")
 
 
 class PenyeliaUpdate(BaseModel):
@@ -320,6 +451,7 @@ class RefreshReq(BaseModel):
 class RegisterReq(BaseModel):
     username: str
     password: str
+    _pw = field_validator("password")(classmethod(lambda cls, v: _password(v)))
     company_name: Optional[str] = None
     invite_code: Optional[str] = None   # 컨설턴트 초대 코드 — 유치 관계·수수료 근거
     # 회원가입 AI OCR 자동추출 프로필(Rizky #1) — 초기 케이스에 프리필
@@ -341,10 +473,20 @@ class AdminUserReq(BaseModel):
     role: str
     org_id: Optional[str] = "org_demo"
 
+    @field_validator("password")
+    @classmethod
+    def _v_pw(cls, v):
+        return _password(v)
+
 
 class AdminUserPatchReq(BaseModel):
     role: Optional[str] = None
     password: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def _v_pw(cls, v):
+        return None if v is None or str(v).strip() == "" else _password(v)
 
 
 class AdminOrgReq(BaseModel):
@@ -420,11 +562,21 @@ class AuditPlanReq(BaseModel):
     scope: Optional[str] = None
     auditors: Optional[list] = None
 
+    @field_validator("scheduled_date")
+    @classmethod
+    def _v_date(cls, v):
+        return _iso_date(v, "심사 예정일")
+
 
 class AuditPlanPatchReq(BaseModel):
     status: Optional[str] = None              # scheduled|completed|cancelled
     scheduled_date: Optional[str] = None
     note: Optional[str] = None
+
+    @field_validator("scheduled_date")
+    @classmethod
+    def _v_date(cls, v):
+        return _iso_date(v, "심사 예정일")
 
 
 class FatwaVoteReq(BaseModel):
@@ -437,6 +589,11 @@ class CarSubmitReq(BaseModel):
     description: str
     evidence: Optional[str] = None
     due_date: Optional[str] = None
+
+    @field_validator("due_date")
+    @classmethod
+    def _v_due(cls, v):
+        return _iso_date(v, "조치 기한")
 
 
 class CarReviewReq(BaseModel):
@@ -542,6 +699,11 @@ class RegulationUpsertReq(BaseModel):
     summary: Optional[str] = None           # 본문요약
     impact_stages: List[str] = Field(default_factory=list)     # 영향 심사단계 키 다중선택
     impact_sections: List[str] = Field(default_factory=list)   # 영향 증거섹션 키 다중선택
+
+    @field_validator("effective_date")
+    @classmethod
+    def _v_eff(cls, v):
+        return _iso_date(v, "시행일")
 
 
 class RegulationTransitionReq(BaseModel):

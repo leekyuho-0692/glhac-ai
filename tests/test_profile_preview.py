@@ -98,9 +98,9 @@ def test_profile_preview_and_pdf():
             assert pr.content[:4] == b"%PDF", url
 
         # 5) org 격리 — 타 조직 사용자 403
-        c.post("/admin/users", json={"username": "other_applicant", "password": "pw",
+        c.post("/admin/users", json={"username": "other_applicant", "password": "halal-test-1",
                                      "role": "applicant", "org_id": "org_other"}, headers=_h(adm))
-        otok = _tok(c, "other_applicant", "pw")
+        otok = _tok(c, "other_applicant", "halal-test-1")
         assert c.get(f"/cases/{cid}/docs/company-info/preview", headers=_h(otok)).status_code == 403
         assert c.get(f"/cases/{cid}/facilities/{fid}/docs/factory-profile/preview",
                      headers=_h(otok)).status_code == 403

@@ -134,7 +134,7 @@ def test_org_isolation_enforced():
         adm = _tok(c, "admin", "admin")
         cid = _mkcase(c, adm)
         # org_demo 소속이 아닌 신규 가입자
-        reg = c.post("/auth/register", json={"username": "outsider_rc", "password": "pw",
+        reg = c.post("/auth/register", json={"username": "outsider_rc", "password": "halal-test-1",
                                              "company_name": "OtherCo"})
         assert reg.status_code == 200, reg.text
         other = reg.json()["token"]

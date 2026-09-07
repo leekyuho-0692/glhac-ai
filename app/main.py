@@ -6,6 +6,7 @@ import time
 import base64
 import logging
 from datetime import datetime, date, timedelta
+from fastapi.exceptions import RequestValidationError
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -162,6 +163,27 @@ async def _security_headers_mw(request: Request, call_next):
     if is_https and _HSTS_VALUE:
         resp.headers.setdefault("Strict-Transport-Security", _HSTS_VALUE)
     return resp
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exc(request: Request, exc: RequestValidationError):
+    """입력 검증 실패 — 앱 규약({"detail": {"code": ...}})으로 맞춰 화면이 읽게 한다.
+
+    FastAPI 기본 422 는 detail 이 **배열**이라, {code} 만 보는 화면 코드에서는 사유가
+    빈칸으로 떴다. 잘못 적었다는 사실은 아는데 무엇이 잘못됐는지 못 보는 상태가 된다.
+    사람이 고칠 수 있게 첫 오류의 필드와 문구를 함께 낸다."""
+    errs = exc.errors()
+    first = errs[0] if errs else {}
+    loc = [str(x) for x in (first.get("loc") or []) if x != "body"]
+    msg = str(first.get("msg") or "")
+    msg = msg[len("Value error, "):] if msg.startswith("Value error, ") else msg
+    return JSONResponse(status_code=422, content={"detail": {
+        "code": "VALIDATION_ERROR",
+        "field": ".".join(loc) or None,
+        "message": msg,
+        "errors": [{"field": ".".join(str(x) for x in (e.get("loc") or []) if x != "body"),
+                    "message": str(e.get("msg") or "")} for e in errs[:8]],
+    }})
 
 
 @app.exception_handler(Exception)
@@ -3263,19 +3285,10 @@ def material_auditor_note(material_id: str, lang: str = Query("ko"),
 # 원재료 유형(Jenis Bahan) — 서류에는 'BAHAN BAKU'·'CLEANING AGENT'처럼 제각각 적힌다.
 # 사전 MATERIAL 축의 표기 목록으로 표준 코드에 붙이고, 화면 표기도 사전에서 꺼낸다.
 def _mat_type_code(raw):
-    """서류 표기 → 표준 코드. 못 알아보면 None(지어내지 않는다)."""
-    if not raw:
-        return None
-    key, _ = _dd_mod.material_type(raw)
-    if key:
-        return (_dd_mod.actions(key) or {}).get("material_type")
-    v = str(raw).strip().lower().replace(" ", "_").replace("-", "_")
-    known = {"raw", "additive", "processing_aid", "preservative",
-             "cleaning", "lubricant", "packaging"}
-    if v in known:
-        return v
-    return {"sanitizer": "cleaning", "cleaning_agent": "cleaning",
-            "raw_material": "raw"}.get(v)
+    """서류 표기 → 표준 코드. 못 알아보면 None(지어내지 않는다).
+
+    코드 목록과 표기 흔들림 처리는 사전이 정본이다 — 여기서 다시 적으면 한쪽만 늘어난다."""
+    return _dd_mod.material_type_code(raw)
 
 
 def _mat_type_label(raw, lang="ko"):

@@ -46,7 +46,7 @@ CASES = [
     ("자기선언 검증", "POST", f"/cases/{CID}/pendamping/verify", {"decision": "verified"}, {"pendamping_pph", "admin"}),
     ("결제 표시", "PATCH", "/invoices/nope/pay", None, {"consultant", "applicant", "admin"}),
     ("admin 사용자목록", "GET", "/admin/users", None, {"admin"}),
-    ("admin 사용자생성", "POST", "/admin/users", {"username": "z", "password": "z", "role": "auditor"}, {"admin"}),
+    ("admin 사용자생성", "POST", "/admin/users", {"username": "z", "password": "halal-test-1", "role": "auditor"}, {"admin"}),
     ("admin 전체케이스", "GET", "/admin/cases", None, {"admin"}),
     ("admin 온톨로지", "GET", "/admin/ontology/stats", None, {"admin"}),
 ]

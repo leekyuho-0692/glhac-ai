@@ -90,8 +90,8 @@ def test_dashboard_events_org_isolation():
         cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "EvtCo"},
                      headers=_h(atok)).json()["case_id"]
         c.post(f"/cases/{cid}/transition", json={"to_state": "application_draft"}, headers=_h(atok))
-        c.post("/auth/register", json={"username": "isouser2", "password": "pw"})
-        utok = _tok(c, "isouser2", "pw")
+        c.post("/auth/register", json={"username": "isouser2", "password": "halal-test-1"})
+        utok = _tok(c, "isouser2", "halal-test-1")
         ev = c.get("/dashboard/summary", headers=_h(utok)).json()["events"]
         assert all(e["case_id"] != cid for e in ev), ("타조직 이벤트 누수", ev)
 
@@ -193,7 +193,7 @@ def test_operator_provisionable():
     """P0-4: admin이 operator 역할 사용자를 생성할 수 있어야 함."""
     with TestClient(app) as c:
         adm = _tok(c, "admin", "admin")
-        r = c.post("/admin/users", json={"username": "op_new", "password": "pw", "role": "operator"},
+        r = c.post("/admin/users", json={"username": "op_new", "password": "halal-test-1", "role": "operator"},
                    headers=_h(adm))
         assert r.status_code == 200, r.text
 

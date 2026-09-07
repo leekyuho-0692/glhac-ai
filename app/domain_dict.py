@@ -348,3 +348,35 @@ def stats():
     return {"terms": len(_STATE["terms"]), "surface_forms": len(_STATE["surface"]),
             "axes": {a: len(v) for a, v in sorted(_STATE["axis"].items())},
             "duplicates": _STATE.get("duplicates") or []}
+
+# ── 원재료 코드 정본 ────────────────────────────────────────────────────────
+# 코드 목록이 main(_ENUMS)·intake·schemas 세 곳에 흩어지면 한쪽만 늘어난다.
+# 사전이 정본이므로 여기서 한 번만 정의하고 나머지가 가져다 쓴다.
+MATERIAL_TYPE_CODES = ("raw", "additive", "processing_aid", "preservative",
+                       "cleaning", "lubricant", "packaging")
+MATERIAL_SOURCE_CODES = ("animal", "plant", "microbial", "synthetic",
+                         "mineral", "unknown")
+# 현장 표기 흔들림 — 뜻이 같은 말은 받아 주되 저장은 표준 코드로 한다.
+_MATERIAL_TYPE_ALIAS = {"sanitizer": "cleaning", "cleaning_agent": "cleaning",
+                        "raw_material": "raw"}
+
+
+def material_type_code(raw):
+    """서류·입력 표기 → 표준 코드. 못 알아보면 None(지어내지 않는다)."""
+    if not raw:
+        return None
+    key, _ = material_type(raw)
+    if key:
+        return (actions(key) or {}).get("material_type")
+    v = str(raw).strip().lower().replace(" ", "_").replace("-", "_")
+    if v in MATERIAL_TYPE_CODES:
+        return v
+    return _MATERIAL_TYPE_ALIAS.get(v)
+
+
+def material_source_code(raw):
+    """원재료 출처 표기 → 표준 코드. 못 알아보면 None."""
+    if not raw:
+        return None
+    v = str(raw).strip().lower().replace(" ", "_").replace("-", "_")
+    return v if v in MATERIAL_SOURCE_CODES else None
