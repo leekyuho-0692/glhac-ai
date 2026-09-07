@@ -221,3 +221,46 @@ def test_material_cert_no_is_deliberately_not_format_checked():
     for v in ("398240000", "ID00410000500391022", "LPPOM-00230049860209",
               "ARA-504254310625", "KAI.5986.12633.250019.CN", "DSM.MAN.2504.5036.COL"):
         assert S.MaterialCreate(name="X", cert_no=v).cert_no == v
+
+
+def test_a_wrong_value_can_be_cleared():
+    """한 번 잘못 들어간 값을 화면에서 지울 수 있어야 한다.
+
+    실측: 사업자번호에 '123' 이 박힌 케이스는 그 칸을 비워도 DB 에 그대로 남았고,
+    화면이 저장할 때 그 값을 다시 보내니 매번 422 로 막혔다 — 손쓸 수 없는 상태였다.
+    인도네시아 업체는 한국 사업자등록번호가 없고 NIB 도 발급 전일 수 있어,
+    비워 두는 것이 정상적인 상태다."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    with TestClient(app) as c:
+        tok = c.post("/auth/login", json={"username": "admin", "password": "admin"}).json()["token"]
+        h = {"Authorization": "Bearer " + tok}
+        cid = c.post("/cases", json={"company_name": "지움테스트"}, headers=h).json()["case_id"]
+        c.patch("/cases/%s/profile" % cid,
+                json={"nib": "1234567890", "responsible_person": "홍길동"}, headers=h)
+        assert c.get("/cases/%s" % cid, headers=h).json()["nib"] == "1234567890"
+
+        # 비워서 보내면 지워진다
+        r = c.patch("/cases/%s/profile" % cid, json={"nib": ""}, headers=h)
+        assert r.status_code == 200, r.text
+        got = c.get("/cases/%s" % cid, headers=h).json()
+        assert got["nib"] is None
+        assert got["responsible_person"] == "홍길동", "안 보낸 필드가 지워졌다"
+
+
+def test_fields_not_sent_are_left_alone():
+    """보낸 적 없는 필드는 건드리지 않는다 — 부분 저장이 다른 값을 날리면 안 된다."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    with TestClient(app) as c:
+        tok = c.post("/auth/login", json={"username": "admin", "password": "admin"}).json()["token"]
+        h = {"Authorization": "Bearer " + tok}
+        cid = c.post("/cases", json={"company_name": "부분저장"}, headers=h).json()["case_id"]
+        c.patch("/cases/%s/profile" % cid, json={
+            "email": "a@b.com", "address": "서울특별시 강남구 테헤란로 1"}, headers=h)
+        c.patch("/cases/%s/profile" % cid, json={"due_date": "2026-12-01"}, headers=h)
+        got = c.get("/cases/%s" % cid, headers=h).json()
+        assert got["email"] == "a@b.com" and got["address"].startswith("서울")
+        assert got["due_date"] == "2026-12-01"

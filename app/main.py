@@ -4876,11 +4876,21 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
                     "used_by": other.company_name,
                     "message": "다른 업체(%s)가 사용 중인 사업자 식별번호입니다."
                                % (other.company_name or "-")})
+    # 비운 칸은 '지운 것'으로 본다.
+    #
+    # 종전에는 값이 None 이면 그냥 건너뛰어, 한 번 잘못 들어간 값을 화면에서 지울 방법이
+    # 없었다(실측: 사업자번호에 '123' 이 박힌 케이스는 그 칸을 비워도 DB 에 그대로 남고,
+    # 화면이 그 값을 다시 보내니 저장이 매번 422 로 막혔다 — 손쓸 수 없는 상태).
+    # 인도네시아 업체는 한국 사업자등록번호가 없고 NIB 도 발급 전일 수 있어, 비워 두는 것이
+    # 정상적인 상태다. 보낸 적 없는 필드(model_fields_set 밖)는 그대로 둔다.
+    _sent = body.model_fields_set
     for f in ("company_name", "nib", "responsible_person", "halal_supervisor", "email",
               "phone", "address", "factory_reg_no", "factory_address", "due_date"):
         v = getattr(body, f)
         if v is not None:
             setattr(c, f, v)
+        elif f in _sent:
+            setattr(c, f, None)
     if body.notify_consent is not None:
         c.notify_consent = bool(body.notify_consent)
     if body.phone is not None:
