@@ -157,6 +157,33 @@ def _non_negative_int(v, what, limit=None):
     return n
 
 
+# 계정 아이디 — 로그인 키이자 감사로그·알림에 찍히는 이름이다. 공백이나 눈에 안 보이는
+# 문자가 섞이면 '분명히 만들었는데 로그인이 안 되는' 상태가 된다.
+# 실데이터 14개 계정은 전부 영숫자·밑줄이라 이 규칙에 걸리는 기존 계정은 없다.
+_USERNAME_RE = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$")
+
+
+def _username(v):
+    t = str(v or "").strip()
+    if not _USERNAME_RE.match(t):
+        raise ValueError("아이디는 영문·숫자로 시작하는 3~32자여야 합니다"
+                         "(영문·숫자와 . _ - 만 사용, 받은 값: %s)" % (v or ""))
+    return t
+
+
+def _address(v, what="주소"):
+    """주소는 인증서·보고서에 인쇄된다. 형식은 나라마다 달라 길이만 최소한으로 본다.
+
+    실데이터는 28~137자(한국·인도네시아). 너무 엄격하면 멀쩡한 주소를 막는다."""
+    if v is None or str(v).strip() == "":
+        return None
+    t = " ".join(str(v).split())
+    if len(t) < 8:
+        raise ValueError("%s가 너무 짧습니다 — 인증서에 인쇄되므로 전체 주소를 적어 주세요"
+                         "(받은 값: %s)" % (what, t))
+    return t
+
+
 def _material_type(v):
     if v is None or str(v).strip() == "":
         return None
@@ -478,6 +505,16 @@ class CaseProfileReq(BaseModel):
     def _v_phone(cls, v):
         return _phone(v)
 
+    @field_validator("address")
+    @classmethod
+    def _v_addr(cls, v):
+        return _address(v, "회사 주소")
+
+    @field_validator("factory_address")
+    @classmethod
+    def _v_faddr(cls, v):
+        return _address(v, "공장 주소")
+
     @field_validator("profile_ext")
     @classmethod
     def _v_ext(cls, v):
@@ -582,6 +619,7 @@ class RegisterReq(BaseModel):
     password: str
     _pw = field_validator("password")(classmethod(lambda cls, v: _password(v)))
     _nibv = field_validator("nib")(classmethod(lambda cls, v: _nib(v)))
+    _un = field_validator("username")(classmethod(lambda cls, v: _username(v)))
     company_name: Optional[str] = None
     invite_code: Optional[str] = None   # 컨설턴트 초대 코드 — 유치 관계·수수료 근거
     # 회원가입 AI OCR 자동추출 프로필(Rizky #1) — 초기 케이스에 프리필
@@ -602,6 +640,11 @@ class AdminUserReq(BaseModel):
     password: str
     role: str
     org_id: Optional[str] = "org_demo"
+
+    @field_validator("username")
+    @classmethod
+    def _v_un(cls, v):
+        return _username(v)
 
     @field_validator("password")
     @classmethod

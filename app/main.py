@@ -4887,7 +4887,10 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
         c.phone = _normalize_phone(body.phone)   # 국가코드 정규화
     if body.profile_ext is not None:
         c.profile_ext = {**(c.profile_ext or {}), **body.profile_ext}  # 확장 양식 병합 저장
-        # BPJPH 자기선언 정량 필드 → 컬럼 미러(가드 판정용)
+        # BPJPH 자기선언 정량 필드 → 컬럼 미러(가드 판정용).
+        # 값 검증은 이제 스키마(CaseProfileReq._v_ext)가 앞에서 한다 — 여기 도달하는 값은
+        # 이미 int 또는 None 이다. 아래 try 는 옛 데이터·직접 호출 대비 잔여 방어일 뿐이라
+        # 조용히 넘겨도 값이 사라지지 않는다(예전에는 여기서 조용히 사라졌다).
         _ext = c.profile_ext or {}
         for _k, _col in (("annual_revenue", "annual_revenue"), ("outlet_count", "outlet_count")):
             if _k in _ext:
@@ -4895,7 +4898,7 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
                 try:
                     setattr(c, _col, int(_v) if _v not in (None, "") else None)
                 except (ValueError, TypeError):
-                    pass
+                    log.warning("정량 필드 변환 실패 — 무시: %s=%r (case=%s)", _k, _v, c.case_id)
         # 사업 규모(Skala Usaha) → MSME 컬럼 미러. 자기선언 자격과 필수 서류 범위가
         # 여기서 갈리는데, 지금까지 규모는 케이스 생성 시점에만 정할 수 있어 정정할 길이
         # 없었다. 사전이 모르는 표기는 건드리지 않는다(지어낸 규모로 경로를 열지 않는다).

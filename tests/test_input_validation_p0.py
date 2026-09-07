@@ -110,17 +110,17 @@ def test_surrounding_spaces_are_trimmed_not_rejected():
 @pytest.mark.parametrize("bad", ["pw", "1234567", "aaaaaaaa", ""])
 def test_weak_password_is_rejected(bad):
     with pytest.raises(ValidationError):
-        S.RegisterReq(username="u", password=bad)
+        S.RegisterReq(username="tester1", password=bad)
 
 
 def test_reasonable_password_passes():
-    assert S.RegisterReq(username="u", password="halal2026").password == "halal2026"
+    assert S.RegisterReq(username="tester1", password="halal2026").password == "halal2026"
 
 
 def test_admin_paths_use_the_same_policy():
     """가입만 막고 관리자 생성이 뚫려 있으면 정책이 아니다."""
     with pytest.raises(ValidationError):
-        S.AdminUserReq(username="u", password="pw", role="auditor")
+        S.AdminUserReq(username="tester1", password="pw", role="auditor")
     with pytest.raises(ValidationError):
         S.AdminUserPatchReq(password="pw")
     assert S.AdminUserPatchReq(password=None).password is None   # 변경 안 함은 허용

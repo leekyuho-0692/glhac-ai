@@ -162,3 +162,62 @@ def test_emsg_prefers_the_human_message():
     body = m.group(1)
     assert "e.message" in body and "e.code" in body
     assert body.index("e.message") < body.index("e.code"), "message 가 code 보다 먼저여야 한다"
+
+
+# ── 잔여 정리: 계정 아이디 · 주소 ────────────────────────────────────────
+@pytest.mark.parametrize("bad,why", [
+    ("ab", "너무 짧음"), ("my id", "공백"), ("한글아이디", "비ASCII"),
+    ("_start", "기호로 시작"), ("x" * 40, "너무 김"), ("", "빈 값")])
+def test_bad_username_is_rejected(bad, why):
+    """아이디는 로그인 키이자 감사로그·알림에 찍히는 이름이다.
+
+    공백이나 눈에 안 보이는 문자가 섞이면 '분명히 만들었는데 로그인이 안 되는' 상태가 된다."""
+    with pytest.raises(ValidationError):
+        S.RegisterReq(username=bad, password="halal2026")
+
+
+def test_existing_account_names_all_still_pass():
+    """규칙을 새로 걸 때는 기존 계정이 전부 통과하는지 먼저 확인한다."""
+    for u in ("admin", "applicant1", "consultant1", "buzzup2_1784165830",
+              "newco1785824124", "demoguide01", "pendamping1"):
+        assert S.RegisterReq(username=u, password="halal2026").username == u
+
+
+def test_admin_user_creation_uses_the_same_username_rule():
+    with pytest.raises(ValidationError):
+        S.AdminUserReq(username="a b", password="halal2026", role="auditor")
+
+
+@pytest.mark.parametrize("addr", [
+    "경기도 광주시 곤지암읍 신만로275-43, 대한민국",
+    "37-6 Ucheonsaneopdanji-ro, Ucheon-myeon, Hoengseong-gun, Gangwon-do",
+    "Jalan Kayu Putih Selatan III C No 24 RT 008 RW 005"])
+def test_real_addresses_pass(addr):
+    """주소 형식은 나라마다 달라 길이만 최소한으로 본다 — 엄격하면 멀쩡한 주소를 막는다."""
+    assert S.CaseProfileReq(address=addr).address == addr
+
+
+@pytest.mark.parametrize("bad", ["서울", "x", "짧은주소"])
+def test_too_short_address_is_rejected(bad):
+    """주소는 인증서·보고서에 인쇄된다 — 두 글자짜리 주소가 찍히면 그 문서가 못 쓴다."""
+    with pytest.raises(ValidationError):
+        S.CaseProfileReq(address=bad)
+
+
+def test_blank_address_is_unset_not_an_error():
+    """주소는 선택 항목이다 — 공백만 넣은 것은 '안 넣은 것'으로 본다(다른 선택 항목과 같은 규칙)."""
+    assert S.CaseProfileReq(address="   ").address is None
+    assert S.CaseProfileReq(address=None).address is None
+
+
+def test_material_cert_no_is_deliberately_not_format_checked():
+    """원재료 인증번호는 형식을 강제하지 않는다 — 그게 옳다.
+
+    실데이터가 발급기관마다 전혀 다르다:
+      398240000 · ID00410000500391022 · LPPOM-00230049860209 ·
+      ARA-504254310625 · KAI.5986.12633.250019.CN · DSM.MAN.2504.5036.COL
+    공통 형식이 없는데 규칙을 만들면 멀쩡한 남의 인증번호를 거부하게 된다.
+    이 테스트는 '나중에 누가 형식 검증을 넣지 않게' 이유를 붙들어 두는 용도다."""
+    for v in ("398240000", "ID00410000500391022", "LPPOM-00230049860209",
+              "ARA-504254310625", "KAI.5986.12633.250019.CN", "DSM.MAN.2504.5036.COL"):
+        assert S.MaterialCreate(name="X", cert_no=v).cert_no == v
