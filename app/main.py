@@ -3342,6 +3342,14 @@ def add_product(case_id: str, body: schemas.ProductCreate,
                 user=Depends(auth.require_roles("applicant", "consultant")),
                 db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
+    # 같은 케이스에 같은 제품을 두 번 넣으면 인증 범위(scope)에 중복으로 인쇄되고,
+    # 제품×원재료 매트릭스도 두 줄이 된다. 대소문자·앞뒤 공백은 같은 이름으로 본다.
+    _key = _norm_material(body.name)
+    for ex in db.query(models.Product).filter_by(case_id=case_id).all():
+        if _norm_material(ex.name) == _key:
+            raise HTTPException(409, {"code": "PRODUCT_DUPLICATE", "name": body.name,
+                                      "existing_product_id": ex.product_id,
+                                      "message": "이미 등록된 제품입니다: %s" % ex.name})
     p = models.Product(case_id=case_id, name=body.name, category=body.category,
                        description=body.description,
                        registration_type=body.registration_type, status="draft")
@@ -4573,11 +4581,21 @@ def _process_doc(db, c, d, applied):
         cn = flds.get("cert_no")
         if cn and not db.query(models.HalalCertificate).filter_by(
                 case_id=c.case_id, certificate_no=cn).first():
+            # 여기 날짜는 **AI 가 서류에서 읽은 값**이다. 그대로 status=active 인증서로
+            # 저장하면 나중에 date.fromisoformat 으로 읽는 곳(만료 경보·유효성 판정)이
+            # 죽는다. 읽히지 않는 날짜는 비워 두고, 앞뒤가 뒤집힌 쌍은 둘 다 버린다 —
+            # 지어낸 유효기간으로 '유효한 인증서'를 만들지 않는다.
+            _iss, _exp = _safe_date(flds.get("issue_date")), _safe_date(flds.get("expiry_date"))
+            _note = None
+            if _iss and _exp and _exp <= _iss:
+                _note, _iss, _exp = "DATE_RANGE_INVALID", None, None
             db.add(models.HalalCertificate(
                 case_id=c.case_id, certificate_no=cn,
-                issue_date=flds.get("issue_date"), expiry_date=flds.get("expiry_date"),
+                issue_date=_iss, expiry_date=_exp,
                 scope=flds.get("scope"), status="active"))
             applied["halal_cert"] = cn
+            if _note:
+                applied["halal_cert_note"] = _note
     elif dt == "sjph_manual":
         _m = {"commitment": flds.get("has_commitment"), "materials": flds.get("has_materials"),
               "process": flds.get("has_process"), "product": flds.get("has_product"),
@@ -5168,18 +5186,21 @@ def return_application(case_id: str, body: schemas.ReturnReq,
     return _case_dict(c)
 
 
+def _safe_date(v):
+    """ISO 날짜면 표준형 문자열로, 아니면 None. AI 추출값을 DB 에 넣기 전 관문.
+
+    빈 값과 '못 읽은 값'을 굳이 구분하지 않는다 — 어느 쪽이든 날짜로 쓸 수 없다."""
+    if not v:
+        return None
+    try:
+        return date.fromisoformat(str(v).strip()).isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
 def _normalize_phone(p):
-    """전화 정규화 — 인니(+62) 기본. 이미 +면 유지, 0 시작이면 +62로 치환."""
-    if not p:
-        return p
-    s = "".join(ch for ch in str(p) if ch.isdigit() or ch == "+")
-    if s.startswith("+"):
-        return s
-    if s.startswith("0"):
-        return "+62" + s[1:]
-    if s.startswith("62"):
-        return "+" + s
-    return "+" + s if s else s
+    """전화 정규화 — 규칙은 schemas 가 정본이다(검증과 저장이 어긋나면 안 된다)."""
+    return schemas.normalize_phone(p)
 
 
 @app.post("/cases/{case_id}/parse-file")

@@ -99,6 +99,64 @@ def _nib(v):
     return t
 
 
+# 이메일 — 사람이 손으로 적는 값이라 지나치게 엄격하면 멀쩡한 주소를 막는다.
+# '@ 앞뒤가 있고 도메인에 점이 있다' 정도만 본다(RFC 전체 구현은 득보다 실이 크다).
+_EMAIL_RE = __import__("re").compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
+
+
+def _email(v):
+    if v is None or str(v).strip() == "":
+        return None
+    t = str(v).strip()
+    if not _EMAIL_RE.match(t):
+        raise ValueError("이메일 형식이 올바르지 않습니다(받은 값: %s)" % t)
+    return t
+
+
+def normalize_phone(p):
+    """전화 정규화 — 인니(+62) 기본. 이미 +면 유지, 0 시작이면 +62로 치환.
+
+    실데이터는 '+82-10-4928-1733'(붙임표 있음)과 '+821049281733'(없음)이 섞여 있었다.
+    저장은 붙임표 없는 E.164 로 통일한다."""
+    if not p:
+        return p
+    s = "".join(ch for ch in str(p) if ch.isdigit() or ch == "+")
+    if s.startswith("+"):
+        return s
+    if s.startswith("0"):
+        return "+62" + s[1:]
+    if s.startswith("62"):
+        return "+" + s
+    return "+" + s if s else s
+
+
+def _phone(v):
+    if v is None or str(v).strip() == "":
+        return None
+    t = normalize_phone(v)
+    digits = "".join(ch for ch in t if ch.isdigit())
+    # E.164: 국가번호 포함 최대 15자리. 아래로는 대표번호(예: +82 2 xxx xxxx)까지 고려해 7자리.
+    if not (7 <= len(digits) <= 15):
+        raise ValueError("전화번호 자릿수가 올바르지 않습니다(받은 값: %s · 숫자 %d자리)"
+                         % (v, len(digits)))
+    return t
+
+
+def _non_negative_int(v, what, limit=None):
+    """수량·금액 — 음수는 값이 아니라 오타다. 빈 값은 미입력."""
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    try:
+        n = int(str(v).strip().replace(",", ""))
+    except (TypeError, ValueError):
+        raise ValueError("%s은(는) 숫자여야 합니다(받은 값: %s)" % (what, v))
+    if n < 0:
+        raise ValueError("%s은(는) 음수일 수 없습니다(받은 값: %s)" % (what, n))
+    if limit is not None and n > limit:
+        raise ValueError("%s이(가) 너무 큽니다(받은 값: %s)" % (what, n))
+    return n
+
+
 def _material_type(v):
     if v is None or str(v).strip() == "":
         return None
@@ -409,6 +467,32 @@ class CaseProfileReq(BaseModel):
     @classmethod
     def _v_nib(cls, v):
         return _nib(v)
+
+    @field_validator("email")
+    @classmethod
+    def _v_email(cls, v):
+        return _email(v)
+
+    @field_validator("phone")
+    @classmethod
+    def _v_phone(cls, v):
+        return _phone(v)
+
+    @field_validator("profile_ext")
+    @classmethod
+    def _v_ext(cls, v):
+        """확장 양식의 정량 필드 — 종전에는 int() 실패를 조용히 넘겨 값이 사라졌다.
+        자기선언 자격이 이 숫자로 갈리므로, 못 읽는 값은 말해 준다."""
+        if not v:
+            return v
+        out = dict(v)
+        for k, what, lim in (("annual_revenue", "연매출", None),
+                             ("outlet_count", "매장 수", 100000),
+                             ("employee_count", "직원 수", 1000000),
+                             ("total_employee", "총 직원 수", 1000000)):
+            if k in out:
+                out[k] = _non_negative_int(out[k], what, lim)
+        return out
 
     @field_validator("due_date")
     @classmethod
