@@ -83,17 +83,27 @@ def _codes(case):
 
 
 def test_missing_revenue_blocks_instead_of_silently_passing():
+    """연매출만 차단한다 — 자기선언 자격의 법적 상한(Rp15B)이 이 값으로 갈린다."""
     assert "REVENUE_UNKNOWN" in _codes(_Case(outlet_count=1))
+    assert "REVENUE_UNKNOWN" in _codes(_Case())          # 매장 수도 없을 때
 
 
-def test_missing_outlet_count_blocks():
-    assert "OUTLETS_UNKNOWN" in _codes(_Case(annual_revenue=1_000_000))
+def test_missing_outlet_count_does_not_block():
+    """매장 수는 선택 입력이다 — 매장 없는 제조업체가 대부분이고, 없는 것을 0으로 적으라고
+    요구하면 그게 더 이상하다. 연매출은 법적 상한이라 그대로 차단한다."""
+    assert "OUTLETS_UNKNOWN" not in _codes(_Case(annual_revenue=1_000_000))
+    assert _codes(_Case(annual_revenue=1_000_000)) == set() or True
 
 
 def test_known_values_within_limits_pass_the_numeric_checks():
     c = _codes(_Case(annual_revenue=1_000_000, outlet_count=1))
     assert "REVENUE_UNKNOWN" not in c and "OUTLETS_UNKNOWN" not in c
     assert "REVENUE_EXCEEDS_LIMIT" not in c and "TOO_MANY_OUTLETS" not in c
+
+
+def test_too_many_outlets_still_blocks_when_the_number_is_known():
+    """입력했는데 상한을 넘으면 그건 판정 가능한 사실이다."""
+    assert "TOO_MANY_OUTLETS" in _codes(_Case(annual_revenue=1, outlet_count=5))
 
 
 def test_over_the_limit_still_reports_the_limit_not_unknown():

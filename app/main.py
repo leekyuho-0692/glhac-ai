@@ -3342,20 +3342,25 @@ def add_product(case_id: str, body: schemas.ProductCreate,
                 user=Depends(auth.require_roles("applicant", "consultant")),
                 db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
-    # 같은 케이스에 같은 제품을 두 번 넣으면 인증 범위(scope)에 중복으로 인쇄되고,
-    # 제품×원재료 매트릭스도 두 줄이 된다. 대소문자·앞뒤 공백은 같은 이름으로 본다.
+    # 같은 이름이 이미 있으면 **알려만 준다**. 막지 않는다.
+    #
+    # 같은 제품을 두 번 넣으면 인증 범위(scope)에 중복 인쇄되고 매트릭스도 두 줄이 되지만,
+    # 그건 등록을 거절할 이유는 못 된다. 같은 이름의 다른 규격·용량을 따로 올리는 일이
+    # 실제로 있고, 무엇보다 등록하는 쪽이 사정을 안다. 판단은 사람에게 남기고
+    # 화면이 "이미 있습니다"라고 말해 주면 된다.
     _key = _norm_material(body.name)
-    for ex in db.query(models.Product).filter_by(case_id=case_id).all():
-        if _norm_material(ex.name) == _key:
-            raise HTTPException(409, {"code": "PRODUCT_DUPLICATE", "name": body.name,
-                                      "existing_product_id": ex.product_id,
-                                      "message": "이미 등록된 제품입니다: %s" % ex.name})
+    dup = next((x for x in db.query(models.Product).filter_by(case_id=case_id).all()
+                if _norm_material(x.name) == _key), None)
     p = models.Product(case_id=case_id, name=body.name, category=body.category,
                        description=body.description,
                        registration_type=body.registration_type, status="draft")
     db.add(p)
     db.commit()
-    return {"product_id": p.product_id}
+    out = {"product_id": p.product_id}
+    if dup:
+        out["duplicate_of"] = dup.product_id
+        out["warning"] = "같은 이름의 제품이 이미 있습니다: %s" % dup.name
+    return out
 
 
 @app.post("/cases/{case_id}/materials")

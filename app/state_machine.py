@@ -147,10 +147,10 @@ def guard_pathway_selfdeclare(db, case):
     fac = len(case.facility_ids or [])
     if fac > SELF_DECLARE_MAX_FACILITIES:
         g.append({"code": "TOO_MANY_FACILITIES", "max": SELF_DECLARE_MAX_FACILITIES, "have": fac})
-    # BPJPH: 매장 최대 1개. 여기도 미입력은 판정 불가다.
-    if case.outlet_count is None:
-        g.append({"code": "OUTLETS_UNKNOWN", "max": SELF_DECLARE_MAX_OUTLETS})
-    elif case.outlet_count > SELF_DECLARE_MAX_OUTLETS:
+    # BPJPH: 매장 최대 1개. **매장 수는 선택 입력이라 미입력을 차단하지 않는다** —
+    # 매장이 없는 제조업체가 대부분이고, 없는 것을 0으로 적으라고 요구하면 그게 더 이상하다.
+    # 연매출은 자기선언 자격의 법적 상한(Rp15B)이라 그대로 미입력을 차단한다.
+    if case.outlet_count is not None and case.outlet_count > SELF_DECLARE_MAX_OUTLETS:
         g.append({"code": "TOO_MANY_OUTLETS", "max": SELF_DECLARE_MAX_OUTLETS, "have": case.outlet_count})
     if len(critical_materials(db, case.case_id)) > 0:
         g.append({"code": "HAS_CRITICAL_MATERIAL"})

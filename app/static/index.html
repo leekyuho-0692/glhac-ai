@@ -790,6 +790,7 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+ "이름 중복":"Duplicate name",
  "AI 호출 실패":"AI call failed", "AI 미연결":"AI not connected", "답변 없음":"No answer",
  "다시 물어보기":"Ask again", "AI 호출이 실패했습니다 — 잠시 후 다시 물어보세요(답이 없는 것이 아닙니다).":"The AI call failed — try again shortly (this is not an empty answer).",
  "원본":"Original",
@@ -1303,6 +1304,7 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+ "이름 중복":"Nama ganda",
  "AI 호출 실패":"Panggilan AI gagal", "AI 미연결":"AI tidak terhubung", "답변 없음":"Tidak ada jawaban",
  "다시 물어보기":"Tanya lagi", "AI 호출이 실패했습니다 — 잠시 후 다시 물어보세요(답이 없는 것이 아닙니다).":"Panggilan AI gagal — coba lagi sebentar lagi (ini bukan jawaban kosong).",
  "원본":"Asli",
@@ -4825,13 +4827,17 @@ function productAccordion(id,prods){
   if(!prods||!prods.length) return '<div class="muted small">제품 없음</div>';
   // 원재료 연결 있는 제품 먼저, 없는(0개) 제품은 맨 아래로 — 안정 정렬(그룹 내 원래 순서 유지)
   prods=prods.map((p,i)=>[p,i]).sort((a,b)=>(((a[0].material_count||0)>0?0:1)-((b[0].material_count||0)>0?0:1))||(a[1]-b[1])).map(x=>x[0]);
+  // 같은 이름이 둘 이상이면 알려만 준다 — 막지는 않는다. 같은 이름의 다른 규격·용량을
+  // 따로 올리는 일이 실제로 있고, 사정은 등록한 쪽이 안다.
+  const _pn={};prods.forEach(p=>{const k=(p.name||'').trim().toLowerCase();_pn[k]=(_pn[k]||0)+1;});
   return '<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">'+prods.map(p=>{
     const has=(p.material_count||0)>0;const rc=p.risk_count>0?'bad':(has?'ok':'mute');
+    const dupN=_pn[(p.name||'').trim().toLowerCase()]||0;
     return `<div class="pacc" data-pid="${p.product_id}">
       <div onclick="toggleProdAcc('${id}','${p.product_id}',this)" style="display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;border-top:1px solid var(--line);user-select:none">
         <span class="pacc-ar" style="color:var(--ink3);font-size:10px;width:11px;display:inline-block">▶</span>
         <b style="flex:1;font-size:12.5px">${esc(p.name)}${p.description?`<span class="muted" style="font-weight:400"> · ${esc(String(p.description).slice(0,60))}</span>`:''}</b>
-        ${tag(rc,T('원재료')+' '+(p.material_count||0))}${p.risk_count>0?tag('bad','⚠ '+T('위험')+' '+p.risk_count):''}
+        ${tag(rc,T('원재료')+' '+(p.material_count||0))}${p.risk_count>0?tag('bad','⚠ '+T('위험')+' '+p.risk_count):''}${dupN>1?tag('warn','⚠ '+T('이름 중복')+' '+dupN):''}
         ${(p.missing_for_report||[]).length?tag('warn','⚠ '+T('보고서 미비')+' '+(p.missing_for_report||[]).map(k=>T(k==='photo'?'사진':'설명')).join('·')):tag('ok','✓ '+T('보고서 준비'))}
       </div>
       <div class="pacc-b" style="display:none;padding:2px 11px 10px 32px;background:var(--panel2,#f7f9fc)"></div>
@@ -11168,7 +11174,7 @@ function showPrivacyNotice(){
 /* 워크플로우 게이트(단일 케이스) 시각화 — 조회 전용. 기존 GET 재사용:
    /cases/{id}/workflow(blockers) · /cases/{id}/audit-report/status(fatwa_gate) · /cases/{id}/invoices(paid).
    ⚠️ 4a 워크플로우 모니터(전역 집계)와 구분 — 여긴 이 케이스의 게이트만. 신규 백엔드 없음. */
-const BLOCKER_KO={PENYELIA_CERT_EXPIRED:'할랄감독자 자격 만료 — 재교육 필요',REVENUE_UNKNOWN:'연매출 미입력 — 자기선언 자격을 판정할 수 없음',OUTLETS_UNKNOWN:'매장 수 미입력 — 자기선언 자격을 판정할 수 없음',RISK_NOT_LOW:'위험도 Low 아님',NOT_MSME:'MSME(소상공인) 아님',HAS_CRITICAL_MATERIAL:'중대(critical) 원재료 존재',MATERIAL_EVIDENCE_INCOMPLETE:'원재료 증빙 미완',PENDAMPING_NOT_VERIFIED:'펜담핑(Pendamping) 미검증',SIHALAL_IDENTITY_UNVERIFIED:'SIHALAL 신원 미검증',PENYELIA_HALAL_MISSING:'페냐리아 할랄 미지정',FATWA_NOT_APPROVED:'파트와 미승인',SCOPE_NOT_FROZEN:'인증범위 미동결',UNRESOLVED_MAJOR_NC:'미해결 주요 부적합(major NC)',UNPAID_INVOICE:'미결제 청구서',INVALID_TRANSITION:'허용되지 않는 전이'};
+const BLOCKER_KO={PENYELIA_CERT_EXPIRED:'할랄감독자 자격 만료 — 재교육 필요',REVENUE_UNKNOWN:'연매출 미입력 — 자기선언 자격을 판정할 수 없음',RISK_NOT_LOW:'위험도 Low 아님',NOT_MSME:'MSME(소상공인) 아님',HAS_CRITICAL_MATERIAL:'중대(critical) 원재료 존재',MATERIAL_EVIDENCE_INCOMPLETE:'원재료 증빙 미완',PENDAMPING_NOT_VERIFIED:'펜담핑(Pendamping) 미검증',SIHALAL_IDENTITY_UNVERIFIED:'SIHALAL 신원 미검증',PENYELIA_HALAL_MISSING:'페냐리아 할랄 미지정',FATWA_NOT_APPROVED:'파트와 미승인',SCOPE_NOT_FROZEN:'인증범위 미동결',UNRESOLVED_MAJOR_NC:'미해결 주요 부적합(major NC)',UNPAID_INVOICE:'미결제 청구서',INVALID_TRANSITION:'허용되지 않는 전이'};
 async function workflowGatesCard(id,w,status){
   let arep={},invs=[];
   try{arep=await API(`/cases/${id}/audit-report/status`);}catch(_){}

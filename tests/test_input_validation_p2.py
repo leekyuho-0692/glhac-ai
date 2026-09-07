@@ -106,7 +106,7 @@ def test_extracted_certificate_with_reversed_dates_keeps_no_dates():
 
 
 # ── ⑩ 제품명 중복 ────────────────────────────────────────────────────────
-def test_duplicate_product_name_is_rejected():
+def test_duplicate_product_name_is_reported_not_blocked():
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -117,9 +117,12 @@ def test_duplicate_product_name_is_rejected():
         cid = c.post("/cases", json={"company_name": "제품중복"}, headers=h).json()["case_id"]
         assert c.post("/cases/%s/products" % cid, json={"name": "딸기잼"},
                       headers=h).status_code == 200
+        # 막지 않는다 — 신규 업체는 남의 제품 사정을 알 수 없고, 같은 이름의 다른 규격을
+        # 따로 올리는 일도 있다. 등록은 시키고 "이미 있습니다"라고 알려 준다.
         r = c.post("/cases/%s/products" % cid, json={"name": "  딸기잼 "}, headers=h)
-        assert r.status_code == 409, r.text
-        assert r.json()["detail"]["code"] == "PRODUCT_DUPLICATE"
+        assert r.status_code == 200, r.text
+        assert r.json().get("duplicate_of"), r.json()
+        assert "이미 있습니다" in r.json().get("warning", "")
         # 다른 제품은 정상 등록
         assert c.post("/cases/%s/products" % cid, json={"name": "포도잼"},
                       headers=h).status_code == 200
