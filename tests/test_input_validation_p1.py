@@ -82,10 +82,27 @@ def _codes(case):
     return {g["code"] for g in sm.guard_pathway_selfdeclare(_DB(), case)}
 
 
-def test_missing_revenue_blocks_instead_of_silently_passing():
-    """연매출만 차단한다 — 자기선언 자격의 법적 상한(Rp15B)이 이 값으로 갈린다."""
-    assert "REVENUE_UNKNOWN" in _codes(_Case(outlet_count=1))
-    assert "REVENUE_UNKNOWN" in _codes(_Case())          # 매장 수도 없을 때
+def test_missing_revenue_does_not_block():
+    """연매출·매장 수는 선택 입력이다 — 미입력으로 막지 않는다.
+
+    대신 '확인하지 못했다'는 사실은 assess_pathway 의 unverified 로 드러낸다.
+    통과시킨 것과 확인한 것은 다르고, 그 차이가 보이지 않으면 안 된다."""
+    assert "REVENUE_UNKNOWN" not in _codes(_Case(outlet_count=1))
+    assert "REVENUE_UNKNOWN" not in _codes(_Case())
+
+
+def test_unverified_criteria_are_still_reported(monkeypatch):
+    """막지 않더라도 무엇을 근거 없이 통과시켰는지는 남는다."""
+    class _MDB(_DB):
+        def all(self): return []
+    monkeypatch.setattr(sm, "materials", lambda db, cid: [])
+    monkeypatch.setattr(sm, "critical_materials", lambda db, cid: [])
+    monkeypatch.setattr(sm, "evidence_complete", lambda db, cid: True)
+    a = sm.assess_pathway(_MDB(), _Case())
+    fields = {u["field"] for u in a["unverified"]}
+    assert fields == {"annual_revenue", "outlet_count"}
+    b = sm.assess_pathway(_MDB(), _Case(annual_revenue=1, outlet_count=1))
+    assert b["unverified"] == []
 
 
 def test_missing_outlet_count_does_not_block():

@@ -135,12 +135,11 @@ def guard_pathway_selfdeclare(db, case):
         g.append({"code": "RISK_NOT_LOW"})
     if not case.is_msme:
         g.append({"code": "NOT_MSME"})
-    # BPJPH: 연매출 ≤ Rp15B. **모르면 통과가 아니라 차단이다** — 자기선언은 업체가
-    # 자격을 스스로 주장하는 경로라, 근거 없이 통과시키면 그 주장을 우리가 대신 해 주는 셈이
-    # 된다(실측: 케이스 9건 전부 매출·매장수가 비어 있었고 전부 무사통과했다).
-    if case.annual_revenue is None:
-        g.append({"code": "REVENUE_UNKNOWN", "limit": SELF_DECLARE_REVENUE_LIMIT})
-    elif case.annual_revenue > SELF_DECLARE_REVENUE_LIMIT:
+    # BPJPH: 연매출 ≤ Rp15B. **연매출·매장 수는 선택 입력이라 미입력을 차단하지 않는다.**
+    # 입력했는데 상한을 넘으면 그때는 판정 가능한 사실이므로 막는다.
+    # 미입력이라 확인하지 못했다는 사실 자체는 assess_pathway 의 unverified 로 남긴다 —
+    # 통과시키되 '무엇을 근거 없이 통과시켰는지'는 보이게 한다.
+    if case.annual_revenue is not None and case.annual_revenue > SELF_DECLARE_REVENUE_LIMIT:
         g.append({"code": "REVENUE_EXCEEDS_LIMIT",
                   "limit": SELF_DECLARE_REVENUE_LIMIT, "have": case.annual_revenue})
     # BPJPH: 공장 최대 1개 (이 신청 대상 공장 수)
@@ -341,7 +340,16 @@ def assess_pathway(db, case):
     blockers = [{"code": "HAS_CRITICAL_MATERIAL", "target": m.name} for m in crit]
     blockers += [{"code": "NOT_ON_POSITIVE_LIST", "target": m.name, "reason": _non_positive_reason(m)}
                  for m in non_positive]
+    # 선택 입력이라 막지는 않지만, 확인하지 못한 자격 요건은 드러내 둔다.
+    unverified = []
+    if case.annual_revenue is None:
+        unverified.append({"field": "annual_revenue", "label": "연매출",
+                           "limit": SELF_DECLARE_REVENUE_LIMIT})
+    if case.outlet_count is None:
+        unverified.append({"field": "outlet_count", "label": "매장 수",
+                           "limit": SELF_DECLARE_MAX_OUTLETS})
     return {"suggested_pathway": suggested, "risk_category": risk, "is_msme": bool(case.is_msme),
+            "unverified": unverified,
             "critical_ingredient_count": len(crit), "evidence_complete": ev,
             "positive_listed_count": sum(1 for m in mats if positive_listed(m)),
             "non_positive_count": len(non_positive),

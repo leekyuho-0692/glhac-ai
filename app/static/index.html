@@ -790,6 +790,7 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+ "미확인 자격 요건":"Unverified eligibility criteria", "입력하지 않아 확인하지 못했습니다 — 자기선언 자격 판단의 근거가 비어 있습니다.":"Not entered, so it could not be checked — the basis for the self-declaration eligibility decision is missing.",
  "이름 중복":"Duplicate name",
  "AI 호출 실패":"AI call failed", "AI 미연결":"AI not connected", "답변 없음":"No answer",
  "다시 물어보기":"Ask again", "AI 호출이 실패했습니다 — 잠시 후 다시 물어보세요(답이 없는 것이 아닙니다).":"The AI call failed — try again shortly (this is not an empty answer).",
@@ -1304,6 +1305,7 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+ "미확인 자격 요건":"Kriteria kelayakan belum diverifikasi", "입력하지 않아 확인하지 못했습니다 — 자기선언 자격 판단의 근거가 비어 있습니다.":"Tidak diisi sehingga tidak dapat diperiksa — dasar penilaian kelayakan deklarasi mandiri kosong.",
  "이름 중복":"Nama ganda",
  "AI 호출 실패":"Panggilan AI gagal", "AI 미연결":"AI tidak terhubung", "답변 없음":"Tidak ada jawaban",
  "다시 물어보기":"Tanya lagi", "AI 호출이 실패했습니다 — 잠시 후 다시 물어보세요(답이 없는 것이 아닙니다).":"Panggilan AI gagal — coba lagi sebentar lagi (ini bukan jawaban kosong).",
@@ -6090,12 +6092,17 @@ function assessRender(id){
   const crit=(r.critical_ingredient_count!=null)?r.critical_ingredient_count:'—';
   const ev=r.evidence_complete;
   const bl=r.blockers||[];
+  // 선택 입력이라 막지는 않았지만, 확인하지 못한 자격 요건은 보이게 둔다 —
+  // 통과시킨 것과 확인한 것은 다르다.
+  const unv=r.unverified||[];
+  const unvHtml=unv.length?`<div class="banner warn" style="margin-top:8px">⚠ <b>${T('미확인 자격 요건')}</b> · ${unv.map(u=>esc(T(u.label||u.field))).join(", ")}
+      <div class="muted small" style="margin-top:3px">${T('입력하지 않아 확인하지 못했습니다 — 자기선언 자격 판단의 근거가 비어 있습니다.')}</div></div>`:'';
   // SEHATI 긍정목록(known-halal) — 전 원재료가 온톨로지 halal 매칭돼야 self-declare 적격.
   const mm=r.materials||[];
   const plc=(r.positive_listed_count!=null)?r.positive_listed_count:mm.filter(m=>m.positive_listed).length;
   const npc=(r.non_positive_count!=null)?r.non_positive_count:mm.filter(m=>!m.positive_listed).length;
   const npReason=x=>x==='unmatched'?T('미매칭 원재료'):(x==='not_halal'?T('할랄 미확인'):x);
-  const posBadges=mm.length?`<div class="small" style="margin-top:8px"><b>${T('긍정목록 점검')} <span class="en">· Positive-list</span></b>
+  const posBadges=mm.length?`${unvHtml}<div class="small" style="margin-top:8px"><b>${T('긍정목록 점검')} <span class="en">· Positive-list</span></b>
     <div class="btnrow" style="flex-wrap:wrap;gap:5px;margin-top:4px">${mm.map(m=>`<span class="tag t-${m.positive_listed?'ok':'warn'}" title="${esc(npReason(m.reason))}">${m.positive_listed?'✅':'⚠️'} ${esc(m.name)}</span>`).join("")}</div>
     ${npc>0?`<div class="small" style="margin-top:5px;color:var(--bad)">${T('미확인 원재료')} ${npc}${T('건 — 정규경로 필요')} · ${mm.filter(m=>!m.positive_listed).map(m=>esc(m.name)+'('+esc(npReason(m.reason))+')').join(', ')}</div>`:`<div class="small" style="margin-top:5px"><span class="ok">${T('전 원재료 긍정목록 확인')}</span></div>`}</div>`:'';
   return `<div class="btnrow" style="flex-wrap:wrap;gap:6px">
@@ -11174,7 +11181,7 @@ function showPrivacyNotice(){
 /* 워크플로우 게이트(단일 케이스) 시각화 — 조회 전용. 기존 GET 재사용:
    /cases/{id}/workflow(blockers) · /cases/{id}/audit-report/status(fatwa_gate) · /cases/{id}/invoices(paid).
    ⚠️ 4a 워크플로우 모니터(전역 집계)와 구분 — 여긴 이 케이스의 게이트만. 신규 백엔드 없음. */
-const BLOCKER_KO={PENYELIA_CERT_EXPIRED:'할랄감독자 자격 만료 — 재교육 필요',REVENUE_UNKNOWN:'연매출 미입력 — 자기선언 자격을 판정할 수 없음',RISK_NOT_LOW:'위험도 Low 아님',NOT_MSME:'MSME(소상공인) 아님',HAS_CRITICAL_MATERIAL:'중대(critical) 원재료 존재',MATERIAL_EVIDENCE_INCOMPLETE:'원재료 증빙 미완',PENDAMPING_NOT_VERIFIED:'펜담핑(Pendamping) 미검증',SIHALAL_IDENTITY_UNVERIFIED:'SIHALAL 신원 미검증',PENYELIA_HALAL_MISSING:'페냐리아 할랄 미지정',FATWA_NOT_APPROVED:'파트와 미승인',SCOPE_NOT_FROZEN:'인증범위 미동결',UNRESOLVED_MAJOR_NC:'미해결 주요 부적합(major NC)',UNPAID_INVOICE:'미결제 청구서',INVALID_TRANSITION:'허용되지 않는 전이'};
+const BLOCKER_KO={PENYELIA_CERT_EXPIRED:'할랄감독자 자격 만료 — 재교육 필요',RISK_NOT_LOW:'위험도 Low 아님',NOT_MSME:'MSME(소상공인) 아님',HAS_CRITICAL_MATERIAL:'중대(critical) 원재료 존재',MATERIAL_EVIDENCE_INCOMPLETE:'원재료 증빙 미완',PENDAMPING_NOT_VERIFIED:'펜담핑(Pendamping) 미검증',SIHALAL_IDENTITY_UNVERIFIED:'SIHALAL 신원 미검증',PENYELIA_HALAL_MISSING:'페냐리아 할랄 미지정',FATWA_NOT_APPROVED:'파트와 미승인',SCOPE_NOT_FROZEN:'인증범위 미동결',UNRESOLVED_MAJOR_NC:'미해결 주요 부적합(major NC)',UNPAID_INVOICE:'미결제 청구서',INVALID_TRANSITION:'허용되지 않는 전이'};
 async function workflowGatesCard(id,w,status){
   let arep={},invs=[];
   try{arep=await API(`/cases/${id}/audit-report/status`);}catch(_){}
