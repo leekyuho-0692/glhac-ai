@@ -4205,16 +4205,31 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
 
 
 def _pending_extractions(db, case_id):
-    """LLM 만 뽑아 자동 반영하지 않은 목록 — 문서에 남긴 출처(fields._sources)로 되짚는다."""
+    """LLM 만 뽑아 **아직 케이스에 없는** 제품·원재료 — 문서에 남긴 출처(fields._sources)로 되짚는다.
+
+    이미 반영된 값은 빼야 한다. 종전에는 문서에 남아 있는 LLM 추출값을 전부 내보내서,
+    사람이 확인해 반영한 뒤에도 같은 항목이 계속 대기 목록에 남았다(실측: 어떤 케이스는
+    대기 157건 전부가 이미 케이스에 있는 값이었고, 정작 새로 볼 것은 0건이었다).
+    그러면 목록이 '봐야 할 것'을 알려주지 못하고 그냥 소음이 된다.
+
+    같은 값인지 판단은 반영 쪽(_apply_agg_to_case)과 같은 정규화(_norm_material)를 쓴다 —
+    기준이 다르면 반영했는데도 안 사라지는 항목이 생긴다."""
     from .intake import _MATERIAL_SRC, _PRODUCT_SRC, aggregate_fields
     docs = [{"doc_type": d.doc_type, "fields": d.fields or {},
              "document_id": d.document_id, "filename": d.filename}
             for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
             if d.fields]
     agg = aggregate_fields([{"doc_type": x["doc_type"], "fields": x["fields"]} for x in docs])
+    have_p = {_norm_material(p.name) for p in
+              db.query(models.Product).filter_by(case_id=case_id) if p.name}
+    have_m = {_norm_material(m.name) for m in
+              db.query(models.Material).filter_by(case_id=case_id) if m.name}
     # 어느 문서에서 나왔는지 붙여 준다 — 확인하는 사람이 원본을 열어봐야 한다
     out = []
     for it in (agg.get("pending") or []):
+        _have = have_p if it["kind"] == "product_names" else have_m
+        if _norm_material(it["value"]) in _have:
+            continue
         src = next((x for x in docs
                     if it["value"] in ((x["fields"].get(it["kind"]) or []))), None)
         out.append({**it,

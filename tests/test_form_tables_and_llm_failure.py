@@ -165,3 +165,39 @@ def test_form_tables_never_reach_the_llm_at_all(monkeypatch):
     rows += [[None, str(i), "CITRIC ACID", "RZBC", "2025-04-22"] for i in range(1, 30)]
     data9 = _xlsx({"Form.9 재료 보관 기록 (피치X샷)": rows})
     assert intake.classify("Form 9.xlsx", intake.parse_file("Form 9.xlsx", data9))["doc_type"] == "other"
+
+
+def test_pending_list_drops_values_already_in_the_case(monkeypatch):
+    """확인 대기는 '아직 안 들어간 것'만 보여야 한다 — 반영한 뒤에도 남으면 목록이 소음이 된다.
+
+    실측: 어떤 케이스는 대기 157건 전부가 이미 케이스에 있는 값이었고 새로 볼 것은 0건이었다.
+    화면이 없던 동안에는 이 사실이 드러나지 않았다."""
+    from app import main as m
+
+    class _Doc:
+        def __init__(self, fields):
+            self.doc_type, self.fields = "material_list", fields
+            self.document_id, self.filename = "d1", "x.xlsx"
+
+    class _Named:
+        def __init__(self, name): self.name = name
+
+    class _Q:
+        def __init__(self, rows): self._rows = rows
+        def filter_by(self, **kw): return self
+        def all(self): return self._rows
+        def __iter__(self): return iter(self._rows)
+
+    doc = _Doc({"material_names": ["설탕", "정제수"]})     # 구조 출처 표시 없음 → LLM 취급
+
+    class _DB:
+        def query(self, model):
+            if model is m.models.DocumentAsset:
+                return _Q([doc])
+            if model is m.models.Product:
+                return _Q([])
+            return _Q([_Named("설탕")])                    # 설탕은 이미 케이스에 있다
+
+    vals = [x["value"] for x in m._pending_extractions(_DB(), "c1")]
+    assert "설탕" not in vals, "이미 반영된 값이 대기 목록에 남았다"
+    assert "정제수" in vals, "아직 안 들어간 값이 빠졌다"
