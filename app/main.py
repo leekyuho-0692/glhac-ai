@@ -4340,7 +4340,7 @@ def detect_doc_lang(text):
 
 
 def _translate_text(text, lang, src=None):
-    """문서 번역 — qwen2.5(영문지시)로 청크 분할. 실패 시 ''.
+    """문서 번역 — qwen2.5(영문지시)로 청크 분할. 실패 시 ''(부분 결과를 내지 않는다).
     원문 언어를 감지해 지시를 맞춘다(한국어 고정이면 인니·영문 문서에 틀린 지시가 나간다).
     원문과 목표가 같으면 번역하지 않고 원문을 돌려준다 — 지어내지 않게.
     한글 echo(번역실패) 청크는 1회 재시도. gemma3는 KO를 그대로 반환해 부적합."""
@@ -4365,7 +4365,14 @@ def _translate_text(text, lang, src=None):
         ch = text[i:i + 1500]
         if not ch.strip():
             continue
-        res = ai_local.llm_text(sysmsg, ch, model=_TRANSLATE_MODEL) or ""
+        r = ai_local.llm_text_result(sysmsg, ch, model=_TRANSLATE_MODEL)
+        # 호출이 실패한 조각은 빈칸으로 두면 안 된다. 다른 조각이 성공하면 전체 결과는
+        # '번역됨'으로 보이고 그대로 캐시돼, 문서 한가운데가 조용히 사라진다.
+        # 한 조각이라도 실패하면 번역 자체를 포기한다 — 구멍 난 번역을 저장하느니 낫다.
+        if r["error"]:
+            log.warning("번역 중단 — 조각 %d 호출 실패: %s", i // 1500, r["error"])
+            return ""
+        res = r["text"] or ""
         # 재시도 신호 둘: (1) 한국어 원문인데 한글이 남았다 (2) 보호 용어가 사라졌다.
         # 둘 다 조용한 오역이라 결과만 보면 알 수 없다. 재시도해도 안 되면 그대로 둔다
         # — 지어낸 번역을 계속 굴리는 것보다 한 번 더 시도하고 멈추는 편이 낫다.
@@ -4373,7 +4380,11 @@ def _translate_text(text, lang, src=None):
         if (src == "ko" and _hangul_ratio(res) > 0.15) or _lost:
             if _lost:
                 log.info("번역 보호용어 소실 재시도: %s", ", ".join(_lost[:5]))
-            res = ai_local.llm_text(sysmsg, ch, model=_TRANSLATE_MODEL) or res
+            r2 = ai_local.llm_text_result(sysmsg, ch, model=_TRANSLATE_MODEL)
+            if r2["error"]:
+                log.warning("번역 중단 — 재시도 실패: %s", r2["error"])
+                return ""
+            res = r2["text"] or res
         out.append(res)
     return "\n".join(out).strip()
 
@@ -4403,7 +4414,8 @@ def translate_document(document_id: str, lang: str = "id",
         raise HTTPException(422, {"code": "NO_TEXT", "detail": "번역할 추출 텍스트가 없습니다"})
     translated = _translate_text(text, lang)
     if not translated:
-        raise HTTPException(502, {"code": "TRANSLATE_FAILED", "detail": "번역 엔진(gemma3) 응답 없음"})
+        raise HTTPException(502, {"code": "TRANSLATE_FAILED",
+                                  "detail": "번역 엔진 호출 실패 — 번역본을 저장하지 않았습니다. 잠시 후 다시 시도하세요."})
     cache[lang] = translated
     d.translations = cache
     flag_modified(d, "translations")
@@ -14348,9 +14360,30 @@ def ask_ai(case_id: str, body: schemas.AskReq,
     if long_term_sources:
         sysmsg += ("\n\n[장기기억 참고 · CHU-1 (보조 근거, 케이스/도메인 정보와 상충 시 무시)]\n"
                    + "\n".join("- " + s["text"] for s in long_term_sources[:3]))
-    ans = ai_local.llm_text(sysmsg, body.question)
-    return {"answer": ans or "(LLM 응답 없음)", "context_facts": ctx,
+    r = ai_local.llm_text_result(sysmsg, body.question)
+    ans, err = r["text"], r["error"]
+    # 답을 못 준 이유를 셋으로 갈라 말한다. 종전에는 전부 '(LLM 응답 없음)' 이라
+    # 꺼져 있는 건지, 실패한 건지, 정말 할 말이 없는 건지 사용자가 알 수 없었다.
+    # answer 는 비우지 않는다 — 화면이 빈 말풍선을 띄우는 것보다 이유를 읽는 편이 낫다.
+    status = "ok"
+    if err == "LLM_UNAVAILABLE":
+        status, ans = "unavailable", _ASK_MSG["unavailable"]
+    elif err:
+        status, ans = "failed", _ASK_MSG["failed"]
+    elif not ans:
+        status, ans = "empty", _ASK_MSG["empty"]
+    return {"answer": ans, "status": status, "error": err if status == "failed" else None,
+            "retryable": status == "failed", "context_facts": ctx,
             "domain_sources": domain_sources, "long_term_sources": long_term_sources}
+
+
+# 채팅이 답을 못 준 이유 — 세 가지를 다른 말로 한다. '응답 없음' 한 마디로 뭉치면
+# 사용자는 다시 물어봐야 할지, 관리자를 불러야 할지 판단할 수 없다.
+_ASK_MSG = {
+    "unavailable": "AI가 연결되어 있지 않습니다 — 관리자에게 문의하세요(다시 물어봐도 같습니다).",
+    "failed": "AI 호출이 실패했습니다 — 잠시 후 다시 물어보세요(답이 없는 것이 아닙니다).",
+    "empty": "AI가 답을 만들지 못했습니다 — 질문을 조금 더 구체적으로 적어 보세요.",
+}
 
 
 @app.get("/ai/context/health")

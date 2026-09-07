@@ -201,3 +201,52 @@ def test_pending_list_drops_values_already_in_the_case(monkeypatch):
     vals = [x["value"] for x in m._pending_extractions(_DB(), "c1")]
     assert "설탕" not in vals, "이미 반영된 값이 대기 목록에 남았다"
     assert "정제수" in vals, "아직 안 들어간 값이 빠졌다"
+
+
+def test_chat_tells_apart_unavailable_failed_and_empty(monkeypatch):
+    """채팅이 답을 못 준 이유 셋을 다른 말로 한다 — '응답 없음' 한 마디로 뭉치지 않는다."""
+    from app import ai_local
+
+    def _fake(pv, text="", err=None):
+        monkeypatch.setattr(ai_local, "provider", lambda *a, **k: pv)
+        monkeypatch.setattr(ai_local, "_openai_chat", lambda *a, **k: text)
+        return None
+
+    # ① AI 없는 배포 — 물어볼 곳 자체가 없다
+    _fake("none")
+    r = ai_local.llm_text_result("s", "u")
+    assert r == {"text": "", "error": "LLM_UNAVAILABLE"}
+
+    # ② 호출 실패 — 다시 물어보면 될 수도 있다
+    monkeypatch.setattr(ai_local, "provider", lambda *a, **k: "openai")
+    def boom(*a, **k):
+        raise RuntimeError("ReadTimeout")
+    monkeypatch.setattr(ai_local, "_openai_chat", boom)
+    r = ai_local.llm_text_result("s", "u")
+    assert r["text"] == "" and "ReadTimeout" in r["error"]
+
+    # ③ 모델이 답했는데 내용이 없다 — 다시 물어봐도 같다
+    monkeypatch.setattr(ai_local, "_openai_chat", lambda *a, **k: "   ")
+    r = ai_local.llm_text_result("s", "u")
+    assert r["text"] == "" and r["error"] is None
+
+    # 기존 호출부는 그대로 문자열을 받는다(호환)
+    assert ai_local.llm_text("s", "u") == ""
+
+
+def test_translation_never_caches_a_hole(monkeypatch):
+    """번역 조각 하나가 실패하면 부분 결과를 내지 않는다 — 구멍 난 번역이 캐시되면 못 알아챈다."""
+    from app import main as m
+
+    calls = {"n": 0}
+
+    def flaky(system, user, timeout=120, model=None):
+        calls["n"] += 1
+        if calls["n"] == 2:                       # 두 번째 조각에서 호출 실패
+            return {"text": "", "error": "ReadTimeout"}
+        return {"text": "translated chunk", "error": None}
+
+    monkeypatch.setattr(m.ai_local, "llm_text_result", flaky)
+    monkeypatch.setattr(m, "detect_doc_lang", lambda t: "ko")
+    out = m._translate_text("가" * 1600, "id")     # 1500자 초과 → 조각 2개
+    assert out == "", "실패한 조각이 있는데 부분 번역을 돌려줬다: %r" % (out[:60],)

@@ -184,21 +184,37 @@ def llm_json(system, user, timeout=90):
         return {"error": str(e)}
 
 
-def llm_text(system, user, timeout=120, model=None):
-    """평문(prose) 응답 — 설명·요약용. model 지정 시 해당 공급자 모델 사용. 실패 시 ''."""
+def llm_text_result(system, user, timeout=120, model=None):
+    """평문(prose) 응답 — {'text': str, 'error': str|None}.
+
+    셋을 구분한다. 종전에는 전부 빈 문자열이라 화면에서 같은 말로 보였다:
+      · error='LLM_UNAVAILABLE'  AI 없는 배포 — 애초에 물어볼 곳이 없다
+      · error=<사유>             호출 실패(타임아웃·연결거부 등) — 다시 물어보면 될 수도 있다
+      · error=None, text=''      모델이 답했는데 내용이 없다 — 다시 물어봐도 같다
+
+    실측: 다른 서비스가 Ollama 를 점유한 동안 채팅이 120초 타임아웃으로 죽었는데,
+    화면에는 '(LLM 응답 없음)' 이라고만 떠서 모델이 할 말이 없는 것과 구별되지 않았다."""
     pv = provider()
     if pv == "none":
-        return ""
+        return {"text": "", "error": "LLM_UNAVAILABLE"}
     try:
         if pv == "openai":
-            return _openai_chat(system, user, timeout, False, model).strip()
+            return {"text": _openai_chat(system, user, timeout, False, model).strip(),
+                    "error": None}
         r = httpx.post(f"{OLLAMA}/api/chat", timeout=timeout, json={
             "model": model or MODEL, "stream": False,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}]})
-        return r.json()["message"]["content"].strip()
-    except Exception:  # noqa: BLE001
-        return ""
+        return {"text": r.json()["message"]["content"].strip(), "error": None}
+    except Exception as e:  # noqa: BLE001
+        return {"text": "", "error": (str(e) or type(e).__name__)[:200]}
+
+
+def llm_text(system, user, timeout=120, model=None):
+    """평문(prose) 응답 — 설명·요약용. 실패 시 ''(기존 호출부 호환).
+
+    실패와 '할 말 없음'을 구분해야 하는 곳은 llm_text_result 를 쓴다."""
+    return llm_text_result(system, user, timeout, model)["text"]
 
 
 def ocr_image(path, lang="korean"):
