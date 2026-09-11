@@ -140,7 +140,7 @@ def test_qr_visitor_is_attributed_to_the_consultant():
         h = {"Authorization": "Bearer " + _tok(c)}
         ref = c.get("/consultant/qr/info", headers=h).json()["code"]
         assert _post(c, title="QR경유", ref=ref).json()["assigned"] is True
-        mine = c.get("/board/posts?mine=true", headers=h).json()
+        mine = c.get("/board/posts?mine=true", headers=h).json()["items"]
         assert any(x["title"] == "QR경유" and x["ref_code"] == ref for x in mine)
 
 
@@ -281,9 +281,9 @@ def test_staff_can_search_posts():
         h = {"Authorization": "Bearer " + _tok(c)}
         for kw, want in [("포장재", "검색B 포장재"), ("글리세린", "검색A 원료"),
                          ("010-1111", "검색A 원료"), ("pack@example", "검색B 포장재")]:
-            rows = c.get("/board/posts", params={"q": kw}, headers=h).json()
+            rows = c.get("/board/posts", params={"q": kw}, headers=h).json()["items"]
             assert [r["title"] for r in rows] == [want], (kw, rows)
-        assert c.get("/board/posts", params={"q": "없는말zzz"}, headers=h).json() == []
+        assert c.get("/board/posts", params={"q": "없는말zzz"}, headers=h).json()["items"] == []
 
 
 # ── 수정 ─────────────────────────────────────────────────────────────────
@@ -374,7 +374,7 @@ def test_public_list_hides_content():
     with TestClient(app) as c:
         _post(c, title="공개목록", body="원료 상세 내용입니다 비밀",
               author_name="김대현", contact="010-3333-4444", password="pub12345")
-        rows = c.get("/board/public").json()          # 로그인 없이
+        rows = c.get("/board/public").json()["items"]   # 로그인 없이
         assert rows and "body" not in rows[0] and "contact" not in rows[0]
         me = [r for r in rows if r["title"] == "공개목록"][0]
         assert me["author_masked"] == "김**"
@@ -406,3 +406,48 @@ def test_password_must_not_reuse_contact_digits():
         for pw in ("glhac2026", "170733x", "a1b2c3d4"):
             assert _post(c, contact="010-4928-1733", password=pw,
                          title="규칙통과").status_code == 200, pw
+
+
+# ── 페이징 ───────────────────────────────────────────────────────────────
+def test_public_list_is_paged():
+    """문의가 쌓이면 한 화면에 다 못 담는다 — 총 몇 쪽인지도 알려 줘야 한다."""
+    with TestClient(app) as c:
+        for i in range(12):
+            _post(c, title="페이징%02d" % i, contact="010-7000-%04d" % i,
+                  password="glhac2026")
+        r = c.get("/board/public", params={"page": 1, "size": 5}).json()
+        assert len(r["items"]) == 5 and r["page"] == 1 and r["size"] == 5
+        assert r["total"] >= 12 and r["pages"] == (r["total"] + 4) // 5
+        first = [x["post_id"] for x in r["items"]]
+        second = c.get("/board/public", params={"page": 2, "size": 5}).json()["items"]
+        assert not set(first) & {x["post_id"] for x in second}     # 겹치지 않는다
+        last = c.get("/board/public", params={"page": r["pages"], "size": 5}).json()
+        assert 1 <= len(last["items"]) <= 5
+        # 범위를 벗어난 쪽은 빈 목록 — 오류가 아니다
+        assert c.get("/board/public", params={"page": 9999, "size": 5}).json()["items"] == []
+
+
+def test_page_size_is_capped():
+    """size=100000 한 번으로 전체를 긁어가지 못하게 한다."""
+    with TestClient(app) as c:
+        for i in range(3):
+            _post(c, title="상한%d" % i, contact="010-7100-%04d" % i, password="glhac2026")
+        assert c.get("/board/public", params={"size": 100000}).json()["size"] == 50
+        h = {"Authorization": "Bearer " + _tok(c)}
+        assert c.get("/board/posts", params={"size": 100000}, headers=h).json()["size"] == 100
+        # 음수·0 은 조용히 최소값으로 — 화면 버그로 페이지가 0 이 되어도 안 깨진다
+        r = c.get("/board/public", params={"page": -3, "size": -5}).json()
+        assert r["page"] == 1 and r["size"] >= 1
+        # 숫자가 아니면 FastAPI 가 먼저 422 로 막는다(내 정리 코드까지 오지 않는다)
+        assert c.get("/board/public", params={"page": "abc"}).status_code == 422
+
+
+def test_search_and_paging_work_together():
+    with TestClient(app) as c:
+        for i in range(7):
+            _post(c, title="검색페이징 %d" % i, body="포장재 관련 문의 내용입니다 %d" % i,
+                  contact="010-7200-%04d" % i, password="glhac2026")
+        h = {"Authorization": "Bearer " + _tok(c)}
+        r = c.get("/board/posts", params={"q": "검색페이징", "size": 3}, headers=h).json()
+        assert r["total"] == 7 and r["pages"] == 3 and len(r["items"]) == 3
+        assert all("검색페이징" in x["title"] for x in r["items"])

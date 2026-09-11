@@ -2860,6 +2860,31 @@ def board_open(post_id: str, body: schemas.BoardPostOpen, request: Request,
     return _post_view(p, replies)
 
 
+def _page_args(page, size, max_size=100):
+    """페이지 번호·크기 정리. 1부터 시작하고, 크기는 상한을 둔다.
+
+    상한이 없으면 size=100000 한 번으로 전체를 긁어갈 수 있다."""
+    try:
+        page = max(1, int(page or 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        size = int(size or 20)
+    except (TypeError, ValueError):
+        size = 20
+    size = max(1, min(size, max_size))
+    return page, size
+
+
+def _paged(query, page, size, order_col):
+    """총 건수와 해당 쪽을 함께 돌려준다 — 화면이 '3 / 12쪽'을 그리려면 총수가 필요하다."""
+    total = query.order_by(None).count()
+    rows = (query.order_by(order_col.desc())
+                 .offset((page - 1) * size).limit(size).all())
+    pages = max(1, (total + size - 1) // size)
+    return rows, {"page": page, "size": size, "total": total, "pages": pages}
+
+
 def _mask_name(n):
     """김대현 → 김**  ·  Kim → K**. 누가 남겼는지 대충만 보이게 한다."""
     n = (n or "").strip()
@@ -2886,7 +2911,7 @@ def _mask_contact(c):
 
 
 @app.get("/board/public")
-def board_public(db: Session = Depends(get_db)):
+def board_public(page: int = 1, size: int = 10, db: Session = Depends(get_db)):
     """홈페이지에 보이는 문의 목록 — 제목·내용·연락처는 주지 않는다.
 
     게시판이 텅 비어 보이면 남길 마음이 안 생긴다. 그래서 몇 건이 오갔고 답변이
@@ -2895,8 +2920,8 @@ def board_public(db: Session = Depends(get_db)):
 
     글번호는 같이 준다 — 비밀번호가 없으면 어차피 못 열고, 대입은 로그인과 같은
     장치로 막는다."""
-    rows = (db.query(models.BoardPost)
-              .order_by(models.BoardPost.created_at.desc()).limit(100).all())
+    page, size = _page_args(page, size, max_size=50)
+    rows, meta = _paged(db.query(models.BoardPost), page, size, models.BoardPost.created_at)
     ids = [r.post_id for r in rows]
     cnt = {}
     if ids:
@@ -2904,11 +2929,12 @@ def board_public(db: Session = Depends(get_db)):
                          .filter(models.BoardReply.post_id.in_(ids))
                          .group_by(models.BoardReply.post_id)):
             cnt[pid] = n
-    return [{"post_id": r.post_id, "title": r.title,
-             "author_masked": _mask_name(r.author_name),
-             "contact_masked": _mask_contact(r.contact),
-             "status": r.status, "reply_count": cnt.get(r.post_id, 0),
-             "created_at": str(r.created_at)} for r in rows]
+    return dict(meta, items=[{
+        "post_id": r.post_id, "title": r.title,
+        "author_masked": _mask_name(r.author_name),
+        "contact_masked": _mask_contact(r.contact),
+        "status": r.status, "reply_count": cnt.get(r.post_id, 0),
+        "created_at": str(r.created_at)} for r in rows])
 
 
 @app.post("/board/find")
@@ -2952,6 +2978,7 @@ def board_find(body: schemas.BoardFindReq, request: Request, db: Session = Depen
 
 @app.get("/board/posts")
 def board_list(status: str = None, mine: bool = False, q: str = None,
+               page: int = 1, size: int = 20,
                user=Depends(auth.require_roles(*_BOARD_STAFF)),
                db: Session = Depends(get_db)):
     """직원용 목록 — 익명 글이라도 담당자는 봐야 답변한다.
@@ -2972,7 +2999,8 @@ def board_list(status: str = None, mine: bool = False, q: str = None,
     q = qy
     if mine and user["role"] == "consultant":
         q = q.filter(models.BoardPost.consultant_id == user["uid"])
-    rows = q.order_by(models.BoardPost.created_at.desc()).limit(300).all()
+    page, size = _page_args(page, size)
+    rows, meta = _paged(q, page, size, models.BoardPost.created_at)
     ids = [r.post_id for r in rows]
     cnt = {}
     if ids:
@@ -2980,10 +3008,11 @@ def board_list(status: str = None, mine: bool = False, q: str = None,
                          .filter(models.BoardReply.post_id.in_(ids))
                          .group_by(models.BoardReply.post_id)):
             cnt[pid] = n
-    return [{"post_id": r.post_id, "title": r.title, "author_name": r.author_name,
-             "contact": r.contact, "status": r.status, "ref_code": r.ref_code,
-             "consultant_id": r.consultant_id, "reply_count": cnt.get(r.post_id, 0),
-             "created_at": str(r.created_at)} for r in rows]
+    return dict(meta, items=[{
+        "post_id": r.post_id, "title": r.title, "author_name": r.author_name,
+        "contact": r.contact, "status": r.status, "ref_code": r.ref_code,
+        "consultant_id": r.consultant_id, "reply_count": cnt.get(r.post_id, 0),
+        "created_at": str(r.created_at)} for r in rows])
 
 
 @app.get("/board/posts/{post_id}")
