@@ -815,6 +815,9 @@ class ConsultantInvite(Base):
     note = Column(Text)
     max_uses = Column(Integer, default=1)
     used_count = Column(Integer, default=0)
+    # 명함·QR 에 박는 대표 코드인가. 가입 시 1회 자동 발급되며 만료·횟수 제한이 없다.
+    # 기간 한정 코드(기존 /consultant/invites)와 구분하려고 둔다.
+    is_primary = Column(Boolean, default=False)
     expires_at = Column(DateTime)
     revoked_at = Column(DateTime)      # 회수된 코드는 다시 쓸 수 없다
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -862,4 +865,40 @@ class ConsultantPayout(Base):
     paid_at = Column(DateTime)
     note = Column(Text)
     created_by = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BoardPost(Base):
+    """홈페이지 상담 게시판 — 가입 없이 남기고, 비밀번호로 다시 본다.
+
+    가입을 요구하면 문의 자체가 줄어든다. 그렇다고 공개로 두면 어느 업체가 무슨 원료로
+    고민 중인지 경쟁사에 그대로 보인다 — 그래서 **전부 비공개**다.
+    볼 수 있는 사람은 (1) 비밀번호를 아는 글쓴이 (2) 로그인한 컨설턴트·오디터뿐이다.
+
+    비밀번호는 계정 비밀번호와 같은 방식(PBKDF2)으로 저장한다. 짧은 글 비번이라도
+    평문으로 두면 유출 시 다른 서비스 비번까지 유추당한다."""
+    __tablename__ = "board_post"
+    post_id = Column(String, primary_key=True, default=uid)
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    author_name = Column(String, nullable=False)
+    contact = Column(String, nullable=False)      # 답변 받을 연락처(전화/이메일)
+    password_hash = Column(String, nullable=False)
+    # QR 로 들어온 문의는 그 영업자 건으로 남긴다 — 수수료·성과 근거
+    ref_code = Column(String, index=True)
+    consultant_id = Column(String, index=True)
+    status = Column(String, default="open")       # open | answered | closed
+    ip_hash = Column(String)                      # 도배 차단용. 원문 IP 는 남기지 않는다
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BoardReply(Base):
+    """게시글 답변 — 로그인한 직원만 쓴다."""
+    __tablename__ = "board_reply"
+    reply_id = Column(String, primary_key=True, default=uid)
+    post_id = Column(String, index=True, nullable=False)
+    author_id = Column(String, nullable=False)    # app_user.user_id
+    author_role = Column(String)
+    body = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -1,6 +1,8 @@
 """GL-HAC AI API — M1(dual-pathway) + M3(OCR/판정) + M2(인증·UI). 설계 24.14 / B.4."""
 import io
+import hashlib
 import os
+import secrets
 import re
 import time
 import base64
@@ -8,7 +10,7 @@ import logging
 from datetime import datetime, date, timedelta
 from fastapi.exceptions import RequestValidationError
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -1212,6 +1214,86 @@ def login(body: schemas.LoginReq, db: Session = Depends(get_db)):
         u.password_hash = auth.hash_pw(body.password)
         db.commit()
     return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username}
+
+
+
+# ── 도메인 간 로그인 인계(홈페이지 → AI 시스템) ───────────────────────────
+#
+# glhac.com 과 glhac.co.kr 은 **서로 다른 도메인**이라 쿠키·localStorage 가 공유되지
+# 않는다(브라우저 보안 정책). 그래서 홈페이지에서 로그인해도 AI 시스템은 그 사실을
+# 모른다. 명시적으로 넘겨 주는 수밖에 없다.
+#
+# 토큰을 URL 에 실어 보내지 않는다 — 주소창·브라우저 기록·Referer 에 남아 흘러나간다.
+# 대신 **한 번만 쓰이고 곧 만료되는 인계코드**를 넘기고, 받는 쪽이 토큰으로 바꾼다.
+# AI 시스템의 공개 주소 — 인계 후 돌아올 곳
+APP_BASE_URL = os.environ.get("GLHAC_APP_URL", "https://glhac.co.kr")
+_HANDOFF: dict = {}          # code → (발급시각, 토큰묶음)
+_HANDOFF_TTL = 90            # 초. 사람이 리다이렉트되는 시간이면 충분하다.
+
+
+def _handoff_sweep():
+    """만료분 정리 — 메모리에 쌓이지 않게. 단일 워커라 프로세스 메모리로 충분하다."""
+    now = time.time()
+    for k in [k for k, (t, _) in _HANDOFF.items() if now - t > _HANDOFF_TTL]:
+        _HANDOFF.pop(k, None)
+
+
+@app.post("/auth/handoff/login")
+def handoff_login(body: schemas.LoginReq, db: Session = Depends(get_db)):
+    """홈페이지(glhac.com)용 로그인 — 토큰 대신 일회용 인계코드만 돌려준다.
+
+    토큰이 홈페이지 쪽 자바스크립트에 아예 닿지 않게 한다."""
+    rl_key = (body.username or "").lower()
+    if auth.rate_limited(rl_key):
+        raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS",
+                                  "retry_after_sec": auth._RL_WINDOW})
+    u = db.query(models.User).filter_by(username=body.username).first()
+    if not u or not auth.verify_pw(body.password, u.password_hash):
+        auth.record_attempt(rl_key)
+        raise HTTPException(401, {"code": "BAD_CREDENTIALS"})
+    auth.clear_attempts(rl_key)
+    _handoff_sweep()
+    code = secrets.token_urlsafe(24)
+    _HANDOFF[code] = (time.time(), {**auth.make_tokens(u), "role": u.role,
+                                    "org_id": u.org_id, "username": u.username})
+    return {"handoff": code, "expires_in": _HANDOFF_TTL,
+            "redirect": "%s/ui/#handoff=%s" % (APP_BASE_URL.rstrip("/"), code)}
+
+
+@app.post("/auth/handoff/issue")
+def handoff_issue(user=Depends(auth.get_current_user)):
+    """이미 로그인한 사용자가 다른 도메인으로 건너갈 때 쓰는 인계코드.
+
+    홈페이지(glhac.com)는 게시판 때문에 자체 로그인 상태를 갖는다. 거기서 '인증 신청'을
+    누르면 다시 로그인시키지 않고 이 코드를 받아 AI 시스템으로 넘어간다 — 같은 계정이
+    두 화면에서 이어진다."""
+    from .db import SessionLocal
+    db = SessionLocal()
+    try:
+        u = db.get(models.User, user["uid"])
+        if not u:
+            raise HTTPException(401, {"code": "USER_NOT_FOUND"})
+        _handoff_sweep()
+        code = secrets.token_urlsafe(24)
+        _HANDOFF[code] = (time.time(), {**auth.make_tokens(u), "role": u.role,
+                                        "org_id": u.org_id, "username": u.username})
+        return {"handoff": code, "expires_in": _HANDOFF_TTL,
+                "redirect": "%s/ui/#handoff=%s" % (APP_BASE_URL.rstrip("/"), code)}
+    finally:
+        db.close()
+
+
+@app.post("/auth/handoff/exchange")
+def handoff_exchange(body: dict = None):
+    """인계코드 → 토큰. 한 번 쓰면 사라진다(재사용·도청 재생 차단)."""
+    _handoff_sweep()
+    code = ((body or {}).get("handoff") or "").strip()
+    got = _HANDOFF.pop(code, None)          # pop — 재사용 불가
+    if not got:
+        raise HTTPException(401, {"code": "HANDOFF_INVALID",
+                                  "message": "만료되었거나 이미 사용된 링크입니다. 다시 로그인해 주세요."})
+    return got[1]
+
 
 
 @app.post("/auth/refresh")
@@ -2631,6 +2713,219 @@ def revoke_invite(invite_id: str,
     _audit(db, user, "consultant.invite.revoked", "invite", invite_id, commit=False)
     db.commit()
     return {"ok": True, "revoked_at": str(inv.revoked_at)}
+
+
+# ── 영업자(컨설턴트) 개별 QR ──────────────────────────────────────────────
+#
+# 영업자는 가입 시 자기 코드를 한 번 발급받고, 그 코드가 박힌 QR 을 명함·자료에 쓴다.
+# 고객이 찍으면 홈페이지로 가고, 거기서 가입하면 '누가 데려왔는지'가 남는다
+# (기존 consultant_invite 구조를 그대로 쓴다 — 수수료 근거가 이미 그 위에 서 있다).
+HOME_BASE_URL = os.environ.get("GLHAC_HOME_URL", "https://glhac.com")
+
+
+def _consultant_primary_invite(db, consultant_id, company_name=None):
+    """영업자의 대표 초대코드 — 없으면 만든다(가입 시 1회 발급, 이후 계속 같은 코드).
+
+    명함에 박아 쓰는 코드라 만료·사용횟수 제한을 두지 않는다. 기간 한정 코드가 필요하면
+    기존 /consultant/invites 로 따로 발급한다."""
+    inv = (db.query(models.ConsultantInvite)
+             .filter_by(consultant_id=consultant_id, is_primary=True)
+             .order_by(models.ConsultantInvite.created_at).first())
+    if inv:
+        return inv
+    inv = models.ConsultantInvite(
+        code=_new_invite_code(db), consultant_id=consultant_id,
+        company_name=company_name, note="가입 시 자동 발급(대표 QR)",
+        max_uses=10 ** 9, is_primary=True, expires_at=None)
+    db.add(inv)
+    db.flush()
+    return inv
+
+
+# ── 홈페이지 상담 게시판(문의하기) ────────────────────────────────────────
+#
+# 가입 없이 남기고 비밀번호로 다시 본다. **모든 글은 비공개** — 목록조차 직원만 본다.
+# 어느 업체가 무슨 원료로 고민 중인지가 경쟁사에 보이면 안 된다.
+_BOARD_RL: dict = {}          # ip_hash → [작성시각...]
+# 같은 IP 에서 한 시간에 몇 건까지. 운영 중 조정할 일이 생긴다(전시회처럼 한 회선에서
+# 여러 업체가 쓰는 자리도 있다). 0 이면 제한 없음 — 테스트가 그렇게 쓴다.
+_BOARD_RL_MAX = int(os.environ.get("GLHAC_BOARD_RATE_MAX", "3"))
+_BOARD_RL_WINDOW = int(os.environ.get("GLHAC_BOARD_RATE_WINDOW", "3600"))
+_BOARD_STAFF = ("consultant", "auditor", "operator", "admin", "fatwa_liaison")
+
+
+def _ip_hash(request: Request) -> str:
+    """도배 차단용 식별자. 원문 IP 는 저장하지 않는다(불필요한 개인정보)."""
+    ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+          or (request.client.host if request.client else "?"))
+    return hashlib.sha256((ip + auth.SECRET.decode("utf-8", "ignore")).encode()).hexdigest()[:32]
+
+
+def _board_rate_limited(iph: str) -> bool:
+    if _BOARD_RL_MAX <= 0:
+        return False
+    now = time.time()
+    hits = [t for t in _BOARD_RL.get(iph, []) if now - t < _BOARD_RL_WINDOW]
+    _BOARD_RL[iph] = hits
+    return len(hits) >= _BOARD_RL_MAX
+
+
+@app.post("/board/posts")
+def board_create(body: schemas.BoardPostCreate, request: Request,
+                 db: Session = Depends(get_db)):
+    """무가입 문의 등록. 로그인 없이 열려 있으므로 도배·봇 대비가 필요하다."""
+    iph = _ip_hash(request)
+    if _board_rate_limited(iph):
+        raise HTTPException(429, {"code": "TOO_MANY_POSTS",
+                                  "message": "문의가 너무 잦습니다. 잠시 후 다시 시도해 주세요."})
+    # QR 로 들어온 문의는 그 영업자 건으로 귀속한다
+    ref = (body.ref or "").strip().upper() or None
+    consultant_id = None
+    if ref:
+        inv = db.query(models.ConsultantInvite).filter_by(code=ref).first()
+        if inv and not inv.revoked_at:
+            consultant_id = inv.consultant_id
+        else:
+            ref = None                      # 없는 코드는 조용히 버린다(가입을 막지 않는다)
+    p = models.BoardPost(
+        title=body.title, body=body.body, author_name=body.author_name,
+        contact=body.contact, password_hash=auth.hash_pw(body.password),
+        ref_code=ref, consultant_id=consultant_id, ip_hash=iph)
+    db.add(p)
+    _BOARD_RL.setdefault(iph, []).append(time.time())
+    db.commit()
+    # 글번호는 알려 준다 — 나중에 자기 글을 찾을 때 쓴다
+    return {"post_id": p.post_id, "status": p.status,
+            "assigned": bool(consultant_id),
+            "message": "접수되었습니다. 글번호와 비밀번호로 다시 확인하실 수 있습니다."}
+
+
+def _post_view(p, replies):
+    return {"post_id": p.post_id, "title": p.title, "body": p.body,
+            "author_name": p.author_name, "contact": p.contact,
+            "status": p.status, "created_at": str(p.created_at),
+            "replies": [{"reply_id": r.reply_id, "body": r.body,
+                         "author_role": r.author_role,
+                         "created_at": str(r.created_at)} for r in replies]}
+
+
+@app.post("/board/posts/{post_id}/open")
+def board_open(post_id: str, body: schemas.BoardPostOpen, request: Request,
+               db: Session = Depends(get_db)):
+    """글쓴이가 비밀번호로 자기 글을 연다."""
+    iph = _ip_hash(request)
+    if auth.rate_limited("board:" + iph):      # 비번 대입 차단(계정 로그인과 같은 장치)
+        raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS"})
+    p = db.get(models.BoardPost, post_id)
+    if not p or not auth.verify_pw(body.password, p.password_hash):
+        auth.record_attempt("board:" + iph)
+        # 글이 없는 것과 비번이 틀린 것을 구분해 주지 않는다 — 글번호 탐색을 막는다
+        raise HTTPException(401, {"code": "BAD_POST_CREDENTIALS",
+                                  "message": "글번호 또는 비밀번호가 맞지 않습니다."})
+    auth.clear_attempts("board:" + iph)
+    replies = (db.query(models.BoardReply).filter_by(post_id=post_id)
+                 .order_by(models.BoardReply.created_at).all())
+    return _post_view(p, replies)
+
+
+@app.get("/board/posts")
+def board_list(status: str = None, mine: bool = False,
+               user=Depends(auth.require_roles(*_BOARD_STAFF)),
+               db: Session = Depends(get_db)):
+    """직원용 목록 — 익명 글이라도 담당자는 봐야 답변한다."""
+    q = db.query(models.BoardPost)
+    if status:
+        q = q.filter(models.BoardPost.status == status)
+    if mine and user["role"] == "consultant":
+        q = q.filter(models.BoardPost.consultant_id == user["uid"])
+    rows = q.order_by(models.BoardPost.created_at.desc()).limit(300).all()
+    ids = [r.post_id for r in rows]
+    cnt = {}
+    if ids:
+        for pid, n in (db.query(models.BoardReply.post_id, func.count())
+                         .filter(models.BoardReply.post_id.in_(ids))
+                         .group_by(models.BoardReply.post_id)):
+            cnt[pid] = n
+    return [{"post_id": r.post_id, "title": r.title, "author_name": r.author_name,
+             "contact": r.contact, "status": r.status, "ref_code": r.ref_code,
+             "consultant_id": r.consultant_id, "reply_count": cnt.get(r.post_id, 0),
+             "created_at": str(r.created_at)} for r in rows]
+
+
+@app.get("/board/posts/{post_id}")
+def board_detail(post_id: str, user=Depends(auth.require_roles(*_BOARD_STAFF)),
+                 db: Session = Depends(get_db)):
+    p = db.get(models.BoardPost, post_id)
+    if not p:
+        raise HTTPException(404, {"code": "POST_NOT_FOUND"})
+    replies = (db.query(models.BoardReply).filter_by(post_id=post_id)
+                 .order_by(models.BoardReply.created_at).all())
+    return _post_view(p, replies)
+
+
+@app.post("/board/posts/{post_id}/replies")
+def board_reply(post_id: str, body: schemas.BoardReplyCreate,
+                user=Depends(auth.require_roles(*_BOARD_STAFF)),
+                db: Session = Depends(get_db)):
+    """답변 — 로그인한 직원만. 답변이 달리면 상태를 answered 로 올린다."""
+    p = db.get(models.BoardPost, post_id)
+    if not p:
+        raise HTTPException(404, {"code": "POST_NOT_FOUND"})
+    r = models.BoardReply(post_id=post_id, author_id=user["uid"],
+                          author_role=user["role"], body=body.body)
+    db.add(r)
+    if p.status == "open":
+        p.status = "answered"
+    _audit(db, user, "board.reply", "board_post", post_id, commit=False)
+    db.commit()
+    return {"reply_id": r.reply_id, "status": p.status}
+
+
+@app.patch("/board/posts/{post_id}/status")
+def board_status(post_id: str, body: schemas.BoardStatusReq,
+                 user=Depends(auth.require_roles(*_BOARD_STAFF)),
+                 db: Session = Depends(get_db)):
+    if body.status not in ("open", "answered", "closed"):
+        raise HTTPException(422, {"code": "BAD_STATUS"})
+    p = db.get(models.BoardPost, post_id)
+    if not p:
+        raise HTTPException(404, {"code": "POST_NOT_FOUND"})
+    p.status = body.status
+    _audit(db, user, "board.status", "board_post", post_id,
+           meta={"status": body.status}, commit=False)
+    db.commit()
+    return {"post_id": post_id, "status": p.status}
+
+
+@app.get("/consultant/qr")
+def consultant_qr(fmt: str = "svg", user=Depends(auth.require_roles("consultant")),
+                  db: Session = Depends(get_db)):
+    """내 QR — 스캔하면 홈페이지로 가고 내 담당으로 붙는다."""
+    inv = _consultant_primary_invite(db, user["uid"])
+    db.commit()
+    url = "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code)
+    import io
+
+    import segno
+    qr = segno.make(url, error="m")
+    buf = io.BytesIO()
+    if fmt == "png":
+        qr.save(buf, kind="png", scale=8, border=2, dark="#0e5548")
+        return Response(buf.getvalue(), media_type="image/png")
+    qr.save(buf, kind="svg", scale=8, border=2, dark="#0e5548")
+    return Response(buf.getvalue(), media_type="image/svg+xml")
+
+
+@app.get("/consultant/qr/info")
+def consultant_qr_info(user=Depends(auth.require_roles("consultant")),
+                       db: Session = Depends(get_db)):
+    """QR 이 가리키는 주소와 코드 — 화면이 같이 보여 준다."""
+    inv = _consultant_primary_invite(db, user["uid"])
+    db.commit()
+    return {"code": inv.code,
+            "url": "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code),
+            "qr_svg": "/consultant/qr?fmt=svg", "qr_png": "/consultant/qr?fmt=png",
+            "used_count": inv.used_count}
 
 
 @app.get("/invites/{code}/check")

@@ -596,6 +596,29 @@ async function API(path, opt, _retried){
   if(!r.ok){FETCH_ERRORS++;console.warn("[API]",r.status,path,j);throw ((j&&j.detail)?j.detail:j);}
   return j;
 }
+/* 홈페이지(glhac.com)에서 넘어온 로그인 인계.
+   두 도메인은 localStorage 를 공유하지 못하므로 한 번만 쓰이는 코드를 받아 토큰으로 바꾼다.
+   토큰 자체를 URL 로 나르면 주소창·기록·Referer 에 남는다 — 그래서 코드만 온다. */
+async function consumeHandoff(){
+  var m = (location.hash||"").match(/handoff=([A-Za-z0-9_\-]+)/);
+  if(!m) return false;
+  try{
+    var j = await API("/auth/handoff/exchange",{method:"POST",body:JSON.stringify({handoff:m[1]})});
+    localStorage.setItem(TK,j.token);
+    if(j.refresh_token)localStorage.setItem(RTK,j.refresh_token);
+    localStorage.setItem("glhac_role",j.role);
+    localStorage.setItem("glhac_org",j.org_id||"");
+    localStorage.setItem("glhac_user",j.username||"");
+    CURCASE=null; try{localStorage.removeItem("glhac_case")}catch(_){}
+    // 코드는 한 번 쓰면 죽지만, 주소창에 남겨 둘 이유도 없다
+    try{history.replaceState(null,"","#/");}catch(_){location.hash="";}
+    return true;
+  }catch(e){
+    try{history.replaceState(null,"","#/");}catch(_){}
+    toast("자동 로그인 실패 · "+(EMSG(e)||"다시 로그인해 주세요"));
+    return false;
+  }
+}
 async function doLogin(e){
   if(e) e.preventDefault();
   const u=document.getElementById("loginUser").value.trim();
@@ -11325,6 +11348,7 @@ async function boot(){
   if(!window._notifPoll)window._notifPoll=setInterval(refreshNotifCount,60000);
   startLiveBadge();
 }
-boot();
+// 홈페이지에서 넘어왔으면 먼저 인계를 처리하고 부팅한다(로그인 화면이 잠깐 스치지 않게)
+(async function(){ await consumeHandoff(); boot(); })();
 </script>
 </body></html>

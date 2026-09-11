@@ -16,3 +16,4 @@ pillow>=10.0           # 사진 EXIF 촬영일시·GPS 추출 — app/main.py �
 # OCR (문서 이미지 텍스트 추출 — app/ai_local.py, app/ocr_pipeline.py) · D1 배포 재현성
 paddleocr==3.7.0
 paddlepaddle==3.3.1
+segno>=1.6          # 영업자(컨설턴트) 개별 QR — 초대코드 → QR 이미지

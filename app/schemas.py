@@ -956,3 +956,74 @@ class PayoutCreate(BaseModel):
     period_from: str
     period_to: str
     note: Optional[str] = None
+
+
+# ── 홈페이지 상담 게시판 ──────────────────────────────────────────────────
+class BoardPostCreate(BaseModel):
+    """무가입 문의 — 연락처는 필수다(답변할 방법이 없으면 글이 무의미하고, 봇 차단도 된다)."""
+    title: str
+    body: str
+    author_name: str
+    contact: str
+    password: str
+    ref: Optional[str] = None       # QR 로 들어온 경우의 영업자 코드
+
+    @field_validator("title")
+    @classmethod
+    def _v_title(cls, v):
+        return _text_required(v, "제목")
+
+    @field_validator("body")
+    @classmethod
+    def _v_body(cls, v):
+        t = _text_required(v, "내용")
+        if len(t) < 10:
+            raise ValueError("내용을 10자 이상 적어 주세요")
+        return t
+
+    @field_validator("author_name")
+    @classmethod
+    def _v_name(cls, v):
+        return _text_required(v, "이름")
+
+    @field_validator("contact")
+    @classmethod
+    def _v_contact(cls, v):
+        t = _text_required(v, "연락처")
+        # 이메일이거나 전화번호여야 한다 — 답변을 보낼 수 있어야 하고, 봇 글도 걸러진다
+        if _EMAIL_RE.match(t):
+            return t
+        digits = "".join(ch for ch in t if ch.isdigit())
+        if 7 <= len(digits) <= 15:
+            # 국가코드를 붙이지 않는다 — 이 게시판은 한국 업체가 쓰는데 normalize_phone 은
+            # 인니(+62) 기준이라 '010-1234-5678' 이 '+621012345678' 이 된다(실측).
+            # 사람이 보고 연락하는 값이라 적은 그대로 두는 편이 안전하다.
+            return t
+        raise ValueError("연락처는 이메일 또는 전화번호여야 합니다(받은 값: %s)" % t)
+
+    @field_validator("password")
+    @classmethod
+    def _v_pw(cls, v):
+        t = str(v or "")
+        # 글 비밀번호는 계정 비번만큼 길 필요는 없지만, 4자면 1만 번이면 뚫린다
+        if len(t) < 6:
+            raise ValueError("글 비밀번호는 6자 이상이어야 합니다")
+        return t
+
+
+class BoardPostOpen(BaseModel):
+    """글쓴이가 자기 글을 다시 열 때."""
+    password: str
+
+
+class BoardReplyCreate(BaseModel):
+    body: str
+
+    @field_validator("body")
+    @classmethod
+    def _v_body(cls, v):
+        return _text_required(v, "답변 내용")
+
+
+class BoardStatusReq(BaseModel):
+    status: str      # open | answered | closed
