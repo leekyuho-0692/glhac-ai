@@ -9397,8 +9397,10 @@ function inqClear(){INQ_Q="";INQ_PAGE=1;INQ_OPEN.clear();applyView();}
 function inqPage(n){INQ_PAGE=n;INQ_OPEN.clear();applyView();}
 /* 쪽 이동 — 총 몇 쪽인지 보여야 어디쯤인지 안다 */
 function inqPager(m){
-  if(!m || (m.pages||1)<=1) return "";
+  if(!m) return "";
   const cur=m.page||1, last=m.pages||1;
+  // 쪽이 하나여도 '총 N건'은 보여 준다 — 통째로 감추면 페이징이 없는 것처럼 보인다
+  if(last<=1) return `<div class="muted small" style="text-align:center;margin-top:12px">${T('총')} ${m.total||0}${T('건')}</div>`;
   let from=Math.max(1,cur-2), to=Math.min(last,from+4); from=Math.max(1,Math.min(from,to-4));
   let out=`<div class="btnrow" style="justify-content:center;margin-top:14px;flex-wrap:wrap">
     <button class="btn" ${cur<=1?"disabled":""} onclick="inqPage(${cur-1})">${T('이전')}</button>`;
