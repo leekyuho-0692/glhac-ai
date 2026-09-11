@@ -81,7 +81,12 @@ _ei = httpx.post(f"{B}/cases/{cid}/sihalal/identity/link", headers=HC,
                  json={"external_email": "s3@x.com"}).json()
 httpx.post(f"{B}/sihalal/identity/{_ei['external_identity_id']}/verify", headers=HC,
            json={"expected_identifier": "s3@x.com"})
-httpx.patch(f"{B}/cases/{cid}/profile", headers=HC, json={"nib": "9876543210987"})
+# 사업자 식별번호는 업체마다 달라야 한다(입력검증 P0). e2e.py 가 같은 값을 먼저 쓰면
+# 여기서 NIB_ALREADY_USED 로 막혀 submit-application 부터 줄줄이 실패했다
+# (CI 는 한 DB 에서 스크립트를 순서대로 돌린다). 실행마다 고유한 값을 쓴다.
+import time as _t
+_S3_NIB = "987654321" + str(int(_t.time()))[-4:]
+httpx.patch(f"{B}/cases/{cid}/profile", headers=HC, json={"nib": _S3_NIB})
 httpx.post(f"{B}/cases/{cid}/submit-application", headers=HC)
 httpx.post(f"{B}/cases/{cid}/pathway/assess", headers=HC)
 httpx.post(f"{B}/cases/{cid}/pathway/confirm", headers=HC, json={"pathway": "self_declare"})

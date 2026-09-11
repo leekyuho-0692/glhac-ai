@@ -30,7 +30,9 @@ m1 = httpx.post(f"{B}/cases/{cid}/materials", headers=HC,
 m2 = httpx.post(f"{B}/cases/{cid}/materials", headers=HC,
                 json={"name": "Lecithin", "e_number": "E322", "mat_type": "additive"}).json()
 m3 = httpx.post(f"{B}/cases/{cid}/materials", headers=HC,
-                json={"name": "Carmine", "e_number": "E120", "mat_type": "colorant"}).json()
+                # 'colorant' 는 사전에 없는 코드다 — 입력검증(P0) 이후 422 가 난다.
+                # 카민은 색소지만 첨가물로 분류한다(사전 기준).
+                json={"name": "Carmine", "e_number": "E120", "mat_type": "additive"}).json()
 ok("원재료 3건 추가", all("material_id" in x for x in [m1, m2, m3]), [m1, m2, m3])
 
 # 개별 스크리닝 API 동작 확인

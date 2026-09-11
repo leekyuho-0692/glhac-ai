@@ -83,7 +83,14 @@ for b in blockers:
 # 순서 의존 제거 — guard_intake_complete(회사명·NIB·제품 1개)가 application_draft →
 # ai_pre_assessment_ready 전이를 막는다. 종전엔 앞서 실행된 다른 스크립트가 org_demo 프로필에
 # 남긴 NIB 을 상속해 우연히 통과했고, 단독 실행하면 깨졌다. 각 케이스가 스스로 요건을 갖춘다.
-S11_NIB = "1112223330011"
+# 사업자 식별번호는 업체마다 달라야 한다(입력검증 P0 가 중복을 막는다).
+# 자기선언 케이스와 정규 케이스가 같은 값을 쓰면 두 번째가 NIB_ALREADY_USED 로 막혀
+# pathway 확정이 안 되고, 그래서 단계가 펼쳐지지 않았다.
+# 실행마다 값을 바꿔 같은 DB 에 두 번 돌려도 부딪히지 않게 한다.
+import time as _t
+_SFX = str(int(_t.time()))[-4:]
+S11_NIB = "111222333" + _SFX          # 자기선언 케이스
+S11_NIB_RG = "111222444" + _SFX       # 정규 케이스
 
 
 def _to_pathway_determination(cid):
@@ -116,7 +123,7 @@ if "case_id" in cc:
     ccid = cc["case_id"]
     # RG 케이스는 종전에 제품·NIB 을 전혀 등록하지 않아 NO_PRODUCT·NIB_MISSING 으로 막혔다
     httpx.post(f"{B}/cases/{ccid}/products", headers=HC, json={"name": "S11P-RG"})
-    httpx.patch(f"{B}/cases/{ccid}/profile", headers=HC, json={"nib": S11_NIB})
+    httpx.patch(f"{B}/cases/{ccid}/profile", headers=HC, json={"nib": S11_NIB_RG})
     _to_pathway_determination(ccid)
     httpx.post(f"{B}/cases/{ccid}/pathway/confirm", headers=HC, json={"pathway": "reguler"})
     wr = httpx.get(f"{B}/cases/{ccid}/workflow", headers=HC).json()

@@ -17,7 +17,20 @@ from fastapi.testclient import TestClient   # noqa: E402
 import app.ai_local as ai_local             # noqa: E402
 import app.intake as intake                 # noqa: E402
 import app.main as m                        # noqa: E402
-from app.main import app                    # noqa: E402
+from app.main import app
+
+# PaddleOCR 이 설치돼 있어야 의미가 있는 테스트들.
+# 이 파일의 주제는 '설치됨'과 '준비됨'을 구분하는 것이다 — 패키지 자체가 없으면
+# 구분할 대상이 없다. CI 는 무거운 paddle 을 일부러 설치하지 않으므로(워크플로 주석
+# 참조) 그 환경에서는 건너뛴다. 건너뛴 사실은 pytest 출력에 남는다.
+import importlib.util as _ilu
+
+import pytest
+
+needs_ocr_pkg = pytest.mark.skipif(
+    _ilu.find_spec("paddleocr") is None,
+    reason="paddleocr 미설치 — '설치됨/준비됨' 구분은 설치 환경에서만 확인할 수 있다")
+                    # noqa: E402
 
 
 def _tok(c, u="applicant1", p="pw"):
@@ -73,6 +86,7 @@ def test_AI_있으면_배너를_띄우지_않는다(monkeypatch, tmp_path):
         assert r["manual_steps"] == []
 
 
+@needs_ocr_pkg
 def test_OCR만_없어도_구분해_알린다(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_local, "health",
                         lambda: {"ollama": "up", "models": ["gemma3:12b"],
@@ -157,6 +171,7 @@ def test_공급사_인증번호가_있어도_체크리스트가_열린다():
 
 
 # ── OCR 준비 상태 ────────────────────────────────────────────────────────
+@needs_ocr_pkg
 def test_패키지만_있고_모델이_없으면_준비된_것이_아니다(monkeypatch, tmp_path):
     """배포 직후 오프라인이면 import 는 되는데 추론에서 모델을 못 받는다.
     import 만 보고 '정상'이라 하면 첫 업로드에서야 발견한다."""
@@ -168,6 +183,7 @@ def test_패키지만_있고_모델이_없으면_준비된_것이_아니다(monk
     assert "내려받" in (st["note"] or "")        # 무엇을 해야 하는지 말해준다
 
 
+@needs_ocr_pkg
 def test_모델이_있으면_준비됨(monkeypatch, tmp_path):
     d = tmp_path / "models"
     (d / "PP-OCRv5_server_det").mkdir(parents=True)
@@ -176,6 +192,7 @@ def test_모델이_있으면_준비됨(monkeypatch, tmp_path):
     assert st["ready"] is True and st["models_cached"] == 1 and st["note"] is None
 
 
+@needs_ocr_pkg
 def test_OCR_미준비면_역량이_partial로_내려간다(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_local, "health",
                         lambda: {"ollama": "up", "models": ["gemma3:12b"],
@@ -189,6 +206,7 @@ def test_OCR_미준비면_역량이_partial로_내려간다(monkeypatch, tmp_pat
         assert "스캔·사진 서류 글자 인식(OCR)" not in r["works_without_ai"]
 
 
+@needs_ocr_pkg
 def test_OCR_준비되면_되는_일_목록에_들어간다(monkeypatch, tmp_path):
     """고정 목록이면 OCR 이 있으나 없으나 같은 말을 한다."""
     _no_llm(monkeypatch)
