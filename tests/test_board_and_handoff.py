@@ -230,3 +230,41 @@ def test_seed_menu_is_idempotent():
             assert db.query(models.SysRoleMenu).filter_by(menu_id=mid).count() == 5
         finally:
             db.close()
+
+
+def test_only_ops_and_admin_can_delete_posts():
+    """컨설턴트가 자기 실적에 불리한 글을 지울 수 있으면 안 된다."""
+    with TestClient(app) as c:
+        pid = _post(c, title="삭제권한").json()["post_id"]
+        for who in ("consultant1", "auditor1"):
+            h = {"Authorization": "Bearer " + _tok(c, who)}
+            assert c.delete("/board/posts/%s" % pid, headers=h).status_code == 403
+        assert c.delete("/board/posts/%s" % pid).status_code in (401, 403)   # 익명
+        h = {"Authorization": "Bearer " + _tok(c, "admin", "admin")}
+        assert c.delete("/board/posts/%s" % pid, headers=h).json()["deleted"] is True
+
+
+def test_delete_removes_replies_and_leaves_an_audit_trail():
+    """지운 사실은 남아야 한다 — 나중에 '왜 없어졌냐'를 답할 수 있어야 한다."""
+    from app import main as m, models
+    with TestClient(app) as c:
+        pid = _post(c, title="스팸글").json()["post_id"]
+        hs = {"Authorization": "Bearer " + _tok(c)}
+        c.post("/board/posts/%s/replies" % pid, json={"body": "답변입니다"}, headers=hs)
+        ha = {"Authorization": "Bearer " + _tok(c, "admin", "admin")}
+        assert c.delete("/board/posts/%s" % pid, headers=ha).json()["replies_deleted"] == 1
+        assert c.get("/board/posts/%s" % pid, headers=hs).status_code == 404
+        db = m.SessionLocal()
+        try:
+            assert db.query(models.BoardReply).filter_by(post_id=pid).count() == 0
+            row = (db.query(models.AuditLog)
+                     .filter_by(action="board.delete", resource_id=pid).first())
+            assert row is not None and "스팸글" in str(row.meta)
+        finally:
+            db.close()
+
+
+def test_deleting_a_missing_post_is_404():
+    with TestClient(app) as c:
+        h = {"Authorization": "Bearer " + _tok(c, "admin", "admin")}
+        assert c.delete("/board/posts/없는글", headers=h).status_code == 404

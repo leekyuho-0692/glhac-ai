@@ -816,6 +816,10 @@ function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
 /* 홈페이지 문의함 · English */
+ "스팸 삭제":"Delete spam",
+ "삭제했습니다":"Deleted",
+ "삭제 실패":"Delete failed",
+ "이 문의를 삭제합니다. 답변도 함께 지워지고 되돌릴 수 없습니다.":"This inquiry and its replies will be deleted and cannot be restored.",
  "답변완료":"Answered",
  "📱 내 영업 QR":"📱 My Sales QR",
  "QR 내려받기":"Download QR",
@@ -1348,6 +1352,10 @@ function capBanner(){
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
 /* 홈페이지 문의함 · Bahasa Indonesia */
+ "스팸 삭제":"Hapus spam",
+ "삭제했습니다":"Terhapus",
+ "삭제 실패":"Gagal menghapus",
+ "이 문의를 삭제합니다. 답변도 함께 지워지고 되돌릴 수 없습니다.":"Pertanyaan ini akan dihapus beserta balasannya dan tidak dapat dikembalikan.",
  "접수":"Diterima",
  "답변완료":"Terjawab",
  "종료":"Selesai",
@@ -9338,6 +9346,7 @@ async function inqLoad(id){
       <div class="btnrow">
         <button class="btn pri" onclick="inqReply('${esc(id)}')">${T('답변 등록')}</button>
         ${p.status!=="closed"?`<button class="btn" onclick="inqStatus('${esc(id)}','closed')">${T('종료 처리')}</button>`:""}
+        ${["ops","admin"].includes(ROLE)?`<button class="btn" style="margin-left:auto;color:#b4432f" onclick="inqDelete('${esc(id)}')">${T('스팸 삭제')}</button>`:""}
       </div>
       <div class="muted small" style="margin-top:8px">${T('답변은 글쓴이가 홈페이지에서 비밀번호로 확인합니다.')}</div>`;
     localizeUI();
@@ -9353,6 +9362,14 @@ async function inqStatus(id,st){
   try{ await API("/board/posts/"+encodeURIComponent(id)+"/status",{method:"PATCH",body:JSON.stringify({status:st})});
        toast(T("상태 변경")); applyView(); }
   catch(e){ toast(T("변경 실패")+" · "+EMSG(e)); }
+}
+/* 스팸 삭제 — 무가입 게시판이라 스팸이 들어온다. 운영자·관리자만(컨설턴트가
+   자기 실적에 불리한 글을 지울 수 있으면 안 된다). 되돌릴 수 없어 한 번 묻는다. */
+async function inqDelete(id){
+  if(!confirm(T("이 문의를 삭제합니다. 답변도 함께 지워지고 되돌릴 수 없습니다."))) return;
+  try{ await API("/board/posts/"+encodeURIComponent(id),{method:"DELETE"});
+       INQ_OPEN.delete(id); toast(T("삭제했습니다")); applyView(); }
+  catch(e){ toast(T("삭제 실패")+" · "+EMSG(e)); }
 }
 /* 영업 QR — 명함·카탈로그에 쓰는 고정 코드 */
 async function inqQR(){

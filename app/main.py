@@ -2897,6 +2897,27 @@ def board_status(post_id: str, body: schemas.BoardStatusReq,
     return {"post_id": post_id, "status": p.status}
 
 
+@app.delete("/board/posts/{post_id}")
+def board_delete(post_id: str, user=Depends(auth.require_roles("operator", "admin")),
+                 db: Session = Depends(get_db)):
+    """스팸·중복 글 삭제 — 운영자·관리자만.
+
+    가입 없이 쓰는 게시판이라 스팸이 반드시 들어온다. 지울 방법이 없으면 목록이
+    쓰레기로 덮여 진짜 문의가 묻힌다. 컨설턴트·오디터에게는 주지 않는다 —
+    자기 실적에 불리한 글을 지울 수 있으면 안 된다.
+    답변도 함께 지우고, 지운 사실은 감사로그에 남는다(제목·연락처 포함)."""
+    p = db.get(models.BoardPost, post_id)
+    if not p:
+        raise HTTPException(404, {"code": "POST_NOT_FOUND"})
+    n = db.query(models.BoardReply).filter_by(post_id=post_id).delete()
+    _audit(db, user, "board.delete", "board_post", post_id,
+           meta={"title": p.title, "contact": p.contact, "status": p.status,
+                 "ref_code": p.ref_code, "replies": n}, commit=False)
+    db.delete(p)
+    db.commit()
+    return {"post_id": post_id, "deleted": True, "replies_deleted": n}
+
+
 @app.get("/consultant/qr")
 def consultant_qr(fmt: str = "svg", user=Depends(auth.require_roles("consultant")),
                   db: Session = Depends(get_db)):
