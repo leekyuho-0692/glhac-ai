@@ -29,7 +29,15 @@ os.environ["GLHAC_BOARD_RATE_MAX"] = "0"
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app import main as _m  # noqa: E402
 from app.main import app  # noqa: E402
+
+# 도배 차단은 app.main 을 **임포트할 때** 환경변수를 한 번만 읽는다.
+# 위 os.environ 설정은 이 파일이 먼저 임포트될 때만 먹는다 — 다른 테스트 파일이
+# 앞서 app.main 을 불러오면 값이 이미 3 으로 굳어 네 번째 글부터 429 가 났다
+# (실측: test_no_ai_mode.py 와 같이 돌리면 16건 실패).
+# 그래서 환경변수에 기대지 않고 모듈 값을 직접 잡는다.
+_m._BOARD_RL_MAX = 0
 
 
 def _tok(c, u="consultant1", p="pw"):
