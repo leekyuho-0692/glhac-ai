@@ -193,3 +193,40 @@ def test_rate_limit_blocks_flooding(monkeypatch):
         assert blocked.status_code == 429
         assert blocked.json()["detail"]["code"] == "TOO_MANY_POSTS"
     m._BOARD_RL.clear()
+
+
+def test_inquiry_menu_is_registered_for_staff():
+    """좌측 메뉴는 DB(sys_menu)에서 온다 — index.html 의 NAV 는 DB 가 빌 때만 쓰는 폴백이다.
+    여기 등록하지 않으면 화면은 있는데 메뉴에 안 떠서 아무도 못 찾는다(실측으로 걸렸다)."""
+    from app import main as m, models
+    with TestClient(app) as c:
+        db = m.SessionLocal()
+        try:
+            menu = db.query(models.SysMenu).filter_by(menu_code="INQUIRY").first()
+            assert menu is not None and menu.route_path == "inquiry"
+            roles = {r.role_id for r in
+                     db.query(models.SysRoleMenu).filter_by(menu_id=menu.menu_id).all()}
+            assert {"consultant", "auditor", "sharia", "ops", "admin"} <= roles
+            assert "client" not in roles          # 클라이언트가 남의 문의를 보면 안 된다
+        finally:
+            db.close()
+        # 실제 응답에도 나오는가
+        tk = _tok(c)
+        menus = c.get("/me/menus?lang=ko", headers={"Authorization": "Bearer " + tk}).json()
+        paths = [ch["routePath"] for g in menus for ch in g.get("children", [])]
+        assert "inquiry" in paths
+
+
+def test_seed_menu_is_idempotent():
+    """매 기동마다 도는 함수다 — 두 번 불러도 메뉴가 늘어나면 안 된다."""
+    from app import main as m, models
+    with TestClient(app):
+        db = m.SessionLocal()
+        try:
+            m._ensure_inquiry_menu(db)
+            m._ensure_inquiry_menu(db)
+            assert db.query(models.SysMenu).filter_by(menu_code="INQUIRY").count() == 1
+            mid = db.query(models.SysMenu).filter_by(menu_code="INQUIRY").first().menu_id
+            assert db.query(models.SysRoleMenu).filter_by(menu_id=mid).count() == 5
+        finally:
+            db.close()

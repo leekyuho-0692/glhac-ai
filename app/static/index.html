@@ -474,6 +474,7 @@ const NAV = [
   ["certificate","🏅","인증서","Certificate","발급·Issue"],
   ["assistant","🤖","AI 어시스턴트","Assistant","AI 보조·Assist"],
   ["feedback","💬","개선 피드백","Feedback","건의·Feedback"],
+  ["inquiry","📮","홈페이지 문의함","Website Inquiries","익명 상담·Inquiries"],   // glhac.com 문의하기로 들어온 익명 글 — 담당자는 여기서 답변한다
   ["consultation","☎️","상담","Support","상담·Support"],
   ["auditLog","🛡️","감사로그","Audit Log","전역 이력·admin"],
   ["compliance","🔐","컴플라이언스","Compliance","플랫폼 준수·admin"],
@@ -485,7 +486,7 @@ const NAV_GROUPS=[
   {label:"신청·서류 · Application", ids:["application","preassess"]},   // 회의 2026-07-10: integration 삭제 · 원재료·AI큐는 개요 그룹으로
   {label:"계약·결제 · Contract", ids:["invoice","payments","deposits"]},   // prod 결제항목 유지
   {label:"심사·판정 · Audit", ids:["manualBuilder","evaluation","mockAudit","onsiteCalendar","audit","auditReport","fatwa","certificate"]},   // 할랄매뉴얼→모의→현장일정조율→현장·리포트→파트와→인증서
-  {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","auditorWork","regulations","consultation","notifyLog","auditLog","compliance","system"]},   // prod notifyLog 유지 + 오디터 업무 현황 + 컴플라이언스
+  {label:"지원 · Support", ids:["opsDashboard","opsCalendar","workflowMonitor","auditorWork","regulations","inquiry","consultation","notifyLog","auditLog","compliance","system"]},   // prod notifyLog 유지 + 오디터 업무 현황 + 컴플라이언스
   {label:"기타 · Others", ids:["assistant","feedback"]},   // prod 고유 그룹 유지
   {label:"내 정보 관리 · My Data", ids:["documents","vault","notifCenter"]},   // M6: 문서=내 자료함 · P1-#4 자료함(Vault) · C13 알림 센터
 ];
@@ -537,6 +538,7 @@ const MENU_ACCESS = {
   certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
   feedback: ["client","consultant","auditor","sharia","ops","admin"],
+  inquiry: ["consultant","auditor","sharia","ops","admin"],   // 서버 _BOARD_STAFF 와 일치 · 클라이언트는 남의 문의를 보면 안 된다
   consultation: ["client","consultant","ops","admin"],   // 상담: 클라이언트 제출·관리자 응대
   auditLog: ["admin"],   // G17 전역 감사로그 — admin 전용(백엔드 require_roles() 정합)
   compliance: ["admin"],   // P4c 플랫폼 컴플라이언스 대시보드 — admin 전용(백엔드 require_roles() 정합)
@@ -775,7 +777,7 @@ const ID_LABEL={
   ketua:"Ketua",anggota:"Anggota",halal:"Halal",haram:"Haram",mushbooh:"Meragukan",
   pre_audit:"Pra-audit",onsite:"Lapangan",certification:"Sertifikasi",supervision:"Pengawasan",
 };
-const NAV_ID={"consultantSales":"Penjualan Saya","consultantAdmin":"Konsultan","feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
+const NAV_ID={"inquiry":"Pertanyaan Situs","consultantSales":"Penjualan Saya","consultantAdmin":"Konsultan","feedback":"Umpan Balik",dashboard:"Dasbor",caseList:"Kasus Saya",workflow:"Ruang Kerja",application:"Aplikasi",preassess:"Pra-audit",materials:"Bahan AI",
   integration:"Integrasi",documents:"Dokumen",audit:"Audit",onsiteCalendar:"현장심사 캘린더",mockAudit:"Audit Simulasi",evaluation:"Evaluasi",
   invoice:"Tagihan",payments:"Pembayaran",deposits:"Pencocokan Setoran",notifyLog:"Pengiriman Notifikasi",opsDashboard:"Operasional",workflowMonitor:"워크플로우 모니터",regulations:"Regulasi & Hukum",auditReport:"Laporan Audit",fatwa:"Fatwa",certificate:"Sertifikat",assistant:"Asisten AI",manualBuilder:"Manual Halal",resubmitCenter:"Pusat Pelengkapan",aiExtractions:"Antrian Tinjau AI",auditLog:"Log Audit",compliance:"Kepatuhan",system:"Sistem"};
 /* 영어 enum 라벨 — EN 모드에서 raw 코드(consultant_review 등) 대신 표기 */
@@ -813,6 +815,23 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+/* 홈페이지 문의함 · English */
+ "답변완료":"Answered",
+ "📱 내 영업 QR":"📱 My Sales QR",
+ "QR 내려받기":"Download QR",
+ "내 담당":"Mine",
+ "영업":"Sales",
+ "누적 사용":"Total uses",
+ "회":" times",
+ "문의가 없습니다.":"No inquiries.",
+ "종료 처리":"Close",
+ "변경 실패":"Change failed",
+ "답변 내용을 입력하세요":"Enter the reply",
+ "고객에게 보낼 답변을 적으세요":"Write a reply to the customer",
+ "답변은 글쓴이가 홈페이지에서 비밀번호로 확인합니다.":"The author reads the reply on the website using their password.",
+ "고객이 이 QR 을 찍으면 홈페이지로 이동하고, 남긴 문의가 내 담당으로 붙습니다.":"When a customer scans this QR they land on the website, and any inquiry they leave is assigned to me.",
+ "홈페이지(glhac.com) 문의하기로 들어온 글입니다. 가입 없이 남긴 익명 글이라 케이스와 연결돼 있지 않습니다.":"This came in through the website contact form (glhac.com). It is anonymous with no account, so it is not linked to a case.",
+
  "미확인 자격 요건":"Unverified eligibility criteria", "입력하지 않아 확인하지 못했습니다 — 자기선언 자격 판단의 근거가 비어 있습니다.":"Not entered, so it could not be checked — the basis for the self-declaration eligibility decision is missing.",
  "이름 중복":"Duplicate name",
  "AI 호출 실패":"AI call failed", "AI 미연결":"AI not connected", "답변 없음":"No answer",
@@ -1328,6 +1347,25 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+/* 홈페이지 문의함 · Bahasa Indonesia */
+ "접수":"Diterima",
+ "답변완료":"Terjawab",
+ "종료":"Selesai",
+ "📱 내 영업 QR":"📱 QR Sales Saya",
+ "QR 내려받기":"Unduh QR",
+ "내 담당":"Tugas saya",
+ "영업":"Sales",
+ "누적 사용":"Total penggunaan",
+ "회":" kali",
+ "문의가 없습니다.":"Tidak ada pertanyaan.",
+ "종료 처리":"Tutup",
+ "변경 실패":"Gagal mengubah",
+ "답변 내용을 입력하세요":"Masukkan isi balasan",
+ "고객에게 보낼 답변을 적으세요":"Tulis balasan untuk pelanggan",
+ "답변은 글쓴이가 홈페이지에서 비밀번호로 확인합니다.":"Penulis membaca balasan di situs web menggunakan kata sandinya.",
+ "고객이 이 QR 을 찍으면 홈페이지로 이동하고, 남긴 문의가 내 담당으로 붙습니다.":"Saat pelanggan memindai QR ini, mereka menuju situs web dan pertanyaan yang mereka kirim menjadi tugas saya.",
+ "홈페이지(glhac.com) 문의하기로 들어온 글입니다. 가입 없이 남긴 익명 글이라 케이스와 연결돼 있지 않습니다.":"Pesan ini masuk lewat formulir kontak situs (glhac.com). Karena anonim tanpa pendaftaran, tidak terhubung ke kasus.",
+
  "미확인 자격 요건":"Kriteria kelayakan belum diverifikasi", "입력하지 않아 확인하지 못했습니다 — 자기선언 자격 판단의 근거가 비어 있습니다.":"Tidak diisi sehingga tidak dapat diperiksa — dasar penilaian kelayakan deklarasi mandiri kosong.",
  "이름 중복":"Nama ganda",
  "AI 호출 실패":"Panggilan AI gagal", "AI 미연결":"AI tidak terhubung", "답변 없음":"Tidak ada jawaban",
@@ -9246,6 +9284,97 @@ const FB_OPEN=new Set(); let FB_FILES=[];
 const FB_CAT=[["improvement","개선 제안"],["bug","오류·버그"],["question","문의"],["other","기타"]];
 const FB_STATUS={open:{ko:"접수",c:"warn"},reviewing:{ko:"검토중",c:"info"},resolved:{ko:"반영완료",c:"ok"},wontfix:{ko:"보류",c:"mute"}};
 function fbCatLabel(k){const f=FB_CAT.find(x=>x[0]===k);return f?f[1]:k;}
+/* ── 홈페이지 문의함 ───────────────────────────────────────────────────────
+   glhac.com 의 '문의하기'로 들어온 **익명 비공개** 글을 여기서 답변한다.
+   담당자는 하루 종일 이 시스템에 있는데 답변하러 홈페이지로 건너가는 건 어색하다.
+   글은 익명이라 케이스와 이어져 있지 않다 — 그래서 케이스 선택과 무관하게 뜬다.
+
+   영업자 QR 도 같이 둔다. 고객이 찍으면 남긴 문의가 그 영업자 담당으로 붙는다. */
+let INQ_MINE=false, INQ_OPEN=new Set();
+const INQ_ST={open:{ko:"접수",c:"warn"},answered:{ko:"답변완료",c:"ok"},closed:{ko:"종료",c:"mute"}};
+
+SCREEN.inquiry=async()=>{
+  const rows=await API("/board/posts"+(INQ_MINE?"?mine=true":""));
+  const isC=BROLE==="consultant";
+  const head=`<div class="card" style="margin-bottom:14px"><div class="body">
+    <div class="banner info" style="margin-bottom:10px">${T('홈페이지(glhac.com) 문의하기로 들어온 글입니다. 가입 없이 남긴 익명 글이라 케이스와 연결돼 있지 않습니다.')}</div>
+    <div class="btnrow" style="flex-wrap:wrap;gap:8px">
+      <button class="btn${INQ_MINE?"":" pri"}" onclick="inqFilter(false)">${T('전체')}</button>
+      ${isC?`<button class="btn${INQ_MINE?" pri":""}" onclick="inqFilter(true)">${T('내 담당')}</button>`:""}
+      ${isC?`<button class="btn" style="margin-left:auto" onclick="inqQR()">${T('📱 내 영업 QR')}</button>`:""}
+    </div>
+    <div id="inqQrBox"></div>
+  </div></div>`;
+  if(!rows.length) return head+`<div class="card"><div class="body muted">${T('문의가 없습니다.')}</div></div>`;
+  const list=rows.map(r=>{
+    const st=INQ_ST[r.status]||{ko:r.status,c:"mute"};
+    return `<div class="card" style="margin-bottom:10px"><div class="body">
+      <div class="btnrow" style="justify-content:space-between;align-items:flex-start">
+        <div><b>${esc(r.title)}</b> ${bTag(st.c,T(st.ko))}
+          ${r.reply_count?`<span class="chip">${T('답변')} ${r.reply_count}</span>`:""}
+          ${r.ref_code?`<span class="chip">${T('영업')} ${esc(r.ref_code)}</span>`:""}
+          <div class="muted small" style="margin-top:4px">${esc(r.author_name)} · ${esc(r.contact)} · ${esc(String(r.created_at).slice(0,16))}</div></div>
+        <button class="btn" onclick="inqToggle('${esc(r.post_id)}')">${INQ_OPEN.has(r.post_id)?T('접기'):T('열기')}</button>
+      </div>
+      <div id="inq-${esc(r.post_id)}" style="margin-top:10px">${INQ_OPEN.has(r.post_id)?'<div class="muted small">'+T('불러오는 중…')+'</div>':""}</div>
+    </div></div>`;
+  }).join("");
+  if(INQ_OPEN.size) AFTER_RENDER=()=>INQ_OPEN.forEach(id=>inqLoad(id));
+  return head+list;
+};
+function inqFilter(mine){INQ_MINE=mine;INQ_OPEN.clear();applyView();}
+function inqToggle(id){INQ_OPEN.has(id)?INQ_OPEN.delete(id):INQ_OPEN.add(id);applyView();}
+async function inqLoad(id){
+  const box=document.getElementById("inq-"+id); if(!box) return;
+  try{
+    const p=await API("/board/posts/"+encodeURIComponent(id));
+    const reps=(p.replies||[]).map(r=>`<div style="border-left:3px solid var(--accent);background:var(--bg2);
+      padding:10px 12px;border-radius:0 8px 8px 0;margin-top:8px">
+      <div class="muted small">${esc(r.author_role||"")} · ${esc(String(r.created_at).slice(0,16))}</div>
+      <div style="white-space:pre-wrap;margin-top:4px">${esc(r.body)}</div></div>`).join("");
+    box.innerHTML=`<div style="white-space:pre-wrap;line-height:1.7">${esc(p.body)}</div>${reps}
+      <div class="field" style="margin-top:12px"><label>${T('답변')}</label>
+        <textarea class="v" id="inqR-${esc(id)}" rows="3" placeholder="${T('고객에게 보낼 답변을 적으세요')}"></textarea></div>
+      <div class="btnrow">
+        <button class="btn pri" onclick="inqReply('${esc(id)}')">${T('답변 등록')}</button>
+        ${p.status!=="closed"?`<button class="btn" onclick="inqStatus('${esc(id)}','closed')">${T('종료 처리')}</button>`:""}
+      </div>
+      <div class="muted small" style="margin-top:8px">${T('답변은 글쓴이가 홈페이지에서 비밀번호로 확인합니다.')}</div>`;
+    localizeUI();
+  }catch(e){ box.innerHTML=errCard(e); }
+}
+async function inqReply(id){
+  const t=document.getElementById("inqR-"+id); if(!t||!t.value.trim()){toast(T("답변 내용을 입력하세요"));return}
+  try{ await API("/board/posts/"+encodeURIComponent(id)+"/replies",{method:"POST",body:JSON.stringify({body:t.value})});
+       toast(T("답변 등록")); applyView(); }
+  catch(e){ toast(T("등록 실패")+" · "+EMSG(e)); }
+}
+async function inqStatus(id,st){
+  try{ await API("/board/posts/"+encodeURIComponent(id)+"/status",{method:"PATCH",body:JSON.stringify({status:st})});
+       toast(T("상태 변경")); applyView(); }
+  catch(e){ toast(T("변경 실패")+" · "+EMSG(e)); }
+}
+/* 영업 QR — 명함·카탈로그에 쓰는 고정 코드 */
+async function inqQR(){
+  const box=document.getElementById("inqQrBox"); if(!box) return;
+  if(box.innerHTML){ box.innerHTML=""; return; }
+  box.innerHTML=`<div class="muted small" style="margin-top:10px">${T('불러오는 중…')}</div>`;
+  try{
+    const info=await API("/consultant/qr/info");
+    const r=await fetch("/consultant/qr?fmt=png",{headers:{Authorization:"Bearer "+token()}});
+    const url=URL.createObjectURL(await r.blob());
+    box.innerHTML=`<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;margin-top:12px;
+        padding-top:12px;border-top:1px solid var(--line)">
+      <img src="${url}" alt="QR" style="width:170px;height:170px;background:#fff;padding:8px;border-radius:10px;border:1px solid var(--line)">
+      <div><div class="muted small">${T('고객이 이 QR 을 찍으면 홈페이지로 이동하고, 남긴 문의가 내 담당으로 붙습니다.')}</div>
+        <div style="font-family:ui-monospace,Menlo,monospace;font-size:17px;font-weight:700;margin:8px 0">${esc(info.code)}</div>
+        <div class="muted small">${esc(info.url)}<br>${T('누적 사용')} ${info.used_count}${T('회')}</div>
+        <div class="btnrow"><a class="btn pri" download="glhac-qr-${esc(info.code)}.png" href="${url}">${T('QR 내려받기')}</a></div>
+      </div></div>`;
+    localizeUI();
+  }catch(e){ box.innerHTML=errCard(e); }
+}
+
 SCREEN.feedback=async()=>{
   const d=await API("/feedback").catch(()=>({items:[],is_admin:false}));
   const items=d.items||[]; const admin=fbIsAdmin();

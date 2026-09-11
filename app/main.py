@@ -16563,6 +16563,43 @@ def _fix_report_route(db):
     db.commit()
 
 
+def _ensure_inquiry_menu(db):
+    """'홈페이지 문의함' 사이드바 — glhac.com 문의하기로 들어온 익명 글을 답변하는 화면.
+
+    좌측 메뉴는 DB(sys_menu)에서 온다 — index.html 의 NAV 는 DB 가 비었을 때만 쓰는
+    폴백이라, 여기 등록하지 않으면 화면은 있는데 메뉴에 안 뜬다.
+    노출 역할은 서버 _BOARD_STAFF 와 같다(클라이언트 제외 — 남의 문의를 보면 안 된다).
+    idempotent."""
+    _ROLES = ("consultant", "auditor", "sharia", "ops", "admin")
+    existing = db.query(models.SysMenu).filter_by(menu_code="INQUIRY").first()
+    if existing:
+        have = {rm.role_id for rm in
+                db.query(models.SysRoleMenu).filter_by(menu_id=existing.menu_id).all()}
+        added = False
+        for r in _ROLES:
+            if r not in have:
+                db.add(models.SysRoleMenu(role_id=r, menu_id=existing.menu_id, sort_order=7))
+                added = True
+        if added:
+            db.commit()
+        return
+    grp = db.query(models.SysMenu).filter_by(menu_code="GRP_5").first()   # 지원
+    if not grp:
+        grp = db.query(models.SysMenu).filter_by(menu_code="GRP_1").first()   # 없으면 개요로
+    if not grp:
+        return
+    mid = models.uid()
+    db.add(models.SysMenu(menu_id=mid, menu_code="INQUIRY", parent_menu_id=grp.menu_id,
+                          menu_depth=2, menu_type="screen", route_path="inquiry",
+                          icon_name="\U0001f4ee", default_sort_order=7))
+    for lang, name in [("ko", "\ud648\ud398\uc774\uc9c0 \ubb38\uc758\ud568"),
+                       ("en", "Website Inquiries"), ("id", "Pertanyaan Situs")]:
+        db.add(models.SysMenuI18n(menu_id=mid, language_code=lang, menu_name=name))
+    for r in _ROLES:
+        db.add(models.SysRoleMenu(role_id=r, menu_id=mid, sort_order=7))
+    db.commit()
+
+
 def seed_menus(db):
     """현행 메뉴 구조(menu_seed.json)를 DB에 시드 — idempotent. 설계서 §10 마이그레이션."""
     import json as _json
@@ -16572,6 +16609,7 @@ def seed_menus(db):
         _ensure_approvals_menu(db)  # '승인함'(2인 승인) 보강
         _fix_report_route(db)     # '보고서' 메뉴가 파트와로 가던 라우팅 교정
         _ensure_consultant_menus(db)   # 영업(유치)·컨설턴트 관리 화면
+        _ensure_inquiry_menu(db)       # '홈페이지 문의함'(익명 게시판)
         return
     path = os.path.join(os.path.dirname(__file__), "menu_seed.json")
     if not os.path.exists(path):
@@ -16601,6 +16639,7 @@ def seed_menus(db):
     _ensure_approvals_menu(db)  # '승인함'(2인 승인) 사이드바 노출
     _fix_report_route(db)
     _ensure_consultant_menus(db)
+    _ensure_inquiry_menu(db)
 
 
 _BR2ROLE_MENU = {"applicant": "client", "consultant": "consultant", "auditor": "auditor",
