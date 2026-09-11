@@ -164,6 +164,19 @@ def get_current_user(authorization: str = Header(None), db=Depends(get_db)):
     return payload  # {uid, username, role, org_id, typ, tv}
 
 
+def optional_user(authorization: str = Header(None), db=Depends(get_db)):
+    """로그인했으면 사용자를, 아니면 None. 401 을 던지지 않는다.
+
+    한 엔드포인트를 직원(토큰)과 비회원(다른 수단)이 함께 쓰는 곳에 필요하다 —
+    게시판 답글이 그렇다. get_current_user 를 쓰면 비회원이 무조건 막힌다."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    try:
+        return get_current_user(authorization, db)
+    except HTTPException:
+        return None                     # 토큰이 낡았어도 비회원 경로는 열어 둔다
+
+
 def require_roles(*roles):
     """RBAC 게이트 — admin은 항상 통과(B.4.2)."""
     def dep(user=Depends(get_current_user)):

@@ -2800,13 +2800,45 @@ def board_create(body: schemas.BoardPostCreate, request: Request,
             "message": "접수되었습니다. 글번호와 비밀번호로 다시 확인하실 수 있습니다."}
 
 
+def _reply_view(r):
+    return {"reply_id": r.reply_id, "body": r.body,
+            "author_role": r.author_role, "author_name": r.author_name,
+            "parent_reply_id": r.parent_reply_id,
+            # 글쓴이가 단 답글인지. author_id 로 보지 않는다 — 이미 만들어진 테이블에
+            # NOT NULL 이 걸려 있어 NULL 을 넣을 수 없다(SQLite 는 제약을 못 푼다).
+            "is_author": r.author_role == "client",
+            "edited_at": str(r.edited_at) if r.edited_at else None,
+            "created_at": str(r.created_at)}
+
+
 def _post_view(p, replies):
     return {"post_id": p.post_id, "title": p.title, "body": p.body,
             "author_name": p.author_name, "contact": p.contact,
-            "status": p.status, "created_at": str(p.created_at),
-            "replies": [{"reply_id": r.reply_id, "body": r.body,
-                         "author_role": r.author_role,
-                         "created_at": str(r.created_at)} for r in replies]}
+            "status": p.status, "ref_code": p.ref_code,
+            "edited_at": str(p.edited_at) if p.edited_at else None,
+            "created_at": str(p.created_at),
+            "replies": [_reply_view(r) for r in replies]}
+
+
+def _post_or_404(db, post_id):
+    p = db.get(models.BoardPost, post_id)
+    if not p:
+        raise HTTPException(404, {"code": "POST_NOT_FOUND"})
+    return p
+
+
+def _verify_author(db, post_id, password, request):
+    """글쓴이 확인 — 비밀번호. 글 없음과 비번 틀림을 구분해 주지 않는다(글번호 탐색 차단)."""
+    iph = _ip_hash(request)
+    if auth.rate_limited("board:" + iph):
+        raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS"})
+    p = db.get(models.BoardPost, post_id)
+    if not p or not password or not auth.verify_pw(password, p.password_hash):
+        auth.record_attempt("board:" + iph)
+        raise HTTPException(401, {"code": "BAD_POST_CREDENTIALS",
+                                  "message": "글번호 또는 비밀번호가 맞지 않습니다."})
+    auth.clear_attempts("board:" + iph)
+    return p
 
 
 @app.post("/board/posts/{post_id}/open")
@@ -2828,14 +2860,116 @@ def board_open(post_id: str, body: schemas.BoardPostOpen, request: Request,
     return _post_view(p, replies)
 
 
+def _mask_name(n):
+    """김대현 → 김**  ·  Kim → K**. 누가 남겼는지 대충만 보이게 한다."""
+    n = (n or "").strip()
+    if not n:
+        return "익명"
+    return n[0] + "*" * max(1, len(n) - 1)
+
+
+def _mask_contact(c):
+    """010-1234-5678 → 010-****-5678 · a@b.com → a***@b.com
+
+    가운데만 가린다. 본인은 자기 것을 알아보고, 남은 못 쓴다."""
+    c = (c or "").strip()
+    if not c:
+        return ""
+    if "@" in c:
+        head, _, dom = c.partition("@")
+        keep = head[0] if head else ""
+        return "%s%s@%s" % (keep, "*" * max(3, len(head) - 1), dom)
+    digits = re.sub(r"[^0-9]", "", c)
+    if len(digits) >= 7:                      # 앞 3 · 뒤 4 만 남긴다
+        return "%s-%s-%s" % (digits[:3], "*" * (len(digits) - 7), digits[-4:])
+    return c[0] + "*" * max(1, len(c) - 1)
+
+
+@app.get("/board/public")
+def board_public(db: Session = Depends(get_db)):
+    """홈페이지에 보이는 문의 목록 — 제목·내용·연락처는 주지 않는다.
+
+    게시판이 텅 비어 보이면 남길 마음이 안 생긴다. 그래서 몇 건이 오갔고 답변이
+    달렸는지는 보여 준다. 다만 **어느 업체가 무슨 원료로 고민 중인지**는 경쟁사에
+    보이면 안 되므로 제목·내용은 내리지 않는다(비밀번호를 아는 사람만 연다).
+
+    글번호는 같이 준다 — 비밀번호가 없으면 어차피 못 열고, 대입은 로그인과 같은
+    장치로 막는다."""
+    rows = (db.query(models.BoardPost)
+              .order_by(models.BoardPost.created_at.desc()).limit(100).all())
+    ids = [r.post_id for r in rows]
+    cnt = {}
+    if ids:
+        for pid, n in (db.query(models.BoardReply.post_id, func.count())
+                         .filter(models.BoardReply.post_id.in_(ids))
+                         .group_by(models.BoardReply.post_id)):
+            cnt[pid] = n
+    return [{"post_id": r.post_id, "title": r.title,
+             "author_masked": _mask_name(r.author_name),
+             "contact_masked": _mask_contact(r.contact),
+             "status": r.status, "reply_count": cnt.get(r.post_id, 0),
+             "created_at": str(r.created_at)} for r in rows]
+
+
+@app.post("/board/find")
+def board_find(body: schemas.BoardFindReq, request: Request, db: Session = Depends(get_db)):
+    """연락처 + 비밀번호로 내 글 찾기 — 글번호를 모를 때.
+
+    32자리 글번호를 옮겨적게 하는 건 무리다. 폰으로 남기고 PC 에서 확인하는 흐름이
+    막히면 답변을 못 본다.
+
+    연락처만으로는 아무것도 안 나온다 — **비밀번호가 맞는 글만** 돌려준다.
+    연락처는 알아내기 쉽지만(명함·홈페이지) 비밀번호는 글쓴이만 안다.
+    대입 시도는 로그인과 같은 장치로 막는다."""
+    iph = _ip_hash(request)
+    if auth.rate_limited("board:" + iph):
+        raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS"})
+    want = (body.contact or "").strip()
+    rows = (db.query(models.BoardPost).filter(models.BoardPost.contact == want)
+              .order_by(models.BoardPost.created_at.desc()).limit(50).all())
+
+    if not body.password:
+        # 연락처만 — 목록만 준다. 제목·내용은 없다(전화번호만 알면 남의 문의 제목을
+        # 훑을 수 있으면 안 된다). 번호 훑기도 막아야 하므로 같이 센다.
+        if not rows:
+            auth.record_attempt("board:" + iph)
+            raise HTTPException(404, {"code": "NO_POSTS",
+                                      "message": "그 연락처로 남긴 문의가 없습니다."})
+        return [{"post_id": r.post_id, "title": r.title,
+                 "contact_masked": _mask_contact(r.contact),
+                 "status": r.status, "created_at": str(r.created_at)} for r in rows]
+
+    hits = [r for r in rows if auth.verify_pw(body.password, r.password_hash)]
+    if not hits:
+        auth.record_attempt("board:" + iph)
+        # 연락처가 없는 것과 비번이 틀린 것을 구분해 주지 않는다
+        raise HTTPException(401, {"code": "BAD_POST_CREDENTIALS",
+                                  "message": "연락처 또는 비밀번호가 맞지 않습니다."})
+    auth.clear_attempts("board:" + iph)
+    return [{"post_id": r.post_id, "title": r.title, "status": r.status,
+             "created_at": str(r.created_at)} for r in hits]
+
+
 @app.get("/board/posts")
-def board_list(status: str = None, mine: bool = False,
+def board_list(status: str = None, mine: bool = False, q: str = None,
                user=Depends(auth.require_roles(*_BOARD_STAFF)),
                db: Session = Depends(get_db)):
-    """직원용 목록 — 익명 글이라도 담당자는 봐야 답변한다."""
-    q = db.query(models.BoardPost)
+    """직원용 목록 — 익명 글이라도 담당자는 봐야 답변한다.
+
+    q 로 제목·내용·이름·연락처·영업코드를 함께 찾는다. 문의가 쌓이면 목록을 눈으로
+    훑을 수 없다 — 특히 연락처로 되찾는 일이 잦다(같은 업체가 다시 문의한다)."""
+    qy = db.query(models.BoardPost)
     if status:
-        q = q.filter(models.BoardPost.status == status)
+        qy = qy.filter(models.BoardPost.status == status)
+    kw = (q or "").strip()
+    if kw:
+        like = "%" + kw + "%"
+        qy = qy.filter(or_(models.BoardPost.title.ilike(like),
+                           models.BoardPost.body.ilike(like),
+                           models.BoardPost.author_name.ilike(like),
+                           models.BoardPost.contact.ilike(like),
+                           models.BoardPost.ref_code.ilike(like)))
+    q = qy
     if mine and user["role"] == "consultant":
         q = q.filter(models.BoardPost.consultant_id == user["uid"])
     rows = q.order_by(models.BoardPost.created_at.desc()).limit(300).all()
@@ -2864,21 +2998,127 @@ def board_detail(post_id: str, user=Depends(auth.require_roles(*_BOARD_STAFF)),
 
 
 @app.post("/board/posts/{post_id}/replies")
-def board_reply(post_id: str, body: schemas.BoardReplyCreate,
-                user=Depends(auth.require_roles(*_BOARD_STAFF)),
-                db: Session = Depends(get_db)):
-    """답변 — 로그인한 직원만. 답변이 달리면 상태를 answered 로 올린다."""
-    p = db.get(models.BoardPost, post_id)
-    if not p:
-        raise HTTPException(404, {"code": "POST_NOT_FOUND"})
+def board_reply(post_id: str, body: schemas.BoardReplyCreate, request: Request,
+                user=Depends(auth.optional_user), db: Session = Depends(get_db)):
+    """답글 — 직원은 토큰으로, 글쓴이는 글 비밀번호로.
+
+    글쓴이가 되물을 수 없으면 대화가 한 번에 끝난다(답변 받고 추가 질문이 불가능).
+    무가입 게시판이라 계정이 없으므로 글 비밀번호로 본인을 확인한다.
+
+    parent_reply_id 가 오면 그 답글에 달리는 대댓글이다. 깊이는 2단까지만 —
+    더 깊어지면 화면에서 누구에게 한 말인지 알아보기 어렵다."""
+    parent = None
+    if body.parent_reply_id:
+        parent = db.get(models.BoardReply, body.parent_reply_id)
+        if not parent or parent.post_id != post_id:
+            raise HTTPException(404, {"code": "PARENT_NOT_FOUND"})
+        if parent.parent_reply_id:
+            raise HTTPException(422, {"code": "TOO_DEEP",
+                                      "message": "대댓글은 한 단계까지만 달 수 있습니다."})
+
+    if body.password:                                  # 글쓴이
+        p = _verify_author(db, post_id, body.password, request)
+        r = models.BoardReply(post_id=post_id, author_id="", author_role="client",
+                              author_name=p.author_name, body=body.body,
+                              parent_reply_id=body.parent_reply_id)
+        db.add(r)
+        p.status = "open"                              # 되물었으니 다시 담당자 차례다
+        db.commit()
+        return {"reply_id": r.reply_id, "status": p.status, "by": "author"}
+
+    if not user or user.get("role") not in _BOARD_STAFF:
+        raise HTTPException(401, {"code": "UNAUTH",
+                                  "message": "로그인하거나 글 비밀번호를 입력하세요."})
+    p = _post_or_404(db, post_id)
     r = models.BoardReply(post_id=post_id, author_id=user["uid"],
-                          author_role=user["role"], body=body.body)
+                          author_role=user["role"], body=body.body,
+                          parent_reply_id=body.parent_reply_id)
     db.add(r)
     if p.status == "open":
         p.status = "answered"
     _audit(db, user, "board.reply", "board_post", post_id, commit=False)
     db.commit()
-    return {"reply_id": r.reply_id, "status": p.status}
+    return {"reply_id": r.reply_id, "status": p.status, "by": "staff"}
+
+
+@app.patch("/board/posts/{post_id}/replies/{reply_id}")
+def board_reply_edit(post_id: str, reply_id: str, body: schemas.BoardReplyEdit,
+                     request: Request, user=Depends(auth.optional_user),
+                     db: Session = Depends(get_db)):
+    """답글 수정 — 잘못 나간 답변은 고칠 수 있어야 한다.
+
+    직원은 자기가 쓴 답글만(운영자·관리자는 전부). 글쓴이는 글 비밀번호로 자기 답글만.
+    원문은 감사로그에 남긴다."""
+    r = db.get(models.BoardReply, reply_id)
+    if not r or r.post_id != post_id:
+        raise HTTPException(404, {"code": "REPLY_NOT_FOUND"})
+    before = r.body
+    if body.password:
+        _verify_author(db, post_id, body.password, request)
+        if r.author_role != "client":
+            raise HTTPException(403, {"code": "NOT_YOUR_REPLY",
+                                      "message": "직원 답변은 수정할 수 없습니다."})
+        r.body = body.body
+        r.edited_at = datetime.utcnow()
+        db.commit()
+        return {"reply_id": reply_id, "edited": True, "by": "author"}
+
+    if not user or user.get("role") not in _BOARD_STAFF:
+        raise HTTPException(401, {"code": "UNAUTH"})
+    if r.author_id != user["uid"] and user["role"] not in ("operator", "admin"):
+        raise HTTPException(403, {"code": "NOT_YOUR_REPLY",
+                                  "message": "본인이 쓴 답변만 수정할 수 있습니다."})
+    r.body = body.body
+    r.edited_at = datetime.utcnow()
+    _audit(db, user, "board.reply.edit", "board_post", post_id,
+           meta={"reply_id": reply_id, "before": before[:500]}, commit=False)
+    db.commit()
+    return {"reply_id": reply_id, "edited": True, "by": "staff"}
+
+
+def _apply_post_edit(p, body):
+    """빈 칸은 그대로 둔다 — 보낸 항목만 바꾼다."""
+    changed = {}
+    for f in ("title", "body", "author_name", "contact"):
+        v = getattr(body, f, None)
+        if v is not None and v != getattr(p, f):
+            changed[f] = getattr(p, f)
+            setattr(p, f, v)
+    if changed:
+        p.edited_at = datetime.utcnow()
+    return changed
+
+
+@app.post("/board/posts/{post_id}/edit")
+def board_edit_by_author(post_id: str, body: schemas.BoardPostEdit, request: Request,
+                         db: Session = Depends(get_db)):
+    """글쓴이가 자기 글을 고친다 — 글 비밀번호로 확인한다."""
+    p = _verify_author(db, post_id, body.password, request)
+    changed = _apply_post_edit(p, body)
+    db.commit()
+    replies = (db.query(models.BoardReply).filter_by(post_id=post_id)
+                 .order_by(models.BoardReply.created_at).all())
+    out = _post_view(p, replies)
+    out["changed"] = list(changed)
+    return out
+
+
+@app.patch("/board/posts/{post_id}")
+def board_edit_by_staff(post_id: str, body: schemas.BoardPostEdit,
+                        user=Depends(auth.require_roles(*_BOARD_STAFF)),
+                        db: Session = Depends(get_db)):
+    """직원이 글을 고친다 — 오타·연락처 정정용.
+
+    남의 글을 고치는 일이라 바꾸기 전 값을 통째로 감사로그에 남긴다.
+    나중에 '내가 쓴 것과 다르다'는 말이 나왔을 때 답할 수 있어야 한다."""
+    p = _post_or_404(db, post_id)
+    changed = _apply_post_edit(p, body)
+    if changed:
+        _audit(db, user, "board.edit", "board_post", post_id,
+               meta={"before": {k: (v or "")[:500] for k, v in changed.items()}}, commit=False)
+    db.commit()
+    return {"post_id": post_id, "changed": list(changed),
+            "edited_at": str(p.edited_at) if p.edited_at else None}
 
 
 @app.patch("/board/posts/{post_id}/status")

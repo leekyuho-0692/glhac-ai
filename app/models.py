@@ -886,6 +886,7 @@ class BoardPost(Base):
     password_hash = Column(String, nullable=False)
     # QR 로 들어온 문의는 그 영업자 건으로 남긴다 — 수수료·성과 근거
     ref_code = Column(String, index=True)
+    edited_at = Column(DateTime)          # 수정 시각(수정 이력은 감사로그)
     consultant_id = Column(String, index=True)
     status = Column(String, default="open")       # open | answered | closed
     ip_hash = Column(String)                      # 도배 차단용. 원문 IP 는 남기지 않는다
@@ -898,7 +899,13 @@ class BoardReply(Base):
     __tablename__ = "board_reply"
     reply_id = Column(String, primary_key=True, default=uid)
     post_id = Column(String, index=True, nullable=False)
-    author_id = Column(String, nullable=False)    # app_user.user_id
-    author_role = Column(String)
+    # 글쓴이(익명)가 되물을 수도 있다 — 그때는 author_id 가 없다
+    # 글쓴이 답글이면 빈 문자열. NULL 이 아니다 — 기존 테이블에 NOT NULL 이 걸려 있고
+    # SQLite 는 컬럼 제약을 나중에 풀 수 없다. 판별은 author_role=='client' 로 한다.
+    author_id = Column(String, nullable=False, default="")
+    author_role = Column(String)                 # 직원 역할 또는 'client'
+    author_name = Column(String)                 # 글쓴이 답글의 표시 이름
+    parent_reply_id = Column(String, index=True) # 대댓글 — 어느 답글에 달았는지
     body = Column(Text, nullable=False)
+    edited_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)

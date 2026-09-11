@@ -9,9 +9,10 @@ DB 에 들어간 뒤 한참 지나 다른 화면에서 터지거나, 아예 안 
 
 원재료 유형·출처 코드는 **사전(domain_dict)이 정본**이다. 여기서 목록을 다시 적지 않는다.
 """
+import re
 from datetime import date as _date
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from . import domain_dict as _dd
 
@@ -959,7 +960,50 @@ class PayoutCreate(BaseModel):
 
 
 # ── 홈페이지 상담 게시판 ──────────────────────────────────────────────────
-class BoardPostCreate(BaseModel):
+class _BoardPwRule:
+    """글 비밀번호는 연락처와 같으면 안 된다.
+
+    연락처는 목록에 일부가 보이고(마스킹) 명함·홈페이지로도 알 수 있다. 비밀번호를
+    전화번호로 쓰면 '연락처로 찾기'가 곧 '내용 열기'가 된다 — 가림막이 사라진다.
+
+    통째로 같은 것만 막으면 '12345678'(가운데·뒷자리 조합) 같은 게 빠져나간다.
+    그래서 **4자리 이상 이어서 겹치면** 막는다 — 앞 4자리든 뒷 4자리든 가운데든.
+    전부 막으면 쓸 수 있는 비번이 지나치게 줄어 그 선에서 끊는다.
+    하이픈은 무시하고 숫자만 본다.
+    """
+
+    @model_validator(mode="after")
+    def _pw_not_contact(self):
+        pw = (getattr(self, "password", None) or "").strip()
+        ct = (getattr(self, "contact", None) or "").strip()
+        if not pw or not ct:
+            return self
+        if pw.lower() == ct.lower():
+            raise ValueError("비밀번호를 연락처와 다르게 정해 주세요")
+        d_ct = re.sub(r"[^0-9]", "", ct)
+        if not d_ct:
+            return self
+        # 연락처 숫자와 **4자리 이상 이어서 겹치면** 거부한다.
+        # 전부 막으면 쓸 수 있는 비번이 너무 줄고, 통째로만 막으면 '12345678' 같은
+        # 조합이 빠져나간다. 섞인 비번('5678abcd')도 숫자 부분만 떼어 본다.
+        def _hits(num):
+            for i in range(len(num) - 3):
+                if num[i:i + 4] in d_ct:
+                    return True
+            return False
+
+        for run in re.findall(r"\d+", pw):
+            if _hits(run):
+                raise ValueError("비밀번호에 연락처 숫자를 4자리 이상 쓰지 말아 주세요")
+        # '49-28-77' 처럼 구분기호로 끊어 쓰면 위 검사를 빠져나간다(실측).
+        # 구분기호만 걷어내고 숫자만 남는 경우 한 번 더 본다.
+        sep_free = re.sub(r"[\s\-./_]", "", pw)
+        if sep_free.isdigit() and _hits(sep_free):
+            raise ValueError("비밀번호에 연락처 숫자를 4자리 이상 쓰지 말아 주세요")
+        return self
+
+
+class BoardPostCreate(_BoardPwRule, BaseModel):
     """무가입 문의 — 연락처는 필수다(답변할 방법이 없으면 글이 무의미하고, 봇 차단도 된다)."""
     title: str
     body: str
@@ -1017,7 +1061,84 @@ class BoardPostOpen(BaseModel):
 
 
 class BoardReplyCreate(BaseModel):
+    """답글 — 직원은 토큰으로, 글쓴이는 글 비밀번호로 쓴다.
+
+    password 가 오면 글쓴이의 되묻기로 본다(무가입 게시판이라 계정이 없다).
+    parent_reply_id 가 오면 그 답글에 달리는 대댓글이다."""
     body: str
+    password: Optional[str] = None
+    parent_reply_id: Optional[str] = None
+
+    @field_validator("body")
+    @classmethod
+    def _v_body(cls, v):
+        return _text_required(v, "답변 내용")
+
+
+class BoardPostEdit(BaseModel):
+    """글 수정 — 글쓴이는 비밀번호로, 직원은 토큰으로. 빈 칸은 그대로 둔다."""
+    password: Optional[str] = None
+    title: Optional[str] = None
+    body: Optional[str] = None
+    author_name: Optional[str] = None
+    contact: Optional[str] = None
+
+    @field_validator("title")
+    @classmethod
+    def _v_title(cls, v):
+        return v if v is None else _text_required(v, "제목")
+
+    @field_validator("body")
+    @classmethod
+    def _v_body(cls, v):
+        if v is None:
+            return v
+        t = _text_required(v, "내용")
+        if len(t) < 10:
+            raise ValueError("내용을 10자 이상 적어 주세요")
+        return t
+
+    @field_validator("author_name")
+    @classmethod
+    def _v_name(cls, v):
+        return v if v is None else _text_required(v, "이름")
+
+    @field_validator("contact")
+    @classmethod
+    def _v_contact(cls, v):
+        if v is None:
+            return v
+        t = _text_required(v, "연락처")
+        digits = re.sub(r"[^0-9]", "", t)
+        if "@" in t:
+            return _email(t)
+        if not (7 <= len(digits) <= 15):
+            raise ValueError("연락처는 이메일이거나 숫자 7~15자리여야 합니다")
+        return t
+
+
+class BoardFindReq(BaseModel):
+    """연락처 + 글 비밀번호로 내 글 찾기.
+
+    32자리 글번호를 받아적게 하는 건 무리다. 다른 기기에서도 자기 글을 찾을 수
+    있어야 한다 — 폰으로 남기고 사무실 PC 에서 확인하는 게 보통이다.
+
+    연락처만으로는 **목록만** 나온다 — 날짜와 답변 여부뿐이고 제목·내용은 없다.
+    내용을 보려면 글 비밀번호가 있어야 한다. 연락처는 알아내기 쉽지만(명함·홈페이지)
+    비밀번호는 글쓴이만 안다."""
+    contact: str
+    password: Optional[str] = None      # 없으면 목록만, 있으면 그 글을 바로 연다
+
+    @field_validator("contact")
+    @classmethod
+    def _v_contact(cls, v):
+        return _text_required(v, "연락처")
+
+
+class BoardReplyEdit(BaseModel):
+    """답글 수정 — 잘못 나간 답변은 고칠 수 있어야 한다."""
+    body: str
+    password: Optional[str] = None      # 글쓴이가 자기 답글을 고칠 때
 
     @field_validator("body")
     @classmethod

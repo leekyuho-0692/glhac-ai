@@ -38,7 +38,7 @@ def _tok(c, u="consultant1", p="pw"):
 
 def _post(c, **kw):
     body = {"title": "할랄 인증 문의", "body": "저희 제품 인증 가능한지 문의드립니다",
-            "author_name": "김대리", "contact": "010-1234-5678", "password": "pw1234"}
+            "author_name": "김대리", "contact": "010-1234-5678", "password": "glhac2026"}
     body.update(kw)
     return c.post("/board/posts", json=body)
 
@@ -118,7 +118,7 @@ def test_posts_are_invisible_without_login():
 def test_author_reopens_with_password():
     with TestClient(app) as c:
         pid = _post(c, title="재열람").json()["post_id"]
-        r = c.post("/board/posts/%s/open" % pid, json={"password": "pw1234"})
+        r = c.post("/board/posts/%s/open" % pid, json={"password": "glhac2026"})
         assert r.status_code == 200
         assert r.json()["title"] == "재열람"
         assert r.json()["contact"] == "010-1234-5678"   # 한국 번호를 그대로 보관
@@ -129,7 +129,7 @@ def test_wrong_password_is_indistinguishable_from_missing_post():
     with TestClient(app) as c:
         pid = _post(c).json()["post_id"]
         bad_pw = c.post("/board/posts/%s/open" % pid, json={"password": "틀린비번"})
-        no_post = c.post("/board/posts/없는글번호/open", json={"password": "pw1234"})
+        no_post = c.post("/board/posts/없는글번호/open", json={"password": "glhac2026"})
         assert bad_pw.status_code == no_post.status_code == 401
         assert bad_pw.json()["detail"]["code"] == no_post.json()["detail"]["code"]
 
@@ -158,7 +158,7 @@ def test_staff_reply_marks_it_answered_and_author_sees_it():
         assert c.post("/board/posts/%s/replies" % pid,
                       json={"body": "제품 정보를 보내주시면 진단해 드리겠습니다"},
                       headers=h).json()["status"] == "answered"
-        seen = c.post("/board/posts/%s/open" % pid, json={"password": "pw1234"}).json()
+        seen = c.post("/board/posts/%s/open" % pid, json={"password": "glhac2026"}).json()
         assert seen["status"] == "answered" and len(seen["replies"]) == 1
 
 
@@ -268,3 +268,141 @@ def test_deleting_a_missing_post_is_404():
     with TestClient(app) as c:
         h = {"Authorization": "Bearer " + _tok(c, "admin", "admin")}
         assert c.delete("/board/posts/없는글", headers=h).status_code == 404
+
+
+# ── 검색 ─────────────────────────────────────────────────────────────────
+def test_staff_can_search_posts():
+    """문의가 쌓이면 목록을 눈으로 훑을 수 없다 — 특히 연락처로 되찾는 일이 잦다."""
+    with TestClient(app) as c:
+        _post(c, title="검색A 원료", body="글리세린 원료 확인 부탁드립니다",
+              contact="010-1111-2222", password="findme01")
+        _post(c, title="검색B 포장재", body="포장재 인증 대상인지요",
+              contact="pack@example.com", password="findme02")
+        h = {"Authorization": "Bearer " + _tok(c)}
+        for kw, want in [("포장재", "검색B 포장재"), ("글리세린", "검색A 원료"),
+                         ("010-1111", "검색A 원료"), ("pack@example", "검색B 포장재")]:
+            rows = c.get("/board/posts", params={"q": kw}, headers=h).json()
+            assert [r["title"] for r in rows] == [want], (kw, rows)
+        assert c.get("/board/posts", params={"q": "없는말zzz"}, headers=h).json() == []
+
+
+# ── 수정 ─────────────────────────────────────────────────────────────────
+def test_author_edits_own_post_with_password():
+    with TestClient(app) as c:
+        pid = _post(c, title="수정전", password="editpw77").json()["post_id"]
+        r = c.post("/board/posts/%s/edit" % pid,
+                   json={"password": "editpw77", "title": "수정후",
+                         "contact": "010-9999-0000"})
+        assert r.status_code == 200 and r.json()["title"] == "수정후"
+        assert r.json()["contact"] == "010-9999-0000"
+        assert r.json()["edited_at"]
+        # 남의 비번으로는 안 된다
+        assert c.post("/board/posts/%s/edit" % pid,
+                      json={"password": "틀림", "title": "탈취"}).status_code == 401
+
+
+def test_staff_edit_is_recorded_in_audit():
+    """남의 글을 고치는 일이다 — '내가 쓴 것과 다르다'는 말에 답할 수 있어야 한다."""
+    from app import main as m, models
+    with TestClient(app) as c:
+        pid = _post(c, title="원래제목", password="editpw77").json()["post_id"]
+        h = {"Authorization": "Bearer " + _tok(c)}
+        r = c.patch("/board/posts/%s" % pid, json={"title": "직원이 고친 제목"}, headers=h)
+        assert r.status_code == 200 and "title" in r.json()["changed"]
+        db = m.SessionLocal()
+        try:
+            row = (db.query(models.AuditLog)
+                     .filter_by(action="board.edit", resource_id=pid).first())
+            assert row is not None and "원래제목" in str(row.meta)
+        finally:
+            db.close()
+
+
+# ── 대댓글 · 글쓴이 답글 ─────────────────────────────────────────────────
+def test_author_can_reply_and_it_reopens_the_post():
+    """되물을 수 없으면 대화가 한 번에 끝난다. 되물으면 다시 담당자 차례다."""
+    with TestClient(app) as c:
+        pid = _post(c, title="되묻기", password="askpw770").json()["post_id"]
+        h = {"Authorization": "Bearer " + _tok(c)}
+        rid = c.post("/board/posts/%s/replies" % pid,
+                     json={"body": "성적서를 보내주세요"}, headers=h).json()["reply_id"]
+        r = c.post("/board/posts/%s/replies" % pid,
+                   json={"body": "어디로 보내면 되나요?", "password": "askpw770",
+                         "parent_reply_id": rid})
+        assert r.status_code == 200 and r.json()["by"] == "author"
+        assert r.json()["status"] == "open"          # 다시 담당자 차례
+        seen = c.post("/board/posts/%s/open" % pid, json={"password": "askpw770"}).json()
+        kids = [x for x in seen["replies"] if x["parent_reply_id"] == rid]
+        assert len(kids) == 1 and kids[0]["is_author"]
+
+
+def test_replies_are_two_levels_deep_at_most():
+    """더 깊어지면 화면에서 누구에게 한 말인지 알아보기 어렵다."""
+    with TestClient(app) as c:
+        pid = _post(c, title="깊이", password="deeppw77").json()["post_id"]
+        h = {"Authorization": "Bearer " + _tok(c)}
+        rid = c.post("/board/posts/%s/replies" % pid, json={"body": "1단"},
+                     headers=h).json()["reply_id"]
+        kid = c.post("/board/posts/%s/replies" % pid,
+                     json={"body": "2단", "parent_reply_id": rid},
+                     headers=h).json()["reply_id"]
+        r = c.post("/board/posts/%s/replies" % pid,
+                   json={"body": "3단", "parent_reply_id": kid}, headers=h)
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "TOO_DEEP"
+
+
+def test_reply_edit_permissions():
+    with TestClient(app) as c:
+        pid = _post(c, title="답글수정", password="reppw770").json()["post_id"]
+        hc = {"Authorization": "Bearer " + _tok(c)}
+        rid = c.post("/board/posts/%s/replies" % pid, json={"body": "처음 답변"},
+                     headers=hc).json()["reply_id"]
+        url = "/board/posts/%s/replies/%s" % (pid, rid)
+        assert c.patch(url, json={"body": "고친 답변"}, headers=hc).status_code == 200
+        ha = {"Authorization": "Bearer " + _tok(c, "auditor1")}
+        assert c.patch(url, json={"body": "남이 고침"}, headers=ha).status_code == 403
+        hadm = {"Authorization": "Bearer " + _tok(c, "admin", "admin")}
+        assert c.patch(url, json={"body": "관리자 정정"}, headers=hadm).status_code == 200
+        # 글쓴이는 직원 답변을 못 고친다
+        assert c.patch(url, json={"body": "훔쳐고치기",
+                                  "password": "reppw770"}).status_code == 403
+
+
+# ── 미로그인 열람 ────────────────────────────────────────────────────────
+def test_public_list_hides_content():
+    """게시판이 비어 보이면 남길 마음이 안 생긴다 — 다만 내용은 가린다."""
+    with TestClient(app) as c:
+        _post(c, title="공개목록", body="원료 상세 내용입니다 비밀",
+              author_name="김대현", contact="010-3333-4444", password="pub12345")
+        rows = c.get("/board/public").json()          # 로그인 없이
+        assert rows and "body" not in rows[0] and "contact" not in rows[0]
+        me = [r for r in rows if r["title"] == "공개목록"][0]
+        assert me["author_masked"] == "김**"
+        assert me["contact_masked"] == "010-****-4444"
+
+
+def test_find_by_contact_needs_password_for_content():
+    """폰으로 남기고 PC 에서 확인하는 흐름 — 목록은 연락처로, 내용은 비밀번호로."""
+    with TestClient(app) as c:
+        _post(c, title="기기이동", contact="010-5555-6666", password="move1234")
+        rows = c.post("/board/find", json={"contact": "010-5555-6666"}).json()
+        assert rows and rows[0]["status"] == "open"
+        hit = c.post("/board/find", json={"contact": "010-5555-6666",
+                                          "password": "move1234"}).json()
+        assert hit[0]["title"] == "기기이동"
+        assert c.post("/board/find", json={"contact": "010-5555-6666",
+                                           "password": "틀림"}).status_code == 401
+        assert c.post("/board/find", json={"contact": "010-0000-0000"}).status_code == 404
+
+
+# ── 비밀번호 규칙 ────────────────────────────────────────────────────────
+def test_password_must_not_reuse_contact_digits():
+    """목록에 연락처가 일부 보인다 — 비번을 전화번호로 쓰면 가림막이 사라진다.
+    4자리 이상 이어서 겹치면 막는다. 구분기호로 끊어 써도 마찬가지다(실측 우회)."""
+    with TestClient(app) as c:
+        for pw in ("01049281733", "pw4928", "004928", "49-28-77", "4 9 2 8", "49281733"):
+            r = _post(c, contact="010-4928-1733", password=pw, title="규칙")
+            assert r.status_code == 422, (pw, r.status_code)
+        for pw in ("glhac2026", "170733x", "a1b2c3d4"):
+            assert _post(c, contact="010-4928-1733", password=pw,
+                         title="규칙통과").status_code == 200, pw

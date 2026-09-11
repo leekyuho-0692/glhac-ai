@@ -816,6 +816,27 @@ function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
 /* 홈페이지 문의함 · English */
+ "검색":"Search",
+ "지우기":"Clear",
+ "검색 결과가 없습니다.":"No results.",
+ "제목·내용·이름·연락처·영업코드로 검색":"Search title, body, name, contact, sales code",
+ "답글":"Reply",
+ "수정":"Edit",
+ "저장":"Save",
+ "취소":"Cancel",
+ "등록":"Submit",
+ "작성자":"Author",
+ "담당자":"Staff",
+ "수정됨":"edited",
+ "글 수정":"Edit post",
+ "답변 수정":"Edit reply",
+ "수정했습니다":"Saved",
+ "수정 실패":"Edit failed",
+ "등록 실패":"Submit failed",
+ "글 수정됨":"Post edited",
+ "내용":"Body",
+ "연락처":"Contact",
+ "남의 글을 고치는 것이라 바꾸기 전 내용이 감사기록에 남습니다.":"You are editing someone else's post — the previous content is recorded in the audit log.",
  "스팸 삭제":"Delete spam",
  "삭제했습니다":"Deleted",
  "삭제 실패":"Delete failed",
@@ -1352,6 +1373,27 @@ function capBanner(){
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
 /* 홈페이지 문의함 · Bahasa Indonesia */
+ "검색":"Cari",
+ "지우기":"Hapus",
+ "검색 결과가 없습니다.":"Tidak ada hasil.",
+ "제목·내용·이름·연락처·영업코드로 검색":"Cari judul, isi, nama, kontak, kode sales",
+ "답글":"Balas",
+ "수정":"Ubah",
+ "저장":"Simpan",
+ "취소":"Batal",
+ "등록":"Kirim",
+ "작성자":"Penulis",
+ "담당자":"Petugas",
+ "수정됨":"diubah",
+ "글 수정":"Ubah pertanyaan",
+ "답변 수정":"Ubah jawaban",
+ "수정했습니다":"Tersimpan",
+ "수정 실패":"Gagal mengubah",
+ "등록 실패":"Gagal mengirim",
+ "글 수정됨":"Pertanyaan diubah",
+ "내용":"Isi",
+ "연락처":"Kontak",
+ "남의 글을 고치는 것이라 바꾸기 전 내용이 감사기록에 남습니다.":"Anda mengubah tulisan orang lain — isi sebelumnya dicatat dalam log audit.",
  "스팸 삭제":"Hapus spam",
  "삭제했습니다":"Terhapus",
  "삭제 실패":"Gagal menghapus",
@@ -9298,14 +9340,21 @@ function fbCatLabel(k){const f=FB_CAT.find(x=>x[0]===k);return f?f[1]:k;}
    글은 익명이라 케이스와 이어져 있지 않다 — 그래서 케이스 선택과 무관하게 뜬다.
 
    영업자 QR 도 같이 둔다. 고객이 찍으면 남긴 문의가 그 영업자 담당으로 붙는다. */
-let INQ_MINE=false, INQ_OPEN=new Set();
+let INQ_MINE=false, INQ_Q="", INQ_OPEN=new Set();
 const INQ_ST={open:{ko:"접수",c:"warn"},answered:{ko:"답변완료",c:"ok"},closed:{ko:"종료",c:"mute"}};
 
 SCREEN.inquiry=async()=>{
-  const rows=await API("/board/posts"+(INQ_MINE?"?mine=true":""));
+  const qs=[]; if(INQ_MINE) qs.push("mine=true");
+  if(INQ_Q.trim()) qs.push("q="+encodeURIComponent(INQ_Q.trim()));
+  const rows=await API("/board/posts"+(qs.length?"?"+qs.join("&"):""));
   const isC=BROLE==="consultant";
   const head=`<div class="card" style="margin-bottom:14px"><div class="body">
     <div class="banner info" style="margin-bottom:10px">${T('홈페이지(glhac.com) 문의하기로 들어온 글입니다. 가입 없이 남긴 익명 글이라 케이스와 연결돼 있지 않습니다.')}</div>
+    <div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <input class="v" id="inqQ" style="max-width:340px" placeholder="${T('제목·내용·이름·연락처·영업코드로 검색')}" value="${esc(INQ_Q)}">
+      <button class="btn" onclick="inqSearch()">${T('검색')}</button>
+      <button class="btn" onclick="inqClear()">${T('지우기')}</button>
+    </div>
     <div class="btnrow" style="flex-wrap:wrap;gap:8px">
       <button class="btn${INQ_MINE?"":" pri"}" onclick="inqFilter(false)">${T('전체')}</button>
       ${isC?`<button class="btn${INQ_MINE?" pri":""}" onclick="inqFilter(true)">${T('내 담당')}</button>`:""}
@@ -9313,7 +9362,7 @@ SCREEN.inquiry=async()=>{
     </div>
     <div id="inqQrBox"></div>
   </div></div>`;
-  if(!rows.length) return head+`<div class="card"><div class="body muted">${T('문의가 없습니다.')}</div></div>`;
+  if(!rows.length) return head+`<div class="card"><div class="body muted">${INQ_Q.trim()?T('검색 결과가 없습니다.'):T('문의가 없습니다.')}</div></div>`;
   const list=rows.map(r=>{
     const st=INQ_ST[r.status]||{ko:r.status,c:"mute"};
     return `<div class="card" style="margin-bottom:10px"><div class="body">
@@ -9331,24 +9380,44 @@ SCREEN.inquiry=async()=>{
   return head+list;
 };
 function inqFilter(mine){INQ_MINE=mine;INQ_OPEN.clear();applyView();}
+function inqSearch(){const e=document.getElementById("inqQ");INQ_Q=e?e.value:"";INQ_OPEN.clear();applyView();}
+function inqClear(){INQ_Q="";INQ_OPEN.clear();applyView();}
 function inqToggle(id){INQ_OPEN.has(id)?INQ_OPEN.delete(id):INQ_OPEN.add(id);applyView();}
 async function inqLoad(id){
   const box=document.getElementById("inq-"+id); if(!box) return;
   try{
     const p=await API("/board/posts/"+encodeURIComponent(id));
-    const reps=(p.replies||[]).map(r=>`<div style="border-left:3px solid var(--accent);background:var(--bg2);
-      padding:10px 12px;border-radius:0 8px 8px 0;margin-top:8px">
-      <div class="muted small">${esc(r.author_role||"")} · ${esc(String(r.created_at).slice(0,16))}</div>
-      <div style="white-space:pre-wrap;margin-top:4px">${esc(r.body)}</div></div>`).join("");
-    box.innerHTML=`<div style="white-space:pre-wrap;line-height:1.7">${esc(p.body)}</div>${reps}
+    const list=p.replies||[];
+    const one=(r)=>{
+      const mine=r.is_author;
+      return `<div id="ir-${esc(r.reply_id)}" style="border-left:3px solid ${mine?'var(--line)':'var(--accent)'};
+        background:${mine?'transparent':'var(--bg2)'};padding:10px 12px;border-radius:0 8px 8px 0;
+        margin-top:8px;margin-left:${r.parent_reply_id?'26px':'0'}">
+        <div class="muted small"><b>${esc(mine?(r.author_name||T('작성자')):(r.author_role||T('담당자')))}</b>
+          · ${esc(String(r.created_at).slice(0,16))}${r.edited_at?` · ${T('수정됨')}`:""}</div>
+        <div class="irbody" style="white-space:pre-wrap;margin-top:4px">${esc(r.body)}</div>
+        <div class="btnrow" style="margin-top:6px;gap:6px">
+          ${r.parent_reply_id?"":`<button class="btn" onclick="inqReplyTo('${esc(id)}','${esc(r.reply_id)}')">${T('답글')}</button>`}
+          ${mine?"":`<button class="btn" onclick="inqEditReply('${esc(id)}','${esc(r.reply_id)}')">${T('수정')}</button>`}
+        </div><div id="if-${esc(r.reply_id)}"></div></div>`;
+    };
+    // 대댓글은 부모 바로 밑에 — 시간순으로만 두면 누구에게 한 말인지 알 수 없다
+    const reps=list.filter(r=>!r.parent_reply_id).map(t=>
+      one(t)+list.filter(k=>k.parent_reply_id===t.reply_id).map(one).join("")).join("");
+    box.innerHTML=`<div style="white-space:pre-wrap;line-height:1.7">${esc(p.body)}</div>
+      ${p.edited_at?`<div class="muted small" style="margin-top:4px">${T('글 수정됨')} · ${esc(String(p.edited_at).slice(0,16))}</div>`:""}
+      ${reps}
       <div class="field" style="margin-top:12px"><label>${T('답변')}</label>
         <textarea class="v" id="inqR-${esc(id)}" rows="3" placeholder="${T('고객에게 보낼 답변을 적으세요')}"></textarea></div>
       <div class="btnrow">
         <button class="btn pri" onclick="inqReply('${esc(id)}')">${T('답변 등록')}</button>
+        <button class="btn" onclick="inqEditPost('${esc(id)}')">${T('글 수정')}</button>
         ${p.status!=="closed"?`<button class="btn" onclick="inqStatus('${esc(id)}','closed')">${T('종료 처리')}</button>`:""}
         ${["ops","admin"].includes(ROLE)?`<button class="btn" style="margin-left:auto;color:#b4432f" onclick="inqDelete('${esc(id)}')">${T('스팸 삭제')}</button>`:""}
       </div>
+      <div id="ip-${esc(id)}"></div>
       <div class="muted small" style="margin-top:8px">${T('답변은 글쓴이가 홈페이지에서 비밀번호로 확인합니다.')}</div>`;
+    INQ_POST[id]=p;
     localizeUI();
   }catch(e){ box.innerHTML=errCard(e); }
 }
@@ -9362,6 +9431,65 @@ async function inqStatus(id,st){
   try{ await API("/board/posts/"+encodeURIComponent(id)+"/status",{method:"PATCH",body:JSON.stringify({status:st})});
        toast(T("상태 변경")); applyView(); }
   catch(e){ toast(T("변경 실패")+" · "+EMSG(e)); }
+}
+const INQ_POST={};
+/* 대댓글 — 특정 답변에 이어 말한다. 서버가 2단까지만 받는다. */
+function inqReplyTo(pid,rid){
+  const box=document.getElementById("if-"+rid); if(!box) return;
+  if(box.innerHTML){box.innerHTML="";return;}
+  box.innerHTML=`<div class="field" style="margin-top:8px"><label>${T('답글')}</label>
+    <textarea class="v" id="ira-${esc(rid)}" rows="2"></textarea></div>
+    <div class="btnrow"><button class="btn pri" onclick="inqSendSub('${esc(pid)}','${esc(rid)}')">${T('등록')}</button>
+    <button class="btn" onclick="inqReplyTo('${esc(pid)}','${esc(rid)}')">${T('취소')}</button></div>`;
+  localizeUI();
+}
+async function inqSendSub(pid,rid){
+  const t=document.getElementById("ira-"+rid);
+  if(!t||!t.value.trim()){toast(T("답변 내용을 입력하세요"));return}
+  try{ await API("/board/posts/"+encodeURIComponent(pid)+"/replies",
+        {method:"POST",body:JSON.stringify({body:t.value,parent_reply_id:rid})});
+       toast(T("답변 등록")); applyView(); }
+  catch(e){ toast(T("등록 실패")+" · "+EMSG(e)); }
+}
+/* 답변 수정 — 잘못 나간 답변을 고칠 수 있어야 한다(쓴 사람 또는 운영자·관리자) */
+function inqEditReply(pid,rid){
+  const box=document.getElementById("if-"+rid); if(!box) return;
+  if(box.innerHTML){box.innerHTML="";return;}
+  const cur=document.querySelector("#ir-"+CSS.escape(rid)+" .irbody");
+  box.innerHTML=`<div class="field" style="margin-top:8px"><label>${T('답변 수정')}</label>
+    <textarea class="v" id="ire-${esc(rid)}" rows="3"></textarea></div>
+    <div class="btnrow"><button class="btn pri" onclick="inqSaveReply('${esc(pid)}','${esc(rid)}')">${T('저장')}</button>
+    <button class="btn" onclick="inqEditReply('${esc(pid)}','${esc(rid)}')">${T('취소')}</button></div>`;
+  document.getElementById("ire-"+rid).value = cur?cur.innerText:"";
+  localizeUI();
+}
+async function inqSaveReply(pid,rid){
+  try{ await API("/board/posts/"+encodeURIComponent(pid)+"/replies/"+encodeURIComponent(rid),
+        {method:"PATCH",body:JSON.stringify({body:document.getElementById("ire-"+rid).value})});
+       toast(T("수정했습니다")); applyView(); }
+  catch(e){ toast(T("수정 실패")+" · "+EMSG(e)); }
+}
+/* 글 수정 — 남의 글이라 바꾸기 전 내용이 감사기록에 남는다 */
+function inqEditPost(pid){
+  const box=document.getElementById("ip-"+pid); if(!box) return;
+  if(box.innerHTML){box.innerHTML="";return;}
+  const p=INQ_POST[pid]||{};
+  box.innerHTML=`<div class="card" style="margin-top:10px"><div class="body">
+    <div class="banner warn" style="margin-bottom:8px">${T('남의 글을 고치는 것이라 바꾸기 전 내용이 감사기록에 남습니다.')}</div>
+    <div class="field"><label>${T('제목')}</label><input class="v" id="iep-t-${esc(pid)}" value="${esc(p.title||"")}"></div>
+    <div class="field"><label>${T('내용')}</label><textarea class="v" id="iep-b-${esc(pid)}" rows="4">${esc(p.body||"")}</textarea></div>
+    <div class="field"><label>${T('연락처')}</label><input class="v" id="iep-c-${esc(pid)}" value="${esc(p.contact||"")}"></div>
+    <div class="btnrow"><button class="btn pri" onclick="inqSavePost('${esc(pid)}')">${T('저장')}</button>
+    <button class="btn" onclick="inqEditPost('${esc(pid)}')">${T('취소')}</button></div></div></div>`;
+  localizeUI();
+}
+async function inqSavePost(pid){
+  try{ await API("/board/posts/"+encodeURIComponent(pid),{method:"PATCH",
+        body:JSON.stringify({title:document.getElementById("iep-t-"+pid).value,
+                             body:document.getElementById("iep-b-"+pid).value,
+                             contact:document.getElementById("iep-c-"+pid).value})});
+       toast(T("수정했습니다")); applyView(); }
+  catch(e){ toast(T("수정 실패")+" · "+EMSG(e)); }
 }
 /* 스팸 삭제 — 무가입 게시판이라 스팸이 들어온다. 운영자·관리자만(컨설턴트가
    자기 실적에 불리한 글을 지울 수 있으면 안 된다). 되돌릴 수 없어 한 번 묻는다. */
