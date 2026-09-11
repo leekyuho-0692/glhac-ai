@@ -74,6 +74,7 @@ def test_AI_없이_되는_업무를_함께_알린다(monkeypatch):
         assert len(r["works_without_ai"]) >= 5
 
 
+@needs_ocr_pkg   # mode=='full' 은 OCR 패키지가 있어야 성립한다
 def test_AI_있으면_배너를_띄우지_않는다(monkeypatch, tmp_path):
     monkeypatch.setattr(ai_local, "health",
                         lambda: {"ollama": "up", "models": ["gemma3:12b"],
