@@ -1,0 +1,85 @@
+name: Deploy (가비아)
+
+# 가비아 서버(glhac.co.kr)로 배포한다.
+#
+# 실제 절차는 scripts/deploy.sh 에 있고 여기서는 그것을 호출만 한다 —
+# 맥에서 손으로 돌릴 때와 서버가 같은 길을 밟게 하려는 것이다. 한 곳만 고치면 된다.
+#
+# 필요한 시크릿 (Settings → Secrets and variables → Actions):
+#   GLHAC_SSH_KEY   배포용 개인키 전문(-----BEGIN … END----- 포함)
+#   GLHAC_SSH_HOST  rocky@1.201.116.174
+#
+# 러너가 서버 22 번에 붙을 수 있어야 한다. 보안그룹이 막고 있으면 연결되지 않는다 —
+# 그 경우엔 맥에서 `bash scripts/deploy.sh` 한 줄이 가장 빠르고 안전하다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "배포하려면 'deploy' 를 입력하세요"
+        required: true
+        default: ''
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: inputs.confirm == 'deploy'        # 실수로 눌러 배포되는 일을 막는다
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 시크릿 확인
+        env:
+          KEY: ${{ secrets.GLHAC_SSH_KEY }}
+          HOST: ${{ secrets.GLHAC_SSH_HOST }}
+        run: |
+          [ -n "$KEY" ]  || { echo "::error::GLHAC_SSH_KEY 가 없습니다"; exit 1; }
+          [ -n "$HOST" ] || { echo "::error::GLHAC_SSH_HOST 가 없습니다"; exit 1; }
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 의존성
+        run: |
+          python -m pip install --upgrade pip
+          sed 's/[[:space:]]*#.*$//' requirements.txt \
+            | grep -vE '^[[:space:]]*$' | grep -viE '^paddle' > /tmp/req.txt
+          pip install -r /tmp/req.txt "pytest>=8.0"
+
+      # 깨진 코드를 서버에 올리지 않는다
+      - name: 테스트 (실패하면 배포하지 않는다)
+        env:
+          GLHAC_DEV: '1'
+          GLHAC_RATE_LIMIT_PER_MIN: '0'
+          GLHAC_SECRET: 'ci-test-secret-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+        run: python -m pytest -q
+
+      - name: SSH 키 준비
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.GLHAC_SSH_KEY }}" > ~/.ssh/glhac.pem
+          chmod 600 ~/.ssh/glhac.pem
+          ssh-keyscan -H "$(echo '${{ secrets.GLHAC_SSH_HOST }}' | cut -d@ -f2)" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: 배포 (백업 → 전송 → 재기동 → 헬스체크, 실패 시 자동 복구)
+        env:
+          GLHAC_SSH_KEY: ~/.ssh/glhac.pem
+          GLHAC_SSH_HOST: ${{ secrets.GLHAC_SSH_HOST }}
+        run: bash scripts/deploy.sh --app-only
+
+      - name: 배포 확인
+        run: |
+          for u in https://glhac.co.kr/ui/ https://glhac.co.kr/health; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -m 20 "$u")
+            echo "  $u → $code"
+            [ "$code" = "200" ] || { echo "::error::$u 가 200 이 아닙니다"; exit 1; }
+          done
+
+      - name: 정리
+        if: always()
+        run: rm -f ~/.ssh/glhac.pem

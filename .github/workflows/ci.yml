@@ -1,0 +1,86 @@
+name: CI
+
+# 단독 저장소용 — 모노레포에서는 glhac-ai-v3/** 경로로 걸렀지만 여기선 전부가 이 프로젝트다.
+#
+# 테스트는 파일별 독립 프로세스로 돌린다(tests/run_isolated.sh). 한 프로세스에서
+# 전부 돌리면 앞 파일이 만든 모듈 전역·DB 상태가 뒤 파일에 새어 순서에 따라 결과가
+# 달라진다 — 실제로 그렇게 깨진 적이 있다.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  GLHAC_DEV: '1'                         # 데모 계정 시드(테스트용)
+  GLHAC_RATE_LIMIT_PER_MIN: '0'          # 레이트리밋 비활성 — 연속 호출 안전
+  GLHAC_SECRET: 'ci-test-secret-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: 의존성 (무거운 OCR 은 제외)
+        run: |
+          python -m pip install --upgrade pip
+          # requirements.txt 에서 paddle* 만 뺀다. 목록을 여기 손으로 적어 두면
+          # 새 의존을 추가했을 때 CI 에서만 ModuleNotFoundError 가 난다(실측: segno).
+          sed 's/[[:space:]]*#.*$//' requirements.txt \
+            | grep -vE '^[[:space:]]*$' | grep -viE '^paddle' > /tmp/ci-reqs.txt
+          echo "--- 설치 목록 ---"; cat /tmp/ci-reqs.txt
+          pip install -r /tmp/ci-reqs.txt
+          pip install "pytest>=8.0" "pytest-cov>=5.0" "coverage>=7.0"
+          python -c "import fastapi, sqlalchemy, httpx, pydantic, fitz, openpyxl, docx, Crypto, PIL, segno; print('deps OK')"
+
+      # e2e 는 HTTP 로 서버를 때린다. 대상이 없으면 run_isolated.sh 가 건너뛰므로
+      # 여기서 격리 서버를 띄워 실제로 돌린다(임시 DB · 운영과 무관).
+      - name: 테스트용 서버 기동
+        env:
+          GLHAC_DB_URL: sqlite:///${{ runner.temp }}/ci_e2e.db
+        run: |
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8899 \
+            > "${{ runner.temp }}/server.log" 2>&1 &
+          echo $! > "${{ runner.temp }}/server.pid"
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8899/health || echo 000)
+            [ "$code" = "200" ] && { echo "기동 완료 (${i}s)"; exit 0; }
+            sleep 1
+          done
+          echo "::error::서버가 60초 안에 뜨지 않았습니다"; cat "${{ runner.temp }}/server.log"; exit 1
+
+      - name: 테스트 (파일별 격리)
+        env:
+          PYTHON: python
+          GLHAC_COV: '1'
+          GLHAC_E2E_BASE: http://127.0.0.1:8899
+          GLHAC_DB_URL: sqlite:///${{ runner.temp }}/ci_e2e.db   # 위 서버와 같은 파일이어야 한다
+          GLHAC_E2E_SKIP_OLLAMA: '1'                             # 러너에 Ollama 가 없다
+        run: bash tests/run_isolated.sh
+
+      - name: 서버 로그 (실패 원인 추적)
+        if: always()
+        run: cat "${{ runner.temp }}/server.log" || true
+
+      - name: 서버 종료
+        if: always()
+        run: kill "$(cat "${{ runner.temp }}/server.pid")" 2>/dev/null || true
+
+      - name: 비밀키 누출 검사
+        run: |
+          # 바이너리 제외(-I) — PDF 압축 데이터가 UUID 패턴과 우연히 겹쳐 오탐이 난다
+          if git grep -InE 'sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY' -- . ; then
+            echo "::error::비밀키 패턴 발견"; exit 1
+          fi
+          echo "누출 없음"
