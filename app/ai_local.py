@@ -229,6 +229,20 @@ def ocr_image(path, lang="korean"):
     return r
 
 
+# oneDNN(MKL-DNN) 가속 경로가 서버 CPU 빌드에서 터진다 —
+#   NotImplementedError: ConvertPirAttribute2RuntimeAttribute not support
+#   (Rocky 8 · Xeon Silver 4510 · paddlepaddle 3.3.1 에서 실측)
+# 끄면 조금 느려지지만 읽기는 된다. 속도보다 되는 게 먼저다.
+# 다른 장비에서 켜고 싶으면 GLHAC_OCR_MKLDNN=1 로 되돌린다.
+_OCR_MKLDNN = os.environ.get("GLHAC_OCR_MKLDNN", "0") == "1"
+
+
+def _ocr_kwargs(lang):
+    return dict(lang=lang, use_doc_orientation_classify=False,
+                use_doc_unwarping=False, use_textline_orientation=False,
+                enable_mkldnn=_OCR_MKLDNN)
+
+
 def _ocr_image_inproc(path, lang="korean"):
     """워커 안에서 실제로 도는 본체(그리고 GLHAC_OCR_MODE=inproc 경로)."""
     global _ocr
@@ -236,9 +250,9 @@ def _ocr_image_inproc(path, lang="korean"):
         if _ocr is None:
             from paddleocr import PaddleOCR
             try:
-                _ocr = PaddleOCR(lang=lang, use_doc_orientation_classify=False,
-                                 use_doc_unwarping=False, use_textline_orientation=False)
+                _ocr = PaddleOCR(**_ocr_kwargs(lang))
             except TypeError:
+                # 옛 버전은 일부 인자를 모른다 — 언어만 주고 간다
                 _ocr = PaddleOCR(lang=lang)
         result = _ocr.predict(path)
         lines = []
@@ -277,8 +291,7 @@ def ocr_image_lang(path, lang):
         if eng is None:
             from paddleocr import PaddleOCR
             try:
-                eng = PaddleOCR(lang=lang, use_doc_orientation_classify=False,
-                                use_doc_unwarping=False, use_textline_orientation=False)
+                eng = PaddleOCR(**_ocr_kwargs(lang))
             except TypeError:
                 eng = PaddleOCR(lang=lang)
             _ocr_engines[lang] = eng
