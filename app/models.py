@@ -879,6 +879,10 @@ class BoardPost(Base):
     평문으로 두면 유출 시 다른 서비스 비번까지 유추당한다."""
     __tablename__ = "board_post"
     post_id = Column(String, primary_key=True, default=uid)
+    # 사람이 부르는 글번호 — 20260912-00001 꼴. 하루 단위로 1부터 센다.
+    # 내부 키(post_id)는 32자리 그대로 둔다: 이미 답글·감사로그가 그걸 가리키고 있고,
+    # 기본키를 갈아엎으면 그 연결이 전부 끊긴다. 화면과 조회에는 이 번호를 쓴다.
+    post_no = Column(String, unique=True, index=True)
     title = Column(String, nullable=False)
     body = Column(Text, nullable=False)
     author_name = Column(String, nullable=False)

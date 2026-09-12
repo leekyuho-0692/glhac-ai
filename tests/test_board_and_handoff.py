@@ -459,3 +459,85 @@ def test_search_and_paging_work_together():
         r = c.get("/board/posts", params={"q": "검색페이징", "size": 3}, headers=h).json()
         assert r["total"] == 7 and r["pages"] == 3 and len(r["items"]) == 3
         assert all("검색페이징" in x["title"] for x in r["items"])
+
+
+# ── 글번호 채번 ──────────────────────────────────────────────────────────
+def test_post_no_is_dated_and_sequential():
+    """32자리 내부 키는 사람이 부를 수 없다 — 20260912-00001 꼴로 따로 매긴다."""
+    from datetime import datetime
+    with TestClient(app) as c:
+        nos = [_post(c, title="채번%d" % i, contact="010-7300-%04d" % i,
+                     password="glhac2026").json()["post_no"] for i in range(3)]
+        day = datetime.now().strftime("%Y%m%d")
+        assert all(n.startswith(day + "-") for n in nos), nos
+        seqs = [int(n.split("-")[1]) for n in nos]
+        assert seqs == sorted(seqs) and seqs[1] == seqs[0] + 1     # 1씩 증가
+        assert len(nos[0].split("-")[1]) == 5                      # 00001 꼴
+
+
+def test_post_can_be_opened_by_its_number():
+    """안내문에 나가는 건 글번호다 — 그걸로 열려야 한다."""
+    with TestClient(app) as c:
+        r = _post(c, title="번호로열기", contact="010-7400-0001",
+                  password="glhac2026").json()
+        by_no = c.post("/board/posts/%s/open" % r["post_no"],
+                       json={"password": "glhac2026"})
+        assert by_no.status_code == 200 and by_no.json()["title"] == "번호로열기"
+        # 내부 키로도 여전히 열린다(기존 링크·답글이 그걸 쓴다)
+        by_id = c.post("/board/posts/%s/open" % r["post_id"],
+                       json={"password": "glhac2026"})
+        assert by_id.status_code == 200
+
+
+def test_post_no_appears_in_every_list():
+    with TestClient(app) as c:
+        _post(c, title="목록번호", contact="010-7500-0001", password="glhac2026")
+        h = {"Authorization": "Bearer " + _tok(c)}
+        assert all(x.get("post_no") for x in c.get("/board/posts", headers=h).json()["items"])
+        assert all(x.get("post_no") for x in c.get("/board/public").json()["items"])
+        found = c.post("/board/find", json={"contact": "010-7500-0001"}).json()
+        assert all(x.get("post_no") for x in found)
+
+
+def test_backfill_numbers_old_posts():
+    """글번호가 생기기 전의 글도 번호를 받아야 목록에서 빈칸이 안 생긴다."""
+    from app import main as m, models
+    with TestClient(app) as c:
+        pid = _post(c, title="채번전", contact="010-7600-0001",
+                    password="glhac2026").json()["post_id"]
+        db = m.SessionLocal()
+        try:
+            p = db.get(models.BoardPost, pid)
+            p.post_no = None                      # 옛 데이터 흉내
+            db.commit()
+            m.backfill_post_no(db)
+            db.expire_all()
+            assert db.get(models.BoardPost, pid).post_no
+            before = db.get(models.BoardPost, pid).post_no
+            m.backfill_post_no(db)                # 두 번 돌아도 안 바뀐다
+            db.expire_all()
+            assert db.get(models.BoardPost, pid).post_no == before
+        finally:
+            db.close()
+
+
+# ── 화면 표기와 서버 권한의 일치 ─────────────────────────────────────────
+def test_fatwa_screen_roles_match_the_server():
+    """화면이 '노출 역할'로 적는 것과 서버가 실제로 허용하는 것이 같아야 한다.
+
+    전에는 화면에 컨설턴트·오디터까지 적혀 있었는데 서버는 403 이었다 —
+    "당신도 쓸 수 있다"고 적힌 화면에서 아무것도 못 하는 상태였다(실측)."""
+    import re
+    with TestClient(app) as c:
+        # 서버: 실제로 통과하는 역할
+        allowed = {u for u in ("consultant1", "auditor1", "fatwa1", "operator1")
+                   if c.get("/fatwa/queue",
+                            headers={"Authorization": "Bearer " + _tok(c, u)}).status_code == 200}
+        assert allowed == {"fatwa1", "operator1"}, allowed
+
+        # 화면: MENU_ACCESS 에 적힌 역할
+        html = open(os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                 "app", "static", "index.html"), encoding="utf-8").read()
+        m = re.search(r"^\s*fatwa:\s*\[([^\]]*)\]", html, re.M)
+        shown = {x.strip().strip('"') for x in m.group(1).split(",") if x.strip()}
+        assert shown == {"sharia", "ops", "admin"}, shown   # admin 은 서버에서 항상 통과

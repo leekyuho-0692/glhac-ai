@@ -534,7 +534,11 @@ const MENU_ACCESS = {
   workflowMonitor: ["ops","admin"],   // 신청~인증서 발급 전 과정 모니터링(샤리아 포함)
   regulations: ["ops","admin"],   // M06 규정·법령 관리(전역·케이스무관) — operator(ops)·admin 전용
   auditReport: ["consultant","auditor","sharia","ops","admin"],   // 작성=오디터·운영 / 열람=컨설턴트·샤리아
-  fatwa:    ["consultant","auditor","sharia","ops","admin"],   // 회의 2026-07-10: 클라이언트는 파트와 화면 불필요(인증서만) — client 제외
+  // 서버는 파트와 심의·결정문을 fatwa_liaison·operator 에게만 연다(admin 은 항상 통과).
+  // 화면은 컨설턴트·오디터까지 적어 두어 "당신도 쓸 수 있다"고 말하고 있었는데,
+  // 실제로 누르면 403 이었다(실측). 표기를 서버에 맞춘다.
+  // 오디터의 심사 결과 확인은 '보고서' 화면에서 한다 — 파트와 화면이 아니다.
+  fatwa:    ["sharia","ops","admin"],
   certificate:["client","sharia","ops","admin"],
   assistant:["client","consultant","auditor","sharia","ops","admin"],
   feedback: ["client","consultant","auditor","sharia","ops","admin"],
@@ -9399,8 +9403,7 @@ function inqPage(n){INQ_PAGE=n;INQ_OPEN.clear();applyView();}
 function inqPager(m){
   if(!m) return "";
   const cur=m.page||1, last=m.pages||1;
-  // 쪽이 하나여도 '총 N건'은 보여 준다 — 통째로 감추면 페이징이 없는 것처럼 보인다
-  if(last<=1) return `<div class="muted small" style="text-align:center;margin-top:12px">${T('총')} ${m.total||0}${T('건')}</div>`;
+  // 쪽이 하나여도 버튼을 그린다 — 감추면 '페이징이 없다'고 보인다(실측).
   let from=Math.max(1,cur-2), to=Math.min(last,from+4); from=Math.max(1,Math.min(from,to-4));
   let out=`<div class="btnrow" style="justify-content:center;margin-top:14px;flex-wrap:wrap">
     <button class="btn" ${cur<=1?"disabled":""} onclick="inqPage(${cur-1})">${T('이전')}</button>`;

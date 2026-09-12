@@ -362,6 +362,7 @@ def _startup():
         seed(db)
         auth.seed_users(db)
         seed_menus(db)   # 동적 메뉴 시드(idempotent) — 설계서 §10
+        backfill_post_no(db)   # 글번호 없던 기존 문의에 채번(한 번만 돈다)
         if os.environ.get("GLHAC_DEV") == "1":
             _seed_auditor_profiles(db)   # 데모 시드 계정에만 프로필 부여
         # load_ontology는 ORM 인스턴스를 모듈 캐시에 담으므로 반드시 마지막 —
@@ -2793,9 +2794,20 @@ def board_create(body: schemas.BoardPostCreate, request: Request,
         ref_code=ref, consultant_id=consultant_id, ip_hash=iph)
     db.add(p)
     _BOARD_RL.setdefault(iph, []).append(time.time())
-    db.commit()
+    # 번호가 겹치면(같은 순간 두 건) 다시 딴다 — unique 제약이 알려 준다
+    for attempt in range(5):
+        p.post_no = _next_post_no(db)
+        try:
+            db.commit()
+            break
+        except IntegrityError:
+            db.rollback()
+            db.add(p)
+    else:
+        raise HTTPException(503, {"code": "POST_NO_BUSY",
+                                  "message": "잠시 후 다시 시도해 주세요."})
     # 글번호는 알려 준다 — 나중에 자기 글을 찾을 때 쓴다
-    return {"post_id": p.post_id, "status": p.status,
+    return {"post_id": p.post_id, "post_no": p.post_no, "status": p.status,
             "assigned": bool(consultant_id),
             "message": "접수되었습니다. 글번호와 비밀번호로 다시 확인하실 수 있습니다."}
 
@@ -2812,7 +2824,7 @@ def _reply_view(r):
 
 
 def _post_view(p, replies):
-    return {"post_id": p.post_id, "title": p.title, "body": p.body,
+    return {"post_id": p.post_id, "post_no": p.post_no, "title": p.title, "body": p.body,
             "author_name": p.author_name, "contact": p.contact,
             "status": p.status, "ref_code": p.ref_code,
             "edited_at": str(p.edited_at) if p.edited_at else None,
@@ -2821,7 +2833,7 @@ def _post_view(p, replies):
 
 
 def _post_or_404(db, post_id):
-    p = db.get(models.BoardPost, post_id)
+    p = _resolve_post(db, post_id)
     if not p:
         raise HTTPException(404, {"code": "POST_NOT_FOUND"})
     return p
@@ -2832,7 +2844,7 @@ def _verify_author(db, post_id, password, request):
     iph = _ip_hash(request)
     if auth.rate_limited("board:" + iph):
         raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS"})
-    p = db.get(models.BoardPost, post_id)
+    p = _resolve_post(db, post_id)
     if not p or not password or not auth.verify_pw(password, p.password_hash):
         auth.record_attempt("board:" + iph)
         raise HTTPException(401, {"code": "BAD_POST_CREDENTIALS",
@@ -2848,7 +2860,7 @@ def board_open(post_id: str, body: schemas.BoardPostOpen, request: Request,
     iph = _ip_hash(request)
     if auth.rate_limited("board:" + iph):      # 비번 대입 차단(계정 로그인과 같은 장치)
         raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS"})
-    p = db.get(models.BoardPost, post_id)
+    p = _resolve_post(db, post_id)
     if not p or not auth.verify_pw(body.password, p.password_hash):
         auth.record_attempt("board:" + iph)
         # 글이 없는 것과 비번이 틀린 것을 구분해 주지 않는다 — 글번호 탐색을 막는다
@@ -2883,6 +2895,34 @@ def _paged(query, page, size, order_col):
                  .offset((page - 1) * size).limit(size).all())
     pages = max(1, (total + size - 1) // size)
     return rows, {"page": page, "size": size, "total": total, "pages": pages}
+
+
+def _next_post_no(db):
+    """오늘자 다음 글번호 — 20260912-00001.
+
+    날짜는 서버 지역시각(KST)을 쓴다. created_at 은 UTC 지만, 글번호는 사람이 부르는
+    이름이라 한국 날짜여야 한다 — 한국에서 9/12 에 남긴 글이 20260911 이면 헷갈린다.
+
+    같은 순간에 두 건이 들어오면 번호가 겹칠 수 있다. unique 제약이 막아 주므로
+    호출하는 쪽에서 다시 시도한다(_create_post_no)."""
+    day = datetime.now().strftime("%Y%m%d")
+    last = (db.query(models.BoardPost.post_no)
+              .filter(models.BoardPost.post_no.like(day + "-%"))
+              .order_by(models.BoardPost.post_no.desc()).first())
+    seq = int(last[0].split("-")[1]) + 1 if last and last[0] else 1
+    return "%s-%05d" % (day, seq)
+
+
+def _resolve_post(db, key):
+    """글번호(20260912-00001) 로도, 내부 키(32자리) 로도 찾는다.
+
+    안내문·메일에는 글번호가 나가고, 기존 링크·답글은 내부 키를 쓴다. 둘 다 받는다."""
+    if not key:
+        return None
+    p = db.get(models.BoardPost, key)
+    if p:
+        return p
+    return db.query(models.BoardPost).filter_by(post_no=key.strip().upper()).first()
 
 
 def _mask_name(n):
@@ -2930,7 +2970,7 @@ def board_public(page: int = 1, size: int = 10, db: Session = Depends(get_db)):
                          .group_by(models.BoardReply.post_id)):
             cnt[pid] = n
     return dict(meta, items=[{
-        "post_id": r.post_id, "title": r.title,
+        "post_id": r.post_id, "post_no": r.post_no, "title": r.title,
         "author_masked": _mask_name(r.author_name),
         "contact_masked": _mask_contact(r.contact),
         "status": r.status, "reply_count": cnt.get(r.post_id, 0),
@@ -2961,7 +3001,7 @@ def board_find(body: schemas.BoardFindReq, request: Request, db: Session = Depen
             auth.record_attempt("board:" + iph)
             raise HTTPException(404, {"code": "NO_POSTS",
                                       "message": "그 연락처로 남긴 문의가 없습니다."})
-        return [{"post_id": r.post_id, "title": r.title,
+        return [{"post_id": r.post_id, "post_no": r.post_no, "title": r.title,
                  "contact_masked": _mask_contact(r.contact),
                  "status": r.status, "created_at": str(r.created_at)} for r in rows]
 
@@ -2972,8 +3012,8 @@ def board_find(body: schemas.BoardFindReq, request: Request, db: Session = Depen
         raise HTTPException(401, {"code": "BAD_POST_CREDENTIALS",
                                   "message": "연락처 또는 비밀번호가 맞지 않습니다."})
     auth.clear_attempts("board:" + iph)
-    return [{"post_id": r.post_id, "title": r.title, "status": r.status,
-             "created_at": str(r.created_at)} for r in hits]
+    return [{"post_id": r.post_id, "post_no": r.post_no, "title": r.title,
+             "status": r.status, "created_at": str(r.created_at)} for r in hits]
 
 
 @app.get("/board/posts")
@@ -3009,7 +3049,8 @@ def board_list(status: str = None, mine: bool = False, q: str = None,
                          .group_by(models.BoardReply.post_id)):
             cnt[pid] = n
     return dict(meta, items=[{
-        "post_id": r.post_id, "title": r.title, "author_name": r.author_name,
+        "post_id": r.post_id, "post_no": r.post_no,
+        "title": r.title, "author_name": r.author_name,
         "contact": r.contact, "status": r.status, "ref_code": r.ref_code,
         "consultant_id": r.consultant_id, "reply_count": cnt.get(r.post_id, 0),
         "created_at": str(r.created_at)} for r in rows])
@@ -3018,10 +3059,8 @@ def board_list(status: str = None, mine: bool = False, q: str = None,
 @app.get("/board/posts/{post_id}")
 def board_detail(post_id: str, user=Depends(auth.require_roles(*_BOARD_STAFF)),
                  db: Session = Depends(get_db)):
-    p = db.get(models.BoardPost, post_id)
-    if not p:
-        raise HTTPException(404, {"code": "POST_NOT_FOUND"})
-    replies = (db.query(models.BoardReply).filter_by(post_id=post_id)
+    p = _post_or_404(db, post_id)
+    replies = (db.query(models.BoardReply).filter_by(post_id=p.post_id)
                  .order_by(models.BoardReply.created_at).all())
     return _post_view(p, replies)
 
@@ -16888,6 +16927,29 @@ def _ensure_inquiry_menu(db):
     for r in _ROLES:
         db.add(models.SysRoleMenu(role_id=r, menu_id=mid, sort_order=7))
     db.commit()
+
+
+def backfill_post_no(db):
+    """글번호가 없던 기존 글에 번호를 매긴다 — 한 번만 돌고 이후엔 아무 일도 않는다.
+
+    작성일(created_at) 기준으로 그날의 순서대로 매긴다. UTC 로 저장돼 있으므로
+    KST 로 바꿔서 날짜를 고른다 — 새 글과 같은 규칙이어야 섞이지 않는다."""
+    rows = (db.query(models.BoardPost).filter(models.BoardPost.post_no.is_(None))
+              .order_by(models.BoardPost.created_at).all())
+    if not rows:
+        return
+    from datetime import timedelta
+    used = {n for (n,) in db.query(models.BoardPost.post_no)
+            .filter(models.BoardPost.post_no.isnot(None)).all()}
+    for r in rows:
+        day = ((r.created_at or datetime.utcnow()) + timedelta(hours=9)).strftime("%Y%m%d")
+        seq = 1
+        while "%s-%05d" % (day, seq) in used:
+            seq += 1
+        r.post_no = "%s-%05d" % (day, seq)
+        used.add(r.post_no)
+    db.commit()
+    log.info("게시판 글번호 채번 %d건", len(rows))
 
 
 def seed_menus(db):
