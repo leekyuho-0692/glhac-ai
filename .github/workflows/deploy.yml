@@ -64,11 +64,15 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "${{ secrets.GLHAC_SSH_KEY }}" > ~/.ssh/glhac.pem
           chmod 600 ~/.ssh/glhac.pem
+          # 다음 스텝의 env 로 넘길 때 '~' 는 셸이 아니라 문자로 전달된다 —
+          # 그대로 두면 deploy.sh 가 '~/.ssh/glhac.pem' 이라는 이름의 파일을 찾다 실패한다.
+          # 절대경로로 풀어 GITHUB_ENV 에 담는다.
+          echo "SSH_KEY_PATH=$HOME/.ssh/glhac.pem" >> "$GITHUB_ENV"
           ssh-keyscan -H "$(echo '${{ secrets.GLHAC_SSH_HOST }}' | cut -d@ -f2)" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: 배포 (백업 → 전송 → 재기동 → 헬스체크, 실패 시 자동 복구)
         env:
-          GLHAC_SSH_KEY: ~/.ssh/glhac.pem
+          GLHAC_SSH_KEY: ${{ env.SSH_KEY_PATH }}
           GLHAC_SSH_HOST: ${{ secrets.GLHAC_SSH_HOST }}
         run: bash scripts/deploy.sh --app-only
 
@@ -82,4 +86,4 @@ jobs:
 
       - name: 정리
         if: always()
-        run: rm -f ~/.ssh/glhac.pem
+        run: rm -f "$HOME/.ssh/glhac.pem"
