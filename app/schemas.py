@@ -508,6 +508,18 @@ class CaseProfileReq(BaseModel):
     due_date: Optional[str] = None   # 처리 목표 기한(ISO date) — 기한 경보
     notify_consent: Optional[bool] = None  # 알림 수신 동의
     profile_ext: Optional[dict] = None  # Company/Facility Info 확장 양식 필드(PIC·CP·등록유형·공장정보 등)
+    scheme: Optional[str] = None            # 인증 종류 변경(신청 단계) — product|logistics
+    logistics_scope: Optional[List[str]] = None  # 물류 jasa 선택
+
+    @field_validator("scheme")
+    @classmethod
+    def _v_scheme(cls, v):
+        if v is None:
+            return v
+        v = v.lower()
+        if v not in ("product", "logistics"):
+            raise ValueError("scheme은 product 또는 logistics여야 합니다")
+        return v
 
     @field_validator("company_name")
     @classmethod

@@ -807,6 +807,17 @@ const EN_LABEL={
 };
 function koText(v){const k=String(v);if(LANG===2&&ID_LABEL[k])return ID_LABEL[k];if(LANG===1&&KO_LABEL[k])return KO_LABEL[k];if(LANG===0&&EN_LABEL[k])return EN_LABEL[k];return null;}
 function bTag(t,v){const ko=koText(v);return ko?`<span class="tag t-${t}">${esc(ko)}<span class="en"> · ${esc(v)}</span></span>`:`<span class="tag t-${t}">${esc(v==null?"—":v)}</span>`;}
+// 인증 종류(제품/물류) 배지 — 신청·목록·상세·파트와 어디서나 같은 모양. jasa 범위도 함께 보인다.
+const _JASA_KO={penyimpanan:"보관",pengemasan:"포장",pendistribusian:"유통"};
+function schemeBadge(c){
+  if(!c||!c.scheme) return "";
+  if(c.scheme==="logistics"){
+    const sc=(c.logistics_scope||[]).map(x=>T(_JASA_KO[x]||x));
+    const extra=sc.length?" ("+sc.join("·")+")":"";
+    return `<span class="tag t-info">🚚 ${T('물류 인증')}${esc(extra)}</span>`;
+  }
+  return `<span class="tag t-mute">🏭 ${T('제품 인증')}</span>`;
+}
 function bSpan(v){const ko=koText(v);return ko?`${esc(ko)}<span class="en"> · ${esc(v)}</span>`:esc(v==null?"—":v);}
 /* 전역 상태→색상(원재료 판정) — 렌더 함수 밖(아코디언 등 전역 함수)에서도 사용. */
 function scol(s){return ({halal:'ok',haram:'bad',mushbooh:'warn',pass:'ok',needs_evidence:'warn',cleared:'ok',block:'bad',najis:'bad'}[String(s||'').toLowerCase()]||'mute');}
@@ -819,6 +830,25 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+  "물류 서비스":"Logistics service",
+  "종류 저장":"Save type",
+  "변경 잠금":"Locked",
+  "인증 종류 저장됨":"Certification type saved",
+  "저장 실패":"Save failed",
+  "종류를 바꾸면 필요 서류·심사항목이 바뀝니다. 서류 제출이 시작되면 잠깁니다.":"Changing the type changes required documents & audit items. Locks once document submission begins.",
+  "사업자·물류 SJPH·시설·차량 서류":"Business · logistics SJPH · facility · vehicle docs",
+  "사업자·성분·제품공정 서류":"Business · ingredient · process docs",
+
+  "제품 인증":"Product cert",
+  "물류 인증":"Logistics cert",
+  "물류":"Logistics",
+  "종류 · 경로":"Type · Pathway",
+  "제품 할랄 인증":"Product halal certification",
+  "물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다":"Logistics service (jasa logistik) — documents & audit items follow logistics criteria",
+  "보관":"Storage",
+  "포장":"Packaging",
+  "유통":"Distribution",
+
   "포함":"Included","미포함":"Not included","인증 종류":"Certification type",
   "물류 서비스를 최소 1개 선택하세요":"Select at least one logistics service",
 /* 홈페이지 문의함 · English */
@@ -1383,6 +1413,25 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "물류 서비스":"Jasa logistik",
+  "종류 저장":"Simpan jenis",
+  "변경 잠금":"Terkunci",
+  "인증 종류 저장됨":"Jenis sertifikasi disimpan",
+  "저장 실패":"Gagal menyimpan",
+  "종류를 바꾸면 필요 서류·심사항목이 바뀝니다. 서류 제출이 시작되면 잠깁니다.":"Mengubah jenis mengubah dokumen & item audit. Terkunci setelah pengiriman dokumen dimulai.",
+  "사업자·물류 SJPH·시설·차량 서류":"Dokumen usaha · SJPH logistik · fasilitas · kendaraan",
+  "사업자·성분·제품공정 서류":"Dokumen usaha · bahan · proses",
+
+  "제품 인증":"Sertifikasi produk",
+  "물류 인증":"Sertifikasi logistik",
+  "물류":"Logistik",
+  "종류 · 경로":"Jenis · Jalur",
+  "제품 할랄 인증":"Sertifikasi halal produk",
+  "물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다":"Jasa logistik — dokumen & item audit mengikuti kriteria logistik",
+  "보관":"Penyimpanan",
+  "포장":"Pengemasan",
+  "유통":"Pendistribusian",
+
   "포함":"Termasuk","미포함":"Tidak termasuk","인증 종류":"Jenis sertifikasi",
   "물류 서비스를 최소 1개 선택하세요":"Pilih minimal satu jasa logistik",
   "새 신청 · New case":"Permohonan baru","제품 · Product":"Produk",
@@ -5307,6 +5356,7 @@ SCREEN.caseList=async()=>{
   if(FILTERS.status)cases=cases.filter(c=>c.status===FILTERS.status);
   if(FILTERS.q){const q=FILTERS.q.toLowerCase();cases=cases.filter(c=>(c.company_name||"").toLowerCase().includes(q)||c.case_id.toLowerCase().includes(q));}
   if(FILTERS.region){cases=cases.filter(c=>c.province===FILTERS.region);}
+  if(FILTERS.scheme){cases=cases.filter(c=>(c.scheme||"product")===FILTERS.scheme);}   // 제품/물류
   if(CASE_SORT==="due")cases=cases.slice().sort((a,b)=>{const da=dueDays(a.due_date),db=dueDays(b.due_date);if(da==null&&db==null)return 0;if(da==null)return 1;if(db==null)return -1;return da-db;});
   // M1/M2/M3: 오디터 업무함 — KPI 카드(담당·이번주현장·처리대기·미해결부적합) + status 유형별 탭
   let auditorHead="", isAud=(ROLE==='auditor');
@@ -5329,7 +5379,7 @@ SCREEN.caseList=async()=>{
   const rows=pg.items.length?pg.items.map(c=>`<tr class="clickable" onclick="openCase('${c.case_id}')">
       <td style="font-family:ui-monospace,monospace;font-size:12px">${short(c.case_id)} <span class="go-arrow">→</span></td>
       <td><b>${esc(c.company_name||"—")}</b>${contractTurnRole(c.contract_status)===ROLE?' <span class="fchip" style="background:var(--bad);color:#fff;font-size:10px">🔔 계약 처리 대기</span>':''}</td>
-      <td>${bTag(c.pathway==="self_declare"?"info":"mute",c.pathway||"—")}</td>
+      <td>${schemeBadge(c)} ${bTag(c.pathway==="self_declare"?"info":"mute",c.pathway||"—")}</td>
       <td>${bTag(statusColor(c.status),c.status||"—")} ${draftBadge(c.draft_state)}</td>
       <td>${c.auditor_name?esc(c.auditor_name):'<span class="muted">—</span>'}</td>
       <td>${c.due_date?dueBadge(c.due_date):'<span class="muted">—</span>'}</td></tr>`).join("")
@@ -5339,6 +5389,9 @@ SCREEN.caseList=async()=>{
   return `${filterChips()}${auditorHead}
   <div class="chipbar" style="margin-bottom:12px">
     ${ROLE!=='client'?`<input class="v" style="width:auto;flex:1;max-width:280px" placeholder="${T('🔍 검색 (기업·번호) — Enter')}" value="${esc(FILTERS.q||'')}" onkeydown="if(event.key==='Enter'){FILTERS.q=this.value;PAGES={};applyView();}">`:''}
+    <span class="fchip${!FILTERS.scheme?'':' clear'}" style="cursor:pointer" onclick="delete FILTERS.scheme;PAGES={};applyView()">${T('전체')}</span>
+    <span class="fchip${FILTERS.scheme==='product'?'':' clear'}" style="cursor:pointer" onclick="FILTERS.scheme='product';PAGES={};applyView()">🏭 ${T('제품')}</span>
+    <span class="fchip${FILTERS.scheme==='logistics'?'':' clear'}" style="cursor:pointer" onclick="FILTERS.scheme='logistics';PAGES={};applyView()">🚚 ${T('물류')}</span>
     <select class="v" style="width:auto" onchange="CASE_SORT=this.value;applyView()">
       <option value="recent"${CASE_SORT==='recent'?' selected':''}>${T('정렬: 최근순')}</option>
       <option value="due"${CASE_SORT==='due'?' selected':''}>${T('정렬: 기한 우선')}</option></select>
@@ -5346,7 +5399,7 @@ SCREEN.caseList=async()=>{
   </div>
   <div class="card"><h3>${T('케이스 테이블')} <span class="en">· Case table</span><span class="r">${ROLE==='auditor'?T('배정 심사 관리'):T('row 클릭 → 상세')}</span></h3>
     <div class="body tight"><table>
-      <thead><tr><th>${T('번호 · ID')}</th><th>${T('기업 · Company')}</th><th>${T('경로')}</th><th>${T('상태 · Status')}</th><th>${T('담당 · Auditor')}</th><th>${T('기한 · Due')}</th></tr></thead>
+      <thead><tr><th>${T('번호 · ID')}</th><th>${T('기업 · Company')}</th><th>${T('종류 · 경로')}</th><th>${T('상태 · Status')}</th><th>${T('담당 · Auditor')}</th><th>${T('기한 · Due')}</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
     ${pager("caseList",pg)}
     <div class="body btnrow" style="border-top:1px solid var(--line)">
@@ -5355,6 +5408,25 @@ SCREEN.caseList=async()=>{
       <span class="chip" style="margin-left:auto">${T('노출')} ${cases.length}${T('건')} · scope: ${T(scopeLabel())}</span>
     </div></div>`;
 };
+function onSchemeChange(){
+  const s=v('apScheme'); const box=document.getElementById('apJasaBox');
+  if(box) box.style.display = (s==='logistics')?'inline-flex':'none';
+}
+async function saveScheme(id){
+  const s=v('apScheme');
+  const body={scheme:s};
+  if(s==='logistics'){
+    const jasa=[...document.querySelectorAll('.apJasa:checked')].map(x=>x.value);
+    if(!jasa.length){toast(T('물류 서비스를 최소 1개 선택하세요'));return;}
+    body.logistics_scope=jasa;
+  }
+  try{
+    await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});
+    toast(T('인증 종류 저장됨'));
+    await loadCases(true);
+    go('application');   // 양식 리렌더 → 필요 서류·심사항목이 바뀐다
+  }catch(e){toast(EMSG(e)||T('저장 실패'));}
+}
 async function newCase(){
   // 신청 맨 앞에서 인증 종류를 고른다 — 제품/물류에 따라 서류·현장항목·부록이 갈린다.
   const yn=[{value:"1",label:T('포함')},{value:"0",label:T('미포함')}];
@@ -6006,6 +6078,24 @@ SCREEN.application=async()=>{
   const isSD=c.pathway==="self_declare";                                   // A1/A3: 자기선언(SEHATI) 경로
   const sdPromote=isSD||!c.pathway||c.pathway==="undetermined";            // A3: 경로 미확정이면 SD-first 안내 노출
   return `
+  <div class="card" style="margin-bottom:14px"><div class="body">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:${(!c.scheme_frozen&&canApp)?'10px':'0'}">
+      <b style="font-size:13px">${T('인증 종류')} · Certification</b> ${schemeBadge(c)}
+      ${c.scheme_frozen?tag('gold',T('변경 잠금')):''}
+    </div>
+    ${(!c.scheme_frozen&&canApp)?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;align-items:center">
+      <select class="v" style="width:auto" id="apScheme" onchange="onSchemeChange()">
+        <option value="product"${c.scheme!=='logistics'?' selected':''}>🏭 ${T('제품')}</option>
+        <option value="logistics"${c.scheme==='logistics'?' selected':''}>🚚 ${T('물류 서비스')}</option>
+      </select>
+      <span id="apJasaBox" style="display:${c.scheme==='logistics'?'inline-flex':'none'};gap:12px;align-items:center;flex-wrap:wrap">
+        ${['penyimpanan','pengemasan','pendistribusian'].map(k=>`<label style="display:inline-flex;gap:4px;align-items:center;font-size:12px;cursor:pointer"><input type="checkbox" class="apJasa" value="${k}" ${(c.logistics_scope||[]).includes(k)?'checked':''}> ${T(_JASA_KO[k])}</label>`).join('')}
+      </span>
+      <button class="btn pri" style="padding:4px 10px" onclick="saveScheme('${id}')">${T('종류 저장')}</button>
+    </div>
+    <div class="muted small" style="margin-top:6px">${T('종류를 바꾸면 필요 서류·심사항목이 바뀝니다. 서류 제출이 시작되면 잠깁니다.')}</div>`
+    :`<div class="muted small">${c.scheme==='logistics'?T('물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다'):T('제품 할랄 인증')}</div>`}
+  </div></div>`+`
   ${sdPromote?`<div class="card" style="margin-bottom:16px;border-left:3px solid var(--ok)"><div class="body">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
       <b style="font-size:13.5px">🕌 ${T('SEHATI 자기선언 간이경로')} <span class="en">· Self-Declare</span></b>
@@ -6024,7 +6114,7 @@ SCREEN.application=async()=>{
     <div class="body">
       <div class="banner info" style="margin-bottom:10px">${T('📎 파일(ZIP·서류)을 올리면 자동 분류되어 프로필·제품·원재료·문서 화면에 자동 연계됩니다.')}</div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
-        ${sjphStage(id,T("신청 업로드 파일 리스트"),"Upload File List","사업자·성분·제품공정 서류",["nib_business_license","factory_registration","product_list","material_list","process_flow"],chk)}
+        ${sjphStage(id,T("신청 업로드 파일 리스트"),"Upload File List",(c.scheme==='logistics'?T("사업자·물류 SJPH·시설·차량 서류"):T("사업자·성분·제품공정 서류")),(c.scheme==='logistics'?["nib_business_license","sjph_manual","logistics_scope","warehouse_layout","vehicle_list","cleaning_sop"]:["nib_business_license","factory_registration","product_list","material_list","process_flow"]),chk)}
         <div style="border:1px solid var(--line2);border-radius:10px;padding:12px">
           <div style="font-weight:700;font-size:12.5px;margin-bottom:8px">📎 ${T('파일 업로드')} <span class="en">· Upload</span></div>
           ${canApp?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center">
@@ -10289,7 +10379,7 @@ SCREEN.fatwa=async()=>{
   let fdash={counts:{},items:[]};try{fdash=await API("/fatwa/dashboard");}catch(_){}
   const fc=fdash.counts||{};
   const fcard=(n,l,c)=>`<div class="card"><div class="body kpi"><span class="n" style="font-size:22px;color:var(--${c})">${n||0}</span><span class="l">${l}</span></div></div>`;
-  const frows=(fdash.items||[]).length?fdash.items.map(it=>`<tr class="clickable" onclick="onCaseChange('${it.case_id}')"><td><b>${esc(it.company||"—")}</b></td><td>${bTag(fatwaColor(it.fatwa_status),T(fatwaLabel(it.fatwa_status)))}</td><td class="muted small">${esc(it.decision_no||"—")}</td></tr>`).join(""):'<tr><td colspan="3" class="muted" style="text-align:center;padding:14px">심의 대상 없음</td></tr>';
+  const frows=(fdash.items||[]).length?fdash.items.map(it=>`<tr class="clickable" onclick="onCaseChange('${it.case_id}')"><td><b>${esc(it.company||"—")}</b> ${schemeBadge(it)}</td><td>${bTag(fatwaColor(it.fatwa_status),T(fatwaLabel(it.fatwa_status)))}</td><td class="muted small">${esc(it.decision_no||"—")}</td></tr>`).join(""):'<tr><td colspan="3" class="muted" style="text-align:center;padding:14px">심의 대상 없음</td></tr>';
   const fatwaDashHtml=`<div class="card" style="margin-bottom:16px"><h3>${T('파트와 위원회 대시보드')} <span class="en">· Committee dashboard</span><span class="r">${(fdash.items||[]).length}${T('건')}</span></h3><div class="body">
     <div class="grid" style="grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">${fcard(fc.review,"심의 대기","warn")}${fcard(fc.provisional,"가승인","info")}${fcard(fc.approved,"최종승인","ok")}${fcard((fc.rejected||0)+(fc.conditional||0),"반려/조건부","bad")}</div>
     <div class="body tight"><table><thead><tr><th>${T('회사')}</th><th>${T('파트와 상태')}</th><th>${T('결정번호')}</th></tr></thead><tbody>${frows}</tbody></table></div></div></div>`;
@@ -11575,7 +11665,7 @@ async function renderCaseDetail(id, tab){
     <div class="detail-top">
       <button class="btn" onclick="history.back()">← 목록으로 · Back</button>
       <div class="dt-title"><h1>${esc(c.company_name||"—")} <span class="muted" style="font-size:14px;font-weight:500">${short(c.case_id)}</span></h1>
-        <div class="dt-sub">${bTag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')} ${bTag(statusColor(c.status),c.status||'—')} ${c.scope_frozen?tag('gold',T('scope 동결')):''}</div></div>
+        <div class="dt-sub">${schemeBadge(c)} ${bTag(c.pathway==='self_declare'?'info':'mute',c.pathway||'—')} ${bTag(statusColor(c.status),c.status||'—')} ${c.scope_frozen?tag('gold',T('scope 동결')):''}</div></div>
     </div>
     <div class="tabbar">${tabs.map(([t,ko,en])=>`<button class="tabbtn ${t===tab?'on':''}" onclick="openCaseTab('${t}')">${ko} <span class="muted">· ${en}</span></button>`).join("")}</div>`;
   let panel="";
@@ -11591,6 +11681,7 @@ async function renderCaseDetail(id, tab){
       <div class="card"><h3>${T('케이스 진행 단계')} <span class="en">· Workflow</span></h3>
         <div class="body"><div class="flow" style="margin-bottom:14px">${flow}</div>
           <div class="kv"><span>기업 · Company</span><b>${esc(c.company_name||"—")}</b></div>
+          <div class="kv"><span>${T('인증 종류')} · Type</span><b>${schemeBadge(c)||esc(c.scheme||"—")}</b></div>
           <div class="kv"><span>경로 · Pathway</span><b>${esc(c.pathway||"—")}</b></div>
           <div class="kv"><span>상태 · Status</span><b>${esc(w.state_label||c.status||"—")}</b></div>
           <div class="kv"><span>NIB</span><b>${esc(c.nib||"—")}</b></div>
