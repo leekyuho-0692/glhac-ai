@@ -819,6 +819,8 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+  "포함":"Included","미포함":"Not included","인증 종류":"Certification type",
+  "물류 서비스를 최소 1개 선택하세요":"Select at least one logistics service",
 /* 홈페이지 문의함 · English */
  "이전":"Prev",
  "다음":"Next",
@@ -1381,6 +1383,12 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "포함":"Termasuk","미포함":"Tidak termasuk","인증 종류":"Jenis sertifikasi",
+  "물류 서비스를 최소 1개 선택하세요":"Pilih minimal satu jasa logistik",
+  "새 신청 · New case":"Permohonan baru","제품 · Product":"Produk",
+  "물류 서비스 · Logistics":"Jasa Logistik","물류 서비스 범위 · Jasa logistik":"Ruang lingkup jasa logistik",
+  "보관 · Storage (penyimpanan)":"Penyimpanan","포장 · Packaging (pengemasan)":"Pengemasan",
+  "유통 · Distribution (pendistribusian)":"Pendistribusian",
 /* 홈페이지 문의함 · Bahasa Indonesia */
  "이전":"Sebelumnya",
  "다음":"Berikutnya",
@@ -5348,11 +5356,30 @@ SCREEN.caseList=async()=>{
     </div></div>`;
 };
 async function newCase(){
-  const r=await dialog("새 신청 · New case",[{key:"company_name",label:"기업명 · Company",required:true}]);
+  // 신청 맨 앞에서 인증 종류를 고른다 — 제품/물류에 따라 서류·현장항목·부록이 갈린다.
+  const yn=[{value:"1",label:T('포함')},{value:"0",label:T('미포함')}];
+  const r=await dialog(T('새 신청 · New case'),[
+    {key:"company_name",label:T('기업명')+" · Company",required:true},
+    {key:"scheme",label:T('인증 종류')+" · Type",type:"select",value:"product",options:[
+      {value:"product",label:T('제품 · Product')},
+      {value:"logistics",label:T('물류 서비스 · Logistics')}]},
+  ]);
   if(!r)return;
-  try{const c=await API("/cases",{method:"POST",body:JSON.stringify({company_name:r.company_name,is_msme:true})});
-    toast("케이스 생성됨");await loadCases(true);openCase(c.case_id);}
-  catch(e){toast("생성 실패 · "+(EMSG(e)||"권한 확인"));}
+  const body={company_name:r.company_name,is_msme:true,scheme:r.scheme};
+  if(r.scheme==="logistics"){
+    // 인증 대상은 차량이 아니라 서비스(jasa)다 — 보관·포장·유통 중 복수 선택(BPJPH 2024-09-05).
+    const j=await dialog(T('물류 서비스 범위 · Jasa logistik'),[
+      {key:"penyimpanan",label:T('보관 · Storage (penyimpanan)'),type:"select",value:"1",options:yn},
+      {key:"pengemasan",label:T('포장 · Packaging (pengemasan)'),type:"select",value:"0",options:yn},
+      {key:"pendistribusian",label:T('유통 · Distribution (pendistribusian)'),type:"select",value:"0",options:yn}]);
+    if(!j)return;
+    const scope=["penyimpanan","pengemasan","pendistribusian"].filter(k=>j[k]==="1");
+    if(!scope.length){toast(T('물류 서비스를 최소 1개 선택하세요'));return;}
+    body.logistics_scope=scope;
+  }
+  try{const c=await API("/cases",{method:"POST",body:JSON.stringify(body)});
+    toast(T('케이스 생성됨'));await loadCases(true);openCase(c.case_id);}
+  catch(e){toast(T('생성 실패')+" · "+(EMSG(e)||T('권한 확인')));}
 }
 function exportCasesCsv(){
   const rows=[["case_id","company_name","pathway","status"]].concat(CASES_CACHE.map(c=>[c.case_id,c.company_name,c.pathway,c.status]));

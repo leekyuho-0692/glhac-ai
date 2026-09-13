@@ -10354,5 +10354,159 @@
       "glhac"
     ],
     "status": "approved"
+  },
+  {
+    "id": "DOC_LOGISTICS_SCOPE",
+    "axis": "DOC",
+    "labels": {
+      "id": "Ruang lingkup jasa logistik",
+      "ko": "취급 화물·서비스 범위",
+      "en": "Logistics scope"
+    },
+    "surface": {
+      "id": [
+        "ruang lingkup jasa logistik",
+        "lingkup layanan logistik"
+      ],
+      "ko": [
+        "취급 화물 범위",
+        "물류 서비스 범위"
+      ],
+      "en": [
+        "logistics scope",
+        "service scope"
+      ]
+    },
+    "context": [
+      "HPAS",
+      "DOC"
+    ],
+    "actions": {
+      "doc_type": "logistics_scope",
+      "required": true
+    },
+    "source": [
+      "BPJPH",
+      "field"
+    ],
+    "status": "approved"
+  },
+  {
+    "id": "DOC_WAREHOUSE_LAYOUT",
+    "axis": "DOC",
+    "labels": {
+      "id": "Denah gudang (Zona Halal)",
+      "ko": "창고 배치도(Halal Zone)",
+      "en": "Warehouse layout (Halal Zone)"
+    },
+    "surface": {
+      "id": [
+        "denah gudang",
+        "layout gudang",
+        "zona halal"
+      ],
+      "ko": [
+        "창고 배치도",
+        "보관 구역도"
+      ],
+      "en": [
+        "warehouse layout",
+        "warehouse floor plan"
+      ]
+    },
+    "context": [
+      "HPAS",
+      "DOC"
+    ],
+    "actions": {
+      "doc_type": "warehouse_layout",
+      "required": true,
+      "evidence_key": "warehouse_layout"
+    },
+    "source": [
+      "BPJPH",
+      "field"
+    ],
+    "status": "approved"
+  },
+  {
+    "id": "DOC_VEHICLE_LIST",
+    "axis": "DOC",
+    "labels": {
+      "id": "Daftar kendaraan/kontainer",
+      "ko": "차량·컨테이너 목록",
+      "en": "Vehicle / container list"
+    },
+    "surface": {
+      "id": [
+        "daftar kendaraan",
+        "daftar armada",
+        "daftar kontainer"
+      ],
+      "ko": [
+        "차량 목록",
+        "운송장비 목록"
+      ],
+      "en": [
+        "vehicle list",
+        "fleet list",
+        "container list"
+      ]
+    },
+    "context": [
+      "HPAS",
+      "DOC"
+    ],
+    "actions": {
+      "doc_type": "vehicle_list",
+      "required": true,
+      "evidence_key": "vehicle_list"
+    },
+    "source": [
+      "BPJPH",
+      "field"
+    ],
+    "status": "approved"
+  },
+  {
+    "id": "DOC_CLEANING_SOP",
+    "axis": "DOC",
+    "labels": {
+      "id": "SOP pembersihan (Sertu)",
+      "ko": "세척 SOP",
+      "en": "Cleaning SOP"
+    },
+    "surface": {
+      "id": [
+        "sop pembersihan",
+        "prosedur pembersihan",
+        "sertu",
+        "pencucian kendaraan"
+      ],
+      "ko": [
+        "세척 SOP",
+        "세척 절차",
+        "세척 기록"
+      ],
+      "en": [
+        "cleaning sop",
+        "cleaning procedure",
+        "sertu"
+      ]
+    },
+    "context": [
+      "HPAS",
+      "DOC"
+    ],
+    "actions": {
+      "doc_type": "cleaning_sop",
+      "required": true,
+      "evidence_key": "cleaning_sop"
+    },
+    "source": [
+      "BPJPH",
+      "field"
+    ],
+    "status": "approved"
   }
 ]

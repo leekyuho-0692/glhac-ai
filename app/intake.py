@@ -31,6 +31,11 @@ DOC_TYPES = [
     "supplier_declaration",     # 공급사 선언서
     "quality_cert",             # 품질/식품안전 인증(HACCP·ISO·GMP·FSSC) — 할랄 인증 아님
     "sjph_manual",              # SJPH/HPAS 매뉴얼
+    # ── 물류(jasa logistik) 고유 서류 ──
+    "logistics_scope",          # 취급 화물·서비스 범위(어떤 제품군을, 어떤 jasa로)
+    "warehouse_layout",         # 창고 배치도 + Halal Zone 구획
+    "vehicle_list",             # 차량·컨테이너 목록(인증 대상은 서비스지만 관리대상)
+    "cleaning_sop",             # 세척 SOP(차량·컨테이너·창고) + Sertu 절차
     "other",
 ]
 # 서류명 3개 언어 — 도메인 사전(domain_dict.json)의 DOC 축에서 파생한다.
@@ -51,6 +56,12 @@ DOC_NAME_L10N = {"en": DOC_EN, "id": DOC_ID}
 # 미제출로 세지 않는 것이다.
 REQUIRED_DOCS = ["nib_business_license", "factory_registration", "product_list",
                  "process_flow", "material_list", "halal_certificate", "sjph_manual"]
+
+# 물류(jasa logistik) 필수 서류 — 제품과 다른 세트다.
+# 제품의 원재료·배합·공정 축이 없고, 대신 시설·차량·세척·취급범위가 핵심이다.
+# BPJPH는 차량이 아니라 '물류 서비스'를 인증하므로, 차량 목록은 관리대상 증빙이다(2024-09-05).
+REQUIRED_DOCS_LOGISTICS = ["nib_business_license", "sjph_manual",
+                           "logistics_scope", "warehouse_layout", "vehicle_list", "cleaning_sop"]
 
 # 경로별 필수 목록. 미정(undetermined)은 정규 기준을 쓴다 — 넓게 요구하는 쪽이 안전하다.
 REQUIRED_DOCS_BY_PATHWAY = {
@@ -94,8 +105,11 @@ def required_docs(pathway=None):
     return REQUIRED_DOCS_BY_PATHWAY.get((pathway or "").lower(), REQUIRED_DOCS)
 
 
-def doc_requirements(pathway=None, country=None, is_msme=None):
-    """이 신청 건에 실제로 요구되는 서류 — 경로(pathway)와 관할·규모를 함께 본다.
+def doc_requirements(pathway=None, country=None, is_msme=None, scheme="product"):
+    """이 신청 건에 실제로 요구되는 서류 — 인증 종류(scheme)·경로(pathway)·관할·규모를 함께 본다.
+
+    scheme 이 가장 바깥 축이다. 물류(logistics)는 제품과 서류 세트 자체가 다르므로
+    pathway 분기 이전에 갈라진다. 제품(product)은 기존 pathway 로직을 그대로 탄다.
 
     돌려주는 것
       required        요구되는 doc_type 목록
@@ -103,6 +117,10 @@ def doc_requirements(pathway=None, country=None, is_msme=None):
                       사유와 함께 남긴다. 조용히 사라지면 면제인지 누락인지 알 수 없다.
       alt             {doc_type: {by, note}} — 원본 서류 대신 다른 근거로 충족 가능한 항목
     """
+    if (scheme or "product").lower() == "logistics":
+        # 물류는 경로(self_declare/reguler)에 따른 서류 차이가 아직 규범으로 확정되지
+        # 않았다(BPJPH jasa logistik SJPH 매뉴얼 미공개) → 단일 세트로 시작한다.
+        return {"required": list(REQUIRED_DOCS_LOGISTICS), "not_applicable": {}, "alt": {}}
     pw = (pathway or "").lower()
     req = list(required_docs(pw))
     na = dict(DOC_NOT_APPLICABLE.get(pw, {}))
@@ -120,6 +138,10 @@ DOC_REQUIREMENT = {
     "material_list": "전(全) 원재료 목록 — 원재료명·공급사·할랄 상태(인증/선언)",
     "halal_certificate": "임계 원재료 공급사가 받은 할랄 인증서 사본 — 이 플랫폼이 발급하는 인증서가 아니라 신청자가 제출하는 입력 서류다(해당 원재료가 있는 경우)",
     "sjph_manual": "SJPH 매뉴얼 — 5요소(경영약속·원재료·공정·제품·모니터링) 포함",
+    "logistics_scope": "취급 화물·서비스 범위 — 어떤 제품군(식품·의약·화장품)을 penyimpanan·pengemasan·pendistribusian 중 어느 서비스로 다루는지",
+    "warehouse_layout": "창고 배치도 — 할랄/비할랄 구획(Halal Zone)과 동선 분리가 드러나야 함",
+    "vehicle_list": "차량·컨테이너 목록 — 등록번호·유형. 인증 대상은 서비스이나 관리대상 증빙",
+    "cleaning_sop": "세척 SOP — 차량·컨테이너·창고 세척 절차. 이전 화물이 비할랄일 때 Sertu 세정 포함",
 }
 
 # 서류 요건 설명 — 인니 신청기업·심사자가 읽는 문구다. 한국어만 두면 인니어 화면에

@@ -582,6 +582,8 @@ def _case_dict(c):
             "factory_address": c.factory_address, "due_date": c.due_date,
             "notify_consent": bool(c.notify_consent),
             "draft_state": c.draft_state, "return_reason": c.return_reason,
+            "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
+            "scheme_frozen": bool(c.scheme_frozen),
             "profile_ext": c.profile_ext or {}, "facility_ids": c.facility_ids or []}
 
 
@@ -3479,6 +3481,8 @@ def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("appli
     c = models.CaseApplication(
         org_id=org, is_msme=bool(body.is_msme),
         company_name=body.company_name or oext.get("company_name") or (org_row.name if org_row else None),
+        scheme=(body.scheme or "product"),
+        logistics_scope=(body.logistics_scope or None),
         profile_ext=(oext or None))
     # 회사 프로필 상속 — 단, 상호가 다르면 '그 회사를 특정하는 값'은 물려받지 않는다.
     # org=회사가 전제지만 실제로는 한 org 에 여러 회사가 들어있다. 그대로 상속하면 인도네시아
@@ -7825,6 +7829,36 @@ SJPH_APPENDICES = [
     ("Appendix 17. 종합 요약", "auto", None),
 ]
 
+# 물류(jasa logistik) 부록 — 제품 17종에서 생산 축(공정흐름도·생산기록·재료 계열)을
+# 물류 축(물류 흐름도·차량세척·인계·취급범위)으로 치환한다.
+# ⚠️ BPJPH의 jasa logistik 전용 SJPH 매뉴얼 템플릿이 아직 공개되지 않았다(도축용 49/2024는
+#    공개됨). 정본이 나오면 이 목록만 교체하면 되도록 데이터로 분리해 둔다. 근거: v0.2 §11-D.
+SJPH_APPENDICES_LOGISTICS = [
+    ("Appendix 1. 할랄정책 포스터", "auto", None),
+    ("Appendix 2. 할랄관리팀 임명장", "upload", "halal_supervisor"),
+    ("Appendix 3. 할랄교육 자료·이수", "upload", "training"),
+    ("Appendix 4. 취급 화물·서비스 범위", "upload", "logistics_scope"),
+    ("Appendix 5. 화물 입고검사 기록", "upload", "receiving_log"),
+    ("Appendix 6. 무돈육시설 선언서", "auto", None),
+    ("Appendix 7. 창고 배치도(Halal Zone)", "upload", "warehouse_layout"),
+    ("Appendix 8. 보관 기록", "upload", "usage_log"),
+    ("Appendix 9. 물류 흐름도(상차→인도)", "upload", "logistics_flow"),
+    ("Appendix 10. 차량·컨테이너 목록", "upload", "vehicle_list"),
+    ("Appendix 11. 세척 SOP·세척 기록", "upload", "cleaning_sop"),
+    ("Appendix 12. 인계·인수 기록", "upload", "handover_log"),
+    ("Appendix 13. 유통·배송 기록", "upload", "distribution_log"),
+    ("Appendix 14. 신규 차량·화물유형 승인", "auto", None),
+    ("Appendix 15. 내부심사 체크리스트", "upload", "internal_audit"),
+    ("Appendix 16. 경영검토 회의록", "upload", None),
+    ("Appendix 17. 종합 요약", "auto", None),
+]
+
+
+def sjph_appendices(scheme="product"):
+    """SJPH 부록 세트 — 인증 종류별. 모르는 scheme 은 제품 기준."""
+    return SJPH_APPENDICES_LOGISTICS if (scheme or "product").lower() == "logistics" else SJPH_APPENDICES
+
+
 # ===== SJPH/HPAS Manual — 공식 템플릿(GLHAC HPAS SJPH Template.docx) 정합 정적 원문(EN/KO 병기) =====
 # 아래 문구는 템플릿 원문 그대로. 동적값(회사명·감독관·재료·제품)은 _sjph_manual_blocks에서 치환.
 SJPH_LEGAL_BASIS = [
@@ -8063,9 +8097,10 @@ def _sjph_manual_blocks(db, c):
     B.append({"type": "table", "headers": ["Ch", "Element / 기준", "Status / 상태", "Note / 비고"],
               "widths": [0.1, 0.34, 0.18, 0.38], "rows": chap_rows})
     # ---------- 부록(17종) + 증빙 게이트 ----------
+    _APPX = sjph_appendices(c.scheme)   # 제품/물류에 따라 부록 세트가 다르다
     B.append({"type": "heading", "text": "Appendices · 부록 (17종, 증빙 소스)", "level": 2})
     appx_rows, done, upload_total = [], 0, 0
-    for i, (label, typ, key) in enumerate(SJPH_APPENDICES):
+    for i, (label, typ, key) in enumerate(_APPX):
         if typ == "auto":
             st = "자동생성"
         else:
@@ -10135,22 +10170,50 @@ ONSITE_ITEMS = [
     ("continuous_improvement", "지속 개선"),
 ]
 
+# 물류(jasa logistik) 현장심사 항목 — 제품의 원재료·생산 축을 빼고 물류 축을 넣는다.
+# BPJPH 물류 임계활동(loading→unloading→receiving→storage→picking→packing→staging→delivery,
+# 2024-09-05)에 맞췄다. 공통 10항목은 제품과 같은 item_key 를 재사용한다(사전·집계 호환).
+ONSITE_ITEMS_LOGISTICS = [
+    ("halal_policy", "할랄 정책 문서"),
+    ("organizational_structure", "조직 구조"),
+    ("training_records", "교육 기록"),
+    ("cargo_receiving", "화물 입고검사"),
+    ("storage_facility", "보관 시설"),
+    ("storage_zone_segregation", "보관 Zone 분리(할랄/비할랄)"),
+    ("cleaning_sanitation", "세척·위생"),
+    ("vehicle_cleaning", "차량·컨테이너 세척"),
+    ("previous_cargo_check", "직전 화물 확인"),
+    ("contamination_prevention", "교차오염 방지"),
+    ("loading_unloading", "상·하차 관리"),
+    ("handover_record", "인계·인수 기록"),
+    ("product_traceability", "추적성"),
+    ("internal_audit", "내부 심사"),
+    ("corrective_action_system", "시정조치 체계"),
+    ("continuous_improvement", "지속 개선"),
+]
+
+
+def onsite_items(scheme="product"):
+    """현장심사 항목 — 인증 종류별. 모르는 scheme 은 제품 기준(넓은 쪽)."""
+    return ONSITE_ITEMS_LOGISTICS if (scheme or "product").lower() == "logistics" else ONSITE_ITEMS
+
 
 @app.get("/cases/{case_id}/onsite-checklist")
 def get_onsite_checklist(case_id: str, lang: str = Query("ko"),
                          user=Depends(auth.get_current_user),
                          db: Session = Depends(get_db)):
-    _get_case(db, case_id, user)
+    c = _get_case(db, case_id, user)
     rows = {r.item_key: r for r in db.query(models.OnsiteChecklist).filter_by(case_id=case_id).all()}
+    ITEMS = onsite_items(c.scheme)   # 제품/물류에 따라 항목이 다르다
     # 현장에서 오디터가 읽는 목록이다 — 인니 심사자에게 한국어로 주면 못 읽는다.
     _oi = _dd_mod.code_labels("ONSITE_ITEM", "onsite_item", lang)
     items = [{"item_key": k, "label": _oi.get(k, ko),
               "result": rows[k].result if k in rows else "not_checked",
-              "note": rows[k].note if k in rows else None} for k, ko in ONSITE_ITEMS]
+              "note": rows[k].note if k in rows else None} for k, ko in ITEMS]
     comply = sum(1 for x in items if x["result"] == "comply")
     nc = sum(1 for x in items if x["result"] == "nonconformity")
     return {"items": items, "comply": comply, "nonconformity": nc,
-            "total": len(ONSITE_ITEMS), "completion": round(comply / len(ONSITE_ITEMS) * 100)}
+            "total": len(ITEMS), "completion": round(comply / len(ITEMS) * 100) if ITEMS else 0}
 
 
 @app.post("/cases/{case_id}/onsite-checklist")
@@ -10159,7 +10222,7 @@ def update_onsite_checklist(case_id: str, body: schemas.OnsiteChecklistReq,
                             db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     _auto_advance(db, c, "onsite_audit_in_progress", user, "onsite.checklist.auto")   # P2 훅: 체크 시작→현장심사 진행
-    if body.item_key not in {k for k, _ in ONSITE_ITEMS}:
+    if body.item_key not in {k for k, _ in onsite_items(c.scheme)}:
         raise HTTPException(400, {"code": "INVALID_ITEM_KEY"})
     if body.result not in ("not_checked", "comply", "nonconformity"):
         raise HTTPException(400, {"code": "INVALID_RESULT", "allowed": ["not_checked", "comply", "nonconformity"]})
@@ -10287,7 +10350,8 @@ def save_onsite_reviewer_opinion(case_id: str, body: dict = None,
     """샤리아·최고승인자 항목별 의견(적합/부적합) + 코멘트. 체크리스트 원본은 건드리지 않는다."""
     b = body or {}
     key = str(b.get("item_key") or "").strip()
-    if key not in {k for k, _ in ONSITE_ITEMS}:
+    _oc = db.get(models.CaseApplication, case_id)
+    if key not in {k for k, _ in onsite_items(_oc.scheme if _oc else "product")}:
         raise HTTPException(422, {"code": "INVALID_ITEM_KEY"})
     op = str(b.get("opinion") or "").strip()
     if op not in ("comply", "nonconformity"):
@@ -13484,7 +13548,8 @@ def _calc_readiness(db, case_id):
     _c = db.get(models.CaseApplication, case_id)      # 면제된 서류는 분모에서도 뺀다
     req = doc_requirements(_c.pathway if _c else None,
                            (_c.profile_ext or {}).get("country") if _c else None,
-                           _c.is_msme if _c else None)["required"]
+                           _c.is_msme if _c else None,
+                           scheme=(_c.scheme if _c else "product"))["required"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     have_types = {d.doc_type for d in docs if d.review_status != "rejected"}
     doc_score = (sum(1 for r in req if r in have_types) / len(req)) if req else 1.0
@@ -15381,7 +15446,8 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
     # 필수 서류는 신청 경로와 관할·규모에 따라 다르다. 목록에서 빼더라도 행은 남겨
     # '해당 없음'으로 사유와 함께 보여준다 — 조용히 사라지면 심사자가 빠뜨린 것인지
     # 면제인지 구분할 수 없다.
-    _rq = doc_requirements(c.pathway, (c.profile_ext or {}).get("country"), c.is_msme)
+    _rq = doc_requirements(c.pathway, (c.profile_ext or {}).get("country"), c.is_msme,
+                           scheme=c.scheme)
     _req, _na, _alt = _rq["required"], _rq["not_applicable"], _rq["alt"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     by_type = {}
