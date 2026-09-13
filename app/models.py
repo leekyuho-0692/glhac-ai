@@ -257,6 +257,9 @@ class HalalCertificate(Base):
     status = Column(String, default="active")  # active|suspended|withdrawn
     frozen_product_ids = Column(JSON)    # 발급 시 동결 제품 ID 목록 — S3-3
     frozen_material_ids = Column(JSON)   # 발급 시 동결 원재료 ID 목록 — S3-3
+    frozen_jasa = Column(JSON)           # 물류: 발급 시 동결 jasa(보관·포장·유통)
+    frozen_facility_ids = Column(JSON)   # 물류: 발급 시 동결 시설 ID 목록
+    synced_at = Column(String)           # 물류: logistics-audit 로 마지막 동기화한 시각(ISO)
     qr_token = Column(String, index=True)   # 공개 검증 토큰(§6.4) — /verify/{token}
 
 

@@ -11072,6 +11072,63 @@ def _issue_guards(db, c, case_id):
         raise HTTPException(409, {"code": "DOCUMENTS_NOT_APPROVED", "unresolved": bad_docs})
 
 
+def _sync_logistics_cert(db, c, cert, event):
+    """물류 인증서 상태를 logistics-audit 로 push한다(best-effort).
+
+    · 제품 인증서는 대상이 아니다(물류만).
+    · GLHAC_LOGISTICS_WEBHOOK_URL 미설정이면 보내지 않고 IntegrationEvent 에 pending 으로
+      남긴다 — 나중에 재전송할 근거가 된다.
+    · 전송 실패해도 발급/상태변경 자체는 되돌리지 않는다. 인증의 정본은 v3 이고,
+      logistics-audit 은 그 사본을 참조할 뿐이다(끊겨도 v3 는 정확하다).
+    """
+    if (c.scheme or "product") != "logistics":
+        return
+    import json as _json, hmac as _hmac, hashlib as _hl, urllib.request as _rq
+    payload = {
+        "event": event,                                  # issued|suspended|withdrawn|reactivated
+        "certificate_no": cert.certificate_no,
+        "org_id": c.org_id, "case_id": c.case_id,
+        "company_name": c.company_name,
+        "jasa": cert.frozen_jasa or c.logistics_scope or [],
+        "status": cert.status,
+        "valid_from": cert.issue_date, "valid_to": cert.expiry_date,
+    }
+    raw = _json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ev = models.IntegrationEvent(
+        provider="logistics_audit", event_type=event, external_id=cert.certificate_no,
+        idempotency_key="logi:%s:%s" % (cert.certificate_no, event),
+        case_id=c.case_id, payload=payload,
+        request_hash=_hl.sha256(raw).hexdigest(), status="pending")
+    url = os.environ.get("GLHAC_LOGISTICS_WEBHOOK_URL")
+    if not url:
+        ev.last_error = "GLHAC_LOGISTICS_WEBHOOK_URL 미설정 — 전송 보류"
+        db.add(ev); db.commit()
+        return
+    sig = _hmac.new(auth.SECRET, raw, _hl.sha256).hexdigest()
+    try:
+        req = _rq.Request(url, data=raw, method="POST",
+                          headers={"Content-Type": "application/json",
+                                   "X-GLHAC-Signature": sig})
+        resp = _rq.urlopen(req, timeout=5)
+        ev.status = "processed"
+        ev.response_hash = _hl.sha256(resp.read() or b"").hexdigest()
+        cert.synced_at = datetime.now().isoformat()
+    except Exception as e:  # noqa: BLE001 — 연동 실패는 발급을 막지 않는다
+        ev.status = "failed"
+        ev.last_error = str(e)[:200]
+    db.add(ev)
+    db.commit()
+
+
+def _next_logistics_cert_no(db):
+    """물류 인증서 번호 — GLHAC-HL-YYYYMMDD-NNNNN. 당일 시퀀스로 채번한다."""
+    ymd = datetime.now().strftime("%Y%m%d")
+    prefix = "GLHAC-HL-" + ymd + "-"
+    n = (db.query(models.HalalCertificate)
+         .filter(models.HalalCertificate.certificate_no.like(prefix + "%")).count())
+    return "%s%05d" % (prefix, n + 1)
+
+
 def _do_issue_certificate(db, c, user, reason=None):
     """실제 인증서 발급 실행(가드 통과 후). user=실행자(2인승인 시 승인자). 설계서 §6·§S3-3."""
     case_id = c.case_id
@@ -11084,12 +11141,17 @@ def _do_issue_certificate(db, c, user, reason=None):
         expiry = date(today.year + 4, today.month, today.day)
     except ValueError:
         expiry = date(today.year + 4, today.month, 28)
-    prods = [p.name for p in db.query(models.Product).filter_by(case_id=case_id)]
-    cert = models.HalalCertificate(case_id=case_id, scope=prods, issue_date=str(today),
+    is_logi = (c.scheme or "product") == "logistics"
+    if is_logi:
+        # 물류 인증서 — scope 는 제품명이 아니라 jasa(보관·포장·유통)다.
+        scope = list(c.logistics_scope or [])
+    else:
+        scope = [p.name for p in db.query(models.Product).filter_by(case_id=case_id)]
+    cert = models.HalalCertificate(case_id=case_id, scope=scope, issue_date=str(today),
                                    expiry_date=str(expiry))
     db.add(cert)
     db.flush()
-    cert.certificate_no = "HC-" + cert.id[:8].upper()
+    cert.certificate_no = _next_logistics_cert_no(db) if is_logi else ("HC-" + cert.id[:8].upper())
     import secrets as _secrets
     cert.qr_token = _secrets.token_urlsafe(24)   # §6.4 공개 검증 토큰
     # 상태 전이 — certificate_issued는 보호상태(raw transition 금지). 이 전용 함수가 소유.
@@ -11099,11 +11161,13 @@ def _do_issue_certificate(db, c, user, reason=None):
     _issue_payload = {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None}
     _issue_payload.update(_tsa_meta(cert.certificate_no or str(cert.id)))   # P3d: TSA configured 시만 병기(미설정 불변)
     sm.record_event(db, c, frm, c.status, "certificate.issue", "system", user["uid"], _issue_payload)
-    # S3-3: freeze snapshot — 발급 시 제품/원재료 ID 동결
-    prod_ids = [p.product_id for p in db.query(models.Product).filter_by(case_id=case_id)]
-    mat_ids = [m.material_id for m in db.query(models.Material).filter_by(case_id=case_id)]
-    cert.frozen_product_ids = prod_ids
-    cert.frozen_material_ids = mat_ids
+    # S3-3: freeze snapshot — 발급 시점 동결. 물류는 jasa·시설, 제품은 제품·원재료.
+    if is_logi:
+        cert.frozen_jasa = list(c.logistics_scope or [])
+        cert.frozen_facility_ids = list(c.facility_ids or [])
+    else:
+        cert.frozen_product_ids = [p.product_id for p in db.query(models.Product).filter_by(case_id=case_id)]
+        cert.frozen_material_ids = [m.material_id for m in db.query(models.Material).filter_by(case_id=case_id)]
     _notify(db, c, "certificate_issued",
             channels=["inapp", "sms", "kakao", "whatsapp"], role="applicant",
             msg=("certificate_issued", {"company": c.company_name or "",
@@ -11118,9 +11182,13 @@ def _do_issue_certificate(db, c, user, reason=None):
                     "expiry_date": ex.expiry_date, "scope": ex.scope, "existing": True}
         raise
     obs.inc("glhac_certificate_issued_total")
+    _sync_logistics_cert(db, c, cert, "certificate.issued")   # 물류면 logistics-audit 로 push
     return {"certificate_no": cert.certificate_no, "issue_date": str(today),
-            "expiry_date": str(expiry), "scope": prods,
-            "frozen_product_ids": prod_ids, "frozen_material_ids": mat_ids,
+            "expiry_date": str(expiry), "scope": cert.scope,
+            "scheme": c.scheme or "product",
+            "frozen_product_ids": cert.frozen_product_ids,
+            "frozen_material_ids": cert.frozen_material_ids,
+            "frozen_jasa": cert.frozen_jasa, "synced_at": cert.synced_at,
             "qr_token": cert.qr_token, "verify_url": "/verify/" + cert.qr_token}
 
 
@@ -12145,6 +12213,8 @@ def _cert_status_change(db, case_id, user, action, new_status, from_status, reas
     _notify(db, c, event, title, "%s — %s" % (c.company_name or "", body),
             channels=["inapp", "sms"], role="applicant")
     db.commit()
+    # 상태 변경(정지·철회·재개)도 물류면 logistics-audit 로 push. action 에서 이벤트 파생.
+    _sync_logistics_cert(db, c, cert, action)   # action = certificate.suspend|withdraw|reactivate
     return {"certificate_no": cert.certificate_no, "status": cert.status, "reason": reason}
 
 

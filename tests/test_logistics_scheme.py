@@ -148,3 +148,53 @@ def test_물류_체크리스트가_물류서류를_한글라벨로_준다():
         assert types["warehouse_layout"] != "warehouse_layout"   # 코드가 아닌 한글 라벨
         assert types["vehicle_list"] != "vehicle_list"
         assert "product_list" not in types                       # 제품 서류는 안 나온다
+
+
+def test_물류_인증서_발급이_scheme을_따른다():
+    """물류 발급은 번호 GLHAC-HL, scope=jasa, frozen_jasa 동결. 제품과 섞이면 안 된다."""
+    from app import models
+    with TestClient(app) as cl:
+        h = _tok(cl, "admin", "admin")
+        cid = cl.post("/cases", json={"company_name": "발급물류", "org_id": "org_demo",
+                                      "scheme": "logistics", "logistics_scope": ["penyimpanan", "pendistribusian"]},
+                      headers=h).json()["case_id"]
+        db = next(m.get_db())
+        cc = db.get(models.CaseApplication, cid)
+        r = m._do_issue_certificate(db, cc, {"uid": "admin", "role": "admin"})
+        assert r["certificate_no"].startswith("GLHAC-HL-")
+        assert r["scope"] == ["penyimpanan", "pendistribusian"]      # jasa
+        assert r["frozen_jasa"] == ["penyimpanan", "pendistribusian"]
+        assert not r["frozen_product_ids"]                          # 제품 동결 없음
+
+
+def test_제품_인증서는_물류연동을_하지_않는다():
+    from app import models
+    with TestClient(app) as cl:
+        h = _tok(cl, "admin", "admin")
+        cid = cl.post("/cases", json={"company_name": "발급제품", "org_id": "org_demo"}, headers=h).json()["case_id"]
+        db = next(m.get_db())
+        cc = db.get(models.CaseApplication, cid)
+        r = m._do_issue_certificate(db, cc, {"uid": "admin", "role": "admin"})
+        assert r["certificate_no"].startswith("HC-")               # 기존 제품 번호 유지
+        assert r["scheme"] == "product"
+        # 물류 연동 이벤트가 생기지 않는다
+        assert db.query(models.IntegrationEvent).filter_by(
+            case_id=cid, provider="logistics_audit").count() == 0
+
+
+def test_물류발급이_sync_이벤트를_남긴다():
+    """webhook URL 미설정이어도 IntegrationEvent 에 pending 으로 근거를 남긴다(재전송 가능)."""
+    from app import models
+    with TestClient(app) as cl:
+        h = _tok(cl, "admin", "admin")
+        cid = cl.post("/cases", json={"company_name": "동기화", "org_id": "org_demo",
+                                      "scheme": "logistics", "logistics_scope": ["pengemasan"]},
+                      headers=h).json()["case_id"]
+        db = next(m.get_db())
+        cc = db.get(models.CaseApplication, cid)
+        m._do_issue_certificate(db, cc, {"uid": "admin", "role": "admin"})
+        ev = db.query(models.IntegrationEvent).filter_by(
+            case_id=cid, provider="logistics_audit").first()
+        assert ev is not None and ev.event_type == "certificate.issued"
+        assert ev.status in ("pending", "processed", "failed")
+        assert ev.payload["jasa"] == ["pengemasan"]
