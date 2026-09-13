@@ -210,6 +210,29 @@ class CaseCreate(BaseModel):
     company_name: Optional[str] = None
     is_msme: Optional[bool] = False
     actor_type: Optional[str] = "applicant"
+    # 인증 종류 — 신청 맨 앞에서 신청자가 고른다. product=제품 / logistics=물류 서비스.
+    scheme: Optional[str] = "product"
+    logistics_scope: Optional[List[str]] = None  # 물류일 때 jasa 복수 선택
+
+    @field_validator("scheme")
+    @classmethod
+    def _scheme_ok(cls, v):
+        v = (v or "product").lower()
+        if v not in ("product", "logistics"):
+            raise ValueError("scheme은 product 또는 logistics여야 합니다")
+        return v
+
+    @model_validator(mode="after")
+    def _logistics_scope_ok(self):
+        if self.scheme == "logistics":
+            allowed = {"penyimpanan", "pengemasan", "pendistribusian"}
+            sel = [x for x in (self.logistics_scope or []) if x in allowed]
+            if not sel:
+                raise ValueError("물류 인증은 jasa(penyimpanan/pengemasan/pendistribusian) 최소 1개를 골라야 합니다")
+            self.logistics_scope = sel
+        else:
+            self.logistics_scope = None   # 제품이면 물류 scope 무시
+        return self
 
 
 class ProductCreate(BaseModel):

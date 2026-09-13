@@ -30,6 +30,13 @@ class CaseApplication(Base):
     draft_state = Column(String)  # 신청단계 오버레이: saved(임시저장)|in_progress(작성중)|completed(작성완료)|returned(반려)
     return_reason = Column(Text)  # 반려 사유(consultant→applicant)
     pathway = Column(String, nullable=False, default="undetermined")  # 24.9
+    # 인증 종류 — 신청 맨 앞에서 신청자가 선언한다. pathway(SEHATI/Reguler)와 달리
+    # 시스템이 원재료로 유도할 수 없다(물류사엔 판정 근거가 될 원재료가 없다) → 선언값이다.
+    # product = 제품 할랄 인증 / logistics = 할랄 물류 서비스 인증(jasa logistik).
+    # 기존 행은 전부 제품이었다 → 기본값 product 로 자동 백필(_migrate).
+    scheme = Column(String, nullable=False, default="product")
+    logistics_scope = Column(JSON)  # 물류만: ["penyimpanan","pengemasan","pendistribusian"] 복수 선택
+    scheme_frozen = Column(Boolean, default=False)  # 서류 요구가 갈리는 순간 잠금 — 이후 변경은 새 케이스
     risk_category = Column(String)
     is_msme = Column(Boolean)
     annual_revenue = Column(Integer)   # 연매출(IDR) — BPJPH 자기선언 ≤Rp15B 판정(Decision 146/2025)
