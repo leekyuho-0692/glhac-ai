@@ -316,6 +316,9 @@
   input[type="date"]:not(.hasval):not(:focus)::-webkit-datetime-edit{color:transparent}
   input[type="date"]:not(.hasval):not(:focus){color:transparent}
   input[type="date"]:focus,input[type="date"].hasval{color:inherit}
+
+.pulse{animation:_pulse 1s ease-in-out infinite}
+@keyframes _pulse{0%,100%{opacity:1}50%{opacity:.55}}
 </style>
 </head>
 <body>
@@ -830,6 +833,9 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+  "— 선택 없음 —":"— None —",
+  "눌러야 서류 반영":"press to apply docs",
+
   "삭제됨":"Deleted","저장됨":"Saved","저장 실패":"Save failed","삭제 실패":"Delete failed",
   "차량·컨테이너":"Vehicles",
   "차량 추가":"Add vehicle",
@@ -1336,7 +1342,7 @@ async function refreshCaseSel(){
       const saved=(()=>{try{return localStorage.getItem("glhac_case")}catch(_){return null}})();
       CURCASE=(saved&&cases.find(c=>c.case_id===saved))?saved:cases[0].case_id;
     }
-    sel.innerHTML=cases.map(c=>`<option value="${c.case_id}"${c.case_id===CURCASE?" selected":""}>${esc(c.company_name||short(c.case_id))}</option>`).join("");
+    sel.innerHTML='<option value="">'+T('— 선택 없음 —')+'</option>'+cases.map(c=>`<option value="${c.case_id}"${c.case_id===CURCASE?" selected":""}>${esc(c.company_name||short(c.case_id))}</option>`).join("");
     pill.style.display="";
     if(cidChip){cidChip.textContent=CURCASE;cidChip.title=T('케이스 ID')+' · '+CURCASE+' — '+T('클릭하여 복사');cidChip.style.display="";}
   }else{
@@ -1351,7 +1357,7 @@ function copyCaseId(){
   try{navigator.clipboard.writeText(CURCASE).then(done,done);}
   catch(_){const ta=document.createElement("textarea");ta.value=CURCASE;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");}catch(__){}ta.remove();done();}
 }
-function onCaseChange(id){CASE_PIN=true;CURCASE=id;try{localStorage.setItem("glhac_case",id)}catch(_){}applyView();}
+function onCaseChange(id){if(!id){clearCase();return;}CASE_PIN=true;CURCASE=id;try{localStorage.setItem("glhac_case",id)}catch(_){}applyView();}
 /* 상단 선택 케이스 해제 — 미선택 상태로 내 케이스 리스트 랜딩(케이스 클릭 시 다시 선택). */
 function clearCase(){CASE_PIN=false;CURCASE=null;try{localStorage.removeItem("glhac_case")}catch(_){}navigate({screen:"caseList"});}
 
@@ -1497,6 +1503,9 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "— 선택 없음 —":"— Tidak dipilih —",
+  "눌러야 서류 반영":"tekan untuk terapkan",
+
   "삭제됨":"Dihapus","저장됨":"Tersimpan","저장 실패":"Gagal simpan","삭제 실패":"Gagal hapus",
   "차량·컨테이너":"Kendaraan",
   "차량 추가":"Tambah kendaraan",
@@ -5588,6 +5597,10 @@ async function resendLogiSync(eventId){
 function onSchemeChange(){
   const s=v('apScheme'); const box=document.getElementById('apJasaBox');
   if(box) box.style.display = (s==='logistics')?'inline-flex':'none';
+  // 종류를 바꾸면 저장 전까지 서류 목록은 그대로다 — 저장 버튼을 강조해 반영을 유도한다.
+  var btns=document.querySelectorAll("button");
+  for(var i=0;i<btns.length;i++){ if(btns[i].textContent.indexOf(T('종류 저장'))>=0){
+    btns[i].classList.add('pulse'); btns[i].textContent='💾 '+T('종류 저장')+' — '+T('눌러야 서류 반영'); break; } }
 }
 async function saveScheme(id){
   const s=v('apScheme');

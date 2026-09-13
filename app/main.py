@@ -11152,7 +11152,10 @@ def _post_logistics_payload(payload, url=None):
     if not url:
         return (False, "GLHAC_LOGISTICS_WEBHOOK_URL 미설정 — 전송 보류", None)
     raw = _json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    sig = _hmac.new(auth.SECRET, raw, _hl.sha256).hexdigest()
+    # 서명 키 — logistics-audit 과 공유할 전용 시크릿이 있으면 그걸, 없으면 앱 시크릿.
+    _sec = os.environ.get("GLHAC_LOGISTICS_WEBHOOK_SECRET")
+    _key = _sec.encode("utf-8") if _sec else auth.SECRET
+    sig = _hmac.new(_key, raw, _hl.sha256).hexdigest()
     try:
         req = _rq.Request(url, data=raw, method="POST",
                           headers={"Content-Type": "application/json",
