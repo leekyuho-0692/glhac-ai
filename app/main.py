@@ -1100,8 +1100,10 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
         _, expected = _sign_payload(_cert_canonical(cert))
         sig_valid = (expected == sig.signature_value)
     official = _official_bpjph_no(db, cert.case_id)
+    _scheme = (c.scheme if c else None) or "product"
     out = {"valid": valid, "certificate_no": cert.certificate_no,
            "company_name": (c.company_name if c else None),
+           "scheme": _scheme,
            "status": cert.status, "issue_date": cert.issue_date,
            "expiry_date": cert.expiry_date, "scope": cert.scope,
            "signed": bool(sig), "signature_valid": sig_valid,
@@ -5525,7 +5527,9 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
     # scheme_frozen(서류 요구가 갈리는 순간 잠금) 이후에는 바꿀 수 없다 — 이미 받은
     # 증빙이 다른 세트라 갈아치우면 고아가 된다. 바꾸려면 새 케이스로.
     if body.scheme is not None and body.scheme != c.scheme:
-        if c.scheme_frozen:
+        # 잠금 플래그 + 문서 존재를 둘 다 본다 — 플래그 세팅 경로를 놓쳐도 문서가 있으면 막힌다.
+        _has_docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).first() is not None
+        if c.scheme_frozen or _has_docs:
             raise HTTPException(409, {"code": "SCHEME_FROZEN",
                                       "message": "서류 제출이 시작되어 인증 종류를 바꿀 수 없습니다. 새 신청을 만들어 주세요."})
         if body.scheme == "logistics":
@@ -9576,6 +9580,10 @@ def upload_case_document(case_id: str, body: dict = None,
         if _gps:
             d.lat, d.lng, d.geo_source = _gps[0], _gps[1], "exif"
     db.add(d)
+    # 서류 제출이 시작되면 인증 종류를 잠근다 — 이후 제품↔물류 변경은 새 케이스로.
+    # (제품/물류는 서류 세트가 통째로 달라 갈아치우면 이미 올린 증빙이 고아가 된다)
+    if not c.scheme_frozen:
+        c.scheme_frozen = True
     db.flush()
     _audit(db, user, "document.upload", "document", d.document_id)
     # 증빙 항목에 제자리가 있으면 바로 편철 — 올려두고 어디에도 안 걸리는 문서를 없앤다
@@ -11099,25 +11107,36 @@ def _sync_logistics_cert(db, c, cert, event):
         idempotency_key="logi:%s:%s" % (cert.certificate_no, event),
         case_id=c.case_id, payload=payload,
         request_hash=_hl.sha256(raw).hexdigest(), status="pending")
+    ok, err, resp_hash = _post_logistics_payload(payload)
+    if ok:
+        ev.status = "processed"; ev.response_hash = resp_hash
+        cert.synced_at = datetime.now().isoformat()
+    else:
+        ev.status = "failed" if os.environ.get("GLHAC_LOGISTICS_WEBHOOK_URL") else "pending"
+        ev.last_error = err
+    db.add(ev)
+    db.commit()
+
+
+def _post_logistics_payload(payload):
+    """payload 를 logistics-audit 로 보낸다. (성공?, 에러문구, 응답해시) 반환.
+
+    URL 미설정이면 전송하지 않는다(보류) — 발급/재전송 로직이 이를 pending 으로 남긴다.
+    """
+    import json as _json, hmac as _hmac, hashlib as _hl, urllib.request as _rq
     url = os.environ.get("GLHAC_LOGISTICS_WEBHOOK_URL")
     if not url:
-        ev.last_error = "GLHAC_LOGISTICS_WEBHOOK_URL 미설정 — 전송 보류"
-        db.add(ev); db.commit()
-        return
+        return (False, "GLHAC_LOGISTICS_WEBHOOK_URL 미설정 — 전송 보류", None)
+    raw = _json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     sig = _hmac.new(auth.SECRET, raw, _hl.sha256).hexdigest()
     try:
         req = _rq.Request(url, data=raw, method="POST",
                           headers={"Content-Type": "application/json",
                                    "X-GLHAC-Signature": sig})
         resp = _rq.urlopen(req, timeout=5)
-        ev.status = "processed"
-        ev.response_hash = _hl.sha256(resp.read() or b"").hexdigest()
-        cert.synced_at = datetime.now().isoformat()
-    except Exception as e:  # noqa: BLE001 — 연동 실패는 발급을 막지 않는다
-        ev.status = "failed"
-        ev.last_error = str(e)[:200]
-    db.add(ev)
-    db.commit()
+        return (True, None, _hl.sha256(resp.read() or b"").hexdigest())
+    except Exception as e:  # noqa: BLE001 — 연동 실패는 호출자를 막지 않는다
+        return (False, str(e)[:200], None)
 
 
 def _next_logistics_cert_no(db):
@@ -12216,6 +12235,54 @@ def _cert_status_change(db, case_id, user, action, new_status, from_status, reas
     # 상태 변경(정지·철회·재개)도 물류면 logistics-audit 로 push. action 에서 이벤트 파생.
     _sync_logistics_cert(db, c, cert, action)   # action = certificate.suspend|withdraw|reactivate
     return {"certificate_no": cert.certificate_no, "status": cert.status, "reason": reason}
+
+
+@app.get("/admin/logistics-sync")
+def list_logistics_sync(status: str = Query(None), limit: int = Query(100, ge=1, le=500),
+                        user=Depends(auth.require_roles("admin", "operator")),
+                        db: Session = Depends(get_db)):
+    """물류 인증 연동(logistics-audit) 이벤트 목록 — 미전송(pending)·실패(failed) 관제용."""
+    q = db.query(models.IntegrationEvent).filter_by(provider="logistics_audit")
+    if status:
+        q = q.filter(models.IntegrationEvent.status == status)
+    rows = q.order_by(models.IntegrationEvent.created_at.desc()).limit(limit).all()
+    def _n(st):
+        return db.query(models.IntegrationEvent).filter_by(
+            provider="logistics_audit", status=st).count()
+    return {"counts": {"pending": _n("pending"), "failed": _n("failed"),
+                       "processed": _n("processed")},
+            "items": [{"id": e.id, "event_type": e.event_type,
+                       "certificate_no": e.external_id, "case_id": e.case_id,
+                       "status": e.status, "retry_count": e.retry_count,
+                       "last_error": e.last_error,
+                       "company_name": (e.payload or {}).get("company_name"),
+                       "created_at": str(e.created_at)} for e in rows]}
+
+
+@app.post("/admin/logistics-sync/{event_id}/resend")
+def resend_logistics_sync(event_id: str,
+                          user=Depends(auth.require_roles("admin", "operator")),
+                          db: Session = Depends(get_db)):
+    """미전송·실패한 물류 연동 이벤트를 저장된 payload 로 재전송한다."""
+    ev = db.get(models.IntegrationEvent, event_id)
+    if not ev or ev.provider != "logistics_audit":
+        raise HTTPException(404, {"code": "SYNC_EVENT_NOT_FOUND"})
+    ok, err, resp_hash = _post_logistics_payload(ev.payload or {})
+    ev.retry_count = (ev.retry_count or 0) + 1
+    if ok:
+        ev.status = "processed"; ev.response_hash = resp_hash; ev.last_error = None
+        # 정본 인증서에도 동기화 시각을 남긴다
+        cert = db.query(models.HalalCertificate).filter_by(
+            certificate_no=ev.external_id).first()
+        if cert:
+            cert.synced_at = datetime.now().isoformat()
+    else:
+        ev.status = "failed"; ev.last_error = err
+    _audit(db, user, "logistics_sync.resend", "integration_event", ev.id, ev.case_id,
+           {"certificate_no": ev.external_id, "result": ev.status})
+    db.commit()
+    return {"id": ev.id, "status": ev.status, "retry_count": ev.retry_count,
+            "last_error": ev.last_error}
 
 
 @app.post("/cases/{case_id}/certificate/suspend")

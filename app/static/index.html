@@ -830,6 +830,13 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+  "재전송":"Resend",
+  "재전송 성공":"Resent",
+  "재전송 실패":"Resend failed",
+  "미전송·실패 건 없음":"No pending/failed items",
+  "물류 인증 연동":"Logistics Sync",
+  "물류 인증서 발급·정지·철회를 logistics-audit 로 보낸 내역. 미전송·실패만 표시.":"Logistics cert issue/suspend/withdraw sent to logistics-audit. Pending/failed only.",
+
   "물류 서비스":"Logistics service",
   "종류 저장":"Save type",
   "변경 잠금":"Locked",
@@ -1413,6 +1420,13 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "재전송":"Kirim ulang",
+  "재전송 성공":"Terkirim ulang",
+  "재전송 실패":"Gagal kirim ulang",
+  "미전송·실패 건 없음":"Tidak ada item tertunda/gagal",
+  "물류 인증 연동":"Sinkronisasi Logistik",
+  "물류 인증서 발급·정지·철회를 logistics-audit 로 보낸 내역. 미전송·실패만 표시.":"Riwayat sertifikat logistik ke logistics-audit. Hanya tertunda/gagal.",
+
   "물류 서비스":"Jasa logistik",
   "종류 저장":"Simpan jenis",
   "변경 잠금":"Terkunci",
@@ -5408,6 +5422,13 @@ SCREEN.caseList=async()=>{
       <span class="chip" style="margin-left:auto">${T('노출')} ${cases.length}${T('건')} · scope: ${T(scopeLabel())}</span>
     </div></div>`;
 };
+async function resendLogiSync(eventId){
+  try{
+    const r=await API(`/admin/logistics-sync/${eventId}/resend`,{method:"POST"});
+    toast(r.status==='processed'?T('재전송 성공'):(T('재전송 실패')+' · '+(r.last_error||'')));
+  }catch(e){toast(EMSG(e)||T('재전송 실패'));}
+  applyView();
+}
 function onSchemeChange(){
   const s=v('apScheme'); const box=document.getElementById('apJasaBox');
   if(box) box.style.display = (s==='logistics')?'inline-flex':'none';
@@ -11460,8 +11481,22 @@ SCREEN.system=async()=>{
       <td class="muted small">${esc(u.org_id||"")}</td>
       <td style="text-align:right"><button class="btn bad" style="padding:3px 8px;font-size:12px" onclick="delUser('${u.user_id}')">✕</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
   const oRows=(orgs||[]).map(o=>`<tr><td><b>${esc(o.name||o.org_id)}</b></td><td class="muted small">${esc(o.org_id)}</td><td>${o.case_count==null?(o.cases==null?"—":o.cases):o.case_count}</td><td style="white-space:nowrap"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="tenantPanel('${esc(o.org_id)}')">🌐 ${T('도메인·브랜딩')}</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
+  let logiSync={counts:{},items:[]};try{logiSync=await API("/admin/logistics-sync");}catch(_){}
+  const lsc=logiSync.counts||{};
+  const lsRows=(logiSync.items||[]).filter(x=>x.status!=='processed').slice(0,20).map(e=>`<tr>
+      <td class="muted small">${esc((e.company_name||'')+' · '+(e.certificate_no||''))}</td>
+      <td>${bTag(e.status==='failed'?'bad':'info',e.status)}</td>
+      <td class="muted small">${esc(e.event_type||'')}${e.retry_count?(' ·'+T('재시도')+e.retry_count):''}</td>
+      <td style="text-align:right"><button class="btn" style="padding:3px 8px;font-size:11px" onclick="resendLogiSync('${e.id}')">↻ ${T('재전송')}</button></td></tr>`).join("")
+    ||`<tr><td colspan="4" class="muted small">${T('미전송·실패 건 없음')}</td></tr>`;
+  const logiCard=`<div class="card"><h3>🚚 ${T('물류 인증 연동')} <span class="en">· Logistics Sync</span>
+      <span class="r">${bTag(lsc.pending?'info':'mute','pending '+(lsc.pending||0))} ${bTag(lsc.failed?'bad':'mute','failed '+(lsc.failed||0))}</span></h3>
+    <div class="body tight">
+      <div class="muted small" style="margin-bottom:6px">${T('물류 인증서 발급·정지·철회를 logistics-audit 로 보낸 내역. 미전송·실패만 표시.')}</div>
+      <table><tbody>${lsRows}</tbody></table></div></div>`;
   return `
   <div class="grid three">
+    ${logiCard}
     <div class="card"><h3>🗂 ${T('메뉴 배정 관리')} <span class="en">· Menu Assignment</span></h3>
       <div class="body btnrow" style="align-items:center;gap:10px"><button class="btn pri" onclick="go('menuAssign')">${T('🗂 메뉴 배정 관리 열기')}</button>
         <span class="muted small">${T('역할별 메뉴 노출·순서를 드래그로 관리 (설계서 §6.1)')}</span></div></div>

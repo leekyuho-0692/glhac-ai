@@ -198,3 +198,54 @@ def test_물류발급이_sync_이벤트를_남긴다():
         assert ev is not None and ev.event_type == "certificate.issued"
         assert ev.status in ("pending", "processed", "failed")
         assert ev.payload["jasa"] == ["pengemasan"]
+
+
+def test_서류제출전에는_종류를_바꿀수있다():
+    with TestClient(app) as cl:
+        h = _tok(cl)
+        cid = cl.post("/cases", json={"company_name": "잠금전"}, headers=h).json()["case_id"]
+        r = cl.patch("/cases/%s/profile" % cid,
+                     json={"company_name": "잠금전", "scheme": "logistics",
+                           "logistics_scope": ["penyimpanan"]}, headers=h)
+        assert r.status_code == 200, r.text
+        assert cl.get("/cases/%s" % cid, headers=h).json()["scheme"] == "logistics"
+
+
+def test_서류제출후에는_종류가_잠긴다():
+    import base64
+    with TestClient(app) as cl:
+        h = _tok(cl)
+        cid = cl.post("/cases", json={"company_name": "잠금후"}, headers=h).json()["case_id"]
+        # 문서 하나 업로드 → scheme 잠김
+        b64 = base64.b64encode(b"%PDF-1.4 test").decode()
+        up = cl.post("/cases/%s/documents" % cid,
+                     json={"filename": "x.pdf", "file_b64": b64, "doc_type": "other"}, headers=h)
+        assert up.status_code == 200, up.text
+        # 이제 종류 변경은 409
+        r = cl.patch("/cases/%s/profile" % cid,
+                     json={"company_name": "잠금후", "scheme": "logistics",
+                           "logistics_scope": ["penyimpanan"]}, headers=h)
+        assert r.status_code == 409
+        assert r.json()["detail"]["code"] == "SCHEME_FROZEN"
+        # scheme_frozen 플래그도 켜졌다
+        assert cl.get("/cases/%s" % cid, headers=h).json()["scheme_frozen"] is True
+
+
+def test_물류연동_이벤트_목록과_재전송():
+    """미전송 sync 를 목록에서 보고 재전송할 수 있다(URL 미설정이면 pending 유지)."""
+    from app import models
+    with TestClient(app) as cl:
+        h = _tok(cl, "admin", "admin")
+        cid = cl.post("/cases", json={"company_name": "재전송대상", "org_id": "org_demo",
+                                      "scheme": "logistics", "logistics_scope": ["penyimpanan"]},
+                      headers=h).json()["case_id"]
+        db = next(m.get_db()); cc = db.get(models.CaseApplication, cid)
+        m._do_issue_certificate(db, cc, {"uid": "admin", "role": "admin"})
+        # 목록
+        lst = cl.get("/admin/logistics-sync", headers=h).json()
+        assert lst["counts"]["pending"] >= 1
+        target = [x for x in lst["items"] if x["case_id"] == cid][0]
+        # 재전송(URL 미설정 → pending 유지, retry_count 증가)
+        r = cl.post("/admin/logistics-sync/%s/resend" % target["id"], headers=h).json()
+        assert r["retry_count"] == 1
+        assert r["status"] in ("pending", "processed", "failed")
