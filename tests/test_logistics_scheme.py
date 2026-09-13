@@ -117,3 +117,34 @@ def test_물류_케이스_생성과_체크리스트():
         keys = {i["item_key"] for i in oc["items"]}
         assert "vehicle_cleaning" in keys
         assert "production_process" not in keys
+
+
+def test_목록응답에_scheme이_실린다():
+    """케이스 목록(/cases)에 scheme·logistics_scope 가 없으면 배지를 못 그린다."""
+    with TestClient(app) as c:
+        h = _tok(c)
+        c.post("/cases", json={"company_name": "물류목록", "scheme": "logistics",
+                               "logistics_scope": ["penyimpanan"]}, headers=h)
+        items = c.get("/cases?limit=50", headers=h).json()["items"]
+        logi = [x for x in items if x["company_name"] == "물류목록"]
+        assert logi and logi[0]["scheme"] == "logistics"
+        assert logi[0]["logistics_scope"] == ["penyimpanan"]
+        # 제품 케이스는 scheme=product 로 실린다
+        c.post("/cases", json={"company_name": "제품목록"}, headers=h)
+        items = c.get("/cases?limit=50", headers=h).json()["items"]
+        prod = [x for x in items if x["company_name"] == "제품목록"]
+        assert prod and prod[0]["scheme"] == "product"
+
+
+def test_물류_체크리스트가_물류서류를_한글라벨로_준다():
+    """doc-checklist 행 루프가 제품 고정이면 물류 서류가 코드로 뜬다(실측 버그)."""
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = c.post("/cases", json={"company_name": "물류CL", "scheme": "logistics",
+                                     "logistics_scope": ["penyimpanan"]}, headers=h).json()["case_id"]
+        cl = c.get("/cases/%s/doc-checklist?lang=ko" % cid, headers=h).json()["checklist"]
+        types = {r["doc_type"]: r["doc_type_ko"] for r in cl}
+        assert "warehouse_layout" in types
+        assert types["warehouse_layout"] != "warehouse_layout"   # 코드가 아닌 한글 라벨
+        assert types["vehicle_list"] != "vehicle_list"
+        assert "product_list" not in types                       # 제품 서류는 안 나온다

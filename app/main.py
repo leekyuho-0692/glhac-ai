@@ -2142,6 +2142,7 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
             db.query(models.Contract).filter(models.Contract.case_id.in_(_cids)).all()} if _cids else {}
     items = [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
               "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
+              "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
               "province": _province_of(c.factory_address or c.address),
               "contract_status": _cts.get(c.case_id),
               "auditor_id": (assign.get(c.case_id) or {}).get("auditor_id"),
@@ -3866,6 +3867,7 @@ def fatwa_dashboard(user=Depends(auth.require_roles("fatwa_liaison", "operator")
         fd = fds.get(c.case_id)
         items.append({"case_id": c.case_id, "company": c.company_name, "status": c.status,
                       "fatwa_status": fs, "decision_no": fd.decision_no if fd else None,
+                      "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
                       "committee_head": fd.committee_head if fd else None,
                       "final_approved_at": str(fd.final_approved_at) if (fd and fd.final_approved_at) else None})
     return {"counts": counts, "total": len(items), "items": items}
@@ -5519,6 +5521,30 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
             setattr(c, f, v)
         elif f in _sent:
             setattr(c, f, None)
+    # 인증 종류 변경(신청 단계) — 서류·심사항목·부록이 통째로 바뀐다.
+    # scheme_frozen(서류 요구가 갈리는 순간 잠금) 이후에는 바꿀 수 없다 — 이미 받은
+    # 증빙이 다른 세트라 갈아치우면 고아가 된다. 바꾸려면 새 케이스로.
+    if body.scheme is not None and body.scheme != c.scheme:
+        if c.scheme_frozen:
+            raise HTTPException(409, {"code": "SCHEME_FROZEN",
+                                      "message": "서류 제출이 시작되어 인증 종류를 바꿀 수 없습니다. 새 신청을 만들어 주세요."})
+        if body.scheme == "logistics":
+            allowed = {"penyimpanan", "pengemasan", "pendistribusian"}
+            sel = [x for x in (body.logistics_scope or []) if x in allowed]
+            if not sel:
+                raise HTTPException(422, {"code": "LOGISTICS_SCOPE_REQUIRED",
+                                         "message": "물류 인증은 jasa(보관·포장·유통) 최소 1개를 골라야 합니다"})
+            c.scheme = "logistics"
+            c.logistics_scope = sel
+        else:
+            c.scheme = "product"
+            c.logistics_scope = None
+    elif c.scheme == "logistics" and body.logistics_scope is not None and not c.scheme_frozen:
+        # 종류는 그대로 물류인데 jasa 범위만 바꾸는 경우
+        allowed = {"penyimpanan", "pengemasan", "pendistribusian"}
+        sel = [x for x in body.logistics_scope if x in allowed]
+        if sel:
+            c.logistics_scope = sel
     if body.notify_consent is not None:
         c.notify_consent = bool(body.notify_consent)
     if body.phone is not None:
@@ -15439,7 +15465,10 @@ def evaluation_verdict(case_id: str, body: dict = None,
 def doc_checklist(case_id: str, lang: str = Query("ko"),
                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
-    from .intake import REQUIRED_DOCS, doc_requirements, requirement_text, exempt_text
+    from .intake import (REQUIRED_DOCS, REQUIRED_DOCS_LOGISTICS, doc_requirements,
+                        requirement_text, exempt_text)
+    base_types = (REQUIRED_DOCS_LOGISTICS if (c.scheme or "product") == "logistics"
+                  else REQUIRED_DOCS)   # 체크리스트 행도 scheme 을 따른다
     # 서류명·요건·면제사유를 읽는 사람 언어로. 표는 있었는데 늘 한국어를 골랐다.
     DOC_KO = _intake_doc_names(lang)
     _L = lambda k: _CHECKLIST_L10N.get(k, {}).get((lang or "ko").lower(), k)
@@ -15462,7 +15491,7 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
               .order_by(models.GeneratedDocument.version.desc()).all()):
         gen.setdefault(g.doc_type, g)
     checklist = []
-    for dt in REQUIRED_DOCS:
+    for dt in base_types:
         files = by_type.get(dt, [])
         non_rejected = [x for x in files if x["review_status"] != "rejected"]
         satisfied = bool(non_rejected)
@@ -15473,7 +15502,7 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
             source = "%s v%s · %s" % (_L("생성 문서"), g.version, g.status)
         # 미제출(파일 없음) vs 반려(제출됐으나 전부 반려=내용 부족) 구분
         status = "ok" if satisfied else ("rejected" if files else "missing")
-        row = {"doc_type": dt, "doc_type_ko": DOC_KO[dt], "satisfied": satisfied,
+        row = {"doc_type": dt, "doc_type_ko": DOC_KO.get(dt, dt), "satisfied": satisfied,
                "files": files, "file_count": len(files), "status": status,
                "source": source, "applicable": True,
                "requirement": requirement_text(dt, lang), "required": dt in _req}
@@ -15483,7 +15512,7 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
         checklist.append(row)
     # 필수 외 실제 업로드된 문서 유형(기타·공급사선언·성적서 등)도 포함 — 전체 파일 표출
     for dt, files in by_type.items():
-        if dt in REQUIRED_DOCS:
+        if dt in base_types:
             continue
         checklist.append({"doc_type": dt, "doc_type_ko": DOC_KO.get(dt, dt), "satisfied": True,
                           "files": files, "file_count": len(files), "status": "ok",
