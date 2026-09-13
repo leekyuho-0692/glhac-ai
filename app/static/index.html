@@ -830,6 +830,10 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+  "취급 화물":"Handled cargo",
+  "제품 · 원재료":"Products & Materials",
+  "취급하는 화물(제품군)을 등록하세요":"Register the cargo (product groups) you handle",
+
   "저장 · Save (기업+창고)":"Save (company+warehouse)",
 
   "창고/시설명":"Warehouse name",
@@ -1458,6 +1462,10 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "취급 화물":"Kargo yang ditangani",
+  "제품 · 원재료":"Produk & Bahan",
+  "취급하는 화물(제품군)을 등록하세요":"Daftarkan kargo (kelompok produk) yang ditangani",
+
   "저장 · Save (기업+창고)":"Simpan (usaha+gudang)",
 
   "창고/시설명":"Nama gudang",
@@ -6238,14 +6246,14 @@ SCREEN.application=async()=>{
       </div>
       ${ROLE!=='client'?`<div style="border:1px solid var(--line2);border-radius:10px;padding:12px;margin-top:12px">
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <div style="font-weight:700;font-size:12.5px">📦 제품 · 원재료 <span class="en">· Products & Materials</span></div>
-          ${canApp?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="autoLinkMaterials('${id}')">${T('🔗 원재료 자동연결')}</button>`:''}
+          <div style="font-weight:700;font-size:12.5px">📦 ${c.scheme==='logistics'?T('취급 화물'):T('제품 · 원재료')} <span class="en">· ${c.scheme==='logistics'?'Cargo':'Products & Materials'}</span></div>
+          ${(canApp&&c.scheme!=='logistics')?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="autoLinkMaterials('${id}')">${T('🔗 원재료 자동연결')}</button>`:''}
         </div>
-        <div class="muted small" style="margin-bottom:6px">제품을 클릭하면 연결된 원재료가 펼쳐집니다</div>
+        <div class="muted small" style="margin-bottom:6px">${c.scheme==='logistics'?T('취급하는 화물(제품군)을 등록하세요'):T('제품을 클릭하면 연결된 원재료가 펼쳐집니다')}</div>
         <div style="max-height:300px;overflow:auto">${prodAccordion(id,prods,mats,matrix)}</div>
       </div>`:''}
       <div class="btnrow" style="margin-top:10px;flex-wrap:wrap;gap:6px">
-        <button class="btn" onclick="go('materials')">${T('🧪 원재료 화면')}</button>
+        ${c.scheme!=='logistics'?`<button class="btn" onclick="go('materials')">${T('🧪 원재료 화면')}</button>`:''}
         <button class="btn" onclick="go('documents')">${T('📁 문서 화면')}</button></div>
     </div></div>
   <div class="card" style="margin-bottom:16px"><div class="body btnrow" style="flex-wrap:wrap;gap:8px;align-items:center">
