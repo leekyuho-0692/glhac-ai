@@ -830,6 +830,44 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+  "저장 · Save (기업+창고)":"Save (company+warehouse)",
+
+  "창고/시설명":"Warehouse name",
+  "제조업체명":"Manufacturer",
+  "사업장/창고 등록번호":"Business/warehouse reg no",
+  "공장등록번호":"Factory reg no",
+  "창고 주소":"Warehouse address",
+  "공장주소":"Factory address",
+  "문서 분류(등록증→창고)":"Classify docs (→warehouse)",
+  "문서 분류(등록증→공장)":"Classify docs (→facility)",
+  "창고 정보를 불러오지 못했습니다.":"Failed to load warehouses.",
+  "공장 정보를 불러오지 못했습니다.":"Failed to load facilities.",
+
+  "창고·시설 목록":"Warehouses",
+  "공장·시설 목록":"Facilities",
+  "불러오는 중…":"Loading…",
+  "💾 저장 · 첫 창고 등록":"💾 Save · first warehouse",
+  "💾 저장 · 첫 공장 등록":"💾 Save · first facility",
+
+  "회사 등록 창고 목록":"Registered warehouses",
+  "회사 등록 공장 목록":"Registered facilities",
+  "회사 자산":"Company assets",
+  "추가":"Add",
+  "체크한 창고가 이 신청 대상으로 저장됩니다":"Checked warehouses are saved as this application's targets",
+  "체크한 공장이 이 신청 대상으로 저장됩니다":"Checked facilities are saved as this application's targets",
+  "등록된 창고가 없습니다. [+ 창고 추가]로 등록하세요.":"No warehouse. Use [+ Add warehouse].",
+  "등록된 공장이 없습니다. [+ 공장 추가]로 회사 공장을 등록하세요.":"No facility. Use [+ Add facility].",
+
+  "재시도":"retry",
+  "창고·시설 정보":"Warehouse & Facilities",
+  "등록된 창고 없음":"No warehouse registered",
+  "창고":"Warehouse",
+  "창고 보관 구역":"Warehouse storage",
+  "상·하차 (영상)":"Loading/unloading (video)",
+  "차량·컨테이너 상태":"Vehicle/container condition",
+  "할랄 구역(Halal Zone)":"Halal Zone",
+  "세척 상태":"Cleaning condition",
+
   "재전송":"Resend",
   "재전송 성공":"Resent",
   "재전송 실패":"Resend failed",
@@ -1420,6 +1458,44 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "저장 · Save (기업+창고)":"Simpan (usaha+gudang)",
+
+  "창고/시설명":"Nama gudang",
+  "제조업체명":"Produsen",
+  "사업장/창고 등록번호":"No reg usaha/gudang",
+  "공장등록번호":"No reg pabrik",
+  "창고 주소":"Alamat gudang",
+  "공장주소":"Alamat pabrik",
+  "문서 분류(등록증→창고)":"Klasifikasi dok (→gudang)",
+  "문서 분류(등록증→공장)":"Klasifikasi dok (→fasilitas)",
+  "창고 정보를 불러오지 못했습니다.":"Gagal memuat gudang.",
+  "공장 정보를 불러오지 못했습니다.":"Gagal memuat fasilitas.",
+
+  "창고·시설 목록":"Daftar gudang",
+  "공장·시설 목록":"Daftar fasilitas",
+  "불러오는 중…":"Memuat…",
+  "💾 저장 · 첫 창고 등록":"💾 Simpan · gudang pertama",
+  "💾 저장 · 첫 공장 등록":"💾 Simpan · fasilitas pertama",
+
+  "회사 등록 창고 목록":"Daftar gudang",
+  "회사 등록 공장 목록":"Daftar fasilitas",
+  "회사 자산":"Aset perusahaan",
+  "추가":"Tambah",
+  "체크한 창고가 이 신청 대상으로 저장됩니다":"Gudang tercentang disimpan sebagai target permohonan",
+  "체크한 공장이 이 신청 대상으로 저장됩니다":"Fasilitas tercentang disimpan sebagai target permohonan",
+  "등록된 창고가 없습니다. [+ 창고 추가]로 등록하세요.":"Belum ada gudang. Gunakan [+ Tambah gudang].",
+  "등록된 공장이 없습니다. [+ 공장 추가]로 회사 공장을 등록하세요.":"Belum ada fasilitas. Gunakan [+ Tambah fasilitas].",
+
+  "재시도":"coba",
+  "창고·시설 정보":"Gudang & Fasilitas",
+  "등록된 창고 없음":"Belum ada gudang",
+  "창고":"Gudang",
+  "창고 보관 구역":"Area penyimpanan gudang",
+  "상·하차 (영상)":"Muat/bongkar (video)",
+  "차량·컨테이너 상태":"Kondisi kendaraan/kontainer",
+  "할랄 구역(Halal Zone)":"Zona Halal",
+  "세척 상태":"Kondisi pembersihan",
+
   "재전송":"Kirim ulang",
   "재전송 성공":"Terkirim ulang",
   "재전송 실패":"Gagal kirim ulang",
@@ -4826,7 +4902,7 @@ async function postDiscussion(id){const inp=document.getElementById("rpDiscInput
 /* 공장(Facility) 등록 리스트 — 회사1:공장N (Phase 3) */
 function facListHtml(facs,org,canApp,selected,caseId){
   const sel=new Set(selected||[]);
-  if(!facs||!facs.length)return '<div class="muted small" style="padding:4px 2px">등록된 공장이 없습니다. [+ 공장 추가]로 회사 공장을 등록하세요.</div>';
+  if(!facs||!facs.length)return '<div class="muted small" style="padding:4px 2px">'+(CUR_SCHEME==="logistics"?T('등록된 창고가 없습니다. [+ 창고 추가]로 등록하세요.'):T('등록된 공장이 없습니다. [+ 공장 추가]로 회사 공장을 등록하세요.'))+'</div>';
   return facs.map(f=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 4px;border-bottom:1px solid var(--line)">
     <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:${caseId?'pointer':'default'}">
       ${caseId?`<input type="checkbox" data-fid="${f.facility_id}" ${sel.has(f.facility_id)?'checked':''} onchange="toggleFacSelect('${caseId}','${esc(org)}')">`:''}
@@ -4846,14 +4922,14 @@ async function facReload(org,caseId){
     const box=document.getElementById("facListBox");if(box)box.innerHTML=facListHtml(facs,org,true,sel,caseId);
   }catch(_){}
 }
-const _FAC_FIELDS=(f)=>{const pe=(f&&f.profile_ext)||{};return [
-  {key:"name",label:"공장명 · Facility name",value:f&&f.name,required:true},
-  {key:"reg_no",label:"공장등록번호 · Reg No",value:f&&f.reg_no},
+const _FAC_FIELDS=(f,scheme)=>{const pe=(f&&f.profile_ext)||{};const lg=(scheme==="logistics");return [
+  {key:"name",label:(lg?"창고/시설명 · Warehouse name":"공장명 · Facility name"),value:f&&f.name,required:true},
+  {key:"reg_no",label:(lg?"사업장/창고 등록번호 · Reg No":"공장등록번호 · Reg No"),value:f&&f.reg_no},
   {key:"address",label:"주소 · Address",value:f&&f.address},
   {key:"city",label:"도시 · City",value:f&&f.city},
   {key:"country",label:"국가 · Country",value:f&&f.country},
   {key:"zip",label:"우편 · ZIP",value:f&&f.zip},
-  {key:"manufacturer_name",label:"제조업체명 · Manufacturer",value:pe.manufacturer_name},
+  {key:"manufacturer_name",label:(lg?"운영 주체 · Operator":"제조업체명 · Manufacturer"),value:pe.manufacturer_name},
   {key:"facility_phone",label:"시설 전화 · Phone",value:pe.facility_phone},
   {key:"facility_email",label:"시설 이메일 · Email",value:pe.facility_email},
 ];};
@@ -4862,7 +4938,9 @@ function _facBody(out){return {name:out.name,reg_no:out.reg_no,address:out.addre
   profile_ext:{manufacturer_name:out.manufacturer_name,facility_phone:out.facility_phone,facility_email:out.facility_email}};}
 async function facAdd(org,caseId){
   if(!org)return alert("회사(org) 정보가 없습니다.");
-  const out=await dialog("공장 추가 · New facility",_FAC_FIELDS(null));
+  let _sc="product";if(caseId){try{_sc=(await API("/cases/"+caseId)).scheme||"product";}catch(_){}}
+  const _isLg=_sc==="logistics";
+  const out=await dialog(_isLg?"창고 추가 · New warehouse":"공장 추가 · New facility",_FAC_FIELDS(null,_sc));
   if(!out)return;
   try{await API(`/orgs/${org}/facilities`,{method:"POST",body:JSON.stringify(_facBody(out))});await facReload(org,caseId);toast("✅ 공장 등록 완료");}
   catch(e){toast("공장 등록 실패 · "+EMSG(e));}
@@ -5811,16 +5889,20 @@ SCREEN.preassess=async()=>{
           </div></details>
       </div></div>`;
     const facs=dos.factories||[];
-    const facCard=`<div class="card" style="margin-top:16px"><h3>🏭 ${T('공장·시설 정보')} <span class="en">· Facilities</span><span class="r">${facs.length}${T('개')}</span></h3>
+    const _isLogi=c.scheme==='logistics';
+    const _facTitle=_isLogi?T('창고·시설 정보'):T('공장·시설 정보');
+    const _facIcon=_isLogi?'🏬':'🏭';
+    const _facEmpty=_isLogi?T('등록된 창고 없음'):T('등록된 공장 없음');
+    const facCard=`<div class="card" style="margin-top:16px"><h3>${_facIcon} ${_facTitle} <span class="en">· Facilities</span><span class="r">${facs.length}${T('개')}</span></h3>
       <div class="body tight">
       ${facs.length?facs.map(f=>`<details class="dd" style="border:1px solid var(--line);border-radius:8px;margin-bottom:6px" ontoggle="if(this.open)facLoadDetail('${id}','${f.facility_id}')">
-        <summary style="cursor:pointer;padding:8px 10px;font-weight:700;font-size:13px">${esc(f.label||f.name||T('공장'))} <span class="muted small">${esc(f.city||'')} ${esc(f.country||'')}${f.reg_no?' · '+esc(f.reg_no):''}</span></summary>
+        <summary style="cursor:pointer;padding:8px 10px;font-weight:700;font-size:13px">${esc(f.label||f.name||(_isLogi?T('창고'):T('공장')))} <span class="muted small">${esc(f.city||'')} ${esc(f.country||'')}${f.reg_no?' · '+esc(f.reg_no):''}</span></summary>
         <div style="padding:8px 12px;border-top:1px solid var(--line)">
           <div id="facDet_${f.facility_id}" class="muted small">${T('상세 정보 불러오는 중…')}</div>
           ${(f.source_docs||[]).length?`<div class="muted small" style="margin-top:8px">${T('원본 문서')}: ${(f.source_docs||[]).map(d=>`<span class="chip" style="cursor:pointer" onclick="docViewer('${esc(d.document_id||d)}')">📄 ${esc(d.filename||d.document_id||d)}</span>`).join(' ')}</div>`:''}
           <div class="btnrow" style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">
             <button class="btn xs" onclick="serverPdf('/cases/${id}/facilities/${f.facility_id}/docs/factory-profile.pdf','factory_${esc(f.facility_id.slice(0,6))}.pdf')">⬇ ${T('공장 프로필 PDF 다운로드')}</button></div>
-        </div></details>`).join(''):`<div class="muted small">${T('등록된 공장 없음')}</div>`}
+        </div></details>`).join(''):`<div class="muted small">${_facEmpty}</div>`}
       </div></div>`;
     /* 제출 서류 — 원문 뷰어 링크 */
     const dcs=dos.doc_counts||{};
@@ -6096,6 +6178,7 @@ SCREEN.application=async()=>{
   const pens=penyeliaResp.items||[];
   let facs=[];try{facs=await API(`/orgs/${org}/facilities?case_id=${id}`);}catch(_){}
   const canApp=["client","consultant","admin"].includes(ROLE);
+  CUR_SCHEME=c.scheme||"product";                                         // 시설 카드 라벨(공장/창고) 분기용
   const isSD=c.pathway==="self_declare";                                   // A1/A3: 자기선언(SEHATI) 경로
   const sdPromote=isSD||!c.pathway||c.pathway==="undetermined";            // A3: 경로 미확정이면 SD-first 안내 노출
   return `
@@ -6169,7 +6252,7 @@ SCREEN.application=async()=>{
     <b style="margin-right:auto;font-size:13px">💾 신청 정보 저장 · Save</b>
     <button class="btn" onclick="autofillProfile('${id}')">📄 ${T('문서에서 프로필 채움')}</button>
     <button class="btn" onclick="saveDraft('${id}')">임시저장 · Draft</button>
-    <button class="btn pri" onclick="saveProfile('${id}')">${T('저장 · Save (기업+공장)')}</button>
+    <button class="btn pri" onclick="saveProfile('${id}')">${c.scheme==='logistics'?T('저장 · Save (기업+창고)'):T('저장 · Save (기업+공장)')}</button>
     <button class="btn ok" onclick="submitApp('${id}')">✅ 작성완료 제출 · Submit</button>
     ${["consultant","ops","admin"].includes(ROLE)?`<button class="btn" style="color:var(--bad)" onclick="returnApp('${id}')">↩ 반려 · Return</button>`:''}
   </div></div>
@@ -6244,10 +6327,10 @@ SCREEN.application=async()=>{
       </div></div>
     ${facMultiPanel(id, `<div style="border:1px solid var(--line2);border-radius:10px;padding:10px;margin-bottom:12px;background:var(--panel2,#fafafa)">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <b style="font-size:12.5px">🏢 회사 등록 공장 목록 · Registered Facilities <span class="muted">(회사 자산 · ${facs.length}${T('개')})</span></b>
-            ${canApp?`<button class="btn" style="padding:4px 10px" onclick="facAdd('${esc(org)}','${id}')">${T('+ 공장 추가')}</button>`:''}
+            <b style="font-size:12.5px">🏢 ${c.scheme==='logistics'?T('회사 등록 창고 목록'):T('회사 등록 공장 목록')} · Registered Facilities <span class="muted">(${T('회사 자산')} · ${facs.length}${T('개')})</span></b>
+            ${canApp?`<button class="btn" style="padding:4px 10px" onclick="facAdd('${esc(org)}','${id}')">+ ${facWord()} ${T('추가')}</button>`:''}
           </div>
-          <div class="muted small" style="margin-bottom:4px">☑ 체크한 공장이 <b>이 신청 대상</b>으로 저장됩니다 · Select target facilities for this application</div>
+          <div class="muted small" style="margin-bottom:4px">☑ ${c.scheme==='logistics'?T('체크한 창고가 이 신청 대상으로 저장됩니다'):T('체크한 공장이 이 신청 대상으로 저장됩니다')}</div>
           <div id="facListBox">${facListHtml(facs,org,canApp,c.facility_ids,id)}</div>
         </div>`)}
   </div>
@@ -7313,27 +7396,30 @@ async function genFatwaDecree(id){
   catch(e){toast("생성 실패 · "+(EMSG(e)));}
 }
 /* ===== 공장 다건 분류 패널 (Facility 1:N) ===== */
-let FAC_LIST=[];let FAC_SEL=0;
+let FAC_LIST=[];let FAC_SEL=0;let CUR_SCHEME="product";
+function facWord(){return CUR_SCHEME==="logistics"?T("창고"):T("공장");}
 function facMultiPanel(id, topHtml){
   const prev=AFTER_RENDER;
   AFTER_RENDER=function(){ if(prev) try{prev()}catch(_){}; loadFacMulti(id); };
-  return '<div class="card"><h3>🏭 공장·시설 목록 · Factories <span class="en">· 다건 분류(1:N)</span></h3><div class="body">'+(topHtml||'')+'<div id="facMultiBody" class="muted small">불러오는 중…</div></div></div>';
+  var _icon=(CUR_SCHEME==="logistics")?"🏬":"🏭";
+  var _ttl=(CUR_SCHEME==="logistics")?T("창고·시설 목록"):T("공장·시설 목록");
+  return '<div class="card"><h3>'+_icon+' '+_ttl+' · Facilities <span class="en">· 1:N</span></h3><div class="body">'+(topHtml||'')+'<div id="facMultiBody" class="muted small">'+T("불러오는 중…")+'</div></div></div>';
 }
 async function loadFacMulti(id){
   try{ const r=await API(`/cases/${id}/factories`); FAC_LIST=(r&&r.factories)||[]; if(FAC_SEL>=FAC_LIST.length)FAC_SEL=0; renderFacMulti(id); }
-  catch(e){ const b=document.getElementById("facMultiBody"); if(b)b.innerHTML='<div class="muted small">공장 정보를 불러오지 못했습니다.</div>'; }
+  catch(e){ const b=document.getElementById("facMultiBody"); if(b)b.innerHTML='<div class="muted small">'+(CUR_SCHEME==="logistics"?T('창고 정보를 불러오지 못했습니다.'):T('공장 정보를 불러오지 못했습니다.'))+'</div>'; }
 }
 function renderFacMulti(id){
   const b=document.getElementById("facMultiBody"); if(!b)return;
-  let html='<div class="btnrow" style="margin-bottom:10px"><button class="btn" onclick="classifyFacs(\''+id+'\')">📂 문서 분류(등록증→공장)</button><button class="btn" onclick="addFacM(\''+id+'\')">＋ 공장 추가</button></div>';
+  let html='<div class="btnrow" style="margin-bottom:10px"><button class="btn" onclick="classifyFacs(\''+id+'\')">📂 '+(CUR_SCHEME==="logistics"?T('문서 분류(등록증→창고)'):T('문서 분류(등록증→공장)'))+'</button><button class="btn" onclick="addFacM(\''+id+'\')">＋ '+facWord()+' '+T('추가')+'</button></div>';
   if(!FAC_LIST.length){
     // 등록된 공장이 없으면 안내문 대신 빈 입력 필드를 바로 노출(첫 공장 즉시 입력·저장)
     html+=facFields(null);
-    html+='<div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="saveFacNew(\''+id+'\')">'+T('💾 저장 · 첫 공장 등록')+'</button></div>';
+    html+='<div class="btnrow" style="margin-top:10px"><button class="btn pri" onclick="saveFacNew(\''+id+'\')">'+(CUR_SCHEME==="logistics"?T('💾 저장 · 첫 창고 등록'):T('💾 저장 · 첫 공장 등록'))+'</button></div>';
     b.innerHTML=html; localizeUI(b); return;
   }
   let chips='<div class="btnrow" style="flex-wrap:wrap;gap:6px;margin-bottom:12px">';
-  FAC_LIST.forEach(function(f,i){ const active=i===FAC_SEL; chips+='<button class="btn" style="'+(active?'background:var(--accent);color:#fff':'')+'" onclick="selFac(\''+id+'\','+i+')">'+esc(f.label||(T('공장')+(i+1)))+'</button>'; });
+  FAC_LIST.forEach(function(f,i){ const active=i===FAC_SEL; chips+='<button class="btn" style="'+(active?'background:var(--accent);color:#fff':'')+'" onclick="selFac(\''+id+'\','+i+')">'+esc(f.label||(facWord()+(i+1)))+'</button>'; });
   chips+='</div>'; html+=chips;
   const sel=FAC_LIST[FAC_SEL]; if(!sel){ b.innerHTML=html; localizeUI(b); return; }
   html+=facFields(sel);
@@ -7345,9 +7431,9 @@ function facFields(sel){
   const pe=(sel&&sel.profile_ext)||{};
   const g=function(k){ return esc((sel&&sel[k])||''); };
   return '<div class="field"><label>리스트 이름 · Label</label><input class="v" id="facLabel" value="'+g('label')+'"></div>'
-    +'<div class="field"><label>제조업체명 · Manufacturer</label><input class="v" id="facName" value="'+g('name')+'"></div>'
-    +'<div class="field"><label>공장등록번호</label><input class="v" id="facRegNo" value="'+g('reg_no')+'"></div>'
-    +'<div class="field"><label>공장주소</label><input class="v" id="facAddr" value="'+g('address')+'"></div>'
+    +'<div class="field"><label>'+(CUR_SCHEME==="logistics"?T('창고/시설명'):T('제조업체명'))+' · Name</label><input class="v" id="facName" value="'+g('name')+'"></div>'
+    +'<div class="field"><label>'+(CUR_SCHEME==="logistics"?T('사업장/창고 등록번호'):T('공장등록번호'))+'</label><input class="v" id="facRegNo" value="'+g('reg_no')+'"></div>'
+    +'<div class="field"><label>'+(CUR_SCHEME==="logistics"?T('창고 주소'):T('공장주소'))+'</label><input class="v" id="facAddr" value="'+g('address')+'"></div>'
     +'<div class="field"><label>도시</label><input class="v" id="facCity" value="'+g('city')+'"></div>'
     +'<div class="field"><label>국가</label><input class="v" id="facCountry" value="'+g('country')+'"></div>'
     +'<div class="field"><label>우편</label><input class="v" id="facZip" value="'+g('zip')+'"></div>'
@@ -7957,6 +8043,21 @@ const MOCK_EV_SECTIONS=[
   {key:"hygiene",n:5,icon:"🧽",tone:"bad",ko:"위생 및 청소 관리",video:false,
     desc:"청소 도구 보관 장소, 세척 소독 시설, 해충 방제 상태 등 위생 관리 상태를 사진으로 업로드해 주세요."}
 ];
+// 물류(jasa logistik) 모의심사 사진·영상 — 생산 축을 물류 축으로 바꾼다.
+const MOCK_EV_SECTIONS_LOGISTICS=[
+  {key:"warehouse_storage",n:1,icon:"🏬",tone:"info",ko:"창고 보관 구역",video:false,
+    desc:"창고 보관 구역 사진 — 할랄/비할랄 구분 보관, Zone 구획, 라벨링이 보이게 촬영해 주세요."},
+  {key:"loading_unloading",n:2,icon:"🚚",tone:"gold",ko:"상·하차 (영상)",video:true,
+    desc:"상차·하차 과정을 영상으로 촬영해 주세요. 화물 취급과 오염 방지 절차가 보이게."},
+  {key:"vehicle_condition",n:3,icon:"🚛",tone:"ok",ko:"차량·컨테이너 상태",video:false,
+    desc:"차량·컨테이너 내부 청결 상태와 직전 화물 흔적 여부를 사진으로 업로드해 주세요."},
+  {key:"halal_zone",n:4,icon:"🕌",tone:"warn",ko:"할랄 구역(Halal Zone)",video:false,
+    desc:"할랄 전용 구역 표지와 분리 상태를 사진으로 업로드해 주세요."},
+  {key:"cleaning",n:5,icon:"🧽",tone:"bad",ko:"세척 상태",video:false,
+    desc:"차량·컨테이너·창고 세척 상태와 Sertu 세정 증빙을 사진으로 업로드해 주세요."}
+];
+function mockEvSections(scheme){return (scheme==="logistics")?MOCK_EV_SECTIONS_LOGISTICS:MOCK_EV_SECTIONS;}
+function mockEvFind(key){return MOCK_EV_SECTIONS.concat(MOCK_EV_SECTIONS_LOGISTICS).find(s=>s.key===key)||{};}
 function mevDate(iso){if(!iso)return '—';const d=new Date(iso);if(isNaN(d.getTime()))return String(iso).slice(0,16).replace('T',' ');
   const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}.${p(d.getMonth()+1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function mevSectionCard(id,sec,list){
@@ -8012,19 +8113,21 @@ async function loadMockMedia(){
 }
 async function mockAuditClientView(id){
   if(!id) return `<div class="card"><div class="body muted">${T('케이스를 선택하세요')} · Select a case.</div></div>`;
+  let _c={};try{_c=await API('/cases/'+id);}catch(_){}
+  const SECS=mockEvSections(_c.scheme);           // 제품/물류에 따라 사진 섹션이 다르다
   const docs=await API('/cases/'+id+'/documents').catch(()=>[]);
-  const bySec={};MOCK_EV_SECTIONS.forEach(s=>bySec[s.key]=[]);
+  const bySec={};SECS.forEach(s=>bySec[s.key]=[]);
   (docs||[]).forEach(d=>{const dt=String(d.doc_type||'');const p='mock_evidence_';
     if(dt.indexOf(p)===0){const k=dt.slice(p.length);if(bySec[k])bySec[k].push(d);}});
   Object.keys(bySec).forEach(k=>bySec[k].sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||''))));
-  let done=0;MOCK_EV_SECTIONS.forEach(s=>{if(bySec[s.key].length)done++;});
-  const total=MOCK_EV_SECTIONS.length,notStarted=total-done,inProg=0;
+  let done=0;SECS.forEach(s=>{if(bySec[s.key].length)done++;});
+  const total=SECS.length,notStarted=total-done,inProg=0;
   const kpis=[['완료',done,'ok','📋'],['진행 중',inProg,'info','🕐'],['미시작',notStarted,'warn','⊖'],['전체 필수 항목',total,'mute','📄']];
   const kpiHtml=`<div class="grid four" style="margin-bottom:16px">`+kpis.map(([l,n,t,ic])=>`<div class="card"><div class="body" style="display:flex;align-items:center;gap:14px">
     <div style="width:46px;height:46px;flex:0 0 46px;border-radius:12px;display:grid;place-items:center;font-size:22px;background:var(--${t==='mute'?'accent-soft':t+'-soft'});color:var(--${t==='mute'?'ink3':t})">${ic}</div>
     <div class="kpi"><span class="l">${T(l)}</span><span class="n" style="color:var(--${t==='mute'?'ink':t})">${n} <span style="font-size:14px;font-weight:400;color:var(--ink3)">${T('항목')}</span></span></div>
   </div></div>`).join('')+`</div>`;
-  const secHtml=MOCK_EV_SECTIONS.map(s=>mevSectionCard(id,s,bySec[s.key])).join('');
+  const secHtml=SECS.map(s=>mevSectionCard(id,s,bySec[s.key])).join('');
   const prev=AFTER_RENDER;AFTER_RENDER=function(){if(prev)try{prev()}catch(_){};loadMockMedia();};
   return `<div class="banner info" style="margin-bottom:16px"><span>ℹ</span><div><b>${T('모의 감사 안내')}</b><div class="small" style="margin-top:3px;font-weight:400">${T('실제 현장 상황을 정확히 보여줄 수 있는 최신 사진 및 영상을 업로드해 주세요. 감사자는 현장 감사에 앞서 해당 자료를 검토하게 됩니다.')}</div></div></div>
   ${kpiHtml}
@@ -8129,7 +8232,7 @@ async function contractApprove(id){ if(!confirm(T('승인하고 계약서를 발
 async function contractReceive(id){ if(!confirm(T('계약서를 접수·확인합니까?')))return; _contractQAction(id,'receive','계약서 접수·확인 완료'); }
 async function contractRequestSignature(id){ if(!confirm(T('서명을 요청합니까?')))return; _contractQAction(id,'request-signature','서명 요청 완료'); }
 async function uploadMockDoc(id,section){
-  const sec=MOCK_EV_SECTIONS.find(s=>s.key===section)||{};
+  const sec=mockEvFind(section);
   const inp=document.createElement("input");inp.type="file";
   inp.accept=sec.video?"video/*":"image/*";inp.multiple=true;
   inp.onchange=async()=>{const files=Array.prototype.slice.call(inp.files||[]);if(files.length)await uploadMockFiles(id,section,files);};

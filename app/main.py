@@ -3550,7 +3550,7 @@ def mock_audit_get(case_id: str, user=Depends(auth.get_current_user), db: Sessio
            .filter(models.WorkflowEvent.case_id == case_id,
                    models.WorkflowEvent.action.like("mock_audit.%"))
            .order_by(models.WorkflowEvent.created_at.desc()).all())
-    return {"case_id": case_id, "status": c.status,
+    return {"case_id": case_id, "status": c.status, "scheme": c.scheme or "product",
             "decisions": [{"result": (e.payload or {}).get("result"),
                            "reason": (e.payload or {}).get("reason"),
                            "actor": e.actor_id,
@@ -3593,6 +3593,18 @@ def mock_audit_decide(case_id: str, body: schemas.MockAuditDecisionReq,
 MOCK_EVIDENCE_SECTIONS = [("material_storage", "원재료 보관"), ("production_video", "생산 공정 영상"),
                           ("product_storage", "제품 보관"), ("facility", "생산 시설"),
                           ("hygiene", "위생 관리")]
+# 물류(jasa logistik) 모의심사 사진·영상 증빙 — 제품의 생산 축을 물류 축으로 바꾼다.
+MOCK_EVIDENCE_SECTIONS_LOGISTICS = [("warehouse_storage", "창고 보관 구역"),
+                                    ("loading_unloading", "상·하차 (영상)"),
+                                    ("vehicle_condition", "차량·컨테이너 상태"),
+                                    ("halal_zone", "할랄 구역(Halal Zone)"),
+                                    ("cleaning", "세척 상태")]
+
+
+def mock_evidence_sections(scheme="product"):
+    """모의심사 사진·영상 증빙 섹션 — 인증 종류별. 모르는 scheme 은 제품 기준."""
+    return (MOCK_EVIDENCE_SECTIONS_LOGISTICS
+            if (scheme or "product") == "logistics" else MOCK_EVIDENCE_SECTIONS)
 
 
 def _mock_manual_latest(db, case_id):
@@ -3665,9 +3677,10 @@ def mock_audit_evidence_verdict(case_id: str, body: schemas.MockAuditEvidenceReq
                                 db: Session = Depends(get_db)):
     """② 5개 증거 섹션별 적합/부적합 판정 — append 기록, 조회 시 섹션별 최신(latest-wins)."""
     c = _get_case(db, case_id, user)
-    valid = {k for k, _ in MOCK_EVIDENCE_SECTIONS}
+    _secs = mock_evidence_sections(c.scheme)
+    valid = {k for k, _ in _secs}
     if body.section not in valid:
-        raise HTTPException(422, {"code": "BAD_SECTION", "allowed": [k for k, _ in MOCK_EVIDENCE_SECTIONS]})
+        raise HTTPException(422, {"code": "BAD_SECTION", "allowed": [k for k, _ in _secs]})
     verdict = (body.verdict or "").lower()
     if verdict not in ("comply", "nonconformity"):
         raise HTTPException(422, {"code": "INVALID_VERDICT", "allowed": ["comply", "nonconformity"]})
@@ -3682,8 +3695,9 @@ def _mock_ai_report_build(db, c):
     """③ 결정적 집계 → 요약·권고 텍스트. LLM 보강은 호출부에서 옵션 처리."""
     case_id = c.case_id
     latest_ev = _mock_evidence_latest(db, case_id)
+    _secs = mock_evidence_sections(c.scheme)
     sections, comply, nonconf = [], 0, 0
-    for k, ko in MOCK_EVIDENCE_SECTIONS:
+    for k, ko in _secs:
         v = latest_ev.get(k, {})
         vd = v.get("verdict")
         if vd == "comply":
@@ -3703,7 +3717,7 @@ def _mock_ai_report_build(db, c):
     overall = "적합" if (nonconf == 0 and comply > 0) else ("부적합" if nonconf > 0 else "미판정")
     summary = ("모의심사 준비자료 종합평가 — 증거 섹션 적합 %d · 부적합 %d(총 %d), "
                "SJPH/HPAS 완성도 %d%%, 제출 증거 %d건, 할랄매뉴얼 검토 %s. 종합 %s." % (
-                   comply, nonconf, len(MOCK_EVIDENCE_SECTIONS), sjph_completion,
+                   comply, nonconf, len(_secs), sjph_completion,
                    evidence_docs, manual_ko, overall))
     recs = []
     for s in sections:
@@ -3717,7 +3731,7 @@ def _mock_ai_report_build(db, c):
     if not recs:
         recs.append("· 준비자료 양호 — 현장심사 단계 진행 권고")
     return {"summary": summary, "recommendations": "\n".join(recs), "verdict_overall": overall,
-            "comply": comply, "nonconformity": nonconf, "sections": sections,
+            "comply": comply, "nonconformity": nonconf, "scheme": c.scheme or "product", "sections": sections,
             "sjph_completion": sjph_completion, "evidence_docs": evidence_docs,
             "manual_status": manual_status, "manual_round": manual_round}
 
@@ -3764,7 +3778,7 @@ def mock_audit_detail(case_id: str, user=Depends(auth.get_current_user), db: Ses
     sections = [{"section": k, "label": ko,
                  "verdict": latest_ev.get(k, {}).get("verdict"),
                  "corrective_action": latest_ev.get(k, {}).get("corrective_action", ""),
-                 "at": latest_ev.get(k, {}).get("at")} for k, ko in MOCK_EVIDENCE_SECTIONS]
+                 "at": latest_ev.get(k, {}).get("at")} for k, ko in mock_evidence_sections(c.scheme)]
     docs = [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
              "review_status": d.review_status, "has_file": bool(d.content_b64),
              "content_type": d.content_type,
@@ -3779,7 +3793,7 @@ def mock_audit_detail(case_id: str, user=Depends(auth.get_current_user), db: Ses
         ev.sort(key=lambda x: str(x.get("captured_at") or ""), reverse=True)
         sec["evidence"] = ev
         sec["evidence_count"] = len(ev)
-    return {"case_id": case_id, "status": c.status,
+    return {"case_id": case_id, "status": c.status, "scheme": c.scheme or "product",
             "manual": manual, "manual_history": manual_history,
             "sections": sections, "documents": docs,
             "evidence_total": sum(s["evidence_count"] for s in sections),

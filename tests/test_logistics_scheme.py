@@ -249,3 +249,33 @@ def test_물류연동_이벤트_목록과_재전송():
         r = cl.post("/admin/logistics-sync/%s/resend" % target["id"], headers=h).json()
         assert r["retry_count"] == 1
         assert r["status"] in ("pending", "processed", "failed")
+
+
+def test_모의심사_사진섹션이_scheme을_따른다():
+    """모의심사 사진·영상 증빙 섹션이 제품/물류로 갈린다."""
+    prod = {k for k, _ in m.mock_evidence_sections("product")}
+    logi = {k for k, _ in m.mock_evidence_sections("logistics")}
+    assert "production_video" in prod and "production_video" not in logi
+    assert "vehicle_condition" in logi and "vehicle_condition" not in prod
+    assert "loading_unloading" in logi and "warehouse_storage" in logi
+
+
+def test_물류_사진섹션_판정은_물류키만_받는다():
+    with TestClient(app) as cl:
+        h = _tok(cl, "admin", "admin")
+        cid = cl.post("/cases", json={"company_name": "사진물류", "org_id": "org_demo",
+                                      "scheme": "logistics", "logistics_scope": ["penyimpanan"]},
+                      headers=h).json()["case_id"]
+        # 제품 섹션 키는 거부
+        r1 = cl.post("/cases/%s/mock-audit/evidence-verdict" % cid,
+                     json={"section": "production_video", "verdict": "comply"}, headers=h)
+        assert r1.status_code == 422
+        # 물류 섹션 키는 허용
+        r2 = cl.post("/cases/%s/mock-audit/evidence-verdict" % cid,
+                     json={"section": "vehicle_condition", "verdict": "comply"}, headers=h)
+        assert r2.status_code == 200, r2.text
+        # detail 이 scheme·물류 섹션을 돌려준다
+        d = cl.get("/cases/%s/mock-audit/detail" % cid, headers=h).json()
+        assert d["scheme"] == "logistics"
+        keys = {x["section"] for x in d["sections"]}
+        assert "vehicle_condition" in keys and "production_video" not in keys
