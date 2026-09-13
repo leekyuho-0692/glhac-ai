@@ -6078,22 +6078,22 @@ SCREEN.application=async()=>{
   const isSD=c.pathway==="self_declare";                                   // A1/A3: 자기선언(SEHATI) 경로
   const sdPromote=isSD||!c.pathway||c.pathway==="undetermined";            // A3: 경로 미확정이면 SD-first 안내 노출
   return `
-  <div class="card" style="margin-bottom:14px"><div class="body">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:${(!c.scheme_frozen&&canApp)?'10px':'0'}">
-      <b style="font-size:13px">${T('인증 종류')} · Certification</b> ${schemeBadge(c)}
+  <div class="card" style="margin-bottom:16px;border:2px solid var(--accent)"><div class="body" style="padding:18px 20px">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:${(!c.scheme_frozen&&canApp)?'14px':'0'}">
+      <b style="font-size:17px">${T('인증 종류')} <span class="en" style="font-weight:500">· Certification</span></b> ${schemeBadge(c)}
       ${c.scheme_frozen?tag('gold',T('변경 잠금')):''}
     </div>
-    ${(!c.scheme_frozen&&canApp)?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;align-items:center">
-      <select class="v" style="width:auto" id="apScheme" onchange="onSchemeChange()">
+    ${(!c.scheme_frozen&&canApp)?`<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center">
+      <select class="v" style="width:auto;font-size:15px;padding:10px 14px;font-weight:600;min-width:190px" id="apScheme" onchange="onSchemeChange()">
         <option value="product"${c.scheme!=='logistics'?' selected':''}>🏭 ${T('제품')}</option>
         <option value="logistics"${c.scheme==='logistics'?' selected':''}>🚚 ${T('물류 서비스')}</option>
       </select>
-      <span id="apJasaBox" style="display:${c.scheme==='logistics'?'inline-flex':'none'};gap:12px;align-items:center;flex-wrap:wrap">
-        ${['penyimpanan','pengemasan','pendistribusian'].map(k=>`<label style="display:inline-flex;gap:4px;align-items:center;font-size:12px;cursor:pointer"><input type="checkbox" class="apJasa" value="${k}" ${(c.logistics_scope||[]).includes(k)?'checked':''}> ${T(_JASA_KO[k])}</label>`).join('')}
+      <span id="apJasaBox" style="display:${c.scheme==='logistics'?'inline-flex':'none'};gap:10px;align-items:center;flex-wrap:wrap">
+        ${['penyimpanan','pengemasan','pendistribusian'].map(k=>`<label style="display:inline-flex;gap:7px;align-items:center;font-size:14px;font-weight:500;cursor:pointer;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg)"><input type="checkbox" class="apJasa" value="${k}" style="width:17px;height:17px" ${(c.logistics_scope||[]).includes(k)?'checked':''}> ${T(_JASA_KO[k])}</label>`).join('')}
       </span>
-      <button class="btn pri" style="padding:4px 10px" onclick="saveScheme('${id}')">${T('종류 저장')}</button>
+      <button class="btn pri" style="padding:10px 20px;font-size:14px;font-weight:600" onclick="saveScheme('${id}')">${T('종류 저장')}</button>
     </div>
-    <div class="muted small" style="margin-top:6px">${T('종류를 바꾸면 필요 서류·심사항목이 바뀝니다. 서류 제출이 시작되면 잠깁니다.')}</div>`
+    <div class="muted" style="margin-top:10px;font-size:12.5px">${T('종류를 바꾸면 필요 서류·심사항목이 바뀝니다. 서류 제출이 시작되면 잠깁니다.')}</div>`
     :`<div class="muted small">${c.scheme==='logistics'?T('물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다'):T('제품 할랄 인증')}</div>`}
   </div></div>`+`
   ${sdPromote?`<div class="card" style="margin-bottom:16px;border-left:3px solid var(--ok)"><div class="body">
