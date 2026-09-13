@@ -830,6 +830,41 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+  "삭제됨":"Deleted","저장됨":"Saved","저장 실패":"Save failed","삭제 실패":"Delete failed",
+  "차량·컨테이너":"Vehicles",
+  "차량 추가":"Add vehicle",
+  "운송 자산 — 번호판·운반형태·직전화물·세척 상태. 직전 화물이 비할랄이면 Sertu 세정이 필요합니다.":"Transport assets — plate, transport type, previous cargo, cleaning. Non-halal previous cargo requires Sertu.",
+  "차량 정보를 불러오지 못했습니다.":"Failed to load vehicles.",
+  "등록된 차량이 없습니다. [+ 차량 추가]로 등록하세요.":"No vehicle. Use [+ Add vehicle].",
+  "직전 비할랄":"Prev non-halal",
+  "직전 할랄":"Prev halal",
+  "세척 필요":"Cleaning needed",
+  "트럭":"Truck",
+  "밴":"Van",
+  "컨테이너":"Container",
+  "탱크로리":"Tanker",
+  "냉장차":"Reefer",
+  "일반":"Ambient",
+  "냉장":"Chilled",
+  "냉동":"Frozen",
+  "보온":"Insulated",
+  "번호판":"Plate",
+  "차량 유형":"Vehicle type",
+  "운반 형태":"Transport type",
+  "적재 용량":"Capacity",
+  "차량등록번호":"Vehicle reg no",
+  "직전 화물":"Previous cargo",
+  "직전 화물 할랄 여부":"Previous cargo halal?",
+  "미상":"Unknown",
+  "할랄":"Halal",
+  "비할랄":"Non-halal",
+  "최근 세척일":"Last cleaned",
+  "세정 수행":"performed",
+  "차량 등록됨":"Vehicle registered",
+  "등록 실패":"Register failed",
+  "차량 편집":"Edit vehicle",
+  "이 차량을 삭제합니까?":"Delete this vehicle?",
+
   "취급 화물":"Handled cargo",
   "제품 · 원재료":"Products & Materials",
   "취급하는 화물(제품군)을 등록하세요":"Register the cargo (product groups) you handle",
@@ -1462,6 +1497,41 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "삭제됨":"Dihapus","저장됨":"Tersimpan","저장 실패":"Gagal simpan","삭제 실패":"Gagal hapus",
+  "차량·컨테이너":"Kendaraan",
+  "차량 추가":"Tambah kendaraan",
+  "운송 자산 — 번호판·운반형태·직전화물·세척 상태. 직전 화물이 비할랄이면 Sertu 세정이 필요합니다.":"Aset transport — plat, jenis, kargo sebelumnya, pembersihan. Kargo non-halal perlu Sertu.",
+  "차량 정보를 불러오지 못했습니다.":"Gagal memuat kendaraan.",
+  "등록된 차량이 없습니다. [+ 차량 추가]로 등록하세요.":"Belum ada kendaraan. Gunakan [+ Tambah].",
+  "직전 비할랄":"Sebelumnya non-halal",
+  "직전 할랄":"Sebelumnya halal",
+  "세척 필요":"Perlu dibersihkan",
+  "트럭":"Truk",
+  "밴":"Van",
+  "컨테이너":"Kontainer",
+  "탱크로리":"Tangki",
+  "냉장차":"Reefer",
+  "일반":"Ambient",
+  "냉장":"Dingin",
+  "냉동":"Beku",
+  "보온":"Insulasi",
+  "번호판":"Plat",
+  "차량 유형":"Jenis kendaraan",
+  "운반 형태":"Jenis transport",
+  "적재 용량":"Kapasitas",
+  "차량등록번호":"No reg kendaraan",
+  "직전 화물":"Kargo sebelumnya",
+  "직전 화물 할랄 여부":"Kargo sebelumnya halal?",
+  "미상":"Tidak diketahui",
+  "할랄":"Halal",
+  "비할랄":"Non-halal",
+  "최근 세척일":"Terakhir dibersihkan",
+  "세정 수행":"dilakukan",
+  "차량 등록됨":"Kendaraan terdaftar",
+  "등록 실패":"Gagal daftar",
+  "차량 편집":"Edit kendaraan",
+  "이 차량을 삭제합니까?":"Hapus kendaraan ini?",
+
   "취급 화물":"Kargo yang ditangani",
   "제품 · 원재료":"Produk & Bahan",
   "취급하는 화물(제품군)을 등록하세요":"Daftarkan kargo (kelompok produk) yang ditangani",
@@ -6341,6 +6411,7 @@ SCREEN.application=async()=>{
           <div class="muted small" style="margin-bottom:4px">☑ ${c.scheme==='logistics'?T('체크한 창고가 이 신청 대상으로 저장됩니다'):T('체크한 공장이 이 신청 대상으로 저장됩니다')}</div>
           <div id="facListBox">${facListHtml(facs,org,canApp,c.facility_ids,id)}</div>
         </div>`)}
+    ${c.scheme==='logistics'?vehiclePanel(id,org,canApp):''}
   </div>
   <div class="grid three" style="margin-top:16px">
     <div class="card"><h3>할랄감독자 · Penyelia <span class="en">· Supervisor</span><span class="r">${T('활성')} ${penyeliaResp.active_count!=null?penyeliaResp.active_count:pens.filter(p=>p.status==='active').length}</span></h3>
@@ -7402,6 +7473,77 @@ async function genContract(id){
 async function genFatwaDecree(id){
   try{await API(`/cases/${id}/fatwa/decree`,{method:"POST",body:"{}"});toast("판결문 생성");serverPdf(`/cases/${id}/fatwa/decree.pdf`,"fatwa_decree.pdf");}
   catch(e){toast("생성 실패 · "+(EMSG(e)));}
+}
+/* ===== 물류 차량·컨테이너 등록 (jasa logistik) ===== */
+let VEH_LIST=[];
+const VEH_TYPE={truck:"트럭",van:"밴",container:"컨테이너",tanker:"탱크로리",reefer:"냉장차"};
+const VEH_TRANS={ambient:"일반",chilled:"냉장",frozen:"냉동",insulated:"보온"};
+function vehiclePanel(id,org,canApp){
+  const prev=AFTER_RENDER;
+  AFTER_RENDER=function(){ if(prev) try{prev()}catch(_){}; loadVehicles(id,org); };
+  return '<div class="card" style="margin-top:16px"><h3>🚚 '+T('차량·컨테이너')+' <span class="en">· Vehicles</span>'
+    +(canApp?'<button class="btn" style="padding:4px 10px;margin-left:auto" onclick="addVehicle(\''+esc(org)+'\',\''+id+'\')">+ '+T('차량 추가')+'</button>':'')
+    +'</h3><div class="body"><div class="muted small" style="margin-bottom:6px">'+T('운송 자산 — 번호판·운반형태·직전화물·세척 상태. 직전 화물이 비할랄이면 Sertu 세정이 필요합니다.')+'</div>'
+    +'<div id="vehBody" class="muted small">'+T('불러오는 중…')+'</div></div></div>';
+}
+async function loadVehicles(id,org){
+  try{ VEH_LIST=await API('/orgs/'+org+'/vehicles'); renderVehicles(id,org); }
+  catch(e){ const b=document.getElementById('vehBody'); if(b)b.innerHTML='<div class="muted small">'+T('차량 정보를 불러오지 못했습니다.')+'</div>'; }
+}
+function renderVehicles(id,org){
+  const b=document.getElementById('vehBody'); if(!b)return;
+  if(!VEH_LIST.length){ b.innerHTML='<div class="muted small">'+T('등록된 차량이 없습니다. [+ 차량 추가]로 등록하세요.')+'</div>'; return; }
+  let rows=VEH_LIST.map(function(v){
+    const pc=(v.previous_cargo_halal===false)?'<span class="tag t-bad">'+T('직전 비할랄')+'</span>':(v.previous_cargo_halal===true?'<span class="tag t-ok">'+T('직전 할랄')+'</span>':'');
+    const st=(v.previous_cargo_halal===false&&!v.sertu)?'<span class="tag t-bad">'+T('세척 필요')+'</span>':(v.sertu?'<span class="tag t-ok">Sertu ✓</span>':'');
+    return '<div class="li" style="padding:6px 0;border-bottom:1px solid var(--line)"><div class="tx" style="flex:1">'
+      +'<b>'+esc(v.plate_no||'—')+'</b> <span class="muted small">'+esc(T(VEH_TYPE[v.vehicle_type]||v.vehicle_type||''))+' · '+esc(T(VEH_TRANS[v.transport_type]||v.transport_type||''))+(v.capacity?' · '+esc(v.capacity):'')+'</span>'
+      +'<div class="muted small">'+(v.previous_cargo?T('직전 화물')+': '+esc(v.previous_cargo)+' ':'')+pc+' '+st+'</div></div>'
+      +'<div class="when" style="display:flex;gap:4px"><button class="btn" style="padding:2px 7px;font-size:11px" onclick="editVehicle(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">'+T('편집')+'</button>'
+      +'<button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delVehicle(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">✕</button></div></div>';
+  }).join('');
+  b.innerHTML=rows;
+}
+function _vehFields(v){v=v||{};return [
+  {key:"plate_no",label:T('번호판')+" · Plate",value:v.plate_no,required:true},
+  {key:"vehicle_type",label:T('차량 유형')+" · Type",type:"select",value:v.vehicle_type||"truck",
+    options:[["truck","트럭"],["van","밴"],["container","컨테이너"],["tanker","탱크로리"],["reefer","냉장차"]].map(function(o){return {value:o[0],label:T(o[1])};})},
+  {key:"transport_type",label:T('운반 형태')+" · Transport",type:"select",value:v.transport_type||"ambient",
+    options:[["ambient","일반"],["chilled","냉장"],["frozen","냉동"],["insulated","보온"]].map(function(o){return {value:o[0],label:T(o[1])};})},
+  {key:"capacity",label:T('적재 용량')+" · Capacity",value:v.capacity,placeholder:"5t / 20ft"},
+  {key:"reg_no",label:T('차량등록번호')+" · Reg No",value:v.reg_no},
+  {key:"previous_cargo",label:T('직전 화물')+" · Previous cargo",value:v.previous_cargo},
+  {key:"previous_cargo_halal",label:T('직전 화물 할랄 여부'),type:"select",
+    value:(v.previous_cargo_halal===true?"1":(v.previous_cargo_halal===false?"0":"")),
+    options:[{value:"",label:T('미상')},{value:"1",label:T('할랄')},{value:"0",label:T('비할랄')}]},
+  {key:"last_cleaned",label:T('최근 세척일')+" · Last cleaned",type:"date",value:v.last_cleaned},
+  {key:"sertu",label:"Sertu "+T('세정 수행'),type:"select",value:(v.sertu?"1":"0"),
+    options:[{value:"0",label:T('아니오')},{value:"1",label:T('예')}]},
+];}
+function _vehBody(out,caseId){return {plate_no:out.plate_no,vehicle_type:out.vehicle_type,
+  transport_type:out.transport_type,capacity:out.capacity,reg_no:out.reg_no,
+  previous_cargo:out.previous_cargo,
+  previous_cargo_halal:(out.previous_cargo_halal===""?null:out.previous_cargo_halal==="1"),
+  last_cleaned:out.last_cleaned||null,sertu:out.sertu==="1",case_id:caseId};}
+async function addVehicle(org,caseId){
+  const out=await dialog(T('차량 추가')+" · New vehicle",_vehFields(null));
+  if(!out)return;
+  try{ await API('/orgs/'+org+'/vehicles',{method:"POST",body:JSON.stringify(_vehBody(out,caseId))});
+    toast(T('차량 등록됨')); loadVehicles(caseId,org); }
+  catch(e){ toast(EMSG(e)||T('등록 실패')); }
+}
+async function editVehicle(org,caseId,vid){
+  const v=VEH_LIST.find(function(x){return x.vehicle_id===vid;}); if(!v)return;
+  const out=await dialog(T('차량 편집')+" · Edit vehicle",_vehFields(v));
+  if(!out)return;
+  try{ await API('/vehicles/'+vid,{method:"PATCH",body:JSON.stringify(_vehBody(out,caseId))});
+    toast(T('저장됨')); loadVehicles(caseId,org); }
+  catch(e){ toast(EMSG(e)||T('저장 실패')); }
+}
+async function delVehicle(org,caseId,vid){
+  if(!confirm(T('이 차량을 삭제합니까?')))return;
+  try{ await API('/vehicles/'+vid,{method:"DELETE"}); toast(T('삭제됨')); loadVehicles(caseId,org); }
+  catch(e){ toast(EMSG(e)||T('삭제 실패')); }
 }
 /* ===== 공장 다건 분류 패널 (Facility 1:N) ===== */
 let FAC_LIST=[];let FAC_SEL=0;let CUR_SCHEME="product";

@@ -305,6 +305,20 @@ class MaterialPatch(BaseModel):
         return _material_source(v)
 
 
+class VehicleReq(BaseModel):
+    plate_no: Optional[str] = None
+    vehicle_type: Optional[str] = None      # truck|van|container|tanker|reefer
+    transport_type: Optional[str] = None    # ambient|chilled|frozen|insulated
+    capacity: Optional[str] = None
+    reg_no: Optional[str] = None
+    previous_cargo: Optional[str] = None
+    previous_cargo_halal: Optional[bool] = None
+    last_cleaned: Optional[str] = None
+    sertu: Optional[bool] = None
+    note: Optional[str] = None
+    case_id: Optional[str] = None
+
+
 class TextScreenReq(BaseModel):
     text: str
 

@@ -16992,6 +16992,70 @@ def del_facility(facility_id: str, user=Depends(auth.get_current_user), db: Sess
     return {"deleted": facility_id}
 
 
+@app.get("/orgs/{org_id}/vehicles")
+def list_vehicles(org_id: str, case_id: str = Query(None),
+                  user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """물류 운송 자산(차량·컨테이너) 목록. 조직 단위 자산 — 여러 케이스에서 참조."""
+    _assert_org_access(db, user, org_id)
+    q = db.query(models.Vehicle).filter_by(org_id=org_id)
+    rows = q.order_by(models.Vehicle.created_at).all()
+    return [{"vehicle_id": v.vehicle_id, "plate_no": v.plate_no, "vehicle_type": v.vehicle_type,
+             "transport_type": v.transport_type, "capacity": v.capacity, "reg_no": v.reg_no,
+             "previous_cargo": v.previous_cargo, "previous_cargo_halal": v.previous_cargo_halal,
+             "last_cleaned": v.last_cleaned, "sertu": bool(v.sertu), "note": v.note,
+             "case_id": v.case_id, "created_at": str(v.created_at)} for v in rows]
+
+
+@app.post("/orgs/{org_id}/vehicles")
+def add_vehicle(org_id: str, body: schemas.VehicleReq,
+                user=Depends(auth.require_roles("applicant", "consultant", "operator", "admin")),
+                db: Session = Depends(get_db)):
+    _assert_org_access(db, user, org_id)
+    if not (body.plate_no or "").strip():
+        raise HTTPException(422, {"code": "PLATE_REQUIRED", "message": "번호판을 입력해 주세요"})
+    v = models.Vehicle(org_id=org_id, case_id=body.case_id,
+                       plate_no=body.plate_no.strip(), vehicle_type=body.vehicle_type,
+                       transport_type=body.transport_type, capacity=body.capacity,
+                       reg_no=body.reg_no, previous_cargo=body.previous_cargo,
+                       previous_cargo_halal=body.previous_cargo_halal,
+                       last_cleaned=body.last_cleaned, sertu=bool(body.sertu), note=body.note)
+    db.add(v)
+    db.commit()
+    _audit(db, user, "vehicle.add", "vehicle", v.vehicle_id, body.case_id,
+           {"plate_no": v.plate_no})
+    return {"vehicle_id": v.vehicle_id, "plate_no": v.plate_no}
+
+
+@app.patch("/vehicles/{vehicle_id}")
+def update_vehicle(vehicle_id: str, body: schemas.VehicleReq,
+                   user=Depends(auth.require_roles("applicant", "consultant", "operator", "admin")),
+                   db: Session = Depends(get_db)):
+    v = db.get(models.Vehicle, vehicle_id)
+    if not v:
+        raise HTTPException(404, {"code": "VEHICLE_NOT_FOUND"})
+    _assert_org_access(db, user, v.org_id)
+    for k in ("plate_no", "vehicle_type", "transport_type", "capacity", "reg_no",
+              "previous_cargo", "previous_cargo_halal", "last_cleaned", "sertu", "note"):
+        val = getattr(body, k)
+        if val is not None:
+            setattr(v, k, val)
+    db.commit()
+    return {"vehicle_id": v.vehicle_id, "plate_no": v.plate_no}
+
+
+@app.delete("/vehicles/{vehicle_id}")
+def del_vehicle(vehicle_id: str,
+                user=Depends(auth.require_roles("applicant", "consultant", "operator", "admin")),
+                db: Session = Depends(get_db)):
+    v = db.get(models.Vehicle, vehicle_id)
+    if not v:
+        raise HTTPException(404, {"code": "VEHICLE_NOT_FOUND"})
+    _assert_org_access(db, user, v.org_id)
+    db.delete(v)
+    db.commit()
+    return {"deleted": vehicle_id}
+
+
 # ===== 동적 메뉴 시스템 (설계서 §3~§5) =====
 def _ensure_menu_assign(db):
     """'메뉴 배정 관리'(관리자 통합 배정) — admin 역할만 노출.

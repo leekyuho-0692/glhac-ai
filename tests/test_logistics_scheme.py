@@ -279,3 +279,32 @@ def test_물류_사진섹션_판정은_물류키만_받는다():
         assert d["scheme"] == "logistics"
         keys = {x["section"] for x in d["sections"]}
         assert "vehicle_condition" in keys and "production_video" not in keys
+
+
+def test_차량_등록과_조회():
+    """물류 운송 자산(차량) 등록·조회·필드 보존."""
+    with TestClient(app) as cl:
+        h = _tok(cl, "consultant1", "pw")
+        cid = cl.post("/cases", json={"company_name": "차량물류", "scheme": "logistics",
+                                      "logistics_scope": ["pendistribusian"]}, headers=h).json()["case_id"]
+        # 번호판 없으면 422
+        r0 = cl.post("/orgs/org_demo/vehicles", json={"vehicle_type": "truck"}, headers=h)
+        assert r0.status_code == 422
+        # 등록
+        r = cl.post("/orgs/org_demo/vehicles", json={
+            "plate_no": "B 9 XYZ", "vehicle_type": "reefer", "transport_type": "frozen",
+            "previous_cargo": "pork", "previous_cargo_halal": False, "sertu": False,
+            "case_id": cid}, headers=h)
+        assert r.status_code == 200, r.text
+        vid = r.json()["vehicle_id"]
+        rows = cl.get("/orgs/org_demo/vehicles", headers=h).json()
+        v = [x for x in rows if x["vehicle_id"] == vid][0]
+        assert v["plate_no"] == "B 9 XYZ" and v["transport_type"] == "frozen"
+        assert v["previous_cargo_halal"] is False and v["sertu"] is False
+        # Sertu 세정 후 편집
+        cl.patch("/vehicles/%s" % vid, json={"sertu": True, "last_cleaned": "2026-09-13"}, headers=h)
+        v2 = [x for x in cl.get("/orgs/org_demo/vehicles", headers=h).json()
+              if x["vehicle_id"] == vid][0]
+        assert v2["sertu"] is True
+        # 삭제
+        assert cl.delete("/vehicles/%s" % vid, headers=h).json()["deleted"] == vid

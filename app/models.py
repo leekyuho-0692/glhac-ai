@@ -444,6 +444,26 @@ class Facility(Base):
     token_version = Column(Integer, default=0)   # 토큰 취소 — 증가 시 기존 토큰 전부 무효(§9.1)
 
 
+
+class Vehicle(Base):
+    """물류(jasa logistik) 운송 자산 — 차량·컨테이너. 인증 대상은 서비스이나 관리·증빙 대상이다.
+    직전 화물·세척 상태는 할랄 무결성 판정(교차오염)에 쓰인다."""
+    __tablename__ = "vehicle"
+    vehicle_id = Column(String, primary_key=True, default=uid)
+    org_id = Column(String, index=True, nullable=False)
+    case_id = Column(String, index=True)              # 등록 신청 케이스(선택)
+    plate_no = Column(String)                          # 번호판
+    vehicle_type = Column(String)                      # truck|van|container|tanker|reefer
+    transport_type = Column(String)                    # ambient|chilled|frozen|insulated (운반 형태)
+    capacity = Column(String)                          # 적재 용량(자유 표기: "5t", "20ft")
+    reg_no = Column(String)                            # 차량등록번호
+    previous_cargo = Column(String)                    # 직전 화물(비할랄 여부 판단)
+    previous_cargo_halal = Column(Boolean)             # 직전 화물이 할랄이었나(None=미상)
+    last_cleaned = Column(String)                      # 최근 세척일(ISO date)
+    sertu = Column(Boolean, default=False)             # Sertu(정결) 세정 수행 여부
+    note = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 class AiExtraction(Base):
     """AI/OCR 결과 근거저장 (보강안 §7.2) — Human-in-the-loop 추적성."""
     __tablename__ = "ai_extraction"
