@@ -308,3 +308,37 @@ def test_차량_등록과_조회():
         assert v2["sertu"] is True
         # 삭제
         assert cl.delete("/vehicles/%s" % vid, headers=h).json()["deleted"] == vid
+
+
+def test_차량_등록시_연동이벤트를_남긴다():
+    """차량 등록·수정·삭제가 logistics-audit sync 이벤트를 남긴다(URL 미설정=pending)."""
+    from app import models
+    with TestClient(app) as cl:
+        h = _tok(cl, "consultant1", "pw")
+        cid = cl.post("/cases", json={"company_name": "차량연동", "scheme": "logistics",
+                                      "logistics_scope": ["pendistribusian"]}, headers=h).json()["case_id"]
+        r = cl.post("/orgs/org_demo/vehicles", json={"plate_no": "B 5 SYNC",
+                    "previous_cargo_halal": False, "sertu": False, "case_id": cid}, headers=h)
+        vid = r.json()["vehicle_id"]
+        db = next(m.get_db())
+        ev = db.query(models.IntegrationEvent).filter_by(
+            external_id="B 5 SYNC", provider="logistics_audit").first()
+        assert ev is not None and ev.event_type == "vehicle.upsert"
+        assert ev.payload["previous_cargo_halal"] is False
+        assert ev.payload["company_name"]        # org 없어도 case 로 폴백
+        # 삭제도 이벤트
+        cl.delete("/vehicles/%s" % vid, headers=h)
+        dele = db.query(models.IntegrationEvent).filter_by(
+            external_id="B 5 SYNC", event_type="vehicle.delete").first()
+        assert dele is not None
+
+
+def test_차량_sync_url_유도():
+    """차량 sync URL 은 인증서 URL 에서 경로만 바꿔 얻는다."""
+    import os
+    os.environ["GLHAC_LOGISTICS_WEBHOOK_URL"] = "https://x/v1/certs/logistics-sync"
+    try:
+        assert m._logistics_url("vehicle") == "https://x/v1/vehicles/sync"
+        assert m._logistics_url("cert") == "https://x/v1/certs/logistics-sync"
+    finally:
+        del os.environ["GLHAC_LOGISTICS_WEBHOOK_URL"]

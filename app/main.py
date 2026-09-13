@@ -11132,13 +11132,23 @@ def _sync_logistics_cert(db, c, cert, event):
     db.commit()
 
 
-def _post_logistics_payload(payload):
+def _logistics_url(kind="cert"):
+    """logistics-audit 수신 URL. 차량은 인증서 URL에서 경로만 바꿔 유도한다."""
+    base = os.environ.get("GLHAC_LOGISTICS_WEBHOOK_URL")
+    if not base:
+        return None
+    if kind == "vehicle":
+        return base.replace("/certs/logistics-sync", "/vehicles/sync")
+    return base
+
+
+def _post_logistics_payload(payload, url=None):
     """payload 를 logistics-audit 로 보낸다. (성공?, 에러문구, 응답해시) 반환.
 
-    URL 미설정이면 전송하지 않는다(보류) — 발급/재전송 로직이 이를 pending 으로 남긴다.
+    url 미지정이면 인증서 URL(GLHAC_LOGISTICS_WEBHOOK_URL). 미설정이면 전송 보류.
     """
     import json as _json, hmac as _hmac, hashlib as _hl, urllib.request as _rq
-    url = os.environ.get("GLHAC_LOGISTICS_WEBHOOK_URL")
+    url = url or os.environ.get("GLHAC_LOGISTICS_WEBHOOK_URL")
     if not url:
         return (False, "GLHAC_LOGISTICS_WEBHOOK_URL 미설정 — 전송 보류", None)
     raw = _json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -11151,6 +11161,46 @@ def _post_logistics_payload(payload):
         return (True, None, _hl.sha256(resp.read() or b"").hexdigest())
     except Exception as e:  # noqa: BLE001 — 연동 실패는 호출자를 막지 않는다
         return (False, str(e)[:200], None)
+
+
+def _sync_logistics_vehicle(db, v, event):
+    """차량·컨테이너 상태를 logistics-audit 로 push(best-effort).
+
+    차량은 org 자산이라 인증서와 달리 case 가 없을 수 있다 — org 로 회사명을 유도한다.
+    직전 화물 할랄 여부·Sertu 는 운송 추적(gate)이 교차오염을 판정하는 근거다.
+    전송 실패해도 등록/수정은 되돌리지 않는다(정본은 v3).
+    """
+    import hashlib as _hl, json as _json
+    org = db.get(models.Org, v.org_id)
+    company = (org.name if org else None)
+    if not company and v.case_id:            # org 레코드 없으면 케이스 회사명으로 폴백
+        _cs = db.get(models.CaseApplication, v.case_id)
+        company = _cs.company_name if _cs else None
+    if not company:                          # 그래도 없으면 org_id 라도(매칭 키 보장)
+        company = v.org_id
+    payload = {
+        "event": event,                          # vehicle.upsert | vehicle.delete
+        "org_id": v.org_id, "vehicle_id": v.vehicle_id,
+        "company_name": company,
+        "plate_no": v.plate_no, "vehicle_type": v.vehicle_type,
+        "transport_type": v.transport_type, "capacity": v.capacity, "reg_no": v.reg_no,
+        "previous_cargo": v.previous_cargo, "previous_cargo_halal": v.previous_cargo_halal,
+        "last_cleaned": v.last_cleaned, "sertu": bool(v.sertu),
+    }
+    raw = _json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ev = models.IntegrationEvent(
+        provider="logistics_audit", event_type=event, external_id=v.plate_no,
+        idempotency_key="veh:%s:%s" % (v.vehicle_id, event),
+        case_id=v.case_id, payload=payload,
+        request_hash=_hl.sha256(raw).hexdigest(), status="pending")
+    ok, err, resp_hash = _post_logistics_payload(payload, _logistics_url("vehicle"))
+    if ok:
+        ev.status = "processed"; ev.response_hash = resp_hash
+    else:
+        ev.status = "failed" if _logistics_url("vehicle") else "pending"
+        ev.last_error = err
+    db.add(ev)
+    db.commit()
 
 
 def _next_logistics_cert_no(db):
@@ -17023,6 +17073,7 @@ def add_vehicle(org_id: str, body: schemas.VehicleReq,
     db.commit()
     _audit(db, user, "vehicle.add", "vehicle", v.vehicle_id, body.case_id,
            {"plate_no": v.plate_no})
+    _sync_logistics_vehicle(db, v, "vehicle.upsert")   # logistics-audit 로 push
     return {"vehicle_id": v.vehicle_id, "plate_no": v.plate_no}
 
 
@@ -17040,6 +17091,7 @@ def update_vehicle(vehicle_id: str, body: schemas.VehicleReq,
         if val is not None:
             setattr(v, k, val)
     db.commit()
+    _sync_logistics_vehicle(db, v, "vehicle.upsert")   # 변경도 push(직전화물·세척 갱신 반영)
     return {"vehicle_id": v.vehicle_id, "plate_no": v.plate_no}
 
 
@@ -17051,6 +17103,7 @@ def del_vehicle(vehicle_id: str,
     if not v:
         raise HTTPException(404, {"code": "VEHICLE_NOT_FOUND"})
     _assert_org_access(db, user, v.org_id)
+    _sync_logistics_vehicle(db, v, "vehicle.delete")   # 삭제 전 push(운송 추적에서 제거)
     db.delete(v)
     db.commit()
     return {"deleted": vehicle_id}
