@@ -6339,7 +6339,7 @@ SCREEN.application=async()=>{
     <div class="body">
       <div class="banner info" style="margin-bottom:10px">${T('📎 파일(ZIP·서류)을 올리면 자동 분류되어 프로필·제품·원재료·문서 화면에 자동 연계됩니다.')}</div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
-        ${sjphStage(id,T("신청 업로드 파일 리스트"),"Upload File List",(c.scheme==='logistics'?T("사업자·물류 SJPH·시설·차량 서류"):T("사업자·성분·제품공정 서류")),(c.scheme==='logistics'?["nib_business_license","sjph_manual","logistics_scope","warehouse_layout","vehicle_list","cleaning_sop"]:["nib_business_license","factory_registration","product_list","material_list","process_flow"]),chk)}
+        ${sjphStage(id,T("신청 업로드 파일 리스트"),"Upload File List",(c.scheme==='logistics'?T("사업자·물류 SJPH·시설·차량 서류"):T("사업자·성분·제품공정 서류")),(c.scheme==='logistics'?(((chk&&chk.checklist)||[]).filter(x=>x.required).map(x=>x.doc_type)):["nib_business_license","factory_registration","product_list","material_list","process_flow"]),chk)}
         <div style="border:1px solid var(--line2);border-radius:10px;padding:12px">
           <div style="font-weight:700;font-size:12.5px;margin-bottom:8px">📎 ${T('파일 업로드')} <span class="en">· Upload</span></div>
           ${canApp?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center">

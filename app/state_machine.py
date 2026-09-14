@@ -219,15 +219,21 @@ def guard_payment(db, case):
 
 # ---- §5.2 증빙기반 전이 가드 (전면화) ----
 def guard_intake_complete(db, case):
-    """신청 완비(§5.2 submitted→intake_review) — 회사명·NIB·제품 최소 1개."""
+    """신청 완비(§5.2) — 회사명·NIB 공통. 인증 대상은 제품/물류로 다르다:
+    제품은 제품 최소 1개, 물류(jasa logistik)는 취급 서비스(logistics_scope) 최소 1개."""
     from .models import Product
     g = []
     if not (case.company_name and str(case.company_name).strip()):
         g.append({"code": "COMPANY_NAME_MISSING"})
     if not (case.nib and str(case.nib).strip()):
         g.append({"code": "NIB_MISSING"})
-    if db.query(Product).filter_by(case_id=case.case_id).count() == 0:
-        g.append({"code": "NO_PRODUCT"})
+    if (getattr(case, "scheme", "product") or "product") == "logistics":
+        # 물류는 제품이 아니라 서비스(보관·포장·유통)가 인증 대상이다.
+        if not (case.logistics_scope):
+            g.append({"code": "NO_JASA"})
+    else:
+        if db.query(Product).filter_by(case_id=case.case_id).count() == 0:
+            g.append({"code": "NO_PRODUCT"})
     return g
 
 

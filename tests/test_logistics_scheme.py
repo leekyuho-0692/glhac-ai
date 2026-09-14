@@ -360,3 +360,37 @@ def test_신청메뉴가_제품_로지스틱으로_나뉜다():
         assert "applyProduct" in routes and "applyLogistics" in routes
         # 기존 '신청'(application)은 사이드바에서 감춰졌다
         assert "application" not in routes
+
+
+def test_jasa별로_서류가_갈린다():
+    """유통만이면 창고 배치도 불필요, 보관만이면 차량 목록 불필요."""
+    from app import intake
+    dist = set(intake.doc_requirements(scheme="logistics", logistics_scope=["pendistribusian"])["required"])
+    stor = set(intake.doc_requirements(scheme="logistics", logistics_scope=["penyimpanan"])["required"])
+    both = set(intake.doc_requirements(scheme="logistics",
+               logistics_scope=["penyimpanan", "pendistribusian"])["required"])
+    assert "vehicle_list" in dist and "warehouse_layout" not in dist      # 유통 → 차량, 창고X
+    assert "warehouse_layout" in stor and "vehicle_list" not in stor      # 보관 → 창고, 차량X
+    assert {"vehicle_list", "warehouse_layout"} <= both                   # 둘 다 → 둘 다
+    # 공통은 항상
+    assert {"nib_business_license", "sjph_manual", "cleaning_sop"} <= dist
+
+
+def test_물류_intake게이트는_제품대신_jasa를_본다():
+    """물류는 제품 0개여도 회사명·NIB·jasa 있으면 신청 완비 게이트를 통과한다."""
+    from app import state_machine as sm, models
+    with TestClient(app) as cl:
+        h = _tok(cl, "admin", "admin")
+        cid = cl.post("/cases", json={"company_name": "게이트물류", "org_id": "org_demo",
+                                      "scheme": "logistics", "logistics_scope": ["pendistribusian"]},
+                      headers=h).json()["case_id"]
+        db = next(m.get_db()); c = db.get(models.CaseApplication, cid)
+        codes = {x["code"] for x in sm.guard_intake_complete(db, c)}
+        assert "NO_PRODUCT" not in codes and "NO_JASA" not in codes       # 제품게이트 안 걸림
+        assert "NIB_MISSING" in codes                                     # NIB 는 여전히 필요
+        c.nib = "1234"; db.commit()
+        assert sm.guard_intake_complete(db, c) == []                      # NIB 채우면 통과
+        # jasa 없는 물류는 케이스 생성 단계에서 이미 422 로 막힌다(더 앞선 방어)
+        r = cl.post("/cases", json={"company_name": "noj", "scheme": "logistics",
+                                    "logistics_scope": []}, headers=h)
+        assert r.status_code == 422

@@ -57,11 +57,32 @@ DOC_NAME_L10N = {"en": DOC_EN, "id": DOC_ID}
 REQUIRED_DOCS = ["nib_business_license", "factory_registration", "product_list",
                  "process_flow", "material_list", "halal_certificate", "sjph_manual"]
 
-# 물류(jasa logistik) 필수 서류 — 제품과 다른 세트다.
-# 제품의 원재료·배합·공정 축이 없고, 대신 시설·차량·세척·취급범위가 핵심이다.
-# BPJPH는 차량이 아니라 '물류 서비스'를 인증하므로, 차량 목록은 관리대상 증빙이다(2024-09-05).
-REQUIRED_DOCS_LOGISTICS = ["nib_business_license", "sjph_manual",
-                           "logistics_scope", "warehouse_layout", "vehicle_list", "cleaning_sop"]
+# 물류(jasa logistik) 필수 서류 — jasa(보관·포장·유통)에 따라 갈린다.
+# BPJPH 임계활동: 보관·포장=창고/시설(warehouse_layout), 유통=차량(vehicle_list).
+# 공통은 사업자·SJPH·취급범위·세척SOP. 유통만 하면 창고 배치도는 요구하지 않는다.
+REQUIRED_DOCS_LOGISTICS_COMMON = ["nib_business_license", "sjph_manual",
+                                  "logistics_scope", "cleaning_sop"]
+REQUIRED_DOCS_BY_JASA = {
+    "penyimpanan": ["warehouse_layout"],           # 보관 — 창고 배치도(Halal Zone)
+    "pengemasan": ["warehouse_layout"],            # 포장 — 포장 시설(창고 배치도로 갈음)
+    "pendistribusian": ["vehicle_list"],           # 유통 — 차량·컨테이너 목록
+}
+# 전체(jasa 미선택 시 안전하게 넓게 요구)
+REQUIRED_DOCS_LOGISTICS = (REQUIRED_DOCS_LOGISTICS_COMMON
+                           + ["warehouse_layout", "vehicle_list"])
+
+
+def logistics_required_docs(logistics_scope=None):
+    """물류 필수 서류 — jasa 조합에 따라. jasa 미선택이면 넓게(창고+차량 모두)."""
+    js = [x for x in (logistics_scope or []) if x in REQUIRED_DOCS_BY_JASA]
+    if not js:
+        return list(REQUIRED_DOCS_LOGISTICS)
+    req = list(REQUIRED_DOCS_LOGISTICS_COMMON)
+    for j in js:
+        for d in REQUIRED_DOCS_BY_JASA[j]:
+            if d not in req:
+                req.append(d)
+    return req
 
 # 경로별 필수 목록. 미정(undetermined)은 정규 기준을 쓴다 — 넓게 요구하는 쪽이 안전하다.
 REQUIRED_DOCS_BY_PATHWAY = {
@@ -105,7 +126,8 @@ def required_docs(pathway=None):
     return REQUIRED_DOCS_BY_PATHWAY.get((pathway or "").lower(), REQUIRED_DOCS)
 
 
-def doc_requirements(pathway=None, country=None, is_msme=None, scheme="product"):
+def doc_requirements(pathway=None, country=None, is_msme=None, scheme="product",
+                    logistics_scope=None):
     """이 신청 건에 실제로 요구되는 서류 — 인증 종류(scheme)·경로(pathway)·관할·규모를 함께 본다.
 
     scheme 이 가장 바깥 축이다. 물류(logistics)는 제품과 서류 세트 자체가 다르므로
@@ -118,9 +140,14 @@ def doc_requirements(pathway=None, country=None, is_msme=None, scheme="product")
       alt             {doc_type: {by, note}} — 원본 서류 대신 다른 근거로 충족 가능한 항목
     """
     if (scheme or "product").lower() == "logistics":
-        # 물류는 경로(self_declare/reguler)에 따른 서류 차이가 아직 규범으로 확정되지
-        # 않았다(BPJPH jasa logistik SJPH 매뉴얼 미공개) → 단일 세트로 시작한다.
-        return {"required": list(REQUIRED_DOCS_LOGISTICS), "not_applicable": {}, "alt": {}}
+        # jasa(보관·포장·유통)에 따라 서류가 갈린다 — 유통만이면 창고 배치도는 안 나온다.
+        req = logistics_required_docs(logistics_scope)
+        # 선택 안 된 jasa의 서류는 '해당 없음'으로 남겨 누락과 구분한다.
+        na = {}
+        _all = set(REQUIRED_DOCS_LOGISTICS)
+        for d in _all - set(req):
+            na[d] = "선택한 물류 서비스(jasa)에 해당하지 않는 서류입니다"
+        return {"required": req, "not_applicable": na, "alt": {}}
     pw = (pathway or "").lower()
     req = list(required_docs(pw))
     na = dict(DOC_NOT_APPLICABLE.get(pw, {}))

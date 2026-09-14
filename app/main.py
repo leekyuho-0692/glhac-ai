@@ -13779,7 +13779,8 @@ def _calc_readiness(db, case_id):
     req = doc_requirements(_c.pathway if _c else None,
                            (_c.profile_ext or {}).get("country") if _c else None,
                            _c.is_msme if _c else None,
-                           scheme=(_c.scheme if _c else "product"))["required"]
+                           scheme=(_c.scheme if _c else "product"),
+                           logistics_scope=(_c.logistics_scope if _c else None))["required"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     have_types = {d.doc_type for d in docs if d.review_status != "rejected"}
     doc_score = (sum(1 for r in req if r in have_types) / len(req)) if req else 1.0
@@ -15680,7 +15681,7 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
     # '해당 없음'으로 사유와 함께 보여준다 — 조용히 사라지면 심사자가 빠뜨린 것인지
     # 면제인지 구분할 수 없다.
     _rq = doc_requirements(c.pathway, (c.profile_ext or {}).get("country"), c.is_msme,
-                           scheme=c.scheme)
+                           scheme=c.scheme, logistics_scope=c.logistics_scope)
     _req, _na, _alt = _rq["required"], _rq["not_applicable"], _rq["alt"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     by_type = {}
