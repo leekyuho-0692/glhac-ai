@@ -6321,7 +6321,7 @@ SCREEN.application=async()=>{
     <div class="muted" style="margin-top:10px;font-size:12.5px">${T('물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다. 종류를 바꾸려면 다른 신청 메뉴로 시작하세요.')}</div>`
     :`<div class="muted small">${c.scheme==='logistics'?T('물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다'):T('제품 할랄 인증')}</div>`}
   </div></div>`+`
-  ${sdPromote?`<div class="card" style="margin-bottom:16px;border-left:3px solid var(--ok)"><div class="body">
+  ${(sdPromote&&c.scheme!=='logistics')?`<div class="card" style="margin-bottom:16px;border-left:3px solid var(--ok)"><div class="body">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
       <b style="font-size:13.5px">🕌 ${T('SEHATI 자기선언 간이경로')} <span class="en">· Self-Declare</span></b>
       ${bTag(isSD?'info':'mute',c.pathway||'undetermined')}
@@ -6403,17 +6403,17 @@ SCREEN.application=async()=>{
           <div class="field"><label>신청유형 · Application</label><select class="v" id="peAppType">${[["","—"],["Regular","정규 · General"],["Self-Declare","자기선언 · Self-declare"]].map(([v,l])=>`<option value="${v}"${(pe.application_type||"")===v?" selected":""}>${l}</option>`).join("")}</select></div>
           <div class="field"><label>등록현황 · Status</label><select class="v" id="peRegStatus">${["","New","Renew","Development"].map(o=>`<option${(pe.registration_status||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div>
           <div class="field"><label>${T('SIHALAL 여부')}</label><select class="v" id="peSiHalal">${["","Yes","No"].map(o=>`<option${(pe.si_halal||"")===o?" selected":""}>${o||"—"}</option>`).join("")}</select></div></div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        ${c.scheme!=='logistics'?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>제품유형 · Product Type</label><input class="v" id="peProdType" value="${esc(pe.product_type||"")}"></div>
           <div class="field"><label>마케팅유형 · Marketing</label><input class="v" id="peMktType" value="${esc(pe.marketing_type||"")}" placeholder="retail/non-retail"></div>
-          <div class="field"><label>상표 · Trademark</label><input class="v" id="peTrademark" value="${esc(pe.trademark||"")}" placeholder="${T('심사원 배정 양식에 사용')}"></div></div>
+          <div class="field"><label>상표 · Trademark</label><input class="v" id="peTrademark" value="${esc(pe.trademark||"")}" placeholder="${T('심사원 배정 양식에 사용')}"></div></div>`:''}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>총 직원수 · Employees</label><input class="v" id="peEmp" value="${esc(pe.total_employee||"")}"></div>
           <div class="field"><label>생산능력 · Capacity</label><input class="v" id="peCap" value="${esc(pe.production_capacity||"")}"></div></div>
-        <div class="muted small" style="margin:10px 0 4px;font-weight:600">${T('자기선언 자격 · Self-Declare (BPJPH)')}</div>
+        ${c.scheme!=='logistics'?`<div class="muted small" style="margin:10px 0 4px;font-weight:600">${T('자기선언 자격 · Self-Declare (BPJPH)')}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>${T('연매출(IDR) · Annual Revenue')} <span class="muted">(≤ 15,000,000,000)</span></label><input class="v" id="peRevenue" type="number" min="0" value="${esc(pe.annual_revenue||"")}" placeholder="${T('예')}: 10000000000"></div>
-          <div class="field"><label>${T('매장 수 · Outlets')} <span class="muted">(≤ 1)</span></label><input class="v" id="peOutlet" type="number" min="0" value="${esc(pe.outlet_count||"")}" placeholder="${T('예')}: 1"></div></div>
+          <div class="field"><label>${T('매장 수 · Outlets')} <span class="muted">(≤ 1)</span></label><input class="v" id="peOutlet" type="number" min="0" value="${esc(pe.outlet_count||"")}" placeholder="${T('예')}: 1"></div></div>`:''}
         <div class="field"><label>주소 · Address</label><input class="v" id="peAddress" value="${esc(c.address||"")}">
           <div class="btnrow" style="margin-top:4px"><button class="btn" type="button" style="padding:3px 8px;font-size:11px" onclick="daumZipSearch('peZip','peAddress','peCity','peCountry')">🔎 ${T('우편번호 검색')} <span class="muted">(한국·KR)</span></button></div></div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
