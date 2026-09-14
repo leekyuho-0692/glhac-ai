@@ -839,6 +839,33 @@ function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko
 var EN_STRINGS={
   "물류 서비스 범위":"Logistics scope",
   "범위 저장":"Save scope",
+  /* 물류 비용 산출 */
+  "정부 등록비(BPJPH)":"Govt registration (BPJPH)",
+  "LPH 심사비":"LPH inspection",
+  "소상공인 상한":"UMK cap",
+  "파트와(MUI)":"Fatwa (MUI)",
+  "LPH 운영비":"LPH operational",
+  "일당(UHPD)":"Per-diem (UHPD)",
+  "교통비":"Transport",
+  "항공권(추정·1회)":"Airfare (est., once)",
+  "숙박(추정)":"Lodging (est.)",
+  "예상 인증비용":"Estimated cost",
+  "인도네시아 BPJPH 요율 기준 자동 산출 — 규모·차량·창고 수로 심사일수(mandays)가 정해집니다.":"Auto-estimated per BPJPH tariff — scale, vehicles and warehouses set the audit mandays.",
+  "자가선언(SEHATI·무료)":"Self-Declare (SEHATI · free)",
+  "소상공인(UMK)":"Micro/Small (UMK)",
+  "중기업":"Medium",
+  "대기업·외국계":"Large / Foreign",
+  "시내":"In-city",
+  "지방(출장)":"Out-of-city",
+  "차량 수":"Vehicles",
+  "창고 수":"Warehouses",
+  "등록수 반영":"Sync counts",
+  "무료":"Free",
+  "SEHATI 자가선언 — 정부가 전액 부담(Rp 0)":"SEHATI self-declare — fully funded by government (Rp 0)",
+  "심사일수":"Audit days",
+  "창고 2곳 이상":"2+ warehouses",
+  "합계(추정)":"Total (est.)",
+  "추정치입니다. 실제 청구는 규모·지역·수량에 따라 다르며 BPJPH 공식 계산기(kalkulator-biaya-sh)가 정본입니다.":"Estimate only. Actual billing varies by scale, region and quantity; the BPJPH official calculator (kalkulator-biaya-sh) is authoritative.",
   "범위 저장됨":"Scope saved",
   "물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다. 종류를 바꾸려면 다른 신청 메뉴로 시작하세요.":"Logistics (jasa logistik) — docs & audit follow logistics criteria. To change type, start from another application menu.",
 
@@ -1514,6 +1541,33 @@ function capBanner(){
 const UI_STRINGS={
   "물류 서비스 범위":"Ruang lingkup jasa",
   "범위 저장":"Simpan lingkup",
+  /* 물류 비용 산출 */
+  "정부 등록비(BPJPH)":"Biaya pendaftaran (BPJPH)",
+  "LPH 심사비":"Pemeriksaan LPH",
+  "소상공인 상한":"Batas UMK",
+  "파트와(MUI)":"Fatwa (MUI)",
+  "LPH 운영비":"Operasional LPH",
+  "일당(UHPD)":"UHPD",
+  "교통비":"Transportasi",
+  "항공권(추정·1회)":"Tiket pesawat (estimasi·1x)",
+  "숙박(추정)":"Akomodasi (estimasi)",
+  "예상 인증비용":"Estimasi biaya sertifikasi",
+  "인도네시아 BPJPH 요율 기준 자동 산출 — 규모·차량·창고 수로 심사일수(mandays)가 정해집니다.":"Estimasi otomatis sesuai tarif BPJPH — skala, kendaraan, dan gudang menentukan mandays audit.",
+  "자가선언(SEHATI·무료)":"Self-Declare (SEHATI · gratis)",
+  "소상공인(UMK)":"Mikro/Kecil (UMK)",
+  "중기업":"Menengah",
+  "대기업·외국계":"Besar / Luar Negeri",
+  "시내":"Dalam kota",
+  "지방(출장)":"Luar kota",
+  "차량 수":"Jumlah kendaraan",
+  "창고 수":"Jumlah gudang",
+  "등록수 반영":"Sinkron jumlah",
+  "무료":"Gratis",
+  "SEHATI 자가선언 — 정부가 전액 부담(Rp 0)":"Self-declare SEHATI — sepenuhnya ditanggung pemerintah (Rp 0)",
+  "심사일수":"Hari audit",
+  "창고 2곳 이상":"2+ gudang",
+  "합계(추정)":"Total (estimasi)",
+  "추정치입니다. 실제 청구는 규모·지역·수량에 따라 다르며 BPJPH 공식 계산기(kalkulator-biaya-sh)가 정본입니다.":"Hanya estimasi. Tagihan sebenarnya bergantung pada skala, wilayah, dan jumlah; kalkulator resmi BPJPH (kalkulator-biaya-sh) yang berlaku.",
   "범위 저장됨":"Lingkup tersimpan",
   "물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다. 종류를 바꾸려면 다른 신청 메뉴로 시작하세요.":"Jasa logistik — dokumen & audit kriteria logistik. Untuk ubah jenis, mulai dari menu permohonan lain.",
 
@@ -6455,6 +6509,7 @@ SCREEN.application=async()=>{
           <div id="facListBox">${facListHtml(facs,org,canApp,c.facility_ids,id)}</div>
         </div>`)}
     ${c.scheme==='logistics'?vehiclePanel(id,org,canApp):''}
+    ${c.scheme==='logistics'?costEstimatePanel(id,c):''}
   </div>
   <div class="grid three" style="margin-top:16px">
     <div class="card"><h3>할랄감독자 · Penyelia <span class="en">· Supervisor</span><span class="r">${T('활성')} ${penyeliaResp.active_count!=null?penyeliaResp.active_count:pens.filter(p=>p.status==='active').length}</span></h3>
@@ -7517,6 +7572,118 @@ async function genFatwaDecree(id){
   try{await API(`/cases/${id}/fatwa/decree`,{method:"POST",body:"{}"});toast("판결문 생성");serverPdf(`/cases/${id}/fatwa/decree.pdf`,"fatwa_decree.pdf");}
   catch(e){toast("생성 실패 · "+(EMSG(e)));}
 }
+/* ===== 물류 인증비용 자동 산출 (BPJPH SK 141/2021 · Kepkaban 22/2024) =====
+   비용 = ①BPJPH 등록비(규모) + ②LPH 심사비(unit cost × mandays × 창고배수)
+          + 운영비 + 일당(UHPD) + 교통비 (+지방 항공·숙박 추정) + ③파트와(MUI)
+   mandays: 차량 수 구간으로 결정, 창고 2곳 이상이면 ×2. self-declare(SEHATI)=무료.
+   ※ 추정치 — 정확 견적은 BPJPH 공식 계산기(kalkulator-biaya-sh)가 정본. */
+const LOGI_TARIFF={
+  bpjph:{umk:300000,menengah:5000000,besar:12500000},
+  unitCost:5275000, umkLphCap:350000,
+  operational:{umk:480000,menengah:960000,besar:1440000},
+  fatwa:{umk:50000,menengah:349500,besar:500000},
+  uhpd:150000, transport:170000,
+  flightEst:1500000, lodgingEst:600000,   // 지방 출장 추정
+};
+function _logiMandays(scale,vehicles){
+  const v=Math.max(0,vehicles|0);
+  const big=(scale==="menengah"||scale==="besar");
+  if(v<=50)  return big?4:2;
+  if(v<=100) return big?5:3;
+  if(v<=200) return big?6:4;
+  return big?7:5;
+}
+function estLogisticsCost(o){
+  const scale=o.scale||"menengah";
+  if(scale==="selfdeclare") return {free:true,mandays:0,total:0,lines:[]};
+  const t=LOGI_TARIFF, vehicles=o.vehicles|0, warehouses=Math.max(1,o.warehouses|0);
+  const outCity=!!o.outCity, whMult=warehouses>=2?2:1;
+  const md=_logiMandays(scale,vehicles), effMd=md*whMult;
+  const lines=[]; const add=(k,v)=>lines.push({k,v});
+  if(scale==="umk"){
+    add(T("정부 등록비(BPJPH)"),t.bpjph.umk);
+    add(T("LPH 심사비")+" ("+T("소상공인 상한")+")",t.umkLphCap);
+    add(T("파트와(MUI)"),t.fatwa.umk);
+  }else{
+    add(T("정부 등록비(BPJPH)"),t.bpjph[scale]);
+    add(T("LPH 심사비")+" (5,275,000 × "+effMd+" "+T("일")+")",t.unitCost*effMd);
+    add(T("LPH 운영비"),t.operational[scale]);
+    add(T("일당(UHPD)")+" (150,000 × "+effMd+")",t.uhpd*effMd);
+    add(T("교통비")+" (170,000 × "+effMd+")",t.transport*effMd);
+    if(outCity){
+      add(T("항공권(추정·1회)"),t.flightEst);
+      add(T("숙박(추정)")+" (600,000 × "+Math.max(0,effMd-1)+")",t.lodgingEst*Math.max(0,effMd-1));
+    }
+    add(T("파트와(MUI)"),t.fatwa[scale]);
+  }
+  const total=lines.reduce((s,l)=>s+l.v,0);
+  return {free:false,mandays:effMd,baseMandays:md,whMult,total,lines};
+}
+function _rp(n){ return "Rp "+(n|0).toLocaleString("en-US"); }
+function _krw(n){ return "≈ "+Math.round(n*0.085).toLocaleString("ko-KR")+"원"; }
+
+/* 물류 신청 화면 — 예상 인증비용 카드 */
+function costEstimatePanel(id,c){
+  if((c.scheme||"product")!=="logistics") return "";
+  const isSD=c.pathway==="self_declare";
+  const defScale=isSD?"selfdeclare":(c.is_msme?"umk":"menengah");
+  const vN=(typeof VEH_LIST!=="undefined"&&VEH_LIST.length)||0;
+  const wN=(typeof FAC_LIST!=="undefined"&&FAC_LIST.length)||1;
+  // 차량/창고 등록수가 나중에 로드되면 반영
+  const prev=AFTER_RENDER;
+  AFTER_RENDER=function(){ if(prev) try{prev()}catch(_){}; setTimeout(function(){recalcLogiCost(id,true);},60); };
+  const opt=(v,l,sel)=>`<option value="${v}" ${sel===v?"selected":""}>${l}</option>`;
+  return `<div class="card" style="margin-top:16px;border-left:3px solid var(--accent)"><h3>💰 ${T("예상 인증비용")} <span class="en">· Estimated cost</span></h3>
+  <div class="body">
+    <div class="muted small" style="margin-bottom:10px">${T("인도네시아 BPJPH 요율 기준 자동 산출 — 규모·차량·창고 수로 심사일수(mandays)가 정해집니다.")}</div>
+    <div class="grid" style="grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:10px">
+      <div class="field"><label>${T("규모")} · Scale</label>
+        <select class="v" id="lgScale_${id}" onchange="recalcLogiCost('${id}')">
+          ${opt("selfdeclare",T("자가선언(SEHATI·무료)"),defScale)}
+          ${opt("umk",T("소상공인(UMK)"),defScale)}
+          ${opt("menengah",T("중기업"),defScale)}
+          ${opt("besar",T("대기업·외국계"),defScale)}
+        </select></div>
+      <div class="field"><label>${T("지역")} · Region</label>
+        <select class="v" id="lgRegion_${id}" onchange="recalcLogiCost('${id}')">
+          ${opt("in",T("시내"),"in")}${opt("out",T("지방(출장)"),"in")}
+        </select></div>
+      <div class="field"><label>${T("차량 수")} · Vehicles</label>
+        <input class="v" id="lgVeh_${id}" type="number" min="0" value="${vN}" oninput="recalcLogiCost('${id}')"></div>
+      <div class="field"><label>${T("창고 수")} · Warehouses</label>
+        <input class="v" id="lgWh_${id}" type="number" min="1" value="${wN}" oninput="recalcLogiCost('${id}')"></div>
+    </div>
+    <button class="btn" style="padding:4px 10px;font-size:12px;margin-bottom:10px" onclick="recalcLogiCost('${id}',true)">🔄 ${T("등록수 반영")}</button>
+    <div id="lgCostOut_${id}"></div>
+  </div></div>`;
+}
+function recalcLogiCost(id,sync){
+  const $=x=>document.getElementById(x+"_"+id);
+  const scaleEl=$("lgScale"); if(!scaleEl) return;
+  if(sync){  // 차량·창고 등록수 반영
+    const v=$("lgVeh"), w=$("lgWh");
+    if(v&&typeof VEH_LIST!=="undefined") v.value=VEH_LIST.length;
+    if(w&&typeof FAC_LIST!=="undefined"&&FAC_LIST.length) w.value=FAC_LIST.length;
+  }
+  const est=estLogisticsCost({
+    scale:scaleEl.value,
+    vehicles:(($("lgVeh")||{}).value)|0,
+    warehouses:(($("lgWh")||{}).value)|0,
+    outCity:(($("lgRegion")||{}).value==="out"),
+  });
+  const out=$("lgCostOut"); if(!out) return;
+  if(est.free){
+    out.innerHTML=`<div class="banner ok"><b>${T("무료")}</b> · ${T("SEHATI 자가선언 — 정부가 전액 부담(Rp 0)")}</div>`;
+    return;
+  }
+  const rows=est.lines.map(l=>`<div class="li" style="padding:4px 0;border-bottom:1px solid var(--line);display:flex"><div class="tx" style="flex:1">${esc(l.k)}</div><div class="when" style="font-variant-numeric:tabular-nums">${_rp(l.v)}</div></div>`).join("");
+  out.innerHTML=`
+    <div class="muted small" style="margin-bottom:6px">${T("심사일수")}: <b>${est.baseMandays}${T("일")}</b>${est.whMult>1?` × ${est.whMult} (${T("창고 2곳 이상")}) = <b>${est.mandays}${T("일")}</b>`:""}</div>
+    ${rows}
+    <div class="li" style="padding:8px 0;display:flex;font-weight:800;border-top:2px solid var(--line);margin-top:2px"><div class="tx" style="flex:1">${T("합계(추정)")}</div><div class="when" style="text-align:right"><div style="font-variant-numeric:tabular-nums">${_rp(est.total)}</div><div class="muted small" style="font-weight:500">${_krw(est.total)}</div></div></div>
+    <div class="muted small" style="margin-top:8px">⚠ ${T("추정치입니다. 실제 청구는 규모·지역·수량에 따라 다르며 BPJPH 공식 계산기(kalkulator-biaya-sh)가 정본입니다.")}</div>`;
+}
+
 /* ===== 물류 차량·컨테이너 등록 (jasa logistik) ===== */
 let VEH_LIST=[];
 const VEH_TYPE={truck:"트럭",van:"밴",container:"컨테이너",tanker:"탱크로리",reefer:"냉장차"};
