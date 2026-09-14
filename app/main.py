@@ -17126,7 +17126,7 @@ def del_vehicle(vehicle_id: str,
 # 할랄 세척 인증의 실체 = SOP대로 쌓인 로그 + 자격 있는 페냘리아 서명(사진은 보조).
 def _latest_cleaning(db, vehicle_id):
     return (db.query(models.VehicleCleaning).filter_by(vehicle_id=vehicle_id)
-              .order_by(models.VehicleCleaning.cleaned_at.desc().nullslast(),
+              .order_by(models.VehicleCleaning.cleaned_at.desc(),
                         models.VehicleCleaning.created_at.desc()).first())
 
 
@@ -17187,7 +17187,7 @@ def list_cleanings(vehicle_id: str,
         raise HTTPException(404, {"code": "VEHICLE_NOT_FOUND"})
     _assert_org_access(db, user, v.org_id)
     rows = (db.query(models.VehicleCleaning).filter_by(vehicle_id=vehicle_id)
-              .order_by(models.VehicleCleaning.cleaned_at.desc().nullslast(),
+              .order_by(models.VehicleCleaning.cleaned_at.desc(),
                         models.VehicleCleaning.created_at.desc()).all())
     return {"vehicle_id": vehicle_id, "halal_clear": _vehicle_halal_clear(db, v),
             "items": [_cleaning_dict(c) for c in rows]}
