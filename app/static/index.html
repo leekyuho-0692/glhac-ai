@@ -837,6 +837,11 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+  "물류 서비스 범위":"Logistics scope",
+  "범위 저장":"Save scope",
+  "범위 저장됨":"Scope saved",
+  "물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다. 종류를 바꾸려면 다른 신청 메뉴로 시작하세요.":"Logistics (jasa logistik) — docs & audit follow logistics criteria. To change type, start from another application menu.",
+
   "— 선택 없음 —":"— None —",
   "눌러야 서류 반영":"press to apply docs",
 
@@ -1507,6 +1512,11 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "물류 서비스 범위":"Ruang lingkup jasa",
+  "범위 저장":"Simpan lingkup",
+  "범위 저장됨":"Lingkup tersimpan",
+  "물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다. 종류를 바꾸려면 다른 신청 메뉴로 시작하세요.":"Jasa logistik — dokumen & audit kriteria logistik. Untuk ubah jenis, mulai dari menu permohonan lain.",
+
   "— 선택 없음 —":"— Tidak dipilih —",
   "눌러야 서류 반영":"tekan untuk terapkan",
 
@@ -5598,27 +5608,16 @@ async function resendLogiSync(eventId){
   }catch(e){toast(EMSG(e)||T('재전송 실패'));}
   applyView();
 }
-function onSchemeChange(){
-  const s=v('apScheme'); const box=document.getElementById('apJasaBox');
-  if(box) box.style.display = (s==='logistics')?'inline-flex':'none';
-  // 종류를 바꾸면 저장 전까지 서류 목록은 그대로다 — 저장 버튼을 강조해 반영을 유도한다.
-  var btns=document.querySelectorAll("button");
-  for(var i=0;i<btns.length;i++){ if(btns[i].textContent.indexOf(T('종류 저장'))>=0){
-    btns[i].classList.add('pulse'); btns[i].textContent='💾 '+T('종류 저장')+' — '+T('눌러야 서류 반영'); break; } }
-}
+function onSchemeChange(){}   // 인증 종류 전환 UI 제거(메뉴에서 결정) — 잔재 호출 대비 no-op
 async function saveScheme(id){
-  const s=v('apScheme');
-  const body={scheme:s};
-  if(s==='logistics'){
-    const jasa=[...document.querySelectorAll('.apJasa:checked')].map(x=>x.value);
-    if(!jasa.length){toast(T('물류 서비스를 최소 1개 선택하세요'));return;}
-    body.logistics_scope=jasa;
-  }
+  // 종류(scheme)는 메뉴에서 정해졌다 — 여기선 물류의 jasa 범위만 저장한다.
+  const jasa=[...document.querySelectorAll('.apJasa:checked')].map(x=>x.value);
+  if(!jasa.length){toast(T('물류 서비스를 최소 1개 선택하세요'));return;}
   try{
-    await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify(body)});
-    toast(T('인증 종류 저장됨'));
+    await API(`/cases/${id}/profile`,{method:"PATCH",body:JSON.stringify({logistics_scope:jasa})});
+    toast(T('범위 저장됨'));
     await loadCases(true);
-    go('application');   // 양식 리렌더 → 필요 서류·심사항목이 바뀐다
+    go('application');
   }catch(e){toast(EMSG(e)||T('저장 실패'));}
 }
 async function newCase(){
@@ -6312,17 +6311,14 @@ SCREEN.application=async()=>{
       <b style="font-size:17px">${T('인증 종류')} <span class="en" style="font-weight:500">· Certification</span></b> ${schemeBadge(c)}
       ${c.scheme_frozen?tag('gold',T('변경 잠금')):''}
     </div>
-    ${(!c.scheme_frozen&&canApp)?`<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center">
-      <select class="v" style="width:auto;font-size:15px;padding:10px 14px;font-weight:600;min-width:190px" id="apScheme" onchange="onSchemeChange()">
-        <option value="product"${c.scheme!=='logistics'?' selected':''}>🏭 ${T('제품')}</option>
-        <option value="logistics"${c.scheme==='logistics'?' selected':''}>🚚 ${T('물류 서비스')}</option>
-      </select>
-      <span id="apJasaBox" style="display:${c.scheme==='logistics'?'inline-flex':'none'};gap:10px;align-items:center;flex-wrap:wrap">
+    ${(!c.scheme_frozen&&canApp&&c.scheme==='logistics')?`<div style="display:flex;flex-wrap:wrap;gap:14px;align-items:center">
+      <span style="font-size:13px;font-weight:600">${T('물류 서비스 범위')}</span>
+      <span style="display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap">
         ${['penyimpanan','pengemasan','pendistribusian'].map(k=>`<label style="display:inline-flex;gap:7px;align-items:center;font-size:14px;font-weight:500;cursor:pointer;padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg)"><input type="checkbox" class="apJasa" value="${k}" style="width:17px;height:17px" ${(c.logistics_scope||[]).includes(k)?'checked':''}> ${T(_JASA_KO[k])}</label>`).join('')}
       </span>
-      <button class="btn pri" style="padding:10px 20px;font-size:14px;font-weight:600" onclick="saveScheme('${id}')">${T('종류 저장')}</button>
+      <button class="btn pri" style="padding:10px 20px;font-size:14px;font-weight:600" onclick="saveScheme('${id}')">${T('범위 저장')}</button>
     </div>
-    <div class="muted" style="margin-top:10px;font-size:12.5px">${T('종류를 바꾸면 필요 서류·심사항목이 바뀝니다. 서류 제출이 시작되면 잠깁니다.')}</div>`
+    <div class="muted" style="margin-top:10px;font-size:12.5px">${T('물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다. 종류를 바꾸려면 다른 신청 메뉴로 시작하세요.')}</div>`
     :`<div class="muted small">${c.scheme==='logistics'?T('물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다'):T('제품 할랄 인증')}</div>`}
   </div></div>`+`
   ${sdPromote?`<div class="card" style="margin-bottom:16px;border-left:3px solid var(--ok)"><div class="body">
