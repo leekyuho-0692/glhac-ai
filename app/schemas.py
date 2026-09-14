@@ -319,6 +319,17 @@ class VehicleReq(BaseModel):
     case_id: Optional[str] = None
 
 
+class VehicleCleaningReq(BaseModel):
+    cleaned_at: Optional[str] = None
+    previous_cargo: Optional[str] = None
+    previous_cargo_halal: Optional[bool] = None
+    method: Optional[str] = None             # sertu | normal
+    sertu_steps: Optional[int] = None
+    photo_doc_id: Optional[str] = None
+    next_due: Optional[str] = None
+    note: Optional[str] = None
+
+
 class TextScreenReq(BaseModel):
     text: str
 

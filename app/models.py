@@ -460,9 +460,36 @@ class Vehicle(Base):
     previous_cargo = Column(String)                    # 직전 화물(비할랄 여부 판단)
     previous_cargo_halal = Column(Boolean)             # 직전 화물이 할랄이었나(None=미상)
     last_cleaned = Column(String)                      # 최근 세척일(ISO date)
-    sertu = Column(Boolean, default=False)             # Sertu(정결) 세정 수행 여부
+    sertu = Column(Boolean, default=False)             # Sertu(정결) 세정 수행 여부 — 최신 로그의 캐시
     note = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class VehicleCleaning(Base):
+    """차량·컨테이너 세척 이력 1건 (차량 1:N).
+
+    할랄 세척 인증의 실체는 '사진 몇 장'이 아니라 'SOP대로 쌓인 로그 + 자격 있는
+    페냘리아 할랄의 서명'이다. 사진은 각 로그의 보조 증빙(photo_doc_id)일 뿐.
+    직전 화물이 비할랄이면 Sertu(정결) 세정 + 페냘리아 서명이 있어야 clear 로 본다.
+    작성자 != 서명자(4-eyes) — 작성은 담당자, 서명은 penyelia_halal 역할만."""
+    __tablename__ = "vehicle_cleaning"
+    cleaning_id = Column(String, primary_key=True, default=uid)
+    vehicle_id = Column(String, index=True, nullable=False)
+    org_id = Column(String, index=True)
+    cleaned_at = Column(String)                        # 세척 일시(ISO)
+    previous_cargo = Column(String)                    # 이 세척 직전 실었던 화물
+    previous_cargo_halal = Column(Boolean)             # 그 화물이 할랄이었나(None=미상)
+    method = Column(String, default="normal")          # sertu | normal
+    sertu_steps = Column(Integer)                      # Sertu 절차 횟수(예: 7)
+    photo_doc_id = Column(String)                      # 첨부 사진(Document FK) — 보조증빙
+    penyelia_id = Column(String)                       # 서명한 페냘리아 할랄
+    penyelia_sign = Column(Boolean, default=False)     # 서명(감독 확인) 완료 여부
+    signed_at = Column(String)                         # 서명 시각(ISO)
+    next_due = Column(String)                          # 다음 세척 예정일(주기 관리)
+    note = Column(Text)
+    created_by = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class AiExtraction(Base):
     """AI/OCR 결과 근거저장 (보강안 §7.2) — Human-in-the-loop 추적성."""

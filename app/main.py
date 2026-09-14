@@ -11189,7 +11189,13 @@ def _sync_logistics_vehicle(db, v, event):
         "transport_type": v.transport_type, "capacity": v.capacity, "reg_no": v.reg_no,
         "previous_cargo": v.previous_cargo, "previous_cargo_halal": v.previous_cargo_halal,
         "last_cleaned": v.last_cleaned, "sertu": bool(v.sertu),
+        "halal_clear": _vehicle_halal_clear(db, v),   # 최신 세척 로그 기준 판정(스냅샷 아님)
     }
+    _lc = _latest_cleaning(db, v.vehicle_id)
+    payload["last_cleaning"] = ({
+        "cleaned_at": _lc.cleaned_at, "method": _lc.method,
+        "penyelia_sign": bool(_lc.penyelia_sign), "next_due": _lc.next_due,
+    } if _lc else None)
     raw = _json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ev = models.IntegrationEvent(
         provider="logistics_audit", event_type=event, external_id=v.plate_no,
@@ -17057,7 +17063,10 @@ def list_vehicles(org_id: str, case_id: str = Query(None),
              "transport_type": v.transport_type, "capacity": v.capacity, "reg_no": v.reg_no,
              "previous_cargo": v.previous_cargo, "previous_cargo_halal": v.previous_cargo_halal,
              "last_cleaned": v.last_cleaned, "sertu": bool(v.sertu), "note": v.note,
-             "case_id": v.case_id, "created_at": str(v.created_at)} for v in rows]
+             "case_id": v.case_id, "created_at": str(v.created_at),
+             "halal_clear": _vehicle_halal_clear(db, v),          # 최신 세척 로그 기준 유도
+             "cleaning_count": db.query(models.VehicleCleaning).filter_by(vehicle_id=v.vehicle_id).count(),
+             "next_due": _vehicle_next_due(db, v)} for v in rows]
 
 
 @app.post("/orgs/{org_id}/vehicles")
@@ -17111,6 +17120,156 @@ def del_vehicle(vehicle_id: str,
     db.delete(v)
     db.commit()
     return {"deleted": vehicle_id}
+
+
+# ===== 차량 세척 이력 (jasa logistik) =====
+# 할랄 세척 인증의 실체 = SOP대로 쌓인 로그 + 자격 있는 페냘리아 서명(사진은 보조).
+def _latest_cleaning(db, vehicle_id):
+    return (db.query(models.VehicleCleaning).filter_by(vehicle_id=vehicle_id)
+              .order_by(models.VehicleCleaning.cleaned_at.desc().nullslast(),
+                        models.VehicleCleaning.created_at.desc()).first())
+
+
+def _vehicle_halal_clear(db, v):
+    """운송 가능 여부(교차오염 없음) 판정 — 최신 세척 로그가 근거.
+    로그가 없으면 기존 스냅샷(previous_cargo_halal·sertu)으로 폴백(하위호환)."""
+    last = _latest_cleaning(db, v.vehicle_id)
+    if not last:
+        return not (v.previous_cargo_halal is False and not v.sertu)
+    if last.previous_cargo_halal is False:
+        # 직전 비할랄 → Sertu 세정 + 자격 페냘리아 서명까지 있어야 clear
+        return last.method == "sertu" and bool(last.penyelia_sign)
+    return True
+
+
+def _vehicle_next_due(db, v):
+    last = _latest_cleaning(db, v.vehicle_id)
+    return last.next_due if last else None
+
+
+def _can_penyelia_sign(db, org_id, user):
+    """서명 자격: penyelia_halal 역할 + 해당 org의 active 페냘리아(수료증 유효)."""
+    from datetime import date as _date
+    pen = (db.query(models.PenyeliaHalal)
+             .filter_by(org_id=org_id, user_id=user.get("uid"), status="active").first())
+    if not pen:   # user_id 매칭이 없으면 org의 active 페냘리아 아무나(계정 미연결 운영 대비)
+        pen = db.query(models.PenyeliaHalal).filter_by(org_id=org_id, status="active").first()
+    if not pen:
+        return None
+    if pen.cert_expiry and pen.cert_expiry < _date.today():
+        return None            # 수료증 만료 → 서명 자격 없음
+    return pen
+
+
+def _refresh_vehicle_cache(db, v):
+    """차량 스냅샷(last_cleaned·sertu)을 최신 로그로 역동기화 — 목록·sync 하위호환."""
+    last = _latest_cleaning(db, v.vehicle_id)
+    if last:
+        v.last_cleaned = last.cleaned_at or v.last_cleaned
+        v.sertu = (last.method == "sertu")
+
+
+def _cleaning_dict(cl):
+    return {"cleaning_id": cl.cleaning_id, "vehicle_id": cl.vehicle_id,
+            "cleaned_at": cl.cleaned_at, "previous_cargo": cl.previous_cargo,
+            "previous_cargo_halal": cl.previous_cargo_halal, "method": cl.method,
+            "sertu_steps": cl.sertu_steps, "photo_doc_id": cl.photo_doc_id,
+            "penyelia_id": cl.penyelia_id, "penyelia_sign": bool(cl.penyelia_sign),
+            "signed_at": cl.signed_at, "next_due": cl.next_due, "note": cl.note,
+            "created_by": cl.created_by, "created_at": str(cl.created_at)}
+
+
+@app.get("/vehicles/{vehicle_id}/cleanings")
+def list_cleanings(vehicle_id: str,
+                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    v = db.get(models.Vehicle, vehicle_id)
+    if not v:
+        raise HTTPException(404, {"code": "VEHICLE_NOT_FOUND"})
+    _assert_org_access(db, user, v.org_id)
+    rows = (db.query(models.VehicleCleaning).filter_by(vehicle_id=vehicle_id)
+              .order_by(models.VehicleCleaning.cleaned_at.desc().nullslast(),
+                        models.VehicleCleaning.created_at.desc()).all())
+    return {"vehicle_id": vehicle_id, "halal_clear": _vehicle_halal_clear(db, v),
+            "items": [_cleaning_dict(c) for c in rows]}
+
+
+@app.post("/vehicles/{vehicle_id}/cleanings")
+def add_cleaning(vehicle_id: str, body: schemas.VehicleCleaningReq,
+                 user=Depends(auth.require_roles("applicant", "consultant", "operator",
+                                                 "penyelia_halal", "admin")),
+                 db: Session = Depends(get_db)):
+    """세척 로그 작성(담당자). 서명은 별도 — 작성자≠서명자(4-eyes)."""
+    v = db.get(models.Vehicle, vehicle_id)
+    if not v:
+        raise HTTPException(404, {"code": "VEHICLE_NOT_FOUND"})
+    _assert_org_access(db, user, v.org_id)
+    method = (body.method or "normal")
+    if method not in ("sertu", "normal"):
+        raise HTTPException(422, {"code": "BAD_METHOD", "message": "method는 sertu|normal"})
+    cl = models.VehicleCleaning(
+        vehicle_id=vehicle_id, org_id=v.org_id, cleaned_at=body.cleaned_at,
+        previous_cargo=body.previous_cargo, previous_cargo_halal=body.previous_cargo_halal,
+        method=method, sertu_steps=body.sertu_steps, photo_doc_id=body.photo_doc_id,
+        next_due=body.next_due, note=body.note, created_by=user.get("uid"), penyelia_sign=False)
+    db.add(cl)
+    db.flush()
+    _refresh_vehicle_cache(db, v)
+    db.commit()
+    _audit(db, user, "vehicle.cleaning.add", "vehicle_cleaning", cl.cleaning_id, v.case_id,
+           {"vehicle_id": vehicle_id, "method": method})
+    _sync_logistics_vehicle(db, v, "vehicle.upsert")     # 세척 반영해 audit의 halal_clear 갱신
+    return _cleaning_dict(cl)
+
+
+@app.post("/cleanings/{cleaning_id}/sign")
+def sign_cleaning(cleaning_id: str,
+                  user=Depends(auth.require_roles("penyelia_halal", "admin")),
+                  db: Session = Depends(get_db)):
+    """페냘리아 할랄 서명 — 이 세척이 규정대로 됐음을 자격자가 귀속·확정.
+    작성자 본인은 서명 불가(4-eyes). 자격(active·수료증 유효) 없으면 거부."""
+    from datetime import datetime as _dt
+    cl = db.get(models.VehicleCleaning, cleaning_id)
+    if not cl:
+        raise HTTPException(404, {"code": "CLEANING_NOT_FOUND"})
+    v = db.get(models.Vehicle, cl.vehicle_id)
+    _assert_org_access(db, user, cl.org_id)
+    if cl.created_by and cl.created_by == user.get("uid") and user.get("role") != "admin":
+        raise HTTPException(403, {"code": "SELF_SIGN_FORBIDDEN",
+                                  "message": "작성자는 서명할 수 없습니다(작성자≠서명자)"})
+    pen = _can_penyelia_sign(db, cl.org_id, user)
+    if not pen and user.get("role") != "admin":
+        raise HTTPException(403, {"code": "NO_SIGN_AUTHORITY",
+                                  "message": "유효한 페냘리아 할랄만 서명할 수 있습니다"})
+    cl.penyelia_id = (pen.penyelia_id if pen else None)
+    cl.penyelia_sign = True
+    cl.signed_at = _dt.utcnow().isoformat()
+    if v:
+        _refresh_vehicle_cache(db, v)
+    db.commit()
+    _audit(db, user, "vehicle.cleaning.sign", "vehicle_cleaning", cl.cleaning_id,
+           (v.case_id if v else None), {"penyelia_id": cl.penyelia_id})
+    if v:
+        _sync_logistics_vehicle(db, v, "vehicle.upsert")   # 서명으로 clear 되면 audit 갱신
+    return _cleaning_dict(cl)
+
+
+@app.delete("/cleanings/{cleaning_id}")
+def del_cleaning(cleaning_id: str,
+                 user=Depends(auth.require_roles("applicant", "consultant", "operator", "admin")),
+                 db: Session = Depends(get_db)):
+    cl = db.get(models.VehicleCleaning, cleaning_id)
+    if not cl:
+        raise HTTPException(404, {"code": "CLEANING_NOT_FOUND"})
+    _assert_org_access(db, user, cl.org_id)
+    v = db.get(models.Vehicle, cl.vehicle_id)
+    db.delete(cl)
+    db.flush()
+    if v:
+        _refresh_vehicle_cache(db, v)
+    db.commit()
+    if v:
+        _sync_logistics_vehicle(db, v, "vehicle.upsert")
+    return {"deleted": cleaning_id}
 
 
 # ===== 동적 메뉴 시스템 (설계서 §3~§5) =====

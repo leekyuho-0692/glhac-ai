@@ -839,6 +839,26 @@ function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko
 var EN_STRINGS={
   "물류 서비스 범위":"Logistics scope",
   "범위 저장":"Save scope",
+  /* 세척 로그 */
+  "운송 불가":"Transport blocked",
+  "운송 가능":"Transport OK",
+  "세척 예정 경과":"Cleaning overdue",
+  "세척 이력":"Cleaning log",
+  "사진이 아니라 로그+페냘리아 서명으로 인증":"Certified by log + penyelia signature, not photos",
+  "세척 기록이 없습니다.":"No cleaning records.",
+  "일반 세척":"Normal wash",
+  "페냘리아 서명":"Penyelia signed",
+  "일시 미상":"No date",
+  "다음 예정":"Next due",
+  "세척 기록":"Cleaning record",
+  "세척 기록 추가":"Add cleaning record",
+  "세척 일시":"Cleaning date",
+  "직전 화물 할랄":"Prev cargo halal",
+  "세척 방법":"Cleaning method",
+  "정결 세정":"Ritual cleansing",
+  "횟수":"Steps",
+  "다음 예정일":"Next due date",
+  "세척 기록됨":"Cleaning recorded",
   /* 물류 비용 산출 */
   "정부 등록비(BPJPH)":"Govt registration (BPJPH)",
   "LPH 심사비":"LPH inspection",
@@ -1541,6 +1561,26 @@ function capBanner(){
 const UI_STRINGS={
   "물류 서비스 범위":"Ruang lingkup jasa",
   "범위 저장":"Simpan lingkup",
+  /* 세척 로그 */
+  "운송 불가":"Tidak boleh angkut",
+  "운송 가능":"Boleh angkut",
+  "세척 예정 경과":"Pencucian terlambat",
+  "세척 이력":"Riwayat pencucian",
+  "사진이 아니라 로그+페냘리아 서명으로 인증":"Diverifikasi lewat log + tanda tangan penyelia, bukan foto",
+  "세척 기록이 없습니다.":"Belum ada catatan pencucian.",
+  "일반 세척":"Cuci biasa",
+  "페냘리아 서명":"Ditandatangani penyelia",
+  "일시 미상":"Tanpa tanggal",
+  "다음 예정":"Jadwal berikutnya",
+  "세척 기록":"Catatan pencucian",
+  "세척 기록 추가":"Tambah catatan pencucian",
+  "세척 일시":"Tanggal pencucian",
+  "직전 화물 할랄":"Kargo sebelumnya halal",
+  "세척 방법":"Metode pencucian",
+  "정결 세정":"Samak/Sertu",
+  "횟수":"Langkah",
+  "다음 예정일":"Tanggal jatuh tempo",
+  "세척 기록됨":"Pencucian tercatat",
   /* 물류 비용 산출 */
   "정부 등록비(BPJPH)":"Biaya pendaftaran (BPJPH)",
   "LPH 심사비":"Pemeriksaan LPH",
@@ -7703,16 +7743,84 @@ async function loadVehicles(id,org){
 function renderVehicles(id,org){
   const b=document.getElementById('vehBody'); if(!b)return;
   if(!VEH_LIST.length){ b.innerHTML='<div class="muted small">'+T('등록된 차량이 없습니다. [+ 차량 추가]로 등록하세요.')+'</div>'; return; }
+  const _today=new Date().toISOString().slice(0,10);
   let rows=VEH_LIST.map(function(v){
     const pc=(v.previous_cargo_halal===false)?'<span class="tag t-bad">'+T('직전 비할랄')+'</span>':(v.previous_cargo_halal===true?'<span class="tag t-ok">'+T('직전 할랄')+'</span>':'');
-    const st=(v.previous_cargo_halal===false&&!v.sertu)?'<span class="tag t-bad">'+T('세척 필요')+'</span>':(v.sertu?'<span class="tag t-ok">Sertu ✓</span>':'');
+    // 운송 가능 여부는 최신 세척 로그로 유도된 halal_clear 를 쓴다(스냅샷 아님)
+    const clr=(v.halal_clear===false)?'<span class="tag t-bad">'+T('운송 불가')+'</span>':(v.halal_clear===true?'<span class="tag t-ok">'+T('운송 가능')+'</span>':'');
+    const overdue=(v.next_due&&v.next_due<_today)?'<span class="tag t-bad">⏰ '+T('세척 예정 경과')+'</span>':'';
+    const cnt=(v.cleaning_count|0);
     return '<div class="li" style="padding:6px 0;border-bottom:1px solid var(--line)"><div class="tx" style="flex:1">'
       +'<b>'+esc(v.plate_no||'—')+'</b> <span class="muted small">'+esc(T(VEH_TYPE[v.vehicle_type]||v.vehicle_type||''))+' · '+esc(T(VEH_TRANS[v.transport_type]||v.transport_type||''))+(v.capacity?' · '+esc(v.capacity):'')+'</span>'
-      +'<div class="muted small">'+(v.previous_cargo?T('직전 화물')+': '+esc(v.previous_cargo)+' ':'')+pc+' '+st+'</div></div>'
-      +'<div class="when" style="display:flex;gap:4px"><button class="btn" style="padding:2px 7px;font-size:11px" onclick="editVehicle(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">'+T('편집')+'</button>'
-      +'<button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delVehicle(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">✕</button></div></div>';
+      +'<div class="muted small">'+(v.previous_cargo?T('직전 화물')+': '+esc(v.previous_cargo)+' ':'')+pc+' '+clr+' '+overdue+'</div></div>'
+      +'<div class="when" style="display:flex;gap:4px">'
+      +'<button class="btn" style="padding:2px 7px;font-size:11px" onclick="toggleCleanings(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">🚿 '+T('세척 이력')+(cnt?' ('+cnt+')':'')+'</button>'
+      +'<button class="btn" style="padding:2px 7px;font-size:11px" onclick="editVehicle(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">'+T('편집')+'</button>'
+      +'<button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delVehicle(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">✕</button></div></div>'
+      +'<div id="clean_'+v.vehicle_id+'" style="display:none;padding:8px 0 12px 8px;border-bottom:1px solid var(--line)"></div>';
   }).join('');
   b.innerHTML=rows;
+}
+/* ===== 세척 이력 아코디언 ===== */
+let CLEAN_CACHE={};
+async function toggleCleanings(org,id,vid){
+  const box=document.getElementById('clean_'+vid); if(!box)return;
+  if(box.style.display==='none'){ box.style.display='block'; box.innerHTML='<div class="muted small">'+T('불러오는 중…')+'</div>';
+    try{ const r=await API('/vehicles/'+vid+'/cleanings'); CLEAN_CACHE[vid]=r; renderCleanings(org,id,vid); }
+    catch(e){ box.innerHTML='<div class="muted small">'+esc(EMSG(e))+'</div>'; }
+  } else { box.style.display='none'; }
+}
+function renderCleanings(org,id,vid){
+  const box=document.getElementById('clean_'+vid); if(!box)return;
+  const r=CLEAN_CACHE[vid]||{items:[]};
+  const canSign=['penyelia_halal','admin'].includes(ROLE);
+  const canAdd=['applicant','consultant','operator','penyelia_halal','admin'].includes(ROLE);
+  let html='<div style="font-weight:700;font-size:12px;margin-bottom:6px">🚿 '+T('세척 이력')+' <span class="muted">· '+T('사진이 아니라 로그+페냘리아 서명으로 인증')+'</span></div>';
+  if(!r.items.length){ html+='<div class="muted small" style="margin-bottom:6px">'+T('세척 기록이 없습니다.')+'</div>'; }
+  else{ html+=r.items.map(function(cl){
+    const m=(cl.method==='sertu')?'<span class="tag t-ok">Sertu'+(cl.sertu_steps?' ×'+cl.sertu_steps:'')+'</span>':'<span class="tag">'+T('일반 세척')+'</span>';
+    const sign=cl.penyelia_sign?'<span class="tag t-ok">✍ '+T('페냘리아 서명')+'</span>':'<span class="tag t-bad">'+T('서명 대기')+'</span>';
+    const prev=(cl.previous_cargo_halal===false)?' · '+T('직전 비할랄'):(cl.previous_cargo_halal===true?' · '+T('직전 할랄'):'');
+    return '<div class="li" style="padding:5px 0;border-bottom:1px dashed var(--line)"><div class="tx" style="flex:1">'
+      +'<span class="muted small">'+esc(cl.cleaned_at||T('일시 미상'))+'</span> '+m+' '+sign
+      +'<div class="muted small">'+(cl.previous_cargo?esc(cl.previous_cargo):'')+prev+(cl.next_due?' · '+T('다음 예정')+' '+esc(cl.next_due):'')+'</div></div>'
+      +'<div class="when" style="display:flex;gap:4px">'
+      +((canSign&&!cl.penyelia_sign)?'<button class="btn pri" style="padding:2px 7px;font-size:11px" onclick="signCleaning(\''+org+'\',\''+id+'\',\''+vid+'\',\''+cl.cleaning_id+'\')">✍ '+T('서명')+'</button>':'')
+      +(canAdd?'<button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delCleaning(\''+org+'\',\''+id+'\',\''+vid+'\',\''+cl.cleaning_id+'\')">✕</button>':'')
+      +'</div></div>';
+  }).join(''); }
+  if(canAdd) html+='<div class="btnrow" style="margin-top:8px"><button class="btn" style="padding:3px 10px;font-size:12px" onclick="addCleaning(\''+org+'\',\''+id+'\',\''+vid+'\')">＋ '+T('세척 기록')+'</button></div>';
+  box.innerHTML=html;
+}
+async function addCleaning(org,id,vid){
+  const yn=[{value:"",label:T('미상')},{value:"1",label:T('할랄')},{value:"0",label:T('비할랄')}];
+  const out=await dialog(T('세척 기록 추가'),[
+    {key:"cleaned_at",label:T('세척 일시')+" · Date",type:"date",value:new Date().toISOString().slice(0,10)},
+    {key:"previous_cargo",label:T('직전 화물')+" · Prev cargo"},
+    {key:"previous_cargo_halal",label:T('직전 화물 할랄')+" · Prev halal",type:"select",value:"",options:yn},
+    {key:"method",label:T('세척 방법')+" · Method",type:"select",value:"normal",options:[{value:"normal",label:T('일반 세척')},{value:"sertu",label:"Sertu ("+T('정결 세정')+")"}]},
+    {key:"sertu_steps",label:"Sertu "+T('횟수')+" · Steps",type:"number"},
+    {key:"next_due",label:T('다음 예정일')+" · Next due",type:"date"},
+    {key:"note",label:T('비고')+" · Note"}]);
+  if(!out)return;
+  const body={cleaned_at:out.cleaned_at||null,previous_cargo:out.previous_cargo||null,
+    method:out.method||"normal",sertu_steps:out.sertu_steps?parseInt(out.sertu_steps):null,
+    next_due:out.next_due||null,note:out.note||null};
+  if(out.previous_cargo_halal==="1")body.previous_cargo_halal=true;
+  else if(out.previous_cargo_halal==="0")body.previous_cargo_halal=false;
+  try{ await API('/vehicles/'+vid+'/cleanings',{method:"POST",body:JSON.stringify(body)});
+    toast(T('세척 기록됨')); CLEAN_CACHE[vid]=await API('/vehicles/'+vid+'/cleanings'); renderCleanings(org,id,vid); loadVehicles(id,org); }
+  catch(e){ toast(EMSG(e)); }
+}
+async function signCleaning(org,id,vid,cid){
+  try{ await API('/cleanings/'+cid+'/sign',{method:"POST"});
+    toast(T('서명 완료')); CLEAN_CACHE[vid]=await API('/vehicles/'+vid+'/cleanings'); renderCleanings(org,id,vid); loadVehicles(id,org); }
+  catch(e){ toast(EMSG(e)); }
+}
+async function delCleaning(org,id,vid,cid){
+  try{ await API('/cleanings/'+cid,{method:"DELETE"});
+    toast(T('삭제됨')); CLEAN_CACHE[vid]=await API('/vehicles/'+vid+'/cleanings'); renderCleanings(org,id,vid); loadVehicles(id,org); }
+  catch(e){ toast(EMSG(e)); }
 }
 function _vehFields(v){v=v||{};return [
   {key:"plate_no",label:T('번호판')+" · Plate",value:v.plate_no,required:true},
