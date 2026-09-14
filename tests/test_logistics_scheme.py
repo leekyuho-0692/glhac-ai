@@ -342,3 +342,21 @@ def test_차량_sync_url_유도():
         assert m._logistics_url("cert") == "https://x/v1/certs/logistics-sync"
     finally:
         del os.environ["GLHAC_LOGISTICS_WEBHOOK_URL"]
+
+
+def test_신청메뉴가_제품_로지스틱으로_나뉜다():
+    """GRP_2(신청)에 제품 신청/로지스틱 신청 메뉴가 시드되고 /me/menus 로 노출된다."""
+    from app import models
+    with TestClient(app) as cl:
+        db = next(m.get_db())
+        m._ensure_apply_menus(db)   # idempotent
+        codes = {x.menu_code for x in db.query(models.SysMenu).filter(
+            models.SysMenu.menu_code.in_(["APPLYPRODUCT", "APPLYLOGISTICS"])).all()}
+        assert codes == {"APPLYPRODUCT", "APPLYLOGISTICS"}
+        # consultant 노출
+        h = _tok(cl, "consultant1", "pw")
+        tree = cl.get("/me/menus?lang=ko", headers=h).json()
+        routes = {c.get("routePath") for g in tree for c in g.get("children", [])}
+        assert "applyProduct" in routes and "applyLogistics" in routes
+        # 기존 '신청'(application)은 사이드바에서 감춰졌다
+        assert "application" not in routes

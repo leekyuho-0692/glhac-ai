@@ -17295,6 +17295,52 @@ def _ensure_inquiry_menu(db):
     db.commit()
 
 
+def _ensure_apply_menus(db):
+    """신청을 '제품 신청 / 로지스틱 신청'으로 나눈다 — GRP_2(신청) 하위에 두 진입점.
+
+    좌측 메뉴는 DB(sys_menu)에서 온다. 기존 'APPLICATION'(신청)은 케이스 편집 진입용으로
+    두되(라우트 유지), 사이드바에서는 감춘다(role_menu 제거) — 신청 시작은 종류별 메뉴로 한다.
+    노출 역할은 기존 APPLICATION 과 같다(client·consultant·admin). idempotent."""
+    _ROLES = ("client", "consultant", "admin")
+    grp = db.query(models.SysMenu).filter_by(menu_code="GRP_2").first()   # 신청
+    if not grp:
+        return
+    specs = [("APPLYPRODUCT", "applyProduct", "📦", 1,
+              [("ko", "제품 신청"), ("en", "Product Application"),
+               ("id", "Permohonan Produk")]),
+             ("APPLYLOGISTICS", "applyLogistics", "🚚", 2,
+              [("ko", "로지스틱 신청"), ("en", "Logistics Application"),
+               ("id", "Permohonan Logistik")])]
+    for code, route, icon, sort, names in specs:
+        m = db.query(models.SysMenu).filter_by(menu_code=code).first()
+        if not m:
+            mid = models.uid()
+            db.add(models.SysMenu(menu_id=mid, menu_code=code, parent_menu_id=grp.menu_id,
+                                  menu_depth=2, menu_type="screen", route_path=route,
+                                  icon_name=icon, default_sort_order=sort))
+            for lang, nm in names:
+                db.add(models.SysMenuI18n(menu_id=mid, language_code=lang, menu_name=nm))
+        else:
+            mid = m.menu_id
+        have = {rm.role_id for rm in
+                db.query(models.SysRoleMenu).filter_by(menu_id=mid).all()}
+        for r in _ROLES:
+            if r not in have:
+                db.add(models.SysRoleMenu(role_id=r, menu_id=mid, sort_order=sort))
+    # 사전심사(PREASSESS)를 신청 종류 2개 뒤(순서 3)로 민다 — 로지스틱(2)과 충돌 방지.
+    pre = db.query(models.SysMenu).filter_by(menu_code="PREASSESS").first()
+    if pre:
+        for rm in db.query(models.SysRoleMenu).filter_by(menu_id=pre.menu_id).all():
+            if rm.sort_order != 3:
+                rm.sort_order = 3
+    # 기존 '신청'(APPLICATION)은 사이드바에서 감춘다 — 라우트는 케이스 진입용으로 살아있다.
+    appm = db.query(models.SysMenu).filter_by(menu_code="APPLICATION").first()
+    if appm:
+        for rm in db.query(models.SysRoleMenu).filter_by(menu_id=appm.menu_id).all():
+            db.delete(rm)
+    db.commit()
+
+
 def backfill_post_no(db):
     """글번호가 없던 기존 글에 번호를 매긴다 — 한 번만 돌고 이후엔 아무 일도 않는다.
 
@@ -17328,6 +17374,7 @@ def seed_menus(db):
         _fix_report_route(db)     # '보고서' 메뉴가 파트와로 가던 라우팅 교정
         _ensure_consultant_menus(db)   # 영업(유치)·컨설턴트 관리 화면
         _ensure_inquiry_menu(db)       # '홈페이지 문의함'(익명 게시판)
+        _ensure_apply_menus(db)        # 제품/로지스틱 신청 분리
         return
     path = os.path.join(os.path.dirname(__file__), "menu_seed.json")
     if not os.path.exists(path):
@@ -17358,6 +17405,7 @@ def seed_menus(db):
     _fix_report_route(db)
     _ensure_consultant_menus(db)
     _ensure_inquiry_menu(db)
+    _ensure_apply_menus(db)
 
 
 _BR2ROLE_MENU = {"applicant": "client", "consultant": "consultant", "auditor": "auditor",

@@ -446,6 +446,8 @@ const NAV = [
   ["caseList","📋","내 케이스","My Cases","목록·List"],
   ["workflow","🧭","워크스페이스","Workspace","진행·In progress"],
   ["application","📝","신청","Application","신청·Intake"],
+  ["applyProduct","📦","제품 신청","Product Application","제품 신청"],
+  ["applyLogistics","🚚","로지스틱 신청","Logistics Application","로지스틱 신청"],
   ["assignments","📬","배정함","Assignments","수락·거절"],   // 오디터 배정 수락/거절 루프
   ["auditorWork","🧑‍⚖️","오디터 업무 현황","Auditor Workload","배정 판단·개별 내역"],
   ["pendamping","🤝","동반자 워크스페이스","Pendamping Workspace","SEHATI 배정·검증"],
@@ -511,6 +513,8 @@ const MENU_ACCESS = {
   consultantAdmin:["ops","admin"],       // 컨설턴트 등록·요율·정산 — 인증기관
   dashboard:[], workflow:[],  // 개요 통합: 케이스 디테일(renderCaseDetail)로 흡수 — 메뉴 비노출
   application:["client","consultant","admin"],
+  applyProduct:["client","consultant","admin"],
+  applyLogistics:["client","consultant","admin"],
   preassess:["client","consultant","auditor","sharia","ops","admin"],   // 심사자 뷰: 오디터·샤리아(열람)·최고운영자   // 오디터 사전심사 뷰(3분할 회신루프)는 기구현 — 메뉴 접근 누락 수정(2026-07-10)
   materials:["client","consultant","auditor","admin"],
   aiExtractions:["consultant","auditor","admin"],   // G14 M08 AI 검수 큐 — 내부(오디터/컨설턴트/관리자) 전용. 2026-07-14 클라이언트 비노출(수정요청 009)
@@ -6243,6 +6247,36 @@ async function createApplication(){
     await loadCases(true);go("application");   // 생성된 케이스의 신청 폼으로 진입
   }catch(e){toast(T('생성 실패')+" · "+(EMSG(e)||T('권한 확인')));}
 }
+async function _startApplication(scheme, jasa){
+  // 해당 종류의 진행중 신청이 있으면 이어가고, 없으면 새로 만든다.
+  const cs=await loadCases(true).catch(()=>[]);
+  const mine=(cs||[]).filter(x=>(x.scheme||'product')===scheme
+    && ['onboarding','application_draft'].includes(x.status));
+  let id;
+  if(mine.length){ id=mine[0].case_id; }
+  else{
+    const body={is_msme:true,scheme:scheme};
+    if(scheme==='logistics') body.logistics_scope=jasa;
+    try{ const c=await API('/cases',{method:'POST',body:JSON.stringify(body)}); id=c.case_id; await loadCases(true); }
+    catch(e){ toast(T('생성 실패')+' · '+(EMSG(e)||'')); return; }
+  }
+  CURCASE=id; CASE_PIN=true; try{localStorage.setItem('glhac_case',id)}catch(_){}
+  go('application');
+}
+SCREEN.applyProduct=async()=>{ await _startApplication('product'); return ''; };
+SCREEN.applyLogistics=async()=>{
+  // 로지스틱은 jasa(보관·포장·유통) 최소 1개를 먼저 고른다.
+  const yn=[{value:"1",label:T('포함')},{value:"0",label:T('미포함')}];
+  const j=await dialog(T('물류 서비스 범위 · Jasa logistik'),[
+    {key:"penyimpanan",label:T('보관 · Storage (penyimpanan)'),type:"select",value:"1",options:yn},
+    {key:"pengemasan",label:T('포장 · Packaging (pengemasan)'),type:"select",value:"0",options:yn},
+    {key:"pendistribusian",label:T('유통 · Distribution (pendistribusian)'),type:"select",value:"0",options:yn}]);
+  if(!j){ go('caseList'); return ''; }
+  const scope=["penyimpanan","pengemasan","pendistribusian"].filter(k=>j[k]==="1");
+  if(!scope.length){ toast(T('물류 서비스를 최소 1개 선택하세요')); go('caseList'); return ''; }
+  await _startApplication('logistics', scope);
+  return '';
+};
 SCREEN.application=async()=>{
   // 진입 모드: ①내 케이스에서 선택(CURCASE 있음)=그 신청 정보 / ②신청 직접 진입=새 신청(회사정보 자동 프리필)
   let id=CURCASE;
