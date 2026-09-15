@@ -578,14 +578,14 @@ let LANG=1; const LANGS=["🌐 EN","🌐 한국어","🌐 Bahasa"];
 /* ---- auth / api ---- */
 const TK="glhac_token", RTK="glhac_refresh";
 function token(){try{return localStorage.getItem(TK)||""}catch(_){return""}}
-/* QR(?ref=코드)로 들어온 컨설턴트 초대코드 — URL에서 잡아 보관하고, 없으면 저장분을 쓴다.
-   홈페이지(glhac.com)와 앱(glhac.co.kr)은 origin이 달라 세션이 안 넘어오므로, 앱 자체 URL의
-   ?ref= 를 잡는다(홈페이지의 '가입하기'가 glhac.co.kr/ui/?ref=코드 로 넘겨준다). */
+/* QR(?ref=코드)로 들어온 컨설턴트 초대코드 — **현재 URL의 ?ref 만** 쓴다.
+   저장분(localStorage) 되살림은 하지 않는다: ref 없이 그냥 들어온 사람에게 옛 코드가
+   붙어 엉뚱한 컨설턴트로 귀속되면 안 된다. 귀속은 QR/추천 URL 체인을 통해서만 흐른다
+   (홈페이지가 인증신청 링크에 ?ref 를 실어 glhac.co.kr/?ref=코드 로 넘긴다). */
 function glhacRef(){
   try{
     const m=(location.search||"").match(/[?&]ref=([A-Za-z0-9\-]+)/);
-    if(m){const c=m[1].toUpperCase();localStorage.setItem("glhac_ref",c);return c;}
-    return localStorage.getItem("glhac_ref")||"";
+    return m?m[1].toUpperCase():"";
   }catch(_){return "";}
 }
 let FETCH_ERRORS=0;
