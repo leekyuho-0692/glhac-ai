@@ -16957,10 +16957,12 @@ class NoCacheStaticFiles(StaticFiles):
 
 
 @app.get("/", include_in_schema=False)
-def _root_redirect():
-    """맨 URL 접속 시 UI로 이동 (루트 라우트 부재로 인한 404 방지)."""
+def _root_redirect(request: Request):
+    """맨 URL 접속 시 UI로 이동 (루트 라우트 부재로 인한 404 방지).
+    쿼리스트링(?ref=컨설턴트코드 등)을 보존해 넘긴다 — 안 그러면 QR 귀속이 끊긴다."""
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/ui/")
+    qs = request.url.query
+    return RedirectResponse(url="/ui/" + (("?" + qs) if qs else ""))
 
 
 # ===== 공장·시설 (회사1:공장N) — Phase 3 =====
