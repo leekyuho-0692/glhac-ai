@@ -578,6 +578,16 @@ let LANG=1; const LANGS=["🌐 EN","🌐 한국어","🌐 Bahasa"];
 /* ---- auth / api ---- */
 const TK="glhac_token", RTK="glhac_refresh";
 function token(){try{return localStorage.getItem(TK)||""}catch(_){return""}}
+/* QR(?ref=코드)로 들어온 컨설턴트 초대코드 — URL에서 잡아 보관하고, 없으면 저장분을 쓴다.
+   홈페이지(glhac.com)와 앱(glhac.co.kr)은 origin이 달라 세션이 안 넘어오므로, 앱 자체 URL의
+   ?ref= 를 잡는다(홈페이지의 '가입하기'가 glhac.co.kr/ui/?ref=코드 로 넘겨준다). */
+function glhacRef(){
+  try{
+    const m=(location.search||"").match(/[?&]ref=([A-Za-z0-9\-]+)/);
+    if(m){const c=m[1].toUpperCase();localStorage.setItem("glhac_ref",c);return c;}
+    return localStorage.getItem("glhac_ref")||"";
+  }catch(_){return "";}
+}
 let FETCH_ERRORS=0;
 async function tryRefresh(){
   let rt=""; try{rt=localStorage.getItem(RTK)||""}catch(_){}
@@ -659,7 +669,8 @@ function logout(skipServer){
   // 전체 리로드로 모든 인메모리 상태를 초기화.
   try{location.reload();}catch(_){document.getElementById("appView").style.display="none";document.getElementById("loginView").style.display="grid";}
 }
-function showRegister(on){document.getElementById("loginForm").style.display=on?"none":"";document.getElementById("registerForm").style.display=on?"":"none";}
+function showRegister(on){document.getElementById("loginForm").style.display=on?"none":"";document.getElementById("registerForm").style.display=on?"":"none";
+  if(on){const ref=glhacRef();if(ref){const el=document.getElementById("regInvite");if(el&&!el.value){el.value=ref;regCheckInvite();}}}}
 function quickLogin(u,p){document.getElementById("loginUser").value=u;document.getElementById("loginPass").value=p;doLogin();}
 function regOcrPick(){
   // 사업자등록증은 PDF로 오는 경우가 더 많다. 서버가 PDF 본문·이미지 OCR을 모두 처리한다.
@@ -12387,6 +12398,7 @@ async function boot(){
       applyTenantBranding(cfg&&cfg.tenant);   // 범위확장: 도메인 매칭 시 화이트라벨 적용
     }catch(_){}
     loginLocalize();   // 로그인/회원가입 화면 언어 적용(Bahasa 등)
+    if(glhacRef())showRegister(true);   // QR(?ref=코드)로 들어오면 가입폼을 열고 코드 자동 반영
     return;}
   try{const th=localStorage.getItem("glhac_theme")||"light";document.documentElement.setAttribute("data-theme",th);document.getElementById("themePill").textContent=th==="dark"?"☀️ 라이트":"🌙 다크";}catch(_){}
   try{LANG=parseInt(localStorage.getItem("glhac_lang")||"1",10)||0;applyLang();}catch(_){}
