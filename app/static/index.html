@@ -839,6 +839,12 @@ function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko
 var EN_STRINGS={
   "물류 서비스 범위":"Logistics scope",
   "범위 저장":"Save scope",
+  /* QR 공유 */
+  "공유":"Share",
+  "링크 복사":"Copy link",
+  "공유하지 못했습니다":"Couldn't share",
+  "링크를 복사했습니다":"Link copied",
+  "복사 실패":"Copy failed",
   /* 세척 로그 */
   "운송 불가":"Transport blocked",
   "운송 가능":"Transport OK",
@@ -1561,6 +1567,12 @@ function capBanner(){
 const UI_STRINGS={
   "물류 서비스 범위":"Ruang lingkup jasa",
   "범위 저장":"Simpan lingkup",
+  /* QR 공유 */
+  "공유":"Bagikan",
+  "링크 복사":"Salin tautan",
+  "공유하지 못했습니다":"Gagal membagikan",
+  "링크를 복사했습니다":"Tautan disalin",
+  "복사 실패":"Gagal menyalin",
   /* 세척 로그 */
   "운송 불가":"Tidak boleh angkut",
   "운송 가능":"Boleh angkut",
@@ -10253,10 +10265,31 @@ async function inqQR(){
       <div><div class="muted small">${T('고객이 이 QR 을 찍으면 홈페이지로 이동하고, 남긴 문의가 내 담당으로 붙습니다.')}</div>
         <div style="font-family:ui-monospace,Menlo,monospace;font-size:17px;font-weight:700;margin:8px 0">${esc(info.code)}</div>
         <div class="muted small">${esc(info.url)}<br>${T('누적 사용')} ${info.used_count}${T('회')}</div>
-        <div class="btnrow"><a class="btn pri" download="glhac-qr-${esc(info.code)}.png" href="${url}">${T('QR 내려받기')}</a></div>
+        <div class="btnrow" style="flex-wrap:wrap;gap:8px">
+          <a class="btn pri" download="glhac-qr-${esc(info.code)}.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
+          <button class="btn" onclick="shareQr('${url}','${esc(info.code)}','${esc(info.url)}')">📤 ${T('공유')}</button>
+          <button class="btn" onclick="copyLink('${esc(info.url)}')">🔗 ${T('링크 복사')}</button>
+        </div>
       </div></div>`;
     localizeUI();
   }catch(e){ box.innerHTML=errCard(e); }
+}
+/* QR 이미지 공유 — Web Share API(이미지 파일 첨부). 미지원이면 링크 공유/복사로 폴백. */
+async function shareQr(pngUrl, code, refUrl){
+  try{
+    let file=null;
+    try{ const blob=await (await fetch(pngUrl)).blob();
+      file=new File([blob], "glhac-qr-"+code+".png", {type:"image/png"}); }catch(_){}
+    if(file && navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file], title:"GL-HAC QR", text:refUrl}); return;
+    }
+    if(navigator.share){ await navigator.share({title:"GL-HAC QR", text:refUrl, url:refUrl}); return; }
+    await copyLink(refUrl);   // 공유 API 미지원(데스크톱 등) → 링크 복사
+  }catch(e){ if(e && e.name==="AbortError") return; toast(T('공유하지 못했습니다')+" · "+EMSG(e)); }
+}
+async function copyLink(url){
+  try{ await navigator.clipboard.writeText(url); toast(T('링크를 복사했습니다')); }
+  catch(_){ toast(T('복사 실패')+" · "+url); }
 }
 
 SCREEN.feedback=async()=>{
