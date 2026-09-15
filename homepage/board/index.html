@@ -1,0 +1,778 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>문의하기 · GLHAC 지엘할랄인증센터</title>
+<meta name="description" content="할랄 인증 상담 문의 — 가입 없이 남기고 비밀번호로 확인하세요.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+<style>
+/* 본 사이트와 같은 팔레트 — 별도 페이지지만 같은 사이트로 보여야 한다 */
+:root{--green-950:#062f29;--green-900:#0a4038;--green-800:#0e5548;--green-700:#14715c;
+  --ivory:#f8f5ec;--gold:#a97827;--gold-soft:#c9a35a;--text:#17211f;--muted:#65726f;
+  --line:#dfe6e2;--radius:18px}
+*{box-sizing:border-box}
+body{margin:0;font-family:'Noto Sans KR',sans-serif;color:var(--text);background:#0d1f1b}
+body::before{content:"";position:fixed;inset:0;z-index:-2;
+  background:url("../intro/photo.jpg") center/cover no-repeat}
+body::after{content:"";position:fixed;inset:0;z-index:-1;
+  background:linear-gradient(180deg,rgba(0,0,0,.62) 0%,rgba(0,0,0,.5) 40%,rgba(255,255,255,.35) 100%)}
+a{color:inherit}
+.wrap{max-width:980px;margin:0 auto;padding:0 22px}
+
+header{background:rgba(255,255,255,.94);backdrop-filter:blur(6px);
+  border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+.nav{display:flex;align-items:center;gap:16px;height:76px}
+.logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.logo img{height:44px}
+.logo .hand{height:32px}
+.logo .hand text{font-family:'Snell Roundhand','Apple Chancery','Segoe Script','Brush Script MT',cursive;
+  font-style:italic;font-size:180px;fill:var(--gold)}
+.logo small{display:block;font-size:9.5px;letter-spacing:.1em;color:var(--gold-soft);font-weight:600}
+.nav-sp{flex:1}
+.nav a.home{font-weight:600;font-size:14px;color:var(--green-800);text-decoration:none}
+
+main{padding:44px 0 80px}
+h1{font-family:'Playfair Display',Georgia,serif;color:#fff;margin:0 0 8px;font-size:34px;letter-spacing:.02em}
+.lead{color:rgba(255,255,255,.84);margin:0 0 26px;font-size:14.5px;line-height:1.7}
+.ref{display:inline-block;margin-bottom:22px;padding:7px 14px;border-radius:999px;
+  background:rgba(169,120,39,.9);color:#fff;font-size:13px;font-weight:600}
+
+.tabs{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap}
+.tab{padding:9px 18px;border-radius:999px;border:1px solid rgba(255,255,255,.35);
+  background:rgba(255,255,255,.12);color:#fff;font:600 13.5px/1 'Noto Sans KR';cursor:pointer}
+.tab.on{background:#fff;color:var(--green-900);border-color:#fff}
+
+.card{background:rgba(255,255,255,.96);border-radius:var(--radius);padding:28px;
+  box-shadow:0 20px 50px rgba(0,0,0,.22)}
+.card h2{font-family:'Playfair Display',Georgia,serif;margin:0 0 4px;font-size:21px}
+.card .sub{color:var(--muted);font-size:13px;margin:0 0 20px;line-height:1.6}
+.field{margin-bottom:14px}
+label{display:block;font-size:12.5px;font-weight:600;margin-bottom:6px;color:var(--green-900)}
+label .req{color:#b4432f}
+input,textarea,select{width:100%;padding:11px 13px;border:1px solid var(--line);
+  border-radius:10px;font:14px/1.5 'Noto Sans KR',sans-serif;background:#fff;color:var(--text)}
+textarea{min-height:150px;resize:vertical}
+input:focus,textarea:focus{outline:2px solid var(--gold-soft);outline-offset:-1px;border-color:transparent}
+.hint{font-size:11.5px;color:var(--muted);margin-top:5px;line-height:1.5}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.btn{display:inline-block;padding:12px 22px;border:0;border-radius:999px;cursor:pointer;
+  font:700 14px/1 'Noto Sans KR',sans-serif;background:var(--gold);color:#fff}
+.btn:hover{background:var(--gold-soft)}
+.btn.ghost{background:transparent;color:var(--green-800);border:1px solid var(--line)}
+.btnrow{display:flex;gap:10px;align-items:center;margin-top:18px;flex-wrap:wrap}
+
+.msg{margin-top:16px;padding:13px 16px;border-radius:12px;font-size:13.5px;line-height:1.6;display:none}
+.msg.ok{display:block;background:#eaf6f0;color:#0e5548;border:1px solid #bfe3d2}
+.msg.bad{display:block;background:#fdecea;color:#93261a;border:1px solid #f5c6c0}
+.msg b{display:block;margin-bottom:4px}
+
+.post{border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:12px;background:#fff}
+.post h3{margin:0 0 6px;font-size:15.5px}
+.post .meta{font-size:12px;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
+.badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700}
+.badge.open{background:#fdf1dc;color:#8a5a12}
+.badge.answered{background:#e7f4ec;color:#136b46}
+.badge.closed{background:#eceff0;color:#5d6b68}
+.body{white-space:pre-wrap;line-height:1.75;font-size:14px;margin:14px 0 0}
+.reply{border-left:3px solid var(--gold-soft);background:var(--ivory);
+  padding:14px 16px;border-radius:0 12px 12px 0;margin-top:12px}
+.reply .who{font-size:11.5px;color:var(--muted);margin-bottom:6px}
+.qr{display:flex;gap:22px;align-items:center;flex-wrap:wrap}
+.qr img{width:190px;height:190px;background:#fff;border-radius:12px;padding:8px;border:1px solid var(--line)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;font-weight:700;color:var(--green-900)}
+.hide{display:none}
+.pager{display:flex;gap:6px;align-items:center;justify-content:center;margin-top:14px;flex-wrap:wrap}
+.pager button{padding:7px 13px;font-size:13px}
+.pager .now{font-size:12.5px;color:var(--muted);padding:0 6px}
+.srch{display:flex;gap:8px;margin-bottom:14px}
+.srch input{flex:1}
+.rthread{margin-left:34px;border-left-color:var(--line)}
+.rhead{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.who2{font-size:11.5px;color:var(--muted)}
+.mine{background:#eef6f1;border-left-color:var(--green-700)}
+.rbtns{display:flex;gap:6px;margin-top:8px}
+.rbtns button{padding:5px 11px;font-size:12px}
+.edited{font-size:11px;color:var(--muted)}
+.plist{list-style:none;margin:0;padding:0}
+.plist li{border:1px solid var(--line);border-radius:12px;margin-bottom:8px;overflow:hidden}
+.plist button{width:100%;display:flex;gap:12px;align-items:center;text-align:left;
+  padding:14px 16px;border:0;background:#fff;cursor:pointer;font:inherit}
+.plist button:hover{background:var(--ivory)}
+.plist .t{flex:1;font-weight:600;font-size:14.5px}
+.plist .d{color:var(--muted);font-size:12px;white-space:nowrap}
+.plist .badge{margin-left:4px}
+.lock{color:var(--gold);font-size:15px}
+.picked{padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--ivory);font-weight:600}
+.empty{padding:26px 18px;text-align:center;color:var(--muted);font-size:13.5px;line-height:1.8;
+  border:1px dashed var(--line);border-radius:12px}
+@media (max-width:640px){.row{grid-template-columns:1fr}h1{font-size:26px}.card{padding:22px}}
+</style>
+</head>
+<body>
+<header><div class="wrap nav">
+  <a class="logo" href="../">
+    <img src="../GLHAC_emblem.svg" alt="GLHAC">
+    <span>
+      <svg class="hand" viewBox="0 0 1000 230" aria-label="GLHAC"><text x="20" y="166">GLHAC</text></svg>
+      <small>HALAL CERTIFICATION CENTER</small>
+    </span>
+  </a>
+  <span class="nav-sp"></span>
+  <a class="home" href="../">← 홈으로</a>
+</div></header>
+
+<main class="wrap">
+  <h1>문의하기</h1>
+  <p class="lead">가입 없이 남기실 수 있습니다. <b>모든 문의는 비공개</b>이며, 담당자와 글쓴이만 볼 수 있습니다.<br>
+     남기실 때 정한 비밀번호로 나중에 답변을 확인하세요.</p>
+  <div id="refBadge" class="ref hide"></div>
+
+  <div class="tabs">
+    <button class="tab on" data-tab="write">문의 남기기</button>
+    <button class="tab" data-tab="check">문의 사항</button>
+    <button class="tab" data-tab="staff">담당자 로그인</button>
+  </div>
+
+  <!-- ① 작성 -->
+  <section id="tab-write" class="card">
+    <h2>상담 문의</h2>
+    <p class="sub">제품·원료 정보를 함께 적어 주시면 더 정확히 안내드릴 수 있습니다.</p>
+    <div class="field"><label>제목 <span class="req">*</span></label><input id="w-title" maxlength="120" placeholder="예) 화장품 원료 할랄 인증 가능 여부 문의"></div>
+    <div class="row">
+      <div class="field"><label>이름 <span class="req">*</span></label><input id="w-name" maxlength="40" placeholder="담당자 성함"></div>
+      <div class="field"><label>연락처 <span class="req">*</span></label><input id="w-contact" maxlength="80" placeholder="010-0000-0000 또는 이메일">
+        <div class="hint">답변을 보내드릴 곳입니다.</div></div>
+    </div>
+    <div class="field"><label>내용 <span class="req">*</span></label><textarea id="w-body" placeholder="제품명, 주요 원료, 수출 예정 국가 등을 적어 주세요. (10자 이상)"></textarea></div>
+    <div class="field"><label>글 비밀번호 <span class="req">*</span></label><input id="w-pw" type="password" maxlength="40" placeholder="6자 이상 · 연락처 숫자 제외">
+      <div class="hint">이 비밀번호로 나중에 답변을 확인합니다. 분실하면 다시 볼 수 없으니 기억해 주세요.<br><b>연락처 숫자는 쓰실 수 없습니다</b> — 목록에 연락처가 일부 보이므로 그대로 쓰면 남이 열 수 있습니다.</div></div>
+    <div class="btnrow"><button class="btn" id="w-submit">문의 남기기</button></div>
+    <div class="msg" id="w-msg"></div>
+  </section>
+
+  <!-- ② 확인 -->
+  <section id="tab-check" class="card hide">
+    <h2>문의 사항</h2>
+    <p class="sub">남겨 주신 문의 목록입니다. <b>내용은 비밀번호를 아는 분만</b> 보실 수 있습니다.<br>다른 기기에서 남기셨다면 연락처로 찾으세요.</p>
+    <div id="c-list"></div>
+    <div id="c-form" class="hide">
+      <div class="field"><label>선택한 글</label><div id="c-picked" class="picked"></div></div>
+      <div class="field"><label>비밀번호</label><input id="c-pw" type="password" placeholder="글 작성 시 정한 비밀번호"></div>
+      <div class="btnrow"><button class="btn" id="c-submit">답변 보기</button>
+        <button class="btn ghost" id="c-back">목록으로</button></div>
+    </div>
+    <div id="c-manual" class="hide">
+      <div class="field"><label>연락처</label>
+        <div class="srch"><input id="c-contact" placeholder="문의할 때 적으신 연락처">
+          <button class="btn" id="c-find">검색</button></div>
+        <div class="hint">다른 기기에서 남기셨다면 연락처로 찾으세요. <b>내용은 비밀번호를 넣어야</b> 보입니다.</div></div>
+      <div id="c-found"></div>
+      <div class="field"><label>또는 글번호</label><input id="c-id" placeholder="예) 20260912-00001">
+        <div class="hint">연락처로 찾으셨다면 비워 두세요.</div></div>
+    </div>
+    <div class="msg" id="c-msg"></div>
+    <div id="c-view"></div>
+  </section>
+
+  <!-- ③ 담당자 -->
+  <section id="tab-staff" class="card hide">
+    <div id="s-login">
+      <h2>담당자 로그인</h2>
+      <p class="sub">컨설턴트·오디터 등 담당자만 문의를 확인하고 답변할 수 있습니다.</p>
+      <div class="row">
+        <div class="field"><label>아이디</label><input id="s-user" autocomplete="username"></div>
+        <div class="field"><label>비밀번호</label><input id="s-pw" type="password" autocomplete="current-password"></div>
+      </div>
+      <div class="btnrow"><button class="btn" id="s-submit">로그인</button></div>
+      <div class="msg" id="s-msg"></div>
+    </div>
+    <div id="s-panel" class="hide">
+      <h2>문의 목록 <span id="s-who" style="font-size:13px;color:var(--muted);font-weight:400"></span></h2>
+      <div class="srch">
+        <input id="s-q" placeholder="제목·내용·이름·연락처·영업코드로 검색">
+        <button class="btn" id="s-go">검색</button>
+        <button class="btn ghost" id="s-clear">지우기</button>
+      </div>
+      <div class="btnrow" style="margin-top:0">
+        <button class="btn ghost" id="s-all">전체</button>
+        <button class="btn ghost" id="s-mine">내 담당</button>
+        <button class="btn ghost" id="s-qr">내 QR</button>
+        <span class="nav-sp"></span>
+        <button class="btn ghost" id="s-app">인증 시스템 열기 →</button>
+        <button class="btn ghost" id="s-out">로그아웃</button>
+      </div>
+      <div id="s-qrbox" class="hide" style="margin-top:18px"></div>
+      <div id="s-list" style="margin-top:18px"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* 홈페이지(glhac.com)에서 AI 시스템(glhac.co.kr)의 API 를 부른다 — 서로 다른 도메인이라
+   서버에 CORS 허용이 있어야 한다(GLHAC_CORS_ORIGINS). */
+/* 배포처마다 다르다(운영 glhac.co.kr · 로컬 테스트 127.0.0.1). 페이지보다 먼저 실행되는
+   곳에서 window.GLHAC_API_BASE 를 정하면 그걸 쓴다 — 주소를 코드에 박지 않는다. */
+var API_BASE = (window.GLHAC_API_BASE || "https://glhac.co.kr").replace(/\/+$/,"");
+var TK = "glhac_home_token";          // 홈페이지 전용 보관소(AI 시스템과 별개 도메인)
+
+function $(id){ return document.getElementById(id); }
+function tok(){ try{ return localStorage.getItem(TK)||""; }catch(e){ return ""; } }
+
+async function api(path, opt){
+  opt = opt||{};
+  opt.headers = Object.assign({"Content-Type":"application/json"}, opt.headers||{},
+                              tok()?{Authorization:"Bearer "+tok()}:{});
+  var r = await fetch(API_BASE+path, opt);
+  var j = await r.json().catch(function(){ return {}; });
+  if(!r.ok) throw (j && j.detail) ? j.detail : {code:"ERROR"};
+  return j;
+}
+/* 서버가 422 를 {code, field, message} 로 내려 준다 — 사유를 그대로 보여 준다 */
+function emsg(e){ if(!e) return "";
+  if(e.message) return e.field ? (e.field+": "+e.message) : e.message;
+  return e.code||""; }
+function show(el, ok, html){ el.className = "msg " + (ok?"ok":"bad"); el.innerHTML = html; }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, function(c){
+  return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+
+/* ── QR 로 들어온 경우: ?ref=코드 를 기억한다.
+   주소창에서 지워도 세션 동안 유지되게 sessionStorage 에 둔다. */
+var REF = (function(){
+  // 문의 귀속도 **현재 URL의 ?ref 만** 쓴다 — 저장분(sessionStorage) 되살림 금지.
+  // ?ref 없이 들어온 문의에 옛 담당이 붙으면 안 된다(홈페이지가 문의 링크에 ?ref 를 실어준다).
+  var m = location.search.match(/[?&]ref=([A-Za-z0-9\-]+)/);
+  return m ? m[1].toUpperCase() : "";
+})();
+if(REF){
+  api("/invites/"+encodeURIComponent(REF)+"/check").then(function(r){
+    if(r.valid){ $("refBadge").textContent = "담당 " + (r.consultant||"영업 담당자") + " 연결됨";
+                 $("refBadge").classList.remove("hide"); }
+  }).catch(function(){});
+}
+
+/* ── 탭 ── */
+document.querySelectorAll(".tab").forEach(function(b){
+  b.onclick = function(){
+    document.querySelectorAll(".tab").forEach(function(x){ x.classList.remove("on"); });
+    b.classList.add("on");
+    ["write","check","staff"].forEach(function(t){
+      $("tab-"+t).classList.toggle("hide", t !== b.dataset.tab); });
+  };
+});
+
+/* ── ① 문의 남기기 ── */
+$("w-submit").onclick = async function(){
+  var btn = this; btn.disabled = true;
+  try{
+    var r = await api("/board/posts", {method:"POST", body: JSON.stringify({
+      title:$("w-title").value, body:$("w-body").value, author_name:$("w-name").value,
+      contact:$("w-contact").value, password:$("w-pw").value, ref: REF||null })});
+    remember(r.post_no || r.post_id, $("w-title").value);
+    show($("w-msg"), true,
+      "<b>접수되었습니다.</b>글번호 <span class='mono' id='w-pid'>"+esc(r.post_no || r.post_id)+"</span> " +
+      "<button class='btn ghost' style='padding:5px 12px;font-size:12px' onclick=\"copyPid()\">복사</button><br>" +
+      "이 번호와 비밀번호로 <b>문의 사항</b> 탭에서 답변을 보실 수 있습니다. " +
+      "이 브라우저에는 기억해 두었으니 비밀번호만 넣으셔도 됩니다." +
+      (r.assigned ? "<br>담당 영업자에게 전달되었습니다." : ""));
+    ["w-title","w-body","w-name","w-contact","w-pw"].forEach(function(i){ $(i).value=""; });
+  }catch(e){ show($("w-msg"), false, "<b>등록하지 못했습니다.</b>"+esc(emsg(e))); }
+  btn.disabled = false;
+};
+
+/* 글번호는 32자리다 — 받아적게 하면 안 된다. 복사 버튼을 주고, 이 브라우저에도
+   기억해 둔다(비밀번호는 절대 저장하지 않는다 — 남의 PC 일 수 있다). */
+function remember(id, title){
+  try{
+    var a = JSON.parse(localStorage.getItem("glhac_my_posts")||"[]");
+    a.unshift({id:id, title:title||"", at:new Date().toISOString().slice(0,10)});
+    localStorage.setItem("glhac_my_posts", JSON.stringify(a.slice(0,10)));
+  }catch(e){}
+  renderRecent();
+}
+function copyPid(){
+  var t = ($("w-pid")||{}).textContent||"";
+  if(navigator.clipboard) navigator.clipboard.writeText(t);
+  else { var i=document.createElement("input"); i.value=t; document.body.appendChild(i);
+         i.select(); document.execCommand("copy"); i.remove(); }
+}
+/* 문의 사항 목록.
+   제목과 마스킹한 연락처까지만 보인다 — 내용은 비밀번호를 아는 사람만 연다.
+   이 브라우저에서 남긴 글은 위에 따로 모아 준다(자기 글을 바로 찾게). */
+var PUBLIC_ROWS = [];
+/* 문의 사항 목록.
+   제목과 **가운데를 가린 연락처**까지만 보인다 — 내용은 비밀번호를 아는 사람만 연다.
+   내 글도 같은 줄에 그리되 표시만 다르게 한다(전에는 내 글만 따로 그려서
+   연락처 열이 비었다). */
+function rowHtml(x, mine){
+  var st = {open:"접수", answered:"답변완료", closed:"종료"}[x.status] || "";
+  return "<li><button onclick=\"pickPost('"+esc(x.post_id)+"')\">" +
+    "<span class='lock'>"+(mine?"📝":"🔒")+"</span>" +
+    (x.post_no?"<span class='d mono' style='font-size:11.5px'>"+esc(x.post_no)+"</span>":"") +
+    "<span class='t'>"+esc(x.title||"(제목 없음)")+"</span>" +
+    (x.contact_masked?"<span class='d'>"+esc(x.contact_masked)+"</span>":"") +
+    "<span class='d'>"+esc(String(x.created_at||"").slice(0,10))+"</span>" +
+    (st?"<span class='badge "+esc(x.status)+"'>"+esc(st)+"</span>":"") + "</button></li>";
+}
+async function renderRecent(){
+  var box = $("c-list");
+  var mineIds = {};
+  myPosts().forEach(function(x){ mineIds[x.id]=1; });
+  var meta = {page:1,pages:1,total:0};
+  try{
+    var res = await api("/board/public?page="+PUB_PAGE+"&size=10");
+    PUBLIC_ROWS = res.items || [];
+    meta = res;
+  }catch(e){ PUBLIC_ROWS = []; }
+  if(!PUBLIC_ROWS.length){
+    box.innerHTML = "<div class='empty'>아직 남겨진 문의가 없습니다.<br>첫 문의를 남겨 보세요.</div>" +
+      "<div class='btnrow'><button class='btn ghost' onclick='manualMode()'>연락처로 찾기</button></div>";
+    return;
+  }
+  var mine = PUBLIC_ROWS.filter(function(x){ return mineIds[x.post_id]; });
+  var rest = PUBLIC_ROWS.filter(function(x){ return !mineIds[x.post_id]; });
+  var html = "";
+  if(mine.length){
+    html += "<label>이 브라우저에서 남기신 문의</label><ul class='plist'>" +
+      mine.map(function(x){ return rowHtml(x, true); }).join("") + "</ul>";
+  }
+  if(rest.length){
+    // '전체 문의'라고 적어 두었는데 내 글은 위로 빼서 여기엔 없었다 — 이름이 사실과 달랐다.
+    html += "<label style='margin-top:14px;display:block'>다른 분들의 문의</label><ul class='plist'>" +
+      rest.map(function(x){ return rowHtml(x, false); }).join("") + "</ul>";
+  }
+  html += pagerHtml(meta, "goPubPage");
+  html += "<div class='btnrow'><button class='btn ghost' onclick='manualMode()'>연락처로 찾기</button></div>";
+  box.innerHTML = html;
+}
+var PUB_PAGE = 1;
+window.goPubPage = function(n){ PUB_PAGE = n; renderRecent(); };
+/* 쪽 이동 — 총 몇 쪽인지 보여야 어디쯤인지 안다 */
+function pagerHtml(m, fn){
+  if(!m) return "";
+  var cur = m.page||1, last = m.pages||1;
+  // 쪽이 하나여도 버튼을 그린다. 전에는 통째로 감췄더니 '페이징이 안 붙었다'고
+  // 보였다(실측: 5건이라 1쪽). 넘길 곳이 없으면 이전·다음만 흐리게 둔다.
+  var out = "<div class='pager'>";
+  out += "<button class='btn ghost' "+(cur<=1?"disabled":"")+" onclick='"+fn+"("+(cur-1)+")'>이전</button>";
+  var from = Math.max(1, cur-2), to = Math.min(last, from+4);
+  from = Math.max(1, Math.min(from, to-4));
+  for(var i=from;i<=to;i++)
+    out += "<button class='btn "+(i===cur?"":"ghost")+"' onclick='"+fn+"("+i+")'>"+i+"</button>";
+  out += "<button class='btn ghost' "+(cur>=last?"disabled":"")+" onclick='"+fn+"("+(cur+1)+")'>다음</button>";
+  out += "<span class='now'>"+cur+" / "+last+"쪽 · 총 "+(m.total||0)+"건</span></div>";
+  return out;
+}
+function myPosts(){ try{ return JSON.parse(localStorage.getItem("glhac_my_posts")||"[]"); }catch(e){ return []; } }
+
+/* 목록에서 고르면 비밀번호만 받는다 — 32자리 글번호를 사람이 옮겨적게 하지 않는다.
+   다른 기기에서 남긴 글은 이 브라우저가 모르므로 글번호 입력으로 빠진다. */
+var PICKED="";
+window.pickPost = function(id){
+  var t = (myPosts().filter(function(x){return x.id===id})[0]||{}).title || id;
+  PICKED = id;
+  $("c-picked").textContent = t;
+  $("c-list").classList.add("hide");
+  $("c-manual").classList.add("hide");
+  $("c-form").classList.remove("hide");
+  $("c-msg").className="msg"; $("c-view").innerHTML="";
+  $("c-pw").value=""; $("c-pw").focus();
+};
+window.manualMode = function(){
+  PICKED="";
+  $("c-picked").textContent = "글번호로 찾기";
+  $("c-list").classList.add("hide");
+  $("c-manual").classList.remove("hide");
+  $("c-form").classList.remove("hide");
+  $("c-msg").className="msg"; $("c-view").innerHTML="";
+  $("c-id").value=""; $("c-id").focus();
+};
+function backToList(){
+  PICKED="";
+  if($("c-found")) $("c-found").innerHTML="";
+  $("c-form").classList.add("hide");
+  $("c-manual").classList.add("hide");
+  $("c-list").classList.remove("hide");
+  $("c-msg").className="msg"; $("c-view").innerHTML="";
+  renderRecent();
+}
+function remember(id, title){
+  try{
+    var a = myPosts();
+    a.unshift({id:id, title:title||"", at:new Date().toISOString().slice(0,10)});
+    localStorage.setItem("glhac_my_posts", JSON.stringify(a.slice(0,20)));
+  }catch(e){}
+  renderRecent();
+}
+function copyPid(){
+  var t = ($("w-pid")||{}).textContent||"";
+  if(navigator.clipboard) navigator.clipboard.writeText(t);
+  else { var i=document.createElement("input"); i.value=t; document.body.appendChild(i);
+         i.select(); document.execCommand("copy"); i.remove(); }
+}
+renderRecent();
+
+/* ── ② 내 문의 확인 ── */
+/* 답글 한 개 — 대댓글은 한 단 들여쓴다. 내가 쓴 글이면 수정 단추를 준다. */
+function replyHtml(r, pid, editable){
+  var mine = r.is_author;
+  return "<div class='reply"+(r.parent_reply_id?" rthread":"")+(mine?" mine":"")+"' id='r-"+esc(r.reply_id)+"'>"+
+    "<div class='rhead'><b class='who2'>"+esc(mine ? (r.author_name||"작성자") : "GLHAC 담당자")+"</b>"+
+    "<span class='who2'>"+esc(String(r.created_at).slice(0,16))+"</span>"+
+    (r.edited_at?"<span class='edited'>(수정됨)</span>":"")+"</div>"+
+    "<div class='rbody'>"+esc(r.body).replace(/\n/g,"<br>")+"</div>"+
+    "<div class='rbtns'>"+
+      (r.parent_reply_id?"":"<button class='btn ghost' onclick=\"replyTo('"+esc(pid)+"','"+esc(r.reply_id)+"')\">답글</button>")+
+      (mine&&editable?"<button class='btn ghost' onclick=\"editReply('"+esc(pid)+"','"+esc(r.reply_id)+"')\">수정</button>":"")+
+    "</div><div id='rf-"+esc(r.reply_id)+"'></div></div>";
+}
+function renderPost(p){
+  var list = p.replies||[];
+  // 대댓글이 부모 바로 밑에 오도록 정렬한다 — 시간순으로만 두면 섞인다
+  var tops = list.filter(function(r){ return !r.parent_reply_id; });
+  var reps = tops.map(function(t){
+    return replyHtml(t, p.post_id, true) +
+      list.filter(function(k){ return k.parent_reply_id===t.reply_id; })
+          .map(function(k){ return replyHtml(k, p.post_id, true); }).join("");
+  }).join("");
+  var extra = "<div class='btnrow' style='margin-top:16px'>"+
+    "<button class='btn' onclick=\"replyTo('"+esc(p.post_id)+"','')\">추가 질문</button>"+
+    "<button class='btn ghost' onclick=\"editPost('"+esc(p.post_id)+"')\">내 글 수정</button></div>"+
+    "<div id='pf-"+esc(p.post_id)+"'></div>";
+  return "<div class='post' style='margin-top:18px'><h3>"+esc(p.title)+
+    " <span class='badge "+esc(p.status)+"'>"+({open:"접수",answered:"답변완료",closed:"종료"}[p.status]||p.status)+"</span></h3>"+
+    "<div class='meta'><span>"+esc(p.author_name)+"</span><span>"+esc(p.contact)+"</span>"+
+    "<span>"+esc(String(p.created_at).slice(0,16))+"</span></div>"+
+    "<div class='body'>"+esc(p.body)+"</div>"+
+    (reps || "<div class='hint' style='margin-top:14px'>아직 답변이 등록되지 않았습니다.</div>")+
+    extra+"</div>";
+}
+
+/* 글쓴이의 되묻기·수정 — 비밀번호는 저장하지 않으므로 그때그때 받는다 */
+var LAST_PW = "";
+function askPw(){
+  if(LAST_PW) return LAST_PW;
+  var v = prompt("글 비밀번호를 입력하세요");
+  return v || "";
+}
+window.replyTo = function(pid, parent){
+  var box = $(parent ? ("rf-"+parent) : ("pf-"+pid));
+  if(!box) return;
+  if(box.innerHTML){ box.innerHTML=""; return; }
+  box.innerHTML = "<div class='field' style='margin-top:10px'><label>"+
+    (parent?"답글":"추가 질문")+"</label><textarea id='ta-"+esc(parent||pid)+"' rows='3'></textarea></div>"+
+    "<div class='btnrow'><button class='btn' onclick=\"sendMyReply('"+esc(pid)+"','"+esc(parent)+"')\">등록</button>"+
+    "<button class='btn ghost' onclick=\"replyTo('"+esc(pid)+"','"+esc(parent)+"')\">취소</button></div>";
+  $("ta-"+(parent||pid)).focus();
+};
+window.sendMyReply = async function(pid, parent){
+  var t = $("ta-"+(parent||pid));
+  if(!t || !t.value.trim()){ alert("내용을 입력하세요"); return; }
+  var pw = askPw(); if(!pw) return;
+  try{
+    await api("/board/posts/"+encodeURIComponent(pid)+"/replies", {method:"POST",
+      body: JSON.stringify({body:t.value, password:pw, parent_reply_id: parent||null})});
+    LAST_PW = pw;
+    reopen(pid, pw);
+  }catch(e){ LAST_PW=""; alert("등록 실패 · "+emsg(e)); }
+};
+window.editReply = function(pid, rid){
+  var box = $("rf-"+rid);
+  var cur = document.querySelector("#r-"+CSS.escape(rid)+" .rbody");
+  if(box.innerHTML){ box.innerHTML=""; return; }
+  box.innerHTML = "<div class='field' style='margin-top:10px'><label>수정</label>"+
+    "<textarea id='te-"+esc(rid)+"' rows='3'></textarea></div>"+
+    "<div class='btnrow'><button class='btn' onclick=\"saveReply('"+esc(pid)+"','"+esc(rid)+"')\">저장</button>"+
+    "<button class='btn ghost' onclick=\"editReply('"+esc(pid)+"','"+esc(rid)+"')\">취소</button></div>";
+  $("te-"+rid).value = cur ? cur.innerText : "";
+};
+window.saveReply = async function(pid, rid){
+  var pw = askPw(); if(!pw) return;
+  try{
+    await api("/board/posts/"+encodeURIComponent(pid)+"/replies/"+encodeURIComponent(rid),
+      {method:"PATCH", body: JSON.stringify({body:$("te-"+rid).value, password:pw})});
+    LAST_PW = pw; reopen(pid, pw);
+  }catch(e){ LAST_PW=""; alert("수정 실패 · "+emsg(e)); }
+};
+window.editPost = function(pid){
+  var box = $("pf-"+pid);
+  if(box.innerHTML){ box.innerHTML=""; return; }
+  var p = LAST_POST || {};
+  box.innerHTML = "<div class='card' style='margin-top:12px;box-shadow:none;border:1px solid var(--line)'>"+
+    "<div class='field'><label>제목</label><input id='ep-title' value='"+esc(p.title||"")+"'></div>"+
+    "<div class='field'><label>내용</label><textarea id='ep-body' rows='5'>"+esc(p.body||"")+"</textarea></div>"+
+    "<div class='field'><label>연락처</label><input id='ep-contact' value='"+esc(p.contact||"")+"'></div>"+
+    "<div class='btnrow'><button class='btn' onclick=\"savePost('"+esc(pid)+"')\">저장</button>"+
+    "<button class='btn ghost' onclick=\"editPost('"+esc(pid)+"')\">취소</button></div></div>";
+};
+window.savePost = async function(pid){
+  var pw = askPw(); if(!pw) return;
+  try{
+    await api("/board/posts/"+encodeURIComponent(pid)+"/edit", {method:"POST",
+      body: JSON.stringify({password:pw, title:$("ep-title").value,
+        body:$("ep-body").value, contact:$("ep-contact").value})});
+    LAST_PW = pw; reopen(pid, pw);
+  }catch(e){ LAST_PW=""; alert("수정 실패 · "+emsg(e)); }
+};
+var LAST_POST = null;
+async function reopen(pid, pw){
+  try{
+    var p = await api("/board/posts/"+encodeURIComponent(pid)+"/open",
+                      {method:"POST", body: JSON.stringify({password:pw})});
+    LAST_POST = p; $("c-view").innerHTML = renderPost(p);
+  }catch(e){ alert(emsg(e)); }
+}
+/* 연락처 검색 — 비밀번호 없이 '어떤 글이 있는지'까지만 보여 준다.
+   전에는 비밀번호를 같이 넣어야만 동작해서, 비번이 기억나지 않으면 아무것도 못 했다. */
+$("c-find").onclick = async function(){
+  var contact = $("c-contact").value.trim();
+  if(!contact){ show($("c-msg"), false, "<b>연락처를 입력해 주세요.</b>"); return; }
+  $("c-msg").className = "msg";
+  try{
+    var rows = await api("/board/find", {method:"POST", body: JSON.stringify({contact:contact})});
+    $("c-found").innerHTML = "<label>찾은 문의 "+rows.length+"건 — 고른 뒤 비밀번호를 넣으세요</label>"+
+      "<ul class='plist'>"+rows.map(function(x){
+        var st={open:"접수",answered:"답변완료",closed:"종료"}[x.status]||"";
+        return "<li><button onclick=\"pickFound('"+esc(x.post_id)+"')\">"+
+          "<span class='lock'>🔒</span>"+
+          (x.post_no?"<span class='d mono' style='font-size:11.5px'>"+esc(x.post_no)+"</span>":"")+
+          "<span class='t'>"+esc(x.title||"(제목 없음)")+"</span>"+
+          "<span class='d'>"+esc(String(x.created_at).slice(0,10))+"</span>"+
+          "<span class='badge "+esc(x.status)+"'>"+esc(st)+"</span></button></li>";
+      }).join("")+"</ul>";
+  }catch(e){
+    $("c-found").innerHTML = "";
+    show($("c-msg"), false, "<b>찾지 못했습니다.</b>"+esc(emsg(e)));
+  }
+};
+window.pickFound = function(id){
+  PICKED = id;
+  var row = (PUBLIC_ROWS||[]).filter(function(x){ return x.post_id===id; })[0];
+  $("c-picked").textContent = "선택한 글 · " + ((row && row.post_no) || id.slice(0,8));
+  $("c-id").value = "";
+  $("c-found").querySelectorAll("button").forEach(function(b){ b.style.background=""; });
+  $("c-pw").focus();
+  show($("c-msg"), true, "<b>글을 골랐습니다.</b>비밀번호를 넣고 <b>답변 보기</b>를 누르세요.");
+};
+$("c-contact").addEventListener("keydown", function(e){ if(e.key==="Enter") $("c-find").click(); });
+$("c-back").onclick = backToList;
+$("c-pw").addEventListener("keydown", function(e){ if(e.key==="Enter") $("c-submit").click(); });
+$("c-submit").onclick = async function(){
+  var id = PICKED || $("c-id").value.trim();
+  var contact = ($("c-contact") ? $("c-contact").value.trim() : "");
+  // 글번호를 모르면 연락처로 찾는다 — 32자리를 옮겨적게 하지 않는다
+  if(!id && contact){
+    try{
+      var found = await api("/board/find", {method:"POST",
+        body: JSON.stringify({contact:contact, password:$("c-pw").value})});
+      found.forEach(function(f){
+        if(!myPosts().some(function(x){ return x.id===f.post_id; }))
+          remember(f.post_id, f.title);
+      });
+      if(found.length === 1){ id = found[0].post_id; }
+      else {
+        show($("c-msg"), true, "<b>"+found.length+"건을 찾았습니다.</b>목록에서 골라 주세요.");
+        backToList(); return;
+      }
+    }catch(e){ show($("c-msg"), false, "<b>찾지 못했습니다.</b>"+esc(emsg(e))); return; }
+  }
+  if(!id){ show($("c-msg"), false, "<b>연락처나 글번호를 입력해 주세요.</b>"); return; }
+  try{
+    var p = await api("/board/posts/"+encodeURIComponent(id)+"/open",
+                      {method:"POST", body: JSON.stringify({password:$("c-pw").value})});
+    // 글번호로 찾아 들어온 글도 다음부터는 목록에 보이게 기억한다
+    if(!PICKED && !myPosts().some(function(x){return x.id===id})) remember(id, p.title);
+    LAST_POST = p; LAST_PW = $("c-pw").value;
+    $("c-msg").className="msg"; $("c-view").innerHTML = renderPost(p);
+  }catch(e){ $("c-view").innerHTML=""; show($("c-msg"), false, "<b>확인하지 못했습니다.</b>"+esc(emsg(e))); }
+};
+
+/* ── ③ 담당자 ── */
+var S_MINE=false, S_PAGE=1;
+async function loadList(mine){
+  S_MINE = !!mine;
+  try{
+    var kw = ($("s-q").value||"").trim();
+    var qs = [];
+    if(mine) qs.push("mine=true");
+    if(kw) qs.push("q="+encodeURIComponent(kw));
+    qs.push("page="+S_PAGE); qs.push("size=20");
+    var res = await api("/board/posts?"+qs.join("&"));
+    var rows = res.items || [];
+    $("s-list").innerHTML = rows.length ? rows.map(function(r){
+      return "<div class='post'><h3>"+esc(r.title)+" <span class='badge "+esc(r.status)+"'>"+
+        ({open:"접수",answered:"답변완료",closed:"종료"}[r.status]||r.status)+"</span></h3>"+
+        "<div class='meta'><span>"+esc(r.author_name)+"</span><span>"+esc(r.contact)+"</span>"+
+        (r.ref_code?"<span>영업 "+esc(r.ref_code)+"</span>":"")+
+        "<span>답변 "+r.reply_count+"</span><span>"+esc(String(r.created_at).slice(0,16))+"</span></div>"+
+        "<div class='btnrow' style='margin-top:12px'><button class='btn ghost' onclick=\"openPost('"+esc(r.post_id)+"')\">열기</button></div>"+
+        "<div id='d-"+esc(r.post_id)+"'></div></div>";
+    }).join("") + pagerHtml(res, "goStaffPage")
+      : "<div class='card'>"+(($("s-q").value||"").trim()?"검색 결과가 없습니다.":"문의가 없습니다.")+"</div>";
+  }catch(e){ $("s-list").innerHTML = "<div class='msg bad' style='display:block'>"+esc(emsg(e))+"</div>"; }
+}
+function staffReplyHtml(r, pid){
+  var mine = r.is_author;
+  return "<div class='reply"+(r.parent_reply_id?" rthread":"")+(mine?" mine":"")+"' id='sr-"+esc(r.reply_id)+"'>"+
+    "<div class='rhead'><b class='who2'>"+esc(mine?(r.author_name||"작성자"):(r.author_role||"담당자"))+"</b>"+
+    "<span class='who2'>"+esc(String(r.created_at).slice(0,16))+"</span>"+
+    (r.edited_at?"<span class='edited'>(수정됨)</span>":"")+"</div>"+
+    "<div class='rbody'>"+esc(r.body).replace(/\n/g,"<br>")+"</div>"+
+    "<div class='rbtns'>"+
+      (r.parent_reply_id?"":"<button class='btn ghost' onclick=\"sReplyTo('"+esc(pid)+"','"+esc(r.reply_id)+"')\">답글</button>")+
+      (mine?"":"<button class='btn ghost' onclick=\"sEditReply('"+esc(pid)+"','"+esc(r.reply_id)+"')\">수정</button>")+
+    "</div><div id='sf-"+esc(r.reply_id)+"'></div></div>";
+}
+window.openPost = async function(id){
+  var box = $("d-"+id);
+  if(box.innerHTML){ box.innerHTML=""; return; }
+  try{
+    var p = await api("/board/posts/"+encodeURIComponent(id));
+    var list = p.replies||[];
+    var tops = list.filter(function(r){ return !r.parent_reply_id; });
+    var reps = tops.map(function(t){
+      return staffReplyHtml(t,id) + list.filter(function(k){ return k.parent_reply_id===t.reply_id; })
+        .map(function(k){ return staffReplyHtml(k,id); }).join("");
+    }).join("");
+    box.innerHTML = "<div class='body'>"+esc(p.body)+"</div>"+
+      (p.edited_at?"<div class='edited'>글 수정됨 · "+esc(String(p.edited_at).slice(0,16))+"</div>":"")+
+      reps+
+      "<div class='field' style='margin-top:14px'><label>답변</label>"+
+      "<textarea id='r-"+esc(id)+"' style='min-height:110px'></textarea></div>"+
+      "<div class='btnrow' style='margin-top:8px'><button class='btn' onclick=\"sendReply('"+esc(id)+"')\">답변 등록</button>"+
+      "<button class='btn ghost' onclick=\"sEditPost('"+esc(id)+"')\">글 수정</button>"+
+      "<button class='btn ghost' onclick=\"setStatus('"+esc(id)+"','closed')\">종료 처리</button></div>"+
+      "<div id='sp-"+esc(id)+"'></div>";
+    STAFF_POST[id] = p;
+  }catch(e){ box.innerHTML = "<div class='msg bad' style='display:block'>"+esc(emsg(e))+"</div>"; }
+};
+var STAFF_POST = {};
+window.sReplyTo = function(pid, parent){
+  var box = $("sf-"+parent);
+  if(box.innerHTML){ box.innerHTML=""; return; }
+  box.innerHTML = "<div class='field' style='margin-top:10px'><label>답글</label>"+
+    "<textarea id='sta-"+esc(parent)+"' rows='3'></textarea></div>"+
+    "<div class='btnrow'><button class='btn' onclick=\"sSendReply('"+esc(pid)+"','"+esc(parent)+"')\">등록</button>"+
+    "<button class='btn ghost' onclick=\"sReplyTo('"+esc(pid)+"','"+esc(parent)+"')\">취소</button></div>";
+};
+window.sSendReply = async function(pid, parent){
+  var t=$("sta-"+parent);
+  if(!t||!t.value.trim()){ alert("내용을 입력하세요"); return; }
+  try{ await api("/board/posts/"+encodeURIComponent(pid)+"/replies",{method:"POST",
+        body: JSON.stringify({body:t.value, parent_reply_id:parent})});
+       $("d-"+pid).innerHTML=""; openPost(pid); }
+  catch(e){ alert("등록 실패 · "+emsg(e)); }
+};
+window.sEditReply = function(pid, rid){
+  var box=$("sf-"+rid);
+  if(box.innerHTML){ box.innerHTML=""; return; }
+  var cur=document.querySelector("#sr-"+CSS.escape(rid)+" .rbody");
+  box.innerHTML = "<div class='field' style='margin-top:10px'><label>답변 수정</label>"+
+    "<textarea id='ste-"+esc(rid)+"' rows='3'></textarea></div>"+
+    "<div class='btnrow'><button class='btn' onclick=\"sSaveReply('"+esc(pid)+"','"+esc(rid)+"')\">저장</button>"+
+    "<button class='btn ghost' onclick=\"sEditReply('"+esc(pid)+"','"+esc(rid)+"')\">취소</button></div>";
+  $("ste-"+rid).value = cur?cur.innerText:"";
+};
+window.sSaveReply = async function(pid, rid){
+  try{ await api("/board/posts/"+encodeURIComponent(pid)+"/replies/"+encodeURIComponent(rid),
+        {method:"PATCH", body: JSON.stringify({body:$("ste-"+rid).value})});
+       $("d-"+pid).innerHTML=""; openPost(pid); }
+  catch(e){ alert("수정 실패 · "+emsg(e)); }
+};
+window.sEditPost = function(pid){
+  var box=$("sp-"+pid);
+  if(box.innerHTML){ box.innerHTML=""; return; }
+  var p=STAFF_POST[pid]||{};
+  box.innerHTML = "<div class='card' style='margin-top:12px;box-shadow:none;border:1px solid var(--line)'>"+
+    "<div class='hint'>남의 글을 고치는 것이라 바꾸기 전 내용이 감사기록에 남습니다.</div>"+
+    "<div class='field'><label>제목</label><input id='sep-title' value='"+esc(p.title||"")+"'></div>"+
+    "<div class='field'><label>내용</label><textarea id='sep-body' rows='5'>"+esc(p.body||"")+"</textarea></div>"+
+    "<div class='field'><label>연락처</label><input id='sep-contact' value='"+esc(p.contact||"")+"'></div>"+
+    "<div class='btnrow'><button class='btn' onclick=\"sSavePost('"+esc(pid)+"')\">저장</button>"+
+    "<button class='btn ghost' onclick=\"sEditPost('"+esc(pid)+"')\">취소</button></div></div>";
+};
+window.sSavePost = async function(pid){
+  try{ await api("/board/posts/"+encodeURIComponent(pid),{method:"PATCH",
+        body: JSON.stringify({title:$("sep-title").value, body:$("sep-body").value,
+                              contact:$("sep-contact").value})});
+       $("d-"+pid).innerHTML=""; openPost(pid); loadList(S_MINE); }
+  catch(e){ alert("수정 실패 · "+emsg(e)); }
+};
+window.sendReply = async function(id){
+  var t = $("r-"+id);
+  if(!t || !t.value.trim()){ alert("답변 내용을 입력하세요"); return; }
+  try{
+    await api("/board/posts/"+encodeURIComponent(id)+"/replies",
+      {method:"POST", body: JSON.stringify({body:t.value})});
+    // 목록만 다시 그리면 열어 둔 글이 닫혀 방금 쓴 답변이 안 보인다 — 그 자리를 다시 채운다
+    await loadList(S_MINE);
+    $("d-"+id).innerHTML = "";
+    await openPost(id);
+  }catch(e){ alert("답변 실패 · "+emsg(e)); }
+};
+window.setStatus = async function(id, st){
+  try{ await api("/board/posts/"+encodeURIComponent(id)+"/status",
+        {method:"PATCH", body: JSON.stringify({status:st})}); await loadList(S_MINE); }
+  catch(e){ alert("변경 실패 · "+emsg(e)); }
+};
+
+function staffUI(on, who){
+  $("s-login").classList.toggle("hide", on);
+  $("s-panel").classList.toggle("hide", !on);
+  if(on){ $("s-who").textContent = who?("· "+who):""; loadList(false); }
+}
+$("s-submit").onclick = async function(){
+  try{
+    var j = await api("/auth/login", {method:"POST", body: JSON.stringify(
+      {username:$("s-user").value, password:$("s-pw").value})});
+    localStorage.setItem(TK, j.token);
+    localStorage.setItem("glhac_home_role", j.role||"");
+    localStorage.setItem("glhac_home_user", j.username||"");
+    staffUI(true, (j.username||"")+" · "+(j.role||""));
+  }catch(e){ show($("s-msg"), false, "<b>로그인하지 못했습니다.</b>"+esc(emsg(e))); }
+};
+$("s-out").onclick = function(){
+  try{ localStorage.removeItem(TK); }catch(e){}
+  staffUI(false); $("s-list").innerHTML=""; $("s-qrbox").innerHTML="";
+};
+$("s-all").onclick  = function(){ S_PAGE=1; loadList(false); };
+window.goStaffPage = function(n){ S_PAGE=n; loadList(S_MINE); };
+$("s-go").onclick   = function(){ S_PAGE=1; loadList(S_MINE); };
+$("s-clear").onclick= function(){ $("s-q").value=""; S_PAGE=1; loadList(S_MINE); };
+$("s-q").addEventListener("keydown", function(e){ if(e.key==="Enter"){ S_PAGE=1; loadList(S_MINE); } });
+$("s-mine").onclick = function(){ S_PAGE=1; loadList(true); };
+
+/* 내 QR — 영업자가 명함·자료에 쓴다 */
+$("s-qr").onclick = async function(){
+  var box = $("s-qrbox");
+  if(!box.classList.contains("hide")){ box.classList.add("hide"); return; }
+  try{
+    var info = await api("/consultant/qr/info");
+    var svg  = await fetch(API_BASE+"/consultant/qr?fmt=png",
+                 {headers:{Authorization:"Bearer "+tok()}}).then(function(r){ return r.blob(); });
+    box.innerHTML = "<div class='card qr'><img src='"+URL.createObjectURL(svg)+"' alt='내 QR'>"+
+      "<div><div class='hint'>고객이 이 QR 을 찍으면 아래 주소로 이동하고, 남긴 문의가 내 담당으로 붙습니다.</div>"+
+      "<p class='mono' style='margin:10px 0'>"+esc(info.code)+"</p>"+
+      "<div class='hint'>"+esc(info.url)+"<br>누적 사용 "+info.used_count+"회</div>"+
+      "<div class='btnrow'><a class='btn' download='glhac-qr.png' href='"+URL.createObjectURL(svg)+"'>QR 내려받기</a></div>"+
+      "</div></div>";
+    box.classList.remove("hide");
+  }catch(e){ box.innerHTML="<div class='msg bad' style='display:block'>"+esc(emsg(e))+"</div>"; box.classList.remove("hide"); }
+};
+
+/* 로그인 상태 그대로 AI 시스템으로 — 다시 로그인시키지 않는다(인계코드) */
+$("s-app").onclick = async function(){
+  try{ var r = await api("/auth/handoff/issue", {method:"POST", body:"{}"});
+       location.href = r.redirect; }
+  catch(e){ location.href = API_BASE; }
+};
+
+if(tok()){
+  staffUI(true, (localStorage.getItem("glhac_home_user")||"")+" · "+(localStorage.getItem("glhac_home_role")||""));
+  document.querySelector('.tab[data-tab="staff"]').click();
+}
+</script>
+</body>
+</html>

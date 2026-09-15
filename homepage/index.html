@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+  <meta content="GLHAC 지엘할랄인증센터 - 인도네시아 할랄 인증부터 시장 진출까지" name="description" />
+  <title>GLHAC | 지엘할랄인증센터</title>
+  <link href="https://fonts.googleapis.com" rel="preconnect" />
+  <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet" />
+  <script type="module" crossorigin src="./assets/index-d477f467.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-2-J_tBsH.css">
+  <style>
+#glhac-intro *{box-sizing:border-box}body.intro-on{overflow:hidden}
+#glhac-intro{position:fixed;inset:0;overflow:hidden;background:#fff}
+
+/* original intro GIF */
+#intro{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center;z-index:60;background:#fff;
+animation: introOff 0.01s linear 3.72s forwards}
+@keyframes introOff{to{opacity:0;visibility:hidden}}
+#white{position:absolute;inset:0;background:#fffdf8;z-index:70;opacity:0;
+animation: whiteShield 2.15s ease 3.58s forwards}
+@keyframes whiteShield{
+  0%{opacity:0}
+  7%{opacity:1}
+  72%{opacity:1}
+  100%{opacity:0}
+}
+
+/* blurred full-screen copy only fills unused screen area */
+#blurBg{position:absolute;inset:-24px;z-index:1;opacity:0;
+background-image:url("./intro/blur.jpeg");
+background-position:center;background-size:cover;background-repeat:no-repeat;
+filter:blur(18px);transform:scale(1.06);
+animation: blurIn 1s ease 7.45s forwards}
+@keyframes blurIn{to{opacity:1}}
+
+/* exact image: aspect ratio preserved, never cropped, final scale = fit inside viewport */
+#photo{position:absolute;left:50%;top:50%;z-index:5;
+width:min(100vw, calc(100vh * 1.693495));aspect-ratio:1536/907;
+opacity:0;overflow:hidden;
+transform:translate(-50%,-50%) rotate(0deg) scale(.12);
+transform-origin:center;
+animation:photoLand 3s cubic-bezier(.2,.72,.2,1) 8.35s forwards}
+#photo img{display:block;width:100%;height:100%;object-fit:contain}
+@keyframes photoLand{
+0%{opacity:0;transform:translate(-50%,-50%) rotate(0deg) scale(.12);filter:blur(0)}
+10%{opacity:1}
+45%{transform:translate(-50%,-50%) rotate(540deg) scale(.55);filter:blur(1px)}
+78%{transform:translate(-50%,-50%) rotate(900deg) scale(.90);filter:blur(2px)}
+100%{opacity:1;transform:translate(-50%,-50%) rotate(1080deg) scale(1);filter:none}
+}
+
+/* handwritten GLHAC */
+#logo{position:absolute;left:50%;top:47%;width:min(72vw,720px);z-index:50;
+transform:translate(-50%,-50%);opacity:0;
+animation: logoOn 0.01s linear 5.78s forwards,
+logoMove 1.7s cubic-bezier(.2,.75,.2,1) 8.45s forwards}
+#logo svg{width:100%;overflow:visible}
+#s{fill:transparent;stroke:#a97827;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round;
+stroke-dasharray:1800;stroke-dashoffset:1800;animation: write 1.6s ease 5.86s forwards}
+#f{fill:#a97827;opacity:0;animation: fill 0.3s ease 7.26s forwards}
+@keyframes logoOn{to{opacity:1}}@keyframes write{to{stroke-dashoffset:0}}
+@keyframes fill{to{opacity:1}}
+@keyframes logoMove{to{left:24px;top:20px;width:170px;transform:none}}
+
+/* UI */
+#ui{position:absolute;inset:0;z-index:20;color:#fff;opacity:0;animation: uiIn 0.6s ease 10.2s forwards}
+@keyframes uiIn{to{opacity:1}}#glhac-intro header{height:82px;display:flex;align-items:center;justify-content:flex-end;padding:0 32px 0 220px;
+background:linear-gradient(to bottom,rgba(0,0,0,.28),transparent)}#glhac-intro nav{display:flex;gap:26px;font:15px Arial,sans-serif}#glhac-intro .hero{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px}#glhac-intro .heroBox{margin-top:90px;padding:24px 30px;background:transparent;backdrop-filter:none;
+border:1px solid rgba(255,255,255,.18);border-radius:18px}#glhac-intro .hero h1{margin:0;font:500 clamp(24px,3.6vw,54px) Georgia,serif;letter-spacing:.08em}#glhac-intro .hero p{font:12px Arial,sans-serif;letter-spacing:.2em}
+
+@media(max-width:700px){
+#logo{width:82vw}
+@keyframes logoMove{to{left:15px;top:16px;width:132px;transform:none}}#glhac-intro header{height:70px;padding:0 14px 0 160px}#glhac-intro nav{gap:12px;font-size:11px}
+}
+
+
+#glhac-intro{position:fixed;inset:0;z-index:9999;transition:opacity .6s ease}
+#glhac-intro.done{opacity:0;pointer-events:none}
+#introSkip{position:absolute;right:24px;bottom:24px;z-index:100;
+  padding:10px 18px;border:1px solid rgba(255,255,255,.55);border-radius:999px;
+  background:rgba(0,0,0,.28);color:#fff;font:500 14px/1 'Noto Sans KR',sans-serif;
+  cursor:pointer;backdrop-filter:blur(4px)}
+#introSkip:hover{background:rgba(0,0,0,.45)}
+#introSoundBtn{display:none;position:absolute;right:132px;bottom:24px;z-index:100;
+  align-items:center;gap:6px;padding:10px 16px;border:1px solid rgba(255,255,255,.55);
+  border-radius:999px;background:rgba(0,0,0,.28);color:#fff;
+  font:500 14px/1 'Noto Sans KR',sans-serif;cursor:pointer;backdrop-filter:blur(4px)}
+#introSoundBtn:hover{background:rgba(0,0,0,.45)}
+@media (prefers-reduced-motion:reduce){#glhac-intro{display:none}}
+</style>
+  <style>
+/* ── 인트로 디자인 테마 ───────────────────────────────────────────────── */
+:root{
+  --gold:#a97827;              /* 인트로 손글씨와 같은 금색(기존 #cba766 보다 깊다) */
+  --gold-soft:#c9a35a;
+}
+
+/* 헤더 로고 — 엠블럼 + 손글씨 GLHAC */
+.logo img{height:46px;width:auto}
+.logo .hand{display:block;height:38px;width:auto;margin-right:2px}
+.logo .hand text{font-family:'Snell Roundhand','Apple Chancery','Segoe Script','Brush Script MT',cursive;
+  font-style:italic;font-size:180px}
+.logo .hand .stroke{fill:transparent;stroke:var(--gold);stroke-width:3.4;
+  stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1800;stroke-dashoffset:1800;
+  animation: handWrite 1.6s ease 0.25s forwards}
+.logo .hand .fill{fill:var(--gold);opacity:0;animation: handFill 0.35s ease 1.7s forwards}
+@keyframes handWrite{to{stroke-dashoffset:0}}
+@keyframes handFill{to{opacity:1}}
+/* 원래 로고처럼 'GLHAC' 아래에 부제를 둔다(가로로 늘어놓으면 헤더 폭 1180px 를
+   넘겨 메뉴가 줄바꿈된다 — 실측). 세로로 쌓으면 폭을 덜 먹는다. */
+.logo{align-items:center;gap:10px}
+.logo .logo-text{display:flex;flex-direction:column;align-items:flex-start;gap:1px;line-height:1}
+.logo .hand{height:34px;margin:0}
+.logo-sub{display:block;font-size:9.5px;letter-spacing:.1em;color:var(--gold-soft);
+  white-space:nowrap;font-weight:600}
+
+/* 히어로 — 모스크 배경 + 블러 레이어 */
+/* 기존 .hero 배경(진녹색 그라데이션)이 ::before 를 덮어 사진이 탁해졌다.
+   한 선언으로 합쳐 사진 위에 그라데이션이 얹히게 한다. */
+.hero{position:relative;background:transparent !important}
+
+/* ── 전 페이지 공통 배경 ──────────────────────────────────────────────────
+   배경 사진을 body 에 고정(fixed)해 스크롤해도 같은 이미지가 깔린다.
+   그 위에 섹션들이 반투명으로 얹히며, 아래로 갈수록 흰색을 더해 본문 가독성을 지킨다. */
+body::before{content:"";position:fixed;inset:0;z-index:-2;
+  background:url("./intro/photo.jpg") center/cover no-repeat}
+body::after{content:"";position:fixed;inset:0;z-index:-1;
+  background:linear-gradient(180deg,rgba(0,0,0,.45) 0%,rgba(0,0,0,.30) 38%,rgba(255,255,255,.55) 100%)}
+body{background:transparent}
+main,section{background:transparent !important}
+
+
+/* 히어로 카드 상단 — 화물 컨테이너 사진 대신 GLHAC 이미지 */
+.hero-card-image{background:url("./intro/photo.jpg") center/cover !important;height:300px !important}
+
+/* 섹션마다 원래 톤이 달라 반투명도 다르게 준다.
+   흰 판을 일괄로 깔면 원래 어두웠던 섹션(진녹색+흰 글씨)에서 글씨가 묻힌다 — 실측. */
+section.about   {background:rgba(255,255,255,.88) !important;backdrop-filter:blur(3px)}
+section.services{background:rgba(248,245,236,.88) !important;backdrop-filter:blur(3px)}
+section.process {background:rgba(6,47,41,.82)   !important;backdrop-filter:blur(3px)}
+section.cta     {background:rgba(6,47,41,.70)   !important;backdrop-filter:blur(2px)}
+footer          {background:rgba(7,31,27,.90)   !important;backdrop-filter:blur(3px)}
+
+/* 표제가 잘리지 않게 여유를 준다(기존은 단색 배경 기준이라 빡빡했다) */
+.hero h1{line-height:1.25;padding-bottom:.12em}
+.hero, .hero h1, .hero p, .hero .eyebrow{color:#fff}
+.hero .eyebrow{color:var(--gold-soft);letter-spacing:.22em}
+.hero h1{font-family:'Playfair Display',Georgia,serif;letter-spacing:.04em}
+.hero h1 em{color:var(--gold-soft);font-style:italic}
+.hero p{color:rgba(255,255,255,.86)}
+
+/* 버튼 — 금색 계열로 */
+.btn-primary{background:var(--gold);border-color:var(--gold);color:#1b1408}
+.btn-primary:hover{background:var(--gold-soft);border-color:var(--gold-soft)}
+.btn-outline{border-color:rgba(255,255,255,.6);color:#fff}
+.btn-outline:hover{background:rgba(255,255,255,.12)}
+.apply{background:var(--gold);color:#1b1408}
+.apply:hover{background:var(--gold-soft)}
+
+/* 히어로 카드 — 어두운 배경 위라 대비를 준다 */
+.hero-card-inner{border:1px solid rgba(255,255,255,.18);
+  box-shadow:0 24px 60px rgba(0,0,0,.35)}
+
+/* 섹션 표제도 serif 로 통일 */
+section h2{font-family:'Playfair Display',Georgia,serif;letter-spacing:.02em}
+</style>
+  <style>
+/* ── 푸터 로고 · 배경 투명도 ──────────────────────────────────────────────
+   푸터 로고는 filter:brightness(0) invert(1) 로 흰 실루엣이 돼 있었다 —
+   엠블럼의 금·크림 테두리와 GL(금)/HAC(녹) 구분이 통째로 사라져 공식 로고와
+   달라 보였다. 필터를 풀어 원래 로고를 그대로 쓴다.
+   어두운 배경에서 짙은 녹색이 묻히므로 로고 뒤에만 밝은 판을 깐다. */
+/* 하단 로고를 상단과 같은 구성으로 — 엠블럼 + 손글씨 GLHAC + 부제.
+   전에는 공식 로고 이미지에 흰 판을 깔았는데, 헤더와 결이 달라 보였다.
+   어두운 푸터라 부제는 금색 계열로 둔다(흰 판 없이도 읽힌다). */
+.footer-logo{display:flex;align-items:center;gap:10px;margin-bottom:20px;width:auto;
+  background:none;filter:none;box-shadow:none;padding:0}
+.footer-logo img{height:46px;width:auto}
+.footer-logo .hand{display:block;height:34px;width:auto}
+.footer-logo .hand text{font-family:'Snell Roundhand','Apple Chancery','Segoe Script','Brush Script MT',cursive;
+  font-style:italic;font-size:180px;fill:var(--gold-soft)}
+.footer-logo .logo-sub{display:block;font-size:9.5px;letter-spacing:.1em;
+  color:var(--gold-soft);font-weight:600;white-space:nowrap}
+
+/* 본문 배경도 뒤 사진이 비치게 — 히어로처럼. 다만 글씨가 읽혀야 하므로
+   완전 투명 대신 옅은 판 + 블러로 대비를 만든다(사진 위 본문 가독성). */
+/* 투명도는 '읽히는 선에서 가장 투명하게' 를 실측으로 잡았다(WCAG 본문 4.5:1).
+   밝은 섹션은 본문 회색이 원래부터 경계선(흰 배경에서 5.0:1)이라, 투명도를 주면
+   어떤 값을 써도 기준을 못 넘었다 — 그래서 본문색을 한 단계 진하게 내렸다. */
+/* 섹션마다 바탕색이 달라(서비스=크림, 인증절차=짙은 녹색) 같은 투명도인데도
+   더 탁해 보였다. 뒤 사진이 고르게 비치도록 바탕을 흰색으로 통일한다.
+   인증절차는 어두운 배경 전제로 글자가 흰색이었으므로 아래에서 전부 뒤집는다. */
+section.about{background:rgba(255,255,255,.62) !important}
+section#halal{background:rgba(255,255,255,.62) !important;
+  -webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px)}   /* 이 섹션만 바탕이 없어 사진 위에 글씨가 그대로 얹혔다 */
+section.services{background:rgba(255,255,255,.62) !important}
+section.process{background:rgba(255,255,255,.62) !important}
+/* 인증절차 — 밝은 바탕에 맞춘 글자·카드 색 */
+section.process .eyebrow{color:var(--gold) !important}
+section.process .section-title,section.process .step h3{color:#17211F !important}
+section.process .section-desc,section.process .step p{color:#45524e !important}
+section.process .step{background:rgba(255,255,255,.52) !important;
+  border-color:rgba(23,33,31,.12) !important}
+section.process .step-num{color:#9c6d20 !important}   /* 금색 그대로면 2.9:1 로 큰글자 기준(3.0) 미달 — 한 단계만 낮췄다 */
+section.cta,section#contact{background:rgba(6,47,41,.55) !important}
+footer{background:rgba(7,31,27,.70) !important}               /* 실측 최소 통과 */
+:root{--muted:#45524e}   /* #65726f 에서 — α .62 에서 5.9:1 / 5.2:1 */
+section.about,section.services,section.process,section.cta,footer{
+  -webkit-backdrop-filter:blur(7px);backdrop-filter:blur(7px)}
+/* 헤더도 같은 결로 — 스크롤해도 뒤가 비친다 */
+header{background:rgba(255,255,255,.72) !important;
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+</style>
+  <style>
+/* ── 전체 화면 가로 슬라이드 ───────────────────────────────────────────────
+   세로로 5,400px 내려가던 페이지를 한 화면씩 좌우로 넘긴다.
+
+   페이지 전체를 가로로 돌리면 앵커(#about 등)와 '맨 위로'가 깨진다 — 아래 JS 에서
+   메뉴 링크를 가로 스크롤로 다시 잇는다.
+   내용이 한 화면에 안 들어가는 슬라이드는 그 안에서 세로로 스크롤된다(강제로
+   줄여 글씨를 작게 만들지 않는다). */
+body.hslides{overflow:hidden}
+/* #root 밑에 래퍼 div 가 한 층 더 있다 — 거기서 높이가 끊기면 main 이 화면을
+   넘어간다(실측 1104px). 그 층까지 같이 100% 로 묶는다. */
+body.hslides #root{height:100dvh;overflow:hidden}
+body.hslides #root,body.hslides #root>div{display:flex;flex-direction:column;min-height:0}
+body.hslides #root>div{height:100%;overflow:hidden}
+body.hslides main{flex:1 1 auto;min-height:0;display:flex;flex-wrap:nowrap;
+  overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scroll-behavior:smooth;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none}
+body.hslides main::-webkit-scrollbar{display:none}
+body.hslides main>.hslide{flex:0 0 100vw;width:100vw;scroll-snap-align:start;
+  overflow-y:auto;overflow-x:hidden;display:block}
+/* 한 화면 안에 담기게 위아래 여백을 줄인다(원래 115px) */
+body.hslides main>.hslide>section,body.hslides main>.hslide>div.wrap{
+  padding-top:clamp(16px,3.2vh,52px);padding-bottom:clamp(16px,3.2vh,52px)}
+/* 글·여백을 화면 높이에 묶는다 — 고정값이면 낮은 노트북에서 잘린다(실측 768/800) */
+body.hslides .section-head{margin-bottom:clamp(12px,2.4vh,32px)}
+body.hslides .section-title{font-size:clamp(25px,4.4vh,45px)}
+body.hslides .step{padding:clamp(12px,2.2vh,30px) clamp(14px,1.6vw,25px)}
+body.hslides .step-num{font-size:clamp(28px,4.6vh,48px)}
+body.hslides .market-grid>*{padding:clamp(12px,2vh,24px)}
+body.hslides main>.hslide>footer{margin-top:0}
+/* 히어로는 카드(601px)가 커서 한 화면을 넘었다 — 실측으로 맞춘 값이다.
+   화면 높이에 따라 같이 줄도록 vh 로 건다(작은 노트북에서도 잘리지 않게). */
+body.hslides main>.hslide>section.hero{min-height:0;padding:16px 0 8px}   /* 위 52px 규칙보다 구체적이어야 이긴다 */
+body.hslides main>.hslide>div.wrap{padding:0 0 12px}
+/* 카드 전체를 자르니 아래 'ONE-STOP…·5 STEP·BPJPH·A to Z' 가 잘렸다.
+   자르지 말고 위쪽 사진만 줄인다 — 글은 전부 남는다. */
+body.hslides .hero-card{max-height:none;overflow:visible;align-self:start;margin-top:0}
+body.hslides .hero-inner{align-items:start}
+/* 카드를 위로 붙이면 아래로 쓸 수 있는 높이가 그만큼 늘어난다 — 사진도 같이 키운다 */
+body.hslides .hero-card-image{height:clamp(120px,21vh,300px) !important}   /* 앞서 넣은 height:300px !important 를 이기려면 필요하다 */   /* 1280x800·1366x768 에서 넘쳐 낮춤 */
+body.hslides .hero h1{font-size:clamp(34px,4.4vh,52px)}
+/* 카드 묶음은 원래 격자 그대로 둔다 — 슬라이드 안에 또 가로 스크롤을 두지 않는다.
+   한 화면을 넘치면 그 슬라이드 안에서 세로로 스크롤된다. */
+/* 서비스는 3+2 두 줄이라 한 화면에 안 들어갔다(둘째 줄이 잘렸다).
+   카드 높이를 줄여 두 줄이 들어오게 한다 — 줄 구성은 원래대로 둔다. */
+body.hslides .service{min-height:0;height:clamp(140px,23vh,250px)}
+body.hslides .service-content{bottom:18px;left:20px;right:20px}
+body.hslides .service-grid{gap:16px}
+body.hslides .step{min-height:0}
+body.hslides section.services .section-head{margin-bottom:22px}
+
+/* ── 배경 통일 ─────────────────────────────────────────────────────────────
+   1번(히어로)만 사진이 그대로 보이고 나머지는 흰 판이 덮여 결이 달랐다.
+   슬라이드 모드에서는 판을 모두 걷어 **여섯 화면이 같은 배경**을 쓰게 한다.
+   대신 배경 베일을 위아래 균일하게 바꾼다(원래는 위가 어둡고 아래가 밝아,
+   화면마다 밝기가 달라 보였다). 글자는 히어로처럼 밝은 색으로 맞춘다. */
+body.hslides::after{background:rgba(5,22,19,.62) !important}   /* .55 면 사진 밝은 부분에서 본문이 4.3:1 로 미달 — 실측 최소값 */
+body.hslides main>.hslide>section,
+body.hslides main>.hslide>section#halal,
+body.hslides main>.hslide>section#contact,
+body.hslides main>.hslide>footer{background:transparent !important;
+  -webkit-backdrop-filter:none !important;backdrop-filter:none !important}
+/* 밝은 배경 전제였던 글자들을 되돌린다 */
+body.hslides .section-title,body.hslides section#halal h2{color:#fff !important}
+/* .88 이면 4.3:1 로 본문 기준(4.5)에 못 미쳤다 — 실측해서 올렸다 */
+body.hslides .section-desc,body.hslides section#halal>.wrap>*>p{color:rgba(255,255,255,.97) !important}
+body.hslides main>.hslide>footer p,body.hslides main>.hslide>footer li,
+body.hslides main>.hslide>footer a{color:rgba(255,255,255,.95) !important}
+body.hslides .eyebrow{color:var(--gold-soft) !important}
+body.hslides .about-copy,body.hslides .about-copy p,body.hslides .about-copy li{
+  color:rgba(255,255,255,.88) !important}
+body.hslides .about-copy b,body.hslides .about-copy strong{color:#fff !important}
+/* 인증절차는 원래 어두운 배경용(밝은 글자)이었다 — 앞서 뒤집은 것을 되돌린다 */
+body.hslides section.process .section-title,body.hslides section.process .step h3{color:#fff !important}
+body.hslides section.process .section-desc,body.hslides section.process .step p{
+  color:rgba(255,255,255,.95) !important}
+body.hslides section.process .step{background:rgba(255,255,255,.10) !important;
+  border-color:rgba(255,255,255,.16) !important}
+body.hslides section.process .step-num{color:var(--gold-soft) !important}
+/* 흰 판 위에 얹힌 글(할랄 법령 목록 등)은 그대로 어둡게 둔다 */
+body.hslides .reg-card,body.hslides .reg-card *{color:inherit !important}
+
+/* 히어로의 보조 버튼(.btn-outline)은 테두리만 있고 속이 비어 있어, 사진 위에서
+   글씨가 묻혔다. 슬라이드 모드에선 속을 채운다. */
+body.hslides .hero .btn-outline{background:#fff !important;border-color:#fff !important;
+  color:var(--green-900,#0a4038) !important}
+body.hslides .hero .btn-outline:hover{background:var(--ivory,#f8f5ec) !important}
+
+/* 요청으로 뺀 버튼들 — 슬라이드에 이미 내용이 다 있거나, 다른 경로가 있다.
+   ('인증 신청'은 헤더에 그대로 있다) */
+#about a[data-i18n="aboutBtn"],
+#contact a[data-i18n="ctaBtn"]{display:none !important}
+
+/* 히어로 문구 뒤 그늘 ─────────────────────────────────────────────────────
+   배경 사진의 밝은 부분과 큰 'GLHAC' 필기체 위에 글이 얹혀, 금색 글자가 특히
+   묻혔다(실측: 윗줄 2.7:1, 금색 제목줄 3.9:1).
+
+   글 뒤에만 상자를 깔았더니 네모 판처럼 도드라졌다 — 화면 왼쪽에서 오른쪽으로
+   서서히 옅어지는 띠로 바꾼다. 위아래로 꽉 차 있어 경계가 보이지 않는다. */
+body.hslides main>.hslide>section.hero{position:relative;isolation:isolate}
+body.hslides main>.hslide>section.hero::after{content:"";position:absolute;
+  inset:0;z-index:0;pointer-events:none;
+  background:linear-gradient(100deg,
+    rgba(3,17,14,.74) 0%, rgba(3,17,14,.66) 26%, rgba(3,17,14,.40) 46%,
+    rgba(3,17,14,.12) 60%, rgba(3,17,14,0) 72%)}
+body.hslides .hero-inner{position:relative;z-index:1}
+/* 원본 히어로의 방사형 그라데이션이 어두운 띠 위에서 큰 원 경계로 드러났다 — 끈다 */
+body.hslides main>.hslide>section.hero::before{background:none !important}
+/* 금색 글자는 그늘 위에서도 가장자리가 번지므로 얇은 그림자를 더한다 */
+body.hslides .hero .eyebrow,body.hslides .hero h1 em{
+  text-shadow:0 1px 10px rgba(0,0,0,.5)}
+
+
+/* ── 2번 화면(센터소개)을 이미지 한 장으로 ────────────────────────────────
+   보내주신 시안에 이미 About GLHAC 문구와 아이콘이 들어 있어, 기존 글을 그대로
+   두면 같은 내용이 두 번 보인다. 그래서 이 화면에서는 글을 감추고 이미지만 쓴다.
+
+   cover 로 채우면 화면이 이미지보다 넓어 위아래가 19~30% 잘린다(로고와 하단
+   문구가 날아간다). contain 으로 전체를 보이고 좌우는 공통 배경을 그대로 둔다.
+
+   작은 화면(슬라이드 모드가 아닐 때)에서는 원래 글을 쓴다 — 이미지 속 글자는
+   너무 작아 못 읽고, 한국어로 구워져 있어 영어·인니어로 바뀌지도 않는다. */
+body.hslides #about>.wrap{display:none !important}
+body.hslides #about{display:flex;align-items:center;justify-content:center}
+/* max-height:100% 는 안쪽 여백을 못 빼서 조금씩 넘쳤다(실측 +42~149px).
+   박스를 정확히 채우고 그림은 object-fit 으로 비율을 지킨다 — 넘칠 수가 없다. */
+/* 부모 높이가 auto 면 자식의 height:100% 가 먹지 않는다 — 명시한다 */
+body.hslides main>.hslide>section#about{height:100%;box-sizing:border-box;
+  padding:clamp(10px,1.8vh,28px) 0 !important;min-height:0}
+body.hslides #about .about-full{display:block;width:100%;height:100%;
+  object-fit:contain;object-position:center}
+
+/* 마지막 화면(연락처)에 인증 신청 바로가기 — 여기까지 내려온 사람이
+   다시 위로 올라가 헤더 버튼을 찾게 하지 않는다. */
+.hs-apply{display:inline-flex;align-items:center;gap:8px;margin-top:18px;
+  padding:14px 26px;border-radius:999px;background:var(--gold);color:#fff;
+  font:700 15px/1 'Noto Sans KR',sans-serif;text-decoration:none;
+  box-shadow:0 10px 26px rgba(0,0,0,.24)}
+.hs-apply:hover{background:var(--gold-soft)}
+
+/* 좌우 이동 · 현재 위치 */
+.hs-arrow{position:fixed;top:50%;transform:translateY(-50%);z-index:40;
+  width:48px;height:48px;border-radius:50%;border:1px solid rgba(23,33,31,.14);
+  background:rgba(255,255,255,.92);color:#0e5548;font-size:22px;line-height:1;cursor:pointer;
+  box-shadow:0 8px 22px rgba(0,0,0,.18);display:grid;place-items:center}
+.hs-arrow.prev{left:16px}
+.hs-arrow.next{right:16px}
+.hs-arrow[disabled]{opacity:0;pointer-events:none}
+.hs-dots{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:40;
+  display:flex;gap:9px;padding:9px 14px;border-radius:999px;
+  background:rgba(255,255,255,.82);box-shadow:0 6px 18px rgba(0,0,0,.14)}
+.hs-dots button{width:9px;height:9px;padding:0;border:0;border-radius:50%;cursor:pointer;
+  background:rgba(23,33,31,.24)}
+.hs-dots button[aria-current="true"]{background:var(--gold);width:26px;border-radius:99px}
+@media(max-width:900px){.hs-arrow{display:none}}
+@media(prefers-reduced-motion:reduce){body.hslides main{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+  
+<div id="glhac-intro" aria-hidden="true">
+  <video id="intro" autoplay muted playsinline preload="auto" poster="./intro/photo.jpg">
+    <source src="./intro/intro.mp4" type="video/mp4">
+  </video>
+  <div id="white"></div>
+  <div id="blurBg"></div>
+  <div id="photo"><img src="./intro/photo.jpg" alt=""></div>
+  <div id="logo"><svg viewBox="0 0 1000 230">
+    <text id="s" x="40" y="166" font-family="'Snell Roundhand','Apple Chancery','Segoe Script','Brush Script MT',cursive" font-size="180" font-style="italic">GLHAC</text>
+    <text id="f" x="40" y="166" font-family="'Snell Roundhand','Apple Chancery','Segoe Script','Brush Script MT',cursive" font-size="180" font-style="italic">GLHAC</text>
+  </svg></div>
+  <button id="introSoundBtn" type="button" aria-label="소리 켜기"><span aria-hidden="true">♪</span> 소리 켜기</button>
+  <button id="introSkip" type="button">건너뛰기 ›</button>
+</div>
+<div id="root"></div>
+  <script>
+(function(){
+  var el = document.getElementById('glhac-intro');
+  if(!el) return;
+  // 같은 방문(탭) 안에서는 한 번만 보여 준다 — 새로고침마다 12초를 기다리게 하지 않는다.
+  if (sessionStorage.getItem('glhacIntroSeen')) { el.remove(); return; }
+  document.body.classList.add('intro-on');
+  function finish(){
+    if (el.classList.contains('done')) return;
+    stopSound();          // 화면이 사라졌는데 소리만 남으면 이상하다
+    sessionStorage.setItem('glhacIntroSeen','1');
+    el.classList.add('done');
+    document.body.classList.remove('intro-on');
+    setTimeout(function(){ el.remove(); }, 700);
+  }
+  /* ── 인트로 효과음 ──────────────────────────────────────────────────────
+     손글씨가 그려지기 **직전**에 울린다(글씨 5.86s · 소리 5.30s).
+     소리가 먼저 오고 글씨가 따라 나오는 순서다.
+
+     나라별로 악기를 바꾼다. IP 로 나라를 알아내려면 외부 조회 서비스를 거쳐야
+     하고, 방문자 주소가 그 업체로 나간다. 같은 목적이면 브라우저가 이미 들고 있는
+     **시간대와 언어**로 충분하다 — 바깥으로 나가는 요청이 없다.
+
+     브라우저는 사용자가 그 사이트에서 한 번이라도 누르기 전까지 소리를 막는다.
+     그래서 첫 방문에는 대개 막힌다. 막혔을 때만 작은 '소리 켜기' 버튼을 내보내고,
+     인트로 화면 아무 데나 눌러도 풀리게 했다. 평소에는 버튼이 보이지 않는다. */
+  var introSound = null, doorSound = null;
+  function pickSound(){
+    var tz = '';
+    try { tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || ''); } catch(e){}
+    var lang = (navigator.language || '').toLowerCase();
+    if (/Seoul/i.test(tz) || lang.indexOf('ko') === 0) return 'gong2';        // 한국 · 징
+    if (/Jakarta|Makassar|Jayapura|Pontianak/i.test(tz) || lang.indexOf('id') === 0)
+      return 'gamelan2';                                                      // 인도네시아 · 가믈란
+    return 'tadum2';                                                          // 그 외 · 중립
+  }
+  try {
+    doorSound = new Audio('./intro/door-creak2.mp3');   // 영상 속 문이 열릴 때
+    doorSound.volume = 0.5;                      // 악기 소리보다 낮게 — 배경이다
+    doorSound.preload = 'auto';
+  } catch(e) { doorSound = null; }
+  try {
+    introSound = new Audio('./intro/' + pickSound() + '.mp3');
+    introSound.volume = 0.55;
+    introSound.preload = 'auto';
+  } catch(e) { introSound = null; }
+
+  /* 두 소리는 각자 '차례'가 있다.
+       · 문 소리 — 인트로가 뜨는 순간(영상 시작과 동시에)
+       · 악기 소리 — 글씨가 써지기 0.56초 전(인트로 시작 후 5.3초, 벽시계)
+     차단돼 있다가 나중에 풀리면, **이미 지난 차례만** 그때 튼다.
+     아직 안 온 차례는 건드리지 않는다 — 순서가 뒤집히면 연출이 무너진다. */
+  var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+  var cue  = { door:false, inst:false };     // 차례가 왔는가
+  var done = { door:false, inst:false };     // 실제로 울렸는가
+  var busy = { door:false, inst:false };     // 재생을 시도하는 중(중복 호출 방지)
+
+  function soundBtn(show){
+    var sb = document.getElementById('introSoundBtn');
+    if (sb) sb.style.display = show ? 'inline-flex' : 'none';
+  }
+  function fire(key, fromUser){
+    var a = (key === 'door') ? doorSound : introSound;
+    if (!a || done[key] || busy[key] || !cue[key]) return;
+    var pr;
+    busy[key] = true;
+    try { pr = a.play(); } catch(e){ busy[key] = false; return; }
+    if (!pr || !pr.then) { done[key] = true; return; }
+    pr.then(function(){ done[key] = true; soundBtn(false); },
+            function(){ busy[key] = false;                   // 막혔다 → 다시 시도할 수 있게
+                        if (!fromUser) soundBtn(true); });   //            버튼을 내보낸다
+  }
+  function playSound(fromUser){                // 사용자가 눌러 소리가 풀렸을 때
+    var vid = document.getElementById('intro');
+    var vt = vid ? vid.currentTime : 99;
+    if (vt < 2.0) fire('door', fromUser);      // 영상 초반일 때만 의미가 있다
+    fire('inst', fromUser);
+  }
+
+  // 문 소리 차례 — 영상이 돌기 시작하는 그 순간
+  cue.door = true;
+  fire('door', false);
+
+  // 악기 소리 차례 — 글씨보다 0.56초 먼저. 소리가 예고하고 글씨가 답한다.
+  setTimeout(function(){ cue.inst = true; fire('inst', false); }, 5300);
+
+  // 인트로 어디든 누르면 그 순간 소리가 풀린다(건너뛰기 버튼은 제외)
+  ['pointerdown','keydown','touchstart'].forEach(function(ev){
+    document.addEventListener(ev, function once(e){
+      document.removeEventListener(ev, once);
+      if (e.target && e.target.id === 'introSkip') return;
+      playSound(true);
+    }, {passive:true});
+  });
+
+  function stopSound(){
+    [introSound, doorSound].forEach(function(a){
+      if (!a) return;
+      try { a.pause(); a.currentTime = 0; } catch(e){}
+    });
+    introSound = doorSound = null;
+    soundBtn(false);
+  }
+
+  document.getElementById('introSkip').addEventListener('click', finish);
+  document.getElementById('introSoundBtn').addEventListener('click', function(){
+    playSound(true);
+    this.style.display = 'none';
+  });
+  // 애니메이션 총 길이(#ui 가 10.20s 에 시작해 .6s) + 여유 — 화이트아웃 1초 단축 반영
+  var t = setTimeout(finish, 11200);
+  // 자동재생이 막히거나 영상이 실패해도 멈춰 있지 않게
+  var v = document.getElementById('intro');
+  if (v) v.addEventListener('error', function(){ clearTimeout(t); finish(); });
+})();
+</script>
+  <script>
+(function(){
+  // 헤더 로고: 엠블럼만 남기고 'GLHAC' 는 손글씨로 바꾼다.
+  // SPA 가 그린 뒤에 손봐야 하므로 root 를 관찰한다(언어 전환으로 다시 그려도 유지).
+  function applyLogo(){
+    document.querySelectorAll('.logo').forEach(function(l){
+      var img = l.querySelector('img');
+      if (img && !img.dataset.emblem){
+        img.src = './GLHAC_emblem.svg';
+        img.dataset.emblem = '1';
+      }
+      if (!l.querySelector('.logo-text')){
+        var sub = l.querySelector('.logo-sub');
+        var col = document.createElement('span');
+        col.className = 'logo-text';
+        var tpl = document.createElement('template');
+        tpl.innerHTML = '<svg class="hand" viewBox="0 0 1000 230" aria-label="GLHAC"><text class="stroke" x="20" y="166">GLHAC</text><text class="fill" x="20" y="166">GLHAC</text></svg>';
+        col.appendChild(tpl.content.firstChild);
+        if (sub) col.appendChild(sub);          // 'HALAL CERTIFICATION CENTER'
+        l.appendChild(col);
+      }
+    });
+  }
+  applyLogo();
+  // 하단 로고 — 상단과 같은 구성으로 바꾼다(원본은 공식 로고 이미지 한 장이었다)
+  function applyFooterLogo(){
+    document.querySelectorAll('img.footer-logo').forEach(function(img){
+      var box = document.createElement('div');
+      box.className = 'footer-logo';
+      box.innerHTML = '<img src="./GLHAC_emblem.svg" alt="GLHAC">' +
+        '<span><svg class="hand" viewBox="0 0 1000 230" aria-label="GLHAC">' +
+        '<text x="20" y="166">GLHAC</text></svg>' +
+        '<span class="logo-sub">HALAL CERTIFICATION CENTER</span></span>';
+      img.parentNode.replaceChild(box, img);
+    });
+  }
+  applyFooterLogo();
+  // 로고를 누르면 첫 화면(히어로)으로. 원래 href="#" 이라 주소창에 '#'만 붙고
+  // 뚝 끊기듯 올라갔다 — 부드럽게 올리고 주소는 깨끗하게 둔다.
+  function wireLogoHome(){
+    document.querySelectorAll('header .logo, .footer-logo').forEach(function(el){
+      if(el.dataset.home) return;
+      el.dataset.home = '1';
+      el.style.cursor = 'pointer';
+      el.setAttribute('role','link');
+      el.setAttribute('aria-label','맨 위로');
+      el.addEventListener('click', function(e){
+        e.preventDefault();
+        var hero = document.querySelector('.hero');
+        if(hero) hero.scrollIntoView({behavior:'smooth', block:'start'});
+        else window.scrollTo({top:0, behavior:'smooth'});
+        if(location.hash) history.replaceState(null,'',location.pathname+location.search);
+      });
+    });
+  }
+  wireLogoHome();
+  // '문의하기'는 게시판으로 보냈으므로, 마지막 화면(상담 신청·연락처·오시는 길)으로
+  // 가는 메뉴가 따로 필요하다. SPA 가 다시 그려도 유지되게 매번 확인한다.
+  /* 메뉴 이름도 언어를 따라야 한다. 원래 '문의하기'(게시판)는 Kontak 으로 번역되므로
+     이쪽은 '연락처(정보)'로 구분되게 적는다. */
+  var CONTACT_LABEL = {ko:'연락처', en:'Contact Info', id:'Info Kontak'};
+  /* SPA 의 LANG 은 전역이 아니다(실측: ReferenceError) — 언어 버튼의 활성 상태로 읽는다. */
+  function pageLang(){
+    var on = document.querySelector('.language-switcher .active, .language-switcher [aria-pressed="true"]');
+    var txt = ((on && on.textContent) || document.documentElement.lang || '').toLowerCase();
+    if(/english|^en/.test(txt)) return 'en';
+    if(/indone|^id/.test(txt)) return 'id';
+    return 'ko';
+  }
+  function contactMenuLabel(){ return CONTACT_LABEL[pageLang()] || CONTACT_LABEL.ko; }
+  /* 메뉴 차례: … 서비스 · 연락처 · 문의하기.
+     '문의하기'를 게시판으로 돌리는 배선이 늦게 붙어서, 처음엔 그 링크를 못 찾고
+     '연락처'가 맨 뒤로 갔다 — 순서는 여기서 따로 맞춘다.
+     이미 제자리면 건드리지 않는다(건드리면 MutationObserver 가 다시 돈다). */
+  function boardLink(menu){
+    return menu.querySelector('a[data-board]')
+        || menu.querySelector('a[data-i18n="navContact"]')
+        || menu.querySelector('a[href="./board/"]');
+  }
+  function orderContactMenu(){
+    var menu = document.querySelector('header .menu') || document.querySelector('header nav');
+    if(!menu) return;
+    var a = menu.querySelector('[data-contact-menu]');
+    var b = boardLink(menu);
+    if(!a || !b || a.nextElementSibling === b) return;
+    menu.insertBefore(a, b);
+  }
+
+  function syncContactMenu(){
+    orderContactMenu();
+    var a = document.querySelector('[data-contact-menu]');
+    setText(a, contactMenuLabel());
+    // 2번 화면 시안의 대체텍스트도 언어를 따른다(화면낭독기·이미지 실패 시 보인다)
+    var img = document.querySelector('#about .about-full');
+    setAlt(img, ALT_TEXT[pageLang()] || ALT_TEXT.ko);
+    syncExtra();
+  }
+  /* 아래 세 곳은 원본에 data-i18n 이 없어 번역 대상에서 빠져 있었다 —
+     영어·인니어 화면에도 한국어가 그대로 보인다(상단바 주소·'처음부터 바르게' 배지·
+     이미지 대체텍스트). 여기서 언어에 맞춰 채운다. */
+  var EXTRA = {
+    addr: {ko:'서울 금천구 가산디지털2로 101',
+           en:'101 Gasan digital 2-ro, Geumcheon-gu, Seoul',
+           id:'101 Gasan digital 2-ro, Geumcheon-gu, Seoul'},
+    seal: {ko:['처음부터 바르게','끝까지 함께'],
+           en:['Right from the start','together to the end'],
+           id:['Benar sejak awal','bersama hingga akhir']},
+    sealTag: {ko:'TRUSTED PARTNER', en:'TRUSTED PARTNER', id:'MITRA TEPERCAYA'},
+    altLogo: {ko:'GLHAC 로고', en:'GLHAC logo', id:'Logo GLHAC'},
+    altMain: {ko:'기업 인증 상담', en:'Certification consulting', id:'Konsultasi sertifikasi'},
+    altSmall:{ko:'전문 컨설팅 공간', en:'Consulting space', id:'Ruang konsultasi'}
+  };
+  /* 값이 이미 맞으면 건드리지 않는다 — 무심코 다시 쓰면 MutationObserver 가
+     또 불려 무한 루프가 된다(실측: 페이지가 멈췄다). */
+  function setText(el, v){ if(el && el.textContent !== v) el.textContent = v; }
+  function setAlt(el, v){ if(el && el.getAttribute('alt') !== v) el.setAttribute('alt', v); }
+  function syncExtra(){
+    var lg = pageLang();
+    var addr = [].slice.call(document.querySelectorAll('.topbar-links span'))
+                 .filter(function(e){ return /가산디지털|Gasan/.test(e.textContent); })[0];
+    setText(addr, EXTRA.addr[lg]);
+    var seal = document.querySelector('.seal > div');
+    if(seal){
+      var html = '<small>' + EXTRA.sealTag[lg] + '</small>'
+               + EXTRA.seal[lg][0] + '<br>' + EXTRA.seal[lg][1];
+      if(seal.innerHTML !== html) seal.innerHTML = html;
+    }
+    document.querySelectorAll('.logo img').forEach(function(i){ setAlt(i, EXTRA.altLogo[lg]); });
+    setAlt(document.querySelector('img.about-main'), EXTRA.altMain[lg]);
+    setAlt(document.querySelector('img.about-small'), EXTRA.altSmall[lg]);
+  }
+
+  var ALT_TEXT = {
+    ko:'GLHAC 센터 소개 — 처음부터 바르게 끝까지 함께. 인증 자체가 목적이 아니라, 기업의 다음 시장이 목적입니다.',
+    en:'About GLHAC — Right from the start, together to the end. Certification is not the final goal; your next market is.',
+    id:'Tentang GLHAC — Benar sejak awal, bersama hingga akhir. Sertifikasi bukan tujuan akhir; pasar berikutnya adalah tujuan Anda.'
+  };
+
+  /* 마지막 화면의 인증 신청 버튼 — 로그인 상태면 인계로 넘어간다(헤더와 같은 규칙). */
+  var APPLY_LABEL = {ko:'인증 신청 바로가기 →', en:'Apply for Certification →',
+                     id:'Ajukan Sertifikasi →'};
+  function addApplyButton(){
+    var cta = document.querySelector('#contact .cta-box') || document.querySelector('#contact .wrap');
+    if(!cta) return;
+    var a = cta.querySelector('[data-apply-cta]');
+    if(!a){
+      a = document.createElement('a');
+      a.setAttribute('data-apply-cta','1');
+      a.className = 'hs-apply';
+      a.href = 'https://glhac.co.kr';
+      a.rel = 'noopener';
+      cta.appendChild(a);
+    }
+    var want = APPLY_LABEL[pageLang()] || APPLY_LABEL.ko;
+    if(a.textContent !== want) a.textContent = want;
+  }
+
+  function addContactMenu(){
+    var menu = document.querySelector('header .menu') || document.querySelector('header nav');
+    if(!menu || menu.querySelector('[data-contact-menu]')) return;
+    if(!document.getElementById('contact')) return;
+    var a = document.createElement('a');
+    a.href = '#contact';
+    a.setAttribute('data-contact-menu','1');
+    a.textContent = contactMenuLabel();
+    menu.appendChild(a);
+    orderContactMenu();
+  }
+  addContactMenu();
+  syncContactMenu();
+  addApplyButton();
+  document.addEventListener('click', function(e){
+    if(e.target.closest && e.target.closest('.language-switcher'))
+      setTimeout(syncContactMenu, 140);
+  }, true);
+  var root = document.getElementById('root');
+  if (root && window.MutationObserver){
+    new MutationObserver(function(){applyLogo();applyFooterLogo();wireLogoHome();addContactMenu();syncContactMenu();addApplyButton();}).observe(root, {childList:true, subtree:true});
+  }
+})();
+</script>
+
+<script id="glhac-home-wire">
+/* 홈페이지 ↔ 할랄 AI 연결 ─────────────────────────────────────────────────
+   본문은 빌드된 SPA 라 소스가 없다. 그래서 **밖에서 손보는** 방식으로 간다 —
+   되돌리려면 이 <script> 한 덩이만 빼면 된다.
+
+   하는 일 세 가지:
+     ① 메뉴 '문의하기' → 익명 비공개 게시판(/board/)
+     ② QR 로 들어온 ?ref= 를 기억 — 게시판 문의가 그 영업자 담당으로 붙는다
+     ③ '인증 신청' 버튼: 로그인 상태면 다시 로그인시키지 않고 인계코드로 넘긴다
+*/
+(function(){
+  var APP = (window.GLHAC_API_BASE || "https://glhac.co.kr").replace(/\/+$/,"");
+  var TK  = "glhac_home_token";
+
+  // ② ?ref= 기억. 주소창에서 지워도 세션 동안 유지된다.
+  var m = location.search.match(/[?&]ref=([A-Za-z0-9\-]+)/);
+  if(m){ try{ sessionStorage.setItem("glhac_ref", m[1].toUpperCase()); }catch(e){} }
+  function ref(){ try{ return sessionStorage.getItem("glhac_ref")||""; }catch(e){ return ""; } }
+  // 인증신청(앱 가입) 귀속은 **현재 URL의 ?ref 만** 쓴다 — 저장분 되살림 금지.
+  // ?ref 없이 그냥 들어와 인증신청을 눌렀는데 옛 코드가 붙으면 엉뚱한 컨설턴트로 귀속된다.
+  function urlRef(){ var mm=(location.search||"").match(/[?&]ref=([A-Za-z0-9\-]+)/); return mm?mm[1].toUpperCase():""; }
+  function tok(){ try{ return localStorage.getItem(TK)||""; }catch(e){ return ""; } }
+
+  // ③ 로그인 상태면 인계코드를 받아 이동한다. 실패하면 그냥 로그인 화면으로 — 막지 않는다.
+  async function toApp(e){
+    if(!tok()) return;                       // 비로그인은 원래 링크대로
+    if(e){ e.preventDefault(); }
+    try{
+      var r = await fetch(APP+"/auth/handoff/issue",
+        {method:"POST", headers:{"Content-Type":"application/json",
+         Authorization:"Bearer "+tok()}, body:"{}"});
+      var j = await r.json();
+      location.href = r.ok && j.redirect ? j.redirect : APP;
+    }catch(err){ location.href = APP; }
+  }
+
+  function wire(){
+    document.querySelectorAll('a[href]').forEach(function(a){
+      var h = a.getAttribute("href")||"";
+      // ① 문의하기 — #contact 앵커(CTA 로 내려가기만 한다)를 게시판으로
+      // '전문가 상담 신청'(히어로)도 문의하기 게시판으로 보낸다.
+      // 원래 glhac.co.kr 을 가리켜 아래 인계 처리에 걸렸으므로, 여기서 먼저 바꾸고
+      // 인계 대상에서 빠지게 한다(순서가 중요하다).
+      if(a.dataset.i18n === "heroConsultBtn" && !a.dataset.board){
+        a.dataset.board = "1";
+        a.setAttribute("href", "./board/" + (urlRef()?("?ref="+urlRef()):""));  // QR 로 왔을 때만 문의도 귀속
+        a.removeAttribute("target");
+        return;
+      }
+      // 헤더 메뉴의 '문의하기'만 게시판으로. 본문에도 #contact 링크가 있어서
+      // ('인증 상담' 바로가기, '센터 소개 더보기') 전에는 그것들까지 게시판으로 갔다.
+      var inMenu = a.closest && a.closest('header');
+      if(h === "#contact" && inMenu && !a.dataset.board && !a.dataset.contactMenu){
+        a.dataset.board = "1";
+        a.setAttribute("href", "./board/" + (urlRef()?("?ref="+urlRef()):""));  // QR 로 왔을 때만 문의도 귀속
+        a.removeAttribute("target");
+      }
+      // ③ 인증 신청 계열 — glhac.co.kr 로 가는 링크 전부
+      if((/glhac\.co\.kr/.test(h) || (APP && h.indexOf(APP)===0)) && !a.dataset.handoff){
+        a.dataset.handoff = "1";
+        a.addEventListener("click", toApp);
+        var _r = urlRef();                       // 현재 URL에 ?ref 있을 때만(저장분 금지)
+        if(_r){ try{
+          var u = new URL(h, location.href); u.searchParams.set("ref", _r);
+          a.setAttribute("href", u.toString());
+        }catch(e){} }
+      }
+    });
+    // CTA 섹션의 '인증 상담 신청'은 앵커가 아니라 버튼일 수 있다
+    document.querySelectorAll('.btn.is-disabled').forEach(function(b){
+      if(b.dataset.i18n === "lawBtn") return;   // 법령 상담은 아직 준비 중이다
+    });
+  }
+  wire();
+  // SPA 가 언어 전환 등으로 다시 그리면 다시 걸어 준다
+  var root = document.getElementById("root");
+  if(root && window.MutationObserver) new MutationObserver(wire).observe(root,{childList:true,subtree:true});
+})();
+</script>
+
+
+
+
+<script id="glhac-hslides">
+/* 한 화면씩 좌우로 넘기는 모드.
+
+   묶음 규칙: 히어로에는 바로 아래 '바로가기' 4칸을 붙이고, 마지막은 문의 + 푸터를
+   한 슬라이드로 묶는다(푸터만 있는 화면은 허전하다).
+   되돌리려면 이 <script> 와 위 <style> 만 빼면 세로 스크롤로 돌아간다. */
+(function(){
+  var main, slides=[], dots, prev, next, built=false;
+
+  function build(){
+    main = document.querySelector('main');
+    if(!main || built) return;
+    var kids = [].slice.call(main.children);
+    if(!kids.length) return;
+    built = true;
+
+    var groups=[], cur=null;
+    kids.forEach(function(el){
+      var isHero = el.classList.contains('hero');
+      var isQuick = el.tagName==='DIV' && el.classList.contains('wrap');
+      var isContact = el.id==='contact';
+      if(isQuick && cur){ cur.push(el); return; }         // 바로가기는 히어로에 붙인다
+      cur=[el]; groups.push(cur);
+      if(isHero) return;
+      if(isContact){ var f=document.querySelector('footer'); if(f) cur.push(f); }
+    });
+
+    groups.forEach(function(g){
+      var d=document.createElement('div');
+      d.className='hslide';
+      main.insertBefore(d, g[0]);
+      g.forEach(function(el){ d.appendChild(el); });
+      slides.push(d);
+    });
+
+    // 2번 화면은 시안 이미지 한 장으로 바꾼다(위 CSS 가 원래 글을 감춘다).
+    // 글이 이미지에 구워져 있으므로 언어마다 다른 파일을 쓴다.
+    // 언어 전환은 SPA 가 하므로, 바뀔 때마다 src 를 다시 맞춘다.
+    var about = document.getElementById('about');
+    if(about && !about.querySelector('.about-full')){
+      var img = document.createElement('img');
+      img.className = 'about-full';
+      img.src = aboutSrc();
+      img.alt = 'GLHAC';   // 자세한 대체텍스트는 syncContactMenu() 가 언어에 맞춰 넣는다
+      // 이미지는 나중에 도착한다 — 그때 높이가 바뀌므로 맞춤을 다시 돌린다
+      img.addEventListener('load', function(){ fit(); sync(); });
+      about.appendChild(img);
+    }
+
+    document.body.classList.add('hslides');
+    chrome();
+    wireLinks();
+    fit();
+    sync();
+  }
+
+  /* 화면 높이가 낮으면(1366x768 같은) 조금씩 잘렸다. 잘리는 슬라이드만 살짝
+     줄인다 — 다 줄이면 큰 화면에서 허전하고, 안 줄이면 내용이 잘린다.
+     0.80 까지만 줄이고 그래도 넘치면 그 슬라이드 안에서 세로로 스크롤된다. */
+  function fit(){
+    slides.forEach(function(d){
+      d.style.zoom = '';
+      for(var i=0;i<3;i++){
+        var over = d.scrollHeight - d.clientHeight;
+        if(over <= 0) break;
+        // 2px 여유를 두고 맞춘다 — 1px 만 남아도 스크롤바가 생긴다(실측 1440x900 등)
+        var z = parseFloat(d.style.zoom || 1) * ((d.clientHeight - 2) / d.scrollHeight);
+        d.style.zoom = Math.max(0.78, z);   // 1366x768 에서 0.84 로는 21px 모자랐다
+      }
+    });
+  }
+
+  /* 화면 언어에 맞는 시안 파일. SPA 의 LANG(0:en 1:ko 2:id)을 쓰되, 없으면
+     <html lang> · 언어 버튼의 활성 상태 순으로 본다. 못 찾으면 한국어를 쓴다. */
+  function curLang(){
+    // LANG 은 SPA 안에 갇혀 있어 밖에서 못 본다 — 언어 버튼의 활성 상태로 읽는다
+    var on = document.querySelector('.language-switcher .active, .language-switcher [aria-pressed="true"]');
+    var txt = (on && on.textContent || document.documentElement.lang || '').toLowerCase();
+    if(/english|^en/.test(txt)) return 'en';
+    if(/indone|^id/.test(txt)) return 'id';
+    return 'ko';
+  }
+  function aboutSrc(){ return './about-visual-' + curLang() + '.jpg'; }
+  function syncAboutImg(){
+    var img = document.querySelector('#about .about-full');
+    if(!img) return;
+    var want = aboutSrc();
+    if(img.getAttribute('src') !== want){ img.setAttribute('src', want); }
+  }
+
+  function chrome(){
+    prev=btn('prev','‹','이전 화면'); next=btn('next','›','다음 화면');
+    document.body.appendChild(prev); document.body.appendChild(next);
+    prev.onclick=function(){ go(idx()-1); };
+    next.onclick=function(){ go(idx()+1); };
+    dots=document.createElement('div'); dots.className='hs-dots';
+    dots.setAttribute('role','tablist'); dots.setAttribute('aria-label','화면 이동');
+    slides.forEach(function(s,i){
+      var b=document.createElement('button'); b.type='button';
+      b.setAttribute('aria-label', (i+1)+'번째 화면');
+      b.onclick=function(){ go(i); };
+      dots.appendChild(b);
+    });
+    document.body.appendChild(dots);
+    main.addEventListener('scroll', sync, {passive:true});
+    window.addEventListener('resize', function(){ fit(); sync(); });
+  }
+  function btn(cls,ch,label){
+    var b=document.createElement('button'); b.type='button';
+    b.className='hs-arrow '+cls; b.textContent=ch; b.setAttribute('aria-label',label);
+    return b;
+  }
+  function idx(){ return Math.round(main.scrollLeft / main.clientWidth); }
+  function go(i){
+    i=Math.max(0, Math.min(slides.length-1, i));
+    main.scrollTo({left:i*main.clientWidth, behavior:'smooth'});
+  }
+  function sync(){
+    var i=idx();
+    prev.disabled = i<=0;
+    next.disabled = i>=slides.length-1;
+    [].forEach.call(dots.children, function(b,n){ b.setAttribute('aria-current', n===i?'true':'false'); });
+  }
+
+  /* 메뉴의 #about 같은 링크를 가로 이동으로 다시 잇는다.
+     문서 단위로 한 번만 건다 — 링크를 나중에 추가해도(예: '연락처') 같이 잡힌다.
+     전에는 만들 때 한 번만 걸어서, 뒤에 생긴 메뉴가 동작하지 않았다. */
+  function wireLinks(){
+    if(document.documentElement.dataset.hsLinks) return;
+    document.documentElement.dataset.hsLinks = '1';
+    document.addEventListener('click', function(e){
+      var a = e.target.closest ? e.target.closest('a[href^="#"]') : null;
+      if(!a || !document.body.classList.contains('hslides')) return;
+      var id = a.getAttribute('href').slice(1);
+      var t = id ? document.getElementById(id) : null;
+      var slide = t ? t.closest('.hslide') : slides[0];
+      if(!slide) return;
+      e.preventDefault();
+      go(slides.indexOf(slide));
+      if(slide.scrollTop) slide.scrollTo({top:0, behavior:'smooth'});
+    }, true);
+  }
+
+  /* 휠·키보드 — 세로로 굴려도 넘어가게. 단, 내용이 긴 슬라이드는 그 안에서
+     세로로 다 읽은 뒤에 다음 화면으로 간다(읽던 내용을 건너뛰지 않게). */
+  var lock=false;
+  function onWheel(e){
+    var s=slides[idx()]; if(!s) return;
+    var canDown = s.scrollTop + s.clientHeight < s.scrollHeight - 2;
+    var canUp = s.scrollTop > 2;
+    if(Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;    // 트랙패드 가로는 그대로
+    if(e.deltaY > 0 && canDown) return;
+    if(e.deltaY < 0 && canUp) return;
+    e.preventDefault();
+    if(lock) return;
+    lock=true; setTimeout(function(){ lock=false; }, 420);
+    go(idx() + (e.deltaY>0 ? 1 : -1));
+  }
+  function onKey(e){
+    if(/^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName||''))) return;
+    var map={ArrowRight:1,ArrowLeft:-1,PageDown:1,PageUp:-1};
+    if(e.key in map){ e.preventDefault(); go(idx()+map[e.key]); }
+    else if(e.key==='Home'){ e.preventDefault(); go(0); }
+    else if(e.key==='End'){ e.preventDefault(); go(slides.length-1); }
+  }
+
+  // 작은 화면은 세로 스크롤을 그대로 둔다. 좁은 화면에서는 어떤 슬라이드도 한 화면에
+  // 안 들어가서, 가로로 넘기며 안에서 또 세로로 굴려야 한다 — 축이 둘이면 헷갈린다.
+  function wantSlides(){ return window.innerWidth>=1024 && window.innerHeight>=640; }
+
+  function start(){
+    if(!wantSlides()) return;
+    build();
+    if(!built) return;
+    window.addEventListener('wheel', onWheel, {passive:false});
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('load', function(){ fit(); sync(); });
+    // 언어 전환(버튼 클릭)에 맞춰 시안도 바꾼다 — SPA 가 다시 그린 뒤에 확인한다
+    document.addEventListener('click', function(e){
+      if(e.target.closest && e.target.closest('.language-switcher'))
+        setTimeout(function(){ syncAboutImg(); fit(); sync(); }, 120);
+    }, true);
+    if(document.fonts && document.fonts.ready) document.fonts.ready.then(function(){ fit(); sync(); });
+  }
+  if(document.querySelector('main')) start();
+  else {
+    var root=document.getElementById('root');
+    if(root && window.MutationObserver){
+      var mo=new MutationObserver(function(){ if(document.querySelector('main')){ mo.disconnect(); start(); } });
+      mo.observe(root,{childList:true,subtree:true});
+    }
+  }
+})();
+</script>
+
+</body>
+</html>
