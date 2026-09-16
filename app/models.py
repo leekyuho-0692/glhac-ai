@@ -875,8 +875,33 @@ class ConsultantInvite(Base):
     # 명함·QR 에 박는 대표 코드인가. 가입 시 1회 자동 발급되며 만료·횟수 제한이 없다.
     # 기간 한정 코드(기존 /consultant/invites)와 구분하려고 둔다.
     is_primary = Column(Boolean, default=False)
+    # 초대 종류. "consultant"(기본): 가입 업체가 consultant_id 담당으로 귀속(수수료 근거).
+    # "client": 관리자 발급 범용 클라이언트 초대 — 특정 컨설턴트에 안 묶인다(귀속 없음).
+    #   consultant_id 엔 발급한 관리자 uid 를 감사용으로 남기되, 담당으로는 쓰지 않는다.
+    kind = Column(String, default="consultant")
     expires_at = Column(DateTime)
     revoked_at = Column(DateTime)      # 회수된 코드는 다시 쓸 수 없다
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class StaffSignupRequest(Base):
+    """스태프(컨설턴트·오디터·파트와·관리자) 가입 신청 — 관리자 승인 전 대기.
+
+    대기 계정을 users 에 만들지 않는다: 미승인 상태가 users 에 있으면 버그 하나로
+    권한이 새어 나갈 수 있다. 승인 시에만 User 를 만들어 권한상승 표면을 원천 차단한다.
+    비밀번호는 해시로 보관했다가 승인 때 그대로 User 로 이관한다(재입력 불필요)."""
+    __tablename__ = "staff_signup_request"
+    request_id = Column(String, primary_key=True, default=uid)
+    username = Column(String, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    requested_role = Column(String, nullable=False)   # consultant|auditor|fatwa_liaison|admin
+    display_name = Column(String)
+    org_id = Column(String)
+    note = Column(Text)                                # 신청 사유(소속·연락 등)
+    status = Column(String, default="pending", index=True)   # pending|approved|rejected
+    reviewed_by = Column(String)
+    reviewed_at = Column(String)
+    reject_reason = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

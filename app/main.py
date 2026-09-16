@@ -1435,7 +1435,9 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         org = "org_" + models.uid()[:8]
         company_role = "client_admin"    # 새 회사 첫 가입자 = 기업업무 관리자
         _o = models.Org(org_id=org, name=company_name or "My Company", address=body.address)
-        if inv:
+        # 컨설턴트 초대만 담당으로 귀속한다. 관리자 발급 클라이언트 초대(kind="client")는
+        # 특정 컨설턴트에 안 묶이므로 consultant_id 를 붙이지 않는다(귀속 없음).
+        if inv and (getattr(inv, "kind", "consultant") or "consultant") != "client":
             _o.consultant_id = inv.consultant_id      # 누가 데려왔는지 — 수수료 근거
             _o.consultant_linked_at = datetime.utcnow()
         db.add(_o)
@@ -1455,7 +1457,9 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id)
     db.commit()
     _ref = None
-    if inv:
+    if inv and (getattr(inv, "kind", "consultant") or "consultant") == "client":
+        _ref = {"client_invite": True}     # GL-HAC 공식 초대 — 특정 컨설턴트 귀속 없음
+    elif inv:
         _cp = db.get(models.ConsultantProfile, inv.consultant_id)
         _cu = db.get(models.User, inv.consultant_id)
         _ref = {"consultant": (_cp.display_name if _cp and _cp.display_name
@@ -1470,6 +1474,98 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
 @app.get("/auth/me")
 def me(user=Depends(auth.get_current_user)):
     return user
+
+
+# ── 스태프 가입 신청 + 관리자 승인 ────────────────────────────────────────
+# 컨설턴트·오디터·파트와·관리자는 자가가입이 곧 권한상승이라, 신청은 대기(pending)로
+# 받아두고 관리자가 승인해야 실제 User 가 만들어진다. 대기건은 users 에 없으므로
+# 승인 전에는 로그인 자체가 안 된다.
+_STAFF_SIGNUP_ROLES = ["consultant", "auditor", "fatwa_liaison", "admin"]
+
+
+@app.post("/auth/staff-signup")
+def staff_signup(body: schemas.StaffSignupReq, db: Session = Depends(get_db)):
+    """스태프 가입 신청(공개) — 대기 상태로만 저장한다. 승인 전 권한 0."""
+    role = (body.requested_role or "").strip()
+    if role not in _STAFF_SIGNUP_ROLES:
+        raise HTTPException(422, {"code": "BAD_ROLE", "allowed": _STAFF_SIGNUP_ROLES})
+    uname = body.username.strip()
+    if db.query(models.User).filter_by(username=uname).first():
+        raise HTTPException(409, {"code": "DUPLICATE_ACCOUNT"})
+    dup = (db.query(models.StaffSignupRequest)
+             .filter_by(username=uname, status="pending").first())
+    if dup:
+        raise HTTPException(409, {"code": "SIGNUP_PENDING",
+                                  "message": "이미 승인 대기 중인 신청이 있습니다"})
+    req = models.StaffSignupRequest(
+        username=uname, password_hash=auth.hash_pw(body.password),
+        requested_role=role, display_name=(body.display_name or None),
+        note=(body.note or None), status="pending")
+    db.add(req)
+    db.commit()
+    return {"status": "pending", "request_id": req.request_id, "requested_role": role}
+
+
+@app.get("/admin/staff-signups")
+def admin_list_staff_signups(status: str = Query("pending"),
+                             user=Depends(auth.require_roles("admin")),
+                             db: Session = Depends(get_db)):
+    q = db.query(models.StaffSignupRequest)
+    if status and status != "all":
+        q = q.filter_by(status=status)
+    rows = q.order_by(models.StaffSignupRequest.created_at.desc()).limit(300).all()
+    pending = db.query(models.StaffSignupRequest).filter_by(status="pending").count()
+    return {"pending_count": pending,
+            "items": [{"request_id": r.request_id, "username": r.username,
+                       "requested_role": r.requested_role, "display_name": r.display_name,
+                       "note": r.note, "status": r.status, "reviewed_by": r.reviewed_by,
+                       "reviewed_at": r.reviewed_at, "reject_reason": r.reject_reason,
+                       "created_at": str(r.created_at)} for r in rows]}
+
+
+@app.post("/admin/staff-signups/{request_id}/approve")
+def admin_approve_staff_signup(request_id: str, body: schemas.StaffSignupReviewReq = None,
+                               user=Depends(auth.require_roles("admin")),
+                               db: Session = Depends(get_db)):
+    """승인 — 이 시점에 비로소 User 를 만든다. 역할은 신청분(또는 관리자 지정)."""
+    from datetime import datetime as _dt
+    req = db.get(models.StaffSignupRequest, request_id)
+    if not req:
+        raise HTTPException(404, {"code": "REQUEST_NOT_FOUND"})
+    if req.status != "pending":
+        raise HTTPException(409, {"code": "ALREADY_REVIEWED", "status": req.status})
+    role = ((body.role if body else None) or req.requested_role)
+    if role not in _STAFF_SIGNUP_ROLES:
+        raise HTTPException(422, {"code": "BAD_ROLE", "allowed": _STAFF_SIGNUP_ROLES})
+    if db.query(models.User).filter_by(username=req.username).first():
+        raise HTTPException(409, {"code": "DUPLICATE_ACCOUNT"})
+    u = models.User(username=req.username, password_hash=req.password_hash,
+                    role=role, org_id="org_demo")
+    db.add(u)
+    req.status = "approved"; req.reviewed_by = user["uid"]; req.reviewed_at = _dt.utcnow().isoformat()
+    db.flush()
+    _audit(db, user, "staff.signup.approve", "staff_signup", request_id, None,
+           {"username": req.username, "role": role}, commit=False)
+    db.commit()
+    return {"status": "approved", "user_id": u.user_id, "username": u.username, "role": role}
+
+
+@app.post("/admin/staff-signups/{request_id}/reject")
+def admin_reject_staff_signup(request_id: str, body: schemas.StaffSignupReviewReq = None,
+                              user=Depends(auth.require_roles("admin")),
+                              db: Session = Depends(get_db)):
+    from datetime import datetime as _dt
+    req = db.get(models.StaffSignupRequest, request_id)
+    if not req:
+        raise HTTPException(404, {"code": "REQUEST_NOT_FOUND"})
+    if req.status != "pending":
+        raise HTTPException(409, {"code": "ALREADY_REVIEWED", "status": req.status})
+    req.status = "rejected"; req.reviewed_by = user["uid"]; req.reviewed_at = _dt.utcnow().isoformat()
+    req.reject_reason = (body.reason if body else None)
+    _audit(db, user, "staff.signup.reject", "staff_signup", request_id, None,
+           {"username": req.username}, commit=False)
+    db.commit()
+    return {"status": "rejected"}
 
 
 # ===================== admin 시스템 설정 (admin 전용) =====================
@@ -3231,13 +3327,8 @@ def board_delete(post_id: str, user=Depends(auth.require_roles("operator", "admi
     return {"post_id": post_id, "deleted": True, "replies_deleted": n}
 
 
-@app.get("/consultant/qr")
-def consultant_qr(fmt: str = "svg", user=Depends(auth.require_roles("consultant")),
-                  db: Session = Depends(get_db)):
-    """내 QR — 스캔하면 홈페이지로 가고 내 담당으로 붙는다."""
-    inv = _consultant_primary_invite(db, user["uid"])
-    db.commit()
-    url = "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code)
+def _qr_response(url, fmt):
+    """초대 URL 을 QR 이미지로 — png|svg 공통 렌더러."""
     import io
 
     import segno
@@ -3250,6 +3341,15 @@ def consultant_qr(fmt: str = "svg", user=Depends(auth.require_roles("consultant"
     return Response(buf.getvalue(), media_type="image/svg+xml")
 
 
+@app.get("/consultant/qr")
+def consultant_qr(fmt: str = "svg", user=Depends(auth.require_roles("consultant")),
+                  db: Session = Depends(get_db)):
+    """내 QR — 스캔하면 홈페이지로 가고 내 담당으로 붙는다."""
+    inv = _consultant_primary_invite(db, user["uid"])
+    db.commit()
+    return _qr_response("%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code), fmt)
+
+
 @app.get("/consultant/qr/info")
 def consultant_qr_info(user=Depends(auth.require_roles("consultant")),
                        db: Session = Depends(get_db)):
@@ -3259,6 +3359,44 @@ def consultant_qr_info(user=Depends(auth.require_roles("consultant")),
     return {"code": inv.code,
             "url": "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code),
             "qr_svg": "/consultant/qr?fmt=svg", "qr_png": "/consultant/qr?fmt=png",
+            "used_count": inv.used_count}
+
+
+# ── 관리자 범용 클라이언트 초대 QR ────────────────────────────────────────
+# 특정 컨설턴트에 안 묶인 '공식' 클라이언트(applicant) 가입 링크. 회사가 공개 게시·배포한다.
+def _house_client_invite(db, admin_uid):
+    """하우스 클라이언트 초대 — 없으면 만든다(하나만, 만료·횟수 무제한)."""
+    inv = (db.query(models.ConsultantInvite)
+             .filter_by(kind="client", is_primary=True)
+             .order_by(models.ConsultantInvite.created_at).first())
+    if inv:
+        return inv
+    inv = models.ConsultantInvite(
+        code=_new_invite_code(db), consultant_id=admin_uid, kind="client",
+        note="관리자 발급 범용 클라이언트 초대", max_uses=10 ** 9,
+        is_primary=True, expires_at=None)
+    db.add(inv)
+    db.flush()
+    return inv
+
+
+@app.get("/admin/client-invite/qr")
+def admin_client_qr(fmt: str = "svg", user=Depends(auth.require_roles("operator", "admin")),
+                    db: Session = Depends(get_db)):
+    inv = _house_client_invite(db, user["uid"])
+    db.commit()
+    return _qr_response("%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code), fmt)
+
+
+@app.get("/admin/client-invite")
+def admin_client_invite_info(user=Depends(auth.require_roles("operator", "admin")),
+                             db: Session = Depends(get_db)):
+    inv = _house_client_invite(db, user["uid"])
+    db.commit()
+    return {"code": inv.code,
+            "url": "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code),
+            "qr_svg": "/admin/client-invite/qr?fmt=svg",
+            "qr_png": "/admin/client-invite/qr?fmt=png",
             "used_count": inv.used_count}
 
 
@@ -3276,9 +3414,13 @@ def check_invite(code: str, db: Session = Depends(get_db)):
         return {"valid": False, "reason": "EXPIRED"}
     if inv.used_count >= inv.max_uses:
         return {"valid": False, "reason": "USED_UP"}
+    if (getattr(inv, "kind", "consultant") or "consultant") == "client":
+        # 관리자 발급 클라이언트 초대 — 특정 컨설턴트 귀속 없음(발급자 노출 안 함).
+        return {"valid": True, "kind": "client", "consultant": None,
+                "company_name": inv.company_name}
     u = db.get(models.User, inv.consultant_id)
     prof = db.get(models.ConsultantProfile, inv.consultant_id)
-    return {"valid": True, "company_name": inv.company_name,
+    return {"valid": True, "kind": "consultant", "company_name": inv.company_name,
             "consultant": (prof.display_name if prof and prof.display_name
                            else (u.username if u else None))}
 

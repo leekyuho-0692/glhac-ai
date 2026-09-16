@@ -691,6 +691,26 @@ class RegisterReq(BaseModel):
     business_type: Optional[str] = None
 
 
+class StaffSignupReq(BaseModel):
+    username: str
+    password: str
+    requested_role: str                 # consultant|auditor|fatwa_liaison|admin
+    display_name: Optional[str] = None
+    note: Optional[str] = None
+    _un = field_validator("username")(classmethod(lambda cls, v: _username(v)))
+    _pw = field_validator("password")(classmethod(lambda cls, v: _password(v)))
+
+
+class StaffSignupReviewReq(BaseModel):
+    role: Optional[str] = None          # 승인 시 역할 덮어쓰기(미지정이면 신청 역할)
+    reason: Optional[str] = None        # 거부 사유
+
+
+class ClientInviteReq(BaseModel):
+    company_name: Optional[str] = None
+    note: Optional[str] = None
+
+
 class OCRExtractReq(BaseModel):
     image_b64: str
     doc_type: Optional[str] = "business_registration"  # business_registration|factory_registration

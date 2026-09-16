@@ -336,6 +336,7 @@
       <button class="btn pri" style="flex:1;justify-content:center;padding:11px" type="submit">로그인 · Sign in</button>
       <button type="button" class="btn" style="justify-content:center;padding:11px 16px;white-space:nowrap" onclick="showRegister(true)">회원가입</button>
     </div>
+    <div style="margin-top:10px;font-size:12px;text-align:center"><a onclick="showStaffSignup(true)" style="color:var(--accent);cursor:pointer">🛡 스태프 가입 (컨설턴트·오디터·파트와·관리자) · Staff sign-up</a></div>
     <div class="demo" id="demoPanel" style="display:none">
       <b>데모 계정 · demo — 클릭하여 로그인</b>
       <div class="demogrid">
@@ -372,6 +373,27 @@
     <input id="regFactory" placeholder="공장 주소 · Factory address">
     <button class="btn pri" style="width:100%;justify-content:center;padding:11px" type="submit">가입 · Sign up</button>
     <div style="margin-top:12px;font-size:12px;text-align:center"><a onclick="showRegister(false)" style="color:var(--accent);cursor:pointer">← 로그인으로 · Back to login</a></div>
+  </form>
+  <!-- 스태프(컨설턴트·오디터·파트와·관리자) 가입 — 역할 선택 후 신청, 관리자 승인 대기 -->
+  <form class="loginbox" id="staffSignupForm" style="display:none" onsubmit="doStaffSignup(event)">
+    <h1>🛡 스태프 가입 · Staff sign-up</h1>
+    <div class="sub">역할 선택 후 신청 — 관리자 승인 후 로그인됩니다 · Approval required</div>
+    <div class="banner info" style="margin:4px 0 12px;font-size:12px">신청은 승인 대기 상태로 저장되며, 관리자가 승인해야 계정이 활성화됩니다.</div>
+    <label style="font-size:12px;color:var(--ink3);display:block;margin-bottom:4px">역할 · Role</label>
+    <select id="stRole" class="v" style="margin-bottom:11px">
+      <option value="consultant">💼 컨설턴트 · Consultant</option>
+      <option value="auditor">🏭 오디터 · Auditor</option>
+      <option value="fatwa_liaison">⚖️ 파트와(샤리아) · Fatwa liaison</option>
+      <option value="admin">⚙️ 관리자 · Admin</option>
+    </select>
+    <div style="display:flex;gap:6px;margin-bottom:11px"><input id="stUser" placeholder="아이디 · Username" autocomplete="username" style="flex:1;margin-bottom:0"><button type="button" class="btn" onclick="checkStaffUsername()">중복확인</button></div>
+    <div id="stUserMsg" class="small" style="margin:-6px 0 8px 2px;min-height:14px"></div>
+    <input id="stPass" type="password" placeholder="비밀번호 · Password" autocomplete="new-password">
+    <input id="stPass2" type="password" placeholder="비밀번호 확인 · Confirm password" autocomplete="new-password">
+    <input id="stName" placeholder="표시 이름 · Display name (선택)">
+    <textarea id="stNote" placeholder="신청 사유·소속·연락처 · Note (선택)" style="min-height:56px"></textarea>
+    <button class="btn pri" style="width:100%;justify-content:center;padding:11px" type="submit">가입 신청 · Request</button>
+    <div style="margin-top:12px;font-size:12px;text-align:center"><a onclick="showStaffSignup(false)" style="color:var(--accent);cursor:pointer">← 로그인으로 · Back to login</a></div>
   </form>
 </div>
 
@@ -670,7 +692,34 @@ function logout(skipServer){
   try{location.reload();}catch(_){document.getElementById("appView").style.display="none";document.getElementById("loginView").style.display="grid";}
 }
 function showRegister(on){document.getElementById("loginForm").style.display=on?"none":"";document.getElementById("registerForm").style.display=on?"":"none";
+  const sf=document.getElementById("staffSignupForm");if(sf)sf.style.display="none";
   if(on){const ref=glhacRef();if(ref){const el=document.getElementById("regInvite");if(el&&!el.value){el.value=ref;regCheckInvite();}}}}
+/* 스태프 가입 화면 토글 */
+function showStaffSignup(on){
+  document.getElementById("loginForm").style.display=on?"none":"";
+  document.getElementById("registerForm").style.display="none";
+  const sf=document.getElementById("staffSignupForm");if(sf)sf.style.display=on?"":"none";
+}
+async function checkStaffUsername(){
+  const u=(v("stUser")||"").trim(), msg=document.getElementById("stUserMsg"); if(!msg)return;
+  if(u.length<3){msg.textContent=T("아이디는 3자 이상");msg.style.color="var(--warn)";return;}
+  try{const r=await fetch("/auth/check-username?username="+encodeURIComponent(u)).then(x=>x.json());
+    if(r.available){msg.textContent="✓ "+T("사용 가능");msg.style.color="var(--ok)";}
+    else{msg.textContent="✕ "+T("이미 사용 중");msg.style.color="var(--bad)";}
+  }catch(_){msg.textContent="";}
+}
+async function doStaffSignup(e){
+  if(e)e.preventDefault();
+  const username=v("stUser"),password=v("stPass"),password2=v("stPass2"),requested_role=v("stRole");
+  if(!username||!password){toast(T("아이디·비밀번호를 입력하세요"));return;}
+  if(password!==password2){toast(T("비밀번호가 일치하지 않습니다"));return;}
+  try{
+    await API("/auth/staff-signup",{method:"POST",body:JSON.stringify({
+      username,password,requested_role,display_name:v("stName")||null,note:v("stNote")||null})});
+    toast(T("가입 신청됨 · 관리자 승인 대기"));
+    showStaffSignup(false);
+  }catch(err){toast(T("신청 실패")+" · "+(EMSG(err)||""));}
+}
 function quickLogin(u,p){document.getElementById("loginUser").value=u;document.getElementById("loginPass").value=p;doLogin();}
 function regOcrPick(){
   // 사업자등록증은 PDF로 오는 경우가 더 많다. 서버가 PDF 본문·이미지 OCR을 모두 처리한다.
@@ -744,7 +793,9 @@ function regCheckInvite(){
       const r=await fetch(`/invites/${encodeURIComponent(code)}/check`).then(x=>x.json());
       if(r.valid){
         msg.className="small"; msg.style.color="var(--ok)";
-        msg.textContent="✓ "+T('담당 컨설턴트')+": "+(r.consultant||"—")+(r.company_name?" · "+r.company_name:"");
+        msg.textContent = r.kind==="client"
+          ? "✓ "+T('GL-HAC 공식 초대')
+          : "✓ "+T('담당 컨설턴트')+": "+(r.consultant||"—")+(r.company_name?" · "+r.company_name:"");
       }else{
         const why={NOT_FOUND:T('없는 코드입니다'),EXPIRED:T('기간이 지난 코드입니다'),
                    REVOKED:T('회수된 코드입니다'),USED_UP:T('이미 사용된 코드입니다')}[r.reason]||r.reason;
@@ -850,6 +901,26 @@ function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko
 var EN_STRINGS={
   "물류 서비스 범위":"Logistics scope",
   "범위 저장":"Save scope",
+  /* 스태프 가입·클라이언트 초대 */
+  "아이디는 3자 이상":"Username min 3 chars",
+  "이미 사용 중":"Already taken",
+  "가입 신청됨 · 관리자 승인 대기":"Requested · awaiting admin approval",
+  "신청 실패":"Request failed",
+  "가입 대기 없음":"No pending sign-ups",
+  "스태프 가입 승인":"Staff sign-up approvals",
+  "컨설턴트·오디터·파트와·관리자 가입 신청 — 승인해야 계정이 생성됩니다.":"Consultant/auditor/fatwa/admin sign-up requests — account is created only on approval.",
+  "클라이언트 초대 QR":"Client invite QR",
+  "특정 컨설턴트에 안 묶인 공식 클라이언트 가입 QR — 게시·배포용.":"Official client sign-up QR, not tied to any consultant — for posting/distribution.",
+  "QR 보기·내려받기":"View / download QR",
+  "승인하면 '":"Approving creates account '",
+  "' 계정이 생성됩니다. 진행할까요?":"'. Proceed?",
+  "거부 사유(선택):":"Reject reason (optional):",
+  "거부됨":"Rejected",
+  "거부 실패":"Reject failed",
+  "누적 가입":"Total sign-ups",
+  "GL-HAC 공식 초대":"GL-HAC official invite",
+  "⚖️ 파트와":"⚖️ Fatwa",
+  "⚙️ 관리자":"⚙️ Admin",
   /* QR 공유 */
   "공유":"Share",
   "링크 복사":"Copy link",
@@ -1578,6 +1649,26 @@ function capBanner(){
 const UI_STRINGS={
   "물류 서비스 범위":"Ruang lingkup jasa",
   "범위 저장":"Simpan lingkup",
+  /* 스태프 가입·클라이언트 초대 */
+  "아이디는 3자 이상":"Min. 3 karakter",
+  "이미 사용 중":"Sudah dipakai",
+  "가입 신청됨 · 관리자 승인 대기":"Permohonan terkirim · menunggu persetujuan admin",
+  "신청 실패":"Permohonan gagal",
+  "가입 대기 없음":"Tidak ada permohonan",
+  "스태프 가입 승인":"Persetujuan pendaftaran staf",
+  "컨설턴트·오디터·파트와·관리자 가입 신청 — 승인해야 계정이 생성됩니다.":"Permohonan konsultan/auditor/fatwa/admin — akun dibuat hanya setelah disetujui.",
+  "클라이언트 초대 QR":"QR undangan klien",
+  "특정 컨설턴트에 안 묶인 공식 클라이언트 가입 QR — 게시·배포용.":"QR pendaftaran klien resmi, tanpa terikat konsultan — untuk dibagikan.",
+  "QR 보기·내려받기":"Lihat / unduh QR",
+  "승인하면 '":"Menyetujui membuat akun '",
+  "' 계정이 생성됩니다. 진행할까요?":"'. Lanjutkan?",
+  "거부 사유(선택):":"Alasan penolakan (opsional):",
+  "거부됨":"Ditolak",
+  "거부 실패":"Gagal menolak",
+  "누적 가입":"Total pendaftaran",
+  "GL-HAC 공식 초대":"Undangan resmi GL-HAC",
+  "⚖️ 파트와":"⚖️ Fatwa",
+  "⚙️ 관리자":"⚙️ Admin",
   /* QR 공유 */
   "공유":"Bagikan",
   "링크 복사":"Salin tautan",
@@ -12086,9 +12177,27 @@ async function maSave(){
   }catch(e){toast("저장 실패 · "+EMSG(e));}
 }
 SCREEN.system=async()=>{
-  const [users,orgs,onto,lphrefs,kma,admCases]=await Promise.all([
+  const [users,orgs,onto,lphrefs,kma,admCases,staffReqs,clientInv]=await Promise.all([
     API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({})),API("/admin/lph-references").catch(()=>[]),
-    API("/admin/kma1360-exempt").catch(()=>({terms:[]})),API("/admin/cases").catch(()=>[])]);
+    API("/admin/kma1360-exempt").catch(()=>({terms:[]})),API("/admin/cases").catch(()=>[]),
+    API("/admin/staff-signups?status=pending").catch(()=>({items:[],pending_count:0})),
+    API("/admin/client-invite").catch(()=>null)]);
+  const _stRole={consultant:"💼 컨설턴트",auditor:"🏭 오디터",fatwa_liaison:"⚖️ 파트와",admin:"⚙️ 관리자"};
+  const stRows=(staffReqs.items||[]).map(r=>`<tr>
+      <td><b>${esc(r.username)}</b>${r.display_name?' <span class="muted small">'+esc(r.display_name)+'</span>':''}${r.note?'<div class="muted small">'+esc(r.note)+'</div>':''}</td>
+      <td>${bTag('info',T(_stRole[r.requested_role]||r.requested_role))}</td>
+      <td style="white-space:nowrap;text-align:right">
+        <button class="btn pri" style="padding:3px 8px;font-size:12px" onclick="approveStaff('${r.request_id}','${esc(r.username)}')">${T('승인')}</button>
+        <button class="btn bad" style="padding:3px 8px;font-size:12px" onclick="rejectStaff('${r.request_id}','${esc(r.username)}')">${T('거부')}</button></td></tr>`).join("")
+    ||`<tr><td colspan="3" class="muted small">${T('가입 대기 없음')}</td></tr>`;
+  const staffCard=`<div class="card"><h3>🛡 ${T('스태프 가입 승인')} <span class="en">· Staff sign-ups</span>
+      <span class="r">${bTag((staffReqs.pending_count||0)?'info':'mute',T('대기')+' '+(staffReqs.pending_count||0))}</span></h3>
+    <div class="body tight"><div class="muted small" style="margin-bottom:6px">${T('컨설턴트·오디터·파트와·관리자 가입 신청 — 승인해야 계정이 생성됩니다.')}</div>
+      <table><tbody>${stRows}</tbody></table></div></div>`;
+  const clientInviteCard=`<div class="card"><h3>🎫 ${T('클라이언트 초대 QR')} <span class="en">· Client invite</span></h3>
+    <div class="body"><div class="muted small" style="margin-bottom:8px">${T('특정 컨설턴트에 안 묶인 공식 클라이언트 가입 QR — 게시·배포용.')}</div>
+      <div id="clientQrBox"></div>
+      <button class="btn" onclick="loadClientInviteQr()">🎫 ${T('QR 보기·내려받기')}</button></div></div>`;
   let ovs=[];try{ovs=(await Promise.all((orgs||[]).map(o=>API(`/admin/orgs/${o.org_id}/overview`).catch(()=>null)))).filter(Boolean);}catch(_){}
   const upg=pageSlice("users",users,12);
   const uRows=upg.items.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
@@ -12111,6 +12220,8 @@ SCREEN.system=async()=>{
       <table><tbody>${lsRows}</tbody></table></div></div>`;
   return `
   <div class="grid three">
+    ${staffCard}
+    ${clientInviteCard}
     ${logiCard}
     <div class="card"><h3>🗂 ${T('메뉴 배정 관리')} <span class="en">· Menu Assignment</span></h3>
       <div class="body btnrow" style="align-items:center;gap:10px"><button class="btn pri" onclick="go('menuAssign')">${T('🗂 메뉴 배정 관리 열기')}</button>
@@ -12167,6 +12278,40 @@ function roleOpts(sel){const rs=[["applicant","신청기업"],["consultant","컨
 async function createUser(){const username=v("nuUser"),password=v("nuPass")||"pw",role=v("nuRole");if(!username){toast("아이디 입력");return}try{await API("/admin/users",{method:"POST",body:JSON.stringify({username,password,role})});toast("사용자 생성 · "+username);applyView();}catch(e){toast("생성 실패 · "+EMSG(e));}}
 async function patchUserRole(uid,role){try{await API(`/admin/users/${uid}`,{method:"PATCH",body:JSON.stringify({role})});toast("역할 변경 · "+role);}catch(e){toast("실패 · "+EMSG(e));}}
 async function delUser(uid){if(!confirm("사용자를 삭제할까요?"))return;try{await API(`/admin/users/${uid}`,{method:"DELETE"});toast("사용자 삭제");applyView();}catch(e){toast("삭제 실패 · "+EMSG(e));}}
+/* 스태프 가입 승인/거부 */
+async function approveStaff(rid,uname){
+  if(!confirm(T("승인하면 '")+uname+T("' 계정이 생성됩니다. 진행할까요?")))return;
+  try{const r=await API(`/admin/staff-signups/${rid}/approve`,{method:"POST",body:"{}"});
+    toast(T("승인됨")+" · "+uname+" ("+(r.role||"")+")");applyView();}
+  catch(e){toast(T("승인 실패")+" · "+EMSG(e));}
+}
+async function rejectStaff(rid,uname){
+  const reason=prompt(T("거부 사유(선택):"),"");if(reason===null)return;
+  try{await API(`/admin/staff-signups/${rid}/reject`,{method:"POST",body:JSON.stringify({reason:reason||null})});
+    toast(T("거부됨")+" · "+uname);applyView();}
+  catch(e){toast(T("거부 실패")+" · "+EMSG(e));}
+}
+/* 관리자 클라이언트 초대 QR — 보기·내려받기·공유(컨설턴트 QR과 같은 방식) */
+async function loadClientInviteQr(){
+  const box=document.getElementById("clientQrBox");if(!box)return;
+  if(box.innerHTML){box.innerHTML="";return;}
+  box.innerHTML=`<div class="muted small">${T('불러오는 중…')}</div>`;
+  try{
+    const info=await API("/admin/client-invite");
+    const r=await fetch("/admin/client-invite/qr?fmt=png",{headers:{Authorization:"Bearer "+token()}});
+    const url=URL.createObjectURL(await r.blob());
+    box.innerHTML=`<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:10px 0">
+      <img src="${url}" alt="QR" style="width:150px;height:150px;background:#fff;padding:8px;border-radius:10px;border:1px solid var(--line)">
+      <div><div style="font-family:ui-monospace,Menlo,monospace;font-size:16px;font-weight:700">${esc(info.code)}</div>
+        <div class="muted small" style="margin:6px 0">${esc(info.url)}<br>${T('누적 가입')} ${info.used_count}${T('회')}</div>
+        <div class="btnrow" style="flex-wrap:wrap;gap:8px">
+          <a class="btn pri" download="glhac-client-qr-${esc(info.code)}.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
+          <button class="btn" onclick="shareQr('${url}','${esc(info.code)}','${esc(info.url)}')">📤 ${T('공유')}</button>
+          <button class="btn" onclick="copyLink('${esc(info.url)}')">🔗 ${T('링크 복사')}</button>
+        </div></div></div>`;
+    localizeUI();
+  }catch(e){box.innerHTML=errCard(e);}
+}
 async function createOrg(){const org_id=v("noId"),name=v("noName");if(!org_id){toast("조직 ID 입력");return}try{await API("/admin/orgs",{method:"POST",body:JSON.stringify({org_id,name})});toast("조직 생성 · "+org_id);applyView();}catch(e){toast("생성 실패 · "+EMSG(e));}}
 /* 범위확장: 화이트라벨 — 요청 호스트가 테넌트 도메인이면 로그인 브랜드·주색상·로케일 적용 */
 function applyTenantBranding(t){
