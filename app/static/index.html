@@ -901,6 +901,9 @@ function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko
 var EN_STRINGS={
   "물류 서비스 범위":"Logistics scope",
   "범위 저장":"Save scope",
+  /* 스태프 링크 카드 */
+  "스태프 가입 링크·QR":"Staff sign-up link & QR",
+  "스태프 후보에게만 전달하세요(로그인 화면엔 없음).":"Share only with staff candidates (not on the login screen).",
   /* 스태프·클라이언트 가입 링크 */
   "스태프 가입 링크 — 스태프 후보에게만 전달하세요(로그인 화면엔 없음).":"Staff sign-up link — share only with staff candidates (not on the login screen).",
   "회원가입 화면으로 바로 가는 공식 클라이언트 가입 링크·QR — 게시·배포용(컨설턴트 QR과 별개).":"Official client sign-up link/QR that opens the registration screen directly — for posting (separate from consultant QR).",
@@ -1657,6 +1660,9 @@ function capBanner(){
 const UI_STRINGS={
   "물류 서비스 범위":"Ruang lingkup jasa",
   "범위 저장":"Simpan lingkup",
+  /* 스태프 링크 카드 */
+  "스태프 가입 링크·QR":"Tautan & QR pendaftaran staf",
+  "스태프 후보에게만 전달하세요(로그인 화면엔 없음).":"Bagikan hanya ke kandidat staf (tidak ada di layar login).",
   /* 스태프·클라이언트 가입 링크 */
   "스태프 가입 링크 — 스태프 후보에게만 전달하세요(로그인 화면엔 없음).":"Tautan pendaftaran staf — bagikan hanya ke kandidat staf (tidak ada di layar login).",
   "회원가입 화면으로 바로 가는 공식 클라이언트 가입 링크·QR — 게시·배포용(컨설턴트 QR과 별개).":"Tautan/QR pendaftaran klien resmi yang langsung membuka layar pendaftaran — untuk dibagikan (terpisah dari QR konsultan).",
@@ -12211,16 +12217,18 @@ SCREEN.system=async()=>{
   const staffCard=`<div class="card"><h3>🛡 ${T('스태프 가입 승인')} <span class="en">· Staff sign-ups</span>
       <span class="r">${bTag((staffReqs.pending_count||0)?'info':'mute',T('대기')+' '+(staffReqs.pending_count||0))}</span></h3>
     <div class="body tight">
-      <div style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:9px">
-        <div class="muted small" style="margin-bottom:5px">🔗 ${T('스태프 가입 링크 — 스태프 후보에게만 전달하세요(로그인 화면엔 없음).')}</div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          <code style="flex:1;min-width:140px;font-size:12px;word-break:break-all">${esc(_slUrl)}</code>
-          <button class="btn xs" onclick="copyLink('${esc(_slUrl)}')">🔗 ${T('링크 복사')}</button>
-          <button class="btn xs" onclick="staffLinkQrView()">📱 QR</button></div>
-        <div id="staffLinkQrBox" style="margin-top:8px"></div>
+      <div style="background:var(--bg);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-weight:700;font-size:13px;margin-bottom:3px">🔗 ${T('스태프 가입 링크·QR')} <span class="en" style="font-weight:500">· Staff sign-up link</span></div>
+        <div class="muted small" style="margin-bottom:9px">${T('스태프 후보에게만 전달하세요(로그인 화면엔 없음).')}</div>
+        <div id="staffLinkQrBox"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px">
+          <code style="flex:1;min-width:150px;font-size:12px;word-break:break-all;color:var(--ink2)">${esc(_slUrl)}</code>
+          <button class="btn" style="padding:5px 12px" onclick="copyLink('${esc(_slUrl)}')">🔗 ${T('링크 복사')}</button></div>
       </div>
       <div class="muted small" style="margin-bottom:6px">${T('컨설턴트·오디터·파트와·관리자 가입 신청 — 승인해야 계정이 생성됩니다.')}</div>
       <table><tbody>${stRows}</tbody></table></div></div>`;
+  // 스태프 링크 QR 을 렌더 직후 자동으로 보여준다(클릭 없이 바로 보이게).
+  { const _prevAR=AFTER_RENDER; AFTER_RENDER=function(){ if(_prevAR)try{_prevAR()}catch(_){}; try{staffLinkQrShow();}catch(_){} }; }
   const _ciRows=(clientInv.items||[]).map(i=>`<tr${i.usable?'':' style="opacity:.45"'}>
       <td><code style="font-size:12px;font-weight:700;letter-spacing:.5px">${esc(i.code)}</code>${i.is_primary?' '+bTag('info',T('대표')):''}</td>
       <td>${esc(i.company_name||'—')}</td>
@@ -12372,22 +12380,23 @@ async function revokeClientInvite(iid){
   catch(e){toast(EMSG(e)||T('회수 실패'));}
 }
 /* 스태프 가입 링크 QR — 보기·내려받기·공유 */
-async function staffLinkQrView(){
-  const box=document.getElementById("staffLinkQrBox");if(!box)return;
-  if(box.innerHTML){box.innerHTML="";return;}
+/* 스태프 가입 링크 QR — 카드 렌더 직후 자동 표시(클라이언트 초대 카드와 동일한 방식) */
+async function staffLinkQrShow(){
+  const box=document.getElementById("staffLinkQrBox");if(!box||box.dataset.loaded)return;
+  box.dataset.loaded="1";
   box.innerHTML=`<div class="muted small">${T('불러오는 중…')}</div>`;
   try{
     const info=await API("/admin/staff-signup-link");
     const r=await fetch("/admin/staff-signup-link/qr?fmt=png",{headers:{Authorization:"Bearer "+token()}});
     const url=URL.createObjectURL(await r.blob());
-    box.innerHTML=`<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:8px;border:1px solid var(--line);border-radius:10px">
+    box.innerHTML=`<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
       <img src="${url}" alt="QR" style="width:130px;height:130px;background:#fff;padding:8px;border-radius:10px;border:1px solid var(--line)">
       <div class="btnrow" style="flex-wrap:wrap;gap:8px">
         <a class="btn pri" download="glhac-staff-signup-qr.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
         <button class="btn" onclick="shareQr('${url}','staff','${esc(info.url)}')">📤 ${T('공유')}</button>
       </div></div>`;
     localizeUI();
-  }catch(e){box.innerHTML=errCard(e);}
+  }catch(e){box.innerHTML=errCard(e);box.dataset.loaded="";}
 }
 async function createOrg(){const org_id=v("noId"),name=v("noName");if(!org_id){toast("조직 ID 입력");return}try{await API("/admin/orgs",{method:"POST",body:JSON.stringify({org_id,name})});toast("조직 생성 · "+org_id);applyView();}catch(e){toast("생성 실패 · "+EMSG(e));}}
 /* 범위확장: 화이트라벨 — 요청 호스트가 테넌트 도메인이면 로그인 브랜드·주색상·로케일 적용 */
