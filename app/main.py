@@ -3364,6 +3364,16 @@ def consultant_qr_info(user=Depends(auth.require_roles("consultant")),
 
 # ── 관리자 범용 클라이언트 초대 QR ────────────────────────────────────────
 # 특정 컨설턴트에 안 묶인 '공식' 클라이언트(applicant) 가입 링크. 회사가 공개 게시·배포한다.
+# 컨설턴트 QR 은 홈페이지(glhac.com/?ref=)로 보내 마케팅 랜딩을 거치지만, 관리자 초대는
+# **앱 회원가입 화면으로 바로** 보낸다(glhac.co.kr/ui/?ref=). 성격이 다르다.
+def _client_signup_url(code):
+    return "%s/ui/?ref=%s" % (APP_BASE_URL.rstrip("/"), code)
+
+
+def _staff_signup_url():
+    return "%s/ui/?signup=staff" % APP_BASE_URL.rstrip("/")
+
+
 def _house_client_invite(db, admin_uid):
     """하우스 클라이언트 초대 — 없으면 만든다(하나만, 만료·횟수 무제한)."""
     inv = (db.query(models.ConsultantInvite)
@@ -3385,7 +3395,7 @@ def admin_client_qr(fmt: str = "svg", user=Depends(auth.require_roles("operator"
                     db: Session = Depends(get_db)):
     inv = _house_client_invite(db, user["uid"])
     db.commit()
-    return _qr_response("%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code), fmt)
+    return _qr_response(_client_signup_url(inv.code), fmt)
 
 
 @app.get("/admin/client-invite")
@@ -3394,7 +3404,7 @@ def admin_client_invite_info(user=Depends(auth.require_roles("operator", "admin"
     inv = _house_client_invite(db, user["uid"])
     db.commit()
     return {"code": inv.code,
-            "url": "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code),
+            "url": _client_signup_url(inv.code),
             "qr_svg": "/admin/client-invite/qr?fmt=svg",
             "qr_png": "/admin/client-invite/qr?fmt=png",
             "used_count": inv.used_count}
@@ -3418,7 +3428,7 @@ def admin_create_client_invite(body: schemas.InviteCreate,
            meta={"code": inv.code, "company_name": inv.company_name}, commit=False)
     db.commit()
     return {"invite_id": inv.invite_id, "code": inv.code,
-            "url": "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code),
+            "url": _client_signup_url(inv.code),
             "company_name": inv.company_name, "max_uses": inv.max_uses,
             "used_count": inv.used_count, "expires_at": str(inv.expires_at)}
 
@@ -3438,7 +3448,7 @@ def admin_list_client_invites(user=Depends(auth.require_roles("operator", "admin
                     or i.used_count >= i.max_uses)
     return {"items": [{
         "invite_id": i.invite_id, "code": i.code,
-        "url": "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), i.code),
+        "url": _client_signup_url(i.code),
         "company_name": i.company_name, "note": i.note,
         "max_uses": i.max_uses, "used_count": i.used_count,
         "is_primary": bool(i.is_primary),
@@ -3471,7 +3481,23 @@ def admin_client_invite_qr(invite_id: str, fmt: str = "png",
     inv = db.get(models.ConsultantInvite, invite_id)
     if not inv or inv.kind != "client":
         raise HTTPException(404, {"code": "INVITE_NOT_FOUND"})
-    return _qr_response("%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code), fmt)
+    return _qr_response(_client_signup_url(inv.code), fmt)
+
+
+# ── 스태프 가입 링크 ────────────────────────────────────
+# 로그인 화면에 공개하지 않는다. 관리자가 이 링크/QR 을 스태프 후보에게만 건넬다.
+# 링크로 들어오면 스태프 가입 폼이 바로 열린다(가입은 여전히 관리자 승인 대기).
+@app.get("/admin/staff-signup-link")
+def admin_staff_signup_link(user=Depends(auth.require_roles("operator", "admin"))):
+    return {"url": _staff_signup_url(),
+            "qr_png": "/admin/staff-signup-link/qr?fmt=png",
+            "qr_svg": "/admin/staff-signup-link/qr?fmt=svg"}
+
+
+@app.get("/admin/staff-signup-link/qr")
+def admin_staff_signup_qr(fmt: str = "png",
+                          user=Depends(auth.require_roles("operator", "admin"))):
+    return _qr_response(_staff_signup_url(), fmt)
 
 
 @app.get("/invites/{code}/check")

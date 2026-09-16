@@ -123,3 +123,21 @@ def test_관리자_클라이언트초대_발급목록회수():
         # 대표 회수는 400
         pid = [i["invite_id"] for i in lst if i["is_primary"]][0]
         assert c.post(f"/admin/client-invites/{pid}/revoke", headers=h).status_code == 400
+
+
+def test_스태프_가입링크와_직행URL():
+    """관리자만 스태프 가입 링크를 얻고, 클라이언트 초대는 앱 회원가입 직행 URL이다."""
+    import os
+    os.environ.setdefault("GLHAC_APP_URL", "https://glhac.co.kr")
+    with TestClient(app) as c:
+        h = _admin(c)
+        sl = c.get("/admin/staff-signup-link", headers=h).json()
+        assert sl["url"].endswith("/ui/?signup=staff")
+        assert c.get("/admin/staff-signup-link/qr?fmt=png", headers=h).status_code == 200
+        # 클라이언트 초대 url 은 앱 회원가입 화면 직행(?ref=)
+        ci = c.get("/admin/client-invite", headers=h).json()
+        assert "/ui/?ref=" in ci["url"]
+        # 비관리자 차단
+        tok = c.post("/auth/login", json={"username": "applicant1", "password": "pw"}).json().get("token")
+        assert c.get("/admin/staff-signup-link",
+                     headers={"Authorization": "Bearer " + tok}).status_code in (401, 403)

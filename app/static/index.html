@@ -336,7 +336,6 @@
       <button class="btn pri" style="flex:1;justify-content:center;padding:11px" type="submit">로그인 · Sign in</button>
       <button type="button" class="btn" style="justify-content:center;padding:11px 16px;white-space:nowrap" onclick="showRegister(true)">회원가입</button>
     </div>
-    <div style="margin-top:10px;font-size:12px;text-align:center"><a onclick="showStaffSignup(true)" style="color:var(--accent);cursor:pointer">🛡 스태프 가입 (컨설턴트·오디터·파트와·관리자) · Staff sign-up</a></div>
     <div class="demo" id="demoPanel" style="display:none">
       <b>데모 계정 · demo — 클릭하여 로그인</b>
       <div class="demogrid">
@@ -379,8 +378,8 @@
     <h1>🛡 스태프 가입 · Staff sign-up</h1>
     <div class="sub">역할 선택 후 신청 — 관리자 승인 후 로그인됩니다 · Approval required</div>
     <div class="banner info" style="margin:4px 0 12px;font-size:12px">신청은 승인 대기 상태로 저장되며, 관리자가 승인해야 계정이 활성화됩니다.</div>
-    <label style="font-size:12px;color:var(--ink3);display:block;margin-bottom:4px">역할 · Role</label>
-    <select id="stRole" class="v" style="margin-bottom:11px">
+    <label style="font-size:14px;font-weight:700;color:var(--ink);display:block;margin-bottom:6px">역할 선택 · Role</label>
+    <select id="stRole" class="v" style="margin-bottom:13px;font-size:16px;font-weight:600;padding:13px 14px;height:auto;line-height:1.4;cursor:pointer">
       <option value="consultant">💼 컨설턴트 · Consultant</option>
       <option value="auditor">🏭 오디터 · Auditor</option>
       <option value="fatwa_liaison">⚖️ 파트와(샤리아) · Fatwa liaison</option>
@@ -901,6 +900,9 @@ function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko
 var EN_STRINGS={
   "물류 서비스 범위":"Logistics scope",
   "범위 저장":"Save scope",
+  /* 스태프·클라이언트 가입 링크 */
+  "스태프 가입 링크 — 스태프 후보에게만 전달하세요(로그인 화면엔 없음).":"Staff sign-up link — share only with staff candidates (not on the login screen).",
+  "회원가입 화면으로 바로 가는 공식 클라이언트 가입 링크·QR — 게시·배포용(컨설턴트 QR과 별개).":"Official client sign-up link/QR that opens the registration screen directly — for posting (separate from consultant QR).",
   /* 관리자 클라이언트 초대 관리 */
   "대표":"Primary",
   "클라이언트 초대 코드 발급":"Issue client invite code",
@@ -1654,6 +1656,9 @@ function capBanner(){
 const UI_STRINGS={
   "물류 서비스 범위":"Ruang lingkup jasa",
   "범위 저장":"Simpan lingkup",
+  /* 스태프·클라이언트 가입 링크 */
+  "스태프 가입 링크 — 스태프 후보에게만 전달하세요(로그인 화면엔 없음).":"Tautan pendaftaran staf — bagikan hanya ke kandidat staf (tidak ada di layar login).",
+  "회원가입 화면으로 바로 가는 공식 클라이언트 가입 링크·QR — 게시·배포용(컨설턴트 QR과 별개).":"Tautan/QR pendaftaran klien resmi yang langsung membuka layar pendaftaran — untuk dibagikan (terpisah dari QR konsultan).",
   /* 관리자 클라이언트 초대 관리 */
   "대표":"Utama",
   "클라이언트 초대 코드 발급":"Terbitkan kode undangan klien",
@@ -12187,11 +12192,12 @@ async function maSave(){
   }catch(e){toast("저장 실패 · "+EMSG(e));}
 }
 SCREEN.system=async()=>{
-  const [users,orgs,onto,lphrefs,kma,admCases,staffReqs,clientInv]=await Promise.all([
+  const [users,orgs,onto,lphrefs,kma,admCases,staffReqs,clientInv,staffLink]=await Promise.all([
     API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({})),API("/admin/lph-references").catch(()=>[]),
     API("/admin/kma1360-exempt").catch(()=>({terms:[]})),API("/admin/cases").catch(()=>[]),
     API("/admin/staff-signups?status=pending").catch(()=>({items:[],pending_count:0})),
-    API("/admin/client-invites").catch(()=>({items:[]}))]);
+    API("/admin/client-invites").catch(()=>({items:[]})),
+    API("/admin/staff-signup-link").catch(()=>null)]);
   const _stRole={consultant:"💼 컨설턴트",auditor:"🏭 오디터",fatwa_liaison:"⚖️ 파트와",admin:"⚙️ 관리자"};
   const stRows=(staffReqs.items||[]).map(r=>`<tr>
       <td><b>${esc(r.username)}</b>${r.display_name?' <span class="muted small">'+esc(r.display_name)+'</span>':''}${r.note?'<div class="muted small">'+esc(r.note)+'</div>':''}</td>
@@ -12200,9 +12206,19 @@ SCREEN.system=async()=>{
         <button class="btn pri" style="padding:3px 8px;font-size:12px" onclick="approveStaff('${r.request_id}','${esc(r.username)}')">${T('승인')}</button>
         <button class="btn bad" style="padding:3px 8px;font-size:12px" onclick="rejectStaff('${r.request_id}','${esc(r.username)}')">${T('거부')}</button></td></tr>`).join("")
     ||`<tr><td colspan="3" class="muted small">${T('가입 대기 없음')}</td></tr>`;
+  const _slUrl=(staffLink&&staffLink.url)||"";
   const staffCard=`<div class="card"><h3>🛡 ${T('스태프 가입 승인')} <span class="en">· Staff sign-ups</span>
       <span class="r">${bTag((staffReqs.pending_count||0)?'info':'mute',T('대기')+' '+(staffReqs.pending_count||0))}</span></h3>
-    <div class="body tight"><div class="muted small" style="margin-bottom:6px">${T('컨설턴트·오디터·파트와·관리자 가입 신청 — 승인해야 계정이 생성됩니다.')}</div>
+    <div class="body tight">
+      <div style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:9px">
+        <div class="muted small" style="margin-bottom:5px">🔗 ${T('스태프 가입 링크 — 스태프 후보에게만 전달하세요(로그인 화면엔 없음).')}</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <code style="flex:1;min-width:140px;font-size:12px;word-break:break-all">${esc(_slUrl)}</code>
+          <button class="btn xs" onclick="copyLink('${esc(_slUrl)}')">🔗 ${T('링크 복사')}</button>
+          <button class="btn xs" onclick="staffLinkQrView()">📱 QR</button></div>
+        <div id="staffLinkQrBox" style="margin-top:8px"></div>
+      </div>
+      <div class="muted small" style="margin-bottom:6px">${T('컨설턴트·오디터·파트와·관리자 가입 신청 — 승인해야 계정이 생성됩니다.')}</div>
       <table><tbody>${stRows}</tbody></table></div></div>`;
   const _ciRows=(clientInv.items||[]).map(i=>`<tr${i.usable?'':' style="opacity:.45"'}>
       <td><code style="font-size:12px;font-weight:700;letter-spacing:.5px">${esc(i.code)}</code>${i.is_primary?' '+bTag('info',T('대표')):''}</td>
@@ -12216,7 +12232,7 @@ SCREEN.system=async()=>{
     ||`<tr><td colspan="5" class="muted small" style="text-align:center;padding:12px">${T('발급한 코드가 없습니다')}</td></tr>`;
   const clientInviteCard=`<div class="card"><h3>🎫 ${T('클라이언트 초대 QR')} <span class="en">· Client invites</span>
       <span class="r"><button class="btn pri" onclick="newClientInvite()">+ ${T('코드 발급')}</button></span></h3>
-    <div class="body"><div class="muted small" style="margin-bottom:8px">${T('특정 컨설턴트에 안 묶인 공식 클라이언트 가입 QR — 게시·배포용.')}</div>
+    <div class="body"><div class="muted small" style="margin-bottom:8px">${T('회원가입 화면으로 바로 가는 공식 클라이언트 가입 링크·QR — 게시·배포용(컨설턴트 QR과 별개).')}</div>
       <div id="clientQrBox" style="margin-bottom:8px"></div>
       <div class="tight"><table><thead><tr><th>${T('코드')}</th><th>${T('대상 업체')}</th><th>${T('사용')}</th><th>${T('상태')}</th><th></th></tr></thead>
         <tbody>${_ciRows}</tbody></table></div></div></div>`;
@@ -12353,6 +12369,24 @@ async function revokeClientInvite(iid){
   try{await API(`/admin/client-invites/${iid}/revoke`,{method:'POST',body:'{}'});
     toast(T('코드 회수됨'));applyView();}
   catch(e){toast(EMSG(e)||T('회수 실패'));}
+}
+/* 스태프 가입 링크 QR — 보기·내려받기·공유 */
+async function staffLinkQrView(){
+  const box=document.getElementById("staffLinkQrBox");if(!box)return;
+  if(box.innerHTML){box.innerHTML="";return;}
+  box.innerHTML=`<div class="muted small">${T('불러오는 중…')}</div>`;
+  try{
+    const info=await API("/admin/staff-signup-link");
+    const r=await fetch("/admin/staff-signup-link/qr?fmt=png",{headers:{Authorization:"Bearer "+token()}});
+    const url=URL.createObjectURL(await r.blob());
+    box.innerHTML=`<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:8px;border:1px solid var(--line);border-radius:10px">
+      <img src="${url}" alt="QR" style="width:130px;height:130px;background:#fff;padding:8px;border-radius:10px;border:1px solid var(--line)">
+      <div class="btnrow" style="flex-wrap:wrap;gap:8px">
+        <a class="btn pri" download="glhac-staff-signup-qr.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
+        <button class="btn" onclick="shareQr('${url}','staff','${esc(info.url)}')">📤 ${T('공유')}</button>
+      </div></div>`;
+    localizeUI();
+  }catch(e){box.innerHTML=errCard(e);}
 }
 async function createOrg(){const org_id=v("noId"),name=v("noName");if(!org_id){toast("조직 ID 입력");return}try{await API("/admin/orgs",{method:"POST",body:JSON.stringify({org_id,name})});toast("조직 생성 · "+org_id);applyView();}catch(e){toast("생성 실패 · "+EMSG(e));}}
 /* 범위확장: 화이트라벨 — 요청 호스트가 테넌트 도메인이면 로그인 브랜드·주색상·로케일 적용 */
@@ -12585,7 +12619,11 @@ async function boot(){
       applyTenantBranding(cfg&&cfg.tenant);   // 범위확장: 도메인 매칭 시 화이트라벨 적용
     }catch(_){}
     loginLocalize();   // 로그인/회원가입 화면 언어 적용(Bahasa 등)
-    if(glhacRef())showRegister(true);   // QR(?ref=코드)로 들어오면 가입폼을 열고 코드 자동 반영
+    // 전용 URL 라우팅: ?signup=staff → 스태프 가입 폼 직행(관리자가 배포하는 링크).
+    // ?ref=코드(또는 ?signup=client) → 클라이언트 가입 폼 직행.
+    const _sg=(function(){try{const m=(location.search||"").match(/[?&]signup=([a-z]+)/);return m?m[1]:"";}catch(_){return"";}})();
+    if(_sg==="staff")showStaffSignup(true);
+    else if(_sg==="client"||glhacRef())showRegister(true);
     return;}
   try{const th=localStorage.getItem("glhac_theme")||"light";document.documentElement.setAttribute("data-theme",th);document.getElementById("themePill").textContent=th==="dark"?"☀️ 라이트":"🌙 다크";}catch(_){}
   try{LANG=parseInt(localStorage.getItem("glhac_lang")||"1",10)||0;applyLang();}catch(_){}
