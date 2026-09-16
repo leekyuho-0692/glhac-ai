@@ -250,8 +250,9 @@
   .loginbox{width:min(520px,94vw);background:var(--card);border-radius:20px;box-shadow:0 24px 70px rgba(0,0,0,.4);padding:44px 42px}
   .loginbox h1{font-size:34px;margin:0 0 6px;letter-spacing:-.5px}
   .loginbox .sub{color:var(--ink3);font-size:15px;margin-bottom:26px}
-  .loginbox input{width:100%;border:1.5px solid var(--line2);border-radius:11px;padding:15px 16px;font-size:16px;margin-bottom:13px;font-family:inherit;background:var(--card);color:var(--ink)}
-  .loginbox input:focus{outline:none;border-color:var(--accent)}
+  .loginbox input,.loginbox textarea{width:100%;box-sizing:border-box;border:1.5px solid var(--line2);border-radius:11px;padding:15px 16px;font-size:16px;margin-bottom:13px;font-family:inherit;background:var(--card);color:var(--ink)}
+  .loginbox textarea{min-height:64px;resize:vertical}
+  .loginbox input:focus,.loginbox textarea:focus{outline:none;border-color:var(--accent)}
   .loginbox>button[type="submit"]{font-size:16px;padding:15px !important;border-radius:11px}
   .loginbox .demo{margin-top:22px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;color:var(--ink3);line-height:1.7}
   .loginbox .demo>b{color:var(--ink2);font-size:13px}
