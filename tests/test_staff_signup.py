@@ -105,3 +105,21 @@ def test_클라이언트초대_코드는_항상_같다():
         a = c.get("/admin/client-invite", headers=h).json()["code"]
         b = c.get("/admin/client-invite", headers=h).json()["code"]
         assert a == b   # 하우스 초대는 하나(재발급 안 함)
+
+
+def test_관리자_클라이언트초대_발급목록회수():
+    """관리자가 컨설턴트처럼 클라이언트 초대를 발급·목록·회수한다. 대표는 회수 불가."""
+    with TestClient(app) as c:
+        h = _admin(c)
+        lst0 = c.get("/admin/client-invites", headers=h).json()
+        assert any(i["is_primary"] for i in lst0["items"])          # 대표 코드 존재
+        nv = c.post("/admin/client-invites", headers=h,
+                    json={"company_name": "PT 부스", "max_uses": 50, "expires_days": 14}).json()
+        assert nv["code"] and nv["max_uses"] == 50
+        lst = c.get("/admin/client-invites", headers=h).json()["items"]
+        iid = [i["invite_id"] for i in lst if not i["is_primary"]][0]
+        assert c.get(f"/admin/client-invites/{iid}/qr?fmt=png", headers=h).status_code == 200
+        assert c.post(f"/admin/client-invites/{iid}/revoke", headers=h).status_code == 200
+        # 대표 회수는 400
+        pid = [i["invite_id"] for i in lst if i["is_primary"]][0]
+        assert c.post(f"/admin/client-invites/{pid}/revoke", headers=h).status_code == 400

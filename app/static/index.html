@@ -901,6 +901,11 @@ function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko
 var EN_STRINGS={
   "물류 서비스 범위":"Logistics scope",
   "범위 저장":"Save scope",
+  /* 관리자 클라이언트 초대 관리 */
+  "대표":"Primary",
+  "클라이언트 초대 코드 발급":"Issue client invite code",
+  "대상 업체명(선택)":"Target company (optional)",
+  "사용 횟수":"Max uses",
   /* 스태프 가입·클라이언트 초대 */
   "아이디는 3자 이상":"Username min 3 chars",
   "이미 사용 중":"Already taken",
@@ -1649,6 +1654,11 @@ function capBanner(){
 const UI_STRINGS={
   "물류 서비스 범위":"Ruang lingkup jasa",
   "범위 저장":"Simpan lingkup",
+  /* 관리자 클라이언트 초대 관리 */
+  "대표":"Utama",
+  "클라이언트 초대 코드 발급":"Terbitkan kode undangan klien",
+  "대상 업체명(선택)":"Nama perusahaan (opsional)",
+  "사용 횟수":"Batas penggunaan",
   /* 스태프 가입·클라이언트 초대 */
   "아이디는 3자 이상":"Min. 3 karakter",
   "이미 사용 중":"Sudah dipakai",
@@ -12181,7 +12191,7 @@ SCREEN.system=async()=>{
     API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({})),API("/admin/lph-references").catch(()=>[]),
     API("/admin/kma1360-exempt").catch(()=>({terms:[]})),API("/admin/cases").catch(()=>[]),
     API("/admin/staff-signups?status=pending").catch(()=>({items:[],pending_count:0})),
-    API("/admin/client-invite").catch(()=>null)]);
+    API("/admin/client-invites").catch(()=>({items:[]}))]);
   const _stRole={consultant:"💼 컨설턴트",auditor:"🏭 오디터",fatwa_liaison:"⚖️ 파트와",admin:"⚙️ 관리자"};
   const stRows=(staffReqs.items||[]).map(r=>`<tr>
       <td><b>${esc(r.username)}</b>${r.display_name?' <span class="muted small">'+esc(r.display_name)+'</span>':''}${r.note?'<div class="muted small">'+esc(r.note)+'</div>':''}</td>
@@ -12194,10 +12204,22 @@ SCREEN.system=async()=>{
       <span class="r">${bTag((staffReqs.pending_count||0)?'info':'mute',T('대기')+' '+(staffReqs.pending_count||0))}</span></h3>
     <div class="body tight"><div class="muted small" style="margin-bottom:6px">${T('컨설턴트·오디터·파트와·관리자 가입 신청 — 승인해야 계정이 생성됩니다.')}</div>
       <table><tbody>${stRows}</tbody></table></div></div>`;
-  const clientInviteCard=`<div class="card"><h3>🎫 ${T('클라이언트 초대 QR')} <span class="en">· Client invite</span></h3>
+  const _ciRows=(clientInv.items||[]).map(i=>`<tr${i.usable?'':' style="opacity:.45"'}>
+      <td><code style="font-size:12px;font-weight:700;letter-spacing:.5px">${esc(i.code)}</code>${i.is_primary?' '+bTag('info',T('대표')):''}</td>
+      <td>${esc(i.company_name||'—')}</td>
+      <td class="muted small">${i.used_count}${i.max_uses>=1000000000?'':'/'+i.max_uses}</td>
+      <td>${i.revoked?tag('bad',T('회수됨')):(i.usable?tag('ok',T('사용 가능')):tag('mute',T('만료·소진')))}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn xs" onclick="clientInviteQrView('${i.invite_id}','${esc(i.code)}','${esc(i.url)}')">📱 QR</button>
+        <button class="btn xs" onclick="copyLink('${esc(i.url)}')">🔗</button>
+        ${(i.usable&&!i.is_primary)?`<button class="btn xs ghost" onclick="revokeClientInvite('${i.invite_id}')">${T('회수')}</button>`:''}</td></tr>`).join("")
+    ||`<tr><td colspan="5" class="muted small" style="text-align:center;padding:12px">${T('발급한 코드가 없습니다')}</td></tr>`;
+  const clientInviteCard=`<div class="card"><h3>🎫 ${T('클라이언트 초대 QR')} <span class="en">· Client invites</span>
+      <span class="r"><button class="btn pri" onclick="newClientInvite()">+ ${T('코드 발급')}</button></span></h3>
     <div class="body"><div class="muted small" style="margin-bottom:8px">${T('특정 컨설턴트에 안 묶인 공식 클라이언트 가입 QR — 게시·배포용.')}</div>
-      <div id="clientQrBox"></div>
-      <button class="btn" onclick="loadClientInviteQr()">🎫 ${T('QR 보기·내려받기')}</button></div></div>`;
+      <div id="clientQrBox" style="margin-bottom:8px"></div>
+      <div class="tight"><table><thead><tr><th>${T('코드')}</th><th>${T('대상 업체')}</th><th>${T('사용')}</th><th>${T('상태')}</th><th></th></tr></thead>
+        <tbody>${_ciRows}</tbody></table></div></div></div>`;
   let ovs=[];try{ovs=(await Promise.all((orgs||[]).map(o=>API(`/admin/orgs/${o.org_id}/overview`).catch(()=>null)))).filter(Boolean);}catch(_){}
   const upg=pageSlice("users",users,12);
   const uRows=upg.items.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
@@ -12291,26 +12313,46 @@ async function rejectStaff(rid,uname){
     toast(T("거부됨")+" · "+uname);applyView();}
   catch(e){toast(T("거부 실패")+" · "+EMSG(e));}
 }
-/* 관리자 클라이언트 초대 QR — 보기·내려받기·공유(컨설턴트 QR과 같은 방식) */
-async function loadClientInviteQr(){
+/* 관리자 클라이언트 초대 관리 — 컨설턴트 QR과 같은 방식(발급·QR·공유·회수) */
+async function clientInviteQrView(iid,code,refUrl){
   const box=document.getElementById("clientQrBox");if(!box)return;
-  if(box.innerHTML){box.innerHTML="";return;}
+  if(box.dataset.iid===iid){box.innerHTML="";box.dataset.iid="";return;}
+  box.dataset.iid=iid;
   box.innerHTML=`<div class="muted small">${T('불러오는 중…')}</div>`;
   try{
-    const info=await API("/admin/client-invite");
-    const r=await fetch("/admin/client-invite/qr?fmt=png",{headers:{Authorization:"Bearer "+token()}});
+    const r=await fetch(`/admin/client-invites/${iid}/qr?fmt=png`,{headers:{Authorization:"Bearer "+token()}});
     const url=URL.createObjectURL(await r.blob());
-    box.innerHTML=`<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:10px 0">
-      <img src="${url}" alt="QR" style="width:150px;height:150px;background:#fff;padding:8px;border-radius:10px;border:1px solid var(--line)">
-      <div><div style="font-family:ui-monospace,Menlo,monospace;font-size:16px;font-weight:700">${esc(info.code)}</div>
-        <div class="muted small" style="margin:6px 0">${esc(info.url)}<br>${T('누적 가입')} ${info.used_count}${T('회')}</div>
+    box.innerHTML=`<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:6px 0;padding:10px;border:1px solid var(--line);border-radius:10px">
+      <img src="${url}" alt="QR" style="width:140px;height:140px;background:#fff;padding:8px;border-radius:10px;border:1px solid var(--line)">
+      <div><div style="font-family:ui-monospace,Menlo,monospace;font-size:15px;font-weight:700">${esc(code)}</div>
+        <div class="muted small" style="margin:6px 0">${esc(refUrl)}</div>
         <div class="btnrow" style="flex-wrap:wrap;gap:8px">
-          <a class="btn pri" download="glhac-client-qr-${esc(info.code)}.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
-          <button class="btn" onclick="shareQr('${url}','${esc(info.code)}','${esc(info.url)}')">📤 ${T('공유')}</button>
-          <button class="btn" onclick="copyLink('${esc(info.url)}')">🔗 ${T('링크 복사')}</button>
+          <a class="btn pri" download="glhac-client-qr-${esc(code)}.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
+          <button class="btn" onclick="shareQr('${url}','${esc(code)}','${esc(refUrl)}')">📤 ${T('공유')}</button>
+          <button class="btn" onclick="copyLink('${esc(refUrl)}')">🔗 ${T('링크 복사')}</button>
         </div></div></div>`;
     localizeUI();
-  }catch(e){box.innerHTML=errCard(e);}
+  }catch(e){box.innerHTML=errCard(e);box.dataset.iid="";}
+}
+async function newClientInvite(){
+  const r=await dialog(T('클라이언트 초대 코드 발급'),[
+    {key:'company',label:T('대상 업체명(선택)'),placeholder:T('가입 시 업체가 정정할 수 있습니다')},
+    {key:'note',label:T('메모'),type:'textarea'},
+    {key:'uses',label:T('사용 횟수'),type:'number',value:1},
+    {key:'days',label:T('유효기간(일)'),type:'number',value:30}]);
+  if(!r)return;
+  try{
+    const inv=await API('/admin/client-invites',{method:'POST',body:JSON.stringify({
+      company_name:(r.company||'').trim()||null, note:(r.note||'').trim()||null,
+      max_uses:parseInt(r.uses||'1',10)||1, expires_days:parseInt(r.days||'30',10)||30})});
+    toast(T('코드 발급됨')+': '+inv.code);applyView();
+  }catch(e){toast(EMSG(e)||T('발급 실패'));}
+}
+async function revokeClientInvite(iid){
+  if(!confirm(T('이 코드를 회수합니다. 아직 가입하지 않은 업체는 이 코드로 들어올 수 없습니다. 계속할까요?')))return;
+  try{await API(`/admin/client-invites/${iid}/revoke`,{method:'POST',body:'{}'});
+    toast(T('코드 회수됨'));applyView();}
+  catch(e){toast(EMSG(e)||T('회수 실패'));}
 }
 async function createOrg(){const org_id=v("noId"),name=v("noName");if(!org_id){toast("조직 ID 입력");return}try{await API("/admin/orgs",{method:"POST",body:JSON.stringify({org_id,name})});toast("조직 생성 · "+org_id);applyView();}catch(e){toast("생성 실패 · "+EMSG(e));}}
 /* 범위확장: 화이트라벨 — 요청 호스트가 테넌트 도메인이면 로그인 브랜드·주색상·로케일 적용 */

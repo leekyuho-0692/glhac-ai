@@ -3367,7 +3367,7 @@ def consultant_qr_info(user=Depends(auth.require_roles("consultant")),
 def _house_client_invite(db, admin_uid):
     """하우스 클라이언트 초대 — 없으면 만든다(하나만, 만료·횟수 무제한)."""
     inv = (db.query(models.ConsultantInvite)
-             .filter_by(kind="client", is_primary=True)
+             .filter_by(kind="client", is_primary=True, revoked_at=None)
              .order_by(models.ConsultantInvite.created_at).first())
     if inv:
         return inv
@@ -3398,6 +3398,80 @@ def admin_client_invite_info(user=Depends(auth.require_roles("operator", "admin"
             "qr_svg": "/admin/client-invite/qr?fmt=svg",
             "qr_png": "/admin/client-invite/qr?fmt=png",
             "used_count": inv.used_count}
+
+
+# 관리자도 컨설턴트처럼 여러 클라이언트 초대를 발급·목록·회수·QR 관리한다.
+@app.post("/admin/client-invites")
+def admin_create_client_invite(body: schemas.InviteCreate,
+                               user=Depends(auth.require_roles("operator", "admin")),
+                               db: Session = Depends(get_db)):
+    """관리자 발급 클라이언트 초대 — 특정 컨설턴트 귀속 없음(kind=client)."""
+    from datetime import timedelta
+    days = int(body.expires_days or 30)
+    inv = models.ConsultantInvite(
+        code=_new_invite_code(db), consultant_id=user["uid"], kind="client",
+        company_name=body.company_name, note=body.note,
+        max_uses=max(1, int(body.max_uses or 1)),
+        expires_at=datetime.utcnow() + timedelta(days=max(1, min(365, days))))
+    db.add(inv)
+    _audit(db, user, "admin.client_invite.created", "invite", inv.invite_id,
+           meta={"code": inv.code, "company_name": inv.company_name}, commit=False)
+    db.commit()
+    return {"invite_id": inv.invite_id, "code": inv.code,
+            "url": "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code),
+            "company_name": inv.company_name, "max_uses": inv.max_uses,
+            "used_count": inv.used_count, "expires_at": str(inv.expires_at)}
+
+
+@app.get("/admin/client-invites")
+def admin_list_client_invites(user=Depends(auth.require_roles("operator", "admin")),
+                              db: Session = Depends(get_db)):
+    """발급된 클라이언트 초대 전체 — 대표(하우스) 코드도 포함."""
+    _house_client_invite(db, user["uid"])   # 대표 코드 없으면 만들어 둔다
+    db.commit()
+    now = datetime.utcnow()
+    rows = (db.query(models.ConsultantInvite).filter_by(kind="client")
+              .order_by(models.ConsultantInvite.created_at.desc()).limit(300).all())
+
+    def _usable(i):
+        return not (i.revoked_at or (i.expires_at and i.expires_at <= now)
+                    or i.used_count >= i.max_uses)
+    return {"items": [{
+        "invite_id": i.invite_id, "code": i.code,
+        "url": "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), i.code),
+        "company_name": i.company_name, "note": i.note,
+        "max_uses": i.max_uses, "used_count": i.used_count,
+        "is_primary": bool(i.is_primary),
+        "expires_at": (str(i.expires_at) if i.expires_at else None),
+        "revoked": bool(i.revoked_at), "usable": _usable(i),
+        "qr_png": "/admin/client-invites/%s/qr?fmt=png" % i.invite_id,
+    } for i in rows]}
+
+
+@app.post("/admin/client-invites/{invite_id}/revoke")
+def admin_revoke_client_invite(invite_id: str,
+                               user=Depends(auth.require_roles("operator", "admin")),
+                               db: Session = Depends(get_db)):
+    inv = db.get(models.ConsultantInvite, invite_id)
+    if not inv or inv.kind != "client":
+        raise HTTPException(404, {"code": "INVITE_NOT_FOUND"})
+    if inv.is_primary:
+        raise HTTPException(400, {"code": "CANNOT_REVOKE_PRIMARY",
+                                  "message": "대표(하우스) 초대는 회수할 수 없습니다"})
+    inv.revoked_at = datetime.utcnow()
+    _audit(db, user, "admin.client_invite.revoked", "invite", invite_id, commit=False)
+    db.commit()
+    return {"ok": True, "revoked_at": str(inv.revoked_at)}
+
+
+@app.get("/admin/client-invites/{invite_id}/qr")
+def admin_client_invite_qr(invite_id: str, fmt: str = "png",
+                           user=Depends(auth.require_roles("operator", "admin")),
+                           db: Session = Depends(get_db)):
+    inv = db.get(models.ConsultantInvite, invite_id)
+    if not inv or inv.kind != "client":
+        raise HTTPException(404, {"code": "INVITE_NOT_FOUND"})
+    return _qr_response("%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code), fmt)
 
 
 @app.get("/invites/{code}/check")
