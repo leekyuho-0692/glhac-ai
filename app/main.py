@@ -606,6 +606,13 @@ NOTIFY_MSG = {
         "en": ("Audit closed", "{company} — the on-site audit has been closed."),
         "id": ("Audit selesai", "{company} — audit lapangan telah ditutup."),
     },
+    # 사전심사 문서요청(document_requested)과 다른 사건이다 — 점 접미사로 변종을 둔다
+    # (기존 audit_scheduled / audit_scheduled.lph 관례). 같은 키를 쓰면 문구가 조용히 덮인다.
+    "document_requested.missing": {
+        "ko": ("부족 서류 요청", "{company} — 서류 {count}건이 필요합니다(원재료 {materials}건). 요청 내역을 확인해 주세요."),
+        "en": ("Missing documents requested", "{company} — {count} document(s) are required for {materials} material(s). Please review the request."),
+        "id": ("Permintaan dokumen yang kurang", "{company} — {count} dokumen diperlukan untuk {materials} bahan. Mohon periksa permintaan tersebut."),
+    },
     "audit_scheduled": {
         "ko": ("심사 일정", "{company} — 현장심사가 예정되었습니다."),
         "en": ("Audit scheduled", "{company} — an on-site audit has been scheduled."),
@@ -1435,7 +1442,9 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         org = "org_" + models.uid()[:8]
         company_role = "client_admin"    # 새 회사 첫 가입자 = 기업업무 관리자
         _o = models.Org(org_id=org, name=company_name or "My Company", address=body.address)
-        if inv:
+        # 컨설턴트 초대만 담당으로 귀속한다. 관리자 발급 클라이언트 초대(kind="client")는
+        # 특정 컨설턴트에 안 묶이므로 consultant_id 를 붙이지 않는다(귀속 없음).
+        if inv and (getattr(inv, "kind", "consultant") or "consultant") != "client":
             _o.consultant_id = inv.consultant_id      # 누가 데려왔는지 — 수수료 근거
             _o.consultant_linked_at = datetime.utcnow()
         db.add(_o)
@@ -1455,7 +1464,9 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id)
     db.commit()
     _ref = None
-    if inv:
+    if inv and (getattr(inv, "kind", "consultant") or "consultant") == "client":
+        _ref = {"client_invite": True}     # GL-HAC 공식 초대 — 특정 컨설턴트 귀속 없음
+    elif inv:
         _cp = db.get(models.ConsultantProfile, inv.consultant_id)
         _cu = db.get(models.User, inv.consultant_id)
         _ref = {"consultant": (_cp.display_name if _cp and _cp.display_name
@@ -1470,6 +1481,98 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
 @app.get("/auth/me")
 def me(user=Depends(auth.get_current_user)):
     return user
+
+
+# ── 스태프 가입 신청 + 관리자 승인 ────────────────────────────────────────
+# 컨설턴트·오디터·파트와·관리자는 자가가입이 곧 권한상승이라, 신청은 대기(pending)로
+# 받아두고 관리자가 승인해야 실제 User 가 만들어진다. 대기건은 users 에 없으므로
+# 승인 전에는 로그인 자체가 안 된다.
+_STAFF_SIGNUP_ROLES = ["consultant", "auditor", "fatwa_liaison", "admin"]
+
+
+@app.post("/auth/staff-signup")
+def staff_signup(body: schemas.StaffSignupReq, db: Session = Depends(get_db)):
+    """스태프 가입 신청(공개) — 대기 상태로만 저장한다. 승인 전 권한 0."""
+    role = (body.requested_role or "").strip()
+    if role not in _STAFF_SIGNUP_ROLES:
+        raise HTTPException(422, {"code": "BAD_ROLE", "allowed": _STAFF_SIGNUP_ROLES})
+    uname = body.username.strip()
+    if db.query(models.User).filter_by(username=uname).first():
+        raise HTTPException(409, {"code": "DUPLICATE_ACCOUNT"})
+    dup = (db.query(models.StaffSignupRequest)
+             .filter_by(username=uname, status="pending").first())
+    if dup:
+        raise HTTPException(409, {"code": "SIGNUP_PENDING",
+                                  "message": "이미 승인 대기 중인 신청이 있습니다"})
+    req = models.StaffSignupRequest(
+        username=uname, password_hash=auth.hash_pw(body.password),
+        requested_role=role, display_name=(body.display_name or None),
+        note=(body.note or None), status="pending")
+    db.add(req)
+    db.commit()
+    return {"status": "pending", "request_id": req.request_id, "requested_role": role}
+
+
+@app.get("/admin/staff-signups")
+def admin_list_staff_signups(status: str = Query("pending"),
+                             user=Depends(auth.require_roles("admin")),
+                             db: Session = Depends(get_db)):
+    q = db.query(models.StaffSignupRequest)
+    if status and status != "all":
+        q = q.filter_by(status=status)
+    rows = q.order_by(models.StaffSignupRequest.created_at.desc()).limit(300).all()
+    pending = db.query(models.StaffSignupRequest).filter_by(status="pending").count()
+    return {"pending_count": pending,
+            "items": [{"request_id": r.request_id, "username": r.username,
+                       "requested_role": r.requested_role, "display_name": r.display_name,
+                       "note": r.note, "status": r.status, "reviewed_by": r.reviewed_by,
+                       "reviewed_at": r.reviewed_at, "reject_reason": r.reject_reason,
+                       "created_at": str(r.created_at)} for r in rows]}
+
+
+@app.post("/admin/staff-signups/{request_id}/approve")
+def admin_approve_staff_signup(request_id: str, body: schemas.StaffSignupReviewReq = None,
+                               user=Depends(auth.require_roles("admin")),
+                               db: Session = Depends(get_db)):
+    """승인 — 이 시점에 비로소 User 를 만든다. 역할은 신청분(또는 관리자 지정)."""
+    from datetime import datetime as _dt
+    req = db.get(models.StaffSignupRequest, request_id)
+    if not req:
+        raise HTTPException(404, {"code": "REQUEST_NOT_FOUND"})
+    if req.status != "pending":
+        raise HTTPException(409, {"code": "ALREADY_REVIEWED", "status": req.status})
+    role = ((body.role if body else None) or req.requested_role)
+    if role not in _STAFF_SIGNUP_ROLES:
+        raise HTTPException(422, {"code": "BAD_ROLE", "allowed": _STAFF_SIGNUP_ROLES})
+    if db.query(models.User).filter_by(username=req.username).first():
+        raise HTTPException(409, {"code": "DUPLICATE_ACCOUNT"})
+    u = models.User(username=req.username, password_hash=req.password_hash,
+                    role=role, org_id="org_demo")
+    db.add(u)
+    req.status = "approved"; req.reviewed_by = user["uid"]; req.reviewed_at = _dt.utcnow().isoformat()
+    db.flush()
+    _audit(db, user, "staff.signup.approve", "staff_signup", request_id, None,
+           {"username": req.username, "role": role}, commit=False)
+    db.commit()
+    return {"status": "approved", "user_id": u.user_id, "username": u.username, "role": role}
+
+
+@app.post("/admin/staff-signups/{request_id}/reject")
+def admin_reject_staff_signup(request_id: str, body: schemas.StaffSignupReviewReq = None,
+                              user=Depends(auth.require_roles("admin")),
+                              db: Session = Depends(get_db)):
+    from datetime import datetime as _dt
+    req = db.get(models.StaffSignupRequest, request_id)
+    if not req:
+        raise HTTPException(404, {"code": "REQUEST_NOT_FOUND"})
+    if req.status != "pending":
+        raise HTTPException(409, {"code": "ALREADY_REVIEWED", "status": req.status})
+    req.status = "rejected"; req.reviewed_by = user["uid"]; req.reviewed_at = _dt.utcnow().isoformat()
+    req.reject_reason = (body.reason if body else None)
+    _audit(db, user, "staff.signup.reject", "staff_signup", request_id, None,
+           {"username": req.username}, commit=False)
+    db.commit()
+    return {"status": "rejected"}
 
 
 # ===================== admin 시스템 설정 (admin 전용) =====================
@@ -3231,13 +3334,8 @@ def board_delete(post_id: str, user=Depends(auth.require_roles("operator", "admi
     return {"post_id": post_id, "deleted": True, "replies_deleted": n}
 
 
-@app.get("/consultant/qr")
-def consultant_qr(fmt: str = "svg", user=Depends(auth.require_roles("consultant")),
-                  db: Session = Depends(get_db)):
-    """내 QR — 스캔하면 홈페이지로 가고 내 담당으로 붙는다."""
-    inv = _consultant_primary_invite(db, user["uid"])
-    db.commit()
-    url = "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code)
+def _qr_response(url, fmt):
+    """초대 URL 을 QR 이미지로 — png|svg 공통 렌더러."""
     import io
 
     import segno
@@ -3250,6 +3348,15 @@ def consultant_qr(fmt: str = "svg", user=Depends(auth.require_roles("consultant"
     return Response(buf.getvalue(), media_type="image/svg+xml")
 
 
+@app.get("/consultant/qr")
+def consultant_qr(fmt: str = "svg", user=Depends(auth.require_roles("consultant")),
+                  db: Session = Depends(get_db)):
+    """내 QR — 스캔하면 홈페이지로 가고 내 담당으로 붙는다."""
+    inv = _consultant_primary_invite(db, user["uid"])
+    db.commit()
+    return _qr_response("%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code), fmt)
+
+
 @app.get("/consultant/qr/info")
 def consultant_qr_info(user=Depends(auth.require_roles("consultant")),
                        db: Session = Depends(get_db)):
@@ -3260,6 +3367,144 @@ def consultant_qr_info(user=Depends(auth.require_roles("consultant")),
             "url": "%s/?ref=%s" % (HOME_BASE_URL.rstrip("/"), inv.code),
             "qr_svg": "/consultant/qr?fmt=svg", "qr_png": "/consultant/qr?fmt=png",
             "used_count": inv.used_count}
+
+
+# ── 관리자 범용 클라이언트 초대 QR ────────────────────────────────────────
+# 특정 컨설턴트에 안 묶인 '공식' 클라이언트(applicant) 가입 링크. 회사가 공개 게시·배포한다.
+# 컨설턴트 QR 은 홈페이지(glhac.com/?ref=)로 보내 마케팅 랜딩을 거치지만, 관리자 초대는
+# **앱 회원가입 화면으로 바로** 보낸다(glhac.co.kr/ui/?ref=). 성격이 다르다.
+def _client_signup_url(code):
+    return "%s/ui/?ref=%s" % (APP_BASE_URL.rstrip("/"), code)
+
+
+def _staff_signup_url():
+    return "%s/ui/?signup=staff" % APP_BASE_URL.rstrip("/")
+
+
+def _house_client_invite(db, admin_uid):
+    """하우스 클라이언트 초대 — 없으면 만든다(하나만, 만료·횟수 무제한)."""
+    inv = (db.query(models.ConsultantInvite)
+             .filter_by(kind="client", is_primary=True, revoked_at=None)
+             .order_by(models.ConsultantInvite.created_at).first())
+    if inv:
+        return inv
+    inv = models.ConsultantInvite(
+        code=_new_invite_code(db), consultant_id=admin_uid, kind="client",
+        note="관리자 발급 범용 클라이언트 초대", max_uses=10 ** 9,
+        is_primary=True, expires_at=None)
+    db.add(inv)
+    db.flush()
+    return inv
+
+
+@app.get("/admin/client-invite/qr")
+def admin_client_qr(fmt: str = "svg", user=Depends(auth.require_roles("operator", "admin")),
+                    db: Session = Depends(get_db)):
+    inv = _house_client_invite(db, user["uid"])
+    db.commit()
+    return _qr_response(_client_signup_url(inv.code), fmt)
+
+
+@app.get("/admin/client-invite")
+def admin_client_invite_info(user=Depends(auth.require_roles("operator", "admin")),
+                             db: Session = Depends(get_db)):
+    inv = _house_client_invite(db, user["uid"])
+    db.commit()
+    return {"code": inv.code,
+            "url": _client_signup_url(inv.code),
+            "qr_svg": "/admin/client-invite/qr?fmt=svg",
+            "qr_png": "/admin/client-invite/qr?fmt=png",
+            "used_count": inv.used_count}
+
+
+# 관리자도 컨설턴트처럼 여러 클라이언트 초대를 발급·목록·회수·QR 관리한다.
+@app.post("/admin/client-invites")
+def admin_create_client_invite(body: schemas.InviteCreate,
+                               user=Depends(auth.require_roles("operator", "admin")),
+                               db: Session = Depends(get_db)):
+    """관리자 발급 클라이언트 초대 — 특정 컨설턴트 귀속 없음(kind=client)."""
+    from datetime import timedelta
+    days = int(body.expires_days or 30)
+    inv = models.ConsultantInvite(
+        code=_new_invite_code(db), consultant_id=user["uid"], kind="client",
+        company_name=body.company_name, note=body.note,
+        max_uses=max(1, int(body.max_uses or 1)),
+        expires_at=datetime.utcnow() + timedelta(days=max(1, min(365, days))))
+    db.add(inv)
+    _audit(db, user, "admin.client_invite.created", "invite", inv.invite_id,
+           meta={"code": inv.code, "company_name": inv.company_name}, commit=False)
+    db.commit()
+    return {"invite_id": inv.invite_id, "code": inv.code,
+            "url": _client_signup_url(inv.code),
+            "company_name": inv.company_name, "max_uses": inv.max_uses,
+            "used_count": inv.used_count, "expires_at": str(inv.expires_at)}
+
+
+@app.get("/admin/client-invites")
+def admin_list_client_invites(user=Depends(auth.require_roles("operator", "admin")),
+                              db: Session = Depends(get_db)):
+    """발급된 클라이언트 초대 전체 — 대표(하우스) 코드도 포함."""
+    _house_client_invite(db, user["uid"])   # 대표 코드 없으면 만들어 둔다
+    db.commit()
+    now = datetime.utcnow()
+    rows = (db.query(models.ConsultantInvite).filter_by(kind="client")
+              .order_by(models.ConsultantInvite.created_at.desc()).limit(300).all())
+
+    def _usable(i):
+        return not (i.revoked_at or (i.expires_at and i.expires_at <= now)
+                    or i.used_count >= i.max_uses)
+    return {"items": [{
+        "invite_id": i.invite_id, "code": i.code,
+        "url": _client_signup_url(i.code),
+        "company_name": i.company_name, "note": i.note,
+        "max_uses": i.max_uses, "used_count": i.used_count,
+        "is_primary": bool(i.is_primary),
+        "expires_at": (str(i.expires_at) if i.expires_at else None),
+        "revoked": bool(i.revoked_at), "usable": _usable(i),
+        "qr_png": "/admin/client-invites/%s/qr?fmt=png" % i.invite_id,
+    } for i in rows]}
+
+
+@app.post("/admin/client-invites/{invite_id}/revoke")
+def admin_revoke_client_invite(invite_id: str,
+                               user=Depends(auth.require_roles("operator", "admin")),
+                               db: Session = Depends(get_db)):
+    inv = db.get(models.ConsultantInvite, invite_id)
+    if not inv or inv.kind != "client":
+        raise HTTPException(404, {"code": "INVITE_NOT_FOUND"})
+    if inv.is_primary:
+        raise HTTPException(400, {"code": "CANNOT_REVOKE_PRIMARY",
+                                  "message": "대표(하우스) 초대는 회수할 수 없습니다"})
+    inv.revoked_at = datetime.utcnow()
+    _audit(db, user, "admin.client_invite.revoked", "invite", invite_id, commit=False)
+    db.commit()
+    return {"ok": True, "revoked_at": str(inv.revoked_at)}
+
+
+@app.get("/admin/client-invites/{invite_id}/qr")
+def admin_client_invite_qr(invite_id: str, fmt: str = "png",
+                           user=Depends(auth.require_roles("operator", "admin")),
+                           db: Session = Depends(get_db)):
+    inv = db.get(models.ConsultantInvite, invite_id)
+    if not inv or inv.kind != "client":
+        raise HTTPException(404, {"code": "INVITE_NOT_FOUND"})
+    return _qr_response(_client_signup_url(inv.code), fmt)
+
+
+# ── 스태프 가입 링크 ────────────────────────────────────
+# 로그인 화면에 공개하지 않는다. 관리자가 이 링크/QR 을 스태프 후보에게만 건넬다.
+# 링크로 들어오면 스태프 가입 폼이 바로 열린다(가입은 여전히 관리자 승인 대기).
+@app.get("/admin/staff-signup-link")
+def admin_staff_signup_link(user=Depends(auth.require_roles("operator", "admin"))):
+    return {"url": _staff_signup_url(),
+            "qr_png": "/admin/staff-signup-link/qr?fmt=png",
+            "qr_svg": "/admin/staff-signup-link/qr?fmt=svg"}
+
+
+@app.get("/admin/staff-signup-link/qr")
+def admin_staff_signup_qr(fmt: str = "png",
+                          user=Depends(auth.require_roles("operator", "admin"))):
+    return _qr_response(_staff_signup_url(), fmt)
 
 
 @app.get("/invites/{code}/check")
@@ -3276,9 +3521,13 @@ def check_invite(code: str, db: Session = Depends(get_db)):
         return {"valid": False, "reason": "EXPIRED"}
     if inv.used_count >= inv.max_uses:
         return {"valid": False, "reason": "USED_UP"}
+    if (getattr(inv, "kind", "consultant") or "consultant") == "client":
+        # 관리자 발급 클라이언트 초대 — 특정 컨설턴트 귀속 없음(발급자 노출 안 함).
+        return {"valid": True, "kind": "client", "consultant": None,
+                "company_name": inv.company_name}
     u = db.get(models.User, inv.consultant_id)
     prof = db.get(models.ConsultantProfile, inv.consultant_id)
-    return {"valid": True, "company_name": inv.company_name,
+    return {"valid": True, "kind": "consultant", "company_name": inv.company_name,
             "consultant": (prof.display_name if prof and prof.display_name
                            else (u.username if u else None))}
 
@@ -4149,6 +4398,72 @@ def _quant_verdict(param_key, value):
 def get_quant_criteria(user=Depends(auth.get_current_user)):
     """정량 기준 카탈로그 — 프런트 입력 폼·비교표의 기준 소스."""
     return {"criteria": [dict(key=k, **v) for k, v in QUANT_CRITERIA.items()]}
+
+
+# 요청서는 미충족 증빙만 나열한다 — 원료 상세 뷰가 충족 여부와 무관하게 required_evidence
+# 전체를 보여주는 것과 다르다. 이미 제출한 서류를 다시 요청하지 않는 것이 요점이다.
+@app.get("/cases/{case_id}/document-requests")
+def case_document_requests(case_id: str, lang: str = Query("ko"),
+                           all_materials: bool = Query(False),
+                           user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """부족 서류 요청서 — 미충족 증빙만, 사유와 제출 가능 서류 포함."""
+    _get_case(db, case_id, user)
+    from . import doc_request as _dr
+    return _dr.build_case_sheet(db, case_id, lang=lang, unresolved_only=not all_materials)
+
+
+@app.get("/cases/{case_id}/document-requests.txt")
+def case_document_requests_text(case_id: str, lang: str = Query("ko"),
+                                all_materials: bool = Query(False),
+                                user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """부족 서류 요청서 평문 — 고객 발송·출력용."""
+    _get_case(db, case_id, user)
+    from . import doc_request as _dr
+    sheet = _dr.build_case_sheet(db, case_id, lang=lang, unresolved_only=not all_materials)
+    return Response(content=_dr.render_text(sheet), media_type="text/plain; charset=utf-8")
+
+
+@app.post("/cases/{case_id}/document-requests/send")
+def send_document_request(case_id: str, lang: str = Query("ko"),
+                          all_materials: bool = Query(False),
+                          user=Depends(auth.require_roles("auditor", "consultant",
+                                                          "operator", "admin")),
+                          db: Session = Depends(get_db)):
+    """부족 서류 요청서를 클라이언트에게 발송한다(P33). 요청 이력과 그 시점 시트 스냅샷을
+    남긴다 — 인증 감사에서 "이 서류를 요구했다"를 증명해야 한다."""
+    case = _get_case(db, case_id, user)
+    from . import doc_request as _dr
+    sheet = _dr.build_case_sheet(db, case_id, lang=lang, unresolved_only=not all_materials)
+    # 부족한 게 없는데 서류를 요구하면 고객 신뢰를 깎는다.
+    if not sheet.get("request_count"):
+        raise HTTPException(400, {"code": "NO_MISSING_EVIDENCE", "case_id": case_id})
+    codes = sorted({g["code"] for g in sheet.get("groups") or []})
+    prev = (db.query(models.DocumentRequest)
+            .filter(models.DocumentRequest.case_id == case_id)
+            .order_by(models.DocumentRequest.created_at.desc()).first())
+    # 같은 내용 재요청은 정당한 독촉일 수 있으니 막지 않고 경고만 한다. 이력에는 둘 다 남는다.
+    duplicate_of = (prev.request_id if prev and sorted(prev.codes or []) == codes
+                    and prev.request_count == sheet["request_count"] else None)
+    n = _notify(db, case, "document_requested", role="applicant",
+                msg=("document_requested.missing",
+                     {"company": case.company_name or "", "count": sheet["request_count"],
+                      "materials": sheet["material_count"]}))
+    row = models.DocumentRequest(
+        case_id=case_id, lang=lang,
+        request_count=sheet["request_count"], material_count=sheet["material_count"],
+        group_count=len(sheet.get("groups") or []), codes=codes, sheet=sheet,
+        notification_id=n.notification_id,
+        requested_by=user.get("uid"), requested_role=user.get("role"))
+    db.add(row)
+    _audit(db, user, "document_request.send", resource_type="case", resource_id=case_id,
+           case_id=case_id,
+           meta={"request_count": sheet["request_count"], "codes": codes, "lang": lang,
+                 "duplicate_of": duplicate_of}, commit=False)
+    db.commit()
+    return {"request_id": row.request_id, "case_id": case_id, "lang": lang,
+            "request_count": sheet["request_count"], "material_count": sheet["material_count"],
+            "group_count": len(sheet.get("groups") or []), "codes": codes,
+            "notification_id": n.notification_id, "duplicate_of": duplicate_of, "sheet": sheet}
 
 
 @app.get("/cases/{case_id}/measurements")
@@ -5914,7 +6229,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
             if f.get(k):
                 setattr(c, k, f[k])
                 applied[k] = f[k]
-    elif body.doc_type in ("material_list", "product_label"):
+    elif body.doc_type in ("material_list", "product_label", "coa_msds", "quality_cert", "supplier_declaration"):  # ② 성분표(coa_msds)·품질/공급자선언도 원재료 스크리닝 연결
         names = f.get("material_names") or f.get("ingredients") or []
         have = {m.name for m in db.query(models.Material).filter_by(case_id=case_id)}
         for mn in names:
@@ -5924,6 +6239,16 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                        screen_status=sc["status"], screen_severity=sc["severity"],
                                        matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk")))
         applied["materials_added"] = len(names)
+        # ③ 제품 자동등록 — 성분표(coa_msds)·제품라벨에 제품명이 있으면 제품도 생성한다.
+        #    문서 업로드만으로 NO_PRODUCT(제품 미등록) 게이트가 풀리게 한다.
+        if body.doc_type in ("coa_msds", "product_label"):
+            pnames = f.get("product_names") or []
+            have_p = {p.name for p in db.query(models.Product).filter_by(case_id=case_id)}
+            addp = 0
+            for pn in pnames:
+                if pn and pn not in have_p:
+                    db.add(models.Product(case_id=case_id, name=pn)); addp += 1
+            applied["products_added"] = addp
     elif body.doc_type == "product_list":
         names = f.get("product_names") or []
         have = {p.name for p in db.query(models.Product).filter_by(case_id=case_id)}
@@ -5939,6 +6264,13 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                 text_excerpt=r.get("excerpt"),
                                 content_b64=_b64 if len(_b64) < 4_000_000 else None,
                                 content_type=_ctype(body.filename)))
+    # ① 검수로그 — 파싱 추출 근거를 ai_extraction 에 기록(§7.2/§7.4). label_judgment 만이 아니라
+    #    문서 필드추출도 검수/감사에 남긴다. reviewer_status=unreviewed 로 시작.
+    if f:
+        _save_ai_extraction(db, case_id, "parse_file:" + body.doc_type, f,
+                            confidence=r.get("confidence"),
+                            evidence=(r.get("excerpt") or ""),
+                            model_name="parse_typed", model_version="v3")
     sm.record_event(db, c, c.status, c.status, "documents.parse_file", "ai", user["uid"],
                     {"doc_type": body.doc_type, "applied": applied})
     db.commit()
@@ -11189,7 +11521,13 @@ def _sync_logistics_vehicle(db, v, event):
         "transport_type": v.transport_type, "capacity": v.capacity, "reg_no": v.reg_no,
         "previous_cargo": v.previous_cargo, "previous_cargo_halal": v.previous_cargo_halal,
         "last_cleaned": v.last_cleaned, "sertu": bool(v.sertu),
+        "halal_clear": _vehicle_halal_clear(db, v),   # 최신 세척 로그 기준 판정(스냅샷 아님)
     }
+    _lc = _latest_cleaning(db, v.vehicle_id)
+    payload["last_cleaning"] = ({
+        "cleaned_at": _lc.cleaned_at, "method": _lc.method,
+        "penyelia_sign": bool(_lc.penyelia_sign), "next_due": _lc.next_due,
+    } if _lc else None)
     raw = _json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ev = models.IntegrationEvent(
         provider="logistics_audit", event_type=event, external_id=v.plate_no,
@@ -13779,7 +14117,8 @@ def _calc_readiness(db, case_id):
     req = doc_requirements(_c.pathway if _c else None,
                            (_c.profile_ext or {}).get("country") if _c else None,
                            _c.is_msme if _c else None,
-                           scheme=(_c.scheme if _c else "product"))["required"]
+                           scheme=(_c.scheme if _c else "product"),
+                           logistics_scope=(_c.logistics_scope if _c else None))["required"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     have_types = {d.doc_type for d in docs if d.review_status != "rejected"}
     doc_score = (sum(1 for r in req if r in have_types) / len(req)) if req else 1.0
@@ -15680,7 +16019,7 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
     # '해당 없음'으로 사유와 함께 보여준다 — 조용히 사라지면 심사자가 빠뜨린 것인지
     # 면제인지 구분할 수 없다.
     _rq = doc_requirements(c.pathway, (c.profile_ext or {}).get("country"), c.is_msme,
-                           scheme=c.scheme)
+                           scheme=c.scheme, logistics_scope=c.logistics_scope)
     _req, _na, _alt = _rq["required"], _rq["not_applicable"], _rq["alt"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     by_type = {}
@@ -16950,10 +17289,12 @@ class NoCacheStaticFiles(StaticFiles):
 
 
 @app.get("/", include_in_schema=False)
-def _root_redirect():
-    """맨 URL 접속 시 UI로 이동 (루트 라우트 부재로 인한 404 방지)."""
+def _root_redirect(request: Request):
+    """맨 URL 접속 시 UI로 이동 (루트 라우트 부재로 인한 404 방지).
+    쿼리스트링(?ref=컨설턴트코드 등)을 보존해 넘긴다 — 안 그러면 QR 귀속이 끊긴다."""
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/ui/")
+    qs = request.url.query
+    return RedirectResponse(url="/ui/" + (("?" + qs) if qs else ""))
 
 
 # ===== 공장·시설 (회사1:공장N) — Phase 3 =====
@@ -17056,7 +17397,10 @@ def list_vehicles(org_id: str, case_id: str = Query(None),
              "transport_type": v.transport_type, "capacity": v.capacity, "reg_no": v.reg_no,
              "previous_cargo": v.previous_cargo, "previous_cargo_halal": v.previous_cargo_halal,
              "last_cleaned": v.last_cleaned, "sertu": bool(v.sertu), "note": v.note,
-             "case_id": v.case_id, "created_at": str(v.created_at)} for v in rows]
+             "case_id": v.case_id, "created_at": str(v.created_at),
+             "halal_clear": _vehicle_halal_clear(db, v),          # 최신 세척 로그 기준 유도
+             "cleaning_count": db.query(models.VehicleCleaning).filter_by(vehicle_id=v.vehicle_id).count(),
+             "next_due": _vehicle_next_due(db, v)} for v in rows]
 
 
 @app.post("/orgs/{org_id}/vehicles")
@@ -17110,6 +17454,156 @@ def del_vehicle(vehicle_id: str,
     db.delete(v)
     db.commit()
     return {"deleted": vehicle_id}
+
+
+# ===== 차량 세척 이력 (jasa logistik) =====
+# 할랄 세척 인증의 실체 = SOP대로 쌓인 로그 + 자격 있는 페냘리아 서명(사진은 보조).
+def _latest_cleaning(db, vehicle_id):
+    return (db.query(models.VehicleCleaning).filter_by(vehicle_id=vehicle_id)
+              .order_by(models.VehicleCleaning.cleaned_at.desc(),
+                        models.VehicleCleaning.created_at.desc()).first())
+
+
+def _vehicle_halal_clear(db, v):
+    """운송 가능 여부(교차오염 없음) 판정 — 최신 세척 로그가 근거.
+    로그가 없으면 기존 스냅샷(previous_cargo_halal·sertu)으로 폴백(하위호환)."""
+    last = _latest_cleaning(db, v.vehicle_id)
+    if not last:
+        return not (v.previous_cargo_halal is False and not v.sertu)
+    if last.previous_cargo_halal is False:
+        # 직전 비할랄 → Sertu 세정 + 자격 페냘리아 서명까지 있어야 clear
+        return last.method == "sertu" and bool(last.penyelia_sign)
+    return True
+
+
+def _vehicle_next_due(db, v):
+    last = _latest_cleaning(db, v.vehicle_id)
+    return last.next_due if last else None
+
+
+def _can_penyelia_sign(db, org_id, user):
+    """서명 자격: penyelia_halal 역할 + 해당 org의 active 페냘리아(수료증 유효)."""
+    from datetime import date as _date
+    pen = (db.query(models.PenyeliaHalal)
+             .filter_by(org_id=org_id, user_id=user.get("uid"), status="active").first())
+    if not pen:   # user_id 매칭이 없으면 org의 active 페냘리아 아무나(계정 미연결 운영 대비)
+        pen = db.query(models.PenyeliaHalal).filter_by(org_id=org_id, status="active").first()
+    if not pen:
+        return None
+    if pen.cert_expiry and pen.cert_expiry < _date.today():
+        return None            # 수료증 만료 → 서명 자격 없음
+    return pen
+
+
+def _refresh_vehicle_cache(db, v):
+    """차량 스냅샷(last_cleaned·sertu)을 최신 로그로 역동기화 — 목록·sync 하위호환."""
+    last = _latest_cleaning(db, v.vehicle_id)
+    if last:
+        v.last_cleaned = last.cleaned_at or v.last_cleaned
+        v.sertu = (last.method == "sertu")
+
+
+def _cleaning_dict(cl):
+    return {"cleaning_id": cl.cleaning_id, "vehicle_id": cl.vehicle_id,
+            "cleaned_at": cl.cleaned_at, "previous_cargo": cl.previous_cargo,
+            "previous_cargo_halal": cl.previous_cargo_halal, "method": cl.method,
+            "sertu_steps": cl.sertu_steps, "photo_doc_id": cl.photo_doc_id,
+            "penyelia_id": cl.penyelia_id, "penyelia_sign": bool(cl.penyelia_sign),
+            "signed_at": cl.signed_at, "next_due": cl.next_due, "note": cl.note,
+            "created_by": cl.created_by, "created_at": str(cl.created_at)}
+
+
+@app.get("/vehicles/{vehicle_id}/cleanings")
+def list_cleanings(vehicle_id: str,
+                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    v = db.get(models.Vehicle, vehicle_id)
+    if not v:
+        raise HTTPException(404, {"code": "VEHICLE_NOT_FOUND"})
+    _assert_org_access(db, user, v.org_id)
+    rows = (db.query(models.VehicleCleaning).filter_by(vehicle_id=vehicle_id)
+              .order_by(models.VehicleCleaning.cleaned_at.desc(),
+                        models.VehicleCleaning.created_at.desc()).all())
+    return {"vehicle_id": vehicle_id, "halal_clear": _vehicle_halal_clear(db, v),
+            "items": [_cleaning_dict(c) for c in rows]}
+
+
+@app.post("/vehicles/{vehicle_id}/cleanings")
+def add_cleaning(vehicle_id: str, body: schemas.VehicleCleaningReq,
+                 user=Depends(auth.require_roles("applicant", "consultant", "operator",
+                                                 "penyelia_halal", "admin")),
+                 db: Session = Depends(get_db)):
+    """세척 로그 작성(담당자). 서명은 별도 — 작성자≠서명자(4-eyes)."""
+    v = db.get(models.Vehicle, vehicle_id)
+    if not v:
+        raise HTTPException(404, {"code": "VEHICLE_NOT_FOUND"})
+    _assert_org_access(db, user, v.org_id)
+    method = (body.method or "normal")
+    if method not in ("sertu", "normal"):
+        raise HTTPException(422, {"code": "BAD_METHOD", "message": "method는 sertu|normal"})
+    cl = models.VehicleCleaning(
+        vehicle_id=vehicle_id, org_id=v.org_id, cleaned_at=body.cleaned_at,
+        previous_cargo=body.previous_cargo, previous_cargo_halal=body.previous_cargo_halal,
+        method=method, sertu_steps=body.sertu_steps, photo_doc_id=body.photo_doc_id,
+        next_due=body.next_due, note=body.note, created_by=user.get("uid"), penyelia_sign=False)
+    db.add(cl)
+    db.flush()
+    _refresh_vehicle_cache(db, v)
+    db.commit()
+    _audit(db, user, "vehicle.cleaning.add", "vehicle_cleaning", cl.cleaning_id, v.case_id,
+           {"vehicle_id": vehicle_id, "method": method})
+    _sync_logistics_vehicle(db, v, "vehicle.upsert")     # 세척 반영해 audit의 halal_clear 갱신
+    return _cleaning_dict(cl)
+
+
+@app.post("/cleanings/{cleaning_id}/sign")
+def sign_cleaning(cleaning_id: str,
+                  user=Depends(auth.require_roles("penyelia_halal", "admin")),
+                  db: Session = Depends(get_db)):
+    """페냘리아 할랄 서명 — 이 세척이 규정대로 됐음을 자격자가 귀속·확정.
+    작성자 본인은 서명 불가(4-eyes). 자격(active·수료증 유효) 없으면 거부."""
+    from datetime import datetime as _dt
+    cl = db.get(models.VehicleCleaning, cleaning_id)
+    if not cl:
+        raise HTTPException(404, {"code": "CLEANING_NOT_FOUND"})
+    v = db.get(models.Vehicle, cl.vehicle_id)
+    _assert_org_access(db, user, cl.org_id)
+    if cl.created_by and cl.created_by == user.get("uid") and user.get("role") != "admin":
+        raise HTTPException(403, {"code": "SELF_SIGN_FORBIDDEN",
+                                  "message": "작성자는 서명할 수 없습니다(작성자≠서명자)"})
+    pen = _can_penyelia_sign(db, cl.org_id, user)
+    if not pen and user.get("role") != "admin":
+        raise HTTPException(403, {"code": "NO_SIGN_AUTHORITY",
+                                  "message": "유효한 페냘리아 할랄만 서명할 수 있습니다"})
+    cl.penyelia_id = (pen.penyelia_id if pen else None)
+    cl.penyelia_sign = True
+    cl.signed_at = _dt.utcnow().isoformat()
+    if v:
+        _refresh_vehicle_cache(db, v)
+    db.commit()
+    _audit(db, user, "vehicle.cleaning.sign", "vehicle_cleaning", cl.cleaning_id,
+           (v.case_id if v else None), {"penyelia_id": cl.penyelia_id})
+    if v:
+        _sync_logistics_vehicle(db, v, "vehicle.upsert")   # 서명으로 clear 되면 audit 갱신
+    return _cleaning_dict(cl)
+
+
+@app.delete("/cleanings/{cleaning_id}")
+def del_cleaning(cleaning_id: str,
+                 user=Depends(auth.require_roles("applicant", "consultant", "operator", "admin")),
+                 db: Session = Depends(get_db)):
+    cl = db.get(models.VehicleCleaning, cleaning_id)
+    if not cl:
+        raise HTTPException(404, {"code": "CLEANING_NOT_FOUND"})
+    _assert_org_access(db, user, cl.org_id)
+    v = db.get(models.Vehicle, cl.vehicle_id)
+    db.delete(cl)
+    db.flush()
+    if v:
+        _refresh_vehicle_cache(db, v)
+    db.commit()
+    if v:
+        _sync_logistics_vehicle(db, v, "vehicle.upsert")
+    return {"deleted": cleaning_id}
 
 
 # ===== 동적 메뉴 시스템 (설계서 §3~§5) =====

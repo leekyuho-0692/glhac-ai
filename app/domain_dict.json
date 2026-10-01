@@ -1502,6 +1502,47 @@
     ],
     "status": "approved"
   },
+{
+    "id": "DOC_ORIGIN_CERT",
+    "axis": "DOC",
+    "labels": {
+      "id": "Surat keterangan asal",
+      "ko": "원산지증명서",
+      "en": "Certificate of origin"
+    },
+    "surface": {
+      "id": [
+        "surat keterangan asal",
+        "negara asal",
+        "sertifikat asal barang"
+      ],
+      "ko": [
+        "원산지증명서",
+        "원산지 확인서",
+        "원산지증명원",
+        "원산지 설명서",
+        "수입서류"
+      ],
+      "en": [
+        "certificate of origin",
+        "country of origin",
+        "coo"
+      ]
+    },
+    "context": [
+      "HPAS",
+      "DOC"
+    ],
+    "actions": {
+      "doc_type": "origin_certificate",
+      "evidence_key": "origin_proof"
+    },
+    "source": [
+      "BPJPH",
+      "field"
+    ],
+    "status": "approved"
+  },
   {
     "id": "DOC_QUALITY_CERT",
     "axis": "DOC",

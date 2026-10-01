@@ -342,6 +342,10 @@ class DocumentAsset(Base):
     uploader_role = Column(String) # 업로더 역할 — 증거 귀속(감사 A08 누가)
     captured_at = Column(String)   # EXIF DateTimeOriginal 원본 촬영시각 — 증거 귀속(A08 언제)
     file_hash = Column(String)     # sha256 파일 해시 — 증거 무결성(A08 무결성)
+    # 추출 전문(OCR·파서 결과). text_excerpt 는 300자로 잘려 있어 증빙 스코프 판정
+    # ("이 문서가 이 원재료를 지목하는가")이 과소판정된다 — 실측 84건이 절단에 가려져 있었다.
+    # 같은 파일을 두 번 OCR 하지 않기 위해 여기 둔다.
+    text_full = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -460,9 +464,36 @@ class Vehicle(Base):
     previous_cargo = Column(String)                    # 직전 화물(비할랄 여부 판단)
     previous_cargo_halal = Column(Boolean)             # 직전 화물이 할랄이었나(None=미상)
     last_cleaned = Column(String)                      # 최근 세척일(ISO date)
-    sertu = Column(Boolean, default=False)             # Sertu(정결) 세정 수행 여부
+    sertu = Column(Boolean, default=False)             # Sertu(정결) 세정 수행 여부 — 최신 로그의 캐시
     note = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class VehicleCleaning(Base):
+    """차량·컨테이너 세척 이력 1건 (차량 1:N).
+
+    할랄 세척 인증의 실체는 '사진 몇 장'이 아니라 'SOP대로 쌓인 로그 + 자격 있는
+    페냘리아 할랄의 서명'이다. 사진은 각 로그의 보조 증빙(photo_doc_id)일 뿐.
+    직전 화물이 비할랄이면 Sertu(정결) 세정 + 페냘리아 서명이 있어야 clear 로 본다.
+    작성자 != 서명자(4-eyes) — 작성은 담당자, 서명은 penyelia_halal 역할만."""
+    __tablename__ = "vehicle_cleaning"
+    cleaning_id = Column(String, primary_key=True, default=uid)
+    vehicle_id = Column(String, index=True, nullable=False)
+    org_id = Column(String, index=True)
+    cleaned_at = Column(String)                        # 세척 일시(ISO)
+    previous_cargo = Column(String)                    # 이 세척 직전 실었던 화물
+    previous_cargo_halal = Column(Boolean)             # 그 화물이 할랄이었나(None=미상)
+    method = Column(String, default="normal")          # sertu | normal
+    sertu_steps = Column(Integer)                      # Sertu 절차 횟수(예: 7)
+    photo_doc_id = Column(String)                      # 첨부 사진(Document FK) — 보조증빙
+    penyelia_id = Column(String)                       # 서명한 페냘리아 할랄
+    penyelia_sign = Column(Boolean, default=False)     # 서명(감독 확인) 완료 여부
+    signed_at = Column(String)                         # 서명 시각(ISO)
+    next_due = Column(String)                          # 다음 세척 예정일(주기 관리)
+    note = Column(Text)
+    created_by = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 
 class AiExtraction(Base):
     """AI/OCR 결과 근거저장 (보강안 §7.2) — Human-in-the-loop 추적성."""
@@ -848,8 +879,33 @@ class ConsultantInvite(Base):
     # 명함·QR 에 박는 대표 코드인가. 가입 시 1회 자동 발급되며 만료·횟수 제한이 없다.
     # 기간 한정 코드(기존 /consultant/invites)와 구분하려고 둔다.
     is_primary = Column(Boolean, default=False)
+    # 초대 종류. "consultant"(기본): 가입 업체가 consultant_id 담당으로 귀속(수수료 근거).
+    # "client": 관리자 발급 범용 클라이언트 초대 — 특정 컨설턴트에 안 묶인다(귀속 없음).
+    #   consultant_id 엔 발급한 관리자 uid 를 감사용으로 남기되, 담당으로는 쓰지 않는다.
+    kind = Column(String, default="consultant")
     expires_at = Column(DateTime)
     revoked_at = Column(DateTime)      # 회수된 코드는 다시 쓸 수 없다
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class StaffSignupRequest(Base):
+    """스태프(컨설턴트·오디터·파트와·관리자) 가입 신청 — 관리자 승인 전 대기.
+
+    대기 계정을 users 에 만들지 않는다: 미승인 상태가 users 에 있으면 버그 하나로
+    권한이 새어 나갈 수 있다. 승인 시에만 User 를 만들어 권한상승 표면을 원천 차단한다.
+    비밀번호는 해시로 보관했다가 승인 때 그대로 User 로 이관한다(재입력 불필요)."""
+    __tablename__ = "staff_signup_request"
+    request_id = Column(String, primary_key=True, default=uid)
+    username = Column(String, index=True, nullable=False)
+    password_hash = Column(String, nullable=False)
+    requested_role = Column(String, nullable=False)   # consultant|auditor|fatwa_liaison|admin
+    display_name = Column(String)
+    org_id = Column(String)
+    note = Column(Text)                                # 신청 사유(소속·연락 등)
+    status = Column(String, default="pending", index=True)   # pending|approved|rejected
+    reviewed_by = Column(String)
+    reviewed_at = Column(String)
+    reject_reason = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -942,4 +998,75 @@ class BoardReply(Base):
     parent_reply_id = Column(String, index=True) # 대댓글 — 어느 답글에 달았는지
     body = Column(Text, nullable=False)
     edited_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MaterialEvidenceLink(Base):
+    """문서↔원재료 N:M 링크 — 설계 P13 Binding.
+
+    `document_asset.material_id` 는 1:1 이라 문서 한 장이 원재료 여러 건을 덮을 수 없다.
+    전성분표 한 장이 원재료 153건을 나열하는 것이 실측이다. 그래서 문서↔원재료를
+    N:M 으로 잇는 링크 테이블을 둔다."""
+    __tablename__ = "material_evidence_links"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    document_id = Column(String, nullable=False, index=True)
+    material_id = Column(String, nullable=False, index=True)
+    # DIRECT|INDIRECT|INFERRED — 문서가 이 원재료를 직접 지목했는가, 관계를 따라 이었는가,
+    # 시스템이 추론했는가. INFERRED 는 자동 최종확정 금지(설계서 REQ-EVD-010).
+    link_type = Column(String)
+    # 왜 이었는지 — 근거 없는 링크를 만들지 않기 위해 반드시 채운다.
+    link_reason = Column(Text)
+    # explicit|name|alias|material_names|manual — 무엇으로 이었는지.
+    # 사후에 이름매칭 오탐을 걸러내려면 근거 종류가 남아야 한다.
+    match_basis = Column(String)
+    page = Column(Integer, nullable=True)      # 문서 내 위치(있으면)
+    confidence = Column(Float, nullable=True)
+    verified_by = Column(String, nullable=True)   # 사람이 확인했으면 그 uid
+    verified_at = Column(String, nullable=True)
+    created_by = Column(String)                # system|uid
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CertificateScopeItem(Base):
+    """인증서가 무엇을 덮는지 적어두는 표.
+
+    번호가 문서로 확인됐다는 것과 그 인증서가 이 원재료를 덮는다는 것은 다른 문제다
+    (설계서 REQ-CERT-004·005). 회사 단위 인증서로 전 제품을 할랄로 올리는 것을 막기 위해
+    scope_type 을 구분한다."""
+    __tablename__ = "certificate_scope_item"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    document_id = Column(String, nullable=True, index=True)   # 이 scope 를 읽어낸 문서
+    certificate_no = Column(String, nullable=False, index=True)
+    # PRODUCT|INGREDIENT|FACTORY|COMPANY|PROCESS — 회사 단위 인증서(COMPANY)로
+    # 개별 제품·원재료를 자동 승격해서는 안 된다(REQ-CERT-005).
+    scope_type = Column(String, nullable=False)
+    scope_value = Column(String, nullable=False)   # 덮는 대상의 이름 그대로
+    normalized = Column(String, nullable=True)     # 비교용 정규화 이름
+    issuer = Column(String, nullable=True)
+    issue_date = Column(String, nullable=True)
+    expiry_date = Column(String, nullable=True)
+    source_page = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DocumentRequest(Base):
+    """부족 서류 요청 이력(P33).
+
+    누가 언제 무엇을 요청했는지 남지 않으면 인증 감사에서 "이 서류를 요구했다"를 증명할 수 없다.
+    요청 시점의 시트를 스냅샷으로 함께 저장한다 — 나중에 판정 로직이 바뀌어도 그때 무엇을
+    요구했는지는 그대로 남아야 한다."""
+    __tablename__ = "document_request"
+    request_id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    lang = Column(String)              # 고객이 받은 문구 그대로를 남긴다
+    request_count = Column(Integer)     # 요청 건수(원재료×증빙)
+    material_count = Column(Integer)    # 대상 원재료 수
+    group_count = Column(Integer)       # 묶인 그룹 수
+    codes = Column(JSON)                # 무엇을 요구했는지 한눈에 보기 위한 색인
+    sheet = Column(JSON)                # 요청 시점 시트 스냅샷(그룹·사유·대상 원재료)
+    notification_id = Column(String, nullable=True)   # 이 요청으로 만든 알림
+    requested_by = Column(String)       # 요청한 사용자 uid
+    requested_role = Column(String)     # 그때의 역할
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -360,3 +360,125 @@ def test_신청메뉴가_제품_로지스틱으로_나뉜다():
         assert "applyProduct" in routes and "applyLogistics" in routes
         # 기존 '신청'(application)은 사이드바에서 감춰졌다
         assert "application" not in routes
+
+
+def test_jasa별로_서류가_갈린다():
+    """유통만이면 창고 배치도 불필요, 보관만이면 차량 목록 불필요."""
+    from app import intake
+    dist = set(intake.doc_requirements(scheme="logistics", logistics_scope=["pendistribusian"])["required"])
+    stor = set(intake.doc_requirements(scheme="logistics", logistics_scope=["penyimpanan"])["required"])
+    both = set(intake.doc_requirements(scheme="logistics",
+               logistics_scope=["penyimpanan", "pendistribusian"])["required"])
+    assert "vehicle_list" in dist and "warehouse_layout" not in dist      # 유통 → 차량, 창고X
+    assert "warehouse_layout" in stor and "vehicle_list" not in stor      # 보관 → 창고, 차량X
+    assert {"vehicle_list", "warehouse_layout"} <= both                   # 둘 다 → 둘 다
+    # 공통은 항상
+    assert {"nib_business_license", "sjph_manual", "cleaning_sop"} <= dist
+
+
+def test_물류_intake게이트는_제품대신_jasa를_본다():
+    """물류는 제품 0개여도 회사명·NIB·jasa 있으면 신청 완비 게이트를 통과한다."""
+    from app import state_machine as sm, models
+    with TestClient(app) as cl:
+        h = _tok(cl, "admin", "admin")
+        cid = cl.post("/cases", json={"company_name": "게이트물류", "org_id": "org_demo",
+                                      "scheme": "logistics", "logistics_scope": ["pendistribusian"]},
+                      headers=h).json()["case_id"]
+        db = next(m.get_db()); c = db.get(models.CaseApplication, cid)
+        codes = {x["code"] for x in sm.guard_intake_complete(db, c)}
+        assert "NO_PRODUCT" not in codes and "NO_JASA" not in codes       # 제품게이트 안 걸림
+        assert "NIB_MISSING" in codes                                     # NIB 는 여전히 필요
+        c.nib = "1234"; db.commit()
+        assert sm.guard_intake_complete(db, c) == []                      # NIB 채우면 통과
+        # jasa 없는 물류는 케이스 생성 단계에서 이미 422 로 막힌다(더 앞선 방어)
+        r = cl.post("/cases", json={"company_name": "noj", "scheme": "logistics",
+                                    "logistics_scope": []}, headers=h)
+        assert r.status_code == 422
+
+
+# ===== 차량 세척 로그 (jasa logistik) =====
+def _mk_vehicle(cl, h, org="org_demo", **kw):
+    body = {"plate_no": kw.pop("plate_no", "B 1 CLEAN"), **kw}
+    return cl.post(f"/orgs/{org}/vehicles", json=body, headers=h).json()["vehicle_id"]
+
+
+def _veh_clear(cl, h, vid, org="org_demo"):
+    return [x for x in cl.get(f"/orgs/{org}/vehicles", headers=h).json()
+            if x["vehicle_id"] == vid][0]["halal_clear"]
+
+
+def test_세척로그로_halal_clear가_유도된다():
+    """직전 비할랄 → 일반세척·서명전 False, Sertu+서명 후에만 True."""
+    with TestClient(app) as cl:
+        h = _tok(cl, "admin", "admin")
+        vid = _mk_vehicle(cl, h, previous_cargo="pork", previous_cargo_halal=False)
+        assert _veh_clear(cl, h, vid) is False                      # 세척 전
+        cl.post(f"/vehicles/{vid}/cleanings",
+                json={"cleaned_at": "2026-09-14", "previous_cargo_halal": False,
+                      "method": "normal"}, headers=h)
+        assert _veh_clear(cl, h, vid) is False                      # 일반세척은 인정 안 됨
+        c2 = cl.post(f"/vehicles/{vid}/cleanings",
+                     json={"cleaned_at": "2026-09-15", "previous_cargo_halal": False,
+                           "method": "sertu", "sertu_steps": 7, "next_due": "2026-12-15"},
+                     headers=h).json()
+        assert _veh_clear(cl, h, vid) is False                      # 서명 전
+        assert cl.post(f"/cleanings/{c2['cleaning_id']}/sign", headers=h).status_code == 200
+        assert _veh_clear(cl, h, vid) is True                       # Sertu + 서명 → clear
+        v = [x for x in cl.get("/orgs/org_demo/vehicles", headers=h).json()
+             if x["vehicle_id"] == vid][0]
+        assert v["cleaning_count"] == 2 and v["next_due"] == "2026-12-15"
+        assert v["sertu"] is True                                    # 캐시 역동기화
+
+
+def _seed_penyelia(username, expiry):
+    """penyelia_halal 계정에 PenyeliaHalal 자격행을 붙인다(공유 DB — 기존 행 제거 후 1건)."""
+    from app import models
+    db = next(m.get_db())
+    u = db.query(models.User).filter_by(username=username).first()
+    db.query(models.PenyeliaHalal).filter_by(user_id=u.user_id).delete()
+    db.add(models.PenyeliaHalal(org_id="org_demo", user_id=u.user_id, name=username,
+                                status="active", cert_expiry=expiry))
+    db.commit()
+
+
+def test_작성자는_서명할수없다_4eyes():
+    """penyelia 가 자기 작성 로그에 서명 → 403(작성자≠서명자)."""
+    from datetime import date, timedelta
+    with TestClient(app) as cl:
+        _seed_penyelia("penyelia1", date.today() + timedelta(days=365))
+        ho = _tok(cl, "operator1", "pw")                                # 차량 생성=오퍼레이터
+        vid = _mk_vehicle(cl, ho, plate_no="B 2 CLEAN", previous_cargo_halal=False)
+        hp = _tok(cl, "penyelia1", "pw")
+        c = cl.post(f"/vehicles/{vid}/cleanings",                       # 로그 작성=penyelia1
+                    json={"method": "sertu", "previous_cargo_halal": False}, headers=hp).json()
+        r = cl.post(f"/cleanings/{c['cleaning_id']}/sign", headers=hp)
+        assert r.status_code == 403 and r.json()["detail"]["code"] == "SELF_SIGN_FORBIDDEN"
+
+
+def test_수료증_만료_페냘리아는_서명거부():
+    """만료 수료증 페냘리아 서명 → 403(자격 없음)."""
+    from datetime import date, timedelta
+    with TestClient(app) as cl:
+        _seed_penyelia("penyelia1", date.today() - timedelta(days=1))   # 어제 만료
+        ho = _tok(cl, "operator1", "pw")                                # 작성=오퍼레이터
+        vid = _mk_vehicle(cl, ho, plate_no="B 3 CLEAN", previous_cargo_halal=False)
+        c = cl.post(f"/vehicles/{vid}/cleanings",
+                    json={"method": "sertu", "previous_cargo_halal": False}, headers=ho).json()
+        hp = _tok(cl, "penyelia1", "pw")
+        r = cl.post(f"/cleanings/{c['cleaning_id']}/sign", headers=hp)
+        assert r.status_code == 403 and r.json()["detail"]["code"] == "NO_SIGN_AUTHORITY"
+
+
+def test_유효_페냘리아_서명은_통과하고_clear():
+    """작성=오퍼레이터, 서명=유효 페냘리아 → 200 + halal_clear True."""
+    from datetime import date, timedelta
+    with TestClient(app) as cl:
+        _seed_penyelia("penyelia1", date.today() + timedelta(days=200))
+        ho = _tok(cl, "operator1", "pw")
+        vid = _mk_vehicle(cl, ho, plate_no="B 4 CLEAN", previous_cargo_halal=False)
+        c = cl.post(f"/vehicles/{vid}/cleanings",
+                    json={"method": "sertu", "previous_cargo_halal": False}, headers=ho).json()
+        hp = _tok(cl, "penyelia1", "pw")
+        r = cl.post(f"/cleanings/{c['cleaning_id']}/sign", headers=hp)
+        assert r.status_code == 200 and r.json()["penyelia_sign"] is True
+        assert _veh_clear(cl, ho, vid) is True

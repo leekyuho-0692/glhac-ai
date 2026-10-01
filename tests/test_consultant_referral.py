@@ -157,7 +157,9 @@ def test_code_check_does_not_leak_contact_details(db):
     db.commit()
     _invite(db)
     r = m.check_invite("AAAA-BBBB", db=db)
-    assert set(r) == {"valid", "company_name", "consultant"}
+    # kind 는 초대 종류(consultant|client) 표시용 — 연락처·계좌 같은 민감정보가 아니다.
+    assert set(r) == {"valid", "kind", "company_name", "consultant"}
+    assert "phone" not in r and "bank_account" not in r   # 민감정보 누출 없음
 
 
 # ── 수수료 근거 ─────────────────────────────────────────────────────────

@@ -319,6 +319,17 @@ class VehicleReq(BaseModel):
     case_id: Optional[str] = None
 
 
+class VehicleCleaningReq(BaseModel):
+    cleaned_at: Optional[str] = None
+    previous_cargo: Optional[str] = None
+    previous_cargo_halal: Optional[bool] = None
+    method: Optional[str] = None             # sertu | normal
+    sertu_steps: Optional[int] = None
+    photo_doc_id: Optional[str] = None
+    next_due: Optional[str] = None
+    note: Optional[str] = None
+
+
 class TextScreenReq(BaseModel):
     text: str
 
@@ -678,6 +689,26 @@ class RegisterReq(BaseModel):
     address: Optional[str] = None
     factory_address: Optional[str] = None
     business_type: Optional[str] = None
+
+
+class StaffSignupReq(BaseModel):
+    username: str
+    password: str
+    requested_role: str                 # consultant|auditor|fatwa_liaison|admin
+    display_name: Optional[str] = None
+    note: Optional[str] = None
+    _un = field_validator("username")(classmethod(lambda cls, v: _username(v)))
+    _pw = field_validator("password")(classmethod(lambda cls, v: _password(v)))
+
+
+class StaffSignupReviewReq(BaseModel):
+    role: Optional[str] = None          # 승인 시 역할 덮어쓰기(미지정이면 신청 역할)
+    reason: Optional[str] = None        # 거부 사유
+
+
+class ClientInviteReq(BaseModel):
+    company_name: Optional[str] = None
+    note: Optional[str] = None
 
 
 class OCRExtractReq(BaseModel):

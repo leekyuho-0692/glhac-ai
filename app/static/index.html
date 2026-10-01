@@ -250,8 +250,9 @@
   .loginbox{width:min(520px,94vw);background:var(--card);border-radius:20px;box-shadow:0 24px 70px rgba(0,0,0,.4);padding:44px 42px}
   .loginbox h1{font-size:34px;margin:0 0 6px;letter-spacing:-.5px}
   .loginbox .sub{color:var(--ink3);font-size:15px;margin-bottom:26px}
-  .loginbox input{width:100%;border:1.5px solid var(--line2);border-radius:11px;padding:15px 16px;font-size:16px;margin-bottom:13px;font-family:inherit;background:var(--card);color:var(--ink)}
-  .loginbox input:focus{outline:none;border-color:var(--accent)}
+  .loginbox input,.loginbox textarea{width:100%;box-sizing:border-box;border:1.5px solid var(--line2);border-radius:11px;padding:15px 16px;font-size:16px;margin-bottom:13px;font-family:inherit;background:var(--card);color:var(--ink)}
+  .loginbox textarea{min-height:64px;resize:vertical}
+  .loginbox input:focus,.loginbox textarea:focus{outline:none;border-color:var(--accent)}
   .loginbox>button[type="submit"]{font-size:16px;padding:15px !important;border-radius:11px}
   .loginbox .demo{margin-top:22px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;color:var(--ink3);line-height:1.7}
   .loginbox .demo>b{color:var(--ink2);font-size:13px}
@@ -372,6 +373,27 @@
     <input id="regFactory" placeholder="공장 주소 · Factory address">
     <button class="btn pri" style="width:100%;justify-content:center;padding:11px" type="submit">가입 · Sign up</button>
     <div style="margin-top:12px;font-size:12px;text-align:center"><a onclick="showRegister(false)" style="color:var(--accent);cursor:pointer">← 로그인으로 · Back to login</a></div>
+  </form>
+  <!-- 스태프(컨설턴트·오디터·파트와·관리자) 가입 — 역할 선택 후 신청, 관리자 승인 대기 -->
+  <form class="loginbox" id="staffSignupForm" style="display:none" onsubmit="doStaffSignup(event)">
+    <h1>🛡 스태프 가입 · Staff sign-up</h1>
+    <div class="sub">역할 선택 후 신청 — 관리자 승인 후 로그인됩니다 · Approval required</div>
+    <div class="banner info" style="margin:4px 0 12px;font-size:12px">신청은 승인 대기 상태로 저장되며, 관리자가 승인해야 계정이 활성화됩니다.</div>
+    <label style="font-size:14px;font-weight:700;color:var(--ink);display:block;margin-bottom:6px">역할 선택 · Role</label>
+    <select id="stRole" class="v" style="margin-bottom:13px;font-size:16px;font-weight:600;padding:13px 14px;height:auto;line-height:1.4;cursor:pointer">
+      <option value="consultant">💼 컨설턴트 · Consultant</option>
+      <option value="auditor">🏭 오디터 · Auditor</option>
+      <option value="fatwa_liaison">⚖️ 파트와(샤리아) · Fatwa liaison</option>
+      <option value="admin">⚙️ 관리자 · Admin</option>
+    </select>
+    <div style="display:flex;gap:6px;margin-bottom:11px"><input id="stUser" placeholder="아이디 · Username" autocomplete="username" style="flex:1;margin-bottom:0"><button type="button" class="btn" onclick="checkStaffUsername()">중복확인</button></div>
+    <div id="stUserMsg" class="small" style="margin:-6px 0 8px 2px;min-height:14px"></div>
+    <input id="stPass" type="password" placeholder="비밀번호 · Password" autocomplete="new-password">
+    <input id="stPass2" type="password" placeholder="비밀번호 확인 · Confirm password" autocomplete="new-password">
+    <input id="stName" placeholder="표시 이름 · Display name (선택)">
+    <textarea id="stNote" placeholder="신청 사유·소속·연락처 · Note (선택)" style="min-height:56px"></textarea>
+    <button class="btn pri" style="width:100%;justify-content:center;padding:11px" type="submit">가입 신청 · Request</button>
+    <div style="margin-top:12px;font-size:12px;text-align:center"><a onclick="showStaffSignup(false)" style="color:var(--accent);cursor:pointer">← 로그인으로 · Back to login</a></div>
   </form>
 </div>
 
@@ -578,6 +600,16 @@ let LANG=1; const LANGS=["🌐 EN","🌐 한국어","🌐 Bahasa"];
 /* ---- auth / api ---- */
 const TK="glhac_token", RTK="glhac_refresh";
 function token(){try{return localStorage.getItem(TK)||""}catch(_){return""}}
+/* QR(?ref=코드)로 들어온 컨설턴트 초대코드 — **현재 URL의 ?ref 만** 쓴다.
+   저장분(localStorage) 되살림은 하지 않는다: ref 없이 그냥 들어온 사람에게 옛 코드가
+   붙어 엉뚱한 컨설턴트로 귀속되면 안 된다. 귀속은 QR/추천 URL 체인을 통해서만 흐른다
+   (홈페이지가 인증신청 링크에 ?ref 를 실어 glhac.co.kr/?ref=코드 로 넘긴다). */
+function glhacRef(){
+  try{
+    const m=(location.search||"").match(/[?&]ref=([A-Za-z0-9\-]+)/);
+    return m?m[1].toUpperCase():"";
+  }catch(_){return "";}
+}
 let FETCH_ERRORS=0;
 async function tryRefresh(){
   let rt=""; try{rt=localStorage.getItem(RTK)||""}catch(_){}
@@ -659,7 +691,35 @@ function logout(skipServer){
   // 전체 리로드로 모든 인메모리 상태를 초기화.
   try{location.reload();}catch(_){document.getElementById("appView").style.display="none";document.getElementById("loginView").style.display="grid";}
 }
-function showRegister(on){document.getElementById("loginForm").style.display=on?"none":"";document.getElementById("registerForm").style.display=on?"":"none";}
+function showRegister(on){document.getElementById("loginForm").style.display=on?"none":"";document.getElementById("registerForm").style.display=on?"":"none";
+  const sf=document.getElementById("staffSignupForm");if(sf)sf.style.display="none";
+  if(on){const ref=glhacRef();if(ref){const el=document.getElementById("regInvite");if(el&&!el.value){el.value=ref;regCheckInvite();}}}}
+/* 스태프 가입 화면 토글 */
+function showStaffSignup(on){
+  document.getElementById("loginForm").style.display=on?"none":"";
+  document.getElementById("registerForm").style.display="none";
+  const sf=document.getElementById("staffSignupForm");if(sf)sf.style.display=on?"":"none";
+}
+async function checkStaffUsername(){
+  const u=(v("stUser")||"").trim(), msg=document.getElementById("stUserMsg"); if(!msg)return;
+  if(u.length<3){msg.textContent=T("아이디는 3자 이상");msg.style.color="var(--warn)";return;}
+  try{const r=await fetch("/auth/check-username?username="+encodeURIComponent(u)).then(x=>x.json());
+    if(r.available){msg.textContent="✓ "+T("사용 가능");msg.style.color="var(--ok)";}
+    else{msg.textContent="✕ "+T("이미 사용 중");msg.style.color="var(--bad)";}
+  }catch(_){msg.textContent="";}
+}
+async function doStaffSignup(e){
+  if(e)e.preventDefault();
+  const username=v("stUser"),password=v("stPass"),password2=v("stPass2"),requested_role=v("stRole");
+  if(!username||!password){toast(T("아이디·비밀번호를 입력하세요"));return;}
+  if(password!==password2){toast(T("비밀번호가 일치하지 않습니다"));return;}
+  try{
+    await API("/auth/staff-signup",{method:"POST",body:JSON.stringify({
+      username,password,requested_role,display_name:v("stName")||null,note:v("stNote")||null})});
+    toast(T("가입 신청됨 · 관리자 승인 대기"));
+    showStaffSignup(false);
+  }catch(err){toast(T("신청 실패")+" · "+(EMSG(err)||""));}
+}
 function quickLogin(u,p){document.getElementById("loginUser").value=u;document.getElementById("loginPass").value=p;doLogin();}
 function regOcrPick(){
   // 사업자등록증은 PDF로 오는 경우가 더 많다. 서버가 PDF 본문·이미지 OCR을 모두 처리한다.
@@ -733,7 +793,9 @@ function regCheckInvite(){
       const r=await fetch(`/invites/${encodeURIComponent(code)}/check`).then(x=>x.json());
       if(r.valid){
         msg.className="small"; msg.style.color="var(--ok)";
-        msg.textContent="✓ "+T('담당 컨설턴트')+": "+(r.consultant||"—")+(r.company_name?" · "+r.company_name:"");
+        msg.textContent = r.kind==="client"
+          ? "✓ "+T('GL-HAC 공식 초대')
+          : "✓ "+T('담당 컨설턴트')+": "+(r.consultant||"—")+(r.company_name?" · "+r.company_name:"");
       }else{
         const why={NOT_FOUND:T('없는 코드입니다'),EXPIRED:T('기간이 지난 코드입니다'),
                    REVOKED:T('회수된 코드입니다'),USED_UP:T('이미 사용된 코드입니다')}[r.reason]||r.reason;
@@ -839,6 +901,87 @@ function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko
 var EN_STRINGS={
   "물류 서비스 범위":"Logistics scope",
   "범위 저장":"Save scope",
+  /* 스태프·클라이언트 가입 링크 */
+  "스태프 가입 링크 — 스태프 후보에게만 전달하세요(로그인 화면엔 없음).":"Staff sign-up link — share only with staff candidates (not on the login screen).",
+  "회원가입 화면으로 바로 가는 공식 클라이언트 가입 링크·QR — 게시·배포용(컨설턴트 QR과 별개).":"Official client sign-up link/QR that opens the registration screen directly — for posting (separate from consultant QR).",
+  /* 관리자 클라이언트 초대 관리 */
+  "대표":"Primary",
+  "클라이언트 초대 코드 발급":"Issue client invite code",
+  "대상 업체명(선택)":"Target company (optional)",
+  "사용 횟수":"Max uses",
+  /* 스태프 가입·클라이언트 초대 */
+  "아이디는 3자 이상":"Username min 3 chars",
+  "이미 사용 중":"Already taken",
+  "가입 신청됨 · 관리자 승인 대기":"Requested · awaiting admin approval",
+  "신청 실패":"Request failed",
+  "가입 대기 없음":"No pending sign-ups",
+  "스태프 가입 승인":"Staff sign-up approvals",
+  "컨설턴트·오디터·파트와·관리자 가입 신청 — 승인해야 계정이 생성됩니다.":"Consultant/auditor/fatwa/admin sign-up requests — account is created only on approval.",
+  "클라이언트 초대 QR":"Client invite QR",
+  "특정 컨설턴트에 안 묶인 공식 클라이언트 가입 QR — 게시·배포용.":"Official client sign-up QR, not tied to any consultant — for posting/distribution.",
+  "QR 보기·내려받기":"View / download QR",
+  "승인하면 '":"Approving creates account '",
+  "' 계정이 생성됩니다. 진행할까요?":"'. Proceed?",
+  "거부 사유(선택):":"Reject reason (optional):",
+  "거부됨":"Rejected",
+  "거부 실패":"Reject failed",
+  "누적 가입":"Total sign-ups",
+  "GL-HAC 공식 초대":"GL-HAC official invite",
+  "⚖️ 파트와":"⚖️ Fatwa",
+  "⚙️ 관리자":"⚙️ Admin",
+  /* QR 공유 */
+  "공유":"Share",
+  "링크 복사":"Copy link",
+  "공유하지 못했습니다":"Couldn't share",
+  "링크를 복사했습니다":"Link copied",
+  "복사 실패":"Copy failed",
+  /* 세척 로그 */
+  "운송 불가":"Transport blocked",
+  "운송 가능":"Transport OK",
+  "세척 예정 경과":"Cleaning overdue",
+  "세척 이력":"Cleaning log",
+  "사진이 아니라 로그+페냘리아 서명으로 인증":"Certified by log + penyelia signature, not photos",
+  "세척 기록이 없습니다.":"No cleaning records.",
+  "일반 세척":"Normal wash",
+  "페냘리아 서명":"Penyelia signed",
+  "일시 미상":"No date",
+  "다음 예정":"Next due",
+  "세척 기록":"Cleaning record",
+  "세척 기록 추가":"Add cleaning record",
+  "세척 일시":"Cleaning date",
+  "직전 화물 할랄":"Prev cargo halal",
+  "세척 방법":"Cleaning method",
+  "정결 세정":"Ritual cleansing",
+  "횟수":"Steps",
+  "다음 예정일":"Next due date",
+  "세척 기록됨":"Cleaning recorded",
+  /* 물류 비용 산출 */
+  "정부 등록비(BPJPH)":"Govt registration (BPJPH)",
+  "LPH 심사비":"LPH inspection",
+  "소상공인 상한":"UMK cap",
+  "파트와(MUI)":"Fatwa (MUI)",
+  "LPH 운영비":"LPH operational",
+  "일당(UHPD)":"Per-diem (UHPD)",
+  "교통비":"Transport",
+  "항공권(추정·1회)":"Airfare (est., once)",
+  "숙박(추정)":"Lodging (est.)",
+  "예상 인증비용":"Estimated cost",
+  "인도네시아 BPJPH 요율 기준 자동 산출 — 규모·차량·창고 수로 심사일수(mandays)가 정해집니다.":"Auto-estimated per BPJPH tariff — scale, vehicles and warehouses set the audit mandays.",
+  "자가선언(SEHATI·무료)":"Self-Declare (SEHATI · free)",
+  "소상공인(UMK)":"Micro/Small (UMK)",
+  "중기업":"Medium",
+  "대기업·외국계":"Large / Foreign",
+  "시내":"In-city",
+  "지방(출장)":"Out-of-city",
+  "차량 수":"Vehicles",
+  "창고 수":"Warehouses",
+  "등록수 반영":"Sync counts",
+  "무료":"Free",
+  "SEHATI 자가선언 — 정부가 전액 부담(Rp 0)":"SEHATI self-declare — fully funded by government (Rp 0)",
+  "심사일수":"Audit days",
+  "창고 2곳 이상":"2+ warehouses",
+  "합계(추정)":"Total (est.)",
+  "추정치입니다. 실제 청구는 규모·지역·수량에 따라 다르며 BPJPH 공식 계산기(kalkulator-biaya-sh)가 정본입니다.":"Estimate only. Actual billing varies by scale, region and quantity; the BPJPH official calculator (kalkulator-biaya-sh) is authoritative.",
   "범위 저장됨":"Scope saved",
   "물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다. 종류를 바꾸려면 다른 신청 메뉴로 시작하세요.":"Logistics (jasa logistik) — docs & audit follow logistics criteria. To change type, start from another application menu.",
 
@@ -1514,6 +1657,87 @@ function capBanner(){
 const UI_STRINGS={
   "물류 서비스 범위":"Ruang lingkup jasa",
   "범위 저장":"Simpan lingkup",
+  /* 스태프·클라이언트 가입 링크 */
+  "스태프 가입 링크 — 스태프 후보에게만 전달하세요(로그인 화면엔 없음).":"Tautan pendaftaran staf — bagikan hanya ke kandidat staf (tidak ada di layar login).",
+  "회원가입 화면으로 바로 가는 공식 클라이언트 가입 링크·QR — 게시·배포용(컨설턴트 QR과 별개).":"Tautan/QR pendaftaran klien resmi yang langsung membuka layar pendaftaran — untuk dibagikan (terpisah dari QR konsultan).",
+  /* 관리자 클라이언트 초대 관리 */
+  "대표":"Utama",
+  "클라이언트 초대 코드 발급":"Terbitkan kode undangan klien",
+  "대상 업체명(선택)":"Nama perusahaan (opsional)",
+  "사용 횟수":"Batas penggunaan",
+  /* 스태프 가입·클라이언트 초대 */
+  "아이디는 3자 이상":"Min. 3 karakter",
+  "이미 사용 중":"Sudah dipakai",
+  "가입 신청됨 · 관리자 승인 대기":"Permohonan terkirim · menunggu persetujuan admin",
+  "신청 실패":"Permohonan gagal",
+  "가입 대기 없음":"Tidak ada permohonan",
+  "스태프 가입 승인":"Persetujuan pendaftaran staf",
+  "컨설턴트·오디터·파트와·관리자 가입 신청 — 승인해야 계정이 생성됩니다.":"Permohonan konsultan/auditor/fatwa/admin — akun dibuat hanya setelah disetujui.",
+  "클라이언트 초대 QR":"QR undangan klien",
+  "특정 컨설턴트에 안 묶인 공식 클라이언트 가입 QR — 게시·배포용.":"QR pendaftaran klien resmi, tanpa terikat konsultan — untuk dibagikan.",
+  "QR 보기·내려받기":"Lihat / unduh QR",
+  "승인하면 '":"Menyetujui membuat akun '",
+  "' 계정이 생성됩니다. 진행할까요?":"'. Lanjutkan?",
+  "거부 사유(선택):":"Alasan penolakan (opsional):",
+  "거부됨":"Ditolak",
+  "거부 실패":"Gagal menolak",
+  "누적 가입":"Total pendaftaran",
+  "GL-HAC 공식 초대":"Undangan resmi GL-HAC",
+  "⚖️ 파트와":"⚖️ Fatwa",
+  "⚙️ 관리자":"⚙️ Admin",
+  /* QR 공유 */
+  "공유":"Bagikan",
+  "링크 복사":"Salin tautan",
+  "공유하지 못했습니다":"Gagal membagikan",
+  "링크를 복사했습니다":"Tautan disalin",
+  "복사 실패":"Gagal menyalin",
+  /* 세척 로그 */
+  "운송 불가":"Tidak boleh angkut",
+  "운송 가능":"Boleh angkut",
+  "세척 예정 경과":"Pencucian terlambat",
+  "세척 이력":"Riwayat pencucian",
+  "사진이 아니라 로그+페냘리아 서명으로 인증":"Diverifikasi lewat log + tanda tangan penyelia, bukan foto",
+  "세척 기록이 없습니다.":"Belum ada catatan pencucian.",
+  "일반 세척":"Cuci biasa",
+  "페냘리아 서명":"Ditandatangani penyelia",
+  "일시 미상":"Tanpa tanggal",
+  "다음 예정":"Jadwal berikutnya",
+  "세척 기록":"Catatan pencucian",
+  "세척 기록 추가":"Tambah catatan pencucian",
+  "세척 일시":"Tanggal pencucian",
+  "직전 화물 할랄":"Kargo sebelumnya halal",
+  "세척 방법":"Metode pencucian",
+  "정결 세정":"Samak/Sertu",
+  "횟수":"Langkah",
+  "다음 예정일":"Tanggal jatuh tempo",
+  "세척 기록됨":"Pencucian tercatat",
+  /* 물류 비용 산출 */
+  "정부 등록비(BPJPH)":"Biaya pendaftaran (BPJPH)",
+  "LPH 심사비":"Pemeriksaan LPH",
+  "소상공인 상한":"Batas UMK",
+  "파트와(MUI)":"Fatwa (MUI)",
+  "LPH 운영비":"Operasional LPH",
+  "일당(UHPD)":"UHPD",
+  "교통비":"Transportasi",
+  "항공권(추정·1회)":"Tiket pesawat (estimasi·1x)",
+  "숙박(추정)":"Akomodasi (estimasi)",
+  "예상 인증비용":"Estimasi biaya sertifikasi",
+  "인도네시아 BPJPH 요율 기준 자동 산출 — 규모·차량·창고 수로 심사일수(mandays)가 정해집니다.":"Estimasi otomatis sesuai tarif BPJPH — skala, kendaraan, dan gudang menentukan mandays audit.",
+  "자가선언(SEHATI·무료)":"Self-Declare (SEHATI · gratis)",
+  "소상공인(UMK)":"Mikro/Kecil (UMK)",
+  "중기업":"Menengah",
+  "대기업·외국계":"Besar / Luar Negeri",
+  "시내":"Dalam kota",
+  "지방(출장)":"Luar kota",
+  "차량 수":"Jumlah kendaraan",
+  "창고 수":"Jumlah gudang",
+  "등록수 반영":"Sinkron jumlah",
+  "무료":"Gratis",
+  "SEHATI 자가선언 — 정부가 전액 부담(Rp 0)":"Self-declare SEHATI — sepenuhnya ditanggung pemerintah (Rp 0)",
+  "심사일수":"Hari audit",
+  "창고 2곳 이상":"2+ gudang",
+  "합계(추정)":"Total (estimasi)",
+  "추정치입니다. 실제 청구는 규모·지역·수량에 따라 다르며 BPJPH 공식 계산기(kalkulator-biaya-sh)가 정본입니다.":"Hanya estimasi. Tagihan sebenarnya bergantung pada skala, wilayah, dan jumlah; kalkulator resmi BPJPH (kalkulator-biaya-sh) yang berlaku.",
   "범위 저장됨":"Lingkup tersimpan",
   "물류 서비스(jasa logistik) 인증 — 서류·심사항목이 물류 기준입니다. 종류를 바꾸려면 다른 신청 메뉴로 시작하세요.":"Jasa logistik — dokumen & audit kriteria logistik. Untuk ubah jenis, mulai dari menu permohonan lain.",
 
@@ -6339,7 +6563,7 @@ SCREEN.application=async()=>{
     <div class="body">
       <div class="banner info" style="margin-bottom:10px">${T('📎 파일(ZIP·서류)을 올리면 자동 분류되어 프로필·제품·원재료·문서 화면에 자동 연계됩니다.')}</div>
       <div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">
-        ${sjphStage(id,T("신청 업로드 파일 리스트"),"Upload File List",(c.scheme==='logistics'?T("사업자·물류 SJPH·시설·차량 서류"):T("사업자·성분·제품공정 서류")),(c.scheme==='logistics'?["nib_business_license","sjph_manual","logistics_scope","warehouse_layout","vehicle_list","cleaning_sop"]:["nib_business_license","factory_registration","product_list","material_list","process_flow"]),chk)}
+        ${sjphStage(id,T("신청 업로드 파일 리스트"),"Upload File List",(c.scheme==='logistics'?T("사업자·물류 SJPH·시설·차량 서류"):T("사업자·성분·제품공정 서류")),(c.scheme==='logistics'?(((chk&&chk.checklist)||[]).filter(x=>x.required).map(x=>x.doc_type)):["nib_business_license","factory_registration","product_list","material_list","process_flow"]),chk)}
         <div style="border:1px solid var(--line2);border-radius:10px;padding:12px">
           <div style="font-weight:700;font-size:12.5px;margin-bottom:8px">📎 ${T('파일 업로드')} <span class="en">· Upload</span></div>
           ${canApp?`<div class="btnrow" style="flex-wrap:wrap;gap:8px;margin-bottom:8px;align-items:center">
@@ -6455,6 +6679,7 @@ SCREEN.application=async()=>{
           <div id="facListBox">${facListHtml(facs,org,canApp,c.facility_ids,id)}</div>
         </div>`)}
     ${c.scheme==='logistics'?vehiclePanel(id,org,canApp):''}
+    ${c.scheme==='logistics'?costEstimatePanel(id,c):''}
   </div>
   <div class="grid three" style="margin-top:16px">
     <div class="card"><h3>할랄감독자 · Penyelia <span class="en">· Supervisor</span><span class="r">${T('활성')} ${penyeliaResp.active_count!=null?penyeliaResp.active_count:pens.filter(p=>p.status==='active').length}</span></h3>
@@ -7517,6 +7742,118 @@ async function genFatwaDecree(id){
   try{await API(`/cases/${id}/fatwa/decree`,{method:"POST",body:"{}"});toast("판결문 생성");serverPdf(`/cases/${id}/fatwa/decree.pdf`,"fatwa_decree.pdf");}
   catch(e){toast("생성 실패 · "+(EMSG(e)));}
 }
+/* ===== 물류 인증비용 자동 산출 (BPJPH SK 141/2021 · Kepkaban 22/2024) =====
+   비용 = ①BPJPH 등록비(규모) + ②LPH 심사비(unit cost × mandays × 창고배수)
+          + 운영비 + 일당(UHPD) + 교통비 (+지방 항공·숙박 추정) + ③파트와(MUI)
+   mandays: 차량 수 구간으로 결정, 창고 2곳 이상이면 ×2. self-declare(SEHATI)=무료.
+   ※ 추정치 — 정확 견적은 BPJPH 공식 계산기(kalkulator-biaya-sh)가 정본. */
+const LOGI_TARIFF={
+  bpjph:{umk:300000,menengah:5000000,besar:12500000},
+  unitCost:5275000, umkLphCap:350000,
+  operational:{umk:480000,menengah:960000,besar:1440000},
+  fatwa:{umk:50000,menengah:349500,besar:500000},
+  uhpd:150000, transport:170000,
+  flightEst:1500000, lodgingEst:600000,   // 지방 출장 추정
+};
+function _logiMandays(scale,vehicles){
+  const v=Math.max(0,vehicles|0);
+  const big=(scale==="menengah"||scale==="besar");
+  if(v<=50)  return big?4:2;
+  if(v<=100) return big?5:3;
+  if(v<=200) return big?6:4;
+  return big?7:5;
+}
+function estLogisticsCost(o){
+  const scale=o.scale||"menengah";
+  if(scale==="selfdeclare") return {free:true,mandays:0,total:0,lines:[]};
+  const t=LOGI_TARIFF, vehicles=o.vehicles|0, warehouses=Math.max(1,o.warehouses|0);
+  const outCity=!!o.outCity, whMult=warehouses>=2?2:1;
+  const md=_logiMandays(scale,vehicles), effMd=md*whMult;
+  const lines=[]; const add=(k,v)=>lines.push({k,v});
+  if(scale==="umk"){
+    add(T("정부 등록비(BPJPH)"),t.bpjph.umk);
+    add(T("LPH 심사비")+" ("+T("소상공인 상한")+")",t.umkLphCap);
+    add(T("파트와(MUI)"),t.fatwa.umk);
+  }else{
+    add(T("정부 등록비(BPJPH)"),t.bpjph[scale]);
+    add(T("LPH 심사비")+" (5,275,000 × "+effMd+" "+T("일")+")",t.unitCost*effMd);
+    add(T("LPH 운영비"),t.operational[scale]);
+    add(T("일당(UHPD)")+" (150,000 × "+effMd+")",t.uhpd*effMd);
+    add(T("교통비")+" (170,000 × "+effMd+")",t.transport*effMd);
+    if(outCity){
+      add(T("항공권(추정·1회)"),t.flightEst);
+      add(T("숙박(추정)")+" (600,000 × "+Math.max(0,effMd-1)+")",t.lodgingEst*Math.max(0,effMd-1));
+    }
+    add(T("파트와(MUI)"),t.fatwa[scale]);
+  }
+  const total=lines.reduce((s,l)=>s+l.v,0);
+  return {free:false,mandays:effMd,baseMandays:md,whMult,total,lines};
+}
+function _rp(n){ return "Rp "+(n|0).toLocaleString("en-US"); }
+function _krw(n){ return "≈ "+Math.round(n*0.085).toLocaleString("ko-KR")+"원"; }
+
+/* 물류 신청 화면 — 예상 인증비용 카드 */
+function costEstimatePanel(id,c){
+  if((c.scheme||"product")!=="logistics") return "";
+  const isSD=c.pathway==="self_declare";
+  const defScale=isSD?"selfdeclare":(c.is_msme?"umk":"menengah");
+  const vN=(typeof VEH_LIST!=="undefined"&&VEH_LIST.length)||0;
+  const wN=(typeof FAC_LIST!=="undefined"&&FAC_LIST.length)||1;
+  // 차량/창고 등록수가 나중에 로드되면 반영
+  const prev=AFTER_RENDER;
+  AFTER_RENDER=function(){ if(prev) try{prev()}catch(_){}; setTimeout(function(){recalcLogiCost(id,true);},60); };
+  const opt=(v,l,sel)=>`<option value="${v}" ${sel===v?"selected":""}>${l}</option>`;
+  return `<div class="card" style="margin-top:16px;border-left:3px solid var(--accent)"><h3>💰 ${T("예상 인증비용")} <span class="en">· Estimated cost</span></h3>
+  <div class="body">
+    <div class="muted small" style="margin-bottom:10px">${T("인도네시아 BPJPH 요율 기준 자동 산출 — 규모·차량·창고 수로 심사일수(mandays)가 정해집니다.")}</div>
+    <div class="grid" style="grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:10px">
+      <div class="field"><label>${T("규모")} · Scale</label>
+        <select class="v" id="lgScale_${id}" onchange="recalcLogiCost('${id}')">
+          ${opt("selfdeclare",T("자가선언(SEHATI·무료)"),defScale)}
+          ${opt("umk",T("소상공인(UMK)"),defScale)}
+          ${opt("menengah",T("중기업"),defScale)}
+          ${opt("besar",T("대기업·외국계"),defScale)}
+        </select></div>
+      <div class="field"><label>${T("지역")} · Region</label>
+        <select class="v" id="lgRegion_${id}" onchange="recalcLogiCost('${id}')">
+          ${opt("in",T("시내"),"in")}${opt("out",T("지방(출장)"),"in")}
+        </select></div>
+      <div class="field"><label>${T("차량 수")} · Vehicles</label>
+        <input class="v" id="lgVeh_${id}" type="number" min="0" value="${vN}" oninput="recalcLogiCost('${id}')"></div>
+      <div class="field"><label>${T("창고 수")} · Warehouses</label>
+        <input class="v" id="lgWh_${id}" type="number" min="1" value="${wN}" oninput="recalcLogiCost('${id}')"></div>
+    </div>
+    <button class="btn" style="padding:4px 10px;font-size:12px;margin-bottom:10px" onclick="recalcLogiCost('${id}',true)">🔄 ${T("등록수 반영")}</button>
+    <div id="lgCostOut_${id}"></div>
+  </div></div>`;
+}
+function recalcLogiCost(id,sync){
+  const $=x=>document.getElementById(x+"_"+id);
+  const scaleEl=$("lgScale"); if(!scaleEl) return;
+  if(sync){  // 차량·창고 등록수 반영
+    const v=$("lgVeh"), w=$("lgWh");
+    if(v&&typeof VEH_LIST!=="undefined") v.value=VEH_LIST.length;
+    if(w&&typeof FAC_LIST!=="undefined"&&FAC_LIST.length) w.value=FAC_LIST.length;
+  }
+  const est=estLogisticsCost({
+    scale:scaleEl.value,
+    vehicles:(($("lgVeh")||{}).value)|0,
+    warehouses:(($("lgWh")||{}).value)|0,
+    outCity:(($("lgRegion")||{}).value==="out"),
+  });
+  const out=$("lgCostOut"); if(!out) return;
+  if(est.free){
+    out.innerHTML=`<div class="banner ok"><b>${T("무료")}</b> · ${T("SEHATI 자가선언 — 정부가 전액 부담(Rp 0)")}</div>`;
+    return;
+  }
+  const rows=est.lines.map(l=>`<div class="li" style="padding:4px 0;border-bottom:1px solid var(--line);display:flex"><div class="tx" style="flex:1">${esc(l.k)}</div><div class="when" style="font-variant-numeric:tabular-nums">${_rp(l.v)}</div></div>`).join("");
+  out.innerHTML=`
+    <div class="muted small" style="margin-bottom:6px">${T("심사일수")}: <b>${est.baseMandays}${T("일")}</b>${est.whMult>1?` × ${est.whMult} (${T("창고 2곳 이상")}) = <b>${est.mandays}${T("일")}</b>`:""}</div>
+    ${rows}
+    <div class="li" style="padding:8px 0;display:flex;font-weight:800;border-top:2px solid var(--line);margin-top:2px"><div class="tx" style="flex:1">${T("합계(추정)")}</div><div class="when" style="text-align:right"><div style="font-variant-numeric:tabular-nums">${_rp(est.total)}</div><div class="muted small" style="font-weight:500">${_krw(est.total)}</div></div></div>
+    <div class="muted small" style="margin-top:8px">⚠ ${T("추정치입니다. 실제 청구는 규모·지역·수량에 따라 다르며 BPJPH 공식 계산기(kalkulator-biaya-sh)가 정본입니다.")}</div>`;
+}
+
 /* ===== 물류 차량·컨테이너 등록 (jasa logistik) ===== */
 let VEH_LIST=[];
 const VEH_TYPE={truck:"트럭",van:"밴",container:"컨테이너",tanker:"탱크로리",reefer:"냉장차"};
@@ -7536,16 +7873,84 @@ async function loadVehicles(id,org){
 function renderVehicles(id,org){
   const b=document.getElementById('vehBody'); if(!b)return;
   if(!VEH_LIST.length){ b.innerHTML='<div class="muted small">'+T('등록된 차량이 없습니다. [+ 차량 추가]로 등록하세요.')+'</div>'; return; }
+  const _today=new Date().toISOString().slice(0,10);
   let rows=VEH_LIST.map(function(v){
     const pc=(v.previous_cargo_halal===false)?'<span class="tag t-bad">'+T('직전 비할랄')+'</span>':(v.previous_cargo_halal===true?'<span class="tag t-ok">'+T('직전 할랄')+'</span>':'');
-    const st=(v.previous_cargo_halal===false&&!v.sertu)?'<span class="tag t-bad">'+T('세척 필요')+'</span>':(v.sertu?'<span class="tag t-ok">Sertu ✓</span>':'');
+    // 운송 가능 여부는 최신 세척 로그로 유도된 halal_clear 를 쓴다(스냅샷 아님)
+    const clr=(v.halal_clear===false)?'<span class="tag t-bad">'+T('운송 불가')+'</span>':(v.halal_clear===true?'<span class="tag t-ok">'+T('운송 가능')+'</span>':'');
+    const overdue=(v.next_due&&v.next_due<_today)?'<span class="tag t-bad">⏰ '+T('세척 예정 경과')+'</span>':'';
+    const cnt=(v.cleaning_count|0);
     return '<div class="li" style="padding:6px 0;border-bottom:1px solid var(--line)"><div class="tx" style="flex:1">'
       +'<b>'+esc(v.plate_no||'—')+'</b> <span class="muted small">'+esc(T(VEH_TYPE[v.vehicle_type]||v.vehicle_type||''))+' · '+esc(T(VEH_TRANS[v.transport_type]||v.transport_type||''))+(v.capacity?' · '+esc(v.capacity):'')+'</span>'
-      +'<div class="muted small">'+(v.previous_cargo?T('직전 화물')+': '+esc(v.previous_cargo)+' ':'')+pc+' '+st+'</div></div>'
-      +'<div class="when" style="display:flex;gap:4px"><button class="btn" style="padding:2px 7px;font-size:11px" onclick="editVehicle(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">'+T('편집')+'</button>'
-      +'<button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delVehicle(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">✕</button></div></div>';
+      +'<div class="muted small">'+(v.previous_cargo?T('직전 화물')+': '+esc(v.previous_cargo)+' ':'')+pc+' '+clr+' '+overdue+'</div></div>'
+      +'<div class="when" style="display:flex;gap:4px">'
+      +'<button class="btn" style="padding:2px 7px;font-size:11px" onclick="toggleCleanings(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">🚿 '+T('세척 이력')+(cnt?' ('+cnt+')':'')+'</button>'
+      +'<button class="btn" style="padding:2px 7px;font-size:11px" onclick="editVehicle(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">'+T('편집')+'</button>'
+      +'<button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delVehicle(\''+esc(org)+'\',\''+id+'\',\''+v.vehicle_id+'\')">✕</button></div></div>'
+      +'<div id="clean_'+v.vehicle_id+'" style="display:none;padding:8px 0 12px 8px;border-bottom:1px solid var(--line)"></div>';
   }).join('');
   b.innerHTML=rows;
+}
+/* ===== 세척 이력 아코디언 ===== */
+let CLEAN_CACHE={};
+async function toggleCleanings(org,id,vid){
+  const box=document.getElementById('clean_'+vid); if(!box)return;
+  if(box.style.display==='none'){ box.style.display='block'; box.innerHTML='<div class="muted small">'+T('불러오는 중…')+'</div>';
+    try{ const r=await API('/vehicles/'+vid+'/cleanings'); CLEAN_CACHE[vid]=r; renderCleanings(org,id,vid); }
+    catch(e){ box.innerHTML='<div class="muted small">'+esc(EMSG(e))+'</div>'; }
+  } else { box.style.display='none'; }
+}
+function renderCleanings(org,id,vid){
+  const box=document.getElementById('clean_'+vid); if(!box)return;
+  const r=CLEAN_CACHE[vid]||{items:[]};
+  const canSign=['penyelia_halal','admin'].includes(ROLE);
+  const canAdd=['applicant','consultant','operator','penyelia_halal','admin'].includes(ROLE);
+  let html='<div style="font-weight:700;font-size:12px;margin-bottom:6px">🚿 '+T('세척 이력')+' <span class="muted">· '+T('사진이 아니라 로그+페냘리아 서명으로 인증')+'</span></div>';
+  if(!r.items.length){ html+='<div class="muted small" style="margin-bottom:6px">'+T('세척 기록이 없습니다.')+'</div>'; }
+  else{ html+=r.items.map(function(cl){
+    const m=(cl.method==='sertu')?'<span class="tag t-ok">Sertu'+(cl.sertu_steps?' ×'+cl.sertu_steps:'')+'</span>':'<span class="tag">'+T('일반 세척')+'</span>';
+    const sign=cl.penyelia_sign?'<span class="tag t-ok">✍ '+T('페냘리아 서명')+'</span>':'<span class="tag t-bad">'+T('서명 대기')+'</span>';
+    const prev=(cl.previous_cargo_halal===false)?' · '+T('직전 비할랄'):(cl.previous_cargo_halal===true?' · '+T('직전 할랄'):'');
+    return '<div class="li" style="padding:5px 0;border-bottom:1px dashed var(--line)"><div class="tx" style="flex:1">'
+      +'<span class="muted small">'+esc(cl.cleaned_at||T('일시 미상'))+'</span> '+m+' '+sign
+      +'<div class="muted small">'+(cl.previous_cargo?esc(cl.previous_cargo):'')+prev+(cl.next_due?' · '+T('다음 예정')+' '+esc(cl.next_due):'')+'</div></div>'
+      +'<div class="when" style="display:flex;gap:4px">'
+      +((canSign&&!cl.penyelia_sign)?'<button class="btn pri" style="padding:2px 7px;font-size:11px" onclick="signCleaning(\''+org+'\',\''+id+'\',\''+vid+'\',\''+cl.cleaning_id+'\')">✍ '+T('서명')+'</button>':'')
+      +(canAdd?'<button class="btn bad" style="padding:2px 7px;font-size:11px" onclick="delCleaning(\''+org+'\',\''+id+'\',\''+vid+'\',\''+cl.cleaning_id+'\')">✕</button>':'')
+      +'</div></div>';
+  }).join(''); }
+  if(canAdd) html+='<div class="btnrow" style="margin-top:8px"><button class="btn" style="padding:3px 10px;font-size:12px" onclick="addCleaning(\''+org+'\',\''+id+'\',\''+vid+'\')">＋ '+T('세척 기록')+'</button></div>';
+  box.innerHTML=html;
+}
+async function addCleaning(org,id,vid){
+  const yn=[{value:"",label:T('미상')},{value:"1",label:T('할랄')},{value:"0",label:T('비할랄')}];
+  const out=await dialog(T('세척 기록 추가'),[
+    {key:"cleaned_at",label:T('세척 일시')+" · Date",type:"date",value:new Date().toISOString().slice(0,10)},
+    {key:"previous_cargo",label:T('직전 화물')+" · Prev cargo"},
+    {key:"previous_cargo_halal",label:T('직전 화물 할랄')+" · Prev halal",type:"select",value:"",options:yn},
+    {key:"method",label:T('세척 방법')+" · Method",type:"select",value:"normal",options:[{value:"normal",label:T('일반 세척')},{value:"sertu",label:"Sertu ("+T('정결 세정')+")"}]},
+    {key:"sertu_steps",label:"Sertu "+T('횟수')+" · Steps",type:"number"},
+    {key:"next_due",label:T('다음 예정일')+" · Next due",type:"date"},
+    {key:"note",label:T('비고')+" · Note"}]);
+  if(!out)return;
+  const body={cleaned_at:out.cleaned_at||null,previous_cargo:out.previous_cargo||null,
+    method:out.method||"normal",sertu_steps:out.sertu_steps?parseInt(out.sertu_steps):null,
+    next_due:out.next_due||null,note:out.note||null};
+  if(out.previous_cargo_halal==="1")body.previous_cargo_halal=true;
+  else if(out.previous_cargo_halal==="0")body.previous_cargo_halal=false;
+  try{ await API('/vehicles/'+vid+'/cleanings',{method:"POST",body:JSON.stringify(body)});
+    toast(T('세척 기록됨')); CLEAN_CACHE[vid]=await API('/vehicles/'+vid+'/cleanings'); renderCleanings(org,id,vid); loadVehicles(id,org); }
+  catch(e){ toast(EMSG(e)); }
+}
+async function signCleaning(org,id,vid,cid){
+  try{ await API('/cleanings/'+cid+'/sign',{method:"POST"});
+    toast(T('서명 완료')); CLEAN_CACHE[vid]=await API('/vehicles/'+vid+'/cleanings'); renderCleanings(org,id,vid); loadVehicles(id,org); }
+  catch(e){ toast(EMSG(e)); }
+}
+async function delCleaning(org,id,vid,cid){
+  try{ await API('/cleanings/'+cid,{method:"DELETE"});
+    toast(T('삭제됨')); CLEAN_CACHE[vid]=await API('/vehicles/'+vid+'/cleanings'); renderCleanings(org,id,vid); loadVehicles(id,org); }
+  catch(e){ toast(EMSG(e)); }
 }
 function _vehFields(v){v=v||{};return [
   {key:"plate_no",label:T('번호판')+" · Plate",value:v.plate_no,required:true},
@@ -9978,10 +10383,31 @@ async function inqQR(){
       <div><div class="muted small">${T('고객이 이 QR 을 찍으면 홈페이지로 이동하고, 남긴 문의가 내 담당으로 붙습니다.')}</div>
         <div style="font-family:ui-monospace,Menlo,monospace;font-size:17px;font-weight:700;margin:8px 0">${esc(info.code)}</div>
         <div class="muted small">${esc(info.url)}<br>${T('누적 사용')} ${info.used_count}${T('회')}</div>
-        <div class="btnrow"><a class="btn pri" download="glhac-qr-${esc(info.code)}.png" href="${url}">${T('QR 내려받기')}</a></div>
+        <div class="btnrow" style="flex-wrap:wrap;gap:8px">
+          <a class="btn pri" download="glhac-qr-${esc(info.code)}.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
+          <button class="btn" onclick="shareQr('${url}','${esc(info.code)}','${esc(info.url)}')">📤 ${T('공유')}</button>
+          <button class="btn" onclick="copyLink('${esc(info.url)}')">🔗 ${T('링크 복사')}</button>
+        </div>
       </div></div>`;
     localizeUI();
   }catch(e){ box.innerHTML=errCard(e); }
+}
+/* QR 이미지 공유 — Web Share API(이미지 파일 첨부). 미지원이면 링크 공유/복사로 폴백. */
+async function shareQr(pngUrl, code, refUrl){
+  try{
+    let file=null;
+    try{ const blob=await (await fetch(pngUrl)).blob();
+      file=new File([blob], "glhac-qr-"+code+".png", {type:"image/png"}); }catch(_){}
+    if(file && navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file], title:"GL-HAC QR", text:refUrl}); return;
+    }
+    if(navigator.share){ await navigator.share({title:"GL-HAC QR", text:refUrl, url:refUrl}); return; }
+    await copyLink(refUrl);   // 공유 API 미지원(데스크톱 등) → 링크 복사
+  }catch(e){ if(e && e.name==="AbortError") return; toast(T('공유하지 못했습니다')+" · "+EMSG(e)); }
+}
+async function copyLink(url){
+  try{ await navigator.clipboard.writeText(url); toast(T('링크를 복사했습니다')); }
+  catch(_){ toast(T('복사 실패')+" · "+url); }
 }
 
 SCREEN.feedback=async()=>{
@@ -11767,9 +12193,50 @@ async function maSave(){
   }catch(e){toast("저장 실패 · "+EMSG(e));}
 }
 SCREEN.system=async()=>{
-  const [users,orgs,onto,lphrefs,kma,admCases]=await Promise.all([
+  const [users,orgs,onto,lphrefs,kma,admCases,staffReqs,clientInv,staffLink]=await Promise.all([
     API("/admin/users").catch(()=>[]),API("/admin/orgs").catch(()=>[]),API("/admin/ontology/stats").catch(()=>({})),API("/admin/lph-references").catch(()=>[]),
-    API("/admin/kma1360-exempt").catch(()=>({terms:[]})),API("/admin/cases").catch(()=>[])]);
+    API("/admin/kma1360-exempt").catch(()=>({terms:[]})),API("/admin/cases").catch(()=>[]),
+    API("/admin/staff-signups?status=pending").catch(()=>({items:[],pending_count:0})),
+    API("/admin/client-invites").catch(()=>({items:[]})),
+    API("/admin/staff-signup-link").catch(()=>null)]);
+  const _stRole={consultant:"💼 컨설턴트",auditor:"🏭 오디터",fatwa_liaison:"⚖️ 파트와",admin:"⚙️ 관리자"};
+  const stRows=(staffReqs.items||[]).map(r=>`<tr>
+      <td><b>${esc(r.username)}</b>${r.display_name?' <span class="muted small">'+esc(r.display_name)+'</span>':''}${r.note?'<div class="muted small">'+esc(r.note)+'</div>':''}</td>
+      <td>${bTag('info',T(_stRole[r.requested_role]||r.requested_role))}</td>
+      <td style="white-space:nowrap;text-align:right">
+        <button class="btn pri" style="padding:3px 8px;font-size:12px" onclick="approveStaff('${r.request_id}','${esc(r.username)}')">${T('승인')}</button>
+        <button class="btn bad" style="padding:3px 8px;font-size:12px" onclick="rejectStaff('${r.request_id}','${esc(r.username)}')">${T('거부')}</button></td></tr>`).join("")
+    ||`<tr><td colspan="3" class="muted small">${T('가입 대기 없음')}</td></tr>`;
+  const _slUrl=(staffLink&&staffLink.url)||"";
+  const staffCard=`<div class="card"><h3>🛡 ${T('스태프 가입 승인')} <span class="en">· Staff sign-ups</span>
+      <span class="r">${bTag((staffReqs.pending_count||0)?'info':'mute',T('대기')+' '+(staffReqs.pending_count||0))}</span></h3>
+    <div class="body tight">
+      <div style="background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:9px">
+        <div class="muted small" style="margin-bottom:5px">🔗 ${T('스태프 가입 링크 — 스태프 후보에게만 전달하세요(로그인 화면엔 없음).')}</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <code style="flex:1;min-width:140px;font-size:12px;word-break:break-all">${esc(_slUrl)}</code>
+          <button class="btn xs" onclick="copyLink('${esc(_slUrl)}')">🔗 ${T('링크 복사')}</button>
+          <button class="btn xs" onclick="staffLinkQrView()">📱 QR</button></div>
+        <div id="staffLinkQrBox" style="margin-top:8px"></div>
+      </div>
+      <div class="muted small" style="margin-bottom:6px">${T('컨설턴트·오디터·파트와·관리자 가입 신청 — 승인해야 계정이 생성됩니다.')}</div>
+      <table><tbody>${stRows}</tbody></table></div></div>`;
+  const _ciRows=(clientInv.items||[]).map(i=>`<tr${i.usable?'':' style="opacity:.45"'}>
+      <td><code style="font-size:12px;font-weight:700;letter-spacing:.5px">${esc(i.code)}</code>${i.is_primary?' '+bTag('info',T('대표')):''}</td>
+      <td>${esc(i.company_name||'—')}</td>
+      <td class="muted small">${i.used_count}${i.max_uses>=1000000000?'':'/'+i.max_uses}</td>
+      <td>${i.revoked?tag('bad',T('회수됨')):(i.usable?tag('ok',T('사용 가능')):tag('mute',T('만료·소진')))}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn xs" onclick="clientInviteQrView('${i.invite_id}','${esc(i.code)}','${esc(i.url)}')">📱 QR</button>
+        <button class="btn xs" onclick="copyLink('${esc(i.url)}')">🔗</button>
+        ${(i.usable&&!i.is_primary)?`<button class="btn xs ghost" onclick="revokeClientInvite('${i.invite_id}')">${T('회수')}</button>`:''}</td></tr>`).join("")
+    ||`<tr><td colspan="5" class="muted small" style="text-align:center;padding:12px">${T('발급한 코드가 없습니다')}</td></tr>`;
+  const clientInviteCard=`<div class="card"><h3>🎫 ${T('클라이언트 초대 QR')} <span class="en">· Client invites</span>
+      <span class="r"><button class="btn pri" onclick="newClientInvite()">+ ${T('코드 발급')}</button></span></h3>
+    <div class="body"><div class="muted small" style="margin-bottom:8px">${T('회원가입 화면으로 바로 가는 공식 클라이언트 가입 링크·QR — 게시·배포용(컨설턴트 QR과 별개).')}</div>
+      <div id="clientQrBox" style="margin-bottom:8px"></div>
+      <div class="tight"><table><thead><tr><th>${T('코드')}</th><th>${T('대상 업체')}</th><th>${T('사용')}</th><th>${T('상태')}</th><th></th></tr></thead>
+        <tbody>${_ciRows}</tbody></table></div></div></div>`;
   let ovs=[];try{ovs=(await Promise.all((orgs||[]).map(o=>API(`/admin/orgs/${o.org_id}/overview`).catch(()=>null)))).filter(Boolean);}catch(_){}
   const upg=pageSlice("users",users,12);
   const uRows=upg.items.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
@@ -11792,6 +12259,8 @@ SCREEN.system=async()=>{
       <table><tbody>${lsRows}</tbody></table></div></div>`;
   return `
   <div class="grid three">
+    ${staffCard}
+    ${clientInviteCard}
     ${logiCard}
     <div class="card"><h3>🗂 ${T('메뉴 배정 관리')} <span class="en">· Menu Assignment</span></h3>
       <div class="body btnrow" style="align-items:center;gap:10px"><button class="btn pri" onclick="go('menuAssign')">${T('🗂 메뉴 배정 관리 열기')}</button>
@@ -11848,6 +12317,78 @@ function roleOpts(sel){const rs=[["applicant","신청기업"],["consultant","컨
 async function createUser(){const username=v("nuUser"),password=v("nuPass")||"pw",role=v("nuRole");if(!username){toast("아이디 입력");return}try{await API("/admin/users",{method:"POST",body:JSON.stringify({username,password,role})});toast("사용자 생성 · "+username);applyView();}catch(e){toast("생성 실패 · "+EMSG(e));}}
 async function patchUserRole(uid,role){try{await API(`/admin/users/${uid}`,{method:"PATCH",body:JSON.stringify({role})});toast("역할 변경 · "+role);}catch(e){toast("실패 · "+EMSG(e));}}
 async function delUser(uid){if(!confirm("사용자를 삭제할까요?"))return;try{await API(`/admin/users/${uid}`,{method:"DELETE"});toast("사용자 삭제");applyView();}catch(e){toast("삭제 실패 · "+EMSG(e));}}
+/* 스태프 가입 승인/거부 */
+async function approveStaff(rid,uname){
+  if(!confirm(T("승인하면 '")+uname+T("' 계정이 생성됩니다. 진행할까요?")))return;
+  try{const r=await API(`/admin/staff-signups/${rid}/approve`,{method:"POST",body:"{}"});
+    toast(T("승인됨")+" · "+uname+" ("+(r.role||"")+")");applyView();}
+  catch(e){toast(T("승인 실패")+" · "+EMSG(e));}
+}
+async function rejectStaff(rid,uname){
+  const reason=prompt(T("거부 사유(선택):"),"");if(reason===null)return;
+  try{await API(`/admin/staff-signups/${rid}/reject`,{method:"POST",body:JSON.stringify({reason:reason||null})});
+    toast(T("거부됨")+" · "+uname);applyView();}
+  catch(e){toast(T("거부 실패")+" · "+EMSG(e));}
+}
+/* 관리자 클라이언트 초대 관리 — 컨설턴트 QR과 같은 방식(발급·QR·공유·회수) */
+async function clientInviteQrView(iid,code,refUrl){
+  const box=document.getElementById("clientQrBox");if(!box)return;
+  if(box.dataset.iid===iid){box.innerHTML="";box.dataset.iid="";return;}
+  box.dataset.iid=iid;
+  box.innerHTML=`<div class="muted small">${T('불러오는 중…')}</div>`;
+  try{
+    const r=await fetch(`/admin/client-invites/${iid}/qr?fmt=png`,{headers:{Authorization:"Bearer "+token()}});
+    const url=URL.createObjectURL(await r.blob());
+    box.innerHTML=`<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:6px 0;padding:10px;border:1px solid var(--line);border-radius:10px">
+      <img src="${url}" alt="QR" style="width:140px;height:140px;background:#fff;padding:8px;border-radius:10px;border:1px solid var(--line)">
+      <div><div style="font-family:ui-monospace,Menlo,monospace;font-size:15px;font-weight:700">${esc(code)}</div>
+        <div class="muted small" style="margin:6px 0">${esc(refUrl)}</div>
+        <div class="btnrow" style="flex-wrap:wrap;gap:8px">
+          <a class="btn pri" download="glhac-client-qr-${esc(code)}.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
+          <button class="btn" onclick="shareQr('${url}','${esc(code)}','${esc(refUrl)}')">📤 ${T('공유')}</button>
+          <button class="btn" onclick="copyLink('${esc(refUrl)}')">🔗 ${T('링크 복사')}</button>
+        </div></div></div>`;
+    localizeUI();
+  }catch(e){box.innerHTML=errCard(e);box.dataset.iid="";}
+}
+async function newClientInvite(){
+  const r=await dialog(T('클라이언트 초대 코드 발급'),[
+    {key:'company',label:T('대상 업체명(선택)'),placeholder:T('가입 시 업체가 정정할 수 있습니다')},
+    {key:'note',label:T('메모'),type:'textarea'},
+    {key:'uses',label:T('사용 횟수'),type:'number',value:1},
+    {key:'days',label:T('유효기간(일)'),type:'number',value:30}]);
+  if(!r)return;
+  try{
+    const inv=await API('/admin/client-invites',{method:'POST',body:JSON.stringify({
+      company_name:(r.company||'').trim()||null, note:(r.note||'').trim()||null,
+      max_uses:parseInt(r.uses||'1',10)||1, expires_days:parseInt(r.days||'30',10)||30})});
+    toast(T('코드 발급됨')+': '+inv.code);applyView();
+  }catch(e){toast(EMSG(e)||T('발급 실패'));}
+}
+async function revokeClientInvite(iid){
+  if(!confirm(T('이 코드를 회수합니다. 아직 가입하지 않은 업체는 이 코드로 들어올 수 없습니다. 계속할까요?')))return;
+  try{await API(`/admin/client-invites/${iid}/revoke`,{method:'POST',body:'{}'});
+    toast(T('코드 회수됨'));applyView();}
+  catch(e){toast(EMSG(e)||T('회수 실패'));}
+}
+/* 스태프 가입 링크 QR — 보기·내려받기·공유 */
+async function staffLinkQrView(){
+  const box=document.getElementById("staffLinkQrBox");if(!box)return;
+  if(box.innerHTML){box.innerHTML="";return;}
+  box.innerHTML=`<div class="muted small">${T('불러오는 중…')}</div>`;
+  try{
+    const info=await API("/admin/staff-signup-link");
+    const r=await fetch("/admin/staff-signup-link/qr?fmt=png",{headers:{Authorization:"Bearer "+token()}});
+    const url=URL.createObjectURL(await r.blob());
+    box.innerHTML=`<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;padding:8px;border:1px solid var(--line);border-radius:10px">
+      <img src="${url}" alt="QR" style="width:130px;height:130px;background:#fff;padding:8px;border-radius:10px;border:1px solid var(--line)">
+      <div class="btnrow" style="flex-wrap:wrap;gap:8px">
+        <a class="btn pri" download="glhac-staff-signup-qr.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
+        <button class="btn" onclick="shareQr('${url}','staff','${esc(info.url)}')">📤 ${T('공유')}</button>
+      </div></div>`;
+    localizeUI();
+  }catch(e){box.innerHTML=errCard(e);}
+}
 async function createOrg(){const org_id=v("noId"),name=v("noName");if(!org_id){toast("조직 ID 입력");return}try{await API("/admin/orgs",{method:"POST",body:JSON.stringify({org_id,name})});toast("조직 생성 · "+org_id);applyView();}catch(e){toast("생성 실패 · "+EMSG(e));}}
 /* 범위확장: 화이트라벨 — 요청 호스트가 테넌트 도메인이면 로그인 브랜드·주색상·로케일 적용 */
 function applyTenantBranding(t){
@@ -12079,6 +12620,11 @@ async function boot(){
       applyTenantBranding(cfg&&cfg.tenant);   // 범위확장: 도메인 매칭 시 화이트라벨 적용
     }catch(_){}
     loginLocalize();   // 로그인/회원가입 화면 언어 적용(Bahasa 등)
+    // 전용 URL 라우팅: ?signup=staff → 스태프 가입 폼 직행(관리자가 배포하는 링크).
+    // ?ref=코드(또는 ?signup=client) → 클라이언트 가입 폼 직행.
+    const _sg=(function(){try{const m=(location.search||"").match(/[?&]signup=([a-z]+)/);return m?m[1]:"";}catch(_){return"";}})();
+    if(_sg==="staff")showStaffSignup(true);
+    else if(_sg==="client"||glhacRef())showRegister(true);
     return;}
   try{const th=localStorage.getItem("glhac_theme")||"light";document.documentElement.setAttribute("data-theme",th);document.getElementById("themePill").textContent=th==="dark"?"☀️ 라이트":"🌙 다크";}catch(_){}
   try{LANG=parseInt(localStorage.getItem("glhac_lang")||"1",10)||0;applyLang();}catch(_){}
