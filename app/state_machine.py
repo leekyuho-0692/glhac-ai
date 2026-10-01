@@ -96,18 +96,25 @@ def materials(db, case_id):
     return db.query(Material).filter_by(case_id=case_id).all()
 
 
+def _has_evidence(m):
+    """증빙 충족 여부 — 사람이 켠 플래그(evidence_provided)와 제출 문서로 계산된 결과
+    (screen_result == "CLEARED") 둘 다 인정한다. 문서로 해소된 건은 screen_status 가
+    mushbooh 로 남으므로 플래그만 보면 게이트가 계속 막는다."""
+    return bool(m.evidence_provided) or getattr(m, "screen_result", None) == "CLEARED"
+
+
 def critical_materials(db, case_id):
     out = []
     for m in materials(db, case_id):
         if m.screen_status == "haram":
             out.append(m)
-        elif m.screen_status == "mushbooh" and m.screen_severity == "high" and not m.evidence_provided:
+        elif m.screen_status == "mushbooh" and m.screen_severity == "high" and not _has_evidence(m):
             out.append(m)
     return out
 
 
 def evidence_complete(db, case_id):
-    return all(m.evidence_provided for m in materials(db, case_id)
+    return all(_has_evidence(m) for m in materials(db, case_id)
                if m.screen_status == "mushbooh")
 
 
@@ -333,7 +340,7 @@ def assess_pathway(db, case):
     crit = critical_materials(db, case.case_id)
     has_haram = any(m.screen_status == "haram" for m in mats)
     has_mush_high = any(m.screen_status == "mushbooh" and m.screen_severity == "high"
-                        and not m.evidence_provided for m in mats)
+                        and not _has_evidence(m) for m in mats)
     has_mush_med = any(m.screen_status == "mushbooh" and m.screen_severity == "medium" for m in mats)
     risk = "high" if (has_haram or has_mush_high) else ("medium" if has_mush_med else "low")
     ev = evidence_complete(db, case.case_id)

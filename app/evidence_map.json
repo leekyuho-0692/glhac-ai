@@ -1,0 +1,606 @@
+{
+  "_doc": "증빙코드(EVIDENCE) ↔ 문서유형(doc_type) 매핑 정본. Phase 1-A.",
+  "_why": "판정은 evidence_provided 불리언만 보고 있었고(screening.py:119) 제출 문서는 판정에 닿지 않았다. EVIDENCE 21종과 doc_type 어휘는 양쪽 다 이미 있었으나 둘을 잇는 표가 없었다. 이 파일이 그 표다.",
+  "_verdict_levels": {
+    "PRIMARY": "그 증빙의 정본 문서유형. 내용조건 충족 시 단독으로 증빙 인정(Grade B 이상).",
+    "ACCEPTABLE": "내용조건을 충족하면 인정하되 Grade 한 단계 낮춤(C).",
+    "SUPPORTING": "단독으로는 불충분. 다른 증빙의 보조로만 계산(Grade D). 단독 제출 시 미충족."
+  },
+  "version": "1.3",
+  "updated": "2026-09-28",
+  "doc_type_canonical": [
+    "nib_business_license",
+    "factory_registration",
+    "product_list",
+    "process_flow",
+    "halal_certificate",
+    "origin_certificate",
+    "material_list",
+    "coa_msds",
+    "supplier_declaration",
+    "quality_cert",
+    "sjph_manual",
+    "sjph_evidence",
+    "other"
+  ],
+  "doc_type_aliases": {
+    "manual_section": "sjph_manual",
+    "halal_cert": "halal_certificate",
+    "coo": "origin_certificate",
+    "certificate_of_origin": "origin_certificate",
+    "spec": "coa_msds",
+    "specification": "coa_msds",
+    "msds": "coa_msds",
+    "coa": "coa_msds"
+  },
+  "_doc_type_notes": {
+    "origin_certificate": "DB에 12건 실존하나 DOC_TYPES 선언에 없었다. 원산지증명서는 유래(source) 증빙의 핵심이라 supplier_declaration 으로 뭉개면 안 된다 → 정식 승격.",
+    "sjph_evidence": "DB에 5건 실존. SJPH 10증빙 항목별 사진·기록물. sjph_manual(문서) 과 성격이 다르다 → 정식 승격.",
+    "manual_section": "sjph_manual 의 부분문서. 별개 유형으로 둘 이유가 없다 → 별칭 처리."
+  },
+  "evidence": {
+    "halal_cert": {
+      "label_ko": "할랄 인증서",
+      "primary": [
+        "halal_certificate"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "supplier_declaration"
+      ],
+      "content_requirements": {
+        "fields_any": [
+          "cert_no",
+          "issuer",
+          "expiry_date"
+        ],
+        "fields_all": [
+          "cert_no"
+        ],
+        "keywords": [
+          "halal",
+          "할랄",
+          "sertifikat halal",
+          "ketetapan halal",
+          "MUI",
+          "BPJPH",
+          "JAKIM",
+          "KMF"
+        ]
+      },
+      "verification_chain": true,
+      "note": "번호 존재만으로 충족 처리 금지(REQ-CERT-001). issuer·expiry·scope 검증 필요. supporting 인 supplier_declaration 은 '인증 보유 사실 진술'이라 단독 불가.",
+      "subject_scope": "material"
+    },
+    "supplier_halal_cert": {
+      "label_ko": "공급사 할랄 인증서",
+      "primary": [
+        "halal_certificate"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "supplier_declaration"
+      ],
+      "content_requirements": {
+        "fields_all": [
+          "cert_no"
+        ],
+        "keywords": [
+          "halal",
+          "할랄",
+          "sertifikat halal",
+          "supplier",
+          "공급사",
+          "pemasok"
+        ]
+      },
+      "verification_chain": true,
+      "note": "halal_cert 와 동일 검증. 다만 Holder 가 원료 공급사여야 한다(제품 제조사가 아님).",
+      "subject_scope": "material"
+    },
+    "halal_slaughter_cert": {
+      "label_ko": "할랄 도축 증명서",
+      "primary": [
+        "halal_certificate"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "supplier_declaration",
+        "origin_certificate"
+      ],
+      "content_requirements": {
+        "keywords": [
+          "slaughter",
+          "도축",
+          "penyembelihan",
+          "dhabihah",
+          "zabiha",
+          "halal slaughter",
+          "RPH"
+        ]
+      },
+      "verification_chain": true,
+      "note": "동물성 원료 전용. 일반 할랄 인증서로 갈음할 수 없다 — 도축 방식 명시가 있어야 한다.",
+      "subject_scope": "material"
+    },
+    "halal_slaughter_certificate": {
+      "label_ko": "할랄 도축 증명서",
+      "alias_of": "halal_slaughter_cert",
+      "note": "domain_dict 내부 표기 중복. ontology 에서 두 표기가 모두 쓰여 둘 다 남기고 alias 로 잇는다."
+    },
+    "slaughter_cert": {
+      "label_ko": "도축증명(할랄 도축)",
+      "alias_of": "halal_slaughter_cert"
+    },
+    "source_declaration": {
+      "label_ko": "유래 선언서",
+      "primary": [
+        "supplier_declaration",
+        "origin_certificate"
+      ],
+      "acceptable": [
+        "coa_msds"
+      ],
+      "supporting": [
+        "material_list"
+      ],
+      "content_requirements": {
+        "fields_any": [
+          "origin",
+          "source",
+          "manufacturer"
+        ],
+        "keywords": [
+          "origin",
+          "source",
+          "원산지",
+          "유래",
+          "asal",
+          "sumber",
+          "bahan baku",
+          "derived from",
+          "vegetable origin",
+          "plant origin",
+          "animal origin",
+          "식물성",
+          "동물성"
+        ]
+      },
+      "note": "원산지증명서(origin_certificate)는 국가만 증명하고 동식물 유래를 밝히지 않는 경우가 많다. 유래 문구가 없으면 ACCEPTABLE 로 강등한다.",
+      "subject_scope": "material"
+    },
+    "animal_source_declaration": {
+      "label_ko": "동물 유래 선언서",
+      "primary": [
+        "supplier_declaration"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "coa_msds",
+        "origin_certificate"
+      ],
+      "content_requirements": {
+        "keywords": [
+          "animal",
+          "동물",
+          "hewani",
+          "porcine",
+          "bovine",
+          "swine",
+          "pork",
+          "돈지",
+          "우지",
+          "돼지",
+          "소",
+          "non-animal",
+          "식물성 유래"
+        ]
+      },
+      "note": "'동물 미사용' 진술도 충족으로 인정한다. 유래가 아예 언급되지 않은 문서는 미충족.",
+      "subject_scope": "material"
+    },
+    "enzyme_source_declaration": {
+      "label_ko": "효소 유래 선언서",
+      "primary": [
+        "supplier_declaration"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "coa_msds"
+      ],
+      "content_requirements": {
+        "keywords": [
+          "enzyme",
+          "효소",
+          "enzim",
+          "microbial",
+          "미생물",
+          "fungal",
+          "bacterial",
+          "animal rennet"
+        ]
+      },
+      "subject_scope": "material"
+    },
+    "rennet_source_declaration": {
+      "label_ko": "레닛 유래 선언서",
+      "primary": [
+        "supplier_declaration"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "coa_msds"
+      ],
+      "content_requirements": {
+        "keywords": [
+          "rennet",
+          "레닛",
+          "renin",
+          "chymosin",
+          "키모신",
+          "microbial rennet",
+          "vegetable rennet",
+          "calf"
+        ]
+      },
+      "note": "유청(whey)·치즈 계열 전용. 미생물/식물 레닛 명시 시 충족.",
+      "subject_scope": "material"
+    },
+    "bone_char_free_declaration": {
+      "label_ko": "골탄(骨炭) 미사용 선언서",
+      "primary": [
+        "supplier_declaration"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "coa_msds"
+      ],
+      "content_requirements": {
+        "keywords": [
+          "bone char",
+          "골탄",
+          "activated carbon",
+          "활성탄",
+          "arang tulang",
+          "decolorization",
+          "탈색",
+          "refining"
+        ]
+      },
+      "note": "설탕·정제당 계열 전용.",
+      "subject_scope": "material"
+    },
+    "composition_breakdown": {
+      "label_ko": "성분 조성 내역",
+      "primary": [
+        "coa_msds"
+      ],
+      "acceptable": [
+        "supplier_declaration"
+      ],
+      "supporting": [
+        "material_list"
+      ],
+      "content_requirements": {
+        "keywords": [
+          "composition",
+          "조성",
+          "komposisi",
+          "ingredient list",
+          "성분 조성",
+          "성분표",
+          "formulation",
+          "배합비",
+          "배합 비율",
+          "raw material composition",
+          "구성 성분"
+        ],
+        "structure_any": [
+          "table",
+          "percentage_rows"
+        ]
+      },
+      "note": "완제품 전성분표(material_list)는 제품의 원료 목록이지 그 원료 자체의 내부 조성이 아니다 → SUPPORTING. 향료·색소의 조성 내역은 향료 제조사가 발행해야 한다. 키워드에서 '%'·'content'·'함량'을 제거했다 — 완제품 시험성적서가 원료 조성으로 오충족됐다(실측: 완제품 CoA 1장이 원료 57건을 충족).",
+      "subject_scope": "material"
+    },
+    "alcohol_carrier_check": {
+      "label_ko": "알코올 캐리어 확인",
+      "primary": [
+        "supplier_declaration"
+      ],
+      "acceptable": [
+        "coa_msds"
+      ],
+      "supporting": [],
+      "content_requirements": {
+        "keywords": [
+          "alcohol",
+          "알코올",
+          "알콜",
+          "ethanol",
+          "에탄올",
+          "alkohol",
+          "etanol",
+          "solvent",
+          "용매",
+          "carrier",
+          "캐리어",
+          "propylene glycol",
+          "PG",
+          "ethyl alcohol",
+          "alcohol-free",
+          "무알코올"
+        ]
+      },
+      "note": "향료(ing.flavor) 최다 요구 항목. 알코올 캐리어 사용 여부가 명시돼야 한다. '무알코올' 진술도 충족. 캐리어 언급이 없는 CoA 는 미충족.",
+      "subject_scope": "material"
+    },
+    "residual_alcohol_test": {
+      "label_ko": "잔류 알코올 시험성적서",
+      "primary": [
+        "coa_msds"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "supplier_declaration"
+      ],
+      "content_requirements": {
+        "keywords": [
+          "residual alcohol",
+          "잔류 알코올",
+          "ethanol content",
+          "에탄올 함량",
+          "kadar alkohol",
+          "GC-FID",
+          "ppm",
+          "% v/v",
+          "alcohol content"
+        ],
+        "numeric_any": [
+          "ethanol_ppm",
+          "ethanol_percent"
+        ]
+      },
+      "note": "수치가 있어야 한다. 정성 진술만 있으면 alcohol_carrier_check 는 충족하되 이 항목은 미충족.",
+      "subject_scope": "material"
+    },
+    "carrier_check": {
+      "label_ko": "캐리어 확인",
+      "primary": [
+        "supplier_declaration"
+      ],
+      "acceptable": [
+        "coa_msds"
+      ],
+      "supporting": [],
+      "content_requirements": {
+        "keywords": [
+          "carrier",
+          "캐리어",
+          "solvent",
+          "용매",
+          "excipient",
+          "부형제",
+          "pembawa",
+          "gelatin",
+          "젤라틴",
+          "glycerin",
+          "글리세린",
+          "maltodextrin",
+          "starch"
+        ]
+      },
+      "note": "알코올 외 캐리어(젤라틴·글리세린 등) 점검. 카로틴류의 젤라틴 캐리어가 대표 사례.",
+      "subject_scope": "material"
+    },
+    "carrier_declaration": {
+      "label_ko": "캐리어 선언서",
+      "primary": [
+        "supplier_declaration"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "coa_msds"
+      ],
+      "content_requirements": {
+        "keywords": [
+          "carrier",
+          "캐리어",
+          "pembawa",
+          "declaration",
+          "선언",
+          "확인서"
+        ]
+      },
+      "subject_scope": "material"
+    },
+    "origin_proof": {
+      "label_ko": "원산지 증빙",
+      "primary": [
+        "origin_certificate"
+      ],
+      "acceptable": [
+        "supplier_declaration"
+      ],
+      "supporting": [
+        "coa_msds",
+        "material_list"
+      ],
+      "content_requirements": {
+        "fields_any": [
+          "origin",
+          "country"
+        ],
+        "keywords": [
+          "origin",
+          "원산지",
+          "asal",
+          "country of origin",
+          "produced in",
+          "made in",
+          "수입서류",
+          "import"
+        ]
+      },
+      "subject_scope": "material"
+    },
+    "coa": {
+      "label_ko": "시험성적서(CoA)",
+      "primary": [
+        "coa_msds"
+      ],
+      "acceptable": [
+        "quality_cert"
+      ],
+      "supporting": [],
+      "content_requirements": {
+        "keywords": [
+          "certificate of analysis",
+          "시험성적서",
+          "성적서",
+          "analysis",
+          "test result",
+          "hasil uji",
+          "CoA",
+          "parameter",
+          "method"
+        ]
+      },
+      "subject_scope": "material"
+    },
+    "msds": {
+      "label_ko": "MSDS",
+      "primary": [
+        "coa_msds"
+      ],
+      "acceptable": [],
+      "supporting": [],
+      "content_requirements": {
+        "keywords": [
+          "msds",
+          "sds",
+          "safety data sheet",
+          "물질안전보건자료",
+          "lembar data keselamatan",
+          "hazard"
+        ]
+      },
+      "subject_scope": "material"
+    },
+    "process_declaration": {
+      "label_ko": "공정 선언서",
+      "primary": [
+        "supplier_declaration",
+        "process_flow"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "sjph_manual"
+      ],
+      "content_requirements": {
+        "keywords": [
+          "process",
+          "공정",
+          "proses",
+          "manufacturing",
+          "제조",
+          "produksi",
+          "extraction",
+          "추출",
+          "fermentation",
+          "발효",
+          "hydrolysis"
+        ]
+      },
+      "subject_scope": "case"
+    },
+    "flow_chart": {
+      "label_ko": "제조공정도",
+      "primary": [
+        "process_flow"
+      ],
+      "acceptable": [],
+      "supporting": [
+        "sjph_manual"
+      ],
+      "content_requirements": {
+        "fields_any": [
+          "process_steps"
+        ],
+        "keywords": [
+          "flow",
+          "공정도",
+          "흐름도",
+          "diagram alir",
+          "flow chart",
+          "alur proses"
+        ]
+      },
+      "subject_scope": "case"
+    },
+    "reformulation": {
+      "label_ko": "배합 변경(대체)",
+      "is_action_not_evidence": true,
+      "primary": [],
+      "acceptable": [],
+      "supporting": [],
+      "note": "이것은 증빙이 아니라 조치다(대체 원료로 배합을 바꾸는 것). Evidence Coverage 계산에서 제외하고 대안(alternatives) 경로로 처리한다. 충족 판정 대상에 넣으면 영구 미충족으로 남는다."
+    }
+  },
+  "_subject_scope": {
+    "material": "그 원료를 지목하는 문서만 인정한다. 명시 바인딩(material_id) 또는 문서의 파일명·본문·추출된 material_names 에 원료명/별칭이 나타나야 한다.",
+    "case": "케이스 단위 문서(공정도 등)라 원료 지목이 필요 없다.",
+    "_why": "완제품 CoA 1장이 원료 57개의 성분조성 증빙으로 충족됐다. 증빙은 반드시 대상(subject)에 스코프돼야 한다."
+  },
+  "request_reasons": {
+    "_doc": "P33 요청서 사유 문구 — 고정 템플릿만 쓴다. LLM 이 문구를 지어내면 심사 문서의 근거가 흔들린다.",
+    "NOT_SUBMITTED": {
+      "ko": "해당 종류의 서류가 제출되지 않았습니다.",
+      "en": "No document of this type has been submitted.",
+      "id": "Dokumen jenis ini belum diserahkan."
+    },
+    "SUBMITTED_CONTENT_MISSING": {
+      "ko": "해당 종류의 서류는 제출됐으나 필요한 정보가 기재되어 있지 않습니다.",
+      "en": "A document of this type was submitted but does not contain the required information.",
+      "id": "Dokumen jenis ini sudah diserahkan tetapi tidak memuat informasi yang diperlukan."
+    },
+    "SUBMITTED_FOR_OTHER_MATERIAL": {
+      "ko": "제출된 서류가 이 원재료를 지목하지 않습니다. 이 원재료에 대한 서류가 필요합니다.",
+      "en": "The submitted document does not refer to this material. A document covering this material is required.",
+      "id": "Dokumen yang diserahkan tidak merujuk pada bahan ini. Diperlukan dokumen untuk bahan ini."
+    },
+    "SUPPORTING_ONLY": {
+      "ko": "보조 자료만 확인됩니다. 정본 서류가 필요합니다.",
+      "en": "Only supporting material was found. The primary document is required.",
+      "id": "Hanya ditemukan dokumen pendukung. Dokumen utama diperlukan."
+    }
+  },
+  "request_sheet_text": {
+    "_doc": "P33 요청서 고정 문구 — 언어별. 렌더러가 한국어를 박아넣지 않게 한다.",
+    "header": {
+      "ko": "부족 서류 요청 (요청 %(req)d건 / 원재료 %(mat)d건)",
+      "en": "Missing document request (%(req)d requests / %(mat)d materials)",
+      "id": "Permintaan dokumen yang kurang (%(req)d permintaan / %(mat)d bahan)"
+    },
+    "reason": {
+      "ko": "사유",
+      "en": "Reason",
+      "id": "Alasan"
+    },
+    "accepted": {
+      "ko": "제출 가능 서류",
+      "en": "Acceptable documents",
+      "id": "Dokumen yang dapat diterima"
+    },
+    "targets": {
+      "ko": "대상 원재료",
+      "en": "Materials",
+      "id": "Bahan"
+    },
+    "more": {
+      "ko": " 외 %(n)d건",
+      "en": " and %(n)d more",
+      "id": " dan %(n)d lainnya"
+    }
+  }
+}

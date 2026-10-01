@@ -26,6 +26,7 @@ DOC_TYPES = [
     "product_list",             # 제품 목록
     "process_flow",             # 공정 흐름도
     "halal_certificate",        # 공급사 할랄 인증서
+    "origin_certificate",       # 원산지증명서 — 유래(source) 증빙의 정본
     "material_list",            # 원재료 목록
     "coa_msds",                 # CoA / MSDS / 성분 명세
     "supplier_declaration",     # 공급사 선언서
@@ -38,6 +39,13 @@ DOC_TYPES = [
     "cleaning_sop",             # 세척 SOP(차량·컨테이너·창고) + Sertu 절차
     "other",
 ]
+
+# DOC_TYPES 는 LLM 분류기에 주는 어휘다.
+# 다른 경로가 직접 기록하는 유형(sjph_evidence — SJPH 증빙 적재 엔드포인트가 쓴다)을
+# 여기 넣으면 분류기가 일반 문서를 그쪽으로 끌어간다.
+# 선언된 전체 어휘는 DOC_TYPES_ALL 로 따로 둔다.
+DOC_TYPES_ALL = DOC_TYPES + ["sjph_evidence"]
+
 # 서류명 3개 언어 — 도메인 사전(domain_dict.json)의 DOC 축에서 파생한다.
 # 전에는 여기 세 벌을 손으로 유지했는데, 같은 말을 사전과 코드가 따로 갖고 있어
 # 인니어 원문 표기('Diagram alir proses produksi')를 서류 유형으로 잇지 못했다.
@@ -164,6 +172,7 @@ DOC_REQUIREMENT = {
     "process_flow": "제조 공정 흐름도 — 원료입고→배합→가열→충전→포장 등 단계 순서",
     "material_list": "전(全) 원재료 목록 — 원재료명·공급사·할랄 상태(인증/선언)",
     "halal_certificate": "임계 원재료 공급사가 받은 할랄 인증서 사본 — 이 플랫폼이 발급하는 인증서가 아니라 신청자가 제출하는 입력 서류다(해당 원재료가 있는 경우)",
+    "origin_certificate": "원산지증명서 — 원재료의 원산지 국가와 공급사·제조사가 판독 가능해야 함. 유래(동물/식물) 표기가 있으면 유래 선언서도 갈음한다",
     "sjph_manual": "SJPH 매뉴얼 — 5요소(경영약속·원재료·공정·제품·모니터링) 포함",
     "logistics_scope": "취급 화물·서비스 범위 — 어떤 제품군(식품·의약·화장품)을 penyimpanan·pengemasan·pendistribusian 중 어느 서비스로 다루는지",
     "warehouse_layout": "창고 배치도 — 할랄/비할랄 구획(Halal Zone)과 동선 분리가 드러나야 함",
@@ -321,6 +330,36 @@ def _decode_text(data):
 
 _OCR_MIN_CONF = float(os.environ.get("GLHAC_OCR_MIN_CONF", "0.5"))
 _OCR_DPI = int(os.environ.get("GLHAC_OCR_DPI", "140"))   # 깨끗한 스캔은 140이 충분(측정), 저품질만 env 상향
+# 기본 OCR 은 한국어 모델이다 — 한글이 아닌 스크립트(키릴/러시아어)는 못 읽는다.
+# 함정: korean 모델은 키릴을 '빈 값'이 아니라 라틴 유사문자로 자신있게 오독한다
+# (실측: 'МОЛОКО'→'MonoKo', 평균 confidence 0.82). 그래서 길이·신뢰도 임계만으론
+# 폴백 트리거가 안 걸린다. 대신 korean 결과에 한글이 없으면(=한국어 문서가 아니면)
+# 아래 언어로도 읽어 평균 신뢰도가 가장 높은 결과를 채택한다. ru→eslav(동슬라브) 모델.
+# 한글이 있으면 한국어 문서이므로 재-OCR 하지 않아 기존 속도를 유지한다.
+_OCR_FALLBACK_LANGS = [s.strip() for s in
+                       os.environ.get("GLHAC_OCR_FALLBACK_LANGS", "ru").split(",") if s.strip()]
+
+
+def _has_hangul(s):
+    return any("가" <= c <= "힣" for c in s)
+
+
+def _mean_conf(lines):
+    cs = [l.get("confidence", 0.0) for l in lines]
+    return sum(cs) / len(cs) if cs else 0.0
+
+
+def _ocr_kept(lines):
+    """confidence 낮은(오인식) 라인을 걸러 텍스트만. 전부 저confidence면 빈 텍스트 방지 폴백."""
+    kept = [l["text"] for l in lines if l.get("confidence", 1) >= _OCR_MIN_CONF]
+    if not kept and lines:
+        kept = [l["text"] for l in lines]
+    return kept
+
+
+def _ocr_score(lines, kept):
+    """OCR 결과 품질 점수 — 내용이 없으면 -1(항상 탈락), 있으면 평균 신뢰도."""
+    return _mean_conf(lines) if "".join(kept).strip() else -1.0
 
 
 def _ocr_bytes(data, ext, sink=None):
@@ -335,12 +374,20 @@ def _ocr_bytes(data, ext, sink=None):
         with os.fdopen(fd, "wb") as f:
             f.write(data)
         lines = ai_local.ocr_image(path).get("lines", [])
+        kept = _ocr_kept(lines)
+        joined = "".join(kept).strip()
+        # 한글이 없으면(=한국어 문서가 아니면) 다른 스크립트로도 읽어 신뢰도 최고를 채택.
+        # 빈 결과(스캔 실패)도 여기 들어와 폴백 언어로 재시도된다.
+        if (not joined) or (not _has_hangul(joined)):
+            best = _ocr_score(lines, kept)
+            for lg in _OCR_FALLBACK_LANGS:
+                alt = ai_local.ocr_image(path, lang=lg).get("lines", [])
+                alt_kept = _ocr_kept(alt)
+                sc = _ocr_score(alt, alt_kept)
+                if sc > best:
+                    best, lines, kept = sc, alt, alt_kept
         if sink is not None:
-            sink.extend(lines[:4000])     # 병적으로 큰 스캔본 방어
-
-        kept = [l["text"] for l in lines if l.get("confidence", 1) >= _OCR_MIN_CONF]
-        if not kept and lines:            # 전부 저confidence면 폴백(빈 텍스트 방지)
-            kept = [l["text"] for l in lines]
+            sink.extend(lines[:4000])     # 병적으로 큰 스캔본 방어(채택된 언어의 라인)
         return " ".join(kept)
     except Exception:  # noqa: BLE001
         return ""
@@ -589,7 +636,10 @@ _CLASSIFY_SYS = (
     "material_names는 원재료(성분) 이름 목록(완제품이 아님). "
     "has_commitment/has_materials/has_process/has_product/has_monitoring는 SJPH 매뉴얼에 "
     "해당 5요소(약속·원재료·공정·제품·모니터링)가 포함되면 true. 없으면 null/false/[]. "
-    '반드시 JSON으로만: {"doc_type":"...","confidence":0.0,'
+    "confidence는 doc_type 분류가 맞다는 확신도를 0.0~1.0 사이 실수로 채우세요 "
+    "(확실하면 0.9 이상, 애매하면 0.5 내외, 근거가 거의 없으면 0.3 이하). "
+    "아래 예시의 0.0을 그대로 복사하지 말고 실제 확신도를 계산해 넣으세요. "
+    '반드시 JSON으로만: {"doc_type":"...","confidence":<0.0~1.0 실수>,'
     '"fields":{"company_name":null,"nib":null,"address":null,"city":null,"province":null,"country":null,"zip":null,'
     '"factory_address":null,"factory_city":null,"factory_province":null,"factory_country":null,"factory_zip":null,'
     '"responsible_person":null,"factory_reg_no":null,"phone":null,"factory_phone":null,'
@@ -618,7 +668,8 @@ _NAME_RULES = [
     (r"제조\s*공정\s*도|공정\s*흐름|process\s*flow|flow\s*chart", "process_flow", "공정도"),
     (r"fssc|haccp|\biso\b|\bgmp\b|22000|식품안전|유기취급|organic|kosher", "quality_cert", "품질/식품안전 인증(HACCP·FSSC·ISO·GMP — 할랄 아님)"),
     (r"소개서|회사\s*소개|company\s*profile|제안서|proposal|접수\s*양식|고객\s*접수|데이터\s*양식|intake\s*form|application\s*form", "other", "소개서·제안서·양식(등록증 아님)"),
-    (r"원산지|수입\s*서류|country\s*of\s*origin|\bcoo\b|certificate\s*of\s*origin|선언서|declaration|확인서|설명서", "supplier_declaration", "원산지·수입·선언서(공급사 선언)"),
+    (r"원산지|수입\s*서류|country\s*of\s*origin|\bcoo\b|certificate\s*of\s*origin|negara\s*asal|surat\s*keterangan\s*asal", "origin_certificate", "원산지증명서(유래 증빙 정본 — 공급사 선언서와 구분)"),
+    (r"선언서|declaration|확인서|설명서|pernyataan", "supplier_declaration", "공급사 선언서·확인서"),
     (r"성적서|시험\s*성적|\bcoa\b|\bmsds\b|성분\s*명세|성분\s*분석|분석\s*성적", "coa_msds", "성적서·성분명세"),
     (r"사업자\s*등록|사업자등록증|business\s*(registration|license)|\bnib\b|법인\s*등기|등록증명원", "nib_business_license", "사업자등록"),
     (r"공장\s*등록|공장등록증|factory\s*registration|manufactur.*licen", "factory_registration", "공장등록"),

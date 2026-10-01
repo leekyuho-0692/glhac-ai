@@ -1,4 +1,5 @@
 """원재료 스크리닝 — 설계 24.13.5 결정 로직."""
+import os
 import re
 from .models import IngredientOntology
 
@@ -127,20 +128,67 @@ def screen(material):
             "required_evidence": evidence, "alternatives": it.alternatives or []}
 
 
-def apply_screen(material):
+# 호출 시점에 읽는 것이 의도적이다 — 테스트·스크립트가 재임포트 없이 플래그를 바꿀 수 있게 한다.
+def _from_docs_enabled():
+    return os.environ.get("GLHAC_EVIDENCE_FROM_DOCS", "").strip().lower() in ("1", "true", "on", "yes")
+
+
+# 3단 모드다. off 는 기존 동작(판정만 기록), format 은 형식 불량만 차단,
+# strict 는 VERIFIED 만 승격. 오타가 인증 판정을 조용히 바꾸면 안 되므로
+# 알 수 없는 값은 off 로 떨어진다. 호출 시점에 읽는 것이 의도적이다.
+def _cert_verify_mode():
+    raw = os.environ.get("GLHAC_CERT_VERIFY", "").strip().lower()
+    if raw in ("", "0", "off", "false", "no"):
+        return "off"
+    if raw == "format":
+        return "format"
+    if raw in ("1", "true", "on", "yes", "strict"):
+        return "strict"
+    return "off"
+
+
+def document_evidence(material, docs, content_check="strict"):
+    """제출 문서로 요구 증빙 충족을 계산한다 — 판정이 문서를 실제로 보게 하는 연결부(Phase 1-B).
+    요구 증빙을 알 수 없으면 None 을 돌려 호출자가 기존 플래그로 되돌아가게 한다."""
+    try:
+        from . import evidence_map as em
+    except Exception:
+        return None
+    required = list(screen(material).get("required_evidence") or [])
+    if not required:
+        return None
+    try:
+        return em.coverage(required, docs or [], content_check=content_check)
+    except Exception:
+        return None
+
+
+def apply_screen(material, docs=None):
     """DB에 저장되는 판정 — 조회·보고서가 쓰는 screen_merged와 같은 경로로 계산한다.
     원시 screen()만 쓰면 미등재 성분이 저장값 UNKNOWN / 조회값 NEEDS_EVIDENCE로 갈려
-    화면과 DB가 어긋난다(재스크리닝 후 실측에서 확인)."""
+    화면과 DB가 어긋난다(재스크리닝 후 실측에서 확인).
+    docs 를 주고 GLHAC_EVIDENCE_FROM_DOCS 가 켜져 있으면 evidence_provided 플래그 대신
+    제출 문서로 계산한 충족 결과를 쓴다. 플래그가 꺼져 있거나 요구 증빙을 알 수 없으면 기존 동작 그대로다."""
+    stored = bool(getattr(material, "evidence_provided", False))
+    cov = None
+    derived = None
+    if docs is not None and _from_docs_enabled():
+        cov = document_evidence(material, docs)
+        if cov is not None:
+            derived = bool(cov.get("decision_ready"))
+    ev = derived if derived is not None else stored
     r = screen_merged(getattr(material, "name", None), getattr(material, "e_number", None),
                       getattr(material, "source", None), getattr(material, "cert_no", None),
-                      bool(getattr(material, "evidence_provided", False)),
+                      ev,
                       (getattr(material, "source_known", None)
                        if getattr(material, "source_known", None) is not None else True),
-                      getattr(material, "note", "") or "")
+                      getattr(material, "note", "") or "", docs=docs)
     material.screen_result = r["result"]
     material.screen_status = r["status"]
     material.screen_severity = r["severity"]
     material.matched_uid = r["matched_uid"]
+    r["evidence_coverage"] = cov
+    r["evidence_source"] = "documents" if derived is not None else "flag"
     return r
 
 
@@ -222,8 +270,9 @@ def v1_rule(name, source, cert_no, note=""):
 
 
 def screen_merged(name, e_number=None, source=None, cert_no=None,
-                  evidence_provided=False, source_known=True, note=""):
-    """병합 스크리닝: ontology 매칭 시 ontology 우선(결정적), 미매칭 시 v1 source-rule."""
+                  evidence_provided=False, source_known=True, note="", docs=None):
+    """병합 스크리닝: ontology 매칭 시 ontology 우선(결정적), 미매칭 시 v1 source-rule.
+    docs 를 주면 인증번호를 제출된 할랄 인증서 문서와 대조한다(REQ-CERT-001)."""
     onto = screen(_Shim(name, e_number, evidence_provided, source_known))
     cert, v1risk = v1_rule(name, source, cert_no, note)
     if onto.get("matched_uid"):
@@ -252,12 +301,25 @@ def screen_merged(name, e_number=None, source=None, cert_no=None,
     # 위험도(severity)는 건드리지 않는다 — 무엇을 근거로 올렸는지, 원래 얼마나 위험한
     # 성분인지는 그대로 남아야 오디터가 인증서 진위를 대조할 수 있다.
     # cert_promoted 플래그로 '증빙으로 해소된 것'과 '번호만 적힌 것'을 구분한다.
+    # 번호가 적혀 있다는 사실만으로 올리지 않는다(REQ-CERT-001). 플래그가 꺼져 있으면 기존
+    # 동작을 유지하되 판정은 기록해 영향 규모를 먼저 잴 수 있게 한다. severity 는 어느 경우에도
+    # 건드리지 않는다 — 무엇을 근거로 올렸는지와 원래 얼마나 위험한 성분인지는 남아야
+    # 오디터가 인증서 진위를 대조할 수 있다.
     out["cert_promoted"] = False
+    out["cert_verification"] = None
     if cert_no and str(cert_no).strip() and out.get("status") == "mushbooh":
-        out["status"] = "halal"
-        out["result"] = "CLEARED"
-        out["cert_promoted"] = True
-        out["decision_by"] = "cert_no"
+        from . import cert_verify as _cv
+        cv = _cv.verify(cert_no, docs)
+        out["cert_verification"] = {"verdict": cv["verdict"], "issuer": cv["issuer"],
+                                    "reason": cv["reason"], "expiry": cv["expiry"]}
+        mode = _cert_verify_mode()
+        verified = _cv.promotes(cv)
+        out["cert_verification"]["mode"] = mode
+        if _cv.may_promote(cv, mode):
+            out["status"] = "halal"
+            out["result"] = "CLEARED"
+            out["cert_promoted"] = True
+            out["decision_by"] = "cert_no_verified" if verified else "cert_no"
     out["v1_risk"] = v1risk
     out["v1_cert"] = cert
     out["source"] = source
