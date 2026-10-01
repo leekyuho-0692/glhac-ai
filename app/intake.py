@@ -3,6 +3,7 @@ import base64
 import io
 import os
 import re
+import unicodedata
 import zipfile
 from . import ai_local
 
@@ -216,17 +217,27 @@ def exempt_text(ko, lang="ko"):
 _IMG = ("png", "jpg", "jpeg", "bmp", "tiff", "tif", "webp")
 
 
+def _nfc(name):
+    """파일명을 NFC(완성형)로 맞춘다.
+
+    macOS(Finder '압축하기'·Safari 업로드)는 한글을 NFD(자모 분해)로 보낸다 — 화면에는
+    똑같이 보이지만 '사업자등록증' 같은 규칙·사전 키워드와 문자열이 달라 매칭이 안 된다.
+    실측: 아카이브.zip 의 '사업자등록증'·'공장등록증'이 파일명 판정을 놓쳐 기타로 떨어졌다."""
+    return unicodedata.normalize("NFC", name) if name else name
+
+
 def _zip_name(zi):
     """한국어 Windows ZIP은 파일명이 CP949인데 UTF-8 플래그(0x800)가 없으면
-    zipfile이 CP437로 디코드해 깨진다(┴╓..). CP437로 되돌려 CP949로 재디코드."""
+    zipfile이 CP437로 디코드해 깨진다(┴╓..). CP437로 되돌려 CP949로 재디코드.
+    macOS ZIP은 플래그 없이 UTF-8(NFD)이라 CP949가 실패하고 UTF-8로 풀린다 — NFC로 맞춘다."""
     name = zi.filename
     if not (zi.flag_bits & 0x800):
         for enc in ("cp949", "euc-kr", "utf-8"):
             try:
-                return name.encode("cp437").decode(enc)
+                return _nfc(name.encode("cp437").decode(enc))
             except Exception:
                 continue
-    return name
+    return _nfc(name)
 
 
 class ArchiveError(Exception):
@@ -276,7 +287,7 @@ def _extract_with_tool(data, suffix):
                 if n.startswith("."):
                     continue
                 p = os.path.join(root, n)
-                rel = os.path.relpath(p, dst)
+                rel = _nfc(os.path.relpath(p, dst))   # macOS 압축은 NFD
                 if "__MACOSX" in rel:
                     continue
                 try:
@@ -716,6 +727,7 @@ def refine_doctype_reason(name, llm_type, text=None):
     사전이 아무것도 모르지만, 그 안의 시트명은 'Form.9 재료 보관 기록' 이고 사전은
     그것을 운영 기록물로 정확히 안다. 파일명만 보던 동안 이 서류는 원재료 목록으로
     분류돼 보관 기록의 입출고 행에서 원재료 42~74건이 지어졌다(모델마다 달랐다)."""
+    name = _nfc(name)   # 단건 업로드도 macOS 브라우저면 NFD 로 온다
     n = (name or "").lower()
     from .domain_dict import doc_type_of, evidence_key_of, lookup
     base = re.sub(r"\.[a-z0-9]{2,5}$", "", (name or "").strip())
