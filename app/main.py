@@ -6156,7 +6156,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
             if f.get(k):
                 setattr(c, k, f[k])
                 applied[k] = f[k]
-    elif body.doc_type in ("material_list", "product_label"):
+    elif body.doc_type in ("material_list", "product_label", "coa_msds", "quality_cert", "supplier_declaration"):
         names = f.get("material_names") or f.get("ingredients") or []
         have = {m.name for m in db.query(models.Material).filter_by(case_id=case_id)}
         for mn in names:
@@ -6166,6 +6166,14 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                        screen_status=sc["status"], screen_severity=sc["severity"],
                                        matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk")))
         applied["materials_added"] = len(names)
+        if body.doc_type in ("coa_msds", "product_label"):
+            pnames = f.get("product_names") or []
+            have_p = {p.name for p in db.query(models.Product).filter_by(case_id=case_id)}
+            addp = 0
+            for pn in pnames:
+                if pn and pn not in have_p:
+                    db.add(models.Product(case_id=case_id, name=pn)); addp += 1
+            applied["products_added"] = addp
     elif body.doc_type == "product_list":
         names = f.get("product_names") or []
         have = {p.name for p in db.query(models.Product).filter_by(case_id=case_id)}
@@ -6181,6 +6189,11 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                 text_excerpt=r.get("excerpt"),
                                 content_b64=_b64 if len(_b64) < 4_000_000 else None,
                                 content_type=_ctype(body.filename)))
+    if f:
+        _save_ai_extraction(db, case_id, "parse_file:" + body.doc_type, f,
+                            confidence=r.get("confidence"),
+                            evidence=(r.get("excerpt") or ""),
+                            model_name="parse_typed", model_version="v3")
     sm.record_event(db, c, c.status, c.status, "documents.parse_file", "ai", user["uid"],
                     {"doc_type": body.doc_type, "applied": applied})
     db.commit()
