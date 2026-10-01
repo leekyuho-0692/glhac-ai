@@ -342,6 +342,10 @@ class DocumentAsset(Base):
     uploader_role = Column(String) # 업로더 역할 — 증거 귀속(감사 A08 누가)
     captured_at = Column(String)   # EXIF DateTimeOriginal 원본 촬영시각 — 증거 귀속(A08 언제)
     file_hash = Column(String)     # sha256 파일 해시 — 증거 무결성(A08 무결성)
+    # 추출 전문(OCR·파서 결과). text_excerpt 는 300자로 잘려 있어 증빙 스코프 판정
+    # ("이 문서가 이 원재료를 지목하는가")이 과소판정된다 — 실측 84건이 절단에 가려져 있었다.
+    # 같은 파일을 두 번 OCR 하지 않기 위해 여기 둔다.
+    text_full = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -994,4 +998,75 @@ class BoardReply(Base):
     parent_reply_id = Column(String, index=True) # 대댓글 — 어느 답글에 달았는지
     body = Column(Text, nullable=False)
     edited_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MaterialEvidenceLink(Base):
+    """문서↔원재료 N:M 링크 — 설계 P13 Binding.
+
+    `document_asset.material_id` 는 1:1 이라 문서 한 장이 원재료 여러 건을 덮을 수 없다.
+    전성분표 한 장이 원재료 153건을 나열하는 것이 실측이다. 그래서 문서↔원재료를
+    N:M 으로 잇는 링크 테이블을 둔다."""
+    __tablename__ = "material_evidence_links"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    document_id = Column(String, nullable=False, index=True)
+    material_id = Column(String, nullable=False, index=True)
+    # DIRECT|INDIRECT|INFERRED — 문서가 이 원재료를 직접 지목했는가, 관계를 따라 이었는가,
+    # 시스템이 추론했는가. INFERRED 는 자동 최종확정 금지(설계서 REQ-EVD-010).
+    link_type = Column(String)
+    # 왜 이었는지 — 근거 없는 링크를 만들지 않기 위해 반드시 채운다.
+    link_reason = Column(Text)
+    # explicit|name|alias|material_names|manual — 무엇으로 이었는지.
+    # 사후에 이름매칭 오탐을 걸러내려면 근거 종류가 남아야 한다.
+    match_basis = Column(String)
+    page = Column(Integer, nullable=True)      # 문서 내 위치(있으면)
+    confidence = Column(Float, nullable=True)
+    verified_by = Column(String, nullable=True)   # 사람이 확인했으면 그 uid
+    verified_at = Column(String, nullable=True)
+    created_by = Column(String)                # system|uid
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CertificateScopeItem(Base):
+    """인증서가 무엇을 덮는지 적어두는 표.
+
+    번호가 문서로 확인됐다는 것과 그 인증서가 이 원재료를 덮는다는 것은 다른 문제다
+    (설계서 REQ-CERT-004·005). 회사 단위 인증서로 전 제품을 할랄로 올리는 것을 막기 위해
+    scope_type 을 구분한다."""
+    __tablename__ = "certificate_scope_item"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    document_id = Column(String, nullable=True, index=True)   # 이 scope 를 읽어낸 문서
+    certificate_no = Column(String, nullable=False, index=True)
+    # PRODUCT|INGREDIENT|FACTORY|COMPANY|PROCESS — 회사 단위 인증서(COMPANY)로
+    # 개별 제품·원재료를 자동 승격해서는 안 된다(REQ-CERT-005).
+    scope_type = Column(String, nullable=False)
+    scope_value = Column(String, nullable=False)   # 덮는 대상의 이름 그대로
+    normalized = Column(String, nullable=True)     # 비교용 정규화 이름
+    issuer = Column(String, nullable=True)
+    issue_date = Column(String, nullable=True)
+    expiry_date = Column(String, nullable=True)
+    source_page = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DocumentRequest(Base):
+    """부족 서류 요청 이력(P33).
+
+    누가 언제 무엇을 요청했는지 남지 않으면 인증 감사에서 "이 서류를 요구했다"를 증명할 수 없다.
+    요청 시점의 시트를 스냅샷으로 함께 저장한다 — 나중에 판정 로직이 바뀌어도 그때 무엇을
+    요구했는지는 그대로 남아야 한다."""
+    __tablename__ = "document_request"
+    request_id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False, index=True)
+    lang = Column(String)              # 고객이 받은 문구 그대로를 남긴다
+    request_count = Column(Integer)     # 요청 건수(원재료×증빙)
+    material_count = Column(Integer)    # 대상 원재료 수
+    group_count = Column(Integer)       # 묶인 그룹 수
+    codes = Column(JSON)                # 무엇을 요구했는지 한눈에 보기 위한 색인
+    sheet = Column(JSON)                # 요청 시점 시트 스냅샷(그룹·사유·대상 원재료)
+    notification_id = Column(String, nullable=True)   # 이 요청으로 만든 알림
+    requested_by = Column(String)       # 요청한 사용자 uid
+    requested_role = Column(String)     # 그때의 역할
     created_at = Column(DateTime, default=datetime.utcnow)
