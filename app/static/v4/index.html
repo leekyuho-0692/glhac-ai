@@ -3433,14 +3433,14 @@ const App = {
       S.role=ui; S.view=ROLES[rk].home;
       const list = ROLES[rk].list(); S.userId = (list[0] && list[0].id) || null;
       S.loginEmail=null;
-      if(ui==='aud'){ await loadAud(); }
+      if(ui==='aud'){ await loadAud(); } else if(ui==='ent'){ await loadEnt(); }
       render(); window.scrollTo(0,0);
       toast('로그인되었습니다. ('+esc(d.username)+' · '+ui+')');
     }catch(err){ toast('서버에 연결할 수 없습니다. 네트워크를 확인해 주세요.'); }
     finally{ if(btn) btn.disabled=false; }
   },
   logout(){ if(AUTH.access){ fetch(API_BASE+'/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+AUTH.access}}).catch(()=>{}); } authClear(); S.role=null; S.userId=null; S.auth='login'; closeModal(); render(); window.scrollTo(0,0); toast('로그아웃되었습니다.'); },
-  async go(v){ S.view=v; if(S.role==='aud'){ await loadAud(); } render(); window.scrollTo(0,0); },
+  async go(v){ S.view=v; if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } render(); window.scrollTo(0,0); },
   terms(k){ openModal(TERMS[k].title, TERMS[k].body); },
 
   /* signup */
@@ -3466,6 +3466,7 @@ const App = {
       const ui=AUTH.uiRole||'ent'; const rk=Object.keys(ROLES).find(k=>ROLES[k].code===ui);
       S.role=ui; S.view=ROLES[rk].home; const list=ROLES[rk].list(); S.userId=(list[0]&&list[0].id)||null;
       S.signup=null; S.consPick=null; S.auth='login';
+      await loadEnt();
       render(); window.scrollTo(0,0);
       toast('인증기업 가입이 완료되었습니다.'+(d.referral&&d.referral.consultant?(' 담당 컨설턴트: '+d.referral.consultant):''));
     }catch(err){ toast('서버에 연결할 수 없습니다. 네트워크를 확인해 주세요.'); }
@@ -4804,6 +4805,39 @@ App.finalBundle = async function(cid){
     const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='evidence_'+cid.slice(0,8)+'.zip';
     document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000); toast('증거 번들을 내려받았습니다.');
   }catch(e){ toast('번들 내보내기에 실패했습니다.'); }
+};
+
+
+/* ===== P4 슬라이스1: 인증기업(ent) 실데이터 계층 + ent-home ===== */
+async function loadEnt(){
+  try{
+    const r = await apiFetch('/cases');
+    RS.cases = r.ok ? ((await r.json()).items || []) : [];
+    RS.loadedFor = AUTH.username;
+  }catch(e){ RS.cases = []; }
+}
+function _stepper8(step, hold, done){
+  return `<ol class="stepper" style="grid-template-columns:repeat(8,minmax(0,1fr))">${S8_LABELS.map((l,i)=>{
+    const cls = (done || i<step) ? 'done' : (i===step ? 'cur' : 'todo');
+    return `<li class="st ${cls}"><span class="st-node"></span><span class="st-no">${pad(i+1)}</span><span class="st-label">${esc(l)}</span></li>`;
+  }).join('')}</ol>`;
+}
+VIEWS['ent-home'] = () => {
+  const c = (RS.cases||[])[0];
+  if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다. 인증 신청서를 작성해 주세요.</p></section>`;
+  return `
+  <section class="summary">
+    <div><span class="k">신청 번호</span><span class="v mono">${esc(c.case_id.slice(0,8))}</span></div>
+    <div><span class="k">현재 단계</span><span class="v">${esc(_s8label(c))}</span></div>
+    <div><span class="k">상태</span><span class="v">${c.hold?'<span class="badge attn">보완 필요</span>':(c.done?'<span class="badge strong">완료</span>':'<span class="badge">진행 중</span>')}</span></div>
+    <div><span class="k">전담 컨설턴트</span><span class="v">${esc(c.consultant||'배정 대기')}</span></div>
+  </section>
+  <section class="panel"><div class="panel-head"><h2>${esc(c.company_name)} 인증 진행 현황</h2><span class="muted mono">${esc(c.status||'')}</span></div>
+    ${_stepper8(typeof c.step8==='number'?c.step8:0, c.hold, c.done)}
+    ${c.next_action?`<div class="note ${c.hold?'attn':''}"><b>${c.hold?'보완 필요':'다음 단계'}</b><p>${esc(c.next_action)}</p></div>`:''}
+    <dl class="dl"><div><dt>담당 심사원</dt><dd>${esc(c.main_auditor||'배정 전')}</dd></div><div><dt>인증 분야</dt><dd>${esc(c.scheme||'-')}</dd></div></dl>
+  </section>
+  <p class="muted" style="font-size:12px">· 사전심사·신청서·계약·문서함·컨설턴트 상담은 P4 후속에서 실데이터로 연결됩니다.</p>`;
 };
 
 window.App = App;
