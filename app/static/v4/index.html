@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, fatwaQ: null, fatwa: {}, admCert: {}, admExperts: null, admPrice: null, admPay: null, flow: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, fatwaQ: null, fatwa: {}, admCert: {}, admExperts: null, admPrice: null, admPay: null, flow: {}, aiq: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4432,6 +4432,75 @@ App.preDoDocReq = async function(cid){
   const r = await apiFetch('/cases/'+cid+'/preassess/doc-request', {method:'POST', body:JSON.stringify({items, message})});
   if(!r.ok){ return toast('보완 요청에 실패했습니다.'); }
   closeModal(); delete RS.pre[cid]; await loadPre(cid); render(); toast('보완 서류를 요청했습니다. 기업에 알림이 전달됩니다.');
+};
+
+
+/* ===== P3 후속: aud-aiq(AI 검수 큐) 실데이터 — ai_extraction 수용/재정의(§7.2 HIL) ===== */
+async function loadAiq(cid){
+  try{ const r = await apiFetch('/cases/'+cid+'/ai-extractions'); RS.aiq[cid] = r.ok ? (await r.json()) : {error:true}; }
+  catch(e){ RS.aiq[cid] = {error:true}; }
+}
+const _AIQ_ST = {unreviewed:['미검수','attn'], accepted:['수용','strong'], overridden:['재정의','attn']};
+function _aiqConf(x){ return x.confidence==null ? null : (x.confidence>1 ? Math.round(x.confidence) : Math.round(x.confidence*100)); }
+function _aiqExtract(ex){
+  let v = ex.extracted;
+  if(v && typeof v==='object'){
+    if(Array.isArray(v)) return v.length+'개 항목';
+    const keys = Object.keys(v);
+    return keys.slice(0,3).map(k=>`<b>${esc(k)}</b> ${esc(String(v[k]==null?'':(typeof v[k]==='object'?JSON.stringify(v[k]):v[k])).slice(0,44))}`).join(' · ') + (keys.length>3?` <span class="muted">외 ${keys.length-3}</span>`:'');
+  }
+  return esc(String(v==null?'':v).slice(0,90)) || '—';
+}
+VIEWS['aud-aiq'] = () => {
+  const list = (RS.cases||[]).filter(c=>!c.done);
+  if(!list.length) return `<section class="panel"><p class="empty">검수할 담당 업체가 없습니다.</p></section>`;
+  let cur = (S.selAiq && list.find(c=>c.case_id===S.selAiq)) ? S.selAiq : list[0].case_id;
+  S.selAiq = cur;
+  const nav = `<nav class="mlist" aria-label="검수 대상 목록"><div class="mh">담당 업체 ${list.length}개사</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selAiq('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const d = (RS.aiq||{})[cur]; let body;
+  if(!d){
+    if(RS._aiqLoading!==cur){ RS._aiqLoading=cur; loadAiq(cur).then(()=>{ RS._aiqLoading=null; render(); }); }
+    body = '<section class="panel"><p class="empty">AI 추출 자료를 불러오는 중…</p></section>';
+  } else if(d.error){
+    body = '<section class="panel"><p class="empty">AI 추출 자료를 불러오지 못했습니다.</p></section>';
+  } else {
+    const rows = Array.isArray(d) ? d : [];
+    const f = S.aiqF||'전체';
+    const low = x => { const c=_aiqConf(x); return c!=null && c<75; };
+    const L = rows.filter(x=> f==='전체' || (f==='저신뢰'&&low(x)) || (f==='미검수'&&x.reviewer_status==='unreviewed') || (f==='검수 완료'&&x.reviewer_status!=='unreviewed'));
+    const n_low = rows.filter(low).length, n_un = rows.filter(x=>x.reviewer_status==='unreviewed').length, n_done = rows.length-n_un;
+    const k = (l,n,fk)=>`<button class="chip ${f===fk?'on':''}" onclick="App.aiqF('${fk}')">${l}<span class="mono">${n}</span></button>`;
+    body = `<div class="note"><b>AI 데이터 정확성 검수</b><p>AI가 서류에서 추출한 값과 신뢰도를 확인하고 <b>수용</b> 또는 <b>재정의</b>합니다. 신뢰도가 낮은 항목을 먼저 검토하세요. (§7.2 Human-in-the-loop)</p></div>
+    <section class="summary"><div><span class="k">AI 추출 항목</span><span class="v mono">${rows.length}</span></div><div><span class="k">저신뢰 (75% 미만)</span><span class="v mono">${n_low}</span></div><div><span class="k">미검수</span><span class="v mono">${n_un}</span></div><div><span class="k">검수 완료</span><span class="v mono">${n_done}</span></div></section>
+    <section class="panel"><div class="panel-head"><h2>AI 추출·검수</h2><div class="chipbar">${k('전체',rows.length,'전체')}${k('저신뢰',n_low,'저신뢰')}${k('미검수',n_un,'미검수')}${k('검수 완료',n_done,'검수 완료')}</div></div>
+      <div class="tbl-wrap"><table><thead><tr><th style="min-width:130px">소스 · 모델</th><th style="min-width:200px">추출값</th><th class="num">신뢰도</th><th>검수 상태</th><th style="min-width:150px">검수 노트</th><th>동작</th></tr></thead><tbody>
+      ${L.slice().sort((a,b)=>(_aiqConf(a)??101)-(_aiqConf(b)??101)).map(x=>{ const st=_AIQ_ST[x.reviewer_status]||_AIQ_ST.unreviewed; const conf=_aiqConf(x); const lo=conf!=null&&conf<75;
+        return `<tr><td><b>${esc(x.source||'문서')}</b><div class="muted mono" style="font-size:11px">${esc(x.model_name||'')}${x.model_version?' '+esc(x.model_version):''}</div></td>
+        <td>${_aiqExtract(x)}${x.evidence?`<div class="muted" style="font-size:11px">📎 ${esc(String(x.evidence).slice(0,60))}</div>`:''}</td>
+        <td class="num ${lo?'':'muted'}">${conf==null?'—':(lo?'<b>'+conf+'%</b>':conf+'%')}</td>
+        <td><span class="badge ${st[1]}">${st[0]}</span></td>
+        <td>${x.reviewer_note?esc(x.reviewer_note):'<span class="muted">—</span>'}</td>
+        <td><div class="row-act"><button class="btn btn-sm btn-primary" onclick="App.aiqReview('${cur}','${x.id}','accepted')">수용</button><button class="btn btn-sm" onclick="App.aiqReview('${cur}','${x.id}','overridden')">재정의</button></div></td></tr>`; }).join('') || '<tr><td colspan="6" class="empty">해당 조건의 추출 항목이 없습니다.</td></tr>'}
+      </tbody></table></div></section>`;
+  }
+  return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${body}</div></div>`;
+};
+App.selAiq = async function(id){ S.selAiq=id; if(!(RS.aiq||{})[id]) await loadAiq(id); render(); };
+App.aiqF = function(f){ S.aiqF=f; render(); };
+App.aiqReview = function(cid, extId, status){
+  if(status==='overridden'){
+    openModal('AI 추출값 재정의', `<p>AI 추출 결과를 <b>재정의(overridden)</b>로 기록합니다. 원본 서류와 다른 부분·올바른 값을 적어 주세요.</p><div class="field"><label for="aiq-note">검수 노트</label><textarea class="in" id="aiq-note"></textarea></div>`,
+      `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.aiqDoReview('${cid}','${extId}','overridden')">재정의 기록</button>`);
+    return;
+  }
+  App.aiqDoReview(cid, extId, 'accepted');
+};
+App.aiqDoReview = async function(cid, extId, status){
+  const note = (($('#aiq-note')||{}).value||'').trim();
+  const r = await apiFetch('/ai-extractions/'+extId+'/review', {method:'PATCH', body:JSON.stringify({reviewer_status:status, note})});
+  if(!r.ok){ return toast('검수 기록에 실패했습니다.'); }
+  closeModal(); delete RS.aiq[cid]; await loadAiq(cid); render();
+  toast(status==='accepted'?'AI 추출값을 수용했습니다.':'AI 추출값을 재정의로 기록했습니다.');
 };
 
 
