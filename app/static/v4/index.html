@@ -5728,6 +5728,397 @@ App.genPdf = async function(gid, name){
   }catch(e){ toast('PDF 오류'); }
 };
 
+
+/* ===== P3 후속: aud-resubmit(보완·재전송 센터) 실데이터 ===== */
+RS.resub = RS.resub || {};
+
+async function loadResub(cid){
+  try{
+    const [cRes, aRes] = await Promise.all([
+      apiFetch('/cases/'+cid+'/resubmit-center'),
+      apiFetch('/cases/'+cid+'/corrective-actions')
+    ]);
+    let center;
+    try{ center = cRes.ok ? (await cRes.json()) : {error:true}; }
+    catch(e){ center = {error:true}; }
+    let cars;
+    try{ const aj = aRes.ok ? (await aRes.json()) : []; cars = Array.isArray(aj) ? aj : []; }
+    catch(e){ cars = []; }
+    RS.resub[cid] = {center, cars};
+  }catch(e){
+    RS.resub[cid] = {center:{error:true}, cars:[]};
+  }
+}
+
+const RESUB_SEV = {major:'중대', minor:'경미', observation:'관찰'};
+const RESUB_DIFF = {added:['attn','신규'], changed:['attn','변경'], unchanged:['','동일'], resubmitted:['attn','재제출'], missing:['','미재제출']};
+
+VIEWS['aud-resubmit'] = () => {
+  const list = (RS.cases||[]).slice().sort((a,b)=> (b.hold?1:0) - (a.hold?1:0));
+  if(!list.length) return `<section class="panel"><p class="empty">담당 업체가 없습니다.</p></section>`;
+  let cur = (S.selResub && list.find(c=>c.case_id===S.selResub)) ? S.selResub : list[0].case_id;
+  S.selResub = cur;
+  const nav = `<nav class="mlist" aria-label="담당 업체 목록"><div class="mh">담당 업체 ${list.length}개사</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selResub('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span>${c.hold?`<span class="badge attn">보완</span>`:`<span class="badge">${esc(_s8label(c))}</span>`}</span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const d = (RS.resub||{})[cur]; let body;
+  if(!d){
+    if(RS._resubLoading!==cur){ RS._resubLoading=cur; loadResub(cur).then(()=>{ RS._resubLoading=null; render(); }); }
+    body = '<section class="panel"><p class="empty">불러오는 중…</p></section>';
+  } else if(d.center.error){
+    body = '<section class="panel"><p class="empty">불러오지 못했습니다.</p></section>';
+  } else {
+    body = _audResubDetail(cur, d);
+  }
+  return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${body}</div></div>`;
+};
+
+function _audResubDetail(cid, d){
+  const center = d.center || {};
+  const counts = center.counts || {};
+  const requests = Array.isArray(center.requests) ? center.requests : [];
+  const cars = Array.isArray(d.cars) ? d.cars : [];
+
+  let html = `<div class="note"><b>보완·재전송</b><p>각 심사 단계에서 요청한 보완·추가 서류를 한곳에서 확인하고 재제출본을 확인 처리합니다.</p></div>`;
+
+  html += `<section class="summary">
+    <div><span class="k">대기</span><span class="v mono">${esc(String(counts.pending||0))}</span></div>
+    <div><span class="k">재제출됨</span><span class="v mono">${esc(String(counts.resubmitted||0))}</span></div>
+    <div><span class="k">해결</span><span class="v mono">${esc(String(counts.resolved||0))}</span></div>
+    <div><span class="k">전체 요청</span><span class="v mono">${esc(String(counts.total||0))}</span></div>
+  </section>`;
+
+  html += `<section class="panel"><div class="panel-head"><h2>보완 요청 항목</h2></div>`;
+  if(!requests.length){
+    html += `<p class="empty">보완 요청이 없습니다.</p>`;
+  } else {
+    html += `<ul class="rows">`;
+    for(const req of requests){
+      const items = Array.isArray(req.items) ? req.items : [];
+      const src = esc(req.source_ko||'');
+      const roundTxt = (req.round!=null) ? ' · '+esc(String(req.round))+'차' : '';
+      let left = `<b>${src}${roundTxt}</b>`;
+      let mutedTxt = esc(req.reason||'');
+      if(items.length) mutedTxt += ' · '+esc(items.join(', '));
+      if(req.due) mutedTxt += ' · 기한 '+esc(req.due);
+      if(req.severity && RESUB_SEV[req.severity]) mutedTxt += ' · '+esc(RESUB_SEV[req.severity]);
+      left += `<span class="muted">${mutedTxt}</span>`;
+
+      let car = null;
+      if(req.source==='car' && req.finding_id){
+        car = cars.find(x=>x.finding_id===req.finding_id && x.status==='submitted') || null;
+      }
+      if(req.source==='car' && car){
+        let ctxt = '시정조치: '+esc(car.description||'');
+        if(car.evidence) ctxt += ' · 증빙 '+esc(car.evidence);
+        left += `<div class="muted">${ctxt}</div>`;
+      }
+
+      let right = '';
+      if(req.status==='pending') right += `<span class="badge">대기</span>`;
+      else if(req.status==='resubmitted') right += `<span class="badge attn">재제출됨</span>`;
+      else if(req.status==='resolved') right += `<span class="badge strong">해결</span>`;
+
+      if(req.status==='resubmitted'){
+        if(req.source==='car' && car){
+          right += `<button class="btn btn-sm btn-primary" onclick="App.resubCar('${cid}','${car.id}','accepted')">수용</button><button class="btn btn-sm btn-ghost" onclick="App.resubCar('${cid}','${car.id}','rejected')">반려</button>`;
+        } else if(req.source==='preassess'){
+          right += `<button class="btn btn-sm" onclick="App.go('aud-pre')">사전심사 재검토 →</button>`;
+        } else if(req.source==='audit_report'){
+          right += `<button class="btn btn-sm" onclick="App.go('aud-final')">보고서 확인 →</button>`;
+        }
+      }
+
+      html += `<li class="row"><div>${left}</div><div class="row-act">${right}</div></li>`;
+    }
+    html += `</ul>`;
+  }
+  html += `</section>`;
+
+  const cmpReq = requests.find(r=> r.compare && Array.isArray(r.compare.diff) && r.compare.diff.length);
+  if(cmpReq){
+    html += `<section class="panel"><div class="panel-head"><h2>이전 ↔ 새 제출본 비교</h2></div><div class="tbl-wrap"><table><thead><tr><th>서류 종류</th><th>이전 제출본</th><th>새 제출본</th><th>차이</th></tr></thead><tbody>`;
+    for(const row of cmpReq.compare.diff){
+      const prev = row.prev;
+      const nw = row['new'];
+      const prevTxt = prev ? (esc(prev.filename||'')+' · '+esc((prev.at||'').slice(0,10))) : '-';
+      const newTxt = nw ? (esc(nw.filename||'')+' · '+esc((nw.at||'').slice(0,10))) : '-';
+      const dm = RESUB_DIFF[row.status] || ['',''];
+      const badge = `<span class="badge ${dm[0]}">${esc(dm[1])}</span>`;
+      html += `<tr><td>${esc(row.doc_type_ko||row.doc_type||'')}</td><td class="mono muted">${prevTxt}</td><td class="mono">${newTxt}</td><td>${badge}</td></tr>`;
+    }
+    html += `</tbody></table></div></section>`;
+  }
+
+  return html;
+}
+
+App.selResub = async function(id){ S.selResub=id; if(!(RS.resub||{})[id]) await loadResub(id); render(); };
+
+App.resubCar = function(cid, carId, status){
+  if(status==='rejected'){
+    openModal('시정조치 반려',
+      `<p>반려 사유를 입력해 주세요.</p><div class="field"><label for="rc-note">반려 사유</label><textarea class="in" id="rc-note"></textarea></div><div class="inline-msg" id="rc-e"></div>`,
+      `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.resubDoCar('${cid}','${carId}','rejected')">반려</button>`);
+    return;
+  }
+  App.resubDoCar(cid, carId, 'accepted');
+};
+
+App.resubDoCar = async function(cid, carId, status){
+  let note = '';
+  if(status==='rejected'){
+    note = (($('#rc-note')||{}).value||'').trim();
+    if(!note){ const el=$('#rc-e'); if(el) el.textContent='반려 사유를 입력해 주세요.'; return; }
+  }
+  let r;
+  try{ r = await apiFetch('/car/'+carId+'/review', {method:'PATCH', body:JSON.stringify({status, note})}); }
+  catch(e){ toast('시정조치 검토 기록에 실패했습니다.'); return; }
+  if(!r.ok){ toast('시정조치 검토 기록에 실패했습니다.'); closeModal(); delete RS.resub[cid]; await loadResub(cid); render(); return; }
+  closeModal();
+  delete RS.resub[cid];
+  await loadResub(cid);
+  await loadAud();
+  render();
+  toast(status==='accepted' ? '시정조치를 수용했습니다. 지적사항이 종결됩니다.' : '시정조치를 반려했습니다.');
+};
+
+
+/* ===== P3 후속: aud-cert(심의·발급·등록 현황) + aud-contract(계약 확인) 실데이터 — 읽기 전용 ===== */
+RS.audCert = RS.audCert || {};
+
+async function loadAudCert(ids) {
+  await Promise.all(ids.map(async (cid) => {
+    try {
+      const r = await apiFetch('/cases/' + encodeURIComponent(cid) + '/certificate');
+      RS.audCert[cid] = r.ok ? await r.json() : { issued: false, error: true };
+    } catch (e) {
+      RS.audCert[cid] = { issued: false, error: true };
+    }
+  }));
+}
+
+VIEWS['aud-cert'] = function () {
+  const note = '<div class="note"><b>06 이후 단계</b><p>샤리아 심의 결과 확정, 인증서 발급, SiHalal 등록은 샤리아 위원회와 관리자가 진행합니다. 오디터는 결과를 확인하고 사후관리를 이어갑니다.</p></div>';
+  const targets = (RS.cases || []).filter(c => (typeof c.step8 === 'number' && c.step8 >= 5) || c.done);
+  if (!targets.length) {
+    return note + '<section class="panel"><p class="empty">샤리아 심의 이후 단계의 업체가 없습니다.</p></section>';
+  }
+  const missing = targets.filter(c => !(c.case_id in RS.audCert)).map(c => c.case_id);
+  if (missing.length) {
+    if (!RS._audCertLoading) {
+      RS._audCertLoading = true;
+      loadAudCert(missing).then(() => { RS._audCertLoading = false; render(); });
+    }
+    return note + '<section class="panel"><p class="empty">불러오는 중…</p></section>';
+  }
+  let rows = '';
+  targets.forEach(c => {
+    const cert = RS.audCert[c.case_id] || { issued: false };
+    const issued = !!cert.issued;
+    const fatwa = cert.fatwa_decision_no ? esc(cert.fatwa_decision_no) : (issued ? '-' : '<span class="muted">심의 중</span>');
+    const certNo = cert.error ? '<span class="muted">조회 실패</span>' : (issued && cert.certificate_no ? esc(cert.certificate_no) : '발급 전');
+    let validity = '-';
+    if (issued) {
+      validity = esc(cert.issue_date || '-') + ' ~ ' + esc(cert.expiry_date || '-');
+      if (cert.days_to_expiry !== null && cert.days_to_expiry !== undefined) {
+        validity += ' (D-' + esc(String(cert.days_to_expiry)) + ')';
+      }
+    }
+    let statusCell = '-';
+    if (issued) {
+      const cls = cert.status === 'active' ? 'strong' : 'attn';
+      statusCell = '<span class="badge ' + cls + '">' + esc(cert.status || '-') + '</span>';
+    }
+    const sihalal = cert.official_bpjph_no
+      ? '<span class="badge attn">등록 ' + esc(cert.official_bpjph_no) + '</span>'
+      : '<span class="badge">대기</span>';
+    const pdfCell = issued
+      ? '<button class="btn btn-sm" onclick="App.certPdf(\'' + c.case_id + '\')">PDF</button>'
+      : '';
+    rows += '<tr>'
+      + '<td><button class="link" style="font-weight:700;text-decoration:none" onclick="App.audDetail(\'' + c.case_id + '\')">' + esc(c.company_name) + '</button></td>'
+      + '<td><span class="badge">' + esc(_s8label(c)) + '</span></td>'
+      + '<td class="mono">' + fatwa + '</td>'
+      + '<td class="mono">' + certNo + '</td>'
+      + '<td class="mono">' + validity + '</td>'
+      + '<td>' + statusCell + '</td>'
+      + '<td>' + sihalal + '</td>'
+      + '<td>' + pdfCell + '</td>'
+      + '</tr>';
+  });
+  return note
+    + '<section class="panel"><div class="panel-head"><h2>심의 · 발급 · 등록 현황</h2><span class="muted">' + targets.length + '건</span></div>'
+    + '<div class="tbl-wrap"><table><thead><tr>'
+    + '<th>업체</th><th>단계</th><th>파트와 결정번호</th><th>인증서</th><th>유효기간</th><th>상태</th><th>SiHalal</th><th>PDF</th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table></div></section>';
+};
+
+VIEWS['aud-contract'] = function () {
+  const note = '<div class="note"><b>03 계약 단계</b><p>견적과 계약은 컨설턴트와 인증기업이 진행합니다. 오디터는 계약 체결 여부를 확인하고, 체결되면 모의심사 일정을 준비합니다.</p></div>';
+  const targets = (RS.cases || []).filter(c => !c.done);
+  if (!targets.length) {
+    return note + '<section class="panel"><p class="empty">담당 업체가 없습니다.</p></section>';
+  }
+  const missing = targets.filter(c => !(c.case_id in RS.entCt)).map(c => c.case_id);
+  if (missing.length) {
+    if (!RS._audCtLoading) {
+      RS._audCtLoading = true;
+      Promise.all(missing.map(id => loadEntCt(id))).then(() => { RS._audCtLoading = false; render(); });
+    }
+    return note + '<section class="panel"><p class="empty">불러오는 중…</p></section>';
+  }
+  let rows = '';
+  targets.forEach(c => {
+    const ent = RS.entCt[c.case_id] || {};
+    const ct = ent.contract || { exists: false };
+    const invoices = Array.isArray(ent.invoices) ? ent.invoices : [];
+    const exists = !!ct.exists;
+
+    let statusCell = '<span class="muted">미작성</span>';
+    if (exists) {
+      const cls = (ct.signed_a && ct.signed_b) ? 'strong' : 'attn';
+      statusCell = '<span class="badge ' + cls + '">' + esc(ct.status || '-') + '</span>';
+    }
+    const noCell = exists ? esc(ct.contract_no || '-') : '-';
+    const feeCell = exists ? _money(ct.fee, ct.currency) : '-';
+    const effCell = exists ? esc(ct.effective_date || '-') : '-';
+    const signCell = exists
+      ? '기업 ' + (ct.signed_a ? '✓' : '대기') + ' · GL HAC ' + (ct.signed_b ? '✓' : '대기')
+      : '-';
+    let invCell = '-';
+    if (invoices.length) {
+      const paid = invoices.filter(i => i.status === 'paid').length;
+      invCell = paid + '/' + invoices.length;
+    }
+
+    let nextCell = '-';
+    if (typeof c.step8 === 'number') {
+      if (c.step8 < 2) {
+        nextCell = '<span class="muted">사전심사 진행 중</span>';
+      } else if (c.step8 === 2) {
+        if (exists && ct.signed_a && ct.signed_b) {
+          nextCell = '<span class="badge attn">체결</span> <button class="link" onclick="App.go(\'aud-schedule\')">모의심사 일정 준비 →</button>';
+        } else {
+          nextCell = '<span class="muted">계약 체결 대기</span>';
+        }
+      } else {
+        nextCell = exists ? '<span class="badge strong">계약 완료</span>' : '<span class="muted">계약 정보 없음</span>';
+      }
+    }
+
+    rows += '<tr>'
+      + '<td style="font-weight:700">' + esc(c.company_name) + '</td>'
+      + '<td><span class="badge">' + esc(_s8label(c)) + '</span></td>'
+      + '<td>' + statusCell + '</td>'
+      + '<td class="mono">' + noCell + '</td>'
+      + '<td class="num mono">' + feeCell + '</td>'
+      + '<td class="mono">' + effCell + '</td>'
+      + '<td>' + signCell + '</td>'
+      + '<td class="mono">' + invCell + '</td>'
+      + '<td>' + nextCell + '</td>'
+      + '</tr>';
+  });
+  return note
+    + '<section class="panel"><div class="panel-head"><h2>담당 업체 계약 현황</h2><span class="muted">' + targets.length + '건</span></div>'
+    + '<div class="tbl-wrap"><table><thead><tr>'
+    + '<th>업체</th><th>현재 단계</th><th>계약 상태</th><th>계약 번호</th><th>계약 금액</th><th>효력일</th><th>서명</th><th>입금</th><th>오디터 다음 할 일</th>'
+    + '</tr></thead><tbody>' + rows + '</tbody></table></div></section>';
+};
+
+
+/* ===== P3 후속: aud-eval(HPAS 5요소 평가) 실데이터 ===== */
+RS.evalH = RS.evalH || {};
+
+async function loadEvalH(cid){
+  try{
+    const r = await apiFetch('/cases/'+cid+'/hpas-auto?lang=ko');
+    RS.evalH[cid] = r.ok ? (await r.json()) : {error:true};
+  }catch(e){
+    RS.evalH[cid] = {error:true};
+  }
+}
+
+VIEWS['aud-eval'] = () => {
+  const list = (RS.cases||[]).filter(c=>!c.done && typeof c.step8==='number' && c.step8>=2 && c.step8<=4);
+  if(!list.length) return `<section class="panel"><p class="empty">평가 대상(계약~현장심사 단계) 담당 업체가 없습니다.</p></section>`;
+  let cur = (S.selEval && list.find(c=>c.case_id===S.selEval)) ? S.selEval : list[0].case_id;
+  S.selEval = cur;
+  const nav = `<nav class="mlist" aria-label="평가 대상 목록"><div class="mh">담당 업체 ${list.length}개사</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selEval('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const d = (RS.evalH||{})[cur]; let body;
+  if(!d){
+    if(RS._evalLoading!==cur){ RS._evalLoading=cur; loadEvalH(cur).then(()=>{ RS._evalLoading=null; render(); }); }
+    body = '<section class="panel"><p class="empty">불러오는 중…</p></section>';
+  } else if(d.error){
+    body = '<section class="panel"><p class="empty">불러오지 못했습니다.</p></section>';
+  } else {
+    const els = Array.isArray(d.elements) ? d.elements : [];
+    const good = d.good||0, gap = d.gap||0, fail = d.fail||0;
+    const auto = d.auto_completion||0;
+    const rows = els.map((e,i)=>{
+      const st = e.status==='ok';
+      const reason = e.reason ? `<div class="muted">${esc(e.reason)}</div>` : '';
+      const v = e.verdict;
+      return `<tr>
+        <td><strong>${esc(e.label||'')}</strong>${reason}</td>
+        <td>${st ? `<span class="badge strong">적합후보</span>` : `<span class="badge attn">보완</span>`}</td>
+        <td class="num mono">📎 ${e.evidence_docs||0} · 🎥 ${e.evidence_media||0}</td>
+        <td><div class="vote">
+          <label><input type="radio" name="ev-${esc(e.element||'')}" ${v==='good'?'checked':''} onchange="App.evalSet('${cur}',${i},'good')">적합</label>
+          <label><input type="radio" name="ev-${esc(e.element||'')}" ${v==='gap'?'checked':''} onchange="App.evalSet('${cur}',${i},'gap')">보완</label>
+          <label><input type="radio" name="ev-${esc(e.element||'')}" ${v==='fail'?'checked':''} onchange="App.evalSet('${cur}',${i},'fail')">부적합</label>
+        </div></td>
+      </tr>`;
+    }).join('');
+    const noteHtml = good<5
+      ? `<div class="note attn"><b>보완 항목 확인</b><p>모든 기준이 적합이어야 상정할 수 있습니다. 보완·부적합 판정은 시정조치(CAR)가 자동 생성됩니다.</p></div>`
+      : `<div class="note"><b>✓ 5대 기준 충족</b></div>`;
+    body = `<section class="panel">
+      <div class="panel-head"><h2>HPAS 5대 기준 평가</h2><span class="muted">자동 완성도 ${auto}%</span></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>평가 기준</th><th>자동 판정</th><th>증거</th><th>심사원 판정</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>샤리아 심의 상정 준비</h2></div>
+      <div><span class="mono" style="font-size:34px;color:var(--brand-text)">${good}</span> <span class="muted">/ 5 기준 적합</span></div>
+      <p class="muted">보완 ${gap} · 부적합 ${fail}</p>
+      ${noteHtml}
+      <button class="btn btn-primary" onclick="App.go('aud-final')">보고서·상정 화면으로 →</button>
+    </section>`;
+  }
+  return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${body}</div></div>`;
+};
+
+App.selEval = async function(id){ S.selEval=id; if(!(RS.evalH||{})[id]) await loadEvalH(id); render(); };
+
+App.evalSet = async function(cid, idx, verdict){
+  const el = (((RS.evalH||{})[cid]||{}).elements||[])[idx]; if(!el) return; const element = el.element;
+  let r;
+  try{
+    r = await apiFetch('/cases/'+cid+'/evaluation/verdict', {method:'POST', body:JSON.stringify({element:element, verdict:verdict})});
+  }catch(e){
+    r = {ok:false};
+  }
+  if(!r.ok){
+    toast('판정 저장에 실패했습니다.');
+    delete RS.evalH[cid];
+    await loadEvalH(cid);
+    render();
+    return;
+  }
+  let data = null;
+  try{ data = await r.json(); }catch(e){ data = null; }
+  delete RS.evalH[cid];
+  await loadEvalH(cid);
+  await loadAud();
+  render();
+  if(data && data.car_id){
+    toast('판정을 저장했습니다. 시정조치(CAR)가 생성되었습니다.');
+  } else {
+    toast('판정을 저장했습니다.');
+  }
+};
+
 window.App = App;
 authLoad();
 /* 가입 링크 처리: ?signup=staff → 스태프(컨설턴트) 가입 / ?ref=CODE → 컨설턴트 초대로 기업 가입 (#20·?ref 귀속) */
