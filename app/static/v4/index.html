@@ -4241,7 +4241,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4595,6 +4595,86 @@ App.matExportR = async function(cid){
     a.download='materials_'+cid.slice(0,8)+'.xlsx'; document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000); toast('Excel을 내려받았습니다.');
   }catch(e){ toast('Excel 내보내기에 실패했습니다.'); }
+};
+
+
+/* ===== P3 슬라이스6: aud-mock(모의심사) 실데이터 ===== */
+async function loadMock(cid){
+  try{
+    const [rd, rm] = await Promise.all([apiFetch('/cases/'+cid+'/mock-audit/detail'), apiFetch('/cases/'+cid+'/mock-audit')]);
+    RS.mock[cid] = { detail: rd.ok?await rd.json():{sections:[]}, meta: rm.ok?await rm.json():{decisions:[]} };
+  }catch(e){ RS.mock[cid] = {detail:{sections:[]}, meta:{decisions:[]}}; }
+}
+function _audMockDetail(cid, d){
+  const det=d.detail||{}, secs=det.sections||[], miss=det.evidence_missing||[];
+  const decisions=(d.meta&&d.meta.decisions)||[], manual=det.manual, air=det.ai_report, lastDec=decisions[0];
+  const VS=[['','미평가'],['comply','준수'],['nonconformity','비준수']];
+  return `
+  <section class="panel"><div class="panel-head"><h2 style="font-size:20px">모의심사</h2>${lastDec?`<span class="badge ${lastDec.result==='pass'?'strong':'attn'}">최근 결정: ${lastDec.result==='pass'?'통과':'반려'}</span>`:''}</div>
+    ${miss.length?`<div class="note attn"><b>증빙 미제출 섹션 ${miss.length}</b><p>${esc(miss.join(', '))}</p></div>`:`<div class="note"><b>✓ 모든 섹션 증빙 제출됨</b></div>`}</section>
+  <section class="panel"><div class="panel-head"><h2>증빙 섹션 평가</h2><span class="muted">총 증빙 ${det.evidence_total||0}건</span></div>
+    <div class="tbl-wrap"><table><thead><tr><th style="min-width:160px">섹션</th><th>증빙</th><th style="min-width:150px">판정</th><th style="min-width:200px">시정 권고</th></tr></thead><tbody>
+    ${secs.map(sx=>`<tr><td><b>${esc(sx.label||sx.section)}</b></td><td class="mono">${sx.evidence_count||0}</td>
+      <td><select class="in" id="mkv_${sx.section}" style="padding:6px 8px" onchange="App.mockEvSave('${cid}','${sx.section}')">${VS.map(([v,l])=>`<option value="${v}" ${sx.verdict===v?'selected':''}>${l}</option>`).join('')}</select></td>
+      <td><input class="in" id="mkca_${sx.section}" style="padding:6px 8px" value="${esc(sx.corrective_action||'')}" onchange="App.mockEvSave('${cid}','${sx.section}')" placeholder="비준수 시 시정 권고"></td></tr>`).join('')||'<tr><td colspan="4" class="empty">섹션 없음</td></tr>'}
+    </tbody></table></div></section>
+  <section class="panel"><div class="panel-head"><h2>SJPH 매뉴얼 검토</h2>${manual&&manual.decision?`<span class="badge ${manual.decision==='approve'?'strong':'attn'}">${manual.decision==='approve'?'승인':'보완 요청'}</span>`:'<span class="muted">검토 전</span>'}</div>
+    <div class="row-act"><button class="btn" onclick="App.mockManual('${cid}','approve')">매뉴얼 승인</button><button class="btn btn-ghost" onclick="App.mockManual('${cid}','reject')">보완 요청</button></div></section>
+  <section class="panel"><div class="panel-head"><h2>AI 모의심사 보고서</h2>${air?`<span class="badge strong">v${air.version||''}</span>`:'<span class="muted">미생성</span>'}</div>
+    <div class="row-act" style="justify-content:flex-end"><button class="btn" onclick="App.mockAiReport('${cid}')">AI 보고서 생성</button></div></section>
+  <div class="action-bar"><span class="muted">통과하면 현장심사 단계로 넘어갑니다.</span><div class="row-act"><button class="btn btn-ghost" onclick="App.mockDecide('${cid}','reject')">반려(보완)</button><button class="btn btn-primary" onclick="App.mockDecide('${cid}','pass')">모의심사 통과</button></div></div>
+  ${decisions.length?`<section class="panel"><div class="panel-head"><h2>결정 이력</h2></div><ul class="rows">${decisions.map(x=>`<li class="row"><div><b>${x.result==='pass'?'통과':'반려'}</b>${x.reason?` <span class="muted">${esc(x.reason)}</span>`:''}</div><span class="muted mono">${esc((x.at||'').slice(0,19))}</span></li>`).join('')}</ul></section>`:''}`;
+}
+VIEWS['aud-mock'] = () => {
+  const list = (RS.cases||[]).filter(c=>c.step8===3 && c.owner==='auditor');
+  if(!list.length) return `<section class="panel"><p class="empty">모의심사 대상이 없습니다. (계약 후 모의심사 단계 업체가 표시됩니다)</p></section>`;
+  let cur = (S.selMock && list.find(c=>c.case_id===S.selMock)) ? S.selMock : list[0].case_id;
+  S.selMock = cur;
+  const nav = `<nav class="mlist" aria-label="모의심사 목록"><div class="mh">모의심사 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selMock('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const d=(RS.mock||{})[cur]; let body;
+  if(!d){ if(RS._mockLoading!==cur){ RS._mockLoading=cur; loadMock(cur).then(()=>{ RS._mockLoading=null; render(); }); } body='<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  else body=_audMockDetail(cur, d);
+  return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${body}</div></div>`;
+};
+App.selMock = async function(id){ S.selMock=id; if(!(RS.mock||{})[id]) await loadMock(id); render(); };
+App.mockEvSave = async function(cid, section){
+  const vEl=document.getElementById('mkv_'+section), cEl=document.getElementById('mkca_'+section);
+  const verdict=vEl?vEl.value:''; if(!verdict){ return; }
+  const corrective_action=cEl?cEl.value:'';
+  const r=await apiFetch('/cases/'+cid+'/mock-audit/evidence-verdict',{method:'POST',body:JSON.stringify({section,verdict,corrective_action})});
+  if(!r.ok) return toast('섹션 판정 저장에 실패했습니다.');
+  await loadMock(cid); render(); toast('섹션 판정을 저장했습니다.');
+};
+App.mockManual = function(cid, decision){
+  if(decision==='approve'){ App.mockDoManual(cid,'approve'); return; }
+  openModal('매뉴얼 보완 요청', `<p>SJPH 매뉴얼 보완을 요청합니다. 사유(필수).</p><div class="field"><label for="mm-c">사유</label><textarea class="in" id="mm-c"></textarea></div><div class="inline-msg" id="mm-e"></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.mockDoManual('${cid}','reject')">보완 요청</button>`);
+};
+App.mockDoManual = async function(cid, decision){
+  const comment=(($('#mm-c')||{}).value||'').trim();
+  if(decision==='reject' && !comment){ const e=$('#mm-e'); if(e) e.textContent='사유를 입력해 주세요.'; return; }
+  const r=await apiFetch('/cases/'+cid+'/mock-audit/manual',{method:'POST',body:JSON.stringify({decision,comment})});
+  if(!r.ok) return toast('매뉴얼 검토 저장에 실패했습니다.');
+  closeModal(); await loadMock(cid); render(); toast(decision==='approve'?'매뉴얼을 승인했습니다.':'매뉴얼 보완을 요청했습니다.');
+};
+App.mockAiReport = async function(cid){
+  toast('보고서를 생성하고 있습니다…');
+  const r=await apiFetch('/cases/'+cid+'/mock-audit/ai-report/run',{method:'POST'});
+  if(!r.ok) return toast('보고서 생성에 실패했습니다.');
+  await loadMock(cid); render(); toast('AI 모의심사 보고서를 생성했습니다.');
+};
+App.mockDecide = function(cid, result){
+  if(result==='pass'){ App.mockDoDecide(cid,'pass'); return; }
+  openModal('모의심사 반려', `<p>모의심사를 <b>반려</b>합니다. 보완 사유(필수).</p><div class="field"><label for="md-r">사유</label><textarea class="in" id="md-r"></textarea></div><div class="inline-msg" id="md-e"></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.mockDoDecide('${cid}','reject')">반려</button>`);
+};
+App.mockDoDecide = async function(cid, result){
+  const reason=(($('#md-r')||{}).value||'').trim();
+  if(result==='reject' && !reason){ const e=$('#md-e'); if(e) e.textContent='사유를 입력해 주세요.'; return; }
+  const r=await apiFetch('/cases/'+cid+'/mock-audit/decision',{method:'POST',body:JSON.stringify({result,reason})});
+  if(!r.ok) return toast('결정 처리에 실패했습니다.');
+  closeModal(); delete RS.mock[cid]; await loadMock(cid); await loadAud(); render();
+  toast(result==='pass'?'모의심사 통과 — 현장심사 단계로 넘어갑니다.':'모의심사를 반려했습니다.');
 };
 
 window.App = App;
