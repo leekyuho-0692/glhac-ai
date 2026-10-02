@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4951,6 +4951,39 @@ VIEWS['cons-home'] = () => {
   ${(RS.todo||[]).length?`<section class="panel"><div class="panel-head"><h2>처리할 일</h2></div><ul class="rows">${RS.todo.map(x=>`<li class="row"><div><b>${esc(x.company_name)}</b><span class="muted">${esc(x.step8_label)} · ${esc(x.reason)}</span></div></li>`).join('')}</ul></section>`:''}
   <p class="muted" style="font-size:12px">· 업체별 현황·계약·문서·질의는 P4 후속에서 실데이터로 연결됩니다.</p>`;
 };
+
+
+/* ===== P4 슬라이스5: 컨설턴트 업체별 현황(cons-status) 실데이터(모니터링) ===== */
+async function loadConsPre(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/preassess/review'); RS.consPre[cid]=r.ok?await r.json():{}; }
+  catch(e){ RS.consPre[cid]={}; }
+}
+VIEWS['cons-status'] = () => {
+  const list = RS.cases||[];
+  if(!list.length) return `<section class="panel"><p class="empty">담당 기업이 없습니다.</p></section>`;
+  let cur=(S.selCompany&&list.find(c=>c.case_id===S.selCompany))?S.selCompany:list[0].case_id; S.selCompany=cur;
+  const c=list.find(x=>x.case_id===cur);
+  const nav=`<nav class="mlist" aria-label="담당 기업"><div class="mh">담당 기업 ${list.length}개사</div>${list.map(x=>`<button class="mitem ${x.case_id===cur?'on':''}" onclick="App.selCompany('${x.case_id}')"><span class="t"><span>${esc(x.company_name)}</span>${x.hold?'<span class="badge attn">보완</span>':`<span class="badge">${esc(_s8label(x))}</span>`}</span><span class="muted mono" style="font-size:11px">${esc(x.status||'')}</span></button>`).join('')}</nav>`;
+  const pre=(RS.consPre||{})[cur];
+  if(!pre && RS._consPreLoading!==cur){ RS._consPreLoading=cur; loadConsPre(cur).then(()=>{RS._consPreLoading=null; render();}); }
+  const rev=pre&&pre.review, dr=pre&&pre.doc_request;
+  const reqItems=(dr&&dr.items||[]).map(it=>typeof it==='string'?it:(it.doc_type||''));
+  const body=`<div style="display:flex;flex-direction:column;gap:22px;min-width:0">
+    <section class="panel"><div class="panel-head"><div><h2 style="font-size:20px">${esc(c.company_name)}</h2><div class="muted mono" style="margin-top:4px">${esc(c.status||'')}</div></div>${c.hold?'<span class="badge attn">보완 필요</span>':(c.done?'<span class="badge strong">완료</span>':'<span class="badge">진행 중</span>')}</div>
+      <dl class="dl"><div><dt>현재 단계</dt><dd>${esc(_s8label(c))}</dd></div><div><dt>다음 할 일</dt><dd>${esc(c.next_action||'-')}</dd></div>
+        <div><dt>담당 심사원</dt><dd>${esc(c.main_auditor||'배정 전')}</dd></div><div><dt>전담 컨설턴트</dt><dd>${esc(c.consultant||'-')}</dd></div></dl>
+    </section>
+    <section class="panel"><div class="panel-head"><h2>8단계 진행 현황</h2><span class="muted">${pad((typeof c.step8==='number'?c.step8:0)+1)} / 08</span></div>
+      ${_stepper8(typeof c.step8==='number'?c.step8:0, c.hold, c.done)}</section>
+    <section class="panel"><div class="panel-head"><h2>사전심사 상태</h2>${rev?`<span class="badge ${rev.verdict==='ready'?'strong':'attn'}">${rev.verdict==='ready'?'통과':rev.verdict==='supplement'?'보완 필요':'검토 중'}</span>`:'<span class="muted">검토 대기/미진행</span>'}</div>
+      ${!pre?'<p class="empty">불러오는 중…</p>':''}
+      ${rev&&rev.note?`<div class="note"><p>${esc(rev.note)}</p></div>`:''}
+      ${reqItems.length?`<b style="font-size:13px">추가 요청 서류 ${reqItems.length}건</b><ul class="rows">${reqItems.map(x=>`<li class="row"><div><b>${esc(x)}</b></div></li>`).join('')}</ul>
+        <div class="note"><p>요청 서류가 준비되면 기업 또는 컨설턴트가 보완 제출할 수 있습니다.</p></div>`:(pre?'<p class="muted" style="font-size:13px">추가 요청 서류 없음</p>':'')}
+    </section></div>`;
+  return `<div class="md">${nav}${body}</div>`;
+};
+App.selCompany = async function(id){ S.selCompany=id; if(!(RS.consPre||{})[id]) await loadConsPre(id); render(); };
 
 window.App = App;
 authLoad();
