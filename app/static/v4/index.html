@@ -732,11 +732,11 @@ function xpAlerts(p){ const a = []; const dd = daysTo(p.qual&&p.qual.expires);
   if(!p.training || p.training.hours < DB.settings.trainHours || daysTo(p.training.date) < -365) a.push('연간 교육 미달');
   if(!p.pledge) a.push('서약 미제출'); return a; }
 const ROLES = {
-  enterprise:{code:'ent',label:'ws.ent',sub:'role.ent.sub',demo:'company@kfood.com',list:()=>DB.companies,home:'ent-home',ext:true},
-  consultant:{code:'cons',label:'ws.cons',sub:'role.cons.sub',demo:'consultant@megainfo.com',list:()=>DB.consultants,home:'cons-home',ext:true},
-  auditor:{code:'aud',label:'ws.aud',sub:'role.aud.sub',demo:'auditor@glhac.demo',list:()=>DB.auditors,home:'aud-home'},
-  sharia:{code:'sha',label:'ws.sha',sub:'role.sha.sub',demo:'sharia@glhac.demo',list:()=>DB.sharia,home:'sha-home'},
-  admin:{code:'adm',label:'ws.adm',sub:'role.adm.sub',demo:'admin@glhac.demo',list:()=>DB.admins,home:'adm-home'}
+  enterprise:{code:'ent',label:'ws.ent',sub:'role.ent.sub',demo:'applicant1',pw:'pw',list:()=>DB.companies,home:'ent-home',ext:true},
+  consultant:{code:'cons',label:'ws.cons',sub:'role.cons.sub',demo:'consultant1',pw:'pw',list:()=>DB.consultants,home:'cons-home',ext:true},
+  auditor:{code:'aud',label:'ws.aud',sub:'role.aud.sub',demo:'auditor1',pw:'pw',list:()=>DB.auditors,home:'aud-home'},
+  sharia:{code:'sha',label:'ws.sha',sub:'role.sha.sub',demo:'fatwa1',pw:'pw',list:()=>DB.sharia,home:'sha-home'},
+  admin:{code:'adm',label:'ws.adm',sub:'role.adm.sub',demo:'admin',pw:'admin',list:()=>DB.admins,home:'adm-home'}
 };
 const roleByCode = code => Object.values(ROLES).find(r=>r.code===code);
 const person = (list,id) => list.find(x=>x.id===id);
@@ -822,7 +822,7 @@ function loginForm(){
         <div class="role-group"><span class="eyebrow">${t('grp.int')}</span><div class="seg seg-3" role="group">${rb('auditor')}${rb('sharia')}${rb('admin')}</div></div>
       </div></div>
     <div class="field"><label for="lg-email">${t(R.label)} ${t('id')}</label><input class="in" id="lg-email" type="text" required value="${esc(email)}" autocomplete="username"></div>
-    <div class="field"><label for="lg-pw">${t('pw')}</label><input class="in" id="lg-pw" type="password" required value="demo1234"></div>
+    <div class="field"><label for="lg-pw">${t('pw')}</label><input class="in" id="lg-pw" type="password" required value="${R.pw||''}"></div>
     <button class="btn btn-primary btn-lg btn-block" type="submit">${t('login')}</button>
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px">
       ${R.ext?`<span>${t('noacct')} <button type="button" class="link" onclick="App.goSignup()">${ent?t('signup.ent'):t('signup.cons')}</button></span>`:`<span class="muted">${t('acct.issued')}</span>`}
