@@ -5161,6 +5161,38 @@ App.consReqContract = async function(cid){
   delete RS.entCt[cid]; await loadEntCt(cid); render(); toast('계약 진행을 신청했습니다. 관리자에게 전달됩니다.');
 };
 
+
+/* ===== P4 슬라이스10: 컨설턴트 문서 관리(cons-docs) 실데이터 (담당 기업별 문서함) ===== */
+function _docVaultBody(cid, docs){
+  const q=(S.docQ||'').toLowerCase();
+  const list=docs.filter(d=>!q||(d.filename||'').toLowerCase().includes(q)||(d.doc_type_ko||'').toLowerCase().includes(q)).slice().reverse();
+  const RVW={approved:'승인', rejected:'반려', rework:'보완', pending:'검토 대기'};
+  return `
+  <section class="panel"><div class="panel-head"><h2>서류 올리기</h2><span class="muted">기업 대신 서류를 올릴 수 있습니다</span></div>
+    <div class="inline" style="flex-wrap:wrap">
+      <select class="in" id="doc-type" style="flex:1 1 200px">${DOC_TYPES.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
+      <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" style="flex:2 1 240px">
+      <button class="btn btn-primary" onclick="App.docUpload('${cid}')">업로드</button></div></section>
+  <section class="panel"><div class="panel-head"><h2>서류함 ${docs.length}건</h2><input class="in" style="max-width:240px" placeholder="파일명·종류 검색" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
+    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th>등록</th><th></th></tr></thead><tbody>
+    ${list.map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td>
+      <td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
+      <td class="mono">${esc((d.created_at||'').slice(0,10))}</td>
+      <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${esc((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
+    </tbody></table></div>`:'<p class="empty">보관된 서류가 없습니다.</p>'}</section>`;
+}
+VIEWS['cons-docs'] = () => {
+  const list=RS.cases||[];
+  if(!list.length) return `<section class="panel"><p class="empty">담당 기업이 없습니다.</p></section>`;
+  let cur=(S.selDocCo&&list.find(c=>c.case_id===S.selDocCo))?S.selDocCo:list[0].case_id; S.selDocCo=cur;
+  const nav=`<nav class="mlist" aria-label="문서 대상 기업"><div class="mh">담당 기업 ${list.length}개사</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selDocCo('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const docs=(RS.entDocs||{})[cur]; let body;
+  if(!docs){ if(RS._entDocsLoading!==cur){ RS._entDocsLoading=cur; loadEntDocs(cur).then(()=>{RS._entDocsLoading=null; render();}); } body='<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  else body=`<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${_docVaultBody(cur,docs)}</div>`;
+  return `<div class="md">${nav}${body}</div>`;
+};
+App.selDocCo = async function(id){ S.selDocCo=id; S.docQ=''; if(!(RS.entDocs||{})[id]) await loadEntDocs(id); render(); };
+
 window.App = App;
 authLoad();
 /* 가입 링크 처리: ?signup=staff → 스태프(컨설턴트) 가입 / ?ref=CODE → 컨설턴트 초대로 기업 가입 (#20·?ref 귀속) */
