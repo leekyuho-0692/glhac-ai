@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, fatwaQ: null, fatwa: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, fatwaQ: null, fatwa: {}, admCert: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -5474,6 +5474,65 @@ App.admDelCo = async function(cid, uid){
   const r=await apiFetch('/cases/'+cid+'/auditors/'+uid,{method:'DELETE'});
   if(!r.ok) return toast('해제에 실패했습니다.');
   await loadAdm(); render(); toast('동반 오디터를 해제했습니다.');
+};
+
+
+/* ===== P7-4: 관리자 인증서 관리(adm-cert) 실데이터 ===== */
+async function loadAdmCert(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/certificate'); RS.admCert[cid]=r.ok?await r.json():{issued:false}; }
+  catch(e){ RS.admCert[cid]={issued:false}; }
+}
+VIEWS['adm-cert'] = () => {
+  const list=(RS.cases||[]).filter(c=>(typeof c.step8==='number'&&c.step8>=5)||['fatwa_approved','certificate_issued','post_certification_monitoring'].includes(c.status));
+  if(!list.length) return `<section class="panel"><p class="empty">인증서 대상 케이스가 없습니다.(샤리아 심의 이후)</p></section>`;
+  let cur=(S.selCert&&list.find(c=>c.case_id===S.selCert))?S.selCert:list[0].case_id; S.selCert=cur;
+  const nav=`<nav class="mlist" aria-label="인증서 케이스"><div class="mh">인증서 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selCert('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const d=(RS.admCert||{})[cur]; let body;
+  if(!d){ if(RS._admCertLoading!==cur){ RS._admCertLoading=cur; loadAdmCert(cur).then(()=>{RS._admCertLoading=null; render();}); } body='<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  else if(d.issued){
+    const active=d.status==='active';
+    body=`<div style="display:flex;flex-direction:column;gap:22px;min-width:0">
+      <section class="panel"><div class="panel-head"><h2>할랄 인증서</h2><span class="badge ${active?'strong':'attn'}">${esc(d.status||'')}</span></div>
+        <dl class="dl"><div><dt>인증서 번호</dt><dd class="mono">${esc(d.certificate_no||'-')}</dd></div><div><dt>발급일</dt><dd class="mono">${esc(d.issue_date||'-')}</dd></div>
+          <div><dt>만료일</dt><dd class="mono">${esc(d.expiry_date||'-')}${d.days_to_expiry!=null?` (D-${d.days_to_expiry})`:''}</dd></div>
+          <div><dt>공식 BPJPH 번호</dt><dd class="mono">${esc(d.official_bpjph_no||'미등록')}</dd></div></dl>
+        <div class="row-act"><button class="btn" onclick="App.certPdf('${cur}')">인증서 PDF</button><button class="btn btn-ghost" onclick="App.certBundle('${cur}')">증거 번들 ZIP</button>${active?`<button class="btn btn-ghost" onclick="App.admRevoke('${cur}')">인증 철회</button>`:''}</div>
+      </section></div>`;
+  } else {
+    body=`<div style="display:flex;flex-direction:column;gap:22px;min-width:0">
+      <section class="panel"><div class="panel-head"><h2>할랄 인증서</h2><span class="muted">발급 전</span></div>
+        <p class="muted">샤리아 심의 통과 후 인증서를 발급할 수 있습니다. 발급은 2인 승인(운영관리자 요청 → 샤리아 확인) 절차를 따릅니다.</p>
+        <div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.admIssueCert('${cur}')">인증서 발급 요청</button></div></section></div>`;
+  }
+  return `<div class="md">${nav}${body}</div>`;
+};
+App.selCert = async function(id){ S.selCert=id; if(!(RS.admCert||{})[id]) await loadAdmCert(id); render(); };
+App.admIssueCert = async function(cid){
+  const r=await apiFetch('/cases/'+cid+'/certificate/issue',{method:'POST',body:JSON.stringify({reason:'관리자 발급 요청'})});
+  if(!r.ok){ const d=await r.json().catch(()=>({})); return toast('발급 요청 실패'+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):' — 권한/요건 확인')); }
+  delete RS.admCert[cid]; await loadAdmCert(cid); render(); toast('인증서 발급을 요청했습니다(2인 승인 대기).');
+};
+App.certPdf = async function(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/certificate/pdf'); if(!r.ok) return toast('PDF를 불러올 수 없습니다.');
+    const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='certificate_'+cid.slice(0,8)+'.pdf';
+    document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000);
+  }catch(e){ toast('PDF 오류'); }
+};
+App.certBundle = async function(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/certificate/bundle.zip'); if(!r.ok) return toast('번들을 불러올 수 없습니다.');
+    const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='cert_bundle_'+cid.slice(0,8)+'.zip';
+    document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000);
+  }catch(e){ toast('번들 오류'); }
+};
+App.admRevoke = function(cid){
+  openModal('인증 철회', `<p>인증서를 철회합니다. 사유(필수).</p><div class="field"><label for="rv-r">사유</label><textarea class="in" id="rv-r"></textarea></div><div class="inline-msg" id="rv-e"></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.admDoRevoke('${cid}')">철회</button>`);
+};
+App.admDoRevoke = async function(cid){
+  const reason=(($('#rv-r')||{}).value||'').trim(); if(!reason){ const e=$('#rv-e'); if(e) e.textContent='사유를 입력해 주세요.'; return; }
+  const r=await apiFetch('/cases/'+cid+'/certificate/revoke',{method:'POST',body:JSON.stringify({reason})});
+  if(!r.ok){ const d=await r.json().catch(()=>({})); return toast('철회 실패'+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
+  closeModal(); delete RS.admCert[cid]; await loadAdmCert(cid); render(); toast('인증 철회를 처리했습니다.');
 };
 
 window.App = App;
