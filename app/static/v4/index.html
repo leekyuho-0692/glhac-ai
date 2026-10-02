@@ -2214,12 +2214,13 @@ async function loadAdmMembers(){
   try{
     const [ru, rs] = await Promise.all([apiFetch('/admin/users'), apiFetch('/admin/staff-signups?status=pending')]);
     const uj = ru.ok?await ru.json():{items:[]};
-    RS.admMembers = { users: (uj.items||uj||[]), signups: rs.ok?((await rs.json()).items||[]):[] };
+    RS.admMembers = { users: (uj.items||uj||[]), signups: rs.ok?((await rs.json()).items||[]):[], forbidden: (ru.status===403 && rs.status===403) };
   }catch(e){ RS.admMembers={users:[],signups:[]}; }
 }
 VIEWS['adm-members'] = () => {
   if(RS.admMembers===null){ if(!RS._admMembersLoading){ RS._admMembersLoading=true; loadAdmMembers().then(()=>{RS._admMembersLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
   const {users, signups}=RS.admMembers;
+  if(RS.admMembers.forbidden) return `<section class="panel"><div class="note attn"><b>관리자 전용 화면</b><p>회원 목록과 스태프 가입 승인은 시스템 관리자(admin) 계정에서만 볼 수 있습니다. 현재 계정 권한: ${esc(AUTH.role||'-')}</p></div></section>`;
   const tab=S.memTab||'전체';
   const bucket=u=>ROLE_LABEL[u.role]||u.role;
   const tabs=['전체','인증기업','컨설턴트','오디터','샤리아 위원','관리자'];
