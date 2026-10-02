@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4838,6 +4838,46 @@ VIEWS['ent-home'] = () => {
     <dl class="dl"><div><dt>담당 심사원</dt><dd>${esc(c.main_auditor||'배정 전')}</dd></div><div><dt>인증 분야</dt><dd>${esc(c.scheme||'-')}</dd></div></dl>
   </section>
   <p class="muted" style="font-size:12px">· 사전심사·신청서·계약·문서함·컨설턴트 상담은 P4 후속에서 실데이터로 연결됩니다.</p>`;
+};
+
+
+/* ===== P4 슬라이스2: 기업 사전심사 결과 수령·보완 제출(ent-pre) 실데이터 ===== */
+async function loadEntPre(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/preassess/review'); RS.entPre[cid]=r.ok?await r.json():{}; }
+  catch(e){ RS.entPre[cid]={}; }
+}
+VIEWS['ent-pre'] = () => {
+  const c=(RS.cases||[])[0];
+  if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
+  const cid=c.case_id, d=(RS.entPre||{})[cid];
+  if(!d){ if(RS._entPreLoading!==cid){ RS._entPreLoading=cid; loadEntPre(cid).then(()=>{RS._entPreLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const rev=d.review, dr=d.doc_request, hist=d.doc_request_history||[], resub=d.resubmit;
+  const verdictKo = v => v==='ready'?'인증 가능(통과)':v==='supplement'?'보완 필요':(v||'검토 중');
+  const reqItems = (dr&&dr.items||[]).map(it=>typeof it==='string'?it:(it.doc_type||it.note||''));
+  return `
+  <section class="panel"><div class="panel-head"><h2>AI 사전심사 결과</h2><span class="muted mono">${esc(c.status||'')}</span></div>
+    ${rev?`<div class="note ${rev.verdict==='ready'?'':'attn'}"><b>오디터 검토 결과: ${verdictKo(rev.verdict)}</b>${rev.note?`<p>${esc(rev.note)}</p>`:''}<span class="muted">${esc((rev.at||'').slice(0,19))}</span></div>`
+         :`<div class="note"><b>오디터 검토 대기 중</b><p>제출하신 서류를 오디터가 검토하고 있습니다.</p></div>`}
+  </section>
+  ${dr&&reqItems.length?`<section class="panel"><div class="panel-head"><h2>추가 요청 서류 ${dr.round?('· '+dr.round+'차'):''}</h2><span class="badge attn">${reqItems.length}건</span></div>
+    ${dr.message?`<div class="note"><p>${esc(dr.message)}</p></div>`:''}
+    <ul class="rows">${reqItems.map(x=>`<li class="row"><div><b>${esc(x)}</b></div></li>`).join('')}</ul>
+    <div class="note"><p>요청 서류를 <b>문서함</b>에서 업로드한 뒤 아래 [보완 완료 제출]을 눌러 주세요.</p></div>
+    <div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.entResubmit('${cid}')">보완 완료 제출</button></div>
+  </section>`:''}
+  ${resub?`<div class="note"><b>보완 재제출 완료</b> <span class="muted">${esc((resub.note||''))} · ${esc((resub.at||'').slice(0,19))}</span></div>`:''}
+  ${hist.length>1?`<section class="panel"><div class="panel-head"><h2>요청 이력</h2></div><ul class="rows">${hist.map(r=>`<li class="row"><div><b>${r.round||''}차</b> <span class="muted">${esc((r.items||[]).map(it=>typeof it==='string'?it:(it.doc_type||'')).join(', '))}</span></div></li>`).join('')}</ul></section>`:''}`;
+};
+App.entResubmit = function(cid){
+  openModal('보완 완료 제출', `<p>요청 서류 업로드를 마쳤다면 보완 제출을 알립니다. 메모(선택).</p><div class="field"><label for="er-note">메모</label><textarea class="in" id="er-note" placeholder="예) 요청하신 공급업체 할랄 인증서를 업로드했습니다."></textarea></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.entDoResubmit('${cid}')">제출</button>`);
+};
+App.entDoResubmit = async function(cid){
+  const note=(($('#er-note')||{}).value||'').trim();
+  const r=await apiFetch('/cases/'+cid+'/preassess/resubmit',{method:'POST',body:JSON.stringify({note})});
+  if(!r.ok) return toast('보완 제출에 실패했습니다.');
+  closeModal(); delete RS.entPre[cid]; await loadEntPre(cid); await loadEnt(); render();
+  toast('보완 제출을 완료했습니다. 오디터에게 알림이 전달됩니다.');
 };
 
 window.App = App;
