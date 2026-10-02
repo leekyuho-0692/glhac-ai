@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, fatwaQ: null, fatwa: {}, admCert: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, fatwaQ: null, fatwa: {}, admCert: {}, admExperts: null, admPrice: null, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -5355,7 +5355,7 @@ async function loadAdm(){
     const [rc, rn] = await Promise.all([apiFetch('/cases?limit=500'), apiFetch('/me/nav-counts')]);
     RS.cases = rc.ok ? ((await rc.json()).items||[]) : [];
     RS.counts = rn.ok ? await rn.json() : {};
-    RS.admMembers = null; RS.admAud = null;
+    RS.admMembers = null; RS.admAud = null; RS.admExperts = null; RS.admPrice = null;
     RS.loadedFor = AUTH.username;
   }catch(e){ RS.cases=[]; RS.counts={}; }
 }
@@ -5533,6 +5533,53 @@ App.admDoRevoke = async function(cid){
   const r=await apiFetch('/cases/'+cid+'/certificate/revoke',{method:'POST',body:JSON.stringify({reason})});
   if(!r.ok){ const d=await r.json().catch(()=>({})); return toast('철회 실패'+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
   closeModal(); delete RS.admCert[cid]; await loadAdmCert(cid); render(); toast('인증 철회를 처리했습니다.');
+};
+
+
+/* ===== P7-5: 관리자 심사원·위원 명부(adm-experts) + 가격 기준표(adm-price) ===== */
+async function loadAdmExperts(){
+  try{ const [ra, rc]=await Promise.all([apiFetch('/ops/auditors'), apiFetch('/fatwa/committee')]);
+    RS.admExperts={ auditors:(ra.ok?((await ra.json()).auditors||[]):[]), committee:(rc.ok?((await rc.json()).members||[]):[]) };
+  }catch(e){ RS.admExperts={auditors:[],committee:[]}; }
+}
+VIEWS['adm-experts'] = () => {
+  if(RS.admExperts===null){ if(!RS._admExpLoading){ RS._admExpLoading=true; loadAdmExperts().then(()=>{RS._admExpLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const {auditors, committee}=RS.admExperts;
+  return `
+  <section class="panel"><div class="panel-head"><h2>오디터(심사원) ${auditors.length}명</h2></div>
+    <div class="tbl-wrap"><table><thead><tr><th>이름</th><th>전문분야</th><th>언어</th><th style="min-width:160px">업무 부하</th></tr></thead><tbody>
+    ${auditors.map(a=>{const pct=a.load_pct||Math.round((a.load||0)/(a.capacity||8)*100);return `<tr><td><b>${esc(a.username)}</b></td><td class="muted">${esc((a.specialty||[]).join?(a.specialty||[]).join(', '):(a.specialty||'-'))||'-'}</td><td class="muted">${esc((a.languages||[]).join(', ')||'-')}</td>
+      <td><div style="display:flex;align-items:center;gap:8px"><div class="pay-bar" style="flex:1"><i style="width:${pct}%"></i></div><span class="mono muted" style="font-size:12px">${a.load||0}/${a.capacity||8}</span></div></td></tr>`}).join('')||'<tr><td colspan="4" class="empty">오디터 없음</td></tr>'}
+    </tbody></table></div></section>
+  <section class="panel"><div class="panel-head"><h2>샤리아 위원 ${committee.length}명</h2></div>
+    ${committee.length?`<ul class="rows">${committee.map(m=>`<li class="row"><div><b>${esc(m.name||m.username||m)}</b>${m.role||m.title?`<span class="muted"> · ${esc(m.role||m.title)}</span>`:''}</div>${m.chair?'<span class="badge strong">위원장</span>':''}</li>`).join('')}</ul>`:'<p class="empty">등록된 샤리아 위원이 없습니다.</p>'}
+  </section>`;
+};
+async function loadAdmPrice(){
+  try{ const r=await apiFetch('/billing/defaults'); RS.admPrice=r.ok?await r.json():{rates:[]}; }
+  catch(e){ RS.admPrice={rates:[]}; }
+}
+VIEWS['adm-price'] = () => {
+  if(RS.admPrice===null){ if(!RS._admPriceLoading){ RS._admPriceLoading=true; loadAdmPrice().then(()=>{RS._admPriceLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const d=RS.admPrice, rates=d.rates||[];
+  return `
+  <section class="panel"><div class="panel-head"><h2>가격 기준표</h2><span class="muted">부가세(PPN) ${Math.round((d.ppn_rate||0.11)*100)}%</span></div>
+    <div class="tbl-wrap"><table><thead><tr><th style="min-width:180px">서비스</th><th style="min-width:200px">기본 금액</th><th>기본값</th></tr></thead><tbody>
+    ${rates.map(r=>`<tr><td><b>${esc(r.label||r.service_type)}</b><div class="muted mono" style="font-size:11px">${esc(r.service_type)}</div></td>
+      <td><input class="in mono" id="price-${esc(r.service_type)}" type="number" value="${r.amount}" style="max-width:180px"></td>
+      <td>${r.is_default?'<span class="badge">기본</span>':'<span class="badge attn">조정됨</span>'}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">요율 없음</td></tr>'}
+    </tbody></table></div>
+    <div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.admSavePrice()">저장</button></div>
+    <div class="note"><p>요율 변경은 운영관리자 권한입니다. 변경값은 새 견적부터 적용됩니다.</p></div>
+  </section>`;
+};
+App.admSavePrice = async function(){
+  const d=RS.admPrice||{rates:[]}; const rates={};
+  (d.rates||[]).forEach(r=>{ const el=document.getElementById('price-'+r.service_type); if(el){ const v=parseInt(el.value,10); if(!isNaN(v)) rates[r.service_type]=v; } });
+  if(!Object.keys(rates).length) return toast('변경할 금액이 없습니다.');
+  const rr=await apiFetch('/billing/defaults',{method:'POST',body:JSON.stringify({rates})});
+  if(!rr.ok){ const e=await rr.json().catch(()=>({})); return toast('저장 실패'+((e.detail&&e.detail.code)?(' ('+e.detail.code+')'):' — 운영관리자 권한 필요')); }
+  await loadAdmPrice(); render(); toast('가격 기준표를 저장했습니다.');
 };
 
 window.App = App;
