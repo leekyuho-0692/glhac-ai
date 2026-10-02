@@ -5127,6 +5127,40 @@ VIEWS['cons-qna'] = () => {
 };
 App.qnaTab = function(k){ S.qnaTab=k; render(); };
 
+
+/* ===== P4 슬라이스9: 컨설턴트 계약·견적 관리(cons-contract) 실데이터 ===== */
+VIEWS['cons-contract'] = () => {
+  const list=RS.cases||[];
+  if(!list.length) return `<section class="panel"><p class="empty">담당 기업이 없습니다.</p></section>`;
+  let cur=(S.selContract&&list.find(c=>c.case_id===S.selContract))?S.selContract:list[0].case_id; S.selContract=cur;
+  const nav=`<nav class="mlist" aria-label="견적·계약 대상"><div class="mh">견적 · 계약 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selContract('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const d=(RS.entCt||{})[cur]; let body;
+  if(!d){ if(RS._entCtLoading!==cur){ RS._entCtLoading=cur; loadEntCt(cur).then(()=>{RS._entCtLoading=null; render();}); } body='<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  else{
+    const ct=d.contract||{}, invs=d.invoices||[];
+    const canReq = !ct.exists || ['none','draft',null,'requested'].includes(ct.status);
+    body=`<div style="display:flex;flex-direction:column;gap:22px;min-width:0">
+      <section class="panel"><div class="panel-head"><h2>용역 계약</h2>${ct.exists?`<span class="badge ${ct.status==='confirmed'||ct.status==='signed'?'strong':'attn'}">${esc(ct.status||'')}</span>`:'<span class="muted">미생성</span>'}</div>
+        ${ct.exists?`<dl class="dl"><div><dt>계약 번호</dt><dd class="mono">${esc(ct.contract_no||'-')}</dd></div><div><dt>계약 금액</dt><dd class="mono">${_money(ct.fee,ct.currency)}</dd></div>
+          <div><dt>효력일</dt><dd class="mono">${esc(ct.effective_date||'-')}</dd></div><div><dt>서명</dt><dd>기업 ${ct.signed_a?'<span class="badge strong">완료</span>':'<span class="badge">대기</span>'} · GL HAC ${ct.signed_b?'<span class="badge strong">완료</span>':'<span class="badge">대기</span>'}</dd></div></dl>`
+          :'<p class="muted">아직 계약서가 없습니다. 사전심사 통과 후 계약을 신청하세요.</p>'}
+        ${canReq?`<div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.consReqContract('${cur}')">${ct.status==='requested'?'계약 재요청':'계약 진행 요청'}</button></div>`:''}
+      </section>
+      <section class="panel"><div class="panel-head"><h2>청구·입금</h2><span class="muted">${invs.length}건</span></div>
+        ${invs.length?`<div class="tbl-wrap"><table><thead><tr><th>구분</th><th>청구액</th><th>상태</th><th>기한</th></tr></thead><tbody>
+        ${invs.map(i=>`<tr><td>${esc(i.service_type||'-')}</td><td class="mono">${_money(i.total!=null?i.total:i.amount)}</td><td><span class="badge ${i.status==='paid'?'strong':'attn'}">${INV_ST[i.status]||i.status}</span></td><td class="mono">${esc((i.due_date||'').slice(0,10)||'-')}</td></tr>`).join('')}
+        </tbody></table></div>`:'<p class="empty">청구 내역이 없습니다.</p>'}</section>
+      <div class="note"><p>견적 금액 조정·할인은 관리자 승인이 필요합니다. 계약 신청 후 관리자가 견적서를 작성·발송합니다.</p></div></div>`;
+  }
+  return `<div class="md">${nav}${body}</div>`;
+};
+App.selContract = async function(id){ S.selContract=id; if(!(RS.entCt||{})[id]) await loadEntCt(id); render(); };
+App.consReqContract = async function(cid){
+  const r=await apiFetch('/cases/'+cid+'/contract/request',{method:'POST'});
+  if(!r.ok) return toast('계약 신청에 실패했습니다.');
+  delete RS.entCt[cid]; await loadEntCt(cid); render(); toast('계약 진행을 신청했습니다. 관리자에게 전달됩니다.');
+};
+
 window.App = App;
 authLoad();
 /* 가입 링크 처리: ?signup=staff → 스태프(컨설턴트) 가입 / ?ref=CODE → 컨설턴트 초대로 기업 가입 (#20·?ref 귀속) */
