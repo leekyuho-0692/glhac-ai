@@ -4241,15 +4241,18 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, loadedFor: null };
 async function loadAud(){
   try{
-    const [rc, rn, rt] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'), apiFetch('/me/todo')]);
+    const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
+        apiFetch('/me/todo'), apiFetch('/auditor/assignments?status=all')]);
     RS.cases = rc.ok ? ((await rc.json()).items || []) : [];
     RS.counts = rn.ok ? await rn.json() : {};
     RS.todo = rt.ok ? ((await rt.json()).items || []) : [];
+    if(ra.ok){ const aj = await ra.json(); RS.assignments = aj.items || []; RS.assignPending = aj.pending_count || 0; }
+    else { RS.assignments = []; RS.assignPending = 0; }
     RS.loadedFor = AUTH.username;
-  }catch(e){ RS.cases = []; RS.counts = {}; RS.todo = []; }
+  }catch(e){ RS.cases = []; RS.counts = {}; RS.todo = []; RS.assignments = []; RS.assignPending = 0; }
 }
 const S8_LABELS = ['접수','사전심사','계약','모의심사','현장심사','샤리아 심의','인증서 발급','SiHalal 등록'];
 const _s8label = c => (typeof c.step8==='number' ? S8_LABELS[c.step8] : null) || c.step8_label || '-';
@@ -4300,6 +4303,59 @@ VIEWS['aud-detail'] = () => {
       <div class="note attn" style="margin-top:12px"><b>P3 진행 중</b><p>사전심사·모의/현장심사·보고서·체크리스트 등 단계별 상세는 다음 슬라이스에서 실데이터로 연결됩니다.</p></div></section>`;
   }
   return _audDetailMock ? _audDetailMock() : '<p class="empty">업체를 선택해 주세요.</p>';
+};
+
+
+/* ===== P3 슬라이스2: aud-inbox(배정 수락/거절) + 오디터 사이드바 배지 실데이터 ===== */
+VIEWS['aud-inbox'] = () => {
+  const items = RS.assignments || [];
+  const tab = S.inboxTab || 'pending';
+  const byst = st => items.filter(i=>i.accept_status===st);
+  const L = tab==='all' ? items : byst(tab);
+  const tabs = [['pending','수락 대기'],['accepted','수락함'],['rejected','거절함'],['all','전체']];
+  return `<section class="panel">
+    ${byst('pending').length?'':'<div class="note"><b>안내</b><p>수락 대기 중인 배정이 없습니다.</p></div>'}
+    <div class="tabs">${tabs.map(([k,l])=>`<button class="${tab===k?'on':''}" onclick="App.inboxTab('${k}')">${l} <span class="mono muted">${k==='all'?items.length:byst(k).length}</span></button>`).join('')}</div>
+    <div class="tbl-wrap" style="border-top:0"><table><thead><tr><th>업체</th><th>케이스 상태</th><th>배정 역할</th><th>배정일</th><th>처리</th></tr></thead><tbody>
+    ${L.map(i=>`<tr><td><b>${esc(i.company_name)}</b></td><td><span class="badge">${esc(i.status_label||i.status||'')}</span></td>
+      <td><span class="badge attn">메인 오디터</span></td><td class="mono">${esc(i.created_at||'-')}</td>
+      <td>${i.accept_status==='pending'
+          ? `<div class="row-act"><button class="btn btn-sm btn-primary" onclick="App.audAccept('${i.case_id}')">수락</button><button class="btn btn-sm btn-ghost" onclick="App.audDecline('${i.case_id}')">거절</button></div>`
+          : `<span class="badge ${i.accept_status==='accepted'?'strong':'attn'}">${i.accept_status==='accepted'?'수락함':'거절함'}</span>${i.reject_reason?` <span class="muted">· ${esc(i.reject_reason)}</span>`:''} <button class="link" onclick="App.audDetail('${i.case_id}')">상세</button>`}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">해당 항목 없음</td></tr>'}
+    </tbody></table></div></section>`;
+};
+App.inboxTab = function(k){ S.inboxTab = k; render(); };
+App.audAccept = async function(cid){
+  const r = await apiFetch('/cases/'+cid+'/assignment/respond', {method:'POST', body:JSON.stringify({decision:'accepted'})});
+  if(!r.ok){ return toast('수락 처리에 실패했습니다.'); }
+  await loadAud(); render(); toast('배정을 수락했습니다. 내 업무에 추가됩니다.');
+};
+App.audDecline = function(cid){
+  const it = (RS.assignments||[]).find(i=>i.case_id===cid) || {};
+  openModal('배정 거절', `<p><b>${esc(it.company_name||'')}</b> 배정을 거절합니다. 관리자에게 전달할 사유를 적어 주세요(5자 이상).</p><div class="field"><label for="dc-text">거절 사유</label><textarea class="in" id="dc-text" placeholder="예) 해당 기간 다른 현장심사 일정과 겹칩니다."></textarea></div><div class="inline-msg" id="dc-msg"></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.audDoDecline('${cid}')">거절</button>`);
+};
+App.audDoDecline = async function(cid){
+  const reason = (($('#dc-text')||{}).value || '').trim();
+  if(reason.length < 5){ const m=$('#dc-msg'); if(m) m.textContent='거절 사유를 5자 이상 입력해 주세요.'; return; }
+  const r = await apiFetch('/cases/'+cid+'/assignment/respond', {method:'POST', body:JSON.stringify({decision:'rejected', reason})});
+  if(!r.ok){ return toast('거절 처리에 실패했습니다.'); }
+  closeModal(); await loadAud(); render(); toast('배정을 거절했습니다. 관리자에게 전달됩니다.');
+};
+
+/* 사이드바 배지 — 오디터는 실데이터(RS) 기준, 그 외 역할은 기존 mock */
+const _navCountMock = navCount;
+navCount = function(v){
+  if(S.role==='aud'){
+    const cs = RS.cases || []; let n = 0;
+    if(v==='aud-inbox') n = RS.assignPending || 0;
+    else if(v==='aud-pre') n = cs.filter(c=>c.step8===1 && c.owner==='auditor').length;
+    else if(v==='aud-mock') n = cs.filter(c=>c.step8===3).length;
+    else if(v==='aud-report') n = cs.filter(c=>c.step8===4 && c.owner==='auditor').length;
+    else if(v==='aud-resubmit') n = cs.filter(c=>c.hold).length;
+    return n ? `<span class="count">${n}</span>` : '';
+  }
+  return _navCountMock(v);
 };
 
 window.App = App;
