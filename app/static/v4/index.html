@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4984,6 +4984,69 @@ VIEWS['cons-status'] = () => {
   return `<div class="md">${nav}${body}</div>`;
 };
 App.selCompany = async function(id){ S.selCompany=id; if(!(RS.consPre||{})[id]) await loadConsPre(id); render(); };
+
+
+/* ===== P4 슬라이스6: 기업 문서함(ent-docs) 실데이터 — 목록·업로드·다운로드 ===== */
+const DOC_TYPES = [['nib_business_license','사업자등록증'],['factory_registration','공장등록증'],
+  ['coa_msds','성분분석표(CoA/MSDS)'],['material_list','원료 목록'],['product_label','제품 라벨'],
+  ['product_list','제품 목록'],['quality_cert','품질 인증서'],['supplier_declaration','공급자 선언서'],
+  ['halal_certificate','할랄 인증서'],['consent','동의서']];
+async function loadEntDocs(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/documents'); RS.entDocs[cid]=r.ok?await r.json():[]; }
+  catch(e){ RS.entDocs[cid]=[]; }
+}
+VIEWS['ent-docs'] = () => {
+  const c=(RS.cases||[])[0];
+  if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
+  const cid=c.case_id, docs=(RS.entDocs||{})[cid];
+  if(!docs){ if(RS._entDocsLoading!==cid){ RS._entDocsLoading=cid; loadEntDocs(cid).then(()=>{RS._entDocsLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const q=(S.docQ||'').toLowerCase();
+  const list=docs.filter(d=>!q||(d.filename||'').toLowerCase().includes(q)||(d.doc_type_ko||'').toLowerCase().includes(q)).slice().reverse();
+  const RVW={approved:'승인', rejected:'반려', rework:'보완', pending:'검토 대기'};
+  return `
+  <section class="summary">
+    <div><span class="k">보관 서류</span><span class="v mono">${docs.length}건</span></div>
+    <div><span class="k">서류 종류</span><span class="v mono">${new Set(docs.map(d=>d.doc_type)).size}종</span></div>
+    <div><span class="k">승인</span><span class="v mono">${docs.filter(d=>d.review_status==='approved').length}건</span></div>
+    <div><span class="k">검토 대기</span><span class="v mono">${docs.filter(d=>!d.review_status||d.review_status==='pending').length}건</span></div>
+  </section>
+  <section class="panel"><div class="panel-head"><h2>서류 올리기</h2><span class="muted">업로드 시 종류에 맞게 자동 파싱·스크리닝됩니다</span></div>
+    <div class="inline" style="flex-wrap:wrap">
+      <select class="in" id="doc-type" style="flex:1 1 200px">${DOC_TYPES.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
+      <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" style="flex:2 1 240px">
+      <button class="btn btn-primary" onclick="App.docUpload('${cid}')">업로드</button>
+    </div>
+  </section>
+  <section class="panel"><div class="panel-head"><h2>서류함</h2><input class="in" style="max-width:260px" placeholder="파일명·종류 검색" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
+    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th>등록</th><th></th></tr></thead><tbody>
+    ${list.map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td>
+      <td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
+      <td class="mono">${esc((d.created_at||'').slice(0,10))}</td>
+      <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${esc((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
+    </tbody></table></div>`:'<p class="empty">보관된 서류가 없습니다. 위에서 올려 주세요.</p>'}
+  </section>`;
+};
+App.docSearch = function(v){ S.docQ=v; render(); };
+App.docUpload = function(cid){
+  const dt=($('#doc-type')||{}).value||'nib_business_license';
+  const inp=$('#doc-file'); if(!inp||!inp.files||!inp.files[0]) return toast('파일을 선택해 주세요.');
+  const f=inp.files[0]; toast('업로드 중…');
+  const rd=new FileReader();
+  rd.onload=async()=>{ const b64=(rd.result||'').toString().split(',')[1]||'';
+    const r=await apiFetch('/cases/'+cid+'/parse-file',{method:'POST',body:JSON.stringify({doc_type:dt,filename:f.name,file_b64:b64})});
+    if(!r.ok){ const d=await r.json().catch(()=>({})); return toast('업로드 실패'+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
+    const res=await r.json(); const ap=res.applied||{};
+    delete RS.entDocs[cid]; await loadEntDocs(cid); await loadEnt(); render();
+    toast('서류를 올렸습니다.'+(ap.materials_added?(' 원재료 '+ap.materials_added+'건 연결'):'')+(ap.products_added?(' 제품 '+ap.products_added+'건'):''));
+  };
+  rd.readAsDataURL(f);
+};
+App.docDownload = async function(docId, name){
+  try{ const r=await apiFetch('/documents/'+docId+'/file'); if(!r.ok) return toast('파일을 열 수 없습니다.');
+    const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name||'document';
+    document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000);
+  }catch(e){ toast('파일을 열 수 없습니다.'); }
+};
 
 window.App = App;
 authLoad();
