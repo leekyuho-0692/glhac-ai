@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -5228,6 +5228,56 @@ App.entAsk = async function(cid){
   const r=await apiFetch('/consultations',{method:'POST',body:JSON.stringify({subject,message,case_id:cid})});
   if(!r.ok) return toast('문의 등록에 실패했습니다.');
   await loadEntAsk(); render(); toast('문의를 등록했습니다.');
+};
+
+
+/* ===== P4 슬라이스12: 인증 신청서 작성(ent-apply) 실데이터 — 제품 등록·신청 제출 ===== */
+async function loadEntProd(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/products'); const j=r.ok?await r.json():[]; RS.entProd[cid]=Array.isArray(j)?j:(j.items||[]); }
+  catch(e){ RS.entProd[cid]=[]; }
+}
+VIEWS['ent-apply'] = () => {
+  const c=(RS.cases||[])[0];
+  if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
+  const cid=c.case_id, prods=(RS.entProd||{})[cid];
+  if(!prods){ if(RS._entProdLoading!==cid){ RS._entProdLoading=cid; loadEntProd(cid).then(()=>{RS._entProdLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const submitted = !['onboarding','application_draft'].includes(c.status);
+  const docs=(RS.entDocs||{})[cid];
+  const docCount = docs ? docs.length : null;
+  return `
+  ${submitted?`<div class="note ${c.hold?'attn':''}"><b>신청서 제출됨</b><p>현재 <b>${esc(_s8label(c))}</b> 단계입니다. (${esc(c.status||'')})</p></div>`:`<div class="note"><b>인증 신청서 작성</b><p>인증 품목을 등록하고 서류를 올린 뒤 아래에서 AI 사전심사를 신청하세요. 품목이 1개 이상 있어야 신청할 수 있습니다.</p></div>`}
+  <section class="panel"><div class="panel-head"><h2>인증 품목 ${prods.length}개</h2></div>
+    ${prods.length?`<div class="tbl-wrap"><table><thead><tr><th class="num">No.</th><th style="min-width:200px">제품명</th><th>분류</th>${submitted?'':'<th></th>'}</tr></thead><tbody>
+    ${prods.map((pr,i)=>`<tr><td class="num">${i+1}</td><td><b>${esc(pr.name||'-')}</b>${pr.description?`<div class="muted">${esc(pr.description)}</div>`:''}</td><td class="muted">${esc(pr.category||pr.registration_type||'-')}</td>${submitted?'':`<td><button class="btn btn-sm btn-ghost" onclick="App.entDelProduct('${cid}','${pr.product_id}')">삭제</button></td>`}</tr>`).join('')}
+    </tbody></table></div>`:'<p class="empty">등록된 품목이 없습니다.</p>'}
+    ${submitted?'':`<div class="inline" style="flex-wrap:wrap;margin-top:8px"><input class="in" id="pr-name" placeholder="제품명 (예: 프리미엄 홍삼 스틱)" style="flex:2 1 220px"><input class="in" id="pr-cat" placeholder="분류(선택)" style="flex:1 1 140px"><button class="btn" onclick="App.entAddProduct('${cid}')">＋ 품목 추가</button></div>`}
+  </section>
+  <section class="panel"><div class="panel-head"><h2>필요 서류</h2><button class="link" onclick="App.go('ent-docs')">문서함 열기 →</button></div>
+    <p class="muted">사업자등록증·성분분석표·제조공정도 등은 <b>문서함</b>에서 업로드합니다.${docCount!=null?` 현재 ${docCount}건 보관 중.`:''}</p></section>
+  ${submitted?'':`<div class="action-bar"><span class="muted">${prods.length?'AI 사전심사를 신청하면 오디터 검토로 넘어갑니다.':'품목을 1개 이상 등록해야 신청할 수 있습니다.'}</span>
+    <div class="row-act"><button class="btn btn-primary" ${prods.length?'':'disabled style="opacity:.45;cursor:not-allowed"'} onclick="App.entSubmitApp('${cid}')">AI 사전심사 신청</button></div></div>`}`;
+};
+App.entAddProduct = async function(cid){
+  const name=(($('#pr-name')||{}).value||'').trim(); if(!name) return toast('제품명을 입력해 주세요.');
+  const category=(($('#pr-cat')||{}).value||'').trim()||null;
+  const r=await apiFetch('/cases/'+cid+'/products',{method:'POST',body:JSON.stringify({name,category})});
+  if(!r.ok) return toast('품목 추가에 실패했습니다.');
+  await loadEntProd(cid); render(); toast('품목을 추가했습니다.');
+};
+App.entDelProduct = async function(cid, pid){
+  const r=await apiFetch('/cases/'+cid+'/products/'+pid,{method:'DELETE'});
+  if(!r.ok) return toast('삭제에 실패했습니다.');
+  await loadEntProd(cid); render(); toast('품목을 삭제했습니다.');
+};
+const BLOCK_KO = {NIB_MISSING:'사업자등록번호(NIB) 누락 — 사업자등록증을 문서함에 올리면 자동 입력됩니다',
+  NO_PRODUCT:'인증 품목 미등록', COMPANY_NAME_MISSING:'기업명 누락', NO_JASA:'물류 서비스 범위 미선택'};
+App.entSubmitApp = async function(cid){
+  const r=await apiFetch('/cases/'+cid+'/submit-application',{method:'POST'});
+  if(!r.ok){ const d=await r.json().catch(()=>({})); const det=d.detail||{};
+    if(det.code==='TRANSITION_BLOCKED'){ const bs=(det.blockers||[]).map(b=>BLOCK_KO[b.code]||b.code);
+      return toast('신청 요건 미충족: '+(bs.join(' · ')||'요건 확인 필요')); }
+    return toast('신청에 실패했습니다.'); }
+  await loadEnt(); render(); toast('AI 사전심사를 신청했습니다. 오디터 검토로 넘어갑니다.');
 };
 
 window.App = App;
