@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4813,6 +4813,7 @@ async function loadEnt(){
   try{
     const r = await apiFetch('/cases');
     RS.cases = r.ok ? ((await r.json()).items || []) : [];
+    RS.entAsk = null;
     RS.loadedFor = AUTH.username;
   }catch(e){ RS.cases = []; }
 }
@@ -5192,6 +5193,42 @@ VIEWS['cons-docs'] = () => {
   return `<div class="md">${nav}${body}</div>`;
 };
 App.selDocCo = async function(id){ S.selDocCo=id; S.docQ=''; if(!(RS.entDocs||{})[id]) await loadEntDocs(id); render(); };
+
+
+/* ===== P4 슬라이스11: 기업↔컨설턴트 상담(ent-consultant) 실데이터 ===== */
+async function loadEntAsk(){
+  try{ const r=await apiFetch('/consultations'); RS.entAsk=r.ok?(await r.json()):[]; }
+  catch(e){ RS.entAsk=[]; }
+}
+VIEWS['ent-consultant'] = () => {
+  const c=(RS.cases||[])[0];
+  if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
+  if(RS.entAsk===null){ if(!RS._entAskLoading){ RS._entAskLoading=true; loadEntAsk().then(()=>{RS._entAskLoading=false; render();}); } }
+  const rows=RS.entAsk||[];
+  const consPanel=`<section class="panel"><div class="panel-head"><h2>전담 컨설턴트</h2></div>
+    ${c.consultant?`<dl class="dl"><div><dt>담당</dt><dd><b>${esc(c.consultant)}</b></dd></div><div><dt>담당 심사원</dt><dd>${esc(c.main_auditor||'배정 전')}</dd></div></dl>`
+      :'<p class="muted">전담 컨설턴트 배정 대기 중입니다. 관리자가 배정하거나 컨설턴트 초대 링크로 가입 시 자동 지정됩니다.</p>'}</section>`;
+  const askForm=`<section class="panel"><div class="panel-head"><h2>문의하기</h2><span class="muted">응답은 담당자가 확인 후 등록됩니다</span></div>
+    <div class="field"><label for="ask-subj">제목</label><input class="in" id="ask-subj" placeholder="예) 원재료 서류 관련 문의"></div>
+    <div class="field"><label for="ask-msg">내용</label><textarea class="in" id="ask-msg" placeholder="문의 내용을 입력해 주세요."></textarea></div>
+    <div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.entAsk('${c.case_id}')">문의 등록</button></div></section>`;
+  const listPanel=`<section class="panel"><div class="panel-head"><h2>내 문의 ${rows.length}건</h2></div>
+    ${rows.length?`<ul class="rows">${rows.slice().reverse().map(r=>`<li class="row" style="flex-direction:column;align-items:stretch;gap:6px">
+      <div class="row-act" style="justify-content:space-between"><b>${esc(r.subject||'(제목없음)')}</b><span class="badge ${r.status==='answered'?'strong':'attn'}">${r.status==='answered'?'답변 완료':'답변 대기'}</span></div>
+      <div class="muted">${esc(r.message||'')}</div>
+      ${r.response?`<div class="note"><b>답변${r.responder?(' · '+esc(r.responder)):''}</b><p>${esc(r.response)}</p></div>`:''}
+      <span class="muted mono" style="font-size:11px">${esc((r.created_at||'').slice(0,16))}</span></li>`).join('')}</ul>`
+      :(RS.entAsk===null?'<p class="empty">불러오는 중…</p>':'<p class="empty">등록한 문의가 없습니다.</p>')}</section>`;
+  return consPanel + askForm + listPanel;
+};
+App.entAsk = async function(cid){
+  const subject=(($('#ask-subj')||{}).value||'').trim();
+  const message=(($('#ask-msg')||{}).value||'').trim();
+  if(!message) return toast('문의 내용을 입력해 주세요.');
+  const r=await apiFetch('/consultations',{method:'POST',body:JSON.stringify({subject,message,case_id:cid})});
+  if(!r.ok) return toast('문의 등록에 실패했습니다.');
+  await loadEntAsk(); render(); toast('문의를 등록했습니다.');
+};
 
 window.App = App;
 authLoad();
