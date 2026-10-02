@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4929,7 +4929,7 @@ async function loadCons(){
     RS.cases = rc.ok ? ((await rc.json()).items || []) : [];
     RS.counts = rn.ok ? await rn.json() : {};
     RS.todo = rt.ok ? ((await rt.json()).items || []) : [];
-    RS.consInv = null;
+    RS.consInv = null; RS.consQna = null;
     RS.loadedFor = AUTH.username;
   }catch(e){ RS.cases=[]; RS.counts={}; RS.todo=[]; }
 }
@@ -5095,6 +5095,37 @@ App.copyLink = async function(url){
   try{ await navigator.clipboard.writeText(url); toast('링크를 복사했습니다.'); }
   catch(e){ toast('복사 실패 — 링크를 직접 선택해 복사하세요.'); }
 };
+
+
+/* ===== P4 슬라이스8: 컨설턴트 고객 문의 모니터링(cons-qna) 실데이터(읽기) =====
+   응답/상태변경은 백엔드가 admin/operator 전용 — 컨설턴트는 조회만. */
+async function loadConsQna(){
+  try{ const r=await apiFetch('/consultations'); RS.consQna=r.ok?(await r.json()):[]; }
+  catch(e){ RS.consQna=[]; }
+}
+VIEWS['cons-qna'] = () => {
+  const rows=RS.consQna;
+  if(rows===null){ if(!RS._consQnaLoading){ RS._consQnaLoading=true; loadConsQna().then(()=>{RS._consQnaLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const tab=S.qnaTab||'all';
+  const byst={open:rows.filter(r=>r.status!=='answered'), answered:rows.filter(r=>r.status==='answered')};
+  const L=tab==='open'?byst.open:tab==='answered'?byst.answered:rows;
+  const tabs=[['all','전체'],['open','답변 대기'],['answered','답변 완료']];
+  return `
+  <section class="summary">
+    <div><span class="k">전체 문의</span><span class="v mono">${rows.length}</span></div>
+    <div><span class="k">답변 대기</span><span class="v mono">${byst.open.length}</span></div>
+    <div><span class="k">답변 완료</span><span class="v mono">${byst.answered.length}</span></div>
+  </section>
+  <section class="panel"><div class="panel-head"><h2>고객 문의</h2><span class="muted">응답은 관리자가 처리합니다</span></div>
+    <div class="tabs">${tabs.map(([k,l])=>`<button class="${tab===k?'on':''}" onclick="App.qnaTab('${k}')">${l} <span class="mono muted">${k==='all'?rows.length:byst[k==='open'?'open':'answered'].length}</span></button>`).join('')}</div>
+    ${L.length?`<ul class="rows">${L.slice().reverse().map(r=>`<li class="row" style="flex-direction:column;align-items:stretch;gap:6px">
+      <div class="row-act" style="justify-content:space-between"><b>${esc(r.subject||'(제목없음)')}</b><span class="badge ${r.status==='answered'?'strong':'attn'}">${r.status==='answered'?'답변 완료':'답변 대기'}</span></div>
+      <div class="muted">${esc(r.message||'')}</div>
+      ${r.response?`<div class="note"><b>답변${r.responder?(' · '+esc(r.responder)):''}</b><p>${esc(r.response)}</p></div>`:''}
+      <span class="muted mono" style="font-size:11px">${esc((r.created_at||'').slice(0,16))}${r.channel?(' · '+esc(r.channel)):''}</span></li>`).join('')}</ul>`:'<p class="empty">해당 문의가 없습니다.</p>'}
+  </section>`;
+};
+App.qnaTab = function(k){ S.qnaTab=k; render(); };
 
 window.App = App;
 authLoad();
