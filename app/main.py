@@ -606,6 +606,13 @@ NOTIFY_MSG = {
         "en": ("Audit closed", "{company} — the on-site audit has been closed."),
         "id": ("Audit selesai", "{company} — audit lapangan telah ditutup."),
     },
+    # 사전심사 문서요청(document_requested)과 다른 사건이다 — 점 접미사로 변종을 둔다
+    # (기존 audit_scheduled / audit_scheduled.lph 관례). 같은 키를 쓰면 문구가 조용히 덮인다.
+    "document_requested.missing": {
+        "ko": ("부족 서류 요청", "{company} — 서류 {count}건이 필요합니다(원재료 {materials}건). 요청 내역을 확인해 주세요."),
+        "en": ("Missing documents requested", "{company} — {count} document(s) are required for {materials} material(s). Please review the request."),
+        "id": ("Permintaan dokumen yang kurang", "{company} — {count} dokumen diperlukan untuk {materials} bahan. Mohon periksa permintaan tersebut."),
+    },
     "audit_scheduled": {
         "ko": ("심사 일정", "{company} — 현장심사가 예정되었습니다."),
         "en": ("Audit scheduled", "{company} — an on-site audit has been scheduled."),
@@ -4393,6 +4400,72 @@ def get_quant_criteria(user=Depends(auth.get_current_user)):
     return {"criteria": [dict(key=k, **v) for k, v in QUANT_CRITERIA.items()]}
 
 
+# 요청서는 미충족 증빙만 나열한다 — 원료 상세 뷰가 충족 여부와 무관하게 required_evidence
+# 전체를 보여주는 것과 다르다. 이미 제출한 서류를 다시 요청하지 않는 것이 요점이다.
+@app.get("/cases/{case_id}/document-requests")
+def case_document_requests(case_id: str, lang: str = Query("ko"),
+                           all_materials: bool = Query(False),
+                           user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """부족 서류 요청서 — 미충족 증빙만, 사유와 제출 가능 서류 포함."""
+    _get_case(db, case_id, user)
+    from . import doc_request as _dr
+    return _dr.build_case_sheet(db, case_id, lang=lang, unresolved_only=not all_materials)
+
+
+@app.get("/cases/{case_id}/document-requests.txt")
+def case_document_requests_text(case_id: str, lang: str = Query("ko"),
+                                all_materials: bool = Query(False),
+                                user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """부족 서류 요청서 평문 — 고객 발송·출력용."""
+    _get_case(db, case_id, user)
+    from . import doc_request as _dr
+    sheet = _dr.build_case_sheet(db, case_id, lang=lang, unresolved_only=not all_materials)
+    return Response(content=_dr.render_text(sheet), media_type="text/plain; charset=utf-8")
+
+
+@app.post("/cases/{case_id}/document-requests/send")
+def send_document_request(case_id: str, lang: str = Query("ko"),
+                          all_materials: bool = Query(False),
+                          user=Depends(auth.require_roles("auditor", "consultant",
+                                                          "operator", "admin")),
+                          db: Session = Depends(get_db)):
+    """부족 서류 요청서를 클라이언트에게 발송한다(P33). 요청 이력과 그 시점 시트 스냅샷을
+    남긴다 — 인증 감사에서 "이 서류를 요구했다"를 증명해야 한다."""
+    case = _get_case(db, case_id, user)
+    from . import doc_request as _dr
+    sheet = _dr.build_case_sheet(db, case_id, lang=lang, unresolved_only=not all_materials)
+    # 부족한 게 없는데 서류를 요구하면 고객 신뢰를 깎는다.
+    if not sheet.get("request_count"):
+        raise HTTPException(400, {"code": "NO_MISSING_EVIDENCE", "case_id": case_id})
+    codes = sorted({g["code"] for g in sheet.get("groups") or []})
+    prev = (db.query(models.DocumentRequest)
+            .filter(models.DocumentRequest.case_id == case_id)
+            .order_by(models.DocumentRequest.created_at.desc()).first())
+    # 같은 내용 재요청은 정당한 독촉일 수 있으니 막지 않고 경고만 한다. 이력에는 둘 다 남는다.
+    duplicate_of = (prev.request_id if prev and sorted(prev.codes or []) == codes
+                    and prev.request_count == sheet["request_count"] else None)
+    n = _notify(db, case, "document_requested", role="applicant",
+                msg=("document_requested.missing",
+                     {"company": case.company_name or "", "count": sheet["request_count"],
+                      "materials": sheet["material_count"]}))
+    row = models.DocumentRequest(
+        case_id=case_id, lang=lang,
+        request_count=sheet["request_count"], material_count=sheet["material_count"],
+        group_count=len(sheet.get("groups") or []), codes=codes, sheet=sheet,
+        notification_id=n.notification_id,
+        requested_by=user.get("uid"), requested_role=user.get("role"))
+    db.add(row)
+    _audit(db, user, "document_request.send", resource_type="case", resource_id=case_id,
+           case_id=case_id,
+           meta={"request_count": sheet["request_count"], "codes": codes, "lang": lang,
+                 "duplicate_of": duplicate_of}, commit=False)
+    db.commit()
+    return {"request_id": row.request_id, "case_id": case_id, "lang": lang,
+            "request_count": sheet["request_count"], "material_count": sheet["material_count"],
+            "group_count": len(sheet.get("groups") or []), "codes": codes,
+            "notification_id": n.notification_id, "duplicate_of": duplicate_of, "sheet": sheet}
+
+
 @app.get("/cases/{case_id}/measurements")
 def list_measurements(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
@@ -6156,7 +6229,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
             if f.get(k):
                 setattr(c, k, f[k])
                 applied[k] = f[k]
-    elif body.doc_type in ("material_list", "product_label", "coa_msds", "quality_cert", "supplier_declaration"):
+    elif body.doc_type in ("material_list", "product_label", "coa_msds", "quality_cert", "supplier_declaration"):  # ② 성분표(coa_msds)·품질/공급자선언도 원재료 스크리닝 연결
         names = f.get("material_names") or f.get("ingredients") or []
         have = {m.name for m in db.query(models.Material).filter_by(case_id=case_id)}
         for mn in names:
@@ -6166,6 +6239,8 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                        screen_status=sc["status"], screen_severity=sc["severity"],
                                        matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk")))
         applied["materials_added"] = len(names)
+        # ③ 제품 자동등록 — 성분표(coa_msds)·제품라벨에 제품명이 있으면 제품도 생성한다.
+        #    문서 업로드만으로 NO_PRODUCT(제품 미등록) 게이트가 풀리게 한다.
         if body.doc_type in ("coa_msds", "product_label"):
             pnames = f.get("product_names") or []
             have_p = {p.name for p in db.query(models.Product).filter_by(case_id=case_id)}
@@ -6189,6 +6264,8 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                 text_excerpt=r.get("excerpt"),
                                 content_b64=_b64 if len(_b64) < 4_000_000 else None,
                                 content_type=_ctype(body.filename)))
+    # ① 검수로그 — 파싱 추출 근거를 ai_extraction 에 기록(§7.2/§7.4). label_judgment 만이 아니라
+    #    문서 필드추출도 검수/감사에 남긴다. reviewer_status=unreviewed 로 시작.
     if f:
         _save_ai_extraction(db, case_id, "parse_file:" + body.doc_type, f,
                             confidence=r.get("confidence"),

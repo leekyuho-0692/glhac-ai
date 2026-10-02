@@ -9,6 +9,7 @@ OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # gemma3:12b — 한국어 성분명 garble 내성 우수(추출 정확도), 다국어 140+ (vs qwen2.5:7b 비교 결과)
 MODEL = os.environ.get("GLHAC_LLM", "gemma3:12b")
 _ocr = None
+_ocr_lang = None   # 현재 _ocr 엔진의 언어 — 언어가 바뀌면 엔진을 교체한다(메모리는 1개만 유지)
 
 # 홍익AI/CHU-1 장기기억(장기 컨텍스트) — RAG 연동. 장애 시 로컬 폴백(차단 없음).
 CHU1_URL = os.environ.get("CHU1_URL", "http://localhost:7600")
@@ -245,15 +246,20 @@ def _ocr_kwargs(lang):
 
 def _ocr_image_inproc(path, lang="korean"):
     """워커 안에서 실제로 도는 본체(그리고 GLHAC_OCR_MODE=inproc 경로)."""
-    global _ocr
+    global _ocr, _ocr_lang
     try:
-        if _ocr is None:
+        # 언어가 바뀌면 엔진을 새로 만든다 — 예전엔 최초 언어(korean)로 고정돼, 상주 워커가
+        # 이후 lang=ru 요청도 korean 엔진으로 처리해 키릴을 라틴으로 오독했다(실측).
+        # 엔진은 한 번에 하나만 유지한다(korean+eslav 동시 상주 시 8GB 서버 메모리 초과 위험).
+        if _ocr is None or _ocr_lang != lang:
             from paddleocr import PaddleOCR
+            _ocr = None   # 이전 엔진 참조 해제 후 생성 — 교체 중 이중 상주 최소화
             try:
                 _ocr = PaddleOCR(**_ocr_kwargs(lang))
             except TypeError:
                 # 옛 버전은 일부 인자를 모른다 — 언어만 주고 간다
                 _ocr = PaddleOCR(lang=lang)
+            _ocr_lang = lang
         result = _ocr.predict(path)
         lines = []
         for r in result:
