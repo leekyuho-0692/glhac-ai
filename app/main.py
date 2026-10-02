@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from .db import Base, engine, get_db, SessionLocal
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
+from . import nav8
 from . import observability as obs
 from . import domain_dict as _dd_mod
 from .ontology_seed import seed
@@ -2245,14 +2246,43 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     # 수정요청 001 P3 — 계약 큐 처리대기 배지용: 케이스별 계약 상태 배치 조회
     _cts = {ct.case_id: ct.status for ct in
             db.query(models.Contract).filter(models.Contract.case_id.in_(_cids)).all()} if _cids else {}
-    items = [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
-              "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
-              "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
-              "province": _province_of(c.factory_address or c.address),
-              "contract_status": _cts.get(c.case_id),
-              "auditor_id": (assign.get(c.case_id) or {}).get("auditor_id"),
-              "auditor_name": (assign.get(c.case_id) or {}).get("auditor_name")}
-             for c in rows]
+    # P2: 동반 오디터(co)·전담 컨설턴트 배치 조회
+    co_map = {}
+    for ca in (db.query(models.CaseAuditor)
+               .filter(models.CaseAuditor.case_id.in_(_cids),
+                       models.CaseAuditor.role == "co").all() if _cids else []):
+        co_map.setdefault(ca.case_id, []).append(ca.user_id)
+    _oids = list({c.org_id for c in rows})
+    org_cons = {org.org_id: org.consultant_id for org in
+                db.query(models.Org).filter(models.Org.org_id.in_(_oids)).all()} if _oids else {}
+    cons_name = {}
+    for cid in {v for v in org_cons.values() if v}:
+        cp = db.get(models.ConsultantProfile, cid)
+        if cp and getattr(cp, "display_name", None):
+            cons_name[cid] = cp.display_name
+        else:
+            u = db.get(models.User, cid)
+            cons_name[cid] = u.username if u else None
+    items = []
+    for c in rows:
+        s8 = nav8.compute_step8(db, c)
+        nxt = sorted(sm.TRANSITIONS.get(c.status, set()))
+        next_state = nxt[0] if nxt else None
+        a = assign.get(c.case_id) or {}
+        _cc = org_cons.get(c.org_id)
+        items.append({"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
+                      "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
+                      "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
+                      "province": _province_of(c.factory_address or c.address),
+                      "contract_status": _cts.get(c.case_id),
+                      "auditor_id": a.get("auditor_id"), "auditor_name": a.get("auditor_name"),
+                      # P2 신규(하위호환 — 필드 추가만)
+                      "step8": s8["step"], "step8_label": s8["step_label"], "done": s8["done"],
+                      "hold": s8["hold"], "owner": s8["owner"],
+                      "consultant": cons_name.get(_cc) if _cc else None,
+                      "main_auditor": a.get("auditor_name"),
+                      "co_auditors": co_map.get(c.case_id, []),
+                      "next_action": _STATE_KO.get(next_state, next_state) if next_state else None})
     return {"total": total, "limit": limit, "offset": offset,
             "count": len(items), "items": items}
 
@@ -9824,7 +9854,135 @@ def get_case_journey(case_id: str, user=Depends(auth.get_current_user), db=Depen
     for i, (key, label, done) in enumerate(stages):
         status = "done" if done else ("current" if i == current_idx else "todo")
         result_stages.append({"key": key, "label": label, "status": status})
-    return {"case_id": case_id, "status": st, "milestone": mi, "current": current_idx, "stages": result_stages}
+    s8 = nav8.compute_step8(db, c)
+    return {"case_id": case_id, "status": st, "milestone": mi, "current": current_idx,
+            "stages": result_stages,
+            "step8": {"step": s8["step"], "label": s8["step_label"], "done": s8["done"],
+                      "hold": s8["hold"], "owner": s8["owner"], "labels": nav8.STEP8_LABELS}}
+
+
+# ===== P2(UI개편 기반): nav-counts(N2) · todo(N3) · 동반 오디터(N6) =====
+def _visible_cases(db, user):
+    """/cases 와 같은 가시성 규칙으로 이 사용자가 볼 수 있는 케이스 전량."""
+    q = db.query(models.CaseApplication)
+    if user["role"] not in CERTIFIER_ROLES:
+        own = models.CaseApplication.org_id == user["org_id"]
+        if user["role"] in ASSIGNED_ROLES:
+            ids = set(_assigned_case_ids(db, user["uid"]))
+            _mine = _my_client_org_ids(db, user["uid"])
+            if _mine:
+                ids |= {c.case_id for c in db.query(models.CaseApplication)
+                        .filter(models.CaseApplication.org_id.in_(_mine)).all()}
+            ids |= {ca.case_id for ca in                     # N6: 동반 오디터 배정분
+                    db.query(models.CaseAuditor).filter_by(user_id=user["uid"]).all()}
+            q = q.filter(or_(own, models.CaseApplication.case_id.in_(ids)) if ids else own)
+        else:
+            q = q.filter(own)
+    return q.all()
+
+
+@app.get("/me/nav-counts")
+def my_nav_counts(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """N2 사이드바 미처리 건수 배지 — 역할 기준 집계(세부 nav-item 매핑은 P3+)."""
+    bucket = nav8.role_bucket(user["role"])
+    cases = _visible_cases(db, user)
+    action_required = hold = in_progress = 0
+    for c in cases:
+        s8 = nav8.compute_step8(db, c)
+        if s8["done"]:
+            continue
+        in_progress += 1
+        if s8["hold"]:
+            hold += 1
+        if s8["owner"] == bucket:
+            action_required += 1
+    counts = {"action_required": action_required, "hold": hold, "in_progress": in_progress}
+    if bucket == "auditor":
+        amap = _ops_latest_assignment(db, [c.case_id for c in cases])
+        counts["assignment_pending"] = sum(
+            1 for a in amap.values()
+            if a.get("auditor_id") == user["uid"] and a.get("accept_status") == "pending")
+    if user["role"] in ("admin", "operator"):
+        counts["staff_signup_pending"] = (db.query(models.StaffSignupRequest)
+                                          .filter_by(status="pending").count())
+    return counts
+
+
+@app.get("/me/todo")
+def my_todo(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """N3 처리할 문서/케이스 — 지금 내(역할)가 처리해야 하거나 보완 대기인 케이스."""
+    bucket = nav8.role_bucket(user["role"])
+    out = []
+    for c in _visible_cases(db, user):
+        s8 = nav8.compute_step8(db, c)
+        if s8["done"]:
+            continue
+        mine = (s8["owner"] == bucket)
+        if not (mine or s8["hold"]):
+            continue
+        out.append({"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
+                    "step8": s8["step"], "step8_label": s8["step_label"], "hold": s8["hold"],
+                    "owner": s8["owner"], "mine": mine,
+                    "reason": "보완 대기" if s8["hold"] else "처리 필요"})
+    out.sort(key=lambda x: (not x["hold"], -x["step8"]))
+    return {"count": len(out), "items": out}
+
+
+@app.get("/cases/{case_id}/auditors")
+def list_case_auditors(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """N6 케이스 오디터(메인+동반) 조회."""
+    _get_case(db, case_id, user)
+    a = _ops_latest_assignment(db, [case_id]).get(case_id) or {}
+    cos = db.query(models.CaseAuditor).filter_by(case_id=case_id, role="co").all()
+
+    def _nm(uid):
+        u = db.get(models.User, uid)
+        return u.username if u else uid
+    return {"case_id": case_id,
+            "main": ({"user_id": a.get("auditor_id"), "name": a.get("auditor_name"),
+                      "accept_status": a.get("accept_status")} if a.get("auditor_id") else None),
+            "co": [{"user_id": x.user_id, "name": _nm(x.user_id),
+                    "assigned_at": str(x.assigned_at)[:19]} for x in cos]}
+
+
+@app.post("/cases/{case_id}/auditors")
+def add_co_auditor(case_id: str, body: dict = None,
+                   user=Depends(auth.require_roles("operator", "admin")),
+                   db: Session = Depends(get_db)):
+    """N6 동반 오디터 추가 — 운영자/관리자."""
+    _get_case(db, case_id, user)
+    b = body or {}
+    uid = (b.get("user_id") or "").strip()
+    uname = (b.get("username") or "").strip()
+    u = (db.get(models.User, uid) if uid
+         else db.query(models.User).filter_by(username=uname).first() if uname else None)
+    if not u:
+        raise HTTPException(400, {"code": "USER_NOT_FOUND"})
+    if u.role != "auditor":
+        raise HTTPException(422, {"code": "NOT_AUDITOR"})
+    uid = u.user_id
+    if db.query(models.CaseAuditor).filter_by(case_id=case_id, user_id=uid, role="co").first():
+        return {"ok": True, "already": True}
+    row = models.CaseAuditor(case_id=case_id, user_id=uid, role="co", assigned_by=user["uid"])
+    db.add(row)
+    _audit(db, user, "case.co_auditor.add", "case", case_id, None, {"user_id": uid})
+    db.commit()
+    return {"ok": True, "id": row.id}
+
+
+@app.delete("/cases/{case_id}/auditors/{uid}")
+def remove_co_auditor(case_id: str, uid: str,
+                      user=Depends(auth.require_roles("operator", "admin")),
+                      db: Session = Depends(get_db)):
+    """N6 동반 오디터 해제."""
+    _get_case(db, case_id, user)
+    row = db.query(models.CaseAuditor).filter_by(case_id=case_id, user_id=uid, role="co").first()
+    if not row:
+        raise HTTPException(404, {"code": "NOT_FOUND"})
+    db.delete(row)
+    _audit(db, user, "case.co_auditor.remove", "case", case_id, None, {"user_id": uid})
+    db.commit()
+    return {"ok": True}
 
 
 # ===== 고객 상담(consultation) 서브시스템 — 관리자 고객대응 (회의 2026-07-09) =====
