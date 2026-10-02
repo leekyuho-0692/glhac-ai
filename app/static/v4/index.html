@@ -3433,14 +3433,14 @@ const App = {
       S.role=ui; S.view=ROLES[rk].home;
       const list = ROLES[rk].list(); S.userId = (list[0] && list[0].id) || null;
       S.loginEmail=null;
-      if(ui==='aud'){ await loadAud(); } else if(ui==='ent'){ await loadEnt(); } else if(ui==='cons'){ await loadCons(); } else if(ui==='sha'){ await loadSha(); }
+      if(ui==='aud'){ await loadAud(); } else if(ui==='ent'){ await loadEnt(); } else if(ui==='cons'){ await loadCons(); } else if(ui==='sha'){ await loadSha(); } else if(ui==='adm'){ await loadAdm(); }
       render(); window.scrollTo(0,0);
       toast('로그인되었습니다. ('+esc(d.username)+' · '+ui+')');
     }catch(err){ toast('서버에 연결할 수 없습니다. 네트워크를 확인해 주세요.'); }
     finally{ if(btn) btn.disabled=false; }
   },
   logout(){ if(AUTH.access){ fetch(API_BASE+'/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+AUTH.access}}).catch(()=>{}); } authClear(); S.role=null; S.userId=null; S.auth='login'; closeModal(); render(); window.scrollTo(0,0); toast('로그아웃되었습니다.'); },
-  async go(v){ S.view=v; if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } else if(S.role==='cons'){ await loadCons(); } else if(S.role==='sha'){ await loadSha(); } render(); window.scrollTo(0,0); },
+  async go(v){ S.view=v; if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } else if(S.role==='cons'){ await loadCons(); } else if(S.role==='sha'){ await loadSha(); } else if(S.role==='adm'){ await loadAdm(); } render(); window.scrollTo(0,0); },
   terms(k){ openModal(TERMS[k].title, TERMS[k].body); },
 
   /* signup */
@@ -5346,6 +5346,38 @@ App.shaVote = async function(cid, vote){
   const r=await apiFetch('/cases/'+cid+'/fatwa/vote',{method:'POST',body:JSON.stringify({member:AUTH.username, vote})});
   if(!r.ok) return toast('투표에 실패했습니다.');
   delete RS.fatwa[cid]; await loadFatwa(cid); render(); toast((VOTE_KO[vote]||vote)+' 투표를 기록했습니다.');
+};
+
+
+/* ===== P7 관리자(adm) 실데이터 계층 + adm-home ===== */
+async function loadAdm(){
+  try{
+    const [rc, rn] = await Promise.all([apiFetch('/cases?limit=500'), apiFetch('/me/nav-counts')]);
+    RS.cases = rc.ok ? ((await rc.json()).items||[]) : [];
+    RS.counts = rn.ok ? await rn.json() : {};
+    RS.loadedFor = AUTH.username;
+  }catch(e){ RS.cases=[]; RS.counts={}; }
+}
+VIEWS['adm-home'] = () => {
+  const all=RS.cases||[], active=all.filter(c=>!c.done), done=all.filter(c=>c.done);
+  const dist=Array(8).fill(0); all.forEach(c=>{ if(!c.done && typeof c.step8==='number') dist[c.step8]++; });
+  const mx=Math.max(1,...dist);
+  const kpi=(lbl,n,unit)=>`<div><span class="k">${lbl}</span><span class="v mono">${n}${unit?`<small style="font-size:14px"> ${unit}</small>`:''}</span></div>`;
+  return `
+  <section class="summary">
+    ${kpi('전체 인증기업', all.length, '개사')}
+    ${kpi('진행 중', active.length, '건')}
+    ${kpi('인증 완료', done.length, '건')}
+    ${kpi('스태프 가입 대기', (RS.counts&&RS.counts.staff_signup_pending)||0, '건')}
+  </section>
+  <section class="panel"><div class="panel-head"><h2>단계별 진행 기업</h2><span class="muted">완료 제외</span></div>
+    <div class="dist">${S8_LABELS.map((s,i)=>`<div><span class="n">${dist[i]}</span><span class="l">${pad(i+1)} ${esc(s)}</span><span class="bar"><i style="width:${dist[i]/mx*100}%"></i></span></div>`).join('')}</div>
+  </section>
+  <section class="panel"><div class="panel-head"><h2>전체 인증기업</h2><button class="link" onclick="App.go('adm-assign')">배정 관리 →</button></div>
+    ${all.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:160px">기업</th><th>단계</th><th>다음 할 일</th><th>컨설턴트</th><th>심사원</th></tr></thead><tbody>
+    ${all.slice(0,100).map(c=>`<tr><td><b>${esc(c.company_name)}</b>${c.hold?' <span class="badge attn">보완</span>':''}</td><td><span class="badge">${esc(_s8label(c))}</span></td><td class="muted">${esc(c.next_action||'-')}</td><td class="muted">${esc(c.consultant||'-')}</td><td class="muted">${esc(c.main_auditor||'-')}</td></tr>`).join('')}
+    </tbody></table></div>`:'<p class="empty">등록된 인증기업이 없습니다.</p>'}
+  </section>`;
 };
 
 window.App = App;
