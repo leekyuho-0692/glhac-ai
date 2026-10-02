@@ -4241,7 +4241,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4516,6 +4516,85 @@ App.genReport = async function(cid){
   const r=await apiFetch('/cases/'+cid+'/audit-report',{method:'POST'});
   if(!r.ok) return toast('보고서 생성에 실패했습니다.');
   await loadOnsite(cid); render(); toast('현장심사 보고서 초안을 생성했습니다.');
+};
+
+
+/* ===== P3 슬라이스5: aud-materials(원재료 스크리닝) 실데이터 ===== */
+async function loadMats(cid){
+  try{ const r = await apiFetch('/cases/'+cid+'/materials'); RS.mats[cid] = r.ok ? await r.json() : []; }
+  catch(e){ RS.mats[cid] = []; }
+}
+const _sevAttn = sv => /high|critical|하람|major|고/i.test(String(sv||''));
+function _audMatDetail(cid, mats){
+  const total = mats.length;
+  const highN = mats.filter(m=>_sevAttn(m.severity)).length;
+  const noEv = mats.filter(m=>(m.evidence_count||0)===0);
+  const f = S.matType || '전체';
+  const types = [...new Set(mats.map(m=>m.mat_type_label||m.mat_type).filter(Boolean))];
+  const L = mats.filter(m=>f==='전체' || (m.mat_type_label||m.mat_type)===f);
+  return `
+  <section class="summary">
+    <div><span class="k">원재료</span><span class="v mono">${total}</span></div>
+    <div><span class="k">고위험/하람</span><span class="v mono">${highN}</span></div>
+    <div><span class="k">증빙 미제출</span><span class="v mono">${noEv.length}</span></div>
+    <div><span class="k">유형</span><span class="v mono">${types.length}</span></div>
+  </section>
+  <div class="md" style="grid-template-columns:minmax(0,1fr) 300px;margin-top:4px">
+    <section class="panel"><div class="panel-head"><h2>원재료 목록</h2><div class="row-act"><span class="muted">${total}건</span><button class="btn btn-sm" onclick="App.matExportR('${cid}')">Excel</button></div></div>
+      <div class="chipbar">${['전체',...types].map(t=>`<button class="chip ${f===t?'on':''}" onclick="App.matType('${t}')">${esc(t)}<span class="mono">${t==='전체'?total:mats.filter(m=>(m.mat_type_label||m.mat_type)===t).length}</span></button>`).join('')}</div>
+      <div class="tbl-wrap"><table><thead><tr><th style="min-width:150px">원재료</th><th>E번호</th><th>유형</th><th>공급사</th><th style="min-width:120px">판정</th><th>증빙</th><th></th></tr></thead><tbody>
+      ${L.map(m=>`<tr><td><b>${esc(m.name)}</b>${m.najis?' <span class="badge attn">najis</span>':''}</td><td class="mono">${esc(m.e_number||'-')}</td>
+        <td class="muted">${esc(m.mat_type_label||m.mat_type||'-')}</td><td class="muted">${esc(m.manufacturer||m.supplier||'-')}</td>
+        <td><span class="badge ${_sevAttn(m.severity)?'attn':(m.result==='halal'||/할랄/.test(m.status||'')?'strong':'')}">${esc(m.status||m.result||'-')}</span></td>
+        <td class="mono">${m.evidence_count||0}</td>
+        <td><button class="btn btn-sm btn-ghost" onclick="App.matScreenR('${cid}','${m.material_id}')">재판정</button></td></tr>`).join('')||'<tr><td colspan="7" class="empty">원재료 없음</td></tr>'}
+      </tbody></table></div>
+      <p class="muted" style="margin-top:8px;font-size:12px">· 원재료 등록·삭제는 인증기업/컨설턴트가 합니다. 오디터는 재판정·증빙 검토·Excel 내보내기를 수행합니다.</p>
+    </section>
+    <section class="panel"><div class="panel-head"><h2>스크리닝 요약</h2></div>
+      ${highN?`<div class="note attn"><b>고위험/하람 가능 ${highN}건</b><p>대체 원료 검토·증빙 보완이 필요합니다.</p></div>`:'<div class="note"><b>✓ 고위험 원재료 없음</b></div>'}
+      <b style="font-size:13px">증빙 미제출 ${noEv.length}건</b>
+      <ul class="rows">${noEv.slice(0,20).map(m=>`<li class="row"><div><b>${esc(m.name)}</b><span class="muted">${esc(m.mat_type_label||m.mat_type||'')}</span></div><span class="badge ${_sevAttn(m.severity)?'attn':''}">${esc(m.status||m.result||'')}</span></li>`).join('')||'<li class="empty">없음</li>'}</ul>
+    </section>
+  </div>`;
+}
+VIEWS['aud-materials'] = () => {
+  const list = (RS.cases||[]).filter(c=>!c.done);
+  if(!list.length) return `<section class="panel"><p class="empty">원재료를 검토할 케이스가 없습니다.</p></section>`;
+  let cur = (S.selMat && list.find(c=>c.case_id===S.selMat)) ? S.selMat : list[0].case_id;
+  S.selMat = cur;
+  const nav = `<nav class="mlist" aria-label="케이스 목록"><div class="mh">케이스 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selMat('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const mats = (RS.mats||{})[cur]; let body;
+  if(!mats){ if(RS._matLoading!==cur){ RS._matLoading=cur; loadMats(cur).then(()=>{ RS._matLoading=null; render(); }); } body='<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  else body = _audMatDetail(cur, mats);
+  return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${body}</div></div>`;
+};
+App.selMat = async function(id){ S.selMat=id; S.matType='전체'; if(!(RS.mats||{})[id]) await loadMats(id); render(); };
+App.matAddR = async function(cid){
+  const name=(($('#mt-name')||{}).value||'').trim(); if(!name) return toast('원재료명을 입력해 주세요.');
+  const e_number=(($('#mt-enum')||{}).value||'').trim()||null; const supplier=(($('#mt-maker')||{}).value||'').trim()||null;
+  const r=await apiFetch('/cases/'+cid+'/materials',{method:'POST',body:JSON.stringify({name,e_number,supplier})});
+  if(!r.ok) return toast('원재료 추가에 실패했습니다.');
+  await loadMats(cid); render(); toast('원재료를 추가하고 스크리닝했습니다.');
+};
+App.matDelR = async function(cid, mid){
+  const r=await apiFetch('/materials/'+mid,{method:'DELETE'});
+  if(!r.ok) return toast('삭제에 실패했습니다.');
+  await loadMats(cid); render(); toast('원재료를 삭제했습니다.');
+};
+App.matScreenR = async function(cid, mid){
+  const r=await apiFetch('/materials/'+mid+'/screen',{method:'POST'});
+  if(!r.ok) return toast('재판정에 실패했습니다.');
+  await loadMats(cid); render(); toast('재판정했습니다.');
+};
+App.matExportR = async function(cid){
+  try{
+    const r=await apiFetch('/cases/'+cid+'/materials/export.xlsx');
+    if(!r.ok) return toast('Excel 생성에 실패했습니다.');
+    const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+    a.download='materials_'+cid.slice(0,8)+'.xlsx'; document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000); toast('Excel을 내려받았습니다.');
+  }catch(e){ toast('Excel 내보내기에 실패했습니다.'); }
 };
 
 window.App = App;
