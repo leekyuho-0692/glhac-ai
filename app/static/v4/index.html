@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4878,6 +4878,47 @@ App.entDoResubmit = async function(cid){
   if(!r.ok) return toast('보완 제출에 실패했습니다.');
   closeModal(); delete RS.entPre[cid]; await loadEntPre(cid); await loadEnt(); render();
   toast('보완 제출을 완료했습니다. 오디터에게 알림이 전달됩니다.');
+};
+
+
+/* ===== P4 슬라이스3: 기업 계약·결제 현황(ent-contract) 실데이터 ===== */
+async function loadEntCt(cid){
+  try{
+    const [rc, ri] = await Promise.all([apiFetch('/cases/'+cid+'/contract'), apiFetch('/cases/'+cid+'/invoices')]);
+    RS.entCt[cid] = { contract: rc.ok?await rc.json():{exists:false}, invoices: ri.ok?await ri.json():[] };
+  }catch(e){ RS.entCt[cid]={contract:{exists:false}, invoices:[]}; }
+}
+const _money = (n,cur) => (n==null?'-':(Number(n).toLocaleString()+' '+(cur||'KRW')));
+const INV_ST = {waiting_payment:'입금 대기', paid:'입금 완료', settlement:'정산', settled:'정산완료', draft:'작성중', refunded:'환불', expired:'기한만료', billed:'청구'};
+VIEWS['ent-contract'] = () => {
+  const c=(RS.cases||[])[0];
+  if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
+  const cid=c.case_id, d=(RS.entCt||{})[cid];
+  if(!d){ if(RS._entCtLoading!==cid){ RS._entCtLoading=cid; loadEntCt(cid).then(()=>{RS._entCtLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const ct=d.contract||{}, invs=d.invoices||[];
+  const contractPanel = ct.exists
+    ? `<section class="panel"><div class="panel-head"><h2>용역 계약</h2><span class="badge ${ct.status==='confirmed'||ct.status==='signed'?'strong':'attn'}">${esc(ct.status||'')}</span></div>
+        <dl class="dl"><div><dt>계약 번호</dt><dd class="mono">${esc(ct.contract_no||'-')}</dd></div><div><dt>계약 금액</dt><dd class="mono">${_money(ct.fee,ct.currency)}</dd></div>
+          <div><dt>효력일</dt><dd class="mono">${esc(ct.effective_date||'-')}</dd></div>
+          <div><dt>서명</dt><dd>기업 ${ct.signed_a?'<span class="badge strong">완료</span>':'<span class="badge attn">대기</span>'} · GL HAC ${ct.signed_b?'<span class="badge strong">완료</span>':'<span class="badge">대기</span>'}</dd></div></dl>
+        ${!ct.signed_a?`<div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.entSign('${cid}','${esc(ct.contract_id)}')">계약서 전자서명</button></div>`:''}
+      </section>`
+    : `<section class="panel"><div class="panel-head"><h2>용역 계약</h2></div><p class="empty">계약서가 아직 준비되지 않았습니다. 사전심사 통과 후 컨설턴트가 견적·계약서를 발송합니다.</p></section>`;
+  const invPanel = `<section class="panel"><div class="panel-head"><h2>청구·입금</h2><span class="muted">${invs.length}건</span></div>
+    ${invs.length?`<div class="tbl-wrap"><table><thead><tr><th>구분</th><th>청구액</th><th>상태</th><th>기한</th></tr></thead><tbody>
+    ${invs.map(i=>`<tr><td>${esc(i.service_type||'-')}</td><td class="mono">${_money(i.total!=null?i.total:i.amount)}</td><td><span class="badge ${i.status==='paid'?'strong':'attn'}">${INV_ST[i.status]||i.status}</span></td><td class="mono">${esc((i.due_date||'').slice(0,10)||'-')}</td></tr>`).join('')}
+    </tbody></table></div>`:'<p class="empty">청구 내역이 없습니다.</p>'}</section>`;
+  return contractPanel + invPanel;
+};
+App.entSign = function(cid, contractId){
+  openModal('계약서 전자서명', `<p>용역 계약서에 전자서명합니다(기업 측). 서명자 이름(필수).</p><div class="field"><label for="ec-name">서명자</label><input class="in" id="ec-name" value="${esc(AUTH.username||'')}"></div><div class="inline-msg" id="ec-e"></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.entDoSign('${cid}','${contractId}')">서명</button>`);
+};
+App.entDoSign = async function(cid, contractId){
+  const name=(($('#ec-name')||{}).value||'').trim(); if(!name){ const e=$('#ec-e'); if(e) e.textContent='서명자 이름을 입력해 주세요.'; return; }
+  const r=await apiFetch('/contracts/'+contractId+'/sign?party=A&name='+encodeURIComponent(name),{method:'POST'});
+  if(!r.ok) return toast('서명에 실패했습니다.');
+  closeModal(); delete RS.entCt[cid]; await loadEntCt(cid); render(); toast('계약서에 전자서명했습니다.');
 };
 
 window.App = App;
