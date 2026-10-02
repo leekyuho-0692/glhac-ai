@@ -4241,7 +4241,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4732,6 +4732,78 @@ App.schedReplan = async function(cid){
   const r=await apiFetch('/cases/'+cid+'/onsite-schedule/reschedule',{method:'POST',body:JSON.stringify({dates})});
   if(!r.ok) return toast('재조율 제시에 실패했습니다.');
   await loadSched(cid); render(); toast('재조율 후보일을 제시했습니다. 기업 수락을 기다립니다.');
+};
+
+
+/* ===== P3 슬라이스8: aud-final(최종 취합·보고서 승인/서명/파트와 상정) 실데이터 ===== */
+async function loadFinal(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/audit-report/status'); RS.final[cid]=r.ok?await r.json():{}; }
+  catch(e){ RS.final[cid]={}; }
+}
+function _audFinalDetail(cid, st){
+  const rep=st.report||{}, gate=st.fatwa_gate||{}, signed=st.signed, sent=st.sent_fatwa;
+  const hasReport = !!rep.status;
+  const items=[['보고서 승인', !!rep.approved],['오디터 서명', !!signed],['SJPH 완비', !!gate.sjph_complete],
+               ['HPAS 평가 '+(gate.hpas_ok||0)+'/'+(gate.hpas_total||0), (gate.hpas_total||0)>0 && (gate.hpas_ok||0)>=(gate.hpas_total||0)],
+               ['할랄 관리책임자(Penyelia)', !!gate.penyelia_ok]];
+  return `
+  <section class="panel"><div class="panel-head"><h2 style="font-size:20px">현장심사 보고서</h2>${hasReport?`<span class="badge ${rep.approved?'strong':'attn'}">${rep.approved?'승인됨':esc(rep.status)}${rep.version?(' v'+rep.version):''}</span>`:'<span class="muted">미생성</span>'}</div>
+    ${signed?`<div class="note"><b>오디터 서명 완료</b> <span class="muted">${esc(signed.name||'')} · ${esc((signed.at||'').slice(0,19))}</span></div>`:''}
+    <div class="row-act" style="flex-wrap:wrap">
+      <button class="btn" onclick="App.finalGen('${cid}')">${hasReport?'새 버전 생성':'AI 보고서 생성'}</button>
+      ${hasReport&&!rep.approved?`<button class="btn btn-primary" onclick="App.finalApprove('${cid}','${esc(rep.gen_doc_id||'')}')">보고서 승인</button>`:''}
+      ${rep.approved&&!signed?`<button class="btn btn-primary" onclick="App.finalSign('${cid}')">전자서명</button>`:''}
+      <button class="btn btn-ghost" onclick="App.finalBundle('${cid}')">증거 번들 ZIP</button>
+    </div></section>
+  <section class="panel"><div class="panel-head"><h2>파트와 상정 요건</h2><span class="badge ${gate.ready?'strong':'attn'}">${gate.ready?'충족':'미충족'}</span></div>
+    <ul class="rows">${items.map(([l,v])=>`<li class="row"><div><b>${esc(l)}</b></div>${v?'<span class="badge strong">✓ 충족</span>':'<span class="badge attn">미충족</span>'}</li>`).join('')}</ul>
+    ${sent?'<div class="note"><b>✓ 샤리아 위원회 상정 완료</b></div>':''}
+    ${!sent?`<div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" ${gate.ready?'':'disabled style="opacity:.45;cursor:not-allowed"'} onclick="App.finalSendFatwa('${cid}')">📤 샤리아 위원회 상정</button></div>`:''}
+  </section>`;
+}
+VIEWS['aud-final'] = () => {
+  const list = (RS.cases||[]).filter(c=>c.step8===4 && c.owner==='auditor');
+  if(!list.length) return `<section class="panel"><p class="empty">최종 취합할 현장심사 업체가 없습니다.</p></section>`;
+  let cur=(S.selFinal&&list.find(c=>c.case_id===S.selFinal))?S.selFinal:list[0].case_id; S.selFinal=cur;
+  const nav=`<nav class="mlist" aria-label="최종취합 대상"><div class="mh">최종 취합 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selFinal('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const st=(RS.final||{})[cur]; let body;
+  if(!st){ if(RS._finalLoading!==cur){ RS._finalLoading=cur; loadFinal(cur).then(()=>{RS._finalLoading=null; render();}); } body='<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  else body=_audFinalDetail(cur, st);
+  return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${body}</div></div>`;
+};
+App.selFinal = async function(id){ S.selFinal=id; if(!(RS.final||{})[id]) await loadFinal(id); render(); };
+App.finalGen = async function(cid){
+  toast('보고서를 생성하고 있습니다…');
+  const r=await apiFetch('/cases/'+cid+'/audit-report',{method:'POST'});
+  if(!r.ok) return toast('보고서 생성에 실패했습니다.');
+  await loadFinal(cid); render(); toast('보고서 초안을 생성했습니다.');
+};
+App.finalApprove = async function(cid, gid){
+  if(!gid) return toast('보고서를 먼저 생성해 주세요.');
+  const r=await apiFetch('/gen-docs/'+gid+'/approve',{method:'POST'});
+  if(!r.ok) return toast('승인에 실패했습니다.');
+  await loadFinal(cid); render(); toast('보고서를 승인했습니다.');
+};
+App.finalSign = function(cid){
+  openModal('보고서 전자서명', `<p>승인된 보고서에 전자서명합니다. 서명자 이름(필수).</p><div class="field"><label for="fs-name">서명자</label><input class="in" id="fs-name" value="${esc(AUTH.username||'')}"></div><div class="inline-msg" id="fs-e"></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.finalDoSign('${cid}')">서명</button>`);
+};
+App.finalDoSign = async function(cid){
+  const name=(($('#fs-name')||{}).value||'').trim(); if(!name){ const e=$('#fs-e'); if(e) e.textContent='서명자 이름을 입력해 주세요.'; return; }
+  const r=await apiFetch('/cases/'+cid+'/audit-report/sign',{method:'POST',body:JSON.stringify({name})});
+  if(!r.ok){ const d=await r.json().catch(()=>({})); return toast('서명 실패'+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
+  closeModal(); await loadFinal(cid); await loadAud(); render(); toast('보고서에 전자서명했습니다.');
+};
+App.finalSendFatwa = async function(cid){
+  const r=await apiFetch('/cases/'+cid+'/audit-report/send-fatwa',{method:'POST'});
+  if(!r.ok){ const d=await r.json().catch(()=>({})); const miss=(d.detail&&d.detail.missing)||[]; return toast('상정 불가 — 미충족: '+(miss.join(', ')||'게이트')); }
+  await loadFinal(cid); await loadAud(); render(); toast('샤리아 위원회에 상정했습니다.');
+};
+App.finalBundle = async function(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/evidence-bundle.zip'); if(!r.ok) return toast('번들 생성에 실패했습니다.');
+    const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='evidence_'+cid.slice(0,8)+'.zip';
+    document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000); toast('증거 번들을 내려받았습니다.');
+  }catch(e){ toast('번들 내보내기에 실패했습니다.'); }
 };
 
 window.App = App;
