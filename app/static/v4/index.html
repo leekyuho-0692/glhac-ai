@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4929,6 +4929,7 @@ async function loadCons(){
     RS.cases = rc.ok ? ((await rc.json()).items || []) : [];
     RS.counts = rn.ok ? await rn.json() : {};
     RS.todo = rt.ok ? ((await rt.json()).items || []) : [];
+    RS.consInv = null;
     RS.loadedFor = AUTH.username;
   }catch(e){ RS.cases=[]; RS.counts={}; RS.todo=[]; }
 }
@@ -5046,6 +5047,53 @@ App.docDownload = async function(docId, name){
     const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name||'document';
     document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000);
   }catch(e){ toast('파일을 열 수 없습니다.'); }
+};
+
+
+/* ===== P4 슬라이스7: 컨설턴트 신규기업 초대(cons-new) 실데이터 ===== */
+async function loadConsInv(){
+  try{ const r=await apiFetch('/consultant/invites'); RS.consInv=r.ok?((await r.json()).items||[]):[]; }
+  catch(e){ RS.consInv=[]; }
+}
+const _refLink = code => location.origin + '/ui/v4/?ref=' + code;
+VIEWS['cons-new'] = () => {
+  const invs=RS.consInv;
+  if(invs===null){ if(!RS._consInvLoading){ RS._consInvLoading=true; loadConsInv().then(()=>{RS._consInvLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const now=Date.now();
+  const active=invs.filter(i=>!i.revoked && (!i.expires_at||new Date(i.expires_at).getTime()>now));
+  return `<div class="cols-2" style="align-items:start">
+    <section class="panel"><div class="panel-head"><h2>신규 인증기업 초대</h2></div>
+      <p class="muted">초대 링크로 가입한 기업은 자동으로 내 담당으로 귀속됩니다.</p>
+      <div class="field"><label for="iv-company">업체명(참고, 선택)</label><input class="in" id="iv-company" placeholder="PT 가나다식품"></div>
+      <div class="field"><label for="iv-note">메모(선택)</label><input class="in" id="iv-note"></div>
+      <div class="field"><label for="iv-days">유효기간(일)</label><input class="in" id="iv-days" type="number" value="30" style="max-width:120px"></div>
+      <div class="row-act"><button class="btn btn-primary" onclick="App.consCreateInvite()">초대 링크 생성</button></div>
+    </section>
+    <section class="panel"><div class="panel-head"><h2>발급한 초대 ${active.length}건</h2><span class="muted">전체 ${invs.length}</span></div>
+      ${invs.length?`<ul class="rows">${invs.slice().reverse().map(i=>{const rl=_refLink(i.code); const dead=i.revoked||(i.expires_at&&new Date(i.expires_at).getTime()<=now);
+        return `<li class="row" style="flex-wrap:wrap;gap:6px"><div style="min-width:0"><b class="mono">${esc(i.code)}</b> ${i.company_name?`<span class="muted">· ${esc(i.company_name)}</span>`:''}
+          <div class="muted mono" style="font-size:11px;word-break:break-all">${esc(rl)}</div>
+          <span class="muted" style="font-size:11px">사용 ${i.used_count||0}/${i.max_uses||1} · 만료 ${esc((i.expires_at||'').slice(0,10))}</span></div>
+          <div class="row-act">${dead?`<span class="badge">${i.revoked?'회수됨':'만료'}</span>`:`<span class="badge strong">유효</span><button class="btn btn-sm btn-ghost" onclick="App.copyLink('${esc(rl)}')">링크 복사</button><button class="btn btn-sm btn-ghost" onclick="App.consRevoke('${i.invite_id}')">회수</button>`}</div></li>`;}).join('')}</ul>`:'<p class="empty">발급한 초대가 없습니다.</p>'}
+    </section></div>`;
+};
+App.consCreateInvite = async function(){
+  const company_name=(($('#iv-company')||{}).value||'').trim()||null;
+  const note=(($('#iv-note')||{}).value||'').trim()||null;
+  const expires_days=parseInt((($('#iv-days')||{}).value||'30'),10)||30;
+  const r=await apiFetch('/consultant/invites',{method:'POST',body:JSON.stringify({company_name,note,expires_days,max_uses:1})});
+  if(!r.ok) return toast('초대 생성에 실패했습니다.');
+  const d=await r.json(); await loadConsInv(); render();
+  toast('초대 링크를 생성했습니다. 코드 '+d.code);
+};
+App.consRevoke = async function(id){
+  const r=await apiFetch('/consultant/invites/'+id+'/revoke',{method:'POST'});
+  if(!r.ok) return toast('회수에 실패했습니다.');
+  await loadConsInv(); render(); toast('초대를 회수했습니다.');
+};
+App.copyLink = async function(url){
+  try{ await navigator.clipboard.writeText(url); toast('링크를 복사했습니다.'); }
+  catch(e){ toast('복사 실패 — 링크를 직접 선택해 복사하세요.'); }
 };
 
 window.App = App;
