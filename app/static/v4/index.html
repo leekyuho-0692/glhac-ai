@@ -1077,8 +1077,7 @@ VIEWS['aud-home'] = () => {
         <td class="muted">${esc(c.status||'')}</td></tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">진행 중인 업체가 없습니다.</p>'}
   </section>
-  ${cases.filter(c=>c.done).length?`<section class="panel"><div class="panel-head"><h2>완료된 업체</h2></div><ul class="rows">${cases.filter(c=>c.done).map(c=>`<li class="row"><div><b>${esc(c.company_name)}</b></div><button class="btn btn-sm btn-ghost" onclick="App.audDetail('${c.case_id}')">상세</button></li>`).join('')}</ul></section>`:''}
-  <p class="muted" style="margin-top:14px;font-size:12px">· 사전심사·현장심사·보고서 등 단계별 상세는 P3 후속에서 실데이터로 연결됩니다.</p>`;
+  ${cases.filter(c=>c.done).length?`<section class="panel"><div class="panel-head"><h2>완료된 업체</h2></div><ul class="rows">${cases.filter(c=>c.done).map(c=>`<li class="row"><div><b>${esc(c.company_name)}</b></div><button class="btn btn-sm btn-ghost" onclick="App.audDetail('${c.case_id}')">상세</button></li>`).join('')}</ul></section>`:''}`;
 };
 
 
@@ -1666,8 +1665,7 @@ VIEWS['ent-home'] = () => {
     ${_stepper8(typeof c.step8==='number'?c.step8:0, c.hold, c.done)}
     ${c.next_action?`<div class="note ${c.hold?'attn':''}"><b>${c.hold?'보완 필요':'다음 단계'}</b><p>${esc(c.next_action)}</p></div>`:''}
     <dl class="dl"><div><dt>담당 심사원</dt><dd>${esc(c.main_auditor||'배정 전')}</dd></div><div><dt>인증 분야</dt><dd>${esc(c.scheme||'-')}</dd></div></dl>
-  </section>
-  <p class="muted" style="font-size:12px">· 사전심사·신청서·계약·문서함·컨설턴트 상담은 P4 후속에서 실데이터로 연결됩니다.</p>`;
+  </section>`;
 };
 
 
@@ -1779,8 +1777,7 @@ VIEWS['cons-home'] = () => {
       <td>${c.hold?'<span class="badge attn">보완 필요</span>':(c.done?'<span class="badge strong">완료</span>':'<span class="muted mono">'+esc(c.status||'')+'</span>')}</td></tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">담당 기업이 없습니다. [신규 인증기업] 메뉴에서 초대 링크를 만들어 보세요.</p>'}
   </section>
-  ${(RS.todo||[]).length?`<section class="panel"><div class="panel-head"><h2>처리할 일</h2></div><ul class="rows">${RS.todo.map(x=>`<li class="row"><div><b>${esc(x.company_name)}</b><span class="muted">${esc(x.step8_label)} · ${esc(x.reason)}</span></div></li>`).join('')}</ul></section>`:''}
-  <p class="muted" style="font-size:12px">· 업체별 현황·계약·문서·질의는 P4 후속에서 실데이터로 연결됩니다.</p>`;
+  ${(RS.todo||[]).length?`<section class="panel"><div class="panel-head"><h2>처리할 일</h2></div><ul class="rows">${RS.todo.map(x=>`<li class="row"><div><b>${esc(x.company_name)}</b><span class="muted">${esc(x.step8_label)} · ${esc(x.reason)}</span></div></li>`).join('')}</ul></section>`:''}`;
 };
 
 
@@ -2442,7 +2439,7 @@ VIEWS['adm-contract'] = () => {
 App.payTab = function(k){ S.payTab=k; render(); };
 VIEWS['adm-docs'] = () => `
   <section class="panel"><div class="panel-head"><h2>표준 양식 관리</h2></div>
-    <div class="note attn"><b>신규 백엔드 필요(N5)</b><p>표준양식 F-01~F-10 템플릿 관리(생성·편집·필드 렌더)는 설계서 7장 N5의 신규 기능입니다. 백엔드(doc_templates·/templates)가 준비되면 이 화면에서 양식을 관리합니다.</p></div>
+    <div class="note"><b>양식 템플릿 관리 준비 중</b><p>표준양식(F-01~F-10)을 직접 만들고 편집하는 기능은 준비 중입니다. 지금은 시스템이 제공하는 고정 양식으로 문서가 생성됩니다.</p></div>
     <p class="muted">현재 문서는 <b>문서함</b>(기업/컨설턴트 업로드)과 D-01~D-19 문서 흐름(P5 예정)으로 처리됩니다. 케이스별 생성 문서는 각 심사 화면에서 PDF로 내려받을 수 있습니다.</p>
   </section>`;
 
@@ -2477,7 +2474,7 @@ VIEWS['aud-flow'] = () => {
         ${docs.slice().reverse().map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td><td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
           <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${esc((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
         </tbody></table></div>`:'<p class="empty">업로드된 문서가 없습니다.</p>'}</section>
-      <div class="note"><p>공식 D-01~D-19 문서 카드(발신·수신·필요 행위)와 전자서명/동의 행위 기록(설계서 N4)은 신규 백엔드 준비 후 이 흐름에 연결됩니다.</p></div></div>`;
+      <div class="note"><p>문서별 발신·수신 흐름과 전자서명·동의 기록 표시는 준비 중입니다. 지금은 생성 문서와 업로드 문서를 내려받을 수 있습니다.</p></div></div>`;
   }
   return `<div class="md">${nav}${body}</div>`;
 };
@@ -3097,6 +3094,11 @@ render();
 <script src="js/pay-docs.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/sha-opinion.js"></script>
+<script src="js/ent-apply-more.js"></script>
+<script src="js/adm-review.js"></script>
+<script src="js/adm-cert-more.js"></script>
+<script src="js/ops-tenant.js"></script>
+<script src="js/gen-docs-more.js"></script>
 <!--MODULES-->
 </body>
 </html>

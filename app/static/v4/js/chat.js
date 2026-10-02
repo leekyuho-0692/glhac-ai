@@ -92,12 +92,9 @@ App.chtSend = async function(cid){
   if(typeof VIEWS !== 'undefined' && VIEWS['cons-status']){
     const f = VIEWS['cons-status'];
     VIEWS['cons-status'] = () => {
-      let cid = null;
-      if(S.selCompany && RS.cases){
-        const found = RS.cases.find(c=>c.company_name===S.selCompany);
-        if(found) cid = found.case_id;
-      }
-      return f() + CHT_panel(cid);
+      const base = f();
+      const cid = S.selCompany || null;
+      return base + CHT_panel(cid);
     };
   }
   // 오디터
