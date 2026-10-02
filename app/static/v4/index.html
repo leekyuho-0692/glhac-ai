@@ -740,6 +740,7 @@ function renderShell(){
       <div class="side-brand">${brand()}<div class="side-ws">${t(roleByCode(S.role).label)}</div></div>
       <nav class="side-nav" aria-label="주 메뉴">${NAV[S.role].map(v=>`${(NAV_GROUP[S.role]||{})[v]?`<div class="nav-grp">${(NAV_GROUP[S.role])[v]}</div>`:''}<button class="nav-item ${S.view===v?'on':''}" onclick="App.go('${v}')" ${S.view===v?'aria-current="page"':''}><span>${t('nav.'+v)}</span>${navCount(v)}</button>`).join('')}</nav>
       <div class="side-foot">
+        ${SHELL_EXT.sideFoot.map(f=>f()).join('')}
         <div class="side-user"><b>${esc(who)}</b><span>${esc(whoSub)}</span></div>
         ${langSelect('lang-side')}
         <button class="btn btn-block" onclick="App.logout()">${t('logout')}</button>
@@ -1046,6 +1047,9 @@ async function loadAud(){
   }catch(e){ RS.cases = []; RS.counts = {}; RS.todo = []; RS.assignments = []; RS.assignPending = 0; }
 }
 const S8_LABELS = ['접수','사전심사','계약','모의심사','현장심사','샤리아 심의','인증서 발급','SiHalal 등록'];
+/* 모듈(js/*.js) 확장 접점 — 배지 가산(NAVC[view]=()=>n), 사이드바 하단 삽입(SHELL_EXT.sideFoot.push(()=>html)) */
+const NAVC = {};
+const SHELL_EXT = { sideFoot: [] };
 const _s8label = c => (typeof c.step8==='number' ? S8_LABELS[c.step8] : null) || c.step8_label || '-';
 const _myRole = rc => (rc.main_auditor && rc.main_auditor === AUTH.username) ? '메인' : '동반';
 
@@ -2953,6 +2957,7 @@ function navCount(v){
     else if(v==='adm-cert') n = live.filter(c=>c.step8===6).length;
     else if(v==='adm-kb') n = Array.isArray(RS.admQna) ? RS.admQna.filter(q=>q.status==='open').length : 0;
   }
+  if(NAVC[v]) n += (NAVC[v]() || 0);
   return n ? `<span class="count">${n}</span>` : '';
 }
 
@@ -3065,5 +3070,13 @@ authLoad();
 }catch(e){} })();
 render();
 </script>
+<!-- v4 모듈: 기능 묶음별 파일(js/*.js). 메인 스크립트의 전역(RS·S·VIEWS·App·NAV…)을 그대로 쓴다. -->
+<script src="js/ent-tasks.js"></script>
+<script src="js/sha-decide.js"></script>
+<script src="js/approvals.js"></script>
+<script src="js/adm-cert-post.js"></script>
+<script src="js/aud-sign.js"></script>
+<script src="js/cons-contract-actions.js"></script>
+<!--MODULES-->
 </body>
 </html>
