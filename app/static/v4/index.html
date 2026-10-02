@@ -5355,6 +5355,7 @@ async function loadAdm(){
     const [rc, rn] = await Promise.all([apiFetch('/cases?limit=500'), apiFetch('/me/nav-counts')]);
     RS.cases = rc.ok ? ((await rc.json()).items||[]) : [];
     RS.counts = rn.ok ? await rn.json() : {};
+    RS.admMembers = null;
     RS.loadedFor = AUTH.username;
   }catch(e){ RS.cases=[]; RS.counts={}; }
 }
@@ -5378,6 +5379,52 @@ VIEWS['adm-home'] = () => {
     ${all.slice(0,100).map(c=>`<tr><td><b>${esc(c.company_name)}</b>${c.hold?' <span class="badge attn">보완</span>':''}</td><td><span class="badge">${esc(_s8label(c))}</span></td><td class="muted">${esc(c.next_action||'-')}</td><td class="muted">${esc(c.consultant||'-')}</td><td class="muted">${esc(c.main_auditor||'-')}</td></tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">등록된 인증기업이 없습니다.</p>'}
   </section>`;
+};
+
+
+/* ===== P7-2: 관리자 회원·가입 승인(adm-members) 실데이터 ===== */
+const ROLE_LABEL = {applicant:'인증기업', penyelia_halal:'인증기업', pendamping_pph:'인증기업', client_admin:'인증기업', client_staff:'인증기업',
+  consultant:'컨설턴트', auditor:'오디터', fatwa_liaison:'샤리아 위원', admin:'관리자', operator:'운영관리자'};
+async function loadAdmMembers(){
+  try{
+    const [ru, rs] = await Promise.all([apiFetch('/admin/users'), apiFetch('/admin/staff-signups?status=pending')]);
+    const uj = ru.ok?await ru.json():{items:[]};
+    RS.admMembers = { users: (uj.items||uj||[]), signups: rs.ok?((await rs.json()).items||[]):[] };
+  }catch(e){ RS.admMembers={users:[],signups:[]}; }
+}
+VIEWS['adm-members'] = () => {
+  if(RS.admMembers===null){ if(!RS._admMembersLoading){ RS._admMembersLoading=true; loadAdmMembers().then(()=>{RS._admMembersLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const {users, signups}=RS.admMembers;
+  const tab=S.memTab||'전체';
+  const bucket=u=>ROLE_LABEL[u.role]||u.role;
+  const tabs=['전체','인증기업','컨설턴트','오디터','샤리아 위원','관리자'];
+  const L=users.filter(u=>tab==='전체'||bucket(u)===tab);
+  return `
+  <section class="panel"><div class="panel-head"><h2>스태프 가입 승인 대기</h2><span class="badge ${signups.length?'attn':''}">${signups.length}건</span></div>
+    ${signups.length?`<ul class="rows">${signups.map(x=>`<li class="row"><div><b>${esc(x.display_name||x.username)}</b> <span class="muted">${esc(x.username)} · ${ROLE_LABEL[x.requested_role]||x.requested_role}${x.note?(' · '+esc(x.note)):''}</span></div>
+      <div class="row-act"><button class="btn btn-sm btn-primary" onclick="App.admApproveSignup('${x.request_id}')">승인</button><button class="btn btn-sm btn-ghost" onclick="App.admRejectSignup('${x.request_id}')">반려</button></div></li>`).join('')}</ul>`:'<p class="empty">대기 중인 가입 신청이 없습니다.</p>'}
+  </section>
+  <section class="panel"><div class="panel-head"><h2>사용자 ${users.length}명</h2></div>
+    <div class="tabs">${tabs.map(k=>`<button class="${tab===k?'on':''}" onclick="App.memTab('${k}')">${k} <span class="mono muted">${k==='전체'?users.length:users.filter(u=>bucket(u)===k).length}</span></button>`).join('')}</div>
+    <div class="tbl-wrap"><table><thead><tr><th style="min-width:180px">아이디</th><th>역할</th><th>소속(org)</th></tr></thead><tbody>
+    ${L.map(u=>`<tr><td><b>${esc(u.username)}</b></td><td><span class="badge">${esc(bucket(u))}</span></td><td class="mono muted">${esc(u.org_id||'-')}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">사용자 없음</td></tr>'}
+    </tbody></table></div></section>`;
+};
+App.memTab = function(k){ S.memTab=k; render(); };
+App.admApproveSignup = async function(id){
+  const r=await apiFetch('/admin/staff-signups/'+id+'/approve',{method:'POST',body:JSON.stringify({})});
+  if(!r.ok) return toast('승인에 실패했습니다.');
+  await loadAdmMembers(); render(); toast('가입을 승인했습니다.');
+};
+App.admRejectSignup = function(id){
+  openModal('가입 반려', `<p>가입 신청을 반려합니다. 사유(선택).</p><div class="field"><label for="rj-r">사유</label><textarea class="in" id="rj-r"></textarea></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.admDoRejectSignup('${id}')">반려</button>`);
+};
+App.admDoRejectSignup = async function(id){
+  const reason=(($('#rj-r')||{}).value||'').trim();
+  const r=await apiFetch('/admin/staff-signups/'+id+'/reject',{method:'POST',body:JSON.stringify({reason})});
+  if(!r.ok) return toast('반려에 실패했습니다.');
+  closeModal(); await loadAdmMembers(); render(); toast('가입을 반려했습니다.');
 };
 
 window.App = App;
