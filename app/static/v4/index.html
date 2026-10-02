@@ -5355,7 +5355,7 @@ async function loadAdm(){
     const [rc, rn] = await Promise.all([apiFetch('/cases?limit=500'), apiFetch('/me/nav-counts')]);
     RS.cases = rc.ok ? ((await rc.json()).items||[]) : [];
     RS.counts = rn.ok ? await rn.json() : {};
-    RS.admMembers = null;
+    RS.admMembers = null; RS.admAud = null;
     RS.loadedFor = AUTH.username;
   }catch(e){ RS.cases=[]; RS.counts={}; }
 }
@@ -5425,6 +5425,55 @@ App.admDoRejectSignup = async function(id){
   const r=await apiFetch('/admin/staff-signups/'+id+'/reject',{method:'POST',body:JSON.stringify({reason})});
   if(!r.ok) return toast('반려에 실패했습니다.');
   closeModal(); await loadAdmMembers(); render(); toast('가입을 반려했습니다.');
+};
+
+
+/* ===== P7-3: 관리자 오디터 배정(adm-assign) 실데이터 ===== */
+async function loadAdmAssign(){
+  try{ const r=await apiFetch('/ops/auditors'); RS.admAud = r.ok?await r.json():{auditors:[]}; }
+  catch(e){ RS.admAud={auditors:[]}; }
+}
+VIEWS['adm-assign'] = () => {
+  const list=RS.cases||[];
+  if(!list.length) return `<section class="panel"><p class="empty">배정할 케이스가 없습니다.</p></section>`;
+  if(RS.admAud===null){ if(!RS._admAudLoading){ RS._admAudLoading=true; loadAdmAssign().then(()=>{RS._admAudLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const auds=(RS.admAud&&RS.admAud.auditors)||[];
+  const nameOf=uid=>{ const a=auds.find(x=>x.user_id===uid); return a?a.username:uid; };
+  let cur=(S.selAssign&&list.find(c=>c.case_id===S.selAssign))?S.selAssign:list[0].case_id; S.selAssign=cur;
+  const c=list.find(x=>x.case_id===cur);
+  const nav=`<nav class="mlist" aria-label="배정 케이스"><div class="mh">케이스 ${list.length}건</div>${list.map(x=>`<button class="mitem ${x.case_id===cur?'on':''}" onclick="App.selAssign('${x.case_id}')"><span class="t"><span>${esc(x.company_name)}</span>${x.main_auditor?`<span class="badge strong">배정</span>`:'<span class="badge attn">미배정</span>'}</span><span class="muted mono" style="font-size:11px">${esc(_s8label(x))}</span></button>`).join('')}</nav>`;
+  const opts=auds.map(a=>`<option value="${a.user_id}">${esc(a.username)} (부하 ${a.load}/${a.capacity})</option>`).join('');
+  const co=(c.co_auditors||[]);
+  const body=`<div style="display:flex;flex-direction:column;gap:22px;min-width:0">
+    <section class="panel"><div class="panel-head"><h2 style="font-size:20px">${esc(c.company_name)}</h2><span class="badge">${esc(_s8label(c))}</span></div>
+      <dl class="dl"><div><dt>메인 오디터</dt><dd>${c.main_auditor?`<b>${esc(c.main_auditor)}</b>`:'<span class="muted">미배정</span>'}</dd></div>
+        <div><dt>동반 오디터</dt><dd>${co.length?co.map(uid=>esc(nameOf(uid))).join(', '):'<span class="muted">없음</span>'}</dd></div></dl>
+    </section>
+    <section class="panel"><div class="panel-head"><h2>메인 오디터 배정</h2></div>
+      <div class="row-act"><select class="in" id="assign-main" style="flex:1">${opts}</select><button class="btn btn-primary" onclick="App.admAssignMain('${cur}')">배정</button></div></section>
+    <section class="panel"><div class="panel-head"><h2>동반 오디터 추가</h2></div>
+      <div class="row-act"><select class="in" id="assign-co" style="flex:1">${opts}</select><button class="btn" onclick="App.admAddCo('${cur}')">추가</button></div>
+      ${co.length?`<ul class="rows" style="margin-top:8px">${co.map(uid=>`<li class="row"><div><b>${esc(nameOf(uid))}</b> <span class="muted">동반</span></div><button class="btn btn-sm btn-ghost" onclick="App.admDelCo('${cur}','${uid}')">해제</button></li>`).join('')}</ul>`:''}</section>
+    <div class="note"><p>오디터 배정·재배정·동반 추가는 운영관리자(operator) 권한입니다.</p></div></div>`;
+  return `<div class="md">${nav}${body}</div>`;
+};
+App.selAssign = function(id){ S.selAssign=id; render(); };
+App.admAssignMain = async function(cid){
+  const uid=($('#assign-main')||{}).value; if(!uid) return toast('오디터를 선택해 주세요.');
+  const r=await apiFetch('/ops/cases/'+cid+'/assign-auditor',{method:'POST',body:JSON.stringify({auditor_id:uid})});
+  if(!r.ok){ const d=await r.json().catch(()=>({})); return toast('배정 실패'+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):' — 운영관리자 권한 필요')); }
+  await loadAdm(); await loadAdmAssign(); render(); toast('메인 오디터를 배정했습니다.');
+};
+App.admAddCo = async function(cid){
+  const uid=($('#assign-co')||{}).value; if(!uid) return toast('오디터를 선택해 주세요.');
+  const r=await apiFetch('/cases/'+cid+'/auditors',{method:'POST',body:JSON.stringify({user_id:uid})});
+  if(!r.ok){ const d=await r.json().catch(()=>({})); return toast('동반 추가 실패'+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
+  await loadAdm(); render(); toast('동반 오디터를 추가했습니다.');
+};
+App.admDelCo = async function(cid, uid){
+  const r=await apiFetch('/cases/'+cid+'/auditors/'+uid,{method:'DELETE'});
+  if(!r.ok) return toast('해제에 실패했습니다.');
+  await loadAdm(); render(); toast('동반 오디터를 해제했습니다.');
 };
 
 window.App = App;
