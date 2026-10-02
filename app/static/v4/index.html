@@ -3433,14 +3433,14 @@ const App = {
       S.role=ui; S.view=ROLES[rk].home;
       const list = ROLES[rk].list(); S.userId = (list[0] && list[0].id) || null;
       S.loginEmail=null;
-      if(ui==='aud'){ await loadAud(); } else if(ui==='ent'){ await loadEnt(); }
+      if(ui==='aud'){ await loadAud(); } else if(ui==='ent'){ await loadEnt(); } else if(ui==='cons'){ await loadCons(); }
       render(); window.scrollTo(0,0);
       toast('로그인되었습니다. ('+esc(d.username)+' · '+ui+')');
     }catch(err){ toast('서버에 연결할 수 없습니다. 네트워크를 확인해 주세요.'); }
     finally{ if(btn) btn.disabled=false; }
   },
   logout(){ if(AUTH.access){ fetch(API_BASE+'/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+AUTH.access}}).catch(()=>{}); } authClear(); S.role=null; S.userId=null; S.auth='login'; closeModal(); render(); window.scrollTo(0,0); toast('로그아웃되었습니다.'); },
-  async go(v){ S.view=v; if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } render(); window.scrollTo(0,0); },
+  async go(v){ S.view=v; if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } else if(S.role==='cons'){ await loadCons(); } render(); window.scrollTo(0,0); },
   terms(k){ openModal(TERMS[k].title, TERMS[k].body); },
 
   /* signup */
@@ -4919,6 +4919,37 @@ App.entDoSign = async function(cid, contractId){
   const r=await apiFetch('/contracts/'+contractId+'/sign?party=A&name='+encodeURIComponent(name),{method:'POST'});
   if(!r.ok) return toast('서명에 실패했습니다.');
   closeModal(); delete RS.entCt[cid]; await loadEntCt(cid); render(); toast('계약서에 전자서명했습니다.');
+};
+
+
+/* ===== P4 슬라이스4: 컨설턴트(cons) 실데이터 계층 + cons-home ===== */
+async function loadCons(){
+  try{
+    const [rc, rn, rt] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'), apiFetch('/me/todo')]);
+    RS.cases = rc.ok ? ((await rc.json()).items || []) : [];
+    RS.counts = rn.ok ? await rn.json() : {};
+    RS.todo = rt.ok ? ((await rt.json()).items || []) : [];
+    RS.loadedFor = AUTH.username;
+  }catch(e){ RS.cases=[]; RS.counts={}; RS.todo=[]; }
+}
+VIEWS['cons-home'] = () => {
+  const list = RS.cases||[], active=list.filter(c=>!c.done), hold=list.filter(c=>c.hold);
+  const kpi=(lbl,n,unit)=>`<div><span class="k">${lbl}</span><span class="v mono">${n}${unit?`<small style="font-size:14px"> ${unit}</small>`:''}</span></div>`;
+  return `
+  <section class="summary">
+    ${kpi('담당 인증기업', list.length, '개사')}
+    ${kpi('보완 요청', hold.length, '건')}
+    ${kpi('진행 중', active.length, '건')}
+    ${kpi('처리할 일', (RS.counts&&RS.counts.action_required)||0, '건')}
+  </section>
+  <section class="panel"><div class="panel-head"><h2>담당 기업 현황</h2><span class="muted">실데이터</span></div>
+    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:160px">기업</th><th>진행 단계</th><th style="min-width:160px">다음 할 일</th><th>상태</th></tr></thead><tbody>
+    ${list.map(c=>`<tr><td><b>${esc(c.company_name)}</b></td><td><span class="badge">${esc(_s8label(c))}</span></td><td>${esc(c.next_action||'-')}</td>
+      <td>${c.hold?'<span class="badge attn">보완 필요</span>':(c.done?'<span class="badge strong">완료</span>':'<span class="muted mono">'+esc(c.status||'')+'</span>')}</td></tr>`).join('')}
+    </tbody></table></div>`:'<p class="empty">담당 기업이 없습니다. [신규 인증기업] 메뉴에서 초대 링크를 만들어 보세요.</p>'}
+  </section>
+  ${(RS.todo||[]).length?`<section class="panel"><div class="panel-head"><h2>처리할 일</h2></div><ul class="rows">${RS.todo.map(x=>`<li class="row"><div><b>${esc(x.company_name)}</b><span class="muted">${esc(x.step8_label)} · ${esc(x.reason)}</span></div></li>`).join('')}</ul></section>`:''}
+  <p class="muted" style="font-size:12px">· 업체별 현황·계약·문서·질의는 P4 후속에서 실데이터로 연결됩니다.</p>`;
 };
 
 window.App = App;
