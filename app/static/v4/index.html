@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, fatwaQ: null, fatwa: {}, admCert: {}, admExperts: null, admPrice: null, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, fatwaQ: null, fatwa: {}, admCert: {}, admExperts: null, admPrice: null, admPay: null, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -5355,7 +5355,7 @@ async function loadAdm(){
     const [rc, rn] = await Promise.all([apiFetch('/cases?limit=500'), apiFetch('/me/nav-counts')]);
     RS.cases = rc.ok ? ((await rc.json()).items||[]) : [];
     RS.counts = rn.ok ? await rn.json() : {};
-    RS.admMembers = null; RS.admAud = null; RS.admExperts = null; RS.admPrice = null;
+    RS.admMembers = null; RS.admAud = null; RS.admExperts = null; RS.admPrice = null; RS.admPay = null;
     RS.loadedFor = AUTH.username;
   }catch(e){ RS.cases=[]; RS.counts={}; }
 }
@@ -5581,6 +5581,40 @@ App.admSavePrice = async function(){
   if(!rr.ok){ const e=await rr.json().catch(()=>({})); return toast('저장 실패'+((e.detail&&e.detail.code)?(' ('+e.detail.code+')'):' — 운영관리자 권한 필요')); }
   await loadAdmPrice(); render(); toast('가격 기준표를 저장했습니다.');
 };
+
+
+/* ===== P7-6: 관리자 결제·입금 현황(adm-contract) + 양식 관리 안내(adm-docs) ===== */
+async function loadAdmPay(){
+  try{ const r=await apiFetch('/admin/payments'); RS.admPay=r.ok?((await r.json()).items||[]):[]; }
+  catch(e){ RS.admPay=[]; }
+}
+VIEWS['adm-contract'] = () => {
+  if(RS.admPay===null){ if(!RS._admPayLoading){ RS._admPayLoading=true; loadAdmPay().then(()=>{RS._admPayLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  const inv=RS.admPay||[]; const tab=S.payTab||'전체';
+  const paid=inv.filter(i=>i.status==='paid'), wait=inv.filter(i=>i.status!=='paid');
+  const L=tab==='입금완료'?paid:tab==='미입금'?wait:inv;
+  const money=n=>n==null?'-':Number(n).toLocaleString()+' 원';
+  return `
+  <section class="summary">
+    <div><span class="k">전체 청구</span><span class="v mono">${inv.length}</span></div>
+    <div><span class="k">입금 완료</span><span class="v mono">${paid.length}</span></div>
+    <div><span class="k">미입금</span><span class="v mono">${wait.length}</span></div>
+    <div><span class="k">입금액 합계</span><span class="v mono" style="font-size:18px">${money(paid.reduce((a,i)=>a+(i.total||0),0))}</span></div>
+  </section>
+  <section class="panel"><div class="panel-head"><h2>청구·입금 현황</h2></div>
+    <div class="tabs">${[['전체','전체'],['입금완료','입금완료'],['미입금','미입금']].map(([k,l])=>`<button class="${tab===k?'on':''}" onclick="App.payTab('${k}')">${l} <span class="mono muted">${k==='전체'?inv.length:k==='입금완료'?paid.length:wait.length}</span></button>`).join('')}</div>
+    ${L.length?`<div class="tbl-wrap"><table><thead><tr><th>청구번호</th><th style="min-width:160px">기업</th><th>금액</th><th>상태</th><th>기한</th></tr></thead><tbody>
+    ${L.map(i=>`<tr><td class="mono">${esc(i.invoice_no||'-')}</td><td><b>${esc(i.company||'-')}</b></td><td class="mono">${money(i.total)}</td><td><span class="badge ${i.status==='paid'?'strong':'attn'}">${i.status==='paid'?'입금완료':(INV_ST[i.status]||i.status)}</span></td><td class="mono">${esc((i.due_date||'').slice(0,10)||'-')}</td></tr>`).join('')}
+    </tbody></table></div>`:'<p class="empty">해당 청구가 없습니다.</p>'}
+    <div class="note"><p>견적 조정·할인 승인(견적 변경 요청)과 입금 매칭은 신규 백엔드(N10)·운영 도구에서 다룹니다.</p></div>
+  </section>`;
+};
+App.payTab = function(k){ S.payTab=k; render(); };
+VIEWS['adm-docs'] = () => `
+  <section class="panel"><div class="panel-head"><h2>표준 양식 관리</h2></div>
+    <div class="note attn"><b>신규 백엔드 필요(N5)</b><p>표준양식 F-01~F-10 템플릿 관리(생성·편집·필드 렌더)는 설계서 7장 N5의 신규 기능입니다. 백엔드(doc_templates·/templates)가 준비되면 이 화면에서 양식을 관리합니다.</p></div>
+    <p class="muted">현재 문서는 <b>문서함</b>(기업/컨설턴트 업로드)과 D-01~D-19 문서 흐름(P5 예정)으로 처리됩니다. 케이스별 생성 문서는 각 심사 화면에서 PDF로 내려받을 수 있습니다.</p>
+  </section>`;
 
 window.App = App;
 authLoad();
