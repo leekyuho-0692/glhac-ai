@@ -966,9 +966,8 @@ function navCount(v){
 function renderShell(){
   const ent = S.role==='ent';
   let who, whoSub, meta;
-  if(ent){ const c = company(S.userId); who = c.name; whoSub = `${c.mgr1.name} ${c.mgr1.title}`; meta = `${c.name} · ${c.mgr1.name} ${c.mgr1.title}님`; }
-  else if(AUTH.username){ who = AUTH.username; whoSub = t(roleByCode(S.role).label); meta = whoSub + ' · ' + AUTH.username; }
-  else { const c = person(roleByCode(S.role).list(), S.userId); who = `${c.name} ${c.title}`; whoSub = c.org; meta = `${c.org} · ${c.name} ${c.title}`; }
+  if(ent){ const rc = (RS.cases||[])[0]; who = (rc && rc.company_name) || AUTH.username || ''; whoSub = AUTH.username || ''; meta = who + (AUTH.username && who!==AUTH.username ? ' · ' + AUTH.username : ''); }
+  else { who = AUTH.username || ''; whoSub = t(roleByCode(S.role).label); meta = whoSub + (who ? ' · ' + who : ''); }
   return `<div class="shell">
     <aside class="sidebar">
       <div class="side-brand">${brand()}<div class="side-ws">${t(roleByCode(S.role).label)}</div></div>
@@ -6117,6 +6116,187 @@ App.evalSet = async function(cid, idx, verdict){
   } else {
     toast('판정을 저장했습니다.');
   }
+};
+
+
+/* ===== P8: 데모(mock) 제거 — 잔여 화면 실데이터 + 메뉴·배지 정리 ===== */
+const _docFlowView = VIEWS['aud-flow'];
+['aud-dossier','ent-flow','cons-flow','adm-flow'].forEach(v=>{ VIEWS[v] = _docFlowView; });
+
+VIEWS['aud-flow'] = () => {
+  const team = RS.cases||[];
+  const col = i => team.filter(c=>!c.done && c.step8===i);
+  const doneN = team.filter(c=>c.done).length;
+  const doneList = team.filter(c=>c.done);
+  return `
+    <div class="note"><b>인증 프로세스 기준</b><p>인증기업·컨설턴트 화면과 같은 8단계로 오디터 업무를 정리했습니다. 각 단계에서 누가 진행하는지와 오디터가 할 일을 확인하고, 업체를 누르면 상세로 이동합니다.</p></div>
+    <section class="panel"><div class="panel-head"><h2>단계별 담당 업체</h2><span class="muted">담당 ${team.length}개사 · 완료 ${doneN}</span></div>
+      <div style="overflow-x:auto"><div style="display:grid;grid-template-columns:repeat(8,minmax(170px,1fr));gap:10px;min-width:1400px">
+        ${S8_LABELS.map((s,i)=>{
+          const f = FLOW[i]||{}; const mine = f.who==='오디터'; const L = col(i);
+          return `<div style="border:1px solid ${mine?'var(--brand)':'var(--line)'};border-radius:var(--rl);padding:12px;display:flex;flex-direction:column;gap:8px;background:${mine?'var(--brand-soft)':'var(--surface)'}">
+            <div><span class="mono muted">${String(i+1).padStart(2,'0')}</span> <b>${s}</b></div>
+            <span class="badge ${mine?'attn':''}" style="align-self:flex-start">${esc(f.who||'')}</span>
+            <div style="font-size:12px"><div class="muted">기업 측</div>${esc(f.ent||'')}</div>
+            <div style="font-size:12px"><div class="muted">오디터 업무</div><b>${esc(f.aud||'')}</b></div>
+            <div style="border-top:1px solid var(--line);padding-top:8px;display:flex;flex-direction:column;gap:6px">
+              ${L.length ? L.map(c=>`<button class="ccard" style="padding:10px;gap:4px" onclick="App.audDetail('${c.case_id}')"><b style="font-size:13px">${esc(c.company_name)}</b><span class="muted" style="font-size:11.5px">${esc(c.next_action||'')}</span>${c.hold?'<span class="badge attn" style="align-self:flex-start">보완 요청</span>':''}</button>`).join('') : `<span class="muted" style="font-size:12px">해당 업체 없음</span>`}
+            </div>
+            ${f.view ? `<button class="link" style="font-size:12px;text-align:left" onclick="App.go('${f.view}')">${esc(t('nav.'+f.view))} 열기 →</button>` : ''}
+          </div>`;
+        }).join('')}
+      </div></div>
+    </section>
+    ${doneList.length ? `<section class="panel"><div class="panel-head"><h2>완료된 업체</h2></div><ul class="rows">
+      ${doneList.map(c=>`<li class="row"><div><b>${esc(c.company_name)}</b></div><button class="btn btn-sm btn-ghost" onclick="App.audDetail('${c.case_id}')">상세</button></li>`).join('')}
+    </ul></section>` : ''}
+  `;
+};
+
+NAV.cons = NAV.cons.filter(v=>v!=='cons-ask'); NAV.aud = NAV.aud.filter(v=>v!=='aud-qna'); delete VIEWS['cons-ask']; delete VIEWS['aud-qna'];
+
+VIEWS['aud-detail'] = () => {
+  const rc = (RS.cases||[]).find(c=>c.case_id===S.audCo);
+  if(!rc) return `<section class="panel"><p class="empty">업체를 선택해 주세요.</p><div class="row-act"><button class="btn" onclick="App.go('aud-home')">종합 정보로</button></div></section>`;
+  const co = Array.isArray(rc.co_auditors) ? rc.co_auditors.length : 0;
+  return `
+    <div><button class="link" onclick="App.go('aud-home')">← 종합 정보로</button></div>
+    <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>${esc(rc.company_name)}</h2><span class="badge ${_myRole(rc)==='메인'?'attn':'strong'}">${_myRole(rc)} 오디터</span></div>
+      <dl class="dl">
+        <div><dt>진행 단계</dt><dd>${esc(_s8label(rc))}${rc.hold?' · <b>보완 대기</b>':''}</dd></div>
+        <div><dt>상태</dt><dd class="mono">${esc(rc.status||'-')}</dd></div>
+        <div><dt>다음 할 일</dt><dd>${esc(rc.next_action||'-')}</dd></div>
+        <div><dt>담당 단계</dt><dd>${esc(rc.owner||'-')}</dd></div>
+        <div><dt>전담 컨설턴트</dt><dd>${esc(rc.consultant||'-')}</dd></div>
+        <div><dt>심사 팀</dt><dd>메인 ${esc(rc.main_auditor||'-')}${co?' · 동반 '+co+'명':''}</dd></div>
+      </dl>
+    </section>
+  `;
+};
+
+navCount = function(v){
+  const cs = RS.cases||[], cnt = RS.counts||{}, live = cs.filter(c=>!c.done);
+  let n = 0;
+  if(S.role==='aud'){
+    if(v==='aud-inbox') n = RS.assignPending||0;
+    else if(v==='aud-pre') n = live.filter(c=>c.step8===1 && c.owner==='auditor').length;
+    else if(v==='aud-mock') n = live.filter(c=>c.step8===3).length;
+    else if(v==='aud-report') n = live.filter(c=>c.step8===4 && c.owner==='auditor').length;
+    else if(v==='aud-resubmit') n = live.filter(c=>c.hold).length;
+  } else if(S.role==='ent'){
+    if(v==='ent-home') n = live.filter(c=>c.owner==='client' || c.hold).length;
+  } else if(S.role==='cons'){
+    if(v==='cons-home') n = cnt.action_required||0;
+    else if(v==='cons-status') n = live.filter(c=>c.hold).length;
+    else if(v==='cons-qna') n = Array.isArray(RS.consQna) ? RS.consQna.filter(q=>q.status!=='answered' && q.status!=='closed').length : 0;
+  } else if(S.role==='sha'){
+    if(v==='sha-review') n = Array.isArray(RS.fatwaQ) ? RS.fatwaQ.length : 0;
+  } else if(S.role==='adm'){
+    if(v==='adm-members') n = cnt.staff_signup_pending||0;
+    else if(v==='adm-assign') n = live.filter(c=>c.step8>=1 && !c.main_auditor).length;
+    else if(v==='adm-cert') n = live.filter(c=>c.step8===6).length;
+    else if(v==='adm-kb') n = Array.isArray(RS.admQna) ? RS.admQna.filter(q=>q.status==='open').length : 0;
+  }
+  return n ? `<span class="count">${n}</span>` : '';
+};
+
+if(RS.admQna===undefined) RS.admQna = null;
+async function loadAdmQna(){
+  try {
+    const r = await apiFetch('/consultations');
+    if(!r.ok){ RS.admQna = []; return; }
+    const d = await r.json();
+    RS.admQna = Array.isArray(d) ? d : [];
+  } catch(e){ RS.admQna = []; }
+}
+
+VIEWS['adm-kb'] = () => {
+  if(RS.admQna===null){
+    if(!RS._admQnaLoading){
+      RS._admQnaLoading = true;
+      loadAdmQna().then(()=>{ RS._admQnaLoading = false; render(); });
+    }
+    return `<section class="panel"><p class="empty">불러오는 중…</p></section>`;
+  }
+  const list = RS.admQna||[];
+  const tab = S.admQnaTab||'open';
+  const tabsDef = [['open','답변 대기'],['answered','답변 완료'],['closed','종결'],['all','전체']];
+  const cntOf = k => k==='all' ? list.length : list.filter(q=>q.status===k).length;
+  const shown = tab==='all' ? list : list.filter(q=>q.status===tab);
+  const stLabel = s => s==='open'?'답변 대기':s==='answered'?'답변 완료':'종결';
+  const stBadge = s => s==='open'?'attn':s==='answered'?'strong':'';
+  return `
+    <section class="summary">
+      <div><span class="k">전체 문의</span><span class="v mono">${list.length}</span></div>
+      <div><span class="k">답변 대기</span><span class="v mono">${cntOf('open')}</span></div>
+      <div><span class="k">답변 완료</span><span class="v mono">${cntOf('answered')}</span></div>
+      <div><span class="k">종결</span><span class="v mono">${cntOf('closed')}</span></div>
+    </section>
+    <section class="panel"><div class="panel-head"><h2>문의 응대</h2><button class="btn btn-sm btn-ghost" onclick="App.admQnaReload()">새로고침</button></div>
+      <div class="tabs">
+        ${tabsDef.map(([k,l])=>`<button class="${tab===k?'on':''}" onclick="App.admQnaTab('${k}')">${l} <span class="mono muted">${cntOf(k)}</span></button>`).join('')}
+      </div>
+      ${shown.length ? `<ul class="rows">
+        ${shown.map(q=>`<li class="row" style="flex-direction:column;align-items:stretch;gap:6px">
+          <div class="row-act" style="justify-content:space-between"><b>${esc(q.subject||'(제목없음)')}</b><span class="badge ${stBadge(q.status)}">${stLabel(q.status)}</span></div>
+          <div class="muted">${esc(q.message||'')}</div>
+          ${q.response?`<div class="note"><b>답변${q.responder?' · '+esc(q.responder):''}</b><p>${esc(q.response)}</p></div>`:''}
+          <span class="muted mono" style="font-size:11px">${esc((q.created_at||'').slice(0,16))}${q.org_id?' · '+esc(q.org_id):''}${q.channel?' · '+esc(q.channel):''}</span>
+          <div class="row-act" style="justify-content:flex-end">
+            ${q.status==='open'?`<button class="btn btn-sm btn-primary" onclick="App.admQnaAnswer('${q.id}')">답변</button><button class="btn btn-sm btn-ghost" onclick="App.admQnaStatus('${q.id}','closed')">종결</button>`:''}
+            ${q.status==='answered'?`<button class="btn btn-sm" onclick="App.admQnaAnswer('${q.id}')">답변 수정</button><button class="btn btn-sm btn-ghost" onclick="App.admQnaStatus('${q.id}','closed')">종결</button>`:''}
+            ${q.status==='closed'?`<button class="btn btn-sm btn-ghost" onclick="App.admQnaStatus('${q.id}','open')">다시 열기</button>`:''}
+          </div>
+        </li>`).join('')}
+      </ul>` : `<p class="empty">해당 문의가 없습니다.</p>`}
+    </section>
+  `;
+};
+
+App.admQnaTab = function(k){ S.admQnaTab = k; render(); };
+App.admQnaReload = function(){ RS.admQna = null; render(); };
+App.admQnaAnswer = function(id){
+  const q = (RS.admQna||[]).find(x=>x.id===id);
+  if(!q) return;
+  openModal('문의 답변', `
+    <p><b>${esc(q.subject||'(제목없음)')}</b></p><p class="muted">${esc(q.message||'')}</p>
+    <div class="field"><label for="aq-text">답변</label><textarea class="in" id="aq-text">${esc(q.response||'')}</textarea></div>
+    <div class="inline-msg" id="aq-e"></div>
+  `, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.admQnaDoAnswer('${id}')">답변 등록</button>`);
+};
+App.admQnaDoAnswer = async function(id){
+  const el = $('#aq-text'); const v = el ? el.value.trim() : '';
+  const e = $('#aq-e');
+  if(!v){ if(e) e.textContent = '답변 내용을 입력해 주세요.'; return; }
+  const r = await apiFetch('/consultations/'+id+'/respond', {method:'POST', body:JSON.stringify({response:v})});
+  if(!r.ok){ toast('답변 등록에 실패했습니다.'); return; }
+  closeModal(); RS.admQna = null; await loadAdmQna(); render(); toast('답변을 등록했습니다.');
+};
+App.admQnaStatus = async function(id, status){
+  const r = await apiFetch('/consultations/'+id, {method:'PATCH', body:JSON.stringify({status:status})});
+  if(!r.ok){ toast('상태 변경에 실패했습니다.'); return; }
+  RS.admQna = null; await loadAdmQna(); render(); toast(status==='closed'?'문의를 종결했습니다.':'문의를 다시 열었습니다.');
+};
+Object.assign(I18N.ko, {'nav.adm-kb':'문의 응대'}); if(I18N.en) Object.assign(I18N.en, {'nav.adm-kb':'Inquiries'}); if(I18N.id) Object.assign(I18N.id, {'nav.adm-kb':'Pertanyaan'});
+
+{ const f = VIEWS['cons-qna']; VIEWS['cons-qna'] = () => `<div class="row-act" style="justify-content:flex-end;margin-bottom:12px"><button class="btn btn-primary" onclick="App.consAskNew()">새 문의 등록</button></div>` + f(); }
+App.consAskNew = function(){
+  openModal('새 문의 등록', `
+    <p>운영팀에 문의를 남깁니다. 답변은 이 화면에서 확인할 수 있습니다.</p>
+    <div class="field"><label for="ca-subject">제목</label><input class="in" id="ca-subject"></div>
+    <div class="field"><label for="ca-message">내용</label><textarea class="in" id="ca-message"></textarea></div>
+    <div class="inline-msg" id="ca-e"></div>
+  `, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.consAskDo()">등록</button>`);
+};
+App.consAskDo = async function(){
+  const sEl = $('#ca-subject'), mEl = $('#ca-message');
+  const subject = sEl ? sEl.value.trim() : '';
+  const message = mEl ? mEl.value.trim() : '';
+  const e = $('#ca-e');
+  if(!message){ if(e) e.textContent = '문의 내용을 입력해 주세요.'; return; }
+  const r = await apiFetch('/consultations', {method:'POST', body:JSON.stringify({subject:subject, message:message})});
+  if(!r.ok){ toast('문의 등록에 실패했습니다.'); return; }
+  closeModal(); RS.consQna = null; render(); toast('문의를 등록했습니다.');
 };
 
 window.App = App;
