@@ -3433,14 +3433,14 @@ const App = {
       S.role=ui; S.view=ROLES[rk].home;
       const list = ROLES[rk].list(); S.userId = (list[0] && list[0].id) || null;
       S.loginEmail=null;
-      if(ui==='aud'){ await loadAud(); } else if(ui==='ent'){ await loadEnt(); } else if(ui==='cons'){ await loadCons(); }
+      if(ui==='aud'){ await loadAud(); } else if(ui==='ent'){ await loadEnt(); } else if(ui==='cons'){ await loadCons(); } else if(ui==='sha'){ await loadSha(); }
       render(); window.scrollTo(0,0);
       toast('로그인되었습니다. ('+esc(d.username)+' · '+ui+')');
     }catch(err){ toast('서버에 연결할 수 없습니다. 네트워크를 확인해 주세요.'); }
     finally{ if(btn) btn.disabled=false; }
   },
   logout(){ if(AUTH.access){ fetch(API_BASE+'/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+AUTH.access}}).catch(()=>{}); } authClear(); S.role=null; S.userId=null; S.auth='login'; closeModal(); render(); window.scrollTo(0,0); toast('로그아웃되었습니다.'); },
-  async go(v){ S.view=v; if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } else if(S.role==='cons'){ await loadCons(); } render(); window.scrollTo(0,0); },
+  async go(v){ S.view=v; if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } else if(S.role==='cons'){ await loadCons(); } else if(S.role==='sha'){ await loadSha(); } render(); window.scrollTo(0,0); },
   terms(k){ openModal(TERMS[k].title, TERMS[k].body); },
 
   /* signup */
@@ -4242,7 +4242,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, final: {}, entPre: {}, entCt: {}, consPre: {}, entDocs: {}, consInv: null, consQna: null, entAsk: null, entProd: {}, fatwaQ: null, fatwa: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -5278,6 +5278,74 @@ App.entSubmitApp = async function(cid){
       return toast('신청 요건 미충족: '+(bs.join(' · ')||'요건 확인 필요')); }
     return toast('신청에 실패했습니다.'); }
   await loadEnt(); render(); toast('AI 사전심사를 신청했습니다. 오디터 검토로 넘어갑니다.');
+};
+
+
+/* ===== P6 샤리아(파트와 심의) 실데이터 — sha-home·sha-review·sha-history ===== */
+const VOTE_KO = {approve:'적합', reject:'부적합', abstain:'기권'};
+async function loadSha(){
+  try{
+    const [rq, rc] = await Promise.all([apiFetch('/fatwa/queue'), apiFetch('/cases')]);
+    RS.fatwaQ = rq.ok ? (await rq.json()) : [];
+    RS.cases = rc.ok ? ((await rc.json()).items||[]) : [];
+    RS.loadedFor = AUTH.username;
+  }catch(e){ RS.fatwaQ=[]; RS.cases=[]; }
+}
+async function loadFatwa(cid){
+  try{
+    const [rs, rv, rf] = await Promise.all([apiFetch('/cases/'+cid+'/fatwa/status'), apiFetch('/cases/'+cid+'/fatwa/votes'), apiFetch('/cases/'+cid+'/fatwa')]);
+    RS.fatwa[cid] = { status: rs.ok?await rs.json():{}, tally: rv.ok?(await rv.json()):{}, detail: rf.ok?await rf.json():{} };
+  }catch(e){ RS.fatwa[cid]={status:{},tally:{},detail:{}}; }
+}
+VIEWS['sha-home'] = () => {
+  const q=RS.fatwaQ||[];
+  const mine = q.filter(x=>{ const f=(RS.fatwa||{})[x.case_id]; return !f || !(((f.tally||{}).ballots)||[]).some(v=>v.member===AUTH.username); });
+  return `
+  <section class="summary">
+    <div><span class="k">심의 대기</span><span class="v mono">${q.length}건</span></div>
+    <div><span class="k">내 미투표(추정)</span><span class="v mono">${mine.length}건</span></div>
+    <div><span class="k">전체 케이스</span><span class="v mono">${(RS.cases||[]).length}</span></div>
+  </section>
+  <section class="panel"><div class="panel-head"><h2>파트와 심의 대기</h2><button class="link" onclick="App.go('sha-review')">심의하기 →</button></div>
+    ${q.length?`<ul class="rows">${q.map(x=>`<li class="row"><div><b>${esc(x.company)}</b><span class="muted mono"> · ${esc(x.pathway||'')}</span></div><button class="btn btn-sm btn-primary" onclick="App.shaOpen('${x.case_id}')">심의</button></li>`).join('')}</ul>`:'<p class="empty">심의 대기 중인 안건이 없습니다.</p>'}</section>`;
+};
+VIEWS['sha-review'] = () => {
+  const q=RS.fatwaQ||[];
+  if(!q.length) return `<section class="panel"><p class="empty">심의 대기 안건이 없습니다.</p></section>`;
+  let cur=(S.selFatwa&&q.find(x=>x.case_id===S.selFatwa))?S.selFatwa:q[0].case_id; S.selFatwa=cur;
+  const nav=`<nav class="mlist" aria-label="심의 안건"><div class="mh">심의 ${q.length}건</div>${q.map(x=>`<button class="mitem ${x.case_id===cur?'on':''}" onclick="App.shaOpen('${x.case_id}')"><span class="t"><span>${esc(x.company)}</span><span class="badge attn">심의</span></span><span class="muted mono" style="font-size:11px">${esc(x.pathway||'')}</span></button>`).join('')}</nav>`;
+  const f=(RS.fatwa||{})[cur]; let body;
+  if(!f){ if(RS._fatwaLoading!==cur){ RS._fatwaLoading=cur; loadFatwa(cur).then(()=>{RS._fatwaLoading=null; render();}); } body='<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  else{
+    const st=f.status||{}, tal=f.tally||{}, ballots=tal.ballots||[], det=f.detail||{};
+    const mine=ballots.find(v=>v.member===AUTH.username);
+    body=`<div style="display:flex;flex-direction:column;gap:22px;min-width:0">
+      <section class="panel"><div class="panel-head"><h2 style="font-size:20px">${esc((q.find(x=>x.case_id===cur)||{}).company||'')}</h2><span class="badge ${det.decision==='approved'?'strong':'attn'}">${esc(det.decision||st.decision||'심의 중')}</span></div>
+        <dl class="dl"><div><dt>위원 투표</dt><dd>적합 ${tal.approve||0} · 부적합 ${tal.reject||0} · 기권 ${tal.abstain||0} / 위원 ${tal.members||'-'}${tal.quorum_met?' · 정족수 충족':''}</dd></div>
+          <div><dt>결정 번호</dt><dd class="mono">${esc(det.decision_no||st.decision_no||'-')}</dd></div>
+          <div style="grid-column:1/-1"><dt>대상 제품</dt><dd>${(det.products||[]).map(p=>esc(p.name)).join(', ')||'-'}</dd></div></dl>
+      </section>
+      <section class="panel"><div class="panel-head"><h2>내 투표</h2>${mine?`<span class="badge strong">${VOTE_KO[mine.vote]||mine.vote}</span>`:'<span class="badge attn">미투표</span>'}</div>
+        <div class="row-act"><button class="btn ${mine&&mine.vote==='approve'?'btn-primary':''}" onclick="App.shaVote('${cur}','approve')">○ 적합</button>
+          <button class="btn ${mine&&mine.vote==='abstain'?'btn-primary':''}" onclick="App.shaVote('${cur}','abstain')">△ 기권/조건부</button>
+          <button class="btn ${mine&&mine.vote==='reject'?'btn-primary':''} btn-ghost" onclick="App.shaVote('${cur}','reject')">× 부적합</button></div>
+      </section>
+      ${ballots.length?`<section class="panel"><div class="panel-head"><h2>위원 의견</h2></div><ul class="rows">${ballots.map(v=>`<li class="row"><div><b>${esc(v.member)}</b>${v.note?`<span class="muted"> · ${esc(v.note)}</span>`:''}</div><span class="badge ${v.vote==='approve'?'strong':v.vote==='reject'?'attn':''}">${VOTE_KO[v.vote]||v.vote}</span></li>`).join('')}</ul></section>`:''}</div>`;
+  }
+  return `<div class="md">${nav}${body}</div>`;
+};
+VIEWS['sha-history'] = () => {
+  const done=(RS.cases||[]).filter(c=>(typeof c.step8==='number'&&c.step8>=5)||['fatwa_approved','certificate_issued','post_certification_monitoring'].includes(c.status));
+  return `<section class="panel"><div class="panel-head"><h2>심의 이력</h2><span class="muted">${done.length}건</span></div>
+    ${done.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:180px">기업</th><th>단계</th><th>상태</th></tr></thead><tbody>
+    ${done.map(c=>`<tr><td><b>${esc(c.company_name)}</b></td><td><span class="badge">${esc(_s8label(c))}</span></td><td class="mono muted">${esc(c.status||'')}</td></tr>`).join('')}
+    </tbody></table></div>`:'<p class="empty">심의 완료 이력이 없습니다.</p>'}</section>`;
+};
+App.shaOpen = async function(cid){ S.selFatwa=cid; S.view='sha-review'; if(!(RS.fatwa||{})[cid]) await loadFatwa(cid); render(); window.scrollTo(0,0); };
+App.shaVote = async function(cid, vote){
+  const r=await apiFetch('/cases/'+cid+'/fatwa/vote',{method:'POST',body:JSON.stringify({member:AUTH.username, vote})});
+  if(!r.ok) return toast('투표에 실패했습니다.');
+  delete RS.fatwa[cid]; await loadFatwa(cid); render(); toast((VOTE_KO[vote]||vote)+' 투표를 기록했습니다.');
 };
 
 window.App = App;
