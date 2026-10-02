@@ -821,7 +821,7 @@ function loginForm(){
         <div class="role-group"><span class="eyebrow">${t('grp.ext')}</span><div class="seg" role="group">${rb('enterprise')}${rb('consultant')}</div></div>
         <div class="role-group"><span class="eyebrow">${t('grp.int')}</span><div class="seg seg-3" role="group">${rb('auditor')}${rb('sharia')}${rb('admin')}</div></div>
       </div></div>
-    <div class="field"><label for="lg-email">${t(R.label)} ${t('id')}</label><input class="in" id="lg-email" type="email" required value="${esc(email)}"></div>
+    <div class="field"><label for="lg-email">${t(R.label)} ${t('id')}</label><input class="in" id="lg-email" type="text" required value="${esc(email)}" autocomplete="username"></div>
     <div class="field"><label for="lg-pw">${t('pw')}</label><input class="in" id="lg-pw" type="password" required value="demo1234"></div>
     <button class="btn btn-primary btn-lg btn-block" type="submit">${t('login')}</button>
     <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:13px">
@@ -967,6 +967,7 @@ function renderShell(){
   const ent = S.role==='ent';
   let who, whoSub, meta;
   if(ent){ const c = company(S.userId); who = c.name; whoSub = `${c.mgr1.name} ${c.mgr1.title}`; meta = `${c.name} · ${c.mgr1.name} ${c.mgr1.title}님`; }
+  else if(AUTH.username){ who = AUTH.username; whoSub = t(roleByCode(S.role).label); meta = whoSub + ' · ' + AUTH.username; }
   else { const c = person(roleByCode(S.role).list(), S.userId); who = `${c.name} ${c.title}`; whoSub = c.org; meta = `${c.org} · ${c.name} ${c.title}`; }
   return `<div class="shell">
     <aside class="sidebar">
@@ -3431,13 +3432,15 @@ const App = {
       const rk = Object.keys(ROLES).find(k=>ROLES[k].code===ui);
       S.role=ui; S.view=ROLES[rk].home;
       const list = ROLES[rk].list(); S.userId = (list[0] && list[0].id) || null;
-      S.loginEmail=null; render(); window.scrollTo(0,0);
+      S.loginEmail=null;
+      if(ui==='aud'){ await loadAud(); }
+      render(); window.scrollTo(0,0);
       toast('로그인되었습니다. ('+esc(d.username)+' · '+ui+')');
     }catch(err){ toast('서버에 연결할 수 없습니다. 네트워크를 확인해 주세요.'); }
     finally{ if(btn) btn.disabled=false; }
   },
   logout(){ if(AUTH.access){ fetch(API_BASE+'/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+AUTH.access}}).catch(()=>{}); } authClear(); S.role=null; S.userId=null; S.auth='login'; closeModal(); render(); window.scrollTo(0,0); toast('로그아웃되었습니다.'); },
-  go(v){ S.view=v; render(); window.scrollTo(0,0); },
+  async go(v){ S.view=v; if(S.role==='aud'){ await loadAud(); } render(); window.scrollTo(0,0); },
   terms(k){ openModal(TERMS[k].title, TERMS[k].body); },
 
   /* signup */
@@ -3975,7 +3978,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     c.chat.push({from:'sys',text:`메인 오디터 배정 · ${auditor(v).name} ${auditor(v).title}`,time:clock()});
     render(); toast(`${c.name}에 ${auditor(v).name} 심사원을 메인 오디터로 배정했습니다.`); },
   audAccept(id){ const c = company(id); if(c.newFor===S.userId) c.newFor = null; App.audDetail(id); },
-  audDetail(id, step){ S.audCo = id; S.audStep = step; const c = company(id); if(c.newFor===S.userId && c.auditorId===S.userId) c.newFor = null; S.view='aud-detail'; render(); window.scrollTo(0,0); },
+  audDetail(id, step){ S.audCo = id; S.audStep = step; const c = company(id); if(c && c.newFor===S.userId && c.auditorId===S.userId) c.newFor = null; S.view='aud-detail'; render(); window.scrollTo(0,0); },
   audStep(i){ S.audStep = i; render(); },
   coAdd(id){ const v = $('#co-add').value; if(!v) return toast('동반 오디터를 선택해 주세요.'); const c = company(id);
     c.coAuditors.push(v); (c.accept ||= {})[v]='수락대기'; c.chat.push({from:'sys',text:`동반 오디터 지정 · ${auditor(v).name}`,time:clock()}); render(); toast(`${auditor(v).name} 심사원을 동반 오디터로 지정했습니다.`); },
@@ -4236,6 +4239,69 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     if(cf.length){ const sg = evSuggest(ev); openModal('일정이 겹칩니다', `<p><b>${esc(c.name)}</b> ${esc(ev.type)} 일정을 ${d}로 확정하면 아래 일정과 겹칩니다.</p>${cf.map(x=>`<div class="note attn"><b class="mono">${x.date} ${evTime(x)}</b><p>${esc(x.title)} · ${x.who.filter(w=>ev.who.includes(w)).map(staffName).map(esc).join(', ')}</p></div>`).join('')}${sg?`<p>가능한 가장 빠른 날짜는 <b class="mono">${sg.date}</b>입니다.</p>`:''}`,
       `<button class="btn" onclick="App.closeModal()">닫기</button>${sg?`<button class="btn btn-primary" onclick="App.closeModal();App.calConfirm('${cid}','${sg.date}')">${sg.date}로 확정</button>`:''}`); return; } }
     return f.call(App,cid,d); }; }
+
+/* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
+const RS = { cases: [], counts: {}, todo: [], loadedFor: null };
+async function loadAud(){
+  try{
+    const [rc, rn, rt] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'), apiFetch('/me/todo')]);
+    RS.cases = rc.ok ? ((await rc.json()).items || []) : [];
+    RS.counts = rn.ok ? await rn.json() : {};
+    RS.todo = rt.ok ? ((await rt.json()).items || []) : [];
+    RS.loadedFor = AUTH.username;
+  }catch(e){ RS.cases = []; RS.counts = {}; RS.todo = []; }
+}
+const S8_LABELS = ['접수','사전심사','계약','모의심사','현장심사','샤리아 심의','인증서 발급','SiHalal 등록'];
+const _s8label = c => (typeof c.step8==='number' ? S8_LABELS[c.step8] : null) || c.step8_label || '-';
+const _myRole = rc => (rc.main_auditor && rc.main_auditor === AUTH.username) ? '메인' : '동반';
+
+VIEWS['aud-home'] = () => {
+  const cases = RS.cases || [], active = cases.filter(c=>!c.done), hold = cases.filter(c=>c.hold);
+  const cnt = RS.counts || {};
+  const kpi = (k,v,sub) => `<div><span class="k">${k}</span><span class="v mono">${v}</span>${sub?`<span class="muted">${sub}</span>`:''}</div>`;
+  return `
+  <section class="summary">
+    ${kpi('담당 업체', cases.length+'개사', '메인 '+cases.filter(c=>_myRole(c)==='메인').length+' · 동반 '+cases.filter(c=>_myRole(c)==='동반').length)}
+    ${kpi('진행 중', active.length+'건')}
+    ${kpi('배정 수락 대기', (cnt.assignment_pending||0)+'건')}
+    ${kpi('보완 대기', hold.length+'건')}
+  </section>
+  ${(RS.todo||[]).length?`<section class="panel"><div class="panel-head"><h2>처리할 일</h2><span class="muted">지금 내 처리가 필요한 업체</span></div>
+    <ul class="rows">${RS.todo.map(x=>`<li class="row"><div><b>${esc(x.company_name)}</b><span class="muted">${esc(x.step8_label)} · ${esc(x.reason)}</span></div>
+      <button class="btn btn-sm btn-ghost" onclick="App.audDetail('${x.case_id}')">상세</button></li>`).join('')}</ul></section>`:''}
+  <section class="panel">
+    <div class="panel-head"><h2>진행 중인 업체 현황</h2><span class="muted">실데이터 · 배정/동반 포함</span></div>
+    ${active.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:160px">업체</th><th>역할</th><th>진행 단계</th><th style="min-width:160px">다음 할 일</th><th>상태</th></tr></thead><tbody>
+      ${active.map(c=>`<tr><td><button class="link" style="font-weight:700;text-decoration:none" onclick="App.audDetail('${c.case_id}')">${esc(c.company_name)}</button>${c.hold?' <span class="badge attn">보완</span>':''}</td>
+        <td><span class="badge ${_myRole(c)==='메인'?'attn':'strong'}">${_myRole(c)}</span></td>
+        <td><span class="badge">${esc(_s8label(c))}</span></td>
+        <td>${esc(c.next_action||'-')}</td>
+        <td class="muted">${esc(c.status||'')}</td></tr>`).join('')}
+    </tbody></table></div>`:'<p class="empty">진행 중인 업체가 없습니다.</p>'}
+  </section>
+  ${cases.filter(c=>c.done).length?`<section class="panel"><div class="panel-head"><h2>완료된 업체</h2></div><ul class="rows">${cases.filter(c=>c.done).map(c=>`<li class="row"><div><b>${esc(c.company_name)}</b></div><button class="btn btn-sm btn-ghost" onclick="App.audDetail('${c.case_id}')">상세</button></li>`).join('')}</ul></section>`:''}
+  <p class="muted" style="margin-top:14px;font-size:12px">· 사전심사·현장심사·보고서 등 단계별 상세는 P3 후속에서 실데이터로 연결됩니다.</p>`;
+};
+
+const _audDetailMock = VIEWS['aud-detail'];
+VIEWS['aud-detail'] = () => {
+  const rc = (RS.cases||[]).find(c=>c.case_id===S.audCo);
+  if(rc){
+    return `<div><button class="link" onclick="App.go('aud-home')">← 종합 정보로</button></div>
+      <section class="panel" style="margin-top:12px"><div class="panel-head"><h2>${esc(rc.company_name)}</h2><span class="badge ${_myRole(rc)==='메인'?'attn':'strong'}">${_myRole(rc)} 오디터</span></div>
+      <dl class="dl">
+        <div><dt>진행 단계</dt><dd>${esc(_s8label(rc))}${rc.hold?' · <b>보완 대기</b>':''}</dd></div>
+        <div><dt>상태(raw)</dt><dd class="mono">${esc(rc.status||'-')}</dd></div>
+        <div><dt>다음 할 일</dt><dd>${esc(rc.next_action||'-')}</dd></div>
+        <div><dt>담당 단계</dt><dd>${esc(rc.owner||'-')}</dd></div>
+        <div><dt>전담 컨설턴트</dt><dd>${esc(rc.consultant||'-')}</dd></div>
+        <div><dt>심사 팀</dt><dd>메인 ${esc(rc.main_auditor||'-')}${(rc.co_auditors||[]).length?' · 동반 '+rc.co_auditors.length+'명':''}</dd></div>
+      </dl>
+      <div class="note attn" style="margin-top:12px"><b>P3 진행 중</b><p>사전심사·모의/현장심사·보고서·체크리스트 등 단계별 상세는 다음 슬라이스에서 실데이터로 연결됩니다.</p></div></section>`;
+  }
+  return _audDetailMock ? _audDetailMock() : '<p class="empty">업체를 선택해 주세요.</p>';
+};
+
 window.App = App;
 authLoad();
 /* 가입 링크 처리: ?signup=staff → 스태프(컨설턴트) 가입 / ?ref=CODE → 컨설턴트 초대로 기업 가입 (#20·?ref 귀속) */
