@@ -4241,7 +4241,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, onsite: {}, mats: {}, mock: {}, sched: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4675,6 +4675,63 @@ App.mockDoDecide = async function(cid, result){
   if(!r.ok) return toast('결정 처리에 실패했습니다.');
   closeModal(); delete RS.mock[cid]; await loadMock(cid); await loadAud(); render();
   toast(result==='pass'?'모의심사 통과 — 현장심사 단계로 넘어갑니다.':'모의심사를 반려했습니다.');
+};
+
+
+/* ===== P3 슬라이스7: aud-schedule(현장심사 일정 조율) 실데이터 ===== */
+const SCHED_ST = {none:'가능일 요청 전', proposed:'기업 가능일 제시', reproposed:'오디터 재조율 제시', confirmed:'확정'};
+async function loadSched(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/onsite-schedule'); RS.sched[cid]=r.ok?await r.json():{status:'none',history:[]}; }
+  catch(e){ RS.sched[cid]={status:'none',history:[]}; }
+}
+function _audSchedDetail(cid, st){
+  const status=st.status||'none', cd=st.client_dates||[], ad=st.auditor_dates||[], cf=st.confirmed, hist=st.history||[];
+  return `
+  <section class="panel"><div class="panel-head"><h2 style="font-size:20px">현장심사 일정</h2><span class="badge ${status==='confirmed'?'strong':'attn'}">${SCHED_ST[status]||status}</span></div>
+    ${cf&&cf.date?`<div class="note"><b>확정 방문일: <span class="mono">${esc(cf.date)}${cf.time?(' '+esc(cf.time)):''}</span></b></div>`:''}
+    ${cd.length?`<div style="margin-top:8px"><b style="font-size:13px">기업 제시 후보일</b>
+      <div class="row-act" style="flex-wrap:wrap;align-items:center;margin-top:6px"><input class="in mono" id="sc-time" type="time" style="max-width:120px" title="확정 시각(선택)">
+      ${cd.map(d=>`<button class="btn btn-sm btn-primary" onclick="App.schedConfirm('${cid}','${esc(d)}')">${esc(d)} 확정</button>`).join('')}</div></div>`:''}
+    ${ad.length?`<div style="margin-top:8px"><b style="font-size:13px">오디터 재조율 제시(기업 수락 대기)</b><p class="muted mono">${ad.map(esc).join(', ')}</p></div>`:''}
+  </section>
+  <section class="panel"><div class="panel-head"><h2>직접 확정 / 재조율</h2></div>
+    <div class="field"><span class="lbl">직접 확정</span><div class="row-act"><input class="in" id="sc-date" type="date" style="max-width:170px"><input class="in" id="sc-dtime" type="time" style="max-width:120px"><button class="btn btn-primary" onclick="App.schedConfirmDirect('${cid}')">방문일 확정</button></div></div>
+    <div class="field"><span class="lbl">재조율 요청(최대 3일, 쉼표로 구분)</span><div class="row-act"><input class="in" id="sc-replan" placeholder="2026-10-20, 2026-10-22" style="flex:1"><button class="btn" onclick="App.schedReplan('${cid}')">재조율 제시</button></div></div>
+  </section>
+  <section class="panel"><div class="panel-head"><h2>조율 이력</h2></div>
+    ${hist.length?`<ul class="rows">${hist.slice().reverse().map(h=>`<li class="row"><div><b>${({propose:'기업 가능일 제시',reschedule:'오디터 재조율',confirm:'오디터 확정'})[h.kind]||h.kind}</b> <span class="muted">${esc((h.dates||[]).join(', '))}${h.time?(' '+esc(h.time)):''}${h.note?(' · '+esc(h.note)):''}</span></div><span class="muted mono">${esc((h.at||'').slice(0,19))}</span></li>`).join('')}</ul>`:'<p class="empty">조율 이력 없음</p>'}
+  </section>`;
+}
+VIEWS['aud-schedule'] = () => {
+  const list = (RS.cases||[]).filter(c=>(c.step8===3||c.step8===4) && c.owner==='auditor' && !c.done);
+  if(!list.length) return `<section class="panel"><p class="empty">일정을 조율할 모의·현장심사 대상이 없습니다.</p></section>`;
+  let cur=(S.selSched&&list.find(c=>c.case_id===S.selSched))?S.selSched:list[0].case_id; S.selSched=cur;
+  const nav=`<nav class="mlist" aria-label="일정 대상"><div class="mh">일정 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selSched('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const st=(RS.sched||{})[cur]; let body;
+  if(!st){ if(RS._schedLoading!==cur){ RS._schedLoading=cur; loadSched(cur).then(()=>{RS._schedLoading=null; render();}); } body='<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  else body=_audSchedDetail(cur, st);
+  return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${body}</div></div>`;
+};
+App.selSched = async function(id){ S.selSched=id; if(!(RS.sched||{})[id]) await loadSched(id); render(); };
+App.schedConfirm = async function(cid, date){
+  const time=(($('#sc-time')||{}).value||'').trim();
+  const r=await apiFetch('/cases/'+cid+'/onsite-schedule/confirm',{method:'POST',body:JSON.stringify({date,time})});
+  if(!r.ok) return toast('일정 확정에 실패했습니다.');
+  await loadSched(cid); render(); toast('방문일을 확정했습니다. 기업에 알림이 전달됩니다.');
+};
+App.schedConfirmDirect = async function(cid){
+  const date=(($('#sc-date')||{}).value||'').trim(); if(!date) return toast('방문일을 선택해 주세요.');
+  const time=(($('#sc-dtime')||{}).value||'').trim();
+  const r=await apiFetch('/cases/'+cid+'/onsite-schedule/confirm',{method:'POST',body:JSON.stringify({date,time})});
+  if(!r.ok) return toast('일정 확정에 실패했습니다.');
+  await loadSched(cid); render(); toast('방문일을 확정했습니다.');
+};
+App.schedReplan = async function(cid){
+  const dates=(($('#sc-replan')||{}).value||'').split(',').map(x=>x.trim()).filter(Boolean).slice(0,3);
+  if(!dates.length) return toast('재조율 후보일을 입력해 주세요.');
+  const r=await apiFetch('/cases/'+cid+'/onsite-schedule/reschedule',{method:'POST',body:JSON.stringify({dates})});
+  if(!r.ok) return toast('재조율 제시에 실패했습니다.');
+  await loadSched(cid); render(); toast('재조율 후보일을 제시했습니다. 기업 수락을 기다립니다.');
 };
 
 window.App = App;
