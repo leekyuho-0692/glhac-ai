@@ -4241,7 +4241,7 @@ ${qs.map((q,i)=>`Q${i+1}: ${q.text}\nA${i+1}: ${q.thread.filter(t=>t.role==='aud
     return f.call(App,cid,d); }; }
 
 /* ===== P3 슬라이스1: 오디터 실데이터 계층 (P2 /cases·/me/nav-counts·/me/todo) ===== */
-const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, loadedFor: null };
+const RS = { cases: [], counts: {}, todo: [], assignments: [], assignPending: 0, pre: {}, loadedFor: null };
 async function loadAud(){
   try{
     const [rc, rn, rt, ra] = await Promise.all([apiFetch('/cases'), apiFetch('/me/nav-counts'),
@@ -4356,6 +4356,81 @@ navCount = function(v){
     return n ? `<span class="count">${n}</span>` : '';
   }
   return _navCountMock(v);
+};
+
+
+/* ===== P3 슬라이스3: aud-pre(사전심사 검토) 실데이터 ===== */
+async function loadPre(cid){
+  try{
+    const [rd, rv] = await Promise.all([apiFetch('/cases/'+cid+'/preassess/dossier'),
+                                        apiFetch('/cases/'+cid+'/preassess/review')]);
+    RS.pre[cid] = { dossier: rd.ok ? await rd.json() : {error:true}, review: rv.ok ? await rv.json() : null };
+  }catch(e){ RS.pre[cid] = {dossier:{error:true}, review:null}; }
+}
+function _audPreDetail(cur, d){
+  const ds = d.dossier || {};
+  if(ds.error) return '<section class="panel"><p class="empty">사전심사 자료를 불러오지 못했습니다.</p></section>';
+  const smy = ds.summary||{}, dc = ds.doc_counts||{}, rev = ds.review, mats = ds.materials||[], reqs = ds.doc_requests||[];
+  const vb = m => `<span class="badge ${m.verdict==='CLEARED'?'strong':(/BLOCK/.test(m.verdict||'')?'attn':'')}">${esc(m.verdict_ko||m.verdict||'')}</span>`;
+  return `
+  <section class="panel"><div class="panel-head"><div><h2 style="font-size:20px">${esc((ds.company&&ds.company.name)||'')} 사전심사</h2><div class="muted" style="margin-top:4px">원재료 ${smy.total||0}종 · 문서 ${dc.total||0}건</div></div>
+    <div class="row-act"><button class="btn" onclick="App.preDocReq('${cur}')">보완 서류 요청</button><button class="btn btn-ghost" onclick="App.preReview('${cur}','supplement')">보완 필요</button><button class="btn btn-primary" onclick="App.preReview('${cur}','ready')">검토 완료</button></div></div>
+    <section class="summary" style="margin-top:4px">
+      <div><span class="k">원재료</span><span class="v mono">${smy.total||0}</span></div>
+      <div><span class="k">적합</span><span class="v mono">${smy.cleared||0}</span></div>
+      <div><span class="k">증빙 필요</span><span class="v mono">${smy.needs_evidence||0}</span></div>
+      <div><span class="k">차단</span><span class="v mono">${smy.blocked||0}</span><span class="muted">najis ${smy.najis||0}</span></div>
+    </section>
+    ${rev?`<div class="note ${rev.verdict==='ready'?'':'attn'}" style="margin-top:10px"><b>오디터 검토: ${rev.verdict==='ready'?'통과(ready)':'보완 필요(supplement)'}</b>${rev.note?`<p>${esc(rev.note)}</p>`:''}<span class="muted">${esc((rev.at||'').slice(0,19))}</span></div>`:''}
+  </section>
+  <section class="panel"><div class="panel-head"><h2>원재료 판정</h2><span class="muted">승인 ${dc.approved||0} · 대기 ${dc.pending||0} · 부적합 ${dc.negative||0}</span></div>
+    <div class="tbl-wrap"><table><thead><tr><th>원재료</th><th>E번호</th><th>판정</th><th>필요 증빙</th><th>증빙</th></tr></thead><tbody>
+    ${mats.map(m=>`<tr><td><b>${esc(m.name||'')}</b>${m.najis?' <span class="badge attn">najis</span>':''}</td><td class="mono">${esc(m.e_number||'-')}</td><td>${vb(m)}</td><td class="muted">${esc((m.required_evidence||[]).join(', ')||'-')}</td><td class="mono">${m.evidence_count||0}</td></tr>`).join('')||'<tr><td colspan="5" class="empty">원재료 없음</td></tr>'}
+    </tbody></table></div></section>
+  ${reqs.length?`<section class="panel"><div class="panel-head"><h2>보완 요청 이력</h2></div><ul class="rows">${reqs.map(r=>`<li class="row"><div><b>${r.round||''}차</b> <span class="muted">${esc((r.items||[]).map(it=>typeof it==='string'?it:(it.doc_type||it.note||'')).join(', '))}</span>${r.message?`<div class="muted">${esc(r.message)}</div>`:''}</div></li>`).join('')}</ul></section>`:''}`;
+}
+VIEWS['aud-pre'] = () => {
+  const list = (RS.cases||[]).filter(c=>c.step8===1 && c.owner==='auditor');
+  if(!list.length) return `<section class="panel"><p class="empty">검토할 사전심사가 없습니다.</p></section>`;
+  let cur = (S.selPre && list.find(c=>c.case_id===S.selPre)) ? S.selPre : list[0].case_id;
+  S.selPre = cur;
+  const nav = `<nav class="mlist" aria-label="사전심사 목록"><div class="mh">사전심사 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selPre('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const d = (RS.pre||{})[cur]; let body;
+  if(!d){
+    if(RS._preLoading!==cur){ RS._preLoading=cur; loadPre(cur).then(()=>{ RS._preLoading=null; render(); }); }
+    body = '<section class="panel"><p class="empty">사전심사 자료를 불러오는 중…</p></section>';
+  } else { body = _audPreDetail(cur, d); }
+  return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${body}</div></div>`;
+};
+App.selPre = async function(id){ S.selPre=id; if(!(RS.pre||{})[id]) await loadPre(id); render(); };
+App.preReview = async function(cid, verdict){
+  if(verdict==='supplement'){
+    openModal('보완 필요로 기록', `<p>이 케이스를 <b>보완 필요(supplement)</b>로 기록합니다. 사유(선택).</p><div class="field"><label for="pr-note">메모</label><textarea class="in" id="pr-note"></textarea></div>`,
+      `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.preDoReview('${cid}','supplement')">기록</button>`);
+    return;
+  }
+  await App.preDoReview(cid, 'ready');
+};
+App.preDoReview = async function(cid, verdict){
+  const note = (($('#pr-note')||{}).value||'').trim();
+  const ok = (verdict==='ready');
+  const sections = {documents:{ok, note:''}, materials:{ok, note:''}, process:{ok, note:''}};
+  const r = await apiFetch('/cases/'+cid+'/preassess/review', {method:'POST', body:JSON.stringify({verdict, sections, note})});
+  if(!r.ok){ return toast('검토 기록에 실패했습니다.'); }
+  closeModal(); delete RS.pre[cid]; await loadPre(cid); await loadAud(); render();
+  toast(verdict==='ready'?'사전심사 검토 완료로 기록했습니다.':'보완 필요로 기록했습니다.');
+};
+App.preDocReq = function(cid){
+  openModal('보완 서류 요청', `<p>요청할 서류를 한 줄에 하나씩 적어 주세요.</p><div class="field"><label for="dr-items">요청 서류</label><textarea class="in" id="dr-items" placeholder="원료 공급업체 할랄 인증서&#10;제조공정도"></textarea></div><div class="field"><label for="dr-msg">메시지(선택)</label><textarea class="in" id="dr-msg"></textarea></div><div class="inline-msg" id="dr-emsg"></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.preDoDocReq('${cid}')">요청 전송</button>`);
+};
+App.preDoDocReq = async function(cid){
+  const items = (($('#dr-items')||{}).value||'').split('\n').map(x=>x.trim()).filter(Boolean).map(x=>({doc_type:x, note:''}));
+  if(!items.length){ const m=$('#dr-emsg'); if(m) m.textContent='요청 서류를 한 개 이상 입력해 주세요.'; return; }
+  const message = (($('#dr-msg')||{}).value||'').trim();
+  const r = await apiFetch('/cases/'+cid+'/preassess/doc-request', {method:'POST', body:JSON.stringify({items, message})});
+  if(!r.ok){ return toast('보완 요청에 실패했습니다.'); }
+  closeModal(); delete RS.pre[cid]; await loadPre(cid); render(); toast('보완 서류를 요청했습니다. 기업에 알림이 전달됩니다.');
 };
 
 window.App = App;
