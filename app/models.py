@@ -212,6 +212,21 @@ class LphAssignment(Base):
     assigned_at = Column(DateTime, default=datetime.utcnow)
 
 
+class CaseAuditor(Base):
+    """P2(N6) 동반 오디터 — 한 케이스에 메인 1 + 동반 N.
+
+    기존 메인 배정은 WorkflowEvent("ops.auditor_assigned") latest-wins 를 그대로 둔다(하위호환).
+    이 표는 메인/동반을 명시적으로 보유해 동반 추가·조회·KPI 를 가능하게 한다. role: 'main' | 'co'.
+    """
+    __tablename__ = "case_auditors"
+    id = Column(String, primary_key=True, default=uid)
+    case_id = Column(String, nullable=False)
+    user_id = Column(String, nullable=False)
+    role = Column(String, nullable=False, default="co")   # main|co
+    assigned_by = Column(String)
+    assigned_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ExternalIdentity(Base):
     """SIHALAL 식별자 연동 — 설계 Part 23 / 24.5."""
     __tablename__ = "external_identity"
