@@ -1270,7 +1270,7 @@ def handoff_login(body: schemas.LoginReq, db: Session = Depends(get_db)):
     _HANDOFF[code] = (time.time(), {**auth.make_tokens(u), "role": u.role,
                                     "org_id": u.org_id, "username": u.username})
     return {"handoff": code, "expires_in": _HANDOFF_TTL,
-            "redirect": "%s/ui/#handoff=%s" % (APP_BASE_URL.rstrip("/"), code)}
+            "redirect": "%s%s#handoff=%s" % (APP_BASE_URL.rstrip("/"), _ui_home(), code)}
 
 
 @app.post("/auth/handoff/issue")
@@ -1291,7 +1291,7 @@ def handoff_issue(user=Depends(auth.get_current_user)):
         _HANDOFF[code] = (time.time(), {**auth.make_tokens(u), "role": u.role,
                                         "org_id": u.org_id, "username": u.username})
         return {"handoff": code, "expires_in": _HANDOFF_TTL,
-                "redirect": "%s/ui/#handoff=%s" % (APP_BASE_URL.rstrip("/"), code)}
+                "redirect": "%s%s#handoff=%s" % (APP_BASE_URL.rstrip("/"), _ui_home(), code)}
     finally:
         db.close()
 
@@ -17446,13 +17446,36 @@ class NoCacheStaticFiles(StaticFiles):
 
 
 
+def _ui_default():
+    """기본 UI — 'v4'(새 화면) 또는 'legacy'(구 화면). 호출 시점에 읽는다."""
+    return "v4" if (os.environ.get("GLHAC_UI_DEFAULT") or "").strip().lower() == "v4" else "legacy"
+
+
+def _ui_home():
+    return "/ui/v4/" if _ui_default() == "v4" else "/ui/"
+
+
+@app.api_route("/ui/", methods=["GET", "HEAD"], include_in_schema=False)
+def _ui_index(request: Request):
+    """기본 화면이 v4 면 /ui/ 로 들어온 요청(북마크·홈페이지 링크)을 /ui/v4/ 로 보낸다(쿼리 보존). 구 화면은 /ui/index.html 로 계속 열 수 있다. 기본이 legacy 면 예전 그대로 구 화면을 준다."""
+    from fastapi.responses import RedirectResponse, FileResponse
+    if _ui_default() == "v4":
+        qs = request.url.query
+        return RedirectResponse(url="/ui/v4/" + (("?" + qs) if qs else ""))
+    resp = FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"), media_type="text/html")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
 @app.get("/", include_in_schema=False)
 def _root_redirect(request: Request):
     """맨 URL 접속 시 UI로 이동 (루트 라우트 부재로 인한 404 방지).
     쿼리스트링(?ref=컨설턴트코드 등)을 보존해 넘긴다 — 안 그러면 QR 귀속이 끊긴다."""
     from fastapi.responses import RedirectResponse
     qs = request.url.query
-    return RedirectResponse(url="/ui/" + (("?" + qs) if qs else ""))
+    return RedirectResponse(url=_ui_home() + (("?" + qs) if qs else ""))
 
 
 # ===== 공장·시설 (회사1:공장N) — Phase 3 =====
