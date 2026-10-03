@@ -162,14 +162,19 @@ def _non_negative_int(v, what, limit=None):
 # 문자가 섞이면 '분명히 만들었는데 로그인이 안 되는' 상태가 된다.
 # 실데이터 14개 계정은 전부 영숫자·밑줄이라 이 규칙에 걸리는 기존 계정은 없다.
 _USERNAME_RE = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$")
+# v4 화면은 이메일을 아이디로 쓴다 — 이메일 형식이면 64자까지 허용.
+_EMAIL_ID_RE = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9._%+-]{0,63}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
+_EMAIL_ID_MAX = 64
 
 
 def _username(v):
     t = str(v or "").strip()
-    if not _USERNAME_RE.match(t):
-        raise ValueError("아이디는 영문·숫자로 시작하는 3~32자여야 합니다"
-                         "(영문·숫자와 . _ - 만 사용, 받은 값: %s)" % (v or ""))
-    return t
+    if _USERNAME_RE.match(t):
+        return t
+    if len(t) <= _EMAIL_ID_MAX and _EMAIL_ID_RE.match(t):
+        return t
+    raise ValueError("아이디는 영문·숫자로 시작하는 3~32자(영문·숫자와 . _ - 만 사용)"
+                     " 또는 64자 이내 이메일이어야 합니다(받은 값: %s)" % (v or ""))
 
 
 def _address(v, what="주소"):
