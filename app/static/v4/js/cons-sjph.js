@@ -108,7 +108,7 @@ App.csjDoc = async function(cid, fmt){
   const name = 'sjph-manual.'+fmt;
   try{
     const r = await apiFetch(path);
-    if(!r.ok) return toast('파일을 불러올 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, '파일을 불러올 수 없습니다.'));
     const blob = await r.blob(); const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name;
     document.body.appendChild(a); a.click();

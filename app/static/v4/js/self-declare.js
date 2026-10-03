@@ -159,7 +159,7 @@ App.sdcPdf = async function(cid){
   const filename = `self-declaration-${cid}.pdf`;
   try{
     const r = await apiFetch(`/cases/${cid}/self-declaration.pdf`);
-    if(!r.ok) return toast('PDF 를 불러올 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, 'PDF 를 불러올 수 없습니다.'));
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = filename;
@@ -218,7 +218,7 @@ App.sdcDecide = async function(cid, decision){
 App.sdcKetetapan = async function(cid){
   try{
     const r = await apiFetch(`/cases/${cid}/committee/ketetapan.pdf`);
-    if(!r.ok) return toast('결정서를 불러올 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, '결정서를 불러올 수 없습니다.'));
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = `ketetapan-${cid}.pdf`;

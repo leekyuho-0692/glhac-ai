@@ -74,7 +74,7 @@ App.paydDoc = async function(idx, kind){
   const fname = (iv.invoice_no||iv.invoice_id)+'-'+kind.replace('/','.');
   try{
     const r = await apiFetch(path);
-    if(!r.ok) return toast('아직 발행되지 않았거나 내려받을 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, '아직 발행되지 않았거나 내려받을 수 없습니다.'));
     const blob = await r.blob();
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fname;
     document.body.appendChild(a); a.click();
@@ -165,7 +165,7 @@ App.paydSave = async function(){
 App.paydQr = async function(){
   try{
     const r = await apiFetch('/consultant/qr');
-    if(!r.ok) return toast('QR을 불러올 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, 'QR을 불러올 수 없습니다.'));
     const blob = await r.blob();
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'consultant_qr.png';
     document.body.appendChild(a); a.click();

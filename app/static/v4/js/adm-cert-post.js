@@ -213,7 +213,7 @@ App.admcpReasonOk = async function(cid, kind){
 App.admcpProductPdf = async function(cid, productId, filename){
   try{
     const r = await apiFetch('/cases/'+cid+'/certificate/products/'+productId+'.pdf');
-    if(!r.ok) return toast('파일을 불러올 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, '파일을 불러올 수 없습니다.'));
     const blob = await r.blob();
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename || 'certificate.pdf';
     document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000);

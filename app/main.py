@@ -4123,10 +4123,19 @@ AUDIT_STAGES = {"document_pre_audit_requested", "document_pre_audit_in_review",
 FATWA_STAGES = {"fatwa_review"}
 
 
+def _scope_case_query(q, db, user):
+    """업무 큐용 케이스 범위 — 인증기관 역할(관리자·최고운영자·샤리아)은 조직을 넘어 전체,
+    배정 역할(오디터·컨설턴트)은 배정받은 케이스, 나머지는 자기 조직.
+    예전엔 admin 만 예외로 org_id 를 걸어, org_demo 소속 샤리아·오디터의 큐가 늘 비었다(실측)."""
+    if user["role"] in CERTIFIER_ROLES:
+        return q
+    if user["role"] in ASSIGNED_ROLES:
+        return q.filter(models.CaseApplication.case_id.in_(_assigned_case_ids(db, user["uid"]) or [""]))
+    return q.filter_by(org_id=user["org_id"])
+
+
 def _stage_queue(db, user, stages):
-    q = db.query(models.CaseApplication)
-    if user["role"] != "admin":
-        q = q.filter_by(org_id=user["org_id"])
+    q = _scope_case_query(db.query(models.CaseApplication), db, user)
     return [{"case_id": c.case_id, "company": c.company_name, "stage": c.status, "pathway": c.pathway}
             for c in q.order_by(models.CaseApplication.created_at.desc()).all() if c.status in stages]
 
@@ -4142,9 +4151,7 @@ def audit_queue(user=Depends(auth.require_roles("auditor", "operator")),
 def fatwa_dashboard(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
                     db: Session = Depends(get_db)):
     """파트와 위원회 대시보드 — 심의 대기/가승인/최종승인/반려 집계 + 케이스 목록."""
-    q = db.query(models.CaseApplication)
-    if user["role"] != "admin":
-        q = q.filter_by(org_id=user["org_id"])
+    q = _scope_case_query(db.query(models.CaseApplication), db, user)
     cases = q.all()
     fds = {f.case_id: f for f in db.query(models.FatwaDecision).all()}
     counts = {"review": 0, "provisional": 0, "approved": 0, "rejected": 0, "conditional": 0}
@@ -10005,9 +10012,20 @@ def create_consultation(body: dict = None, user=Depends(auth.get_current_user), 
 
 @app.get("/consultations")
 def list_consultations(status: str = None, user=Depends(auth.get_current_user), db=Depends(get_db)):
-    """상담 목록 — 관리자/운영자는 전체, 그 외는 본인 조직만."""
+    """상담 목록 — 관리자/운영자는 전체, 컨설턴트·오디터는 담당 업체 문의 + 본인 작성분,
+    그 외는 본인 조직만."""
     q = db.query(models.Consultation)
-    if user["role"] not in ("admin", "operator"):
+    if user["role"] in ASSIGNED_ROLES:
+        # 스태프는 인증기관 조직(org_demo) 소속이라 조직으로 거르면 담당 고객 문의는 빠지고
+        # 같은 조직 다른 스태프의 문의가 보였다(실측) — 담당 관계로 범위를 잡는다.
+        _ids = _assigned_case_ids(db, user["uid"])
+        orgs = set(_my_client_org_ids(db, user["uid"]))
+        if _ids:
+            orgs |= {c.org_id for c in db.query(models.CaseApplication)
+                     .filter(models.CaseApplication.case_id.in_(_ids)).all()}
+        q = q.filter(or_(models.Consultation.org_id.in_(orgs or [""]),
+                         models.Consultation.created_by == user["uid"]))
+    elif user["role"] not in ("admin", "operator"):
         q = q.filter(models.Consultation.org_id == user.get("org_id"))
     if status:
         q = q.filter(models.Consultation.status == status)
@@ -15080,7 +15098,11 @@ def auditor_assignments(status: str = Query("pending", pattern="^(pending|accept
     """오디터 배정함 — 본인에게 배정된 케이스의 수락/거절 상태별 목록.
     operator/admin은 조직 전체(거절 회신 확인용)."""
     q = db.query(models.CaseApplication)
-    if user["role"] != "admin":
+    # 오디터는 인증기관(org_demo) 소속이고 업체 케이스는 업체 조직이라, 조직으로 거르면 늘 비었다
+    # (실측: 배정 후 items=[] 인데 nav-counts 는 1). 오디터는 배정받은 케이스로, 인증기관 역할은 전체로.
+    if user["role"] == "auditor":
+        q = q.filter(models.CaseApplication.case_id.in_(_assigned_case_ids(db, user["uid"]) or [""]))
+    elif user["role"] not in CERTIFIER_ROLES:
         q = q.filter_by(org_id=user["org_id"])
     cases = q.all()
     assign = _ops_latest_assignment(db, [c.case_id for c in cases])

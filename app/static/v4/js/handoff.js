@@ -20,7 +20,7 @@ async function HOF_consume(){
       return;
     }
     if(!r.ok){
-      toast('만료되었거나 이미 사용된 링크입니다. 다시 로그인해 주세요.');
+      toast(await apiErr(r, '만료되었거나 이미 사용된 링크입니다. 다시 로그인해 주세요.'));
       return;
     }
     let d;
