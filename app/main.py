@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from .db import Base, engine, get_db, SessionLocal
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
+from . import nav8
 from . import observability as obs
 from . import domain_dict as _dd_mod
 from .ontology_seed import seed
@@ -760,6 +761,83 @@ def _notify(db, case, event_type, title=None, body="", channels=None, role=None,
     return n
 
 
+# ── 인증 패키지 점검 — 업체·제품·성분(원재료)·공장은 한 묶음이다. 하나라도 빠지면 심사가 성립하지 않는다.
+# 서류를 올릴 때마다 점검해, 서류에서 찾지 못한 항목이나 판독 불가 서류(손글씨 등)가 있으면
+# 배정 오디터(없으면 운영자)에게 통보한다. 실측: 아미라 밀크는 손글씨 기록물 등 9건이 신뢰도 0 이었는데
+# 아무에게도 통보되지 않았다(2026-09-23).
+PKG_UNREADABLE_CONF = 0.5
+PKG_GAP_EVENT = "package.gap.notified"
+_PKG_LABEL = {"company": "업체 정보", "product": "제품", "material": "성분(원재료)", "factory": "공장"}
+
+
+def _package_check(db, c):
+    company_missing = [k for k, lbl in (("company_name", "업체명"), ("nib", "사업자등록번호"),
+                                        ("responsible_person", "대표자"), ("address", "주소"))
+                       if not (getattr(c, k, None) or "").strip()]
+    products = db.query(models.Product).filter_by(case_id=c.case_id).all()
+    materials = db.query(models.Material).filter_by(case_id=c.case_id).count()
+    linked = {pm.product_id for pm in db.query(models.ProductMaterial).filter_by(case_id=c.case_id).all()}
+    unlinked = [p.name for p in products if p.product_id not in linked]
+    factory_ok = bool(c.facility_ids) or bool((c.factory_address or "").strip())
+    # 판독을 돌렸는데 신뢰도가 낮은 서류(손글씨·저품질)와, 판독 자체를 안 돌린 서류(confidence 없음)를 나눈다.
+    # 실측: 질경이·천우건설·CITRA 서류 89건은 판독 기능 이전(8월) 업로드라 confidence 가 비어 있었다.
+    docs = [d for d in db.query(models.DocumentAsset).filter_by(case_id=c.case_id).all()
+            if (d.review_status or "pending") == "pending"]
+    row = lambda d: {"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
+                     "confidence": d.confidence, "has_file": bool(d.content_b64)}
+    unreadable = [row(d) for d in docs if d.confidence is not None and d.confidence < PKG_UNREADABLE_CONF]
+    unprocessed = [row(d) for d in docs if d.confidence is None]
+    items = {
+        "company": {"ok": not company_missing, "missing": company_missing},
+        "product": {"ok": bool(products), "count": len(products)},
+        "material": {"ok": materials > 0, "count": materials, "unlinked_products": unlinked},
+        "factory": {"ok": factory_ok},
+    }
+    gaps = [k for k, v in items.items() if not v["ok"]]
+    return {"case_id": c.case_id, "complete": not gaps and not unreadable and not unprocessed, "gaps": gaps,
+            "items": items, "unreadable": unreadable, "unprocessed": unprocessed}
+
+
+def _assigned_auditor_id(db, case_id):
+    a = _ops_latest_assignment(db, [case_id]).get(case_id)
+    return a.get("auditor_id") if a and a.get("accept_status") != "rejected" else None
+
+
+def _notify_package_gaps(db, c, force=False):
+    """빠진 항목·판독 불가 서류가 있으면 통보. 같은 내용은 반복 통보하지 않는다(force: 새 담당자)."""
+    chk = _package_check(db, c)
+    if chk["complete"]:
+        return chk
+    # 미판독은 건수가 아니라 '있음' 만 지문에 넣는다 — 재처리가 한 건씩 끝날 때마다 재통보하지 않게
+    fp = ("|".join(sorted(chk["gaps"])) + "#" + ",".join(sorted(u["document_id"] for u in chk["unreadable"]))
+          + ("#U" if chk["unprocessed"] else ""))
+    auditor = _assigned_auditor_id(db, c.case_id)
+    last = (db.query(models.WorkflowEvent).filter_by(case_id=c.case_id, action=PKG_GAP_EVENT)
+            .order_by(models.WorkflowEvent.created_at.desc()).first())
+    if not force and last and (last.payload or {}).get("fp") == fp and (last.payload or {}).get("auditor_id") == auditor:
+        return chk
+    parts = ["%s 누락" % _PKG_LABEL[g] for g in chk["gaps"]]
+    if chk["unreadable"]:
+        parts.append("판독 실패 서류 %d건(손글씨·저품질 등)" % len(chk["unreadable"]))
+    if chk["unprocessed"]:
+        parts.append("미판독 서류 %d건(판독 전 — 재처리 필요)" % len(chk["unprocessed"]))
+    names = ", ".join(u["filename"] for u in chk["unreadable"][:5])
+    title = "[%s] 인증 패키지 확인 필요 — %s" % (c.company_name or c.case_id[:8], " · ".join(parts))
+    body = ("업체·제품·성분·공장은 한 묶음입니다. 올라온 서류에서 찾지 못했거나 판독되지 않은 항목이 있어 "
+            "수기 확인·입력이 필요합니다." + (" 판독 실패: " + names if names else ""))
+    role = "auditor" if auditor else "operator"
+    n = _notify(db, c, "package.gap", title=title, body=body, role=role)
+    n.payload = {"gaps": chk["gaps"], "unreadable": [u["document_id"] for u in chk["unreadable"]],
+                 "unprocessed": len(chk["unprocessed"]), "auditor_id": auditor}
+    # 업체·담당 컨설턴트도 무엇이 빠졌는지 알아야 채운다
+    _notify(db, c, "package.gap", title=title, body=body, role="consultant")
+    _notify(db, c, "package.gap", title=title, body=body, role="applicant")
+    sm.record_event(db, c, c.status, c.status, PKG_GAP_EVENT, "system", None,
+                    {"fp": fp, "auditor_id": auditor, "gaps": chk["gaps"], "unreadable": len(chk["unreadable"]),
+                     "unprocessed": len(chk["unprocessed"])})
+    return chk
+
+
 _NOTIFY_NONRETRY = ("no_credentials", "no_contact", "not_implemented")
 _USER_CHANNELS = {"sms", "whatsapp", "email", "kakao"}   # 수신동의 필요(사용자 대상)
 
@@ -1269,7 +1347,7 @@ def handoff_login(body: schemas.LoginReq, db: Session = Depends(get_db)):
     _HANDOFF[code] = (time.time(), {**auth.make_tokens(u), "role": u.role,
                                     "org_id": u.org_id, "username": u.username})
     return {"handoff": code, "expires_in": _HANDOFF_TTL,
-            "redirect": "%s/ui/#handoff=%s" % (APP_BASE_URL.rstrip("/"), code)}
+            "redirect": "%s%s#handoff=%s" % (APP_BASE_URL.rstrip("/"), _ui_home(), code)}
 
 
 @app.post("/auth/handoff/issue")
@@ -1290,7 +1368,7 @@ def handoff_issue(user=Depends(auth.get_current_user)):
         _HANDOFF[code] = (time.time(), {**auth.make_tokens(u), "role": u.role,
                                         "org_id": u.org_id, "username": u.username})
         return {"handoff": code, "expires_in": _HANDOFF_TTL,
-                "redirect": "%s/ui/#handoff=%s" % (APP_BASE_URL.rstrip("/"), code)}
+                "redirect": "%s%s#handoff=%s" % (APP_BASE_URL.rstrip("/"), _ui_home(), code)}
     finally:
         db.close()
 
@@ -1481,6 +1559,24 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
 @app.get("/auth/me")
 def me(user=Depends(auth.get_current_user)):
     return user
+
+
+@app.post("/auth/change-password")
+def change_password(body: schemas.ChangePasswordReq, user=Depends(auth.get_current_user),
+                    db: Session = Depends(get_db)):
+    """본인 비밀번호 변경(모든 역할). 바꾸면 다른 기기의 세션은 끊고(token_version+1)
+    지금 화면에는 새 토큰을 준다 — 바꾼 직후 본인까지 로그아웃되면 안 된다.
+    현재 비밀번호 불일치는 401 이 아니라 400 — 화면이 401 을 세션 만료로 보고 로그아웃시킨다."""
+    u = db.get(models.User, user["uid"])
+    if not u or not auth.verify_pw(body.current_password, u.password_hash):
+        raise HTTPException(400, {"code": "BAD_CURRENT_PASSWORD", "message": "현재 비밀번호가 맞지 않습니다"})
+    if body.current_password == body.new_password:
+        raise HTTPException(422, {"code": "SAME_PASSWORD", "message": "새 비밀번호가 현재 비밀번호와 같습니다"})
+    u.password_hash = auth.hash_pw(body.new_password)
+    u.token_version = (u.token_version or 0) + 1
+    _audit(db, user, "auth.password.change", "user", u.user_id, None, {}, commit=False)
+    db.commit()
+    return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username}
 
 
 # ── 스태프 가입 신청 + 관리자 승인 ────────────────────────────────────────
@@ -2245,25 +2341,78 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     # 수정요청 001 P3 — 계약 큐 처리대기 배지용: 케이스별 계약 상태 배치 조회
     _cts = {ct.case_id: ct.status for ct in
             db.query(models.Contract).filter(models.Contract.case_id.in_(_cids)).all()} if _cids else {}
-    items = [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
-              "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
-              "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
-              "province": _province_of(c.factory_address or c.address),
-              "contract_status": _cts.get(c.case_id),
-              "auditor_id": (assign.get(c.case_id) or {}).get("auditor_id"),
-              "auditor_name": (assign.get(c.case_id) or {}).get("auditor_name")}
-             for c in rows]
+    # P2: 동반 오디터(co)·전담 컨설턴트 배치 조회
+    co_map = {}
+    for ca in (db.query(models.CaseAuditor)
+               .filter(models.CaseAuditor.case_id.in_(_cids),
+                       models.CaseAuditor.role == "co").all() if _cids else []):
+        co_map.setdefault(ca.case_id, []).append(ca.user_id)
+    _oids = list({c.org_id for c in rows})
+    org_cons = {org.org_id: org.consultant_id for org in
+                db.query(models.Org).filter(models.Org.org_id.in_(_oids)).all()} if _oids else {}
+    cons_name = {}
+    for cid in {v for v in org_cons.values() if v}:
+        cp = db.get(models.ConsultantProfile, cid)
+        if cp and getattr(cp, "display_name", None):
+            cons_name[cid] = cp.display_name
+        else:
+            u = db.get(models.User, cid)
+            cons_name[cid] = u.username if u else None
+    items = []
+    for c in rows:
+        s8 = nav8.compute_step8(db, c)
+        nxt = sorted(sm.TRANSITIONS.get(c.status, set()))
+        next_state = nxt[0] if nxt else None
+        a = assign.get(c.case_id) or {}
+        _cc = org_cons.get(c.org_id)
+        items.append({"case_id": c.case_id, "org_id": c.org_id, "company_name": c.company_name, "status": c.status,
+                      "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
+                      "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
+                      "province": _province_of(c.factory_address or c.address),
+                      "contract_status": _cts.get(c.case_id),
+                      "auditor_id": a.get("auditor_id"), "auditor_name": a.get("auditor_name"),
+                      # P2 신규(하위호환 — 필드 추가만)
+                      "step8": s8["step"], "step8_label": s8["step_label"], "done": s8["done"],
+                      "hold": s8["hold"], "owner": s8["owner"],
+                      "consultant": cons_name.get(_cc) if _cc else None,
+                      "main_auditor": a.get("auditor_name"),
+                      "co_auditors": co_map.get(c.case_id, []),
+                      "next_action": _STATE_KO.get(next_state, next_state) if next_state else None})
     return {"total": total, "limit": limit, "offset": offset,
             "count": len(items), "items": items}
 
 
 # ===================== 알림 (Rizky #5) =====================
+def _notif_scope(db, user, q):
+    """알림 범위 — 인증기관 역할은 전체, 오디터·컨설턴트는 자기 조직 + 담당 케이스·담당 업체.
+    예전엔 자기 조직만 봐서, org_demo 소속 오디터에게 업체 조직의 알림이 보이지 않았다."""
+    if user["role"] in CERTIFIER_ROLES:
+        return q
+    if user["role"] in ASSIGNED_ROLES:
+        ids = _assigned_case_ids(db, user["uid"])
+        orgs = _my_client_org_ids(db, user["uid"])
+        conds = [models.Notification.org_id == user["org_id"]]
+        if ids:
+            conds.append(models.Notification.case_id.in_(ids))
+        if orgs:
+            conds.append(models.Notification.org_id.in_(orgs))
+        return q.filter(or_(*conds))
+    return q.filter_by(org_id=user["org_id"])
+
+
 def _my_notifs(db, user):
-    q = db.query(models.Notification)
-    if user["role"] != "admin":
-        q = q.filter_by(org_id=user["org_id"])
-    return [n for n in q.order_by(models.Notification.created_at.desc()).limit(80).all()
-            if not n.role or n.role == user["role"]]
+    q = _notif_scope(db, user, db.query(models.Notification))
+    out = []
+    for n in q.order_by(models.Notification.created_at.desc()).limit(200).all():
+        if n.role and n.role != user["role"]:
+            continue
+        aid = (n.payload or {}).get("auditor_id") if isinstance(n.payload, dict) else None
+        if aid and user["role"] == "auditor" and aid != user["uid"]:
+            continue          # 특정 오디터 앞 통보는 그 오디터에게만
+        out.append(n)
+        if len(out) >= 80:
+            break
+    return out
 
 
 @app.get("/notifications")
@@ -2289,7 +2438,8 @@ def read_notification(nid: str, user=Depends(auth.get_current_user), db: Session
     n = db.get(models.Notification, nid)
     if not n:
         raise HTTPException(404, {"code": "NOTIF_NOT_FOUND"})
-    if user["role"] != "admin" and n.org_id != user["org_id"]:
+    if user["role"] != "admin" and not _notif_scope(db, user, db.query(models.Notification)).filter(
+            models.Notification.notification_id == nid).count():
         raise HTTPException(403, {"code": "FORBIDDEN_ORG"})
     n.read = True
     db.commit()
@@ -3723,10 +3873,67 @@ def scan_expiry(user=Depends(auth.require_roles()), db: Session = Depends(get_db
     return {"created": created}
 
 
+def _company_org_for(db, user, company_name):
+    """업체 신청을 대신 만드는 스태프(컨설턴트·관리자)용 — 업체 조직을 찾거나 만든다.
+    같은 이름의 조직이 있고 (내 담당이거나 담당이 없으면) 재사용, 아니면 새로 만든다.
+    컨설턴트가 만들면 담당 컨설턴트로 연결한다(접근·수수료 근거, _is_my_client_org)."""
+    if not company_name:
+        raise HTTPException(422, {"code": "COMPANY_NAME_REQUIRED", "message": "업체명을 입력해 주세요"})
+    mine = user["uid"] if user["role"] == "consultant" else None
+    for o in db.query(models.Org).filter(models.Org.name == company_name).all():
+        if o.org_id in ("org_demo", "*"):
+            continue
+        if not o.consultant_id or o.consultant_id == mine or user["role"] == "admin":
+            if mine and not o.consultant_id:
+                o.consultant_id, o.consultant_linked_at = mine, datetime.utcnow()
+            return o.org_id
+    o = models.Org(org_id="org_" + models.uid()[:8], name=company_name)
+    if mine:
+        o.consultant_id, o.consultant_linked_at = mine, datetime.utcnow()
+    db.add(o)
+    db.flush()
+    return o.org_id
+
+
+@app.post("/orgs/{org_id}/accounts")
+def issue_company_account(org_id: str, body: dict = None,
+                          user=Depends(auth.require_roles("consultant", "operator")),
+                          db: Session = Depends(get_db)):
+    """기업 계정 발급 — 업체 조직에 신청인(applicant) 계정을 만든다. 임시 비밀번호는 서버가
+    만들어 한 번만 돌려준다(첫 로그인 후 본인이 /auth/change-password 로 바꾼다).
+    컨설턴트는 자기 담당 업체에만, 관리자·운영자는 모든 업체에."""
+    import secrets as _sec
+    o = db.get(models.Org, org_id)
+    if not o or org_id in ("org_demo", "*"):
+        raise HTTPException(404, {"code": "ORG_NOT_FOUND"})
+    if user["role"] == "consultant" and not _is_my_client_org(db, user, org_id):
+        raise HTTPException(403, {"code": "NOT_MY_CLIENT"})
+    try:
+        uname = schemas._username(((body or {}).get("username") or "").strip())
+    except ValueError as e:
+        raise HTTPException(422, {"code": "VALIDATION_ERROR", "field": "username", "message": str(e)})
+    if db.query(models.User).filter_by(username=uname).first():
+        raise HTTPException(409, {"code": "DUPLICATE_ACCOUNT"})
+    alpha = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+    pw = "Gh-" + "".join(_sec.choice(alpha) for _ in range(10))
+    first = db.query(models.User).filter_by(org_id=org_id).count() == 0
+    u = models.User(username=uname, password_hash=auth.hash_pw(pw), role="applicant", org_id=org_id,
+                    company_role="client_admin" if first else "client_staff")
+    db.add(u)
+    _audit(db, user, "org.account.issue", "user", None, None, {"org_id": org_id, "username": uname}, commit=False)
+    db.commit()
+    return {"username": uname, "temp_password": pw, "org_id": org_id, "company": o.name,
+            "company_role": u.company_role}
+
+
 @app.post("/cases")
 def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("applicant", "consultant")),
                 db: Session = Depends(get_db)):
     org = body.org_id if (user["role"] == "admin" and body.org_id) else user["org_id"]
+    # 컨설턴트·관리자가 업체 신청을 대신 만들면 그 업체의 조직에 넣는다. 예전엔 만든 사람의
+    # 조직(org_demo·'*')에 들어가, 서로 다른 업체 6곳이 한 조직에 섞이고 업체 계정이 없었다(실측).
+    if user["role"] in ("consultant", "admin") and not (user["role"] == "admin" and body.org_id):
+        org = _company_org_for(db, user, (body.company_name or "").strip())
     # 조직(org) 회사 프로필 역상속 — 신청 직접 진입 시 회사정보 자동 프리필
     org_row = db.get(models.Org, org)
     oext = dict(org_row.profile_ext or {}) if org_row else {}
@@ -3770,8 +3977,9 @@ MOCK_AUDIT_STAGES = {
 }
 # 현재 상태 → (pass 시 다음 긍정 단계, reject 시 시정 단계). 유효 전이일 때만 적용.
 _MOCK_NEXT = {
-    "document_pre_audit_requested": ("document_pre_audit_in_review", None),
-    "document_pre_audit_in_review": ("document_pre_audit_approved", None),
+    # v4 모의심사 큐(nav8 step 3) = requested/in_review. pass 는 approved 까지 연쇄, reject 는 보완 루프.
+    "document_pre_audit_requested": ("document_pre_audit_in_review", "supplementation_required"),
+    "document_pre_audit_in_review": ("document_pre_audit_approved", "supplementation_required"),
     "onsite_audit_in_progress": ("audit_closed", "corrective_action_required"),
     "corrective_action_submitted": ("audit_closed", "corrective_action_required"),
 }
@@ -3819,22 +4027,34 @@ def mock_audit_decide(case_id: str, body: schemas.MockAuditDecisionReq,
         raise HTTPException(422, {"code": "REASON_REQUIRED"})
     sm.record_event(db, c, c.status, c.status, "mock_audit.decision", user["role"], user["uid"],
                     {"result": result, "reason": body.reason or ""})
-    # ② 상태전이 연동: pass→다음 긍정 단계, reject→시정조치 (유효 전이·가드 통과 시에만)
+    # ② 상태전이 연동: pass→다음 긍정 단계, reject→시정조치/보완 (유효 전이·가드 통과 시에만)
+    # 모의심사 pass 는 requested→in_review→approved 까지 연쇄(판정 한 번 = 모의심사 통과).
+    # 막히면 blockers 를 돌려준다(종전엔 조용히 기록만 돼 '통과했는데 그대로'로 보였다).
     transitioned_to = None
+    blockers = []
     mapping = _MOCK_NEXT.get(c.status)
-    if mapping:
+    for _hop in range(2):
+        if not mapping:
+            break
         target = mapping[0] if result == "pass" else mapping[1]
-        if target:
-            ok, _blk = sm.can_transition(db, c, target)
-            if ok:
-                frm = c.status
-                sm.apply_side_effects(c, target)
-                c.status = target
-                sm.record_event(db, c, frm, target, "mock_audit." + result, user["role"], user["uid"],
-                                {"reason": body.reason or ""})
-                transitioned_to = target
+        if not target:
+            break
+        ok, blk = sm.can_transition(db, c, target)
+        if not ok:
+            blockers = blk
+            break
+        frm = c.status
+        sm.apply_side_effects(c, target)
+        c.status = target
+        sm.record_event(db, c, frm, target, "mock_audit." + result, user["role"], user["uid"],
+                        {"reason": body.reason or ""})
+        transitioned_to = target
+        if result != "pass" or target != "document_pre_audit_in_review":
+            break
+        mapping = _MOCK_NEXT.get(c.status)
     db.commit()
-    return {"ok": True, "result": result, "transitioned_to": transitioned_to}
+    return {"ok": True, "result": result, "transitioned_to": transitioned_to,
+            "status": c.status, "blockers": blockers}
 
 
 # ── P0-5: 모의심사 오디터 뷰 3종 — 스키마 무변경, WorkflowEvent(latest-wins)로 저장 ──
@@ -4093,10 +4313,19 @@ AUDIT_STAGES = {"document_pre_audit_requested", "document_pre_audit_in_review",
 FATWA_STAGES = {"fatwa_review"}
 
 
+def _scope_case_query(q, db, user):
+    """업무 큐용 케이스 범위 — 인증기관 역할(관리자·최고운영자·샤리아)은 조직을 넘어 전체,
+    배정 역할(오디터·컨설턴트)은 배정받은 케이스, 나머지는 자기 조직.
+    예전엔 admin 만 예외로 org_id 를 걸어, org_demo 소속 샤리아·오디터의 큐가 늘 비었다(실측)."""
+    if user["role"] in CERTIFIER_ROLES:
+        return q
+    if user["role"] in ASSIGNED_ROLES:
+        return q.filter(models.CaseApplication.case_id.in_(_assigned_case_ids(db, user["uid"]) or [""]))
+    return q.filter_by(org_id=user["org_id"])
+
+
 def _stage_queue(db, user, stages):
-    q = db.query(models.CaseApplication)
-    if user["role"] != "admin":
-        q = q.filter_by(org_id=user["org_id"])
+    q = _scope_case_query(db.query(models.CaseApplication), db, user)
     return [{"case_id": c.case_id, "company": c.company_name, "stage": c.status, "pathway": c.pathway}
             for c in q.order_by(models.CaseApplication.created_at.desc()).all() if c.status in stages]
 
@@ -4112,9 +4341,7 @@ def audit_queue(user=Depends(auth.require_roles("auditor", "operator")),
 def fatwa_dashboard(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
                     db: Session = Depends(get_db)):
     """파트와 위원회 대시보드 — 심의 대기/가승인/최종승인/반려 집계 + 케이스 목록."""
-    q = db.query(models.CaseApplication)
-    if user["role"] != "admin":
-        q = q.filter_by(org_id=user["org_id"])
+    q = _scope_case_query(db.query(models.CaseApplication), db, user)
     cases = q.all()
     fds = {f.case_id: f for f in db.query(models.FatwaDecision).all()}
     counts = {"review": 0, "provisional": 0, "approved": 0, "rejected": 0, "conditional": 0}
@@ -5186,6 +5413,12 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     sm.record_event(db, c, c.status, c.status, "documents.reprocess", actor_role, actor_id,
                     {"document_id": d.document_id, "from": prev, "to": d.doc_type,
                      "text_len": len(text or ""), "applied": applied})
+    db.flush()
+    # 업로드 후 자동 추출·수동 재처리 모두 여기를 지난다 — 판독 결과가 나온 뒤에 패키지 점검.
+    # 같은 케이스에 아직 판독 전 서류가 남아 있으면(일괄 재처리 중) 마지막 건에서 한 번만 한다.
+    if not db.query(models.DocumentAsset).filter(models.DocumentAsset.case_id == c.case_id,
+                                                 models.DocumentAsset.confidence.is_(None)).count():
+        _notify_package_gaps(db, c)
     db.commit()
     return {"document_id": d.document_id, "doc_type": d.doc_type,
             "confidence": d.confidence, "text_len": len(text or ""), "applied": applied}
@@ -5750,6 +5983,7 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     applied = _apply_intake_autofill(db, c, res)
     sm.record_event(db, c, c.status, c.status, "documents.intake", "ai", user["uid"],
                     {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
+    _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
     db.commit()
     return res
 
@@ -5800,12 +6034,56 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
         applied = _apply_intake_autofill(db, c, res)
         sm.record_event(db, c, c.status, c.status, "documents.intake", "ai", user["uid"],
                         {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
+        _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
         db.commit()
         yield ev({"type": "result", **res})
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no"})
+
+
+@app.get("/cases/{case_id}/package-check")
+def package_check(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """업체·제품·성분·공장 묶음 점검 + 판독 불가 서류 — 화면의 '인증 패키지 점검' 패널."""
+    c = _get_case(db, case_id, user)
+    return _package_check(db, c)
+
+
+@app.post("/cases/{case_id}/package-check/request")
+def package_check_request(case_id: str, body: dict = None,
+                          user=Depends(auth.require_roles("auditor", "operator")),
+                          db: Session = Depends(get_db)):
+    """오디터·운영자 → 업체·담당 컨설턴트에게 빠진 항목 수기 입력·보완 요청."""
+    c = _get_case(db, case_id, user)
+    chk = _package_check(db, c)
+    note = ((body or {}).get("note") or "").strip()
+    parts = ["%s" % _PKG_LABEL[g] for g in chk["gaps"]]
+    if chk["unreadable"]:
+        parts.append("판독 불가 서류 %d건 재제출 또는 수기 입력" % len(chk["unreadable"]))
+    if not parts and not note:
+        raise HTTPException(409, {"code": "PACKAGE_COMPLETE", "message": "빠진 항목이 없습니다"})
+    title = "[%s] 보완 요청 — %s" % (c.company_name or c.case_id[:8], " · ".join(parts) or "확인 요청")
+    for role in ("applicant", "consultant"):
+        _notify(db, c, "package.supplement_request", title=title, body=note or "빠진 항목을 직접 입력하거나 서류를 다시 올려 주세요.", role=role)
+    sm.record_event(db, c, c.status, c.status, "package.supplement_request", user["role"], user["uid"],
+                    {"gaps": chk["gaps"], "unreadable": len(chk["unreadable"]), "note": note})
+    db.commit()
+    return {"ok": True, "gaps": chk["gaps"], "unreadable": len(chk["unreadable"])}
+
+
+@app.post("/cases/{case_id}/documents/reprocess-pending")
+def reprocess_pending(case_id: str, user=Depends(auth.require_roles("consultant", "operator", "auditor")),
+                      db: Session = Depends(get_db)):
+    """판독 전(confidence 없음) 서류를 자동 파싱 큐에 넣는다 — 끝나면 패키지 점검이 한 번 돈다."""
+    c = _get_case(db, case_id, user)
+    ids = [d.document_id for d in db.query(models.DocumentAsset).filter(
+        models.DocumentAsset.case_id == c.case_id, models.DocumentAsset.confidence.is_(None)).all()
+        if d.content_b64]
+    queued = sum(1 for i in ids if autoparse_enqueue(i))
+    _audit(db, user, "documents.reprocess_pending", "case", c.case_id, c.case_id, {"queued": queued, "found": len(ids)})
+    db.commit()
+    return {"found": len(ids), "queued": queued, "autoparse": _AUTOPARSE}
 
 
 @app.patch("/cases/{case_id}/profile")
@@ -6273,6 +6551,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                             model_name="parse_typed", model_version="v3")
     sm.record_event(db, c, c.status, c.status, "documents.parse_file", "ai", user["uid"],
                     {"doc_type": body.doc_type, "applied": applied})
+    _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
     db.commit()
     return {"doc_type": body.doc_type, "extracted": f, "applied": applied,
             "confidence": r.get("confidence", 0)}
@@ -9684,7 +9963,9 @@ def update_factory(facility_id, body: dict = None, user=Depends(auth.get_current
     f = db.get(models.Facility, facility_id)
     if not f:
         raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
-    if user["role"] != "admin" and f.org_id != user["org_id"]:
+    # 담당 컨설턴트·배정 심사자도 업체 조직 자원을 고친다(_org_access_ok) — 업체가 각자 조직을 가지면서
+    # 같은 조직만 허용하던 검사가 컨설턴트를 막았다(실측 403).
+    if user["role"] != "admin" and not _org_access_ok(db, user, f.org_id):
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
     b = body or {}
     for col in ["name", "address", "city", "country", "zip", "reg_no"]:
@@ -9824,7 +10105,135 @@ def get_case_journey(case_id: str, user=Depends(auth.get_current_user), db=Depen
     for i, (key, label, done) in enumerate(stages):
         status = "done" if done else ("current" if i == current_idx else "todo")
         result_stages.append({"key": key, "label": label, "status": status})
-    return {"case_id": case_id, "status": st, "milestone": mi, "current": current_idx, "stages": result_stages}
+    s8 = nav8.compute_step8(db, c)
+    return {"case_id": case_id, "status": st, "milestone": mi, "current": current_idx,
+            "stages": result_stages,
+            "step8": {"step": s8["step"], "label": s8["step_label"], "done": s8["done"],
+                      "hold": s8["hold"], "owner": s8["owner"], "labels": nav8.STEP8_LABELS}}
+
+
+# ===== P2(UI개편 기반): nav-counts(N2) · todo(N3) · 동반 오디터(N6) =====
+def _visible_cases(db, user):
+    """/cases 와 같은 가시성 규칙으로 이 사용자가 볼 수 있는 케이스 전량."""
+    q = db.query(models.CaseApplication)
+    if user["role"] not in CERTIFIER_ROLES:
+        own = models.CaseApplication.org_id == user["org_id"]
+        if user["role"] in ASSIGNED_ROLES:
+            ids = set(_assigned_case_ids(db, user["uid"]))
+            _mine = _my_client_org_ids(db, user["uid"])
+            if _mine:
+                ids |= {c.case_id for c in db.query(models.CaseApplication)
+                        .filter(models.CaseApplication.org_id.in_(_mine)).all()}
+            ids |= {ca.case_id for ca in                     # N6: 동반 오디터 배정분
+                    db.query(models.CaseAuditor).filter_by(user_id=user["uid"]).all()}
+            q = q.filter(or_(own, models.CaseApplication.case_id.in_(ids)) if ids else own)
+        else:
+            q = q.filter(own)
+    return q.all()
+
+
+@app.get("/me/nav-counts")
+def my_nav_counts(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """N2 사이드바 미처리 건수 배지 — 역할 기준 집계(세부 nav-item 매핑은 P3+)."""
+    bucket = nav8.role_bucket(user["role"])
+    cases = _visible_cases(db, user)
+    action_required = hold = in_progress = 0
+    for c in cases:
+        s8 = nav8.compute_step8(db, c)
+        if s8["done"]:
+            continue
+        in_progress += 1
+        if s8["hold"]:
+            hold += 1
+        if s8["owner"] == bucket:
+            action_required += 1
+    counts = {"action_required": action_required, "hold": hold, "in_progress": in_progress}
+    if bucket == "auditor":
+        amap = _ops_latest_assignment(db, [c.case_id for c in cases])
+        counts["assignment_pending"] = sum(
+            1 for a in amap.values()
+            if a.get("auditor_id") == user["uid"] and a.get("accept_status") == "pending")
+    if user["role"] in ("admin", "operator"):
+        counts["staff_signup_pending"] = (db.query(models.StaffSignupRequest)
+                                          .filter_by(status="pending").count())
+    return counts
+
+
+@app.get("/me/todo")
+def my_todo(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """N3 처리할 문서/케이스 — 지금 내(역할)가 처리해야 하거나 보완 대기인 케이스."""
+    bucket = nav8.role_bucket(user["role"])
+    out = []
+    for c in _visible_cases(db, user):
+        s8 = nav8.compute_step8(db, c)
+        if s8["done"]:
+            continue
+        mine = (s8["owner"] == bucket)
+        if not (mine or s8["hold"]):
+            continue
+        out.append({"case_id": c.case_id, "company_name": c.company_name, "status": c.status,
+                    "step8": s8["step"], "step8_label": s8["step_label"], "hold": s8["hold"],
+                    "owner": s8["owner"], "mine": mine,
+                    "reason": "보완 대기" if s8["hold"] else "처리 필요"})
+    out.sort(key=lambda x: (not x["hold"], -x["step8"]))
+    return {"count": len(out), "items": out}
+
+
+@app.get("/cases/{case_id}/auditors")
+def list_case_auditors(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """N6 케이스 오디터(메인+동반) 조회."""
+    _get_case(db, case_id, user)
+    a = _ops_latest_assignment(db, [case_id]).get(case_id) or {}
+    cos = db.query(models.CaseAuditor).filter_by(case_id=case_id, role="co").all()
+
+    def _nm(uid):
+        u = db.get(models.User, uid)
+        return u.username if u else uid
+    return {"case_id": case_id,
+            "main": ({"user_id": a.get("auditor_id"), "name": a.get("auditor_name"),
+                      "accept_status": a.get("accept_status")} if a.get("auditor_id") else None),
+            "co": [{"user_id": x.user_id, "name": _nm(x.user_id),
+                    "assigned_at": str(x.assigned_at)[:19]} for x in cos]}
+
+
+@app.post("/cases/{case_id}/auditors")
+def add_co_auditor(case_id: str, body: dict = None,
+                   user=Depends(auth.require_roles("operator", "admin")),
+                   db: Session = Depends(get_db)):
+    """N6 동반 오디터 추가 — 운영자/관리자."""
+    _get_case(db, case_id, user)
+    b = body or {}
+    uid = (b.get("user_id") or "").strip()
+    uname = (b.get("username") or "").strip()
+    u = (db.get(models.User, uid) if uid
+         else db.query(models.User).filter_by(username=uname).first() if uname else None)
+    if not u:
+        raise HTTPException(400, {"code": "USER_NOT_FOUND"})
+    if u.role != "auditor":
+        raise HTTPException(422, {"code": "NOT_AUDITOR"})
+    uid = u.user_id
+    if db.query(models.CaseAuditor).filter_by(case_id=case_id, user_id=uid, role="co").first():
+        return {"ok": True, "already": True}
+    row = models.CaseAuditor(case_id=case_id, user_id=uid, role="co", assigned_by=user["uid"])
+    db.add(row)
+    _audit(db, user, "case.co_auditor.add", "case", case_id, None, {"user_id": uid})
+    db.commit()
+    return {"ok": True, "id": row.id}
+
+
+@app.delete("/cases/{case_id}/auditors/{uid}")
+def remove_co_auditor(case_id: str, uid: str,
+                      user=Depends(auth.require_roles("operator", "admin")),
+                      db: Session = Depends(get_db)):
+    """N6 동반 오디터 해제."""
+    _get_case(db, case_id, user)
+    row = db.query(models.CaseAuditor).filter_by(case_id=case_id, user_id=uid, role="co").first()
+    if not row:
+        raise HTTPException(404, {"code": "NOT_FOUND"})
+    db.delete(row)
+    _audit(db, user, "case.co_auditor.remove", "case", case_id, None, {"user_id": uid})
+    db.commit()
+    return {"ok": True}
 
 
 # ===== 고객 상담(consultation) 서브시스템 — 관리자 고객대응 (회의 2026-07-09) =====
@@ -9847,9 +10256,20 @@ def create_consultation(body: dict = None, user=Depends(auth.get_current_user), 
 
 @app.get("/consultations")
 def list_consultations(status: str = None, user=Depends(auth.get_current_user), db=Depends(get_db)):
-    """상담 목록 — 관리자/운영자는 전체, 그 외는 본인 조직만."""
+    """상담 목록 — 관리자/운영자는 전체, 컨설턴트·오디터는 담당 업체 문의 + 본인 작성분,
+    그 외는 본인 조직만."""
     q = db.query(models.Consultation)
-    if user["role"] not in ("admin", "operator"):
+    if user["role"] in ASSIGNED_ROLES:
+        # 스태프는 인증기관 조직(org_demo) 소속이라 조직으로 거르면 담당 고객 문의는 빠지고
+        # 같은 조직 다른 스태프의 문의가 보였다(실측) — 담당 관계로 범위를 잡는다.
+        _ids = _assigned_case_ids(db, user["uid"])
+        orgs = set(_my_client_org_ids(db, user["uid"]))
+        if _ids:
+            orgs |= {c.org_id for c in db.query(models.CaseApplication)
+                     .filter(models.CaseApplication.case_id.in_(_ids)).all()}
+        q = q.filter(or_(models.Consultation.org_id.in_(orgs or [""]),
+                         models.Consultation.created_by == user["uid"]))
+    elif user["role"] not in ("admin", "operator"):
         q = q.filter(models.Consultation.org_id == user.get("org_id"))
     if status:
         q = q.filter(models.Consultation.status == status)
@@ -14216,25 +14636,8 @@ def get_workflow(case_id: str, user=Depends(auth.get_current_user), db: Session 
 
 # ── 워크플로우 모니터(관리자·운영자) — 전 케이스 진행단계·핸드오프·게이트 집약 ──
 # 스키마 무변경: 기존 상태머신/청구/파트와 데이터를 read-only로 fold. stage→처리(대기) 역할 매핑만 신규.
-_STAGE_OWNER = {
-    "onboarding": "client", "application_draft": "client",
-    "ai_pre_assessment_ready": "client", "ai_pre_assessment_running": "client",
-    "pathway_determination": "consultant",
-    "self_declare_eligible": "client", "sjph_lite_prepared": "client",
-    "pendamping_verification": "consultant", "self_declaration_submitted": "client",
-    "committee_verification": "ops",
-    "supplementation_required": "client", "supplementation_submitted": "consultant",
-    "consultant_review": "consultant",
-    "document_pre_audit_requested": "ops", "document_pre_audit_in_review": "auditor",
-    "document_pre_audit_approved": "auditor", "lph_assignment": "ops",
-    "onsite_audit_scheduled": "auditor", "onsite_audit_in_progress": "auditor",
-    "corrective_action_required": "client", "corrective_action_submitted": "auditor",
-    "audit_closed": "auditor", "hpas_evaluation_ready": "auditor",
-    "final_package_preparation": "ops", "fatwa_review": "sharia",
-    "fatwa_approved": "ops", "certificate_issued": "sharia",
-    "post_certification_monitoring": "client", "change_impact": "client",
-    "renewal_preparation": "client",
-}
+# 단계 담당 — nav8._OWNER 단일 출처(v4 연결 4: v4 큐·워크플로 모니터가 같은 담당을 본다)
+_STAGE_OWNER = nav8._OWNER
 
 
 @app.get("/admin/workflow-monitor")
@@ -14922,7 +15325,11 @@ def auditor_assignments(status: str = Query("pending", pattern="^(pending|accept
     """오디터 배정함 — 본인에게 배정된 케이스의 수락/거절 상태별 목록.
     operator/admin은 조직 전체(거절 회신 확인용)."""
     q = db.query(models.CaseApplication)
-    if user["role"] != "admin":
+    # 오디터는 인증기관(org_demo) 소속이고 업체 케이스는 업체 조직이라, 조직으로 거르면 늘 비었다
+    # (실측: 배정 후 items=[] 인데 nav-counts 는 1). 오디터는 배정받은 케이스로, 인증기관 역할은 전체로.
+    if user["role"] == "auditor":
+        q = q.filter(models.CaseApplication.case_id.in_(_assigned_case_ids(db, user["uid"]) or [""]))
+    elif user["role"] not in CERTIFIER_ROLES:
         q = q.filter_by(org_id=user["org_id"])
     cases = q.all()
     assign = _ops_latest_assignment(db, [c.case_id for c in cases])
@@ -14998,6 +15405,8 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
     _notify(db, c, "ops.auditor_assigned", role="auditor",
             msg=("ops.auditor_assigned", {"company": c.company_name or "",
                                           "auditor": au.username}))
+    db.flush()
+    _notify_package_gaps(db, c)   # 새 담당 오디터에게 남아 있는 패키지 공백 통보
     db.commit()
     cases = _ops_cases(db, user)
     assignments = _ops_latest_assignment(db, [x.case_id for x in cases])
@@ -16282,10 +16691,13 @@ def preassess_review(case_id: str, body: schemas.PreassessReviewReq,
                                   "got": sorted(bad)})
     sm.record_event(db, c, c.status, c.status, "preassess.review", user["role"], user["uid"],
                     {"sections": sections, "verdict": verdict, "note": (body.note or "").strip()})
+    advanced = False
     if verdict == "ready":   # P2 훅: 보완 재제출 검토 통과→컨설턴트 검토(supplementation_submitted에서만 발화)
-        _auto_advance(db, c, "consultant_review", user, "preassess.review.auto")
+        advanced = _auto_advance(db, c, "consultant_review", user, "preassess.review.auto")
     db.commit()
-    return {"ok": True, "verdict": verdict}
+    # v4 5a: 전진 여부를 돌려준다(nav8 이 supplementation_submitted 를 오디터 큐로 보낸다)
+    return {"ok": True, "verdict": verdict,
+            "transitioned_to": "consultant_review" if advanced else None, "status": c.status}
 
 
 @app.post("/cases/{case_id}/preassess/doc-request")
@@ -16568,7 +16980,9 @@ def transition(case_id: str, body: schemas.TransitionReq,
 def add_penyelia(org_id: str, body: schemas.PenyeliaCreate,
                  user=Depends(auth.require_roles("applicant", "penyelia_halal", "consultant")),
                  db: Session = Depends(get_db)):
-    if user["role"] != "admin" and org_id != user["org_id"]:
+    # 담당 컨설턴트·배정 심사자도 업체 조직 자원을 고친다(_org_access_ok) — 업체가 각자 조직을 가지면서
+    # 같은 조직만 허용하던 검사가 컨설턴트를 막았다(실측 403).
+    if user["role"] != "admin" and not _org_access_ok(db, user, org_id):
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
     p = models.PenyeliaHalal(org_id=org_id, name=body.name, training_cert=body.training_cert,
                              cert_expiry=date.fromisoformat(body.cert_expiry) if body.cert_expiry else None)
@@ -16590,7 +17004,9 @@ def list_penyelia(org_id: str, user=Depends(auth.get_current_user), db: Session 
 def update_penyelia(org_id: str, penyelia_id: str, body: schemas.PenyeliaUpdate,
                     user=Depends(rbac.require_action("penyelia.update")),
                     db: Session = Depends(get_db)):
-    if user["role"] != "admin" and org_id != user["org_id"]:
+    # 담당 컨설턴트·배정 심사자도 업체 조직 자원을 고친다(_org_access_ok) — 업체가 각자 조직을 가지면서
+    # 같은 조직만 허용하던 검사가 컨설턴트를 막았다(실측 403).
+    if user["role"] != "admin" and not _org_access_ok(db, user, org_id):
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
     p = db.get(models.PenyeliaHalal, penyelia_id)
     if not p or p.org_id != org_id:
@@ -17288,13 +17704,36 @@ class NoCacheStaticFiles(StaticFiles):
 
 
 
+def _ui_default():
+    """기본 UI — 'v4'(새 화면) 또는 'legacy'(구 화면). 호출 시점에 읽는다."""
+    return "v4" if (os.environ.get("GLHAC_UI_DEFAULT") or "").strip().lower() == "v4" else "legacy"
+
+
+def _ui_home():
+    return "/ui/v4/" if _ui_default() == "v4" else "/ui/"
+
+
+@app.api_route("/ui/", methods=["GET", "HEAD"], include_in_schema=False)
+def _ui_index(request: Request):
+    """기본 화면이 v4 면 /ui/ 로 들어온 요청(북마크·홈페이지 링크)을 /ui/v4/ 로 보낸다(쿼리 보존). 구 화면은 /ui/index.html 로 계속 열 수 있다. 기본이 legacy 면 예전 그대로 구 화면을 준다."""
+    from fastapi.responses import RedirectResponse, FileResponse
+    if _ui_default() == "v4":
+        qs = request.url.query
+        return RedirectResponse(url="/ui/v4/" + (("?" + qs) if qs else ""))
+    resp = FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"), media_type="text/html")
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
 @app.get("/", include_in_schema=False)
 def _root_redirect(request: Request):
     """맨 URL 접속 시 UI로 이동 (루트 라우트 부재로 인한 404 방지).
     쿼리스트링(?ref=컨설턴트코드 등)을 보존해 넘긴다 — 안 그러면 QR 귀속이 끊긴다."""
     from fastapi.responses import RedirectResponse
     qs = request.url.query
-    return RedirectResponse(url="/ui/" + (("?" + qs) if qs else ""))
+    return RedirectResponse(url=_ui_home() + (("?" + qs) if qs else ""))
 
 
 # ===== 공장·시설 (회사1:공장N) — Phase 3 =====

@@ -217,16 +217,32 @@ input:focus,textarea:focus{outline:2px solid var(--gold-soft);outline-offset:-1p
    곳에서 window.GLHAC_API_BASE 를 정하면 그걸 쓴다 — 주소를 코드에 박지 않는다. */
 var API_BASE = (window.GLHAC_API_BASE || "https://glhac.co.kr").replace(/\/+$/,"");
 var TK = "glhac_home_token";          // 홈페이지 전용 보관소(AI 시스템과 별개 도메인)
+var RTK = "glhac_home_refresh";       // 리프레시 토큰 보관소(토큰 갱신용)
 
 function $(id){ return document.getElementById(id); }
 function tok(){ try{ return localStorage.getItem(TK)||""; }catch(e){ return ""; } }
 
 async function api(path, opt){
   opt = opt||{};
-  opt.headers = Object.assign({"Content-Type":"application/json"}, opt.headers||{},
-                              tok()?{Authorization:"Bearer "+tok()}:{});
+  var hdr = Object.assign({"Content-Type":"application/json"}, opt.headers||{});
+  if(tok()) hdr.Authorization = "Bearer "+tok();
+  opt.headers = hdr;
   var r = await fetch(API_BASE+path, opt);
   var j = await r.json().catch(function(){ return {}; });
+  // 401 권한없음 — 토큰 만료시 리프레시 시도
+  if(r.status === 401 && tok() && path!=="/auth/login" && path!=="/auth/refresh"){
+    if(await tryRefresh()){
+      // 리프레시 성공 — 새 토큰으로 같은 요청 다시
+      opt.headers = Object.assign({"Content-Type":"application/json"}, opt.headers||{});
+      if(tok()) opt.headers.Authorization = "Bearer "+tok();
+      r = await fetch(API_BASE+path, opt);
+      j = await r.json().catch(function(){ return {}; });
+    }else{
+      // 리프레시 실패 — 세션 만료
+      sessionExpired();
+      throw {code:"SESSION_EXPIRED", message:"세션이 만료되었습니다. 다시 로그인해 주세요."};
+    }
+  }
   if(!r.ok) throw (j && j.detail) ? j.detail : {code:"ERROR"};
   return j;
 }
@@ -237,6 +253,36 @@ function emsg(e){ if(!e) return "";
 function show(el, ok, html){ el.className = "msg " + (ok?"ok":"bad"); el.innerHTML = html; }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, function(c){
   return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
+
+/* 리프레시 토큰으로 새 액세스 토큰 발급 시도 */
+async function tryRefresh(){
+  try{
+    var rtk = localStorage.getItem(RTK)||"";
+    if(!rtk) return false;
+    var r = await fetch(API_BASE+"/auth/refresh", {method:"POST", headers:{"Content-Type":"application/json"},
+                                                     body:JSON.stringify({refresh_token:rtk})});
+    var j = await r.json().catch(function(){ return {}; });
+    if(r.ok && j.token){
+      localStorage.setItem(TK, j.token);
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+
+/* 세션 만료 처리 — 로컬스토리지 정리 후 로그인 화면으로 */
+function sessionExpired(){
+  try{ localStorage.removeItem(TK); }catch(e){}
+  try{ localStorage.removeItem(RTK); }catch(e){}
+  try{ localStorage.removeItem("glhac_home_role"); }catch(e){}
+  try{ localStorage.removeItem("glhac_home_user"); }catch(e){}
+  staffUI(false);
+  var sl = $("s-list"), sq = $("s-qrbox");
+  if(sl) sl.innerHTML = "";
+  if(sq) sq.innerHTML = "";
+  var sm = $("s-msg");
+  if(sm) show(sm, false, "<b>세션이 만료되었습니다.</b> 다시 로그인해 주세요.");
+}
 
 /* ── QR 로 들어온 경우: ?ref=코드 를 기억한다.
    주소창에서 지워도 세션 동안 유지되게 sessionStorage 에 둔다. */
@@ -728,6 +774,7 @@ $("s-submit").onclick = async function(){
     var j = await api("/auth/login", {method:"POST", body: JSON.stringify(
       {username:$("s-user").value, password:$("s-pw").value})});
     localStorage.setItem(TK, j.token);
+    if(j.refresh_token) localStorage.setItem(RTK, j.refresh_token);
     localStorage.setItem("glhac_home_role", j.role||"");
     localStorage.setItem("glhac_home_user", j.username||"");
     staffUI(true, (j.username||"")+" · "+(j.role||""));
@@ -735,6 +782,7 @@ $("s-submit").onclick = async function(){
 };
 $("s-out").onclick = function(){
   try{ localStorage.removeItem(TK); }catch(e){}
+  try{ localStorage.removeItem(RTK); }catch(e){}
   staffUI(false); $("s-list").innerHTML=""; $("s-qrbox").innerHTML="";
 };
 $("s-all").onclick  = function(){ S_PAGE=1; loadList(false); };
