@@ -738,6 +738,13 @@ class AdminUserReq(BaseModel):
         return _password(v)
 
 
+class ChangePasswordReq(BaseModel):
+    """본인 비밀번호 변경 — 현재 비밀번호를 확인해야 바꾼다(탈취된 세션만으로는 못 바꾸게)."""
+    current_password: str
+    new_password: str
+    _pw = field_validator("new_password")(classmethod(lambda cls, v: _password(v)))
+
+
 class AdminUserPatchReq(BaseModel):
     role: Optional[str] = None
     password: Optional[str] = None

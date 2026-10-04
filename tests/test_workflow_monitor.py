@@ -54,7 +54,7 @@ def test_workflow_monitor_shape_and_fold():
                   "next_state", "blockers", "blocker_count", "gates"):
             assert f in row, (f, row)
         assert set(row["gates"]) == {"payment", "ai_report", "fatwa"}, row["gates"]
-        assert row["owner"] in ("client", "consultant", "auditor", "sharia", "ops", "admin")
+        assert row["owner"] in ("client", "consultant", "auditor", "sharia", "ops", "admin", "pendamping")
         # 파이프라인 집계 합 == totals.cases (모든 케이스가 한 단계에 귀속)
         psum = sum(p["count"] for p in d["pipeline"])
         assert psum == d["totals"]["cases"], (psum, d["totals"])

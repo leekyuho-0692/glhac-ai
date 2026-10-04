@@ -129,8 +129,8 @@ function ENTP_profileHtml(){
   return `<section class="panel">
     <div class="panel-head"><h2>기업 프로필(Form.1)</h2></div>
     <div class="inline" style="margin-bottom:10px">
-      <button class="btn btn-sm" onclick="App.entpAutofill()">서류에서 자동 채우기</button>
-      <button class="btn btn-sm btn-primary" onclick="App.entpSaveProfile()">프로필 저장</button>
+      ${canCall('POST','/cases/{}/profile/autofill')?`<button class="btn btn-sm" onclick="App.entpAutofill()">서류에서 자동 채우기</button>`:''}
+      ${canCall('PATCH','/cases/{}/profile')?`<button class="btn btn-sm btn-primary" onclick="App.entpSaveProfile()">프로필 저장</button>`:'<span class="muted">프로필 수정은 신청기업·컨설턴트 계정만 할 수 있습니다.</span>'}
     </div>
     <div id="entp-msg" class="inline-msg"></div>
     <div class="grid-2">${rows}</div>

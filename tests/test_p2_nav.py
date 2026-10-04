@@ -104,3 +104,88 @@ def test_동반_오디터_추가조회해제_N6():
         assert r3.status_code == 200, r3.text
         au2 = c.get(f"/cases/{cid}/auditors", headers=ha).json()
         assert all(x["user_id"] != co_uid for x in au2["co"])
+
+
+# ---------- v4 연결 4: nav8 재정의(상태머신 기준) ----------
+_NAV8_TABLE = [
+    # status, step, owner, done
+    ("supplementation_submitted", 1, "auditor", False),
+    ("consultant_review", 1, "consultant", False),
+    ("document_pre_audit_requested", 3, "auditor", False),     # 모의심사(결제 정리)
+    ("document_pre_audit_in_review", 3, "auditor", False),
+    ("document_pre_audit_approved", 4, "ops", False),          # 다음 = lph_assignment
+    ("lph_assignment", 4, "auditor", False),
+    ("final_package_preparation", 4, "auditor", False),
+    ("pendamping_verification", 1, "pendamping", False),
+    ("self_declaration_submitted", 5, "ops", False),
+    ("fatwa_review", 5, "sharia", False),
+    ("fatwa_approved", 6, "ops", False),
+    ("certificate_issued", 6, "ops", False),                    # SiHalal 미등록
+    ("post_certification_monitoring", 7, "client", True),
+    ("change_impact", 7, "client", False),                      # 완료 아님
+    ("renewal_preparation", 7, "client", False),
+]
+
+
+def _nav8_of(cid, status):
+    from app import models, nav8
+    from app.db import SessionLocal
+    db = SessionLocal()
+    try:
+        c = db.get(models.CaseApplication, cid)
+        c.status = status
+        db.commit()
+        return nav8.compute_step8(db, c)
+    finally:
+        db.close()
+
+
+def test_nav8_상태머신_기준_매핑():
+    with TestClient(app) as c:
+        cid = _case(c, _tok(c), "PT Nav8 Map")
+        for st, step, owner, done in _NAV8_TABLE:
+            s8 = _nav8_of(cid, st)
+            assert (s8["step"], s8["owner"], s8["done"]) == (step, owner, done), (st, s8)
+
+
+def test_nav8_신호_보정_계약_결제_SiHalal_위원회():
+    from app import models
+    from app.db import SessionLocal
+    with TestClient(app) as c:
+        cid = _case(c, _tok(c), "PT Nav8 Sig")
+        db = SessionLocal()
+        try:
+            db.add(models.Contract(case_id=cid))
+            db.add(models.Invoice(case_id=cid, status="waiting_payment"))
+            db.commit()
+        finally:
+            db.close()
+        # 계약 있으면 consultant_review = 계약(2)
+        assert _nav8_of(cid, "consultant_review")["step"] == 2
+        # 미결제 인보이스 → 모의심사 요청돼도 계약·결제(2), 기업 차례
+        s8 = _nav8_of(cid, "document_pre_audit_requested")
+        assert (s8["step"], s8["owner"]) == (2, "client")
+        db = SessionLocal()
+        try:   # INVOICE_SETTLED(paid·refunded·expired·cancelled) 기준으로 정리
+            db.query(models.Invoice).filter_by(case_id=cid).update({"status": "cancelled"})
+            db.add(models.IntegrationEvent(case_id=cid, event_type="document_package_submitted",
+                                           status="submitted"))
+            c0 = db.get(models.CaseApplication, cid)
+            c0.fatwa_status = "approved"
+            db.commit()
+        finally:
+            db.close()
+        s8 = _nav8_of(cid, "document_pre_audit_requested")
+        assert (s8["step"], s8["owner"]) == (3, "auditor")
+        # SiHalal 등록되면 7(진행 중), 미등록이면 6 — 위 표
+        s8 = _nav8_of(cid, "certificate_issued")
+        assert (s8["step"], s8["done"]) == (7, False)
+        # 자기선언 위원회 승인 후 = 인증서 발급(6), 운영 차례
+        s8 = _nav8_of(cid, "committee_verification")
+        assert (s8["step"], s8["owner"]) == (6, "ops")
+
+
+def test_nav8_pendamping_버킷():
+    from app import nav8
+    assert nav8.role_bucket("pendamping_pph") == "pendamping"
+    assert nav8.role_bucket("penyelia_halal") == "client"

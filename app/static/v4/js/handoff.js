@@ -48,8 +48,10 @@ async function HOF_consume(){
       const rk = Object.keys(ROLES).find(k => ROLES[k].code === ui);
       if(rk && ROLES[rk] && ROLES[rk].home) S.view = ROLES[rk].home;
     }catch(e){}
+    try{ if(typeof loadRbac === 'function') await loadRbac(); }catch(e){}
     try{
-      if(ui === 'aud') await loadAud();
+      if(ui === 'pen'){ if(typeof loadPen === 'function') await loadPen(); }
+      else if(ui === 'aud') await loadAud();
       else if(ui === 'ent') await loadEnt();
       else if(ui === 'cons') await loadCons();
       else if(ui === 'sha') await loadSha();

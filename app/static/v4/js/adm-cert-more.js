@@ -83,6 +83,8 @@ function ADMCM_impactPanel(cid){
 }
 
 function ADMCM_sihalalPanel(cid){
+  // 연결(applicant·consultant main.py:16989)·검증(consultant 17004) — 운영자에겐 403 이라 조회만 남긴다
+  const canLink = canCall('POST','/cases/{}/sihalal/identity/link'), canVerify = canCall('POST','/sihalal/identity/{}/verify');
   const lk = RS.admcmLookup;
   let result = '';
   if(lk){
@@ -92,7 +94,7 @@ function ADMCM_sihalalPanel(cid){
       const rows = (lk.matches||[]).map((m,i)=>`<tr>
         <td>${esc(m.name||'-')}</td>
         <td class="mono">${esc(m.sihalal_id||'-')}</td>
-        <td><button class="btn btn-sm" onclick="App.admcmLink('${cid}',${i},'${esc(lk.type||'penyelia')}')">이 업체로 연결</button></td>
+        <td>${canLink?`<button class="btn btn-sm" onclick="App.admcmLink('${cid}',${i},'${esc(lk.type||'penyelia')}')">이 업체로 연결</button>`:''}</td>
       </tr>`);
       const dup = lk.duplicate ? `<div class="note attn">중복 등록 감지: ${esc(lk.duplicate.name)} (유사도 ${esc(String(lk.duplicate.similarity))})</div>` : '';
       result = `${dup}
@@ -110,7 +112,7 @@ function ADMCM_sihalalPanel(cid){
         <div><span class="k">신청번호</span><span class="v mono">${esc(id.external_application_no||'-')}</span></div>
         <div><span class="k">검증 상태</span><span class="v">${esc(id.verification_status||'-')}</span></div>
       </div>
-      ${id.verification_status==='verified'?'<p class="note">식별자 검증 완료.</p>':
+      ${id.verification_status==='verified'?'<p class="note">식별자 검증 완료.</p>':!canVerify?'':
         `<div class="inline" style="margin-top:10px">
           <input class="in" id="admcm-expect" placeholder="GL-HAC 식별자(이메일/NIB)"/>
           <button class="btn" onclick="App.admcmVerify('${esc(id.external_identity_id)}')">동일성 검증</button>
@@ -118,6 +120,7 @@ function ADMCM_sihalalPanel(cid){
     </div>`;
   }
   return `<section class="panel"><div class="panel-head"><h2>SIHALAL 동일성 확인</h2></div>
+    ${canLink?'':'<p class="muted" style="font-size:12px">신원 연결·검증은 컨설턴트(업체별 현황 화면)가 합니다.</p>'}
     <div class="fieldset"><legend>조회</legend>
       <div class="inline">
         <input class="in" id="admcm-q" placeholder="업체명/SIHALAL ID" value="${esc(lk&&lk.query||'')}"/>
@@ -185,6 +188,17 @@ App.admcmVerify = async function(eid){
       const cid = S.selCert;
       if(!cid) return prev();
       return prev() + ADMCM_impactPanel(cid) + ADMCM_historyPanel(cid) + ADMCM_sihalalPanel(cid);
+    };
+  }
+}
+/* 컨설턴트 업체별 현황(cons-status) — SIHALAL 신원 연결·검증의 실제 담당 화면 */
+{
+  const prev = VIEWS['cons-status'];
+  if(typeof prev === 'function'){
+    VIEWS['cons-status'] = () => {
+      if(!RS.admcmId) RS.admcmId = {};
+      const base = prev(); const cid = S.selCompany;   // prev() 가 기본 선택을 정한다
+      return base + (cid ? ADMCM_sihalalPanel(cid) : '');
     };
   }
 }

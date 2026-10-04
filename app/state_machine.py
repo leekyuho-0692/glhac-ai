@@ -23,8 +23,9 @@ TRANSITIONS = {
     "supplementation_required": {"supplementation_submitted"},
     "supplementation_submitted": {"consultant_review"},
     "consultant_review": {"document_pre_audit_requested"},
-    "document_pre_audit_requested": {"document_pre_audit_in_review"},
-    "document_pre_audit_in_review": {"document_pre_audit_approved"},
+    # 모의심사(document_pre_audit_*) 반려 → 보완 루프(v4 연결 5a: reject 가 갈 곳이 없어 기록만 되던 문제)
+    "document_pre_audit_requested": {"document_pre_audit_in_review", "supplementation_required"},
+    "document_pre_audit_in_review": {"document_pre_audit_approved", "supplementation_required"},
     "document_pre_audit_approved": {"lph_assignment"},
     "lph_assignment": {"onsite_audit_scheduled"},
     "onsite_audit_scheduled": {"onsite_audit_in_progress"},
@@ -54,13 +55,17 @@ PROTECTED_STATES = {"fatwa_approved", "certificate_issued"}
 # 진입(to_state)에 필요한 역할. admin은 항상 허용. 미정의 상태는 DEFAULT.
 TRANSITION_ROLES = {
     "committee_verification": {"operator"},                     # SEHATI ketetapan = 최종 결제자
-    "final_package_preparation": {"fatwa_liaison", "operator"},
+    # auditor: HPAS 5요소 평가를 끝내는 쪽이 오디터라 evaluation/verdict 자동 전진이 조용히 실패하던 것 해소(v4 5d)
+    "final_package_preparation": {"auditor", "fatwa_liaison", "operator"},
     "fatwa_review": {"fatwa_liaison", "operator"},
     "lph_assignment": {"fatwa_liaison", "operator"},
     "onsite_audit_scheduled": {"auditor", "fatwa_liaison", "operator"},
     "onsite_audit_in_progress": {"auditor", "operator"},
     "corrective_action_required": {"auditor", "operator"},
-    "corrective_action_submitted": {"auditor", "consultant", "operator"},
+    # applicant·penyelia_halal: CAR 제출은 기업의 행위(POST /findings/{id}/car) — 자동 전진이 권한 부족으로 실패하던 것 해소(v4 5g)
+    "corrective_action_submitted": {"auditor", "consultant", "operator", "applicant", "penyelia_halal"},
+    # 보완 요구는 검토자 판단 — 신청자가 모의심사·심의 단계에서 스스로 되돌리지 못하게(위 반려 루프 추가에 따른 게이트)
+    "supplementation_required": {"consultant", "auditor", "fatwa_liaison", "operator"},
     "audit_closed": {"auditor", "operator"},                    # 오디터 현장심사 완료
     "hpas_evaluation_ready": {"auditor", "fatwa_liaison", "operator"},
 }

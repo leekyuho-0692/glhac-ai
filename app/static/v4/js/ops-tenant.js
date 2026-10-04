@@ -82,8 +82,8 @@ function OPST_tenantDetail(orgId, t){
     <div class="inline"><input id="opst-domain" class="in" placeholder="example.com" value="${OPST_esc(t.domain||'')}">
       <button class="btn" onclick="App.opstSetDomain('${OPST_esc(orgId)}')">등록</button>
       <button class="btn" onclick="App.opstVerifyDomain('${OPST_esc(orgId)}')">도메인 검증</button>
-      <button class="btn" onclick="App.opstActivateDomain('${OPST_esc(orgId)}','active')">도메인 활성화</button>
-      <button class="btn btn-ghost" onclick="App.opstActivateDomain('${OPST_esc(orgId)}','suspended')">정지</button></div>
+      ${canCall('POST','/admin/orgs/{}/activate-domain')?`<button class="btn" onclick="App.opstActivateDomain('${OPST_esc(orgId)}','active')">도메인 활성화</button>
+      <button class="btn btn-ghost" onclick="App.opstActivateDomain('${OPST_esc(orgId)}','suspended')">정지</button>`:''}</div>
     ${verify ? `<div class="note attn">DNS TXT 레코드 값: <code class="mono">${OPST_esc(verify)}</code></div>` : ''}
   </fieldset>`;
   const brandBox = `<fieldset><legend>화이트라벨 브랜딩</legend>
@@ -130,9 +130,11 @@ function OPST_settleView(){
 }
 
 function OPST_render(){
-  const cur = S.opstTab || 'tenant';
+  // 테넌트 탭은 조직 목록(GET /admin/orgs, admin 전용 main.py:1682)부터 읽는다 — operator 는 정산만
+  const canTenant = canCall('GET','/admin/orgs');
+  const cur = canTenant ? (S.opstTab || 'tenant') : 'settle';
   const tabs = `<div class="tabs">
-    <button class="${cur==='tenant'?'on':''}" onclick="App.opstTab('tenant')">테넌트·도메인·브랜딩</button>
+    ${canTenant?`<button class="${cur==='tenant'?'on':''}" onclick="App.opstTab('tenant')">테넌트·도메인·브랜딩</button>`:''}
     <button class="${cur==='settle'?'on':''}" onclick="App.opstTab('settle')">정산</button>
   </div>`;
   const body = cur==='settle' ? OPST_settleView() : OPST_tenantView();

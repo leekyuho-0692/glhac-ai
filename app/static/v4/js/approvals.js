@@ -37,6 +37,8 @@ function APRV_fmtTime(iso){
   }catch(e){ return String(iso); }
 }
 
+function APRV_canDecide(it){ return !!it && it.can_decide !== false && !APRV_isMine(it); }
+
 function APRV_row(it, i){
   const label = it.label || it.action_type || '(알 수 없는 작업)';
   const target = it.company_name || it.case_id || '';
@@ -44,8 +46,11 @@ function APRV_row(it, i){
   const when = APRV_fmtTime(it.created_at);
   const mine = APRV_isMine(it);
   const meta = [target, '요청: '+who, when].filter(x=>x&&String(x).length).join(' · ');
+  // 서버가 판정한 can_decide(main.py:11514 — checker 역할·본인요청 아님·pending) 를 따른다
   const acts = mine
     ? `<span class="muted" style="font-size:11px">내가 요청한 건 — 다른 계정이 승인해야 합니다</span>`
+    : !APRV_canDecide(it)
+    ? `<span class="muted" style="font-size:11px">결정 권한 없음${(it.checker_roles||[]).length?` — 승인 역할: ${esc(it.checker_roles.map(r=>ROLE_LABEL[r]||r).join(', '))}`:''}</span>`
     : `<button class="btn btn-sm btn-primary" onclick="App.aprvApprove(${i})">승인</button>
       <button class="btn btn-sm" onclick="App.aprvReject(${i})">반려</button>`;
   return `<li class="row">
@@ -69,11 +74,11 @@ function APRV_panel(){
   if(RS.aprv.forbidden) return '';
   const items = (RS.aprv.items||[]);
   if(!items.length) return '';
-  const n = items.length;
+  const n = items.length, m = items.filter(APRV_canDecide).length;
   return `<section class="panel">
     <div class="panel-head">
       <h2>승인 대기</h2>
-      <span class="badge attn">${n}건</span>
+      <span class="badge ${m?'attn':''}">${m}건${m!==n?` / 전체 ${n}`:''}</span>
     </div>
     <ul class="rows">${items.map((it,i)=>APRV_row(it,i)).join('')}</ul>
   </section>`;
@@ -164,7 +169,7 @@ App.aprvRejectDo = async function(i){
 });
 
 /* 사이드바 배지 */
-const APRV_count = () => (RS.aprv && RS.aprv.items ? RS.aprv.items.length : 0);
+const APRV_count = () => (RS.aprv && RS.aprv.items ? RS.aprv.items.filter(APRV_canDecide).length : 0);
 if(NAVC){
   NAVC['sha-home'] = APRV_count;
   NAVC['adm-cert'] = APRV_count;

@@ -277,7 +277,9 @@ function OPSA_renderCompliance(){
   const tsa = RS.opsa.tsa;
 
   let compHtml;
-  if(comp === undefined){
+  if(!canCall('GET','/admin/compliance')){
+    compHtml = null;   // admin 전용(main.py:13237) — operator 에겐 패널 생략
+  } else if(comp === undefined){
     if(RS.opsa._loadingComp!==1){ RS.opsa._loadingComp=1; OPSA_loadCompliance().then(()=>{ RS.opsa._loadingComp=0; render(); }); }
     compHtml = '<p class="empty">불러오는 중…</p>';
   } else if(comp.error){
@@ -325,10 +327,10 @@ function OPSA_renderCompliance(){
     </div>`;
   }
 
-  return `<section class="panel">
+  return `${compHtml===null?'':`<section class="panel">
     <div class="panel-head"><h2>컴플라이언스 상태</h2></div>
     ${compHtml}
-  </section>
+  </section>`}
   <section class="panel">
     <div class="panel-head"><h2>PSrE 공인 전자서명</h2></div>
     ${psreHtml}
@@ -342,7 +344,7 @@ function OPSA_renderCompliance(){
 // ── 탭 렌더러 ─────────────────────────────────────────────
 function OPSA_render(){
   return [
-    OPSA_renderLogs(),
+    canCall('GET','/admin/audit-logs') ? OPSA_renderLogs() : '',   // 감사 로그·체인 검증 admin 전용(main.py:1647·2010)
     OPSA_renderWf(),
     OPSA_renderNotifs(),
     OPSA_renderCompliance(),

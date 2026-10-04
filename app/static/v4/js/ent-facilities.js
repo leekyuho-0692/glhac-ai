@@ -121,7 +121,7 @@ function ENTF_orgPanel(cid) {
         ${ENTF_orgMembersTable(mem, true)}
         <div style="margin-top:8px"><button class="btn btn-sm" onclick="App.entfOrgAddMember()">행 추가</button></div>
       </fieldset>
-      <div style="margin-top:10px"><button class="btn btn-primary" onclick="App.entfOrgSave('${esc(cid)}')">저장</button></div>
+      ${canCall('PUT','/cases/{}/halal-org')?`<div style="margin-top:10px"><button class="btn btn-primary" onclick="App.entfOrgSave('${esc(cid)}')">저장</button></div>`:''}
     `;
   }
   return `<section class="panel"><div class="panel-head"><h2>할랄 관리 조직</h2></div>${body}</section>`;
