@@ -48,12 +48,14 @@
     (t.ballots || []).forEach(b => { ballotMap[b.member] = b; });
     const signMap = d.signs || {};
 
-    const defSeat = (S.shqSeat && t.member_keys.indexOf(S.shqSeat) >= 0) ? S.shqSeat : (t.member_keys.indexOf(AUTH.username) >= 0 ? AUTH.username : t.member_keys[0]);
+    const proxy = !!t.proxy;
+
+    const defSeat = proxy ? 'auditor' : ((S.shqSeat && t.member_keys.indexOf(S.shqSeat) >= 0) ? S.shqSeat : (t.member_keys.indexOf(AUTH.username) >= 0 ? AUTH.username : t.member_keys[0]));
 
     const rows = t.member_keys.map(k => {
       const b = ballotMap[k];
       const m = seatMap[k];
-      const seatName = m ? SHQ_seatLabel(m) : k;
+      const seatName = proxy ? '오디터(대리)' : (m ? SHQ_seatLabel(m) : k);
       const voteTxt = b ? (SHQ_VOTE_ICON[b.vote] || esc(b.vote)) : '— 미제출';
       const note = b && b.note ? `<div class="muted" style="font-size:11px">${esc(b.note)}</div>` : '';
       const sig = signMap[k] ? '✔' : '—';
@@ -71,13 +73,15 @@
       reason = `의견 ${t.votes_cast || 0}/${need}·서명 ${t.signatures || 0}/${need}`;
     }
 
-    const seatOpts = t.member_keys.map(k => {
-      const m = seatMap[k];
-      return `<option value="${esc(k)}" ${k === defSeat ? 'selected' : ''}>${esc(m ? SHQ_seatLabel(m) : k)}</option>`;
-    }).join('');
+    const seatOpts = proxy
+      ? `<option value="auditor" selected>오디터(대리)</option>`
+      : t.member_keys.map(k => {
+        const m = seatMap[k];
+        return `<option value="${esc(k)}" ${k === defSeat ? 'selected' : ''}>${esc(m ? SHQ_seatLabel(m) : k)}</option>`;
+      }).join('');
 
     return `<section class="panel">
-      <div class="panel-head"><h2>샤리아 심의 · 정족수 3인 (재심의 ${t.round || 1}차)</h2><span class="badge ${t.quorum_met ? 'strong' : 'attn'}">진행 ${esc(prog)}</span></div>
+      <div class="panel-head"><h2>${proxy ? '샤리아 심의 · 오디터 대리(위원회 미등록)' : '샤리아 심의 · 정족수 3인'} (재심의 ${t.round || 1}차)</h2><span class="badge ${t.quorum_met ? 'strong' : 'attn'}">진행 ${esc(prog)}</span></div>
       <div class="tbl-wrap"><table>
         <thead><tr><th>좌석</th><th>의견</th><th class="num">서명</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -97,12 +101,22 @@
         <div><span class="k">서명</span><span class="v">${t.signatures_ok ? '✔ 완료' : (t.signatures || 0) + '/3'}</span></div>
       </div>
       <div class="row-act">
-        <button class="btn btn-primary" ${canConfirm ? '' : 'disabled'} onclick="App.shqConfirm('${cid}')">위원장 확정 · D-19 발행</button>
+        <button class="btn btn-primary" ${canConfirm ? '' : 'disabled'} onclick="App.shqConfirm('${cid}')">${proxy ? '심의 결과 확정 · D-19 발행(오디터 대리)' : '위원장 확정 · D-19 발행'}</button>
         ${reason ? `<span class="inline-msg">${esc(reason)}</span>` : ''}
         ${decided && decree ? `<button class="btn btn-ghost" onclick="App.genPdf('${decree}','D-19_의결서.pdf')">D-19 PDF</button>` : ''}
+        ${(t.proxy && !t.signatures_ok) ? `<button class="btn btn-sm" onclick="App.shqSign('${cid}')">대리 서명</button>` : ''}
       </div>
     </section>`;
   }
+
+  const SHQ_origFinal = VIEWS['aud-final'];
+  VIEWS['aud-final'] = () => {
+    const body = SHQ_origFinal ? SHQ_origFinal() : '';
+    const cid = S.selFinal || S.selCase;
+    const c = cid ? (RS.cases || []).find(x => x.case_id === cid) : null;
+    const extra = (cid && c && c.status === 'fatwa_review') ? SHQ_panel(cid) : '';
+    return body + extra;
+  };
 
   const SHQ_origReview = VIEWS['sha-review'];
   VIEWS['sha-review'] = () => {
@@ -113,7 +127,9 @@
 
   App.shqVote = async function(cid, vote){
     const seatEl = $('#shq-seat');
-    const member = seatEl ? seatEl.value : AUTH.username;
+    const _d = RS.shq[cid];
+    const _proxy = !!(_d && _d.tally && _d.tally.proxy);
+    const member = _proxy ? 'auditor' : (seatEl ? seatEl.value : AUTH.username);
     const note = (($('#shq-note') || {}).value || '').trim();
     const msgEl = $('#shq-msg');
     if((vote === 'conditional' || vote === 'reject') && !note){ if(msgEl) msgEl.textContent = '사유를 입력해 주세요.'; return; }
@@ -142,6 +158,68 @@
     }catch(e){ toast('의견 제출에 실패했습니다.'); }
   };
 
+  function SHQ_padInit(){
+    const cv = $('#shq-pad');
+    if(!cv) return;
+    const W = 520, H = 180;
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+    ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = S.shqInk || '#111';
+    let drawing = false;
+    const pos = (e) => {
+      const r = cv.getBoundingClientRect();
+      const p = e.touches ? e.touches[0] : e;
+      return { x:(p.clientX - r.left) * (W / r.width), y:(p.clientY - r.top) * (H / r.height) };
+    };
+    const down = (e) => { e.preventDefault(); drawing = true; const q = pos(e); ctx.beginPath(); ctx.moveTo(q.x, q.y); };
+    const move = (e) => { if(!drawing) return; e.preventDefault(); const q = pos(e); ctx.lineTo(q.x, q.y); ctx.stroke(); };
+    const up = () => { drawing = false; };
+    cv.onmousedown = down; cv.onmousemove = move; window.addEventListener('mouseup', up);
+    cv.ontouchstart = down; cv.ontouchmove = move; cv.ontouchend = up;
+  }
+
+  App.shqPadClear = function(){
+    const cv = $('#shq-pad');
+    if(!cv) return;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+  };
+
+  App.shqSign = function(cid){
+    openModal('대리 서명', `
+      <div class="field"><label>서명자 이름</label><input id="shq-signer" class="in" value="${esc(AUTH.username || '')}"></div>
+      <div class="field"><label>서명</label><div class="dropzone"><canvas id="shq-pad" style="width:100%;height:180px;background:#fff;touch-action:none"></canvas></div></div>
+    `, `<button class="btn" onclick="App.closeModal()">취소</button>
+        <button class="btn" onclick="App.shqPadClear()">지우기</button>
+        <button class="btn btn-primary" onclick="App.shqSignDo('${cid}')">서명 제출</button>`, true);
+    setTimeout(SHQ_padInit, 0);
+  };
+
+  App.shqSignDo = async function(cid){
+    const name = (($('#shq-signer') || {}).value || '').trim() || AUTH.username;
+    const cv = $('#shq-pad');
+    if(!cv) return;
+    const image = cv.toDataURL('image/png');
+    try{
+      const r = await apiFetch('/cases/' + cid + '/fatwa/sign', { method:'POST', body: JSON.stringify({ member:'auditor', name, image }) });
+      if(!r.ok){
+        let code = '';
+        try{ const j = await r.json(); code = (j && j.detail && j.detail.code) || ''; }catch(e){}
+        if(r.status === 403) toast('권한이 없습니다.');
+        else toast('서명 제출에 실패했습니다.' + (code ? ' (' + code + ')' : ''));
+        return;
+      }
+      delete RS.shq[cid];
+      delete RS.fatwa[cid];
+      closeModal();
+      SHQ_ensure(cid);
+      render();
+      toast('대리 서명을 제출했습니다.');
+    }catch(e){ toast('서명 제출에 실패했습니다.'); }
+  };
+
   App.shqConfirm = async function(cid){
     try{
       const r = await apiFetch('/cases/' + cid + '/fatwa/confirm', { method:'POST', body: JSON.stringify({}) });
@@ -157,7 +235,7 @@
       RS.shqDecree[cid] = j.gen_doc_id;
       delete RS.shq[cid];
       delete RS.fatwa[cid];
-      try{ await loadSha(); }catch(e){}
+      try{ await (S.role === "aud" ? loadAud() : loadSha()); }catch(e){}
       render();
       toast('결과를 확정했습니다 — 의결서 ' + (j.decision_no || ''));
     }catch(e){ toast('확정에 실패했습니다.'); }

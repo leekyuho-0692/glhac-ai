@@ -8102,6 +8102,14 @@ def _fatwa_srs(db):
     return nav8.formal_flow_on()
 
 
+def _fatwa_proxy(db, org_id):
+    """오디터 대리 모드 — SRS 모드이지만 위원회가 정족수(3인) 미만으로 등록돼 있으면 오디터가 샤리아 심의를 대신한다."""
+    return _fatwa_srs(db) and len(_fatwa_committee(db, org_id)) < FATWA_QUORUM
+
+
+FATWA_PROXY_KEY = "auditor"
+
+
 def _fatwa_member_keys(db, org_id):
     """위원회 3인의 서명/투표 키 — 'chair' + 'member:<이름>' (기존 fatwa.sign 의 member 키 규약과 호환: chair 는 'chairman' 포함)."""
     return [("chairman" if m.get("role") == "chair" else (m.get("role", "member") + ":" + m.get("name", "")))
@@ -8131,6 +8139,10 @@ def _fatwa_quorum_ok(db, case_id):
         signers[mk] = isinstance(img, str) and img.startswith("data:image/")
     valid = [mk for mk, ok in signers.items() if ok]
     has_chairman = any("chairman" in str(mk).lower() for mk in valid)
+    c0 = db.get(models.CaseApplication, case_id)
+    if _fatwa_proxy(db, c0.org_id if c0 else None):
+        ok = len(valid) >= 1
+        return ok, ([] if ok else ["AUDITOR_SIGN_REQUIRED"]), {"chairman_signed": False, "signer_count": len(valid), "signers": valid, "proxy": True}
     if _fatwa_srs(db):
         missing = []
         if not has_chairman:
@@ -11977,7 +11989,7 @@ def get_onsite_opinion(case_id: str, user=Depends(auth.get_current_user),
 #    onsite.sign 패턴 동일. 기존 fatwa 투표/결정(P0-4)과 별개의 위원 개별 캔버스 서명. ──
 @app.post("/cases/{case_id}/fatwa/sign")
 def fatwa_sign(case_id: str, body: dict = None,
-               user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
+               user=Depends(auth.require_roles("fatwa_liaison", "operator", "auditor")), db: Session = Depends(get_db)):
     b = body or {}
     member = (b.get("member") or "").strip()
     if not member:
@@ -11989,6 +12001,8 @@ def fatwa_sign(case_id: str, body: dict = None,
         raise HTTPException(413, {"code": "IMAGE_TOO_LARGE"})
     name = (b.get("name") or "").strip() or None
     c = _get_case(db, case_id, user)
+    if user["role"] == "auditor" and not _fatwa_proxy(db, c.org_id):
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
     sm.record_event(db, c, c.status, c.status, "fatwa.sign", user["role"], user["uid"],
                     {"member": member, "image": image, "name": name})
     # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op). 내부 서명 이벤트는 위에서 그대로 병행.
@@ -12426,6 +12440,18 @@ def _fatwa_tally(db, case_id, detail=False):
         votes = db.query(models.FatwaVote).filter_by(case_id=case_id).all()
         c = db.get(models.CaseApplication, case_id)
         keys = _fatwa_member_keys(db, c.org_id if c else None)
+        if _fatwa_proxy(db, c.org_id if c else None):
+            votes = [v for v in votes if v.member == FATWA_PROXY_KEY]
+            v0 = votes[-1] if votes else None
+            result = {"approve": "passed", "conditional": "conditional", "reject": "rejected"}.get(v0.vote if v0 else None, "pending")
+            ok_sig, _miss, sctx = _fatwa_quorum_ok(db, case_id)
+            out = {"votes_cast": len(votes), "members": 1, "approve": int(bool(v0 and v0.vote == "approve")), "conditional": int(bool(v0 and v0.vote == "conditional")),
+                   "reject": int(bool(v0 and v0.vote == "reject")), "abstain": 0, "quorum_met": bool(v0), "quorum_need": 1, "result": result,
+                   "signatures": sctx.get("signer_count", 0), "signatures_ok": ok_sig, "progress": "%d/1" % (1 if v0 else 0),
+                   "round": _fatwa_round(db, case_id), "member_keys": [FATWA_PROXY_KEY], "voted_keys": [FATWA_PROXY_KEY] if v0 else [], "proxy": True}
+            if detail:
+                out["ballots"] = [{"member": v.member, "vote": v.vote, "note": v.note} for v in votes]
+            return out
         votes = [v for v in votes if v.member in keys]
         approve = sum(1 for v in votes if v.vote == "approve")
         cond = sum(1 for v in votes if v.vote == "conditional")
@@ -12467,13 +12493,15 @@ def _fatwa_tally(db, case_id, detail=False):
 
 @app.post("/cases/{case_id}/fatwa/vote")
 def fatwa_vote(case_id: str, body: schemas.FatwaVoteReq,
-               user=Depends(rbac.require_action("fatwa.propose")),
+               user=Depends(auth.require_roles("fatwa_liaison", "auditor", "operator")),
                db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    if user["role"] in ("auditor", "operator") and not _fatwa_proxy(db, c.org_id):
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED", "hint": "샤리아 위원회가 등록된 상태에서는 위원만 의견을 낼 수 있습니다."})
     if body.vote not in FATWA_VOTES:
         raise HTTPException(400, {"code": "BAD_VOTE"})
     if _fatwa_srs(db):
-        keys = _fatwa_member_keys(db, c.org_id)
+        keys = [FATWA_PROXY_KEY] if _fatwa_proxy(db, c.org_id) else _fatwa_member_keys(db, c.org_id)
         if body.member not in keys:
             raise HTTPException(422, {"code": "NOT_COMMITTEE_MEMBER", "allowed": keys})
         if body.vote == "abstain":
@@ -12494,7 +12522,8 @@ def fatwa_vote(case_id: str, body: schemas.FatwaVoteReq,
 @app.get("/cases/{case_id}/fatwa/votes")
 def get_fatwa_votes(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
-    if not _fatwa_privileged(user):   # 위원회 투표 상세는 sharia/operator/admin만
+    _c0 = db.get(models.CaseApplication, case_id)
+    if not _fatwa_privileged(user) and not (user["role"] == "auditor" and _fatwa_proxy(db, _c0.org_id if _c0 else None)):   # 위원회 투표 상세는 sharia/operator/admin + 대리 모드 오디터
         raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
     _audit(db, user, "fatwa.votes.read", "fatwa", case_id, case_id)
     return _fatwa_tally(db, case_id, detail=True)
@@ -14747,11 +14776,14 @@ def fatwa_final_approve(case_id: str, user=Depends(rbac.require_action("fatwa.ap
 
 
 @app.post("/cases/{case_id}/fatwa/confirm")
-def fatwa_confirm(case_id: str, body: dict = None, user=Depends(auth.require_roles("fatwa_liaison")),
+def fatwa_confirm(case_id: str, body: dict = None, user=Depends(auth.require_roles("fatwa_liaison", "auditor", "operator")),
                   db: Session = Depends(get_db)):
     """SHA-04 위원장 확정 — 3인 의견·3인 서명이 모두 모이면 위원장이 결과를 확정하고 D-19 의결서를 발행한다."""
     import json as _json
     c = _get_case(db, case_id, user)
+    proxy = _fatwa_proxy(db, c.org_id)
+    if user["role"] in ("auditor", "operator") and not proxy:
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
     t = _fatwa_tally(db, case_id, detail=True)
     if not t.get("quorum_met"):
         raise HTTPException(409, {"code": "VOTES_INCOMPLETE", "progress": t.get("progress")})
@@ -14759,7 +14791,7 @@ def fatwa_confirm(case_id: str, body: dict = None, user=Depends(auth.require_rol
         raise HTTPException(409, {"code": "SIGNATURES_INCOMPLETE", "signatures": t.get("signatures")})
     committee = _fatwa_committee(db, c.org_id)
     chair = next((m for m in committee if m.get("role") == "chair"), None)
-    if chair and chair.get("user") and chair.get("user") != user.get("username"):
+    if not proxy and chair and chair.get("user") and chair.get("user") != user.get("username"):
         raise HTTPException(403, {"code": "NOT_CHAIR"})
     result = t["result"]
     decision = {"passed": "approved", "conditional": "conditional", "rejected": "rejected"}.get(result)
@@ -14781,7 +14813,7 @@ def fatwa_confirm(case_id: str, body: dict = None, user=Depends(auth.require_rol
         fd.committee_note = note
     content = {"doc": "D-19", "title": "샤리아 심의 의결서", "decision_no": fd.decision_no, "company_name": c.company_name,
                "case_id": case_id, "result": decision, "round": t.get("round"), "ballots": t.get("ballots"),
-               "committee": committee, "decided_at": fd.decided_at.isoformat(), "confirmed_by": user.get("username"), "note": note}
+               "committee": ([{"role": "auditor_proxy", "name": user.get("username")}] if proxy else committee), "proxy": proxy, "decided_at": fd.decided_at.isoformat(), "confirmed_by": user.get("username"), "note": note}
     g = _save_gendoc(db, c, "fatwa_decree", _json.dumps(content, ensure_ascii=False), user, status="final")
     c.fatwa_status = "provisional" if decision == "approved" else decision
     sm.record_event(db, c, c.status, c.status, "fatwa.confirm", user["role"], user["uid"],
@@ -14794,7 +14826,7 @@ def fatwa_confirm(case_id: str, body: dict = None, user=Depends(auth.require_rol
 
 
 @app.get("/sharia/agenda")
-def sharia_agenda(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
+def sharia_agenda(user=Depends(auth.require_roles("fatwa_liaison", "operator", "auditor")), db: Session = Depends(get_db)):
     """SHA-01 안건 목록 — 심의 대기 케이스와 의견 제출 진행(n/3)."""
     items = []
     for c in _ops_cases(db, user):
@@ -14803,12 +14835,13 @@ def sharia_agenda(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
         t = _fatwa_tally(db, c.case_id)
         items.append({"case_id": c.case_id, "company_name": c.company_name, "round": t.get("round", 1),
                       "progress": t.get("progress", "%d/%d" % (t.get("votes_cast", 0), t.get("members", 0))),
-                      "result": t.get("result"), "signatures_ok": t.get("signatures_ok"), "voted_keys": t.get("voted_keys", [])})
+                      "result": t.get("result"), "signatures_ok": t.get("signatures_ok"), "voted_keys": t.get("voted_keys", []),
+                      "proxy": _fatwa_proxy(db, c.org_id)})
     return {"items": items, "quorum": FATWA_QUORUM}
 
 
 @app.get("/sharia/history")
-def sharia_history(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
+def sharia_history(user=Depends(auth.require_roles("fatwa_liaison", "operator", "auditor")), db: Session = Depends(get_db)):
     """SHA-06 심의 이력 — 의결서 번호·결과·일자."""
     rows = (db.query(models.FatwaDecision).filter(models.FatwaDecision.decision_no.isnot(None))
             .order_by(models.FatwaDecision.decided_at.desc()).limit(200).all())
