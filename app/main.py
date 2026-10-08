@@ -8946,6 +8946,174 @@ def _sjph_blocks_to_text(company, blocks):
 SJPH_TEMPLATE_DOCX = os.path.join(os.path.dirname(__file__), "assets", "GLHAC_HPAS_SJPH_Template.docx")
 
 
+# ===== SRS ⑨ 양식 관리(DOC-04) — 서식(F-) 업로드·버전·적용일, 코드 자산은 기본값 =====
+FORM_KEYS = {
+    "factory_audit": {"label": "현장심사 보고서 서식 (F-17)", "default": None},
+    "sjph_manual": {"label": "SJPH 매뉴얼 서식 (F-12)", "default": SJPH_TEMPLATE_DOCX},
+}
+
+
+def _forms_dir(key):
+    d = os.path.join(os.path.realpath(os.environ.get("GLHAC_UPLOAD_DIR", "/tmp")), "forms", key)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _form_versions(db, org_id, key):
+    evs = (db.query(models.WorkflowEvent).filter_by(case_id="forms:" + (org_id or "org_demo"), action="form.version")
+           .order_by(models.WorkflowEvent.created_at.asc()).all())
+    out = [dict(e.payload or {}, at=e.created_at.isoformat() if e.created_at else None, by=e.actor_id) for e in evs
+           if (e.payload or {}).get("key") == key]
+    return out
+
+
+def _form_active(db, org_id, key):
+    """활성 버전 — 마지막 'activate' 가 가리키는 버전, 없으면 마지막 업로드."""
+    vs = _form_versions(db, org_id, key)
+    act = [v for v in vs if v.get("op") == "activate"]
+    ups = [v for v in vs if v.get("op") == "upload"]
+    if act:
+        n = act[-1].get("version")
+        return next((u for u in ups if u.get("version") == n), None)
+    return ups[-1] if ups else None
+
+
+def _template_path(db, org_id, key, default):
+    a = _form_active(db, org_id, key)
+    if a and a.get("path") and os.path.exists(a["path"]):
+        return a["path"]
+    return default
+
+
+@app.get("/admin/forms")
+def admin_forms(user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    out = []
+    for key, meta in FORM_KEYS.items():
+        vs = [v for v in _form_versions(db, user.get("org_id"), key) if v.get("op") == "upload"]
+        a = _form_active(db, user.get("org_id"), key)
+        out.append({"key": key, "label": meta["label"], "versions": vs, "active_version": a.get("version") if a else None,
+                    "active_since": a.get("applied_at") if a else None, "using_default": a is None})
+    return {"items": out}
+
+
+@app.post("/admin/forms/{key}")
+def admin_form_upload(key: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """서식 파일(docx)을 올리면 새 버전이 되고 즉시 적용된다(적용일 = 지금 또는 body.applied_at)."""
+    import base64 as _b64
+    if key not in FORM_KEYS:
+        raise HTTPException(404, {"code": "FORM_NOT_FOUND", "allowed": list(FORM_KEYS)})
+    b = dict(body or {})
+    fn = (b.get("filename") or "").strip()
+    if not fn.lower().endswith(".docx"):
+        raise HTTPException(422, {"code": "DOCX_REQUIRED"})
+    raw = _validate_upload(b.get("file_b64") or "", fn)
+    data = _b64.b64decode(raw)
+    if data[:2] != b"PK":
+        raise HTTPException(422, {"code": "NOT_A_DOCX"})
+    ups = [v for v in _form_versions(db, user.get("org_id"), key) if v.get("op") == "upload"]
+    version = (ups[-1]["version"] + 1) if ups else 1
+    path = os.path.join(_forms_dir(key), "v%d.docx" % version)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    shim = _billing_shim(user.get("org_id"))
+    shim.case_id = "forms:" + (user.get("org_id") or "org_demo")
+    payload = {"key": key, "op": "upload", "version": version, "filename": fn, "path": path, "size": len(data),
+               "note": (b.get("note") or "").strip(), "applied_at": (b.get("applied_at") or datetime.utcnow().isoformat())}
+    sm.record_event(db, shim, "forms", "forms", "form.version", user["role"], user["uid"], payload)
+    sm.record_event(db, shim, "forms", "forms", "form.version", user["role"], user["uid"], {"key": key, "op": "activate", "version": version})
+    db.commit()
+    return {"ok": True, "key": key, "version": version}
+
+
+@app.post("/admin/forms/{key}/activate")
+def admin_form_activate(key: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """이전 버전으로 되돌리기(version=0 이면 코드 기본 서식)."""
+    if key not in FORM_KEYS:
+        raise HTTPException(404, {"code": "FORM_NOT_FOUND"})
+    try:
+        version = int((body or {}).get("version"))
+    except (TypeError, ValueError):
+        raise HTTPException(422, {"code": "BAD_VERSION"})
+    ups = {v["version"] for v in _form_versions(db, user.get("org_id"), key) if v.get("op") == "upload"}
+    if version != 0 and version not in ups:
+        raise HTTPException(404, {"code": "VERSION_NOT_FOUND"})
+    shim = _billing_shim(user.get("org_id"))
+    shim.case_id = "forms:" + (user.get("org_id") or "org_demo")
+    sm.record_event(db, shim, "forms", "forms", "form.version", user["role"], user["uid"], {"key": key, "op": "activate", "version": version})
+    db.commit()
+    return {"ok": True, "key": key, "active_version": version or None}
+
+
+@app.get("/admin/forms/{key}/download")
+def admin_form_download(key: str, version: int = Query(None), user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    if key not in FORM_KEYS:
+        raise HTTPException(404, {"code": "FORM_NOT_FOUND"})
+    ups = [v for v in _form_versions(db, user.get("org_id"), key) if v.get("op") == "upload"]
+    v = next((u for u in ups if u.get("version") == version), None) if version else (_form_active(db, user.get("org_id"), key))
+    path = v.get("path") if v else FORM_KEYS[key]["default"]
+    if not path or not os.path.exists(path):
+        raise HTTPException(404, {"code": "FORM_FILE_MISSING"})
+    with open(path, "rb") as fh:
+        data = fh.read()
+    return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": _content_disposition("%s_v%s.docx" % (key, (v or {}).get("version") or "default"))})
+
+
+# ===== SRS ⑨ 문서 열람 권한표(DOC-05/06) =====
+CLIENT_ROLES = {"applicant", "penyelia_halal", "pendamping_pph", "client"}
+# doc_type → 열람 불가 역할. 없으면 전원 열람.
+DOC_DENY = {
+    "ai_second_analysis": CLIENT_ROLES | {"consultant"},        # D-04 기업·컨설턴트 비공개
+    "preassess_report": {"fatwa_liaison"},                      # D-02R 샤리아 비공개
+}
+# 컨설턴트는 보기만 — 다운로드·인쇄(PDF) 불가 (DOC-06)
+CONSULTANT_VIEW_ONLY = {"audit_report", "final_package", "fatwa_decree", "eligibility_notice", "contract", "esign_certificate"}
+
+
+def _doc_can_view(user, doc_type):
+    return user["role"] == "admin" or user["role"] not in DOC_DENY.get(doc_type, set())
+
+
+# ===== SRS ⑨ 심사 설정(ADM-04) =====
+AUDIT_SETTINGS_DEFAULT = {"max_cases_per_auditor": 6, "decision_rule": "majority", "training_hours": 4, "quorum": FATWA_QUORUM}
+
+
+def _audit_settings(db, org_id):
+    ev = (db.query(models.WorkflowEvent).filter_by(case_id="billing-defaults:" + (org_id or "org_demo"), action="audit.settings")
+          .order_by(models.WorkflowEvent.created_at.desc()).first())
+    out = dict(AUDIT_SETTINGS_DEFAULT)
+    if ev and isinstance((ev.payload or {}).get("settings"), dict):
+        out.update({k: v for k, v in ev.payload["settings"].items() if k in out and k != "quorum"})
+    out["quorum"] = FATWA_QUORUM
+    return out
+
+
+@app.get("/admin/audit-settings")
+def get_audit_settings(user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    return _audit_settings(db, user.get("org_id"))
+
+
+@app.post("/admin/audit-settings")
+def set_audit_settings(body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    b = dict(body or {})
+    if "quorum" in b:
+        raise HTTPException(422, {"code": "QUORUM_FIXED", "quorum": FATWA_QUORUM})
+    if "decision_rule" in b and b["decision_rule"] not in ("majority", "unanimous"):
+        raise HTTPException(422, {"code": "BAD_DECISION_RULE"})
+    for k in ("max_cases_per_auditor", "training_hours"):
+        if k in b:
+            try:
+                b[k] = int(b[k])
+            except (TypeError, ValueError):
+                raise HTTPException(422, {"code": "BAD_" + k.upper()})
+            if not (1 <= b[k] <= 100):
+                raise HTTPException(422, {"code": "BAD_" + k.upper()})
+    sm.record_event(db, _billing_shim(user.get("org_id")), "settings", "settings", "audit.settings", user["role"], user["uid"], {"settings": b})
+    db.commit()
+    return _audit_settings(db, user.get("org_id"))
+
+
 def _sjph_docx_para_replace(p, repl):
     txt = p.text
     new = txt
@@ -9485,6 +9653,7 @@ def _sjph_check_hpas_yes(doc):
 
 FACTORY_AUDIT_TEMPLATE = os.path.join(os.path.dirname(__file__), "assets",
                                       "GLHAC_Factory_Audit_Template.docx")
+FORM_KEYS["factory_audit"]["default"] = FACTORY_AUDIT_TEMPLATE
 
 
 def _doc_image_bytes(d):
@@ -9671,7 +9840,7 @@ def _factory_audit_docx_bytes(db, c, lang="ko"):
     양식은 템플릿 원본 그대로 두고 값만 채운다."""
     import io as _io
     import docx as _docx
-    doc = _docx.Document(FACTORY_AUDIT_TEMPLATE)
+    doc = _docx.Document(_template_path(db, c.org_id, "factory_audit", FACTORY_AUDIT_TEMPLATE))
     # 서식 라벨(Company Information 기업정보 …)은 템플릿 소유라 번역하지 않는다.
     # 우리가 채워 넣는 '값'만 언어를 따른다 — LPH 심사원이 읽는 것은 값이다.
     L = _dd_mod.text_fn(lang)
@@ -9775,7 +9944,7 @@ def _sjph_manual_docx_bytes(db, c):
     """기준 템플릿 docx를 열어 실데이터 병합 — 양식(표지·표·부록17·EN/KO 병기) 원본 그대로 유지."""
     import io as _io
     import docx as _docx
-    doc = _docx.Document(SJPH_TEMPLATE_DOCX)
+    doc = _docx.Document(_template_path(db, c.org_id, "sjph_manual", SJPH_TEMPLATE_DOCX))
     company = c.company_name or ""
     px = c.profile_ext or {}
     today = date.today().isoformat()
@@ -10792,8 +10961,7 @@ def list_gendocs(case_id: str, doc_type: str = None,
         q = q.filter_by(doc_type=doc_type)
     rows = q.order_by(models.GeneratedDocument.doc_type,
                       models.GeneratedDocument.version.desc()).all()
-    if user["role"] not in STAFF_ROLES:
-        rows = [g for g in rows if g.doc_type != "ai_second_analysis"]
+    rows = [g for g in rows if _doc_can_view(user, g.doc_type)]
     return [{"gen_doc_id": g.gen_doc_id, "doc_type": g.doc_type, "version": g.version,
              "status": g.status, "created_at": str(g.created_at)} for g in rows]
 
@@ -10804,8 +10972,8 @@ def get_gendoc(gen_doc_id: str, user=Depends(auth.get_current_user), db: Session
     if not g:
         raise HTTPException(404, {"code": "GENDOC_NOT_FOUND"})
     _get_case(db, g.case_id, user)  # 조직격리
-    if g.doc_type == "ai_second_analysis" and user["role"] not in STAFF_ROLES:
-        raise HTTPException(403, {"code": "DOC_RESTRICTED", "doc": "D-04"})
+    if not _doc_can_view(user, g.doc_type):
+        raise HTTPException(403, {"code": "DOC_RESTRICTED", "doc_type": g.doc_type})
     return {"gen_doc_id": g.gen_doc_id, "doc_type": g.doc_type, "version": g.version,
             "status": g.status, "content": g.content, "created_at": str(g.created_at)}
 
@@ -11080,6 +11248,10 @@ def get_gendoc_pdf(gen_doc_id: str, user=Depends(auth.get_current_user), db: Ses
     g = db.get(models.GeneratedDocument, gen_doc_id)
     if not g:
         raise HTTPException(404, {"code": "GENDOC_NOT_FOUND"})
+    if not _doc_can_view(user, g.doc_type):
+        raise HTTPException(403, {"code": "DOC_RESTRICTED", "doc_type": g.doc_type})
+    if user["role"] == "consultant" and g.doc_type in CONSULTANT_VIEW_ONLY:
+        raise HTTPException(403, {"code": "DOC_VIEW_ONLY"})
     c = _get_case(db, g.case_id, user)
     # 계약서 gen-doc은 텍스트 요약이 아니라 실제 10p FORM 4.1 원본 양식으로 서빙(로고 포함)
     if g.doc_type == "contract":
@@ -12180,7 +12352,7 @@ def _fatwa_tally(db, case_id, detail=False):
         approve = sum(1 for v in votes if v.vote == "approve")
         cond = sum(1 for v in votes if v.vote == "conditional")
         reject = sum(1 for v in votes if v.vote == "reject")
-        need = (FATWA_QUORUM // 2) + 1
+        need = FATWA_QUORUM if _audit_settings(db, c.org_id if c else None).get("decision_rule") == "unanimous" else (FATWA_QUORUM // 2) + 1
         all_in = len(votes) >= FATWA_QUORUM
         if all_in and reject >= need:
             result = "rejected"
@@ -16938,6 +17110,11 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
         raise HTTPException(404, {"code": "AUDITOR_NOT_FOUND", "auditor_id": body.auditor_id})
     if user["role"] != "admin" and au.org_id != user["org_id"]:
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
+    _limit = _audit_settings(db, user.get("org_id")).get("max_cases_per_auditor") or 6
+    _assign_all = _ops_latest_assignment(db, [x.case_id for x in _ops_cases(db, user)])
+    _load = sum(1 for p in _assign_all.values() if p.get("auditor_id") == au.user_id)
+    if _load >= _limit and not (body.__dict__.get("force") if hasattr(body, "__dict__") else False):
+        raise HTTPException(409, {"code": "AUDITOR_OVERLOADED", "load": _load, "limit": _limit})
     sm.record_event(db, c, c.status, c.status, "ops.auditor_assigned", user["role"], user["uid"],
                     {"auditor_id": au.user_id, "auditor_name": au.username})
     # SRS MEM-06: 서브 오디터가 없으면 담당 건수가 가장 적은 오디터(메인 제외)를 자동 배정 — 2인 확인의 전제

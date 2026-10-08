@@ -86,5 +86,11 @@
 - `POST /admin/reports`: 번호 `RPT-YYYY-NNN`(가짜 케이스 `reports:org` 의 `report.issued` 이벤트 수), 본문 텍스트 gendoc `period_report`(결재란 포함) + 이벤트에 수치 스냅샷 고정. `GET /admin/reports`·`/{id}`·`/{id}/pdf`(`_render_pdf`).
 - v4 `report.js`: 관리자 `adm-report` 화면(기간 버튼·이전/오늘/다음·날짜, 지표 카드 전기 비교, CSS 막대 추이, 8단계·분야·심사원 표, 조치 필요 바로 가기, 보고서 생성·목록·PDF). 테스트 `tests/test_period_report.py` 6건. 정기 자동 생성(RPT-08)은 3차.
 
+## 3i. 묶음 ⑨ 설계 — 양식 관리·열람 권한표·심사 설정·역할 기본 언어 (구현 2026-10-08)
+- 양식 관리(DOC-04): `FORM_KEYS`(factory_audit·sjph_manual) — 업로드 docx 를 `UPLOAD_DIR/forms/{key}/v{n}.docx` 에 버전 보관, 이벤트 `form.version`(upload/activate) 으로 활성 버전·적용일, `_template_path` 가 활성 서식 없으면 코드 자산 기본값. 문서 생성 2곳이 활성 서식을 쓴다. `GET/POST /admin/forms(/{key}|/activate|/download)`.
+- 열람 권한표(DOC-05/06): `DOC_DENY`(D-04 기업·컨설턴트 비공개, D-02R 샤리아 비공개)·`CONSULTANT_VIEW_ONLY`(PDF 403) 를 gen-docs 목록/상세/PDF 에 공통 적용.
+- 심사 설정(ADM-04): `GET/POST /admin/audit-settings`(1인 최대 담당·결정 방식 과반/만장일치·교육 시간·정족수 3 고정 표시) — 만장일치면 `_fatwa_tally` need=3, 배정 시 `AUDITOR_OVERLOADED`.
+- v4 `forms.js`: adm-docs 양식 관리 패널(업로드·버전·적용·되돌리기·다운로드), adm-experts 심사 설정, 역할별 기본 언어(오디터 en·샤리아 id, localStorage 로 역할별 유지). 테스트 `tests/test_forms_settings.py` 5건.
+
 ## 4. 진행 기록
-- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료(0580127) — **1차 MVP 핵심 3묶음 완료**, 묶음 ④ 완료(897534c), 묶음 ⑤ 완료(3871e7c), 묶음 ⑥ 완료(6058564), 묶음 ⑦ 완료(40cfca9), 묶음 ⑧ 완료. 다음 ⑨ 양식 관리·열람 권한·알림 설정.
+- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료(0580127) — **1차 MVP 핵심 3묶음 완료**, 묶음 ④ 완료(897534c), 묶음 ⑤ 완료(3871e7c), 묶음 ⑥ 완료(6058564), 묶음 ⑦ 완료(40cfca9), 묶음 ⑧ 완료(fb1f5e4), 묶음 ⑨ 완료. 다음 ⑩ 소소한 보정.
