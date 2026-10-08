@@ -15302,6 +15302,239 @@ def decide_match(candidate_id: str, body: schemas.MatchDecisionReq,
 
 
 # ---------- 대시보드 분석 (§11.3 analytics) ----------
+# ===== SRS ⑧ 기간별 인증 현황·보고서 =====
+REPORT_GRANULARITIES = ("daily", "weekly", "monthly", "quarterly", "half", "yearly")
+
+
+def _period_range(granularity, d):
+    """기간 [start, end) 와 라벨. d 는 date."""
+    import calendar
+    if granularity == "daily":
+        s = d; e = d + timedelta(days=1); label = d.isoformat()
+    elif granularity == "weekly":
+        s = d - timedelta(days=d.weekday()); e = s + timedelta(days=7); label = "%s ~ %s" % (s.isoformat(), (e - timedelta(days=1)).isoformat())
+    elif granularity == "monthly":
+        s = d.replace(day=1); e = (s.replace(day=28) + timedelta(days=4)).replace(day=1); label = s.strftime("%Y-%m")
+    elif granularity == "quarterly":
+        qm = ((d.month - 1) // 3) * 3 + 1; s = d.replace(month=qm, day=1)
+        e = (s.replace(month=qm + 2, day=28) + timedelta(days=4)).replace(day=1); label = "%d Q%d" % (d.year, (d.month - 1) // 3 + 1)
+    elif granularity == "half":
+        hm = 1 if d.month <= 6 else 7; s = d.replace(month=hm, day=1)
+        e = date(d.year + 1, 1, 1) if hm == 7 else d.replace(month=7, day=1); label = "%d H%d" % (d.year, 1 if hm == 1 else 2)
+    else:
+        s = d.replace(month=1, day=1); e = date(d.year + 1, 1, 1); label = str(d.year)
+    return s, e, label
+
+
+def _prev_period(granularity, s):
+    return _period_range(granularity, s - timedelta(days=1))
+
+
+def _in(dt, s, e):
+    if dt is None:
+        return False
+    d = dt.date() if isinstance(dt, datetime) else dt
+    return s <= d < e
+
+
+def _report_metrics(db, cases, s, e):
+    """RPT-02 주요 지표 — 기간 [s,e)."""
+    ids = {c.case_id for c in cases}
+    evs = (db.query(models.WorkflowEvent).filter(models.WorkflowEvent.case_id.in_(list(ids)) if ids else False).all()) if ids else []
+    def cnt(action=None, to_status=None):
+        return sum(1 for ev in evs if _in(ev.created_at, s, e) and (action is None or ev.action == action) and (to_status is None or ev.to_status == to_status))
+    new_cases = sum(1 for c in cases if _in(c.created_at, s, e))
+    eligible = sum(1 for ev in evs if _in(ev.created_at, s, e) and ev.action == "eligibility.verdict" and (ev.payload or {}).get("verdict") == "eligible")
+    signed_evs = [ev for ev in evs if _in(ev.created_at, s, e) and ev.action == "contract.signed"]
+    contract_amount = 0.0
+    for ev in signed_evs:
+        ct = db.query(models.Contract).filter_by(case_id=ev.case_id).order_by(models.Contract.created_at.desc()).first()
+        contract_amount += float(ct.fee or 0) if ct else 0.0
+    pays = db.query(models.Payment).filter(models.Payment.case_id.in_(list(ids)) if ids else False).all() if ids else []
+    paid_amount = round(sum(float(p.amount or 0) for p in pays if p.status == "confirmed" and _in(p.paid_at, s, e)), 2)
+    certs = db.query(models.HalalCertificate).filter(models.HalalCertificate.case_id.in_(list(ids)) if ids else False).all() if ids else []
+    issued = sum(1 for ct in certs if ct.issue_date and s.isoformat() <= ct.issue_date[:10] < e.isoformat())
+    return {"new_cases": new_cases, "eligible": eligible, "contracts_signed": len(signed_evs),
+            "contract_amount": round(contract_amount, 2), "paid_amount": paid_amount,
+            "onsite_audits": cnt(to_status="onsite_audit_in_progress"), "fatwa_submitted": cnt(action="audit_report.send_fatwa"),
+            "certificates_issued": issued}, evs, pays, certs
+
+
+def _report_trend(db, cases, evs, pays, certs, granularity, s, e):
+    """RPT-03 추이 — daily/weekly 는 일 단위, 그 외 월 단위 버킷."""
+    unit = "day" if granularity in ("daily", "weekly") else "month"
+    def key(d):
+        d = d.date() if hasattr(d, "date") and not isinstance(d, date) else d
+        return d.isoformat() if unit == "day" else d.strftime("%Y-%m")
+    buckets = {}
+    cur = s
+    while cur < e:
+        buckets[key(cur)] = {"new_cases": 0, "contracts_signed": 0, "certificates_issued": 0, "paid_amount": 0.0}
+        cur = cur + timedelta(days=1) if unit == "day" else (cur.replace(day=28) + timedelta(days=4)).replace(day=1)
+    for c in cases:
+        if _in(c.created_at, s, e):
+            buckets[key(c.created_at)]["new_cases"] += 1
+    for ev in evs:
+        if ev.action == "contract.signed" and _in(ev.created_at, s, e):
+            buckets[key(ev.created_at)]["contracts_signed"] += 1
+    for p in pays:
+        if p.status == "confirmed" and _in(p.paid_at, s, e):
+            buckets[key(p.paid_at)]["paid_amount"] += float(p.amount or 0)
+    for ct in certs:
+        if ct.issue_date and s.isoformat() <= ct.issue_date[:10] < e.isoformat():
+            k = ct.issue_date[:10] if unit == "day" else ct.issue_date[:7]
+            if k in buckets:
+                buckets[k]["certificates_issued"] += 1
+    return [dict(bucket=k, **v) for k, v in buckets.items()]
+
+
+def _report_actions(db, cases):
+    """RPT-06 조치 필요 — 접수 대기·서명 대기·입금 기한 경과·입금 확인·서브 확인 대기·오디터 배정 필요."""
+    now = datetime.utcnow()
+    ids = [c.case_id for c in cases]
+    formal_wait = [c.case_id for c in cases if nav8.formal_state(db, c.case_id) == "submitted"]
+    sig_wait = [ct.case_id for ct in db.query(models.Contract).filter(models.Contract.case_id.in_(ids) if ids else False).all()
+                if ct.status in ("sent", "received", "signing")] if ids else []
+    invs = db.query(models.Invoice).filter(models.Invoice.case_id.in_(ids) if ids else False).all() if ids else []
+    overdue = [i.case_id for i in invs if i.status == "waiting_payment" and i.due_date and i.due_date < now]
+    verify = [i.case_id for i in invs if i.status == "need_verification"]
+    pend2 = db.query(models.ApprovalRequest).filter_by(status="pending").count()
+    assigned = {(ev.payload or {}).get("auditor_id") and ev.case_id for ev in db.query(models.WorkflowEvent)
+                .filter(models.WorkflowEvent.action == "ops.auditor_assigned", models.WorkflowEvent.case_id.in_(ids) if ids else False).all()} if ids else set()
+    need_assign = [c.case_id for c in cases if c.status in ("consultant_review", "document_pre_audit_requested") and c.case_id not in assigned]
+    return {"formal_wait": formal_wait, "signature_wait": sig_wait, "payment_overdue": overdue, "payment_verify": verify,
+            "two_person_pending": pend2, "auditor_unassigned": need_assign}
+
+
+def _build_period_report(db, user, granularity, d):
+    if granularity not in REPORT_GRANULARITIES:
+        raise HTTPException(422, {"code": "BAD_GRANULARITY", "allowed": list(REPORT_GRANULARITIES)})
+    s, e, label = _period_range(granularity, d)
+    today = date.today()
+    in_progress = s <= today < e
+    eff_e = min(e, today + timedelta(days=1)) if in_progress else e
+    cases = _ops_cases(db, user)
+    m, evs, pays, certs = _report_metrics(db, cases, s, eff_e)
+    ps, pe, plabel = _prev_period(granularity, s)
+    pm, _, _, _ = _report_metrics(db, cases, ps, pe)
+    delta = {k: (m[k] - pm[k]) for k in m}
+    # RPT-04 현재 진행(오늘 기준)
+    steps = {i: 0 for i in range(len(nav8.STEP8_LABELS))}
+    stages = {}
+    sectors = {k: {"applied": 0, "issued": 0} for k in SECTOR_KO}
+    cert_case = {ct.case_id for ct in certs if ct.issue_date and s.isoformat() <= ct.issue_date[:10] < eff_e.isoformat()}
+    for c in cases:
+        s8 = nav8.compute_step8(db, c)
+        steps[s8["step"]] += 1
+        sec = (c.profile_ext or {}).get("sector")
+        if sec in sectors:
+            if _in(c.created_at, s, eff_e):
+                sectors[sec]["applied"] += 1
+            if c.case_id in cert_case:
+                sectors[sec]["issued"] += 1
+    # RPT-05 단계 처리 실적(기간 내 전이 to_status 상위 12) · 심사원별 처리 건수
+    auditors = {}
+    users = {u.user_id: u for u in db.query(models.User).filter_by(role="auditor").all()}
+    for ev in evs:
+        if not _in(ev.created_at, s, eff_e):
+            continue
+        if ev.to_status and ev.to_status != ev.from_status:
+            stages[ev.to_status] = stages.get(ev.to_status, 0) + 1
+        if ev.actor_id in users:
+            auditors[users[ev.actor_id].username] = auditors.get(users[ev.actor_id].username, 0) + 1
+    stages_top = sorted(stages.items(), key=lambda x: -x[1])[:12]
+    return {"granularity": granularity, "date": d.isoformat(), "period": {"start": s.isoformat(), "end": (eff_e - timedelta(days=1)).isoformat(), "label": label, "in_progress": in_progress},
+            "previous": {"start": ps.isoformat(), "end": (pe - timedelta(days=1)).isoformat(), "label": plabel},
+            "metrics": m, "previous_metrics": pm, "delta": delta,
+            "trend": _report_trend(db, cases, evs, pays, certs, granularity, s, eff_e),
+            "in_progress_steps": [{"step": i, "label": nav8.STEP8_LABELS[i], "count": steps[i]} for i in steps],
+            "stages": [{"status": k, "count": v} for k, v in stages_top],
+            "sectors": [{"sector": k, "label": SECTOR_KO[k], **v} for k, v in sectors.items()],
+            "auditors": [{"auditor": k, "count": v} for k, v in sorted(auditors.items(), key=lambda x: -x[1])],
+            "actions": _report_actions(db, cases)}
+
+
+@app.get("/admin/reports/period")
+def admin_report_period(granularity: str = Query("monthly"), date_: str = Query(None, alias="date"),
+                        user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    """RPT-01~06 — 기간 선택(일·주·월·분기·반기·연), 진행 중 기간은 오늘까지 집계 + 전기 비교."""
+    try:
+        d = date.fromisoformat(date_) if date_ else date.today()
+    except ValueError:
+        raise HTTPException(422, {"code": "BAD_DATE"})
+    return _build_period_report(db, user, granularity, d)
+
+
+def _report_text(r, report_no):
+    m, pm, dl = r["metrics"], r["previous_metrics"], r["delta"]
+    def row(k, label, money=False):
+        f = (lambda v: format(int(v), ",") + " 원") if money else (lambda v: str(v))
+        return "- %s: %s (전기 %s, %s%s)" % (label, f(m[k]), f(pm[k]), "+" if dl[k] >= 0 else "", f(dl[k]))
+    L = ["■ 인증 현황 보고서 %s" % report_no, "기간: %s (%s ~ %s)%s" % (r["period"]["label"], r["period"]["start"], r["period"]["end"], " · 진행 중(오늘까지)" if r["period"]["in_progress"] else ""),
+         "전기: %s" % r["previous"]["label"], "", "■ 주요 지표",
+         row("new_cases", "신규 신청"), row("eligible", "인증 가능 판정"), row("contracts_signed", "계약 체결"),
+         row("contract_amount", "계약 금액", True), row("paid_amount", "입금액", True), row("onsite_audits", "현장심사"),
+         row("fatwa_submitted", "샤리아 상정"), row("certificates_issued", "인증서 발급"), "", "■ 현재 진행(단계별)"]
+    L += ["- %s: %d건" % (x["label"], x["count"]) for x in r["in_progress_steps"]]
+    L += ["", "■ 단계별 처리 실적"] + (["- %s: %d" % (x["status"], x["count"]) for x in r["stages"]] or ["- 없음"])
+    L += ["", "■ 분야별 신청·발급"] + ["- %s: 신청 %d · 발급 %d" % (x["label"], x["applied"], x["issued"]) for x in r["sectors"]]
+    L += ["", "■ 심사원별 처리 건수"] + (["- %s: %d" % (x["auditor"], x["count"]) for x in r["auditors"]] or ["- 없음"])
+    a = r["actions"]
+    L += ["", "■ 조치 필요", "- 접수 대기 %d · 서명 대기 %d · 입금 기한 경과 %d · 입금 확인 %d · 서브 확인 대기 %d · 오디터 배정 필요 %d"
+          % (len(a["formal_wait"]), len(a["signature_wait"]), len(a["payment_overdue"]), len(a["payment_verify"]), a["two_person_pending"], len(a["auditor_unassigned"]))]
+    L += ["", "■ 결재", "작성: ____________    검토: ____________    승인: ____________", "", "※ 생성 시점의 수치로 고정 보관됩니다(RPT-07)."]
+    return "\n".join(L)
+
+
+@app.post("/admin/reports")
+def admin_report_create(body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """RPT-07 보고서 생성 — 번호 부여(RPT-연도-NNN)·수치 고정 보관(GeneratedDocument period_report + 이벤트 스냅샷)."""
+    import json as _json
+    import types as _types
+    b = dict(body or {})
+    try:
+        d = date.fromisoformat(b.get("date")) if b.get("date") else date.today()
+    except ValueError:
+        raise HTTPException(422, {"code": "BAD_DATE"})
+    r = _build_period_report(db, user, b.get("granularity") or "monthly", d)
+    shim = _types.SimpleNamespace(case_id="reports:" + (user.get("org_id") or "org_demo"), org_id=user.get("org_id"))
+    n = db.query(models.WorkflowEvent).filter_by(case_id=shim.case_id, action="report.issued").count() + 1
+    report_no = "RPT-%d-%03d" % (d.year, n)
+    text = _report_text(r, report_no)
+    g = _save_gendoc(db, shim, "period_report", text, user, status="final")
+    sm.record_event(db, shim, "report", "report", "report.issued", user["role"], user["uid"],
+                    {"report_no": report_no, "gen_doc_id": g.gen_doc_id, "granularity": r["granularity"], "period": r["period"],
+                     "metrics": r["metrics"], "previous_metrics": r["previous_metrics"]})
+    db.commit()
+    return {"ok": True, "report_no": report_no, "gen_doc_id": g.gen_doc_id, "period": r["period"], "metrics": r["metrics"]}
+
+
+@app.get("/admin/reports")
+def admin_report_list(user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    rows = (db.query(models.WorkflowEvent).filter_by(case_id="reports:" + (user.get("org_id") or "org_demo"), action="report.issued")
+            .order_by(models.WorkflowEvent.created_at.desc()).limit(100).all())
+    return {"items": [dict(e.payload or {}, at=e.created_at.isoformat() if e.created_at else None, by=e.actor_id) for e in rows]}
+
+
+@app.get("/admin/reports/{gen_doc_id}")
+def admin_report_get(gen_doc_id: str, user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    g = db.get(models.GeneratedDocument, gen_doc_id)
+    if not g or g.doc_type != "period_report":
+        raise HTTPException(404, {"code": "REPORT_NOT_FOUND"})
+    return {"gen_doc_id": g.gen_doc_id, "content": g.content, "created_at": str(g.created_at), "status": g.status}
+
+
+@app.get("/admin/reports/{gen_doc_id}/pdf")
+def admin_report_pdf(gen_doc_id: str, user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    g = db.get(models.GeneratedDocument, gen_doc_id)
+    if not g or g.doc_type != "period_report":
+        raise HTTPException(404, {"code": "REPORT_NOT_FOUND"})
+    first = (g.content or "").split("\n", 1)[0].replace("■ ", "")
+    pdf = _render_pdf(first, g.content or "", subtitle="GL HAC · 인증 현황 보고서")
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": _content_disposition(first.replace(" ", "_") + ".pdf")})
+
+
 @app.get("/analytics/summary")
 def analytics_summary(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
     """운영 분석 — 상태/경로/월별 추이·인증서·매출 집계(operator/admin)."""

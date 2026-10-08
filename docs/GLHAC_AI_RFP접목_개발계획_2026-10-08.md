@@ -81,5 +81,10 @@
 - 교육 서류 D-10~14: `GET/POST /cases/{id}/education-docs(/issue|/consent)` — D-10·11·13·14 는 텍스트 gendoc 발행, D-12 는 기존 SJPH 매뉴얼, 기업 일괄 서명·동의(`education.consent`).
 - v4 `prep.js`: 기업 `ent-prep`(교육 서류 일괄 서명·13종 업로드/해당 없음), 오디터 aud-mock 패널(확인·보완·되돌리기·완료 D-16), 컨설턴트 `cons-prep`(의견·초안 업로드). 테스트 `tests/test_prep_flow.py` 7건.
 
+## 3h. 묶음 ⑧ 설계 — 기간별 인증 현황·보고서 (구현 2026-10-08)
+- `GET /admin/reports/period?granularity=&date=`: 일·주·월·분기·반기·연 기간 [start,end), 진행 중 기간은 오늘까지, 전기 같은 기간 비교(delta). 지표 8종은 케이스 생성·`eligibility.verdict`·`contract.signed`(계약 금액)·`Payment confirmed`(입금액)·`to_status=onsite_audit_in_progress`·`audit_report.send_fatwa`·`HalalCertificate.issue_date` 에서 집계. 추이(일/월 버킷), 현재 진행(compute_step8 8단계), 단계 처리 실적(전이 to_status 상위 12)·분야(profile_ext.sector)·심사원(auditor 이벤트 actor), 조치 필요 6종.
+- `POST /admin/reports`: 번호 `RPT-YYYY-NNN`(가짜 케이스 `reports:org` 의 `report.issued` 이벤트 수), 본문 텍스트 gendoc `period_report`(결재란 포함) + 이벤트에 수치 스냅샷 고정. `GET /admin/reports`·`/{id}`·`/{id}/pdf`(`_render_pdf`).
+- v4 `report.js`: 관리자 `adm-report` 화면(기간 버튼·이전/오늘/다음·날짜, 지표 카드 전기 비교, CSS 막대 추이, 8단계·분야·심사원 표, 조치 필요 바로 가기, 보고서 생성·목록·PDF). 테스트 `tests/test_period_report.py` 6건. 정기 자동 생성(RPT-08)은 3차.
+
 ## 4. 진행 기록
-- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료(0580127) — **1차 MVP 핵심 3묶음 완료**, 묶음 ④ 완료(897534c), 묶음 ⑤ 완료(3871e7c), 묶음 ⑥ 완료(6058564), 묶음 ⑦ 완료. 다음 ⑧ 기간별 보고서.
+- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료(0580127) — **1차 MVP 핵심 3묶음 완료**, 묶음 ④ 완료(897534c), 묶음 ⑤ 완료(3871e7c), 묶음 ⑥ 완료(6058564), 묶음 ⑦ 완료(40cfca9), 묶음 ⑧ 완료. 다음 ⑨ 양식 관리·열람 권한·알림 설정.
