@@ -8,13 +8,13 @@ const SL_role = () => S.role==='adm' ? 'adm' : (S.role==='cons' ? 'cons' : 'aud'
 const SL_countStep = (step) => (RS.cases||[]).filter(c=>c.step8===step).length;
 const SL_countDone = () => (RS.cases||[]).filter(c=>c.done).length;
 const SL_countHold = () => (RS.cases||[]).filter(c=>c.hold).length;
-const SL_key = (step,q,sector) => (step===null?'all':String(step))+'|'+q+'|'+sector;
+const SL_key = (step,q,sector) => (step==null?'all':String(step))+'|'+q+'|'+sector;
 
 async function SL_load(step, q, sector){
   const key = SL_key(step, q, sector);
   try{
     const p = new URLSearchParams(); p.set('limit','500'); p.set('offset','0');
-    if(step!==null) p.set('step8', String(step));
+    if(step!=null) p.set('step8', String(step));
     if(sector) p.set('sector', sector);
     if(q) p.set('search', q);
     const r = await apiFetch('/cases?'+p.toString());
