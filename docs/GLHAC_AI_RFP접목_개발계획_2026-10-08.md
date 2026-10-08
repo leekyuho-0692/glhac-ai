@@ -46,5 +46,12 @@
 - v4: `approvals.js` 를 aud 역할에서도 보이게(서브 홈 배지 `NAVC['aud-home']` + 승인함), 승인/되돌리기(의견 필수)/취소 버튼, 판정 화면 3곳은 202 응답이면 "서브 오디터 확인 대기" 토스트.
 - 테스트 `tests/test_two_person.py`: 서브 있음→pending / 서브 승인→실행·이벤트 / 되돌림→알림 / 서브 판정 호출 403 / self 403 / 서브 없음→즉시 / 취소 / 자동 배정 / strict 409.
 
+## 3b. 묶음 ② 설계 — 인증 가능 판정 → 정식 신청 → 관리자 접수 (구현 2026-10-08)
+- **스키마 무변경**: 상태는 `consultant_review` 그대로 두고 WorkflowEvent latest-wins(`ai_second_analysis`·`eligibility.verdict`·`formal_application.submitted|returned|accepted`) + GeneratedDocument(`ai_second_analysis`=D-04, `eligibility_notice`=D-05, `formal_application`=D-06)로 표현. `nav8.eligibility_state/formal_state`.
+- **플래그 `GLHAC_FORMAL_FLOW=1`**(기본 0): 켜면 `compute_step8` 이 consultant_review 안에서 담당을 세분(판정 전 auditor → eligible 후 client → 제출 후 ops/step 2 → accepted 후 consultant) 하고 `contract/approve` 가 접수 확인 전엔 409 `FORMAL_NOT_ACCEPTED`. 엔드포인트 자체는 플래그와 무관하게 동작. 케이스 목록 항목에 `eligibility`·`formal` 필드 추가.
+- API: `POST/GET cases/{id}/ai-second-analysis`(스태프 전용, 규칙 기반 가능성 % + 권고 + 이전값), `POST cases/{id}/eligibility/verdict`(2인 확인 대상 `eligibility.verdict`, 불가는 사유 필수, AI 2차 선행), `GET cases/{id}/eligibility`(COM-05 세부 단계), `POST/GET cases/{id}/formal-application`(+`/return`·`/accept`, 서약·대표 서명 data:image 필수, 컨설턴트에겐 서명 비노출), `GET ops/formal-applications`. DOC-05: D-04 는 기업·컨설턴트 403/목록 제외.
+- v4 `formal-app.js`: 오디터 사전심사 상세 패널(세부 단계·AI 2차·판정·신청서 열람), 기업 `ent-formal` 화면(잠금 안내/신청서 폼+서명 캔버스/대기·접수 표시), 관리자 계약 관리 상단 접수 보드(보기·반려·접수 확인). `AUDQ.pre` 를 판정 대기 케이스까지 확장.
+- 테스트 `tests/test_formal_flow.py` 9건.
+
 ## 4. 진행 기록
-- 2026-10-08 갭표 완료, 묶음 ① 착수.
+- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료.

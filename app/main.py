@@ -2374,6 +2374,7 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
                       # P2 신규(하위호환 — 필드 추가만)
                       "step8": s8["step"], "step8_label": s8["step_label"], "done": s8["done"],
                       "hold": s8["hold"], "owner": s8["owner"],
+                      "eligibility": s8.get("eligibility"), "formal": s8.get("formal"),
                       "consultant": cons_name.get(_cc) if _cc else None,
                       "main_auditor": a.get("auditor_name"),
                       "co_auditors": co_map.get(c.case_id, []),
@@ -7565,6 +7566,9 @@ def contract_request(case_id: str, user=Depends(auth.require_roles("applicant", 
 def contract_approve(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
     """② 승인·계약서 발송(관리자) — 계약서 생성 + status=sent. 클라이언트 접수 큐로 이관."""
     c = _get_case(db, case_id, user)
+    # SRS FRM-05: 흐름 스위치가 켜져 있으면 정식 신청 접수 확인 전에는 견적·계약서를 발송하지 않는다
+    if nav8.formal_flow_on() and nav8.formal_state(db, case_id) != "accepted":
+        raise HTTPException(409, {"code": "FORMAL_NOT_ACCEPTED", "hint": "정식 인증 신청서 접수 확인 후 발송할 수 있습니다."})
     contract, gendoc = _gen_contract_core(db, c, body or {}, user, status="sent")
     _audit(db, user, "contract.approve", "contract", contract.contract_id, case_id, {}, commit=False)
     sm.record_event(db, c, c.status, c.status, "contract.approve", user["role"], user["uid"],
@@ -10350,6 +10354,269 @@ def upload_case_document(case_id: str, body: dict = None,
             "sjph_evidence": filed, "autoparse_queued": queued}
 
 
+# ===== SRS ② 인증 가능 판정 — AI 2차 분석(D-04) · 인증 가능 여부 판정(D-05) =====
+STAFF_ROLES = {"auditor", "fatwa_liaison", "operator", "admin"}
+
+
+def _ai_second_analysis_compute(db, c):
+    """보완 서류를 반영한 재분석 — 규칙 기반 인증 가능성(%)·권고. 사람이 반드시 확인한다(AI-04)."""
+    a = sm.assess_pathway(db, c)
+    blockers = [b.get("code") for b in sm.evaluate_blocking(db, c)]
+    mats = sm.materials(db, c.case_id)
+    with_ev = sum(1 for m in mats if sm._has_evidence(m))
+    crit = len(sm.critical_materials(db, c.case_id))
+    p = 95
+    if "HARAM_INGREDIENT" in blockers:
+        p -= 40
+    p -= min(45, 15 * blockers.count("CRITICAL_MATERIAL_NO_EVIDENCE"))
+    if any(b in ("PENYELIA_HALAL_MISSING", "PENYELIA_CERT_EXPIRED") for b in blockers):
+        p -= 10
+    if "SIHALAL_IDENTITY_UNVERIFIED" in blockers:
+        p -= 5
+    risk = a.get("risk_category")
+    p -= 15 if risk == "high" else (5 if risk == "medium" else 0)
+    p = max(5, min(98, p))
+    if p >= 80:
+        rec = "인증 가능 — 정식 인증 신청을 권고합니다."
+    elif p >= 50:
+        rec = "보완 후 가능 — 지적 항목(원재료 증빙·할랄 감독자)을 보완한 뒤 판정을 권고합니다."
+    else:
+        rec = "현 상태로는 인증이 어렵습니다 — 원재료 대체 또는 증빙 확보가 필요합니다."
+    return {"probability": p, "risk_category": risk, "suggested_pathway": a.get("suggested_pathway"),
+            "blockers": blockers, "materials": {"total": len(mats), "with_evidence": with_ev, "critical": crit},
+            "recommendation": rec}
+
+
+def _preassess_ready(db, case_id):
+    e = nav8.latest_event(db, case_id, "preassess.review")
+    return bool(e) and (e.payload or {}).get("verdict") == "ready"
+
+
+@app.post("/cases/{case_id}/ai-second-analysis")
+def ai_second_analysis(case_id: str, user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator")),
+                       db: Session = Depends(get_db)):
+    """FRM-01 AI 2차 분석 — 사전심사 '가능(ready)' 이후에만. 결과는 D-04 로 저장(기업·컨설턴트 비공개)."""
+    import json as _json
+    c = _get_case(db, case_id, user)
+    if not _preassess_ready(db, case_id):
+        raise HTTPException(409, {"code": "PREASSESS_NOT_READY"})
+    prev = nav8.latest_event(db, case_id, "ai_second_analysis")
+    prev_p = (prev.payload or {}).get("probability") if prev else None
+    res = _ai_second_analysis_compute(db, c)
+    res["previous_probability"] = prev_p
+    res["analyzed_at"] = datetime.utcnow().isoformat()
+    g = _save_gendoc(db, c, "ai_second_analysis",
+                     _json.dumps(dict(res, company_name=c.company_name, case_id=case_id), ensure_ascii=False),
+                     user, status="final")
+    res["gen_doc_id"] = g.gen_doc_id
+    sm.record_event(db, c, c.status, c.status, "ai_second_analysis", user["role"], user["uid"], res)
+    db.commit()
+    return res
+
+
+@app.get("/cases/{case_id}/ai-second-analysis")
+def ai_second_analysis_get(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    if user["role"] not in STAFF_ROLES:
+        raise HTTPException(403, {"code": "DOC_RESTRICTED", "doc": "D-04"})
+    e = nav8.latest_event(db, case_id, "ai_second_analysis")
+    if not e:
+        return {"exists": False}
+    return dict(e.payload or {}, exists=True)
+
+
+def _do_eligibility_verdict(db, c, actor, body):
+    """FRM-02 인증 가능 여부 판정 본체 — 이벤트 + D-05 통지서 + 기업·컨설턴트 알림(가능·불가만)."""
+    import json as _json
+    verdict = (body.get("verdict") or "").lower()
+    reason = (body.get("reason") or "").strip()
+    note = (body.get("note") or "").strip()
+    label = "가능" if verdict == "eligible" else "불가"
+    content = {"doc": "D-05", "title": "인증 가능 여부 판정 통지서", "company_name": c.company_name,
+               "case_id": c.case_id, "verdict": verdict, "verdict_label": label,
+               "reason": reason if verdict == "not_eligible" else "",
+               "decided_at": datetime.utcnow().isoformat(), "decided_by": actor.get("username")}
+    g = _save_gendoc(db, c, "eligibility_notice", _json.dumps(content, ensure_ascii=False), actor, status="final")
+    sm.record_event(db, c, c.status, c.status, "eligibility.verdict", actor["role"], actor["uid"],
+                    {"verdict": verdict, "reason": reason, "note": note, "gen_doc_id": g.gen_doc_id})
+    body_txt = "인증 가능 여부 판정 결과: " + label + (("\n사유: " + reason) if verdict == "not_eligible" else "")
+    for r in ("client", "consultant"):
+        _notify(db, c, "eligibility.verdict", "인증 가능 여부 판정 — " + label, body=body_txt, role=r)
+    db.commit()
+    return {"ok": True, "verdict": verdict, "gen_doc_id": g.gen_doc_id, "status": c.status}
+
+
+@app.post("/cases/{case_id}/eligibility/verdict")
+def eligibility_verdict(case_id: str, body: dict = None,
+                        user=Depends(auth.require_roles("auditor", "operator")), db: Session = Depends(get_db)):
+    """FRM-02 — 메인 오디터 판정(가능·불가, 불가는 사유 필수) → 서브 오디터 확인(2인) → D-05."""
+    c = _get_case(db, case_id, user)
+    b = dict(body or {})
+    verdict = (b.get("verdict") or "").lower()
+    if verdict not in ("eligible", "not_eligible"):
+        raise HTTPException(422, {"code": "INVALID_VERDICT", "allowed": ["eligible", "not_eligible"]})
+    if verdict == "not_eligible" and not (b.get("reason") or "").strip():
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    if not nav8.latest_event(db, case_id, "ai_second_analysis"):
+        raise HTTPException(409, {"code": "AI2_REQUIRED", "hint": "AI 2차 분석을 먼저 실행하세요."})
+    b["verdict"] = verdict
+    pend = _two_person_gate(db, c, user, "eligibility.verdict", b)
+    if pend:
+        return pend
+    return _do_eligibility_verdict(db, c, user, b)
+
+
+@app.get("/cases/{case_id}/eligibility")
+def eligibility_get(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """COM-05 사전심사 세부 단계 — 판정·AI 2차·정식 신청 상태를 한 번에(역할별 노출 차등)."""
+    _get_case(db, case_id, user)
+    staff = user["role"] in STAFF_ROLES
+    ev = nav8.latest_event(db, case_id, "eligibility.verdict")
+    ai2 = nav8.latest_event(db, case_id, "ai_second_analysis")
+    fm = nav8.latest_event(db, case_id, "formal_application.submitted", "formal_application.returned",
+                           "formal_application.accepted")
+    pv = (ev.payload or {}) if ev else {}
+    out = {"flow_on": nav8.formal_flow_on(), "preassess_ready": _preassess_ready(db, case_id),
+           "verdict": pv.get("verdict"), "reason": pv.get("reason") if (staff or pv.get("verdict") == "not_eligible") else None,
+           "note": pv.get("note") if staff else None, "gen_doc_id": pv.get("gen_doc_id"),
+           "decided_at": ev.created_at.isoformat() if ev else None,
+           "ai2": bool(ai2), "ai2_probability": (ai2.payload or {}).get("probability") if (ai2 and staff) else None,
+           "formal": {"status": fm.action.split(".")[-1] if fm else None,
+                      "at": fm.created_at.isoformat() if fm else None,
+                      "return_reason": (fm.payload or {}).get("reason") if (fm and fm.action.endswith("returned")) else None,
+                      "gen_doc_id": (fm.payload or {}).get("gen_doc_id") if fm else None}}
+    return out
+
+
+# ===== SRS ② 정식 인증 신청서(D-06) → 관리자 접수·반려 =====
+FORMAL_REQUIRED = ("process_summary", "halal_management", "preferred_audit_period", "signer_name")
+
+
+def _formal_latest(db, case_id):
+    return nav8.latest_event(db, case_id, "formal_application.submitted", "formal_application.returned",
+                             "formal_application.accepted")
+
+
+@app.post("/cases/{case_id}/formal-application")
+def formal_application_submit(case_id: str, body: dict = None,
+                              user=Depends(auth.require_roles("applicant", "penyelia_halal", "consultant")),
+                              db: Session = Depends(get_db)):
+    """FRM-03/04 — 인증 가능 판정 뒤에만 작성 가능. 사전심사 자료 이관 + 공정·할랄 관리·비할랄 취급·
+    희망 심사 시기·판매처·서약·대표자 서명 → D-06 저장 → 관리자 접수 대기."""
+    import json as _json
+    c = _get_case(db, case_id, user)
+    if nav8.eligibility_state(db, case_id) != "eligible":
+        raise HTTPException(409, {"code": "ELIGIBILITY_REQUIRED", "hint": "인증 가능 판정 후 작성할 수 있습니다."})
+    st = nav8.formal_state(db, case_id)
+    if st == "submitted":
+        raise HTTPException(409, {"code": "FORMAL_ALREADY_SUBMITTED"})
+    if st == "accepted":
+        raise HTTPException(409, {"code": "FORMAL_ALREADY_ACCEPTED"})
+    b = dict(body or {})
+    missing = [k for k in FORMAL_REQUIRED if not str(b.get(k) or "").strip()]
+    if missing:
+        raise HTTPException(422, {"code": "FIELDS_REQUIRED", "fields": missing})
+    if b.get("pledge") is not True:
+        raise HTTPException(422, {"code": "PLEDGE_REQUIRED"})
+    sig = b.get("signature") or ""
+    if not (isinstance(sig, str) and sig.startswith("data:image/")):
+        raise HTTPException(422, {"code": "SIGNATURE_REQUIRED"})
+    fields = {k: b.get(k) for k in ("process_summary", "halal_management", "non_halal_handling", "non_halal_desc",
+                                    "preferred_audit_period", "sales_channels", "signer_name")}
+    submitted_at = datetime.utcnow().isoformat()
+    content = {"doc": "D-06", "title": "정식 인증 신청서", "case_id": case_id, "company_name": c.company_name,
+               "nib": c.nib, "responsible_person": c.responsible_person, "address": c.address,
+               "factory_address": c.factory_address, "scheme": c.scheme or "product", "pathway": c.pathway,
+               "fields": fields, "pledge": True, "signature": sig, "submitted_by": user.get("username"),
+               "submitted_role": user["role"], "submitted_at": submitted_at}
+    g = _save_gendoc(db, c, "formal_application", _json.dumps(content, ensure_ascii=False), user, status="submitted")
+    sm.record_event(db, c, c.status, c.status, "formal_application.submitted", user["role"], user["uid"],
+                    dict(fields, gen_doc_id=g.gen_doc_id, submitted_at=submitted_at))
+    _notify(db, c, "formal_application.submitted", "정식 인증 신청서 접수 대기 — " + (c.company_name or ""),
+            body="정식 인증 신청서가 제출되었습니다. 접수 확인 또는 반려해 주세요.", role="operator")
+    db.commit()
+    return {"ok": True, "status": "submitted", "gen_doc_id": g.gen_doc_id, "submitted_at": submitted_at}
+
+
+@app.get("/cases/{case_id}/formal-application")
+def formal_application_get(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """FRM-07 — 오디터·관리자·기업·컨설턴트 열람(서명 이미지는 기업·인증기관만)."""
+    import json as _json
+    _get_case(db, case_id, user)
+    e = _formal_latest(db, case_id)
+    if not e:
+        return {"status": None}
+    sub = nav8.latest_event(db, case_id, "formal_application.submitted")
+    gid = (sub.payload or {}).get("gen_doc_id") if sub else None
+    g = db.get(models.GeneratedDocument, gid) if gid else None
+    doc = {}
+    if g and g.content:
+        try:
+            doc = _json.loads(g.content)
+        except Exception:
+            doc = {}
+    if user["role"] == "consultant":
+        doc.pop("signature", None)
+    status = e.action.split(".")[-1]
+    return {"status": status, "at": e.created_at.isoformat() if e.created_at else None,
+            "return_reason": (e.payload or {}).get("reason") if status == "returned" else None,
+            "gen_doc_id": gid, "doc": doc, "can_accept": user["role"] in ("operator", "admin") and status == "submitted"}
+
+
+@app.post("/cases/{case_id}/formal-application/return")
+def formal_application_return(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")),
+                              db: Session = Depends(get_db)):
+    """FRM-06 반려 — 사유 필수, 기업이 다시 작성·제출."""
+    c = _get_case(db, case_id, user)
+    reason = ((body or {}).get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    if nav8.formal_state(db, case_id) != "submitted":
+        raise HTTPException(409, {"code": "FORMAL_NOT_SUBMITTED"})
+    sm.record_event(db, c, c.status, c.status, "formal_application.returned", user["role"], user["uid"], {"reason": reason})
+    for r in ("client", "consultant"):
+        _notify(db, c, "formal_application.returned", "정식 인증 신청서 반려", body="반려 사유: " + reason, role=r)
+    db.commit()
+    return {"ok": True, "status": "returned", "reason": reason}
+
+
+@app.post("/cases/{case_id}/formal-application/accept")
+def formal_application_accept(case_id: str, user=Depends(auth.require_roles("operator")),
+                              db: Session = Depends(get_db)):
+    """FRM-05 접수 확인(관리자) — 이후 견적서·계약서 발송(contract/approve)으로 이어진다."""
+    c = _get_case(db, case_id, user)
+    if nav8.formal_state(db, case_id) != "submitted":
+        raise HTTPException(409, {"code": "FORMAL_NOT_SUBMITTED"})
+    sm.record_event(db, c, c.status, c.status, "formal_application.accepted", user["role"], user["uid"], {})
+    for r in ("client", "consultant"):
+        _notify(db, c, "formal_application.accepted", "정식 인증 신청 접수 완료",
+                body="정식 인증 신청서가 접수되었습니다. 견적서·계약서가 곧 발송됩니다.", role=r)
+    db.commit()
+    return {"ok": True, "status": "accepted"}
+
+
+@app.get("/ops/formal-applications")
+def ops_formal_applications(status: str = "submitted", user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")),
+                            db: Session = Depends(get_db)):
+    """FRM-05 접수 대기 목록(관리자) — status=submitted|returned|accepted|all. 오디터는 열람만."""
+    items = []
+    for c in _ops_cases(db, user):
+        e = _formal_latest(db, c.case_id)
+        if not e:
+            continue
+        stt = e.action.split(".")[-1]
+        if status != "all" and stt != status:
+            continue
+        sub = nav8.latest_event(db, c.case_id, "formal_application.submitted")
+        items.append({"case_id": c.case_id, "company_name": c.company_name, "case_status": c.status,
+                      "formal": stt, "at": e.created_at.isoformat() if e.created_at else None,
+                      "submitted_at": (sub.payload or {}).get("submitted_at") if sub else None,
+                      "gen_doc_id": (sub.payload or {}).get("gen_doc_id") if sub else None,
+                      "return_reason": (e.payload or {}).get("reason") if stt == "returned" else None})
+    items.sort(key=lambda x: x.get("at") or "", reverse=True)
+    return {"items": items, "count": len(items)}
+
+
 @app.get("/cases/{case_id}/gen-docs")
 def list_gendocs(case_id: str, doc_type: str = None,
                  user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -10359,6 +10626,8 @@ def list_gendocs(case_id: str, doc_type: str = None,
         q = q.filter_by(doc_type=doc_type)
     rows = q.order_by(models.GeneratedDocument.doc_type,
                       models.GeneratedDocument.version.desc()).all()
+    if user["role"] not in STAFF_ROLES:
+        rows = [g for g in rows if g.doc_type != "ai_second_analysis"]
     return [{"gen_doc_id": g.gen_doc_id, "doc_type": g.doc_type, "version": g.version,
              "status": g.status, "created_at": str(g.created_at)} for g in rows]
 
@@ -10369,6 +10638,8 @@ def get_gendoc(gen_doc_id: str, user=Depends(auth.get_current_user), db: Session
     if not g:
         raise HTTPException(404, {"code": "GENDOC_NOT_FOUND"})
     _get_case(db, g.case_id, user)  # 조직격리
+    if g.doc_type == "ai_second_analysis" and user["role"] not in STAFF_ROLES:
+        raise HTTPException(403, {"code": "DOC_RESTRICTED", "doc": "D-04"})
     return {"gen_doc_id": g.gen_doc_id, "doc_type": g.doc_type, "version": g.version,
             "status": g.status, "content": g.content, "created_at": str(g.created_at)}
 
@@ -11667,9 +11938,10 @@ MAKER_CHECKER = {
     "preassess.review": {"maker": {"auditor"}, "checker": "co_auditor", "label": "사전심사 판정"},
     "mock_audit.decision": {"maker": {"auditor"}, "checker": "co_auditor", "label": "모의심사 완료"},
     "audit_report.send_fatwa": {"maker": {"auditor"}, "checker": "co_auditor", "label": "샤리아 상정"},
+    "eligibility.verdict": {"maker": {"auditor"}, "checker": "co_auditor", "label": "인증 가능 판정"},
 }
 
-TWO_PERSON_ACTIONS = {"preassess.review", "mock_audit.decision", "audit_report.send_fatwa"}
+TWO_PERSON_ACTIONS = {"preassess.review", "mock_audit.decision", "audit_report.send_fatwa", "eligibility.verdict"}
 
 
 def _checker_roles(rule):
@@ -11842,6 +12114,8 @@ def _exec_approved(db, ar, user):
             return _do_mock_audit_decide(db, c, actor, ar.payload or {})
         if ar.action_type == "audit_report.send_fatwa":
             return _do_send_fatwa(db, c, actor, ar.payload or {})
+        if ar.action_type == "eligibility.verdict":
+            return _do_eligibility_verdict(db, c, actor, ar.payload or {})
     reason = (ar.payload or {}).get("reason")
     if ar.action_type == "certificate.issue":
         _issue_guards(db, c, ar.case_id)   # 발급 재검증(요청 후 상태 변동 대비)

@@ -40,6 +40,8 @@ v4 연결 4번(재정의) — 상태머신 실제 흐름 기준. owner = '지금
 주의: 이 모듈은 읽기 전용 계산만 한다(쓰기·스키마 변경 없음). main.py 가 import 해서 쓴다.
 main._STAGE_OWNER(워크플로 모니터)는 이 _OWNER 를 그대로 쓴다(단일 출처).
 """
+import os
+
 from . import models
 from . import state_machine as sm
 
@@ -124,12 +126,54 @@ def _sihalal_registered(db, case_id):
         case_id=case_id, action="certificate_number_imported").first() is not None
 
 
+def formal_flow_on():
+    """SRS FRM(인증 가능 판정→정식 신청→관리자 접수) 흐름 스위치 — 켜면 consultant_review 안에서 담당이 세분된다."""
+    return os.environ.get("GLHAC_FORMAL_FLOW", "0").lower() in ("1", "true", "on")
+
+
+def latest_event(db, case_id, *actions):
+    """해당 액션들 중 가장 최근 WorkflowEvent(latest-wins). 없으면 None."""
+    return (db.query(models.WorkflowEvent)
+            .filter(models.WorkflowEvent.case_id == case_id,
+                    models.WorkflowEvent.action.in_(list(actions)))
+            .order_by(models.WorkflowEvent.created_at.desc(), models.WorkflowEvent.event_id.desc()).first())
+
+
+def eligibility_state(db, case_id):
+    """인증 가능 여부 판정(eligibility.verdict) 최신값: 'eligible'|'not_eligible'|None."""
+    e = latest_event(db, case_id, "eligibility.verdict")
+    return (e.payload or {}).get("verdict") if e else None
+
+
+def formal_state(db, case_id):
+    """정식 인증 신청서 상태: None|'submitted'|'returned'|'accepted' (formal_application.* 최신 이벤트)."""
+    e = latest_event(db, case_id, "formal_application.submitted", "formal_application.returned",
+                     "formal_application.accepted")
+    return e.action.split(".")[-1] if e else None
+
+
 def compute_step8(db, c):
     """case → {step(0-7), step_label, done, hold, owner}. 읽기 전용."""
     st = c.status or "onboarding"
     step = _BASE_STEP.get(st, 0)
     owner = _OWNER.get(st, "ops")
     done = st in _DONE_STATES
+    hold_flag = False
+    el = fm = None
+
+    # SRS ②: 인증 가능 판정 → 정식 신청 → 관리자 접수 (플래그 GLHAC_FORMAL_FLOW)
+    if st == "consultant_review" and formal_flow_on():
+        el = eligibility_state(db, c.case_id)
+        fm = formal_state(db, c.case_id)
+        if el is None:
+            owner = "auditor"                      # 인증 가능 여부 판정 대기(메인 오디터)
+        elif el == "not_eligible":
+            owner, hold_flag = "client", True      # 불가 → 보완 후 재신청
+        elif fm in (None, "returned"):
+            owner = "client"                       # 정식 인증 신청서 작성(대표 서명)
+        elif fm == "submitted":
+            step, owner = 2, "ops"                 # 관리자 접수 확인 대기
+        # accepted 면 아래 계약 신호 로직(컨설턴트·계약) 그대로
 
     # 계약(2): 전용 상태가 없어 계약·인보이스 신호로 가른다.
     if st == "consultant_review" and _has_contract(db, c.case_id):
@@ -146,11 +190,12 @@ def compute_step8(db, c):
         step = 7
 
     # hold(보완 대기) — 설계서 4장: 보완요청·시정요청·샤리아 부적합 재심의
-    hold = st in ("supplementation_required", "corrective_action_required")
+    hold = st in ("supplementation_required", "corrective_action_required") or bool(hold_flag)
     if st == "fatwa_review":
         fd = db.query(models.FatwaDecision).filter_by(case_id=c.case_id).first()
         if fd and fd.decision and fd.decision not in ("approved", "conditional"):
             hold = True
 
     return {"step": step, "step_label": STEP8_LABELS[step],
-            "done": done, "hold": hold, "owner": owner}
+            "done": done, "hold": hold, "owner": owner,
+            "eligibility": el, "formal": fm}
