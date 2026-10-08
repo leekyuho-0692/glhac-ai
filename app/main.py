@@ -971,6 +971,27 @@ def debug_stream_test(mode: str = Query("ndjson"), n: int = Query(6)):
                                       "X-Accel-Buffering": "no"})
 
 
+@app.get("/auth/demo-accounts")
+def demo_accounts(db: Session = Depends(get_db)):
+    """데모 모드(GLHAC_DEV=1) 전용 — 로그인 화면 역할 버튼에 매칭할 계정. 기업은 '실제 케이스가 있는 업체 계정'만."""
+    if os.environ.get("GLHAC_DEV") != "1":
+        raise HTTPException(404, {"code": "NOT_FOUND"})
+    staff = {"consultant": "consultant1", "auditor": "auditor1", "sharia": "fatwa1", "admin": "admin"}
+    ents = []
+    for u in db.query(models.User).filter_by(role="applicant").order_by(models.User.username).all():
+        if u.username == "applicant1":
+            continue
+        cases = db.query(models.CaseApplication).filter_by(org_id=u.org_id).order_by(models.CaseApplication.created_at.desc()).all()
+        if not cases:
+            continue
+        o = db.get(models.Org, u.org_id)
+        c = cases[0]
+        s8 = nav8.compute_step8(db, c)
+        ents.append({"username": u.username, "company": (o.name if o else None) or c.company_name,
+                     "scheme": c.scheme or "product", "status": c.status, "step_label": s8.get("step_label"), "cases": len(cases)})
+    return {"demo": True, "password_hint": "pw", "staff": staff, "enterprise": ents}
+
+
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
     """라이브니스+DB 체크 — 로드밸런서/오케스트레이터용."""
