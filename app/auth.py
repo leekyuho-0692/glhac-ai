@@ -161,6 +161,10 @@ def get_current_user(authorization: str = Header(None), db=Depends(get_db)):
     u = db.get(models.User, payload.get("uid"))
     if not u or payload.get("tv", 0) != (u.token_version or 0):
         raise HTTPException(401, {"code": "TOKEN_REVOKED"})
+    _ev = (db.query(models.WorkflowEvent).filter_by(case_id="users:" + u.user_id, action="user.status")
+           .order_by(models.WorkflowEvent.created_at.desc()).first())
+    if _ev and (_ev.payload or {}).get("status") == "suspended":
+        raise HTTPException(403, {"code": "USER_SUSPENDED"})
     return payload  # {uid, username, role, org_id, typ, tv}
 
 

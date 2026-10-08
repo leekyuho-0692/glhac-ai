@@ -1302,6 +1302,8 @@ def login(body: schemas.LoginReq, db: Session = Depends(get_db)):
         auth.record_attempt(rl_key)
         raise HTTPException(401, {"code": "BAD_CREDENTIALS"})
     auth.clear_attempts(rl_key)
+    if _user_suspended(db, u.user_id):
+        raise HTTPException(403, {"code": "USER_SUSPENDED"})
     if auth.needs_rehash(u.password_hash):   # 레거시 sha256 → pbkdf2 자동 승격
         u.password_hash = auth.hash_pw(body.password)
         db.commit()
@@ -1344,6 +1346,8 @@ def handoff_login(body: schemas.LoginReq, db: Session = Depends(get_db)):
         auth.record_attempt(rl_key)
         raise HTTPException(401, {"code": "BAD_CREDENTIALS"})
     auth.clear_attempts(rl_key)
+    if _user_suspended(db, u.user_id):
+        raise HTTPException(403, {"code": "USER_SUSPENDED"})
     _handoff_sweep()
     code = secrets.token_urlsafe(24)
     _HANDOFF[code] = (time.time(), {**auth.make_tokens(u), "role": u.role,
@@ -1703,7 +1707,7 @@ def admin_list_users(user=Depends(auth.require_roles()), db: Session = Depends(g
     col = {"username": M.username, "role": M.role, "org_id": M.org_id}.get(sort, M.username)
     Q = Q.order_by(col.desc() if dir == "desc" else col.asc())
     rows = Q.offset(offset).limit(limit).all()
-    items = [{"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id} for u in rows]
+    items = [{"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id, "suspended": _user_suspended(db, u.user_id)} for u in rows]
     return {"items": items, "total": total, "limit": limit, "offset": offset} if meta else items
 
 
@@ -1719,6 +1723,45 @@ def admin_create_user(body: schemas.AdminUserReq, user=Depends(rbac.require_acti
     db.add(u)
     db.commit()
     return {"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id}
+
+
+USER_STATUS_ACTION = "user.status"
+
+
+def _user_suspended(db, user_id):
+    e = (db.query(models.WorkflowEvent).filter_by(case_id="users:" + user_id, action=USER_STATUS_ACTION)
+         .order_by(models.WorkflowEvent.created_at.desc()).first())
+    return bool(e and (e.payload or {}).get("status") == "suspended")
+
+
+@app.post("/admin/users/{user_id}/suspend")
+def admin_user_suspend(user_id: str, body: dict = None, user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    """MEM-09 정지 — 기존 토큰 즉시 무효(token_version) + 로그인 차단."""
+    import types as _types
+    u = db.get(models.User, user_id)
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    if u.user_id == user["uid"]:
+        raise HTTPException(409, {"code": "CANNOT_SUSPEND_SELF"})
+    u.token_version = (u.token_version or 0) + 1
+    sm.record_event(db, _types.SimpleNamespace(case_id="users:" + user_id, org_id=u.org_id), "user", "user",
+                    USER_STATUS_ACTION, user["role"], user["uid"], {"status": "suspended", "reason": ((body or {}).get("reason") or "").strip()})
+    _audit(db, user, "admin.user.suspend", "user", user_id, None, {"reason": (body or {}).get("reason")}, commit=False)
+    db.commit()
+    return {"ok": True, "user_id": user_id, "status": "suspended"}
+
+
+@app.post("/admin/users/{user_id}/unsuspend")
+def admin_user_unsuspend(user_id: str, user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    import types as _types
+    u = db.get(models.User, user_id)
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    sm.record_event(db, _types.SimpleNamespace(case_id="users:" + user_id, org_id=u.org_id), "user", "user",
+                    USER_STATUS_ACTION, user["role"], user["uid"], {"status": "active"})
+    _audit(db, user, "admin.user.unsuspend", "user", user_id, None, {}, commit=False)
+    db.commit()
+    return {"ok": True, "user_id": user_id, "status": "active"}
 
 
 @app.patch("/admin/users/{user_id}")
@@ -12514,6 +12557,9 @@ def _do_preassess_review(db, c, actor, body):
     sm.record_event(db, c, c.status, c.status, "preassess.review", actor["role"], actor["uid"],
                     {"sections": sections, "verdict": verdict, "note": (body.get("note") or "").strip()})
     advanced = False
+    if verdict == "reject":   # SRS PRE-10: 불가 → 사유 통지, 보완 후 재신청(새 사전심사 건)
+        for _r in ("client", "consultant"):
+            _notify(db, c, "preassess.reject", "AI 사전심사 결과 — 불가", body="사유: " + (body.get("note") or ""), role=_r)
     if verdict == "ready":
         advanced = _auto_advance(db, c, "consultant_review", actor, "preassess.review.auto")
     db.commit()
@@ -17414,8 +17460,8 @@ def util_romanize(body: dict = None, user=Depends(auth.get_current_user)):
 
 @app.get("/cases/{case_id}/preassess-report.docx")
 def preassess_report_docx(case_id: str, lang: str = Query("ko"),
-                          user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
-                                                          "consultant")),
+                          user=Depends(auth.require_roles("auditor", "operator", "consultant",
+                                                          "applicant", "penyelia_halal")),
                           db: Session = Depends(get_db)):
     """사전심사 결과 보고서 — 편집 가능한 Word(.docx). 기업·공장·문서·성분(부정 우선)·판정 수록.
     lang=ko|en|id — 제목·표머리·판정어 등 고정 라벨을 현지화한다(성분 근거 서술은 원문 유지)."""
@@ -17587,8 +17633,8 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
 
 @app.get("/cases/{case_id}/preassess-report.pdf")
 def preassess_report_pdf(case_id: str, lang: str = Query("ko"),
-                         user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
-                                                         "consultant")),
+                         user=Depends(auth.require_roles("auditor", "operator", "consultant",
+                                                         "applicant", "penyelia_halal")),
                          db: Session = Depends(get_db)):
     """사전심사 보고서 PDF — docx를 LibreOffice로 변환(인라인 미리보기용, docx와 동일 양식).
     soffice 부재 시 docx 그대로 반환(다운로드 폴백)."""
@@ -18633,8 +18679,10 @@ def preassess_review(case_id: str, body: schemas.PreassessReviewReq,
     """① 오디터 3섹션(문서·재료·제조) 검토 기록 — auditor_reviewed 근거. latest-wins."""
     c = _get_case(db, case_id, user)
     verdict = (body.verdict or "").lower()
-    if verdict not in ("ready", "supplement"):
-        raise HTTPException(422, {"code": "INVALID_VERDICT", "allowed": ["ready", "supplement"]})
+    if verdict not in ("ready", "supplement", "reject"):
+        raise HTTPException(422, {"code": "INVALID_VERDICT", "allowed": ["ready", "supplement", "reject"]})
+    if verdict == "reject" and not (body.note or "").strip():
+        raise HTTPException(422, {"code": "REASON_REQUIRED", "hint": "불가 판정은 사유가 필요합니다."})
     sections = body.sections or {}
     bad = set(sections.keys()) - set(PREASSESS_SECTIONS)
     if bad:
