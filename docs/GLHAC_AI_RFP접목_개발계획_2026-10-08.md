@@ -61,5 +61,11 @@
 - 보드(CTR-06): `GET /admin/billing/board?filter=` — 다음 조치 규칙 `_billing_next_action`(접수 확인→계약 발송→서명 요청→GL HAC 서명→체결 고지→입금 고지→재고지→입금 확인→확인 알림→다음 회차→완납).
 - v4 `billing-adm.js`(보드·조치 버튼·발송 창·설정/가격표), `billing-ent.js`(기업 견적서·갑 서명·결제 일정·입금 완료 알림·고지 이력, 컨설턴트 견적 변경 요청). 테스트 `tests/test_billing_flow.py` 9건.
 
+## 3d. 묶음 ④ 설계 — 분야 5종 (구현 2026-10-08)
+- 분야는 `profile_ext.sector/sectors`(Org·Case). 창고·운송은 `intake.sector_defaults` 로 기존 물류 체계(`scheme=logistics` + jasa 기본값)에 매핑, 제품 3분야는 `coa_msds`(성분분석표) 추가 요구·화장품은 공장등록증 메모(`doc_requirements(..., sector=)` → `notes`).
+- `POST /cases` 의 `sector/sectors`, `POST /cases/{id}/sector`(접수 단계면 scheme 자동), 가입 `sectors`·초대 `sectors/contact_name/phone`(`invite:{code}` 이벤트 메타 → 가입 프리필; 공개 `/invites/{code}/check` 는 연락처 비노출 유지), `GET /cases?sector=&status=&search=` + 항목·상세 `sector`.
+- MEM-05 컨설턴트 변경 요청 = `ApprovalRequest("consultant.change")`(maker 기업·checker 관리자) → 승인 시 `Org.consultant_id` 교체.
+- v4 `sector.js`: 신청 모달 분야 셀렉트(창고·운송→물류 자동), 가입 분야 저장·초대 프리필, 초대 폼 분야/담당자/연락처(분야 미선택 가드), 변경 요청 모달, 목록 분야 칩(adm-flow·aud-dossier·cons-status). 테스트 `tests/test_sector_flow.py` 7건.
+
 ## 4. 진행 기록
-- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료 — **1차 MVP 핵심 3묶음 완료**. 다음 ④ 분야 5종.
+- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료(0580127) — **1차 MVP 핵심 3묶음 완료**, 묶음 ④ 완료. 다음 ⑤ 샤리아 정족수.

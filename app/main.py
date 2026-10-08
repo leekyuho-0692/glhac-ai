@@ -26,6 +26,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from .db import Base, engine, get_db, SessionLocal
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from . import nav8
+from . import intake
 from . import observability as obs
 from . import domain_dict as _dd_mod
 from .ontology_seed import seed
@@ -585,6 +586,7 @@ def _case_dict(c):
             "draft_state": c.draft_state, "return_reason": c.return_reason,
             "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
             "scheme_frozen": bool(c.scheme_frozen),
+            "sector": (c.profile_ext or {}).get("sector"),
             "profile_ext": c.profile_ext or {}, "facility_ids": c.facility_ids or []}
 
 
@@ -1511,6 +1513,12 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
             invite_note, inv = "EXPIRED", None
         elif inv.used_count >= inv.max_uses:
             invite_note, inv = "USED_UP", None
+    _meta = {}
+    if inv:
+        _ev = (db.query(models.WorkflowEvent).filter_by(case_id="invite:" + inv.code, action="invite.meta")
+               .order_by(models.WorkflowEvent.created_at.desc()).first())
+        _meta = dict((_ev.payload or {})) if _ev else {}
+    _reg_sectors = [s for s in (body.sectors or _meta.get("sectors") or []) if s in intake.SECTORS]
     # 회사1:직원N — 소속회사명으로 기존 org(Company) 매핑 (Phase 2)
     existing = db.query(models.Org).filter(models.Org.name == company_name).first() if company_name else None
     if existing:
@@ -1519,7 +1527,8 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     else:
         org = "org_" + models.uid()[:8]
         company_role = "client_admin"    # 새 회사 첫 가입자 = 기업업무 관리자
-        _o = models.Org(org_id=org, name=company_name or "My Company", address=body.address)
+        _o = models.Org(org_id=org, name=company_name or "My Company", address=body.address,
+                        profile_ext=(({"sector": _reg_sectors[0], "sectors": _reg_sectors}) if _reg_sectors else None))
         # 컨설턴트 초대만 담당으로 귀속한다. 관리자 발급 클라이언트 초대(kind="client")는
         # 특정 컨설턴트에 안 묶이므로 consultant_id 를 붙이지 않는다(귀속 없음).
         if inv and (getattr(inv, "kind", "consultant") or "consultant") != "client":
@@ -1533,9 +1542,12 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     db.add(u)
     # 새 회사(관리자)만 초기 케이스 프리필(Rizky #1) — 기존 회사 직원은 기존 케이스 활용
     if not existing and (company_name or body.nib):
+        _reg_scheme, _reg_scope = intake.sector_defaults(_reg_sectors[0]) if _reg_sectors else ("product", None)
         c = models.CaseApplication(org_id=org, company_name=company_name or "My Company",
                                    nib=body.nib, responsible_person=body.responsible_person,
                                    address=body.address, factory_address=body.factory_address,
+                                   scheme=_reg_scheme, logistics_scope=_reg_scope,
+                                   profile_ext=(({"sector": _reg_sectors[0], "sectors": _reg_sectors}) if _reg_sectors else None),
                                    is_msme=True)
         db.add(c)
         db.flush()
@@ -2313,7 +2325,8 @@ def gen_report(case_id: str, user=Depends(auth.get_current_user), db: Session = 
 # ---------- cases ----------
 @app.get("/cases")
 def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db),
-               limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
+               limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+               sector: str = Query(None), status: str = Query(None), search: str = Query(None)):
     """케이스 목록(§8.1 페이징). total 포함 봉투 — 클라이언트가 페이지 순회로 전량 적재.
     기존 default 500·no-total은 500건 초과 조직에서 조용히 누락됐음."""
     # 목록도 상세와 같은 규칙을 쓴다 — 목록에 안 보이는데 상세만 열리면 쓸모가 없고,
@@ -2335,6 +2348,14 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     total = q.count()
     rows = (q.order_by(models.CaseApplication.created_at.desc())
             .offset(offset).limit(limit).all())
+    # SRS COM-08: 분야·상태·업체명/번호 검색 (python 측 — profile_ext JSON 은 DB 필터 불가)
+    if sector or status or search:
+        _s = (search or "").strip().lower()
+        rows = [c for c in rows
+                if (not sector or ((c.profile_ext or {}).get("sector") == sector))
+                and (not status or c.status == status)
+                and (not _s or _s in (c.company_name or "").lower() or _s in (c.case_id or "").lower())]
+        total = len(rows)
     # E2/M2: 배정 오디터(ops.auditor_assigned latest-wins) — 목록에 담당자 노출·오디터 KPI 집계용
     _cids = [c.case_id for c in rows]
     assign = _ops_latest_assignment(db, _cids)
@@ -2366,6 +2387,7 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
         a = assign.get(c.case_id) or {}
         _cc = org_cons.get(c.org_id)
         items.append({"case_id": c.case_id, "org_id": c.org_id, "company_name": c.company_name, "status": c.status,
+                      "sector": (c.profile_ext or {}).get("sector"),
                       "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
                       "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
                       "province": _province_of(c.factory_address or c.address),
@@ -2934,12 +2956,19 @@ def create_invite(body: schemas.InviteCreate,
         max_uses=max(1, int(body.max_uses or 1)),
         expires_at=datetime.utcnow() + timedelta(days=max(1, min(365, days))))
     db.add(inv)
+    db.flush()
+    _sec = [s for s in (body.sectors or []) if s in intake.SECTORS]
+    if _sec or body.contact_name or body.phone:
+        import types as _types
+        sm.record_event(db, _types.SimpleNamespace(case_id="invite:" + inv.code, org_id=user.get("org_id")), "invite", "invite",
+                        "invite.meta", user["role"], user["uid"], {"sectors": _sec, "contact_name": body.contact_name, "phone": body.phone})
     _audit(db, user, "consultant.invite.created", "invite", inv.invite_id,
            meta={"code": inv.code, "company_name": inv.company_name}, commit=False)
     db.commit()
     return {"invite_id": inv.invite_id, "code": inv.code,
             "company_name": inv.company_name, "max_uses": inv.max_uses,
-            "used_count": inv.used_count, "expires_at": str(inv.expires_at)}
+            "used_count": inv.used_count, "expires_at": str(inv.expires_at),
+            "sectors": _sec}
 
 
 @app.get("/consultant/invites")
@@ -3672,18 +3701,87 @@ def check_invite(code: str, db: Session = Depends(get_db)):
         return {"valid": False, "reason": "EXPIRED"}
     if inv.used_count >= inv.max_uses:
         return {"valid": False, "reason": "USED_UP"}
+    _ev = (db.query(models.WorkflowEvent).filter_by(case_id="invite:" + inv.code, action="invite.meta")
+           .order_by(models.WorkflowEvent.created_at.desc()).first())
+    _m = dict((_ev.payload or {})) if _ev else {}
     if (getattr(inv, "kind", "consultant") or "consultant") == "client":
         # 관리자 발급 클라이언트 초대 — 특정 컨설턴트 귀속 없음(발급자 노출 안 함).
         return {"valid": True, "kind": "client", "consultant": None,
-                "company_name": inv.company_name}
+                "company_name": inv.company_name,
+                "sectors": _m.get("sectors") or []}
     u = db.get(models.User, inv.consultant_id)
     prof = db.get(models.ConsultantProfile, inv.consultant_id)
     return {"valid": True, "kind": "consultant", "company_name": inv.company_name,
+            "sectors": _m.get("sectors") or [],
             "consultant": (prof.display_name if prof and prof.display_name
                            else (u.username if u else None))}
 
 
 # ── 유치 관계 ─────────────────────────────────────────────────────────────
+@app.post("/cases/{case_id}/sector")
+def set_case_sector(case_id: str, body: dict = None,
+                    user=Depends(auth.require_roles("applicant", "penyelia_halal", "consultant", "operator")),
+                    db: Session = Depends(get_db)):
+    """SRS PRE-02 — 신청 분야(5종) 지정. 접수·작성 단계에서만 scheme/물류 범위를 분야 기본값으로 맞춘다."""
+    c = _get_case(db, case_id, user)
+    b = dict(body or {})
+    sectors = [s for s in (b.get("sectors") or ([b.get("sector")] if b.get("sector") else [])) if s in intake.SECTORS]
+    if not sectors:
+        raise HTTPException(422, {"code": "BAD_SECTOR", "allowed": list(intake.SECTORS)})
+    pe = dict(c.profile_ext or {})
+    pe["sector"], pe["sectors"] = sectors[0], sectors
+    c.profile_ext = pe
+    if (c.status or "onboarding") in ("onboarding", "application_draft") and not c.scheme_frozen:
+        scheme, scope = intake.sector_defaults(sectors[0])
+        c.scheme = scheme
+        c.logistics_scope = scope if scheme == "logistics" else None
+    sm.record_event(db, c, c.status, c.status, "case.sector", user["role"], user["uid"], {"sector": sectors[0], "sectors": sectors})
+    db.commit()
+    return {"ok": True, "sector": sectors[0], "sectors": sectors, "scheme": c.scheme, "logistics_scope": c.logistics_scope}
+
+
+@app.post("/consultant/invites/{invite_id}/meta")
+def set_invite_meta(invite_id: str, body: dict = None, user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
+    """초대 링크 메타(분야·담당자·연락처) — 가입 시 프리필."""
+    inv = db.get(models.ConsultantInvite, invite_id)
+    if not inv or inv.consultant_id != user["uid"]:
+        raise HTTPException(404, {"code": "INVITE_NOT_FOUND"})
+    b = dict(body or {})
+    sec = [s for s in (b.get("sectors") or []) if s in intake.SECTORS]
+    import types as _types
+    sm.record_event(db, _types.SimpleNamespace(case_id="invite:" + inv.code, org_id=user.get("org_id")), "invite", "invite",
+                    "invite.meta", user["role"], user["uid"], {"sectors": sec, "contact_name": b.get("contact_name"), "phone": b.get("phone")})
+    db.commit()
+    return {"ok": True, "sectors": sec}
+
+
+@app.post("/orgs/{org_id}/consultant-change-request")
+def consultant_change_request(org_id: str, body: dict = None,
+                              user=Depends(auth.require_roles("applicant", "penyelia_halal")), db: Session = Depends(get_db)):
+    """MEM-05 — 기업이 사유·희망 컨설턴트를 적어 요청 → 관리자 승인(ApprovalRequest)·반려."""
+    if user["role"] != "admin" and user.get("org_id") != org_id:
+        raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
+    o = db.get(models.Org, org_id)
+    if not o:
+        o = models.Org(org_id=org_id, name=org_id)
+        db.add(o)
+        db.flush()
+    b = dict(body or {})
+    reason = (b.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    c = db.query(models.CaseApplication).filter_by(org_id=org_id).order_by(models.CaseApplication.created_at.desc()).first()
+    if not c:
+        raise HTTPException(409, {"code": "NO_CASE"})
+    res = _create_approval(db, "consultant.change", c, user, reason)
+    ar = db.get(models.ApprovalRequest, res["approval_id"])
+    ar.payload = dict(ar.payload or {}, preferred_consultant=(b.get("preferred_consultant") or "").strip(), org_id=org_id)
+    db.commit()
+    _notify(db, c, "consultant.change_requested", "담당 컨설턴트 변경 요청", body="사유: " + reason, role="operator")
+    db.commit()
+    return res
+
+
 @app.put("/admin/orgs/{org_id}/consultant")
 def set_org_consultant(org_id: str, body: schemas.OrgConsultantReq,
                        user=Depends(auth.require_roles("operator", "admin")),
@@ -3938,11 +4036,22 @@ def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("appli
     # 조직(org) 회사 프로필 역상속 — 신청 직접 진입 시 회사정보 자동 프리필
     org_row = db.get(models.Org, org)
     oext = dict(org_row.profile_ext or {}) if org_row else {}
+    _sectors = [s for s in (body.sectors or ([body.sector] if body.sector else [])) if s in intake.SECTORS]
+    if not _sectors and (oext.get("sectors") or oext.get("sector")):
+        _sectors = [s for s in (oext.get("sectors") or [oext.get("sector")]) if s in intake.SECTORS]
+    _sector = _sectors[0] if _sectors else None
+    _scheme, _scope = intake.sector_defaults(_sector) if _sector else ((body.scheme or "product"), (body.logistics_scope or None))
+    if body.scheme and body.scheme != "product" and not _sector:
+        _scheme, _scope = body.scheme, (body.logistics_scope or None)
+    if body.logistics_scope:
+        _scope = body.logistics_scope
+    if _sector:
+        oext = dict(oext, sector=_sector, sectors=_sectors)
     c = models.CaseApplication(
         org_id=org, is_msme=bool(body.is_msme),
         company_name=body.company_name or oext.get("company_name") or (org_row.name if org_row else None),
-        scheme=(body.scheme or "product"),
-        logistics_scope=(body.logistics_scope or None),
+        scheme=_scheme,
+        logistics_scope=_scope,
         profile_ext=(oext or None))
     # 회사 프로필 상속 — 단, 상호가 다르면 '그 회사를 특정하는 값'은 물려받지 않는다.
     # org=회사가 전제지만 실제로는 한 org 에 여러 회사가 들어있다. 그대로 상속하면 인도네시아
@@ -11959,6 +12068,7 @@ def get_fatwa_status(case_id: str, user=Depends(auth.get_current_user), db: Sess
 
 # ========== 2인 승인(maker-checker) 프레임워크 — 설계서 보강안 §4.3 ==========
 MAKER_CHECKER = {
+    "consultant.change": {"maker": {"applicant", "penyelia_halal"}, "checker": {"operator", "admin"}, "label": "담당 컨설턴트 변경"},
     "certificate.issue":  {"maker": {"operator"}, "checker": {"fatwa_liaison"}, "label": "인증서 발급"},
     "certificate.revoke": {"maker": {"operator"}, "checker": {"admin"}, "label": "인증서 철회"},
     "preassess.review": {"maker": {"auditor"}, "checker": "co_auditor", "label": "사전심사 판정"},
@@ -12142,6 +12252,25 @@ def _exec_approved(db, ar, user):
             return _do_send_fatwa(db, c, actor, ar.payload or {})
         if ar.action_type == "eligibility.verdict":
             return _do_eligibility_verdict(db, c, actor, ar.payload or {})
+    if ar.action_type == "consultant.change":
+        p = ar.payload or {}
+        o = db.get(models.Org, p.get("org_id") or c.org_id)
+        if not o:
+            o = models.Org(org_id=p.get("org_id") or c.org_id, name=c.company_name or "")
+            db.add(o)
+            db.flush()
+        pref = (p.get("preferred_consultant") or "").strip()
+        if not pref:
+            return {"ok": True, "changed": False}
+        cu = _resolve_consultant(db, pref)
+        before = o.consultant_id
+        o.consultant_id = cu.user_id
+        o.consultant_linked_at = datetime.utcnow()
+        sm.record_event(db, c, c.status, c.status, "consultant.changed", user["role"], user["uid"],
+                        {"before": before, "after": cu.user_id, "approval_id": ar.id})
+        _notify(db, c, "consultant.changed", "담당 컨설턴트 변경 완료", body="새 담당: " + (cu.username or ""), role="client")
+        db.commit()
+        return {"ok": True, "changed": True, "consultant_id": cu.user_id}
     reason = (ar.payload or {}).get("reason")
     if ar.action_type == "certificate.issue":
         _issue_guards(db, c, ar.case_id)   # 발급 재검증(요청 후 상태 변동 대비)
@@ -14996,7 +15125,8 @@ def _calc_readiness(db, case_id):
                            (_c.profile_ext or {}).get("country") if _c else None,
                            _c.is_msme if _c else None,
                            scheme=(_c.scheme if _c else "product"),
-                           logistics_scope=(_c.logistics_scope if _c else None))["required"]
+                           logistics_scope=(_c.logistics_scope if _c else None),
+                           sector=((_c.profile_ext or {}).get("sector") if _c else None))["required"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     have_types = {d.doc_type for d in docs if d.review_status != "rejected"}
     doc_score = (sum(1 for r in req if r in have_types) / len(req)) if req else 1.0
@@ -17326,7 +17456,8 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
     # '해당 없음'으로 사유와 함께 보여준다 — 조용히 사라지면 심사자가 빠뜨린 것인지
     # 면제인지 구분할 수 없다.
     _rq = doc_requirements(c.pathway, (c.profile_ext or {}).get("country"), c.is_msme,
-                           scheme=c.scheme, logistics_scope=c.logistics_scope)
+                           scheme=c.scheme, logistics_scope=c.logistics_scope,
+                           sector=(c.profile_ext or {}).get("sector"))
     _req, _na, _alt = _rq["required"], _rq["not_applicable"], _rq["alt"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     by_type = {}

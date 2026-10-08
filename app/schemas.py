@@ -218,6 +218,8 @@ class CaseCreate(BaseModel):
     # 인증 종류 — 신청 맨 앞에서 신청자가 고른다. product=제품 / logistics=물류 서비스.
     scheme: Optional[str] = "product"
     logistics_scope: Optional[List[str]] = None  # 물류일 때 jasa 복수 선택
+    sector: Optional[str] = None
+    sectors: Optional[List[str]] = None
 
     @field_validator("scheme")
     @classmethod
@@ -694,6 +696,7 @@ class RegisterReq(BaseModel):
     address: Optional[str] = None
     factory_address: Optional[str] = None
     business_type: Optional[str] = None
+    sectors: Optional[List[str]] = None   # SRS MEM-01 분야 5종(첫 항목이 주 분야)
 
 
 class StaffSignupReq(BaseModel):
@@ -1037,6 +1040,9 @@ class InviteCreate(BaseModel):
     note: Optional[str] = None
     max_uses: Optional[int] = 1
     expires_days: Optional[int] = 30
+    sectors: Optional[List[str]] = None
+    contact_name: Optional[str] = None
+    phone: Optional[str] = None
 
 
 class OrgConsultantReq(BaseModel):
