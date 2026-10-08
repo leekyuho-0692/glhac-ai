@@ -769,7 +769,9 @@ def _notify(db, case, event_type, title=None, body="", channels=None, role=None,
 # 아무에게도 통보되지 않았다(2026-09-23).
 PKG_UNREADABLE_CONF = 0.5
 PKG_GAP_EVENT = "package.gap.notified"
-_PKG_LABEL = {"company": "업체 정보", "product": "제품", "material": "성분(원재료)", "factory": "공장"}
+_PKG_LABEL = {"company": "업체 정보", "product": "제품", "material": "성분(원재료)", "factory": "공장",
+              # 물류(운송·창고) 패키지 점검 항목 — 없으면 통보 문구 조립에서 KeyError 로 500
+              "scope": "취급 서비스", "vehicle": "운송 차량", "facility": "보관·포장 시설", "cleaning": "세척 SOP 서류"}
 
 
 def _package_check(db, c):
@@ -834,7 +836,7 @@ def _notify_package_gaps(db, c, force=False):
             .order_by(models.WorkflowEvent.created_at.desc()).first())
     if not force and last and (last.payload or {}).get("fp") == fp and (last.payload or {}).get("auditor_id") == auditor:
         return chk
-    parts = ["%s 누락" % _PKG_LABEL[g] for g in chk["gaps"]]
+    parts = ["%s 누락" % _PKG_LABEL.get(g, g) for g in chk["gaps"]]
     if chk["unreadable"]:
         parts.append("판독 실패 서류 %d건(손글씨·저품질 등)" % len(chk["unreadable"]))
     if chk["unprocessed"]:
@@ -6242,7 +6244,7 @@ def package_check_request(case_id: str, body: dict = None,
     c = _get_case(db, case_id, user)
     chk = _package_check(db, c)
     note = ((body or {}).get("note") or "").strip()
-    parts = ["%s" % _PKG_LABEL[g] for g in chk["gaps"]]
+    parts = ["%s" % _PKG_LABEL.get(g, g) for g in chk["gaps"]]
     if chk["unreadable"]:
         parts.append("판독 불가 서류 %d건 재제출 또는 수기 입력" % len(chk["unreadable"]))
     if not parts and not note:

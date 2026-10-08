@@ -9,6 +9,32 @@ from app.main import app                    # noqa: E402
 from app import models                      # noqa: E402
 
 
+def test_물류_빈칸_있어도_오디터배정과_보완요청_500_아님():
+    """회귀: 물류 gaps 키(scope·vehicle·facility·cleaning)가 통보 문구 사전에 없어 500 나던 결함."""
+    with TestClient(app) as c:
+        ha = _tok(c, "applicant1", "pw")
+        ho = _tok(c, "operator1", "pw")
+        hd = _tok(c, "admin", "admin")
+        cid = _mkcase(c, ha, {"company_name": "패키지운송배정", "sector": "transport"})
+        users = c.get("/admin/users?q=auditor", headers=hd).json()
+        users = users.get("items", users) if isinstance(users, dict) else users
+        ok_any = False
+        for u in users:
+            if u.get("role") != "auditor":
+                continue
+            r = c.post(f"/ops/cases/{cid}/assign-auditor", headers=ho, json={"auditor_id": u["user_id"]})
+            assert r.status_code != 500, r.text
+            if r.status_code == 200:
+                ok_any = True
+                break
+        assert ok_any
+        r = c.post(f"/cases/{cid}/package-check/request", headers=ho, json={"note": "보완 요청"})
+        assert r.status_code == 200, r.text
+
+
+
+
+
 def _tok(c, u, p):
     r = c.post("/auth/login", json={"username": u, "password": p})
     assert r.status_code == 200, r.text
