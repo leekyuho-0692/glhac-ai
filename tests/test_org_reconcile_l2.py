@@ -72,7 +72,8 @@ def test_reconcile_endpoint_with_chart_200():
         c.patch(f"/cases/{cid}/profile", json={"responsible_person": "홍길동",
                 "halal_supervisor": "김철수",
                 "profile_ext": {"pic_name": "이영희", "cp_name": "박민수"}}, headers=h)
-        c.post("/orgs/org_demo/penyelia", json={"name": "최지훈"}, headers=h)
+        org = c.get(f"/cases/{cid}", headers=h).json()["org_id"]
+        c.post(f"/orgs/{org}/penyelia", json={"name": "최지훈"}, headers=h)
         # 조직도 이미지 업로드 + layout 삽입
         d = c.post(f"/cases/{cid}/documents",
                    json={"filename": "org.png", "file_b64": _PNG_1x1, "doc_type": "manual_section"},

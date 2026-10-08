@@ -31,7 +31,8 @@ def _seed(c, h):
     cid = c.post("/cases", json={"company_name": "PT Sinar Halal"}, headers=h).json()["case_id"]
     c.patch(f"/cases/{cid}/profile", json={"responsible_person": "홍길동", "halal_supervisor": "김철수",
             "profile_ext": {"pic_name": "이영희", "cp_name": "박민수"}}, headers=h)
-    c.post("/orgs/org_demo/penyelia", json={"name": "최지훈"}, headers=h)
+    org = c.get(f"/cases/{cid}", headers=h).json()["org_id"]
+    c.post(f"/orgs/{org}/penyelia", json={"name": "최지훈"}, headers=h)
     return cid
 
 

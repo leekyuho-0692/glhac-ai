@@ -38,7 +38,8 @@ def test_org_chart_l1_data_contract():
                                 "cp_name": "박민수", "cp_title": "구매"}}
         assert c.patch(f"/cases/{cid}/profile", json=prof, headers=h).status_code == 200
         # Penyelia 추가
-        assert c.post("/orgs/org_demo/penyelia", json={"name": "최지훈"}, headers=h).status_code == 200
+        org = c.get(f"/cases/{cid}", headers=h).json()["org_id"]
+        assert c.post(f"/orgs/{org}/penyelia", json={"name": "최지훈"}, headers=h).status_code == 200
         # 케이스 GET — 담당자 복호화되어 조직도 파생 입력으로 제공
         d = c.get(f"/cases/{cid}", headers=h).json()
         assert d["responsible_person"] == "홍길동", "대표자 미제공"
