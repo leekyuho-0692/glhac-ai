@@ -7569,7 +7569,11 @@ def contract_approve(case_id: str, body: dict = None, user=Depends(auth.require_
     # SRS FRM-05: 흐름 스위치가 켜져 있으면 정식 신청 접수 확인 전에는 견적·계약서를 발송하지 않는다
     if nav8.formal_flow_on() and nav8.formal_state(db, case_id) != "accepted":
         raise HTTPException(409, {"code": "FORMAL_NOT_ACCEPTED", "hint": "정식 인증 신청서 접수 확인 후 발송할 수 있습니다."})
-    contract, gendoc = _gen_contract_core(db, c, body or {}, user, status="sent")
+    b = dict(body or {})
+    q = _latest_quote(db, case_id)
+    if b.get("fee") in (None, "") and q:          # D-07 견적 총액을 계약 금액으로
+        b["fee"] = q.get("total")
+    contract, gendoc = _gen_contract_core(db, c, b, user, status="sent")
     _audit(db, user, "contract.approve", "contract", contract.contract_id, case_id, {}, commit=False)
     sm.record_event(db, c, c.status, c.status, "contract.approve", user["role"], user["uid"],
                     {"contract_no": contract.contract_no})
@@ -7836,11 +7840,33 @@ def sign_contract(contract_id: str, party: str = "A", name: str = "",
     ct = db.get(models.Contract, contract_id)
     if not ct:
         raise HTTPException(404, {"code": "CONTRACT_NOT_FOUND"})
+    # SRS CTR-03: 갑(A)=인증기업, 을(B)=GL HAC 관리자. 컨설턴트는 참조일 뿐 서명 권한 없음.
+    party = (party or "A").upper()
+    if user["role"] == "consultant":
+        raise HTTPException(403, {"code": "CONSULTANT_CANNOT_SIGN"})
+    if party == "A" and user["role"] not in ("applicant", "penyelia_halal", "client", "admin"):
+        raise HTTPException(403, {"code": "NOT_PARTY_A"})
+    if party == "B" and user["role"] not in ("operator", "admin"):
+        raise HTTPException(403, {"code": "NOT_PARTY_B"})
+    if any(s.get("party") == party for s in (ct.signatures or [])):
+        raise HTTPException(409, {"code": "ALREADY_SIGNED", "party": party})
     sigs = list(ct.signatures or [])
     sigs.append({"party": party, "name": name, "title": "", "signed_at": str(datetime.utcnow())})
     ct.signatures = sigs
     if any(s.get("party") == "A" for s in sigs) and any(s.get("party") == "B" for s in sigs):
         ct.status = "signed"
+        # SRS CTR-04: 체결 → D-09 전자서명 확인서 · 관리자 확인(confirmed) · 회차 청구 생성 · 체결 고지(자동 설정 시)
+        import json as _json
+        _c = db.get(models.CaseApplication, ct.case_id)
+        _settings = _billing_settings(db, user.get("org_id") if user["role"] in ("operator", "admin") else _c.org_id)
+        _g = _save_gendoc(db, _c, "esign_certificate", _json.dumps({"doc": "D-09", "title": "전자서명 확인서", "contract_no": ct.contract_no,
+                          "company_name": _c.company_name, "signatures": sigs, "signed_at": str(datetime.utcnow())}, ensure_ascii=False), user, status="final")
+        ct.status = "confirmed"
+        inst = _create_installments(db, _c, ct, _settings, user)
+        sm.record_event(db, _c, _c.status, _c.status, "contract.signed", user["role"], user["uid"],
+                        {"contract_no": ct.contract_no, "esign_doc_id": _g.gen_doc_id, "installments": inst})
+        if _settings.get("auto_notice_contract"):
+            _send_notice(db, _c, "contract_signed", user, auto=True)
         _sc = db.query(models.CaseApplication).filter_by(case_id=ct.case_id).first()
         if _sc:
             _notify(db, _sc, "contract.signed", role="operator",
@@ -12425,6 +12451,12 @@ def _do_issue_certificate(db, c, user, reason=None):
     frm = c.status
     if "certificate_issued" in sm.TRANSITIONS.get(c.status, set()):
         c.status = "certificate_issued"
+    # SRS CRT-02: 인증서 발급 시점 회차(stage=certificate, draft)를 청구·입금 고지
+    for _e in db.query(models.WorkflowEvent).filter_by(case_id=c.case_id, action="invoice.installment").all():
+        if (_e.payload or {}).get("stage") == "certificate":
+            _inv = db.get(models.Invoice, (_e.payload or {}).get("invoice_id"))
+            if _inv and _inv.status == "draft":
+                _send_notice(db, c, "payment_due", user, invoice=_inv, auto=True)
     _issue_payload = {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None}
     _issue_payload.update(_tsa_meta(cert.certificate_no or str(cert.id)))   # P3d: TSA configured 시만 병기(미설정 불변)
     sm.record_event(db, c, frm, c.status, "certificate.issue", "system", user["uid"], _issue_payload)
@@ -14398,6 +14430,9 @@ def set_invoice_status(invoice_id: str, body: schemas.InvoiceStatusReq,
            {"before": frm, "after": body.status, "reason": body.reason}, commit=False)
     if body.status == "paid":       # 관리자 결제확정 → 모의심사 진입 게이트
         c = _get_case(db, inv.case_id, user)
+        _st = _billing_settings(db, user.get("org_id"))
+        if _st.get("auto_notice_paid"):
+            _send_notice(db, c, "payment_confirmed", user, invoice=inv, auto=True)
         _on_invoice_paid(db, c, user)
     db.commit()
     return {"invoice_id": invoice_id, "status": inv.status}
@@ -15447,6 +15482,426 @@ def _billing_defaults(db, org_id):
             except (TypeError, ValueError):
                 pass
     return out, (bool(ev), (ev.created_at.isoformat() if ev and ev.created_at else None))
+
+
+# ===== SRS ③ 계약·입금 설정(ADM-05) · 분야 가격표(ADM-03) · 견적 자동 산출(D-07) =====
+BILLING_SETTINGS_ACTION = "billing.settings"
+SECTORS = ("food", "cosmetics", "household", "warehouse", "transport")
+SECTOR_KO = {"food": "식품", "cosmetics": "화장품", "household": "생활용품", "warehouse": "창고", "transport": "운송"}
+BILLING_SETTINGS_DEFAULT = {
+    "sector_base": {"food": 6500000, "cosmetics": 6500000, "household": 6000000, "warehouse": 5500000, "transport": 5500000},
+    "per_product_extra": 300000,          # 2번째 품목부터 품목당
+    "onsite_travel": 1500000,             # 현장심사 출장비
+    "options": {"sihalal_registration": 500000},
+    "ppn_rate": 0.11,
+    "payment_terms": "split50",           # lump | split50 (계약 시 50% · 인증서 발급 시 50%)
+    "due_days": 7,
+    "auto_notice_contract": True,
+    "auto_notice_paid": True,
+    "bank_account": {"bank": "", "number": "", "holder": "GL HAC"},
+}
+
+
+def _billing_settings(db, org_id):
+    ev = (db.query(models.WorkflowEvent)
+          .filter_by(case_id="billing-defaults:" + (org_id or "org_demo"), action=BILLING_SETTINGS_ACTION)
+          .order_by(models.WorkflowEvent.created_at.desc()).first())
+    import copy
+    out = copy.deepcopy(BILLING_SETTINGS_DEFAULT)
+    saved = (ev.payload or {}).get("settings") if ev else None
+    if isinstance(saved, dict):
+        for k, v in saved.items():
+            if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+                out[k].update(v)
+            elif k in out:
+                out[k] = v
+    return out
+
+
+@app.get("/billing/settings")
+def get_billing_settings(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    s = _billing_settings(db, user.get("org_id"))
+    if user["role"] not in ("operator", "admin", "fatwa_liaison"):
+        s = {k: s[k] for k in ("payment_terms", "due_days", "bank_account", "ppn_rate")}
+    return s
+
+
+@app.post("/billing/settings")
+def set_billing_settings(body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """ADM-03/05 — 분야별 기본 심사비·품목 추가비·출장비·옵션·지급 조건·입금 기한·자동 발송·계좌."""
+    b = dict(body or {})
+    if "payment_terms" in b and b["payment_terms"] not in ("lump", "split50"):
+        raise HTTPException(422, {"code": "BAD_PAYMENT_TERMS"})
+    if "due_days" in b:
+        try:
+            b["due_days"] = int(b["due_days"])
+        except (TypeError, ValueError):
+            raise HTTPException(422, {"code": "BAD_DUE_DAYS"})
+        if not (1 <= b["due_days"] <= 90):
+            raise HTTPException(422, {"code": "BAD_DUE_DAYS"})
+    for k in ("sector_base", "options"):
+        if k in b:
+            if not isinstance(b[k], dict):
+                raise HTTPException(422, {"code": "BAD_" + k.upper()})
+            for kk, vv in b[k].items():
+                try:
+                    b[k][kk] = float(vv)
+                except (TypeError, ValueError):
+                    raise HTTPException(422, {"code": "BAD_AMOUNT", "key": kk})
+    sm.record_event(db, _billing_shim(user.get("org_id")), "billing", "billing",
+                    BILLING_SETTINGS_ACTION, user["role"], user["uid"], {"settings": b})
+    db.commit()
+    return _billing_settings(db, user.get("org_id"))
+
+
+def _case_sector(c):
+    pe = c.profile_ext or {}
+    s = pe.get("sector") or (pe.get("sectors") or [None])[0]
+    if s in SECTORS:
+        return s
+    return "warehouse" if (c.scheme or "product") == "logistics" else "food"
+
+
+def _quote_compute(db, c, settings, opts):
+    """CTR-01 — 분야 기본 심사비 + 품목당 추가(2번째부터) + 출장비 + 선택 옵션 + 부가세. 산출 근거를 lines 로."""
+    sector = opts.get("sector") if opts.get("sector") in SECTORS else _case_sector(c)
+    n_prod = int(opts.get("product_count") if opts.get("product_count") is not None else len(c.product_ids or []))
+    lines = [{"code": "base", "label": "기본 심사비 (" + SECTOR_KO[sector] + ")", "qty": 1,
+              "unit": float(settings["sector_base"][sector]), "amount": float(settings["sector_base"][sector])}]
+    extra_n = max(0, n_prod - 1)
+    if extra_n:
+        lines.append({"code": "product_extra", "label": "품목 추가 (2번째부터)", "qty": extra_n,
+                      "unit": float(settings["per_product_extra"]), "amount": float(settings["per_product_extra"]) * extra_n})
+    if opts.get("onsite", True):
+        lines.append({"code": "onsite_travel", "label": "현장심사 출장비", "qty": 1,
+                      "unit": float(settings["onsite_travel"]), "amount": float(settings["onsite_travel"])})
+    for o in (opts.get("options") or []):
+        if o in settings["options"]:
+            lines.append({"code": "opt:" + o, "label": "선택 옵션 (" + o + ")", "qty": 1,
+                          "unit": float(settings["options"][o]), "amount": float(settings["options"][o])})
+    for adj in (opts.get("adjustments") or []):
+        try:
+            amt = float(adj.get("amount"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        lines.append({"code": "adjust", "label": str(adj.get("label") or "조정"), "qty": 1, "unit": amt, "amount": amt})
+    subtotal = round(sum(l["amount"] for l in lines), 2)
+    ppn = round(subtotal * float(settings.get("ppn_rate", 0.11)), 2)
+    return {"sector": sector, "product_count": n_prod, "lines": lines, "subtotal": subtotal, "ppn": ppn,
+            "total": round(subtotal + ppn, 2), "payment_terms": settings.get("payment_terms"),
+            "currency": "KRW"}
+
+
+def _latest_quote(db, case_id):
+    e = nav8.latest_event(db, case_id, "quote.issued")
+    return (e.payload or {}) if e else None
+
+
+@app.post("/cases/{case_id}/quote")
+def issue_quote(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """D-07 견적서 자동 산출(관리자). body: {sector?, product_count?, onsite?(기본 true), options?[], adjustments?[{label,amount}], note?}.
+    다시 부르면 새 버전(변경 요청 반영)."""
+    import json as _json
+    c = _get_case(db, case_id, user)
+    if nav8.formal_flow_on() and nav8.formal_state(db, case_id) != "accepted":
+        raise HTTPException(409, {"code": "FORMAL_NOT_ACCEPTED"})
+    settings = _billing_settings(db, user.get("org_id"))
+    q = _quote_compute(db, c, settings, dict(body or {}))
+    prev = _latest_quote(db, case_id)
+    q["version"] = (int(prev.get("version") or 0) + 1) if prev else 1
+    q["note"] = ((body or {}).get("note") or "").strip()
+    q["issued_at"] = datetime.utcnow().isoformat()
+    g = _save_gendoc(db, c, "quotation", _json.dumps(dict(q, doc="D-07", company_name=c.company_name, case_id=case_id), ensure_ascii=False), user, status="final")
+    q["gen_doc_id"] = g.gen_doc_id
+    sm.record_event(db, c, c.status, c.status, "quote.issued", user["role"], user["uid"], q)
+    for r in ("client", "consultant"):
+        _notify(db, c, "quote.issued", "견적서 발송 (v%d)" % q["version"], body="총액 %s원" % format(int(q["total"]), ","), role=r)
+    db.commit()
+    return q
+
+
+@app.get("/cases/{case_id}/quote")
+def get_quote(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    q = _latest_quote(db, case_id)
+    cr = nav8.latest_event(db, case_id, "quote.change_requested", "quote.change_rejected", "quote.issued")
+    hist = [dict(e.payload or {}, action=e.action, at=e.created_at.isoformat() if e.created_at else None, by=e.actor_id)
+            for e in db.query(models.WorkflowEvent).filter(models.WorkflowEvent.case_id == case_id,
+                                                           models.WorkflowEvent.action.in_(["quote.issued", "quote.change_requested", "quote.change_rejected"]))
+            .order_by(models.WorkflowEvent.created_at.asc()).all()]
+    pending_change = bool(cr and cr.action == "quote.change_requested")
+    return {"quote": q, "pending_change": pending_change, "history": hist}
+
+
+@app.post("/cases/{case_id}/quote/change-request")
+def quote_change_request(case_id: str, body: dict = None, user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
+    """CTR-02 — 컨설턴트가 사유와 함께 변경 요청 → 관리자가 조정 견적(재발행) 또는 반려."""
+    c = _get_case(db, case_id, user)
+    reason = ((body or {}).get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    if not _latest_quote(db, case_id):
+        raise HTTPException(409, {"code": "QUOTE_NOT_ISSUED"})
+    sm.record_event(db, c, c.status, c.status, "quote.change_requested", user["role"], user["uid"], {"reason": reason})
+    _notify(db, c, "quote.change_requested", "견적 변경 요청", body="사유: " + reason, role="operator")
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/cases/{case_id}/quote/change-reject")
+def quote_change_reject(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    c = _get_case(db, case_id, user)
+    reason = ((body or {}).get("reason") or "").strip()
+    sm.record_event(db, c, c.status, c.status, "quote.change_rejected", user["role"], user["uid"], {"reason": reason})
+    _notify(db, c, "quote.change_rejected", "견적 변경 반려", body=("사유: " + reason) if reason else "", role="consultant")
+    db.commit()
+    return {"ok": True}
+
+
+def _create_installments(db, c, contract, settings, user):
+    """CTR-05 — 계약 체결 시 지급 조건에 따라 회차 청구서 생성. split50: 1회차(계약 시) 즉시 청구·2회차(인증서 발급 시) 대기(draft)."""
+    total = float(contract.fee or 0)
+    if total <= 0:
+        return []
+    terms = settings.get("payment_terms") or "split50"
+    plan = [(1, total, "contract")] if terms == "lump" else [(1, round(total / 2, 2), "contract"), (2, round(total - round(total / 2, 2), 2), "certificate")]
+    out = []
+    for rnd, amt, stage in plan:
+        base = round(amt / (1 + float(settings.get("ppn_rate", 0.11))), 2)
+        inv = models.Invoice(case_id=c.case_id, service_type="installment", amount=base, ppn=round(amt - base, 2), total=amt,
+                             status="waiting_payment" if stage == "contract" else "draft",
+                             due_date=(datetime.utcnow() + timedelta(days=int(settings.get("due_days") or 7))) if stage == "contract" else None)
+        db.add(inv)
+        db.flush()
+        inv.invoice_no = "INV-" + inv.invoice_id[:8].upper() + "-R%d" % rnd
+        inv.payment_ref = "PAY-" + inv.invoice_id[:8].upper()
+        sm.record_event(db, c, c.status, c.status, "invoice.installment", user["role"], user["uid"],
+                        {"invoice_id": inv.invoice_id, "round": rnd, "stage": stage, "total": amt, "of": len(plan)})
+        out.append({"invoice_id": inv.invoice_id, "round": rnd, "stage": stage, "total": amt, "status": inv.status})
+    return out
+
+
+# ===== SRS ③ 고지·알림(관리자 결정형) · 입금 확인 · 계약·입금 보드 =====
+NOTICE_KINDS = {
+    "signature_request": "전자서명 요청", "contract_signed": "계약 체결 고지", "payment_due": "입금 고지",
+    "payment_reminder": "입금 재고지(기한 경과)", "payment_confirmed": "입금 확인 알림",
+}
+_NOTICE_DEFAULT_RECIPIENTS = {"signature_request": ["client"], "contract_signed": ["client", "consultant", "auditor"],
+                              "payment_due": ["client", "consultant"], "payment_reminder": ["client", "consultant"],
+                              "payment_confirmed": ["client", "consultant"]}
+
+
+def _installment_map(db, case_id):
+    """invoice_id → {round, stage, of} (invoice.installment 이벤트)."""
+    out = {}
+    for e in db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="invoice.installment").all():
+        p = e.payload or {}
+        if p.get("invoice_id"):
+            out[p["invoice_id"]] = {"round": p.get("round"), "stage": p.get("stage"), "of": p.get("of")}
+    return out
+
+
+def _last_notice(db, case_id, kind, invoice_id=None):
+    evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="billing.notice")
+           .order_by(models.WorkflowEvent.created_at.desc()).all())
+    for e in evs:
+        p = e.payload or {}
+        if p.get("kind") == kind and (invoice_id is None or p.get("invoice_id") == invoice_id):
+            return e
+    return None
+
+
+def _send_notice(db, c, kind, user, invoice=None, recipients=None, channels=None, message=None, due_days=None, auto=False):
+    """고지·알림 한 건 발송 + 이력(billing.notice). payment_due 는 청구서 기한·상태도 갱신한다."""
+    if kind not in NOTICE_KINDS:
+        raise HTTPException(422, {"code": "BAD_NOTICE_KIND", "allowed": sorted(NOTICE_KINDS)})
+    settings = _billing_settings(db, c.org_id if user is None or user["role"] not in ("operator", "admin") else user.get("org_id"))
+    recipients = [r for r in (recipients or _NOTICE_DEFAULT_RECIPIENTS[kind]) if r in ("client", "consultant", "auditor")]
+    channels = channels or ["inapp", "email"]
+    due_date = None
+    if kind in ("payment_due", "payment_reminder"):
+        if not invoice:
+            raise HTTPException(422, {"code": "INVOICE_REQUIRED"})
+        if kind == "payment_due":
+            invoice.due_date = datetime.utcnow() + timedelta(days=int(due_days or settings.get("due_days") or 7))
+            if invoice.status == "draft":
+                invoice.status = "waiting_payment"
+        due_date = invoice.due_date.isoformat() if invoice.due_date else None
+    title = NOTICE_KINDS[kind] + ((" — " + invoice.invoice_no) if invoice and invoice.invoice_no else "")
+    body = (message or "").strip()
+    if not body:
+        if kind == "payment_due":
+            ba = settings.get("bank_account") or {}
+            body = "청구 금액 %s원 · 입금 기한 %s · 계좌 %s %s (%s)" % (format(int(invoice.total or 0), ","), (due_date or "")[:10],
+                                                                ba.get("bank", ""), ba.get("number", ""), ba.get("holder", ""))
+        elif kind == "payment_reminder":
+            body = "입금 기한(%s)이 지났습니다. 청구 금액 %s원을 입금해 주세요." % ((due_date or "")[:10], format(int(invoice.total or 0), ","))
+        elif kind == "payment_confirmed":
+            body = "입금이 확인되었습니다. 감사합니다." + ((" (" + invoice.invoice_no + ")") if invoice and invoice.invoice_no else "")
+        elif kind == "contract_signed":
+            body = "할랄인증 계약이 체결되었습니다."
+        else:
+            body = "계약서 전자서명을 요청드립니다. 시스템에서 서명해 주세요."
+    for r in recipients:
+        _notify(db, c, "billing." + kind, title, body=body, channels=channels, role=r)
+    payload = {"kind": kind, "invoice_id": invoice.invoice_id if invoice else None, "recipients": recipients,
+               "channels": channels, "message": body, "due_date": due_date, "auto": auto}
+    sm.record_event(db, c, c.status, c.status, "billing.notice", (user or {}).get("role", "system"), (user or {}).get("uid"), payload)
+    return payload
+
+
+@app.post("/cases/{case_id}/billing/notice")
+def billing_notice(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """NTF-02 관리자 결정형 발송 창 — {kind, invoice_id?, recipients?[], channels?[], due_days?, message?}."""
+    c = _get_case(db, case_id, user)
+    b = dict(body or {})
+    inv = db.get(models.Invoice, b.get("invoice_id")) if b.get("invoice_id") else None
+    if b.get("invoice_id") and (not inv or inv.case_id != case_id):
+        raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    p = _send_notice(db, c, b.get("kind"), user, invoice=inv, recipients=b.get("recipients"), channels=b.get("channels"),
+                     message=b.get("message"), due_days=b.get("due_days"))
+    db.commit()
+    return {"ok": True, "notice": p}
+
+
+@app.get("/cases/{case_id}/billing/notices")
+def billing_notices(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """NTF-03 업체별 고지·알림 이력."""
+    _get_case(db, case_id, user)
+    evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="billing.notice")
+           .order_by(models.WorkflowEvent.created_at.desc()).limit(100).all())
+    return {"items": [dict(e.payload or {}, at=e.created_at.isoformat() if e.created_at else None, by=e.actor_id,
+                           kind_label=NOTICE_KINDS.get((e.payload or {}).get("kind"), "")) for e in evs]}
+
+
+@app.post("/invoices/{invoice_id}/paid-notice")
+def invoice_paid_notice(invoice_id: str, body: dict = None, user=Depends(auth.require_roles("applicant", "penyelia_halal", "consultant")),
+                        db: Session = Depends(get_db)):
+    """CTR-10 기업 [입금 완료 알림] → 입금확인중(need_verification) + 관리자 알림."""
+    inv = db.get(models.Invoice, invoice_id)
+    if not inv:
+        raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    c = _get_case(db, inv.case_id, user)
+    if inv.status in ("paid", "refunded", "cancelled"):
+        raise HTTPException(409, {"code": "INVOICE_SETTLED", "status": inv.status})
+    inv.status = "need_verification"
+    note = ((body or {}).get("note") or "").strip()
+    sm.record_event(db, c, c.status, c.status, "invoice.client_paid_notice", user["role"], user["uid"],
+                    {"invoice_id": invoice_id, "note": note})
+    _notify(db, c, "invoice.client_paid_notice", "입금 완료 알림 — " + (inv.invoice_no or ""),
+            body=(c.company_name or "") + " 입금 완료를 알려 왔습니다. 입금을 확인해 주세요." + ((" 메모: " + note) if note else ""), role="operator")
+    db.commit()
+    return {"invoice_id": invoice_id, "status": inv.status}
+
+
+@app.post("/invoices/{invoice_id}/bill-now")
+def invoice_bill_now(invoice_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """CTR-11 미리 청구 — 대기(draft) 회차를 지급 시점 전에 청구·입금 고지."""
+    inv = db.get(models.Invoice, invoice_id)
+    if not inv:
+        raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    c = _get_case(db, inv.case_id, user)
+    if inv.status != "draft":
+        raise HTTPException(409, {"code": "NOT_DRAFT", "status": inv.status})
+    p = _send_notice(db, c, "payment_due", user, invoice=inv, due_days=(body or {}).get("due_days"), message=(body or {}).get("message"))
+    sm.record_event(db, c, c.status, c.status, "invoice.bill_early", user["role"], user["uid"], {"invoice_id": invoice_id})
+    db.commit()
+    return {"invoice_id": invoice_id, "status": inv.status, "notice": p}
+
+
+def _billing_next_action(formal, contract, quote, invoices, inst, signed_notice_sent, notices_by_inv, now):
+    """CTR-07 다음 조치 규칙: 접수 확인 → 서명 요청 → GL HAC 서명 → 체결 고지 → 입금 고지 → (기한 경과 재고지) → 입금 확인 → 확인 알림 → 다음 회차 · 완납."""
+    if nav8.formal_flow_on() and formal != "accepted":
+        return "accept_formal", "접수 확인"
+    if not contract or contract.status in ("requested", "draft"):
+        return "send_contract", "견적·계약서 발송"
+    sigs = {s.get("party") for s in (contract.signatures or [])}
+    if "A" not in sigs:
+        return "request_signature", "서명 요청(기업)"
+    if "B" not in sigs:
+        return "sign_b", "GL HAC 서명"
+    if not signed_notice_sent:
+        return "notice_contract", "체결 고지"
+    rounds = sorted(invoices, key=lambda i: (inst.get(i.invoice_id, {}).get("round") or 99))
+    for inv in rounds:
+        if inv.status == "paid":
+            if not notices_by_inv.get((inv.invoice_id, "payment_confirmed")):
+                return "notice_paid", "입금 확인 알림"
+            continue
+        if inv.status == "need_verification":
+            return "confirm_paid", "입금 확인"
+        if inv.status == "draft":
+            return "next_round", "다음 회차(발급 시 청구)"
+        if not notices_by_inv.get((inv.invoice_id, "payment_due")):
+            return "notice_due", "입금 고지"
+        if inv.due_date and inv.due_date < now:
+            return "notice_reminder", "재고지(기한 경과)"
+        return "wait_payment", "입금 대기"
+    return "settled", "완납" if invoices else "회차 없음"
+
+
+@app.get("/admin/billing/board")
+def admin_billing_board(filter: str = "all", user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")),
+                        db: Session = Depends(get_db)):
+    """CTR-06 계약·입금 처리 보드 — 업체별 계약 금액·서명(갑·을)·체결 고지·회차별 입금·다음 조치. filter: action|signing|signed|paying|overdue|settled|all."""
+    now = datetime.utcnow()
+    items = []
+    for c in _ops_cases(db, user):
+        contract = db.query(models.Contract).filter_by(case_id=c.case_id).order_by(models.Contract.created_at.desc()).first()
+        quote = _latest_quote(db, c.case_id)
+        if not contract and not quote and not (nav8.formal_flow_on() and nav8.formal_state(db, c.case_id)):
+            continue
+        inst = _installment_map(db, c.case_id)
+        invoices = [i for i in db.query(models.Invoice).filter_by(case_id=c.case_id).all() if i.invoice_id in inst] or \
+                   db.query(models.Invoice).filter_by(case_id=c.case_id).all()
+        notices_by_inv = {}
+        signed_notice_sent = False
+        for e in db.query(models.WorkflowEvent).filter_by(case_id=c.case_id, action="billing.notice").all():
+            p = e.payload or {}
+            if p.get("kind") == "contract_signed":
+                signed_notice_sent = True
+            if p.get("invoice_id"):
+                notices_by_inv[(p["invoice_id"], p.get("kind"))] = e.created_at.isoformat() if e.created_at else True
+        sigs = {s.get("party"): s for s in (contract.signatures or [])} if contract else {}
+        formal = nav8.formal_state(db, c.case_id)
+        code, label = _billing_next_action(formal, contract, quote, invoices, inst, signed_notice_sent, notices_by_inv, now)
+        rounds = []
+        overdue = False
+        for inv in sorted(invoices, key=lambda i: (inst.get(i.invoice_id, {}).get("round") or 99)):
+            od = bool(inv.due_date and inv.due_date < now and inv.status in ("waiting_payment",))
+            overdue = overdue or od
+            rounds.append({"invoice_id": inv.invoice_id, "invoice_no": inv.invoice_no, "round": inst.get(inv.invoice_id, {}).get("round"),
+                           "stage": inst.get(inv.invoice_id, {}).get("stage"), "total": inv.total, "status": inv.status,
+                           "due_date": inv.due_date.isoformat() if inv.due_date else None, "overdue": od,
+                           "due_notice_at": notices_by_inv.get((inv.invoice_id, "payment_due")),
+                           "reminder_at": notices_by_inv.get((inv.invoice_id, "payment_reminder")),
+                           "confirmed_notice_at": notices_by_inv.get((inv.invoice_id, "payment_confirmed"))})
+        paid_all = bool(rounds) and all(r["status"] == "paid" for r in rounds)
+        items.append({"case_id": c.case_id, "company_name": c.company_name, "case_status": c.status,
+                      "formal": formal, "quote_total": (quote or {}).get("total"),
+                      "contract_id": contract.contract_id if contract else None, "contract_no": contract.contract_no if contract else None,
+                      "contract_status": contract.status if contract else None, "fee": contract.fee if contract else None,
+                      "signed_a": bool(sigs.get("A")), "signed_b": bool(sigs.get("B")), "signed_notice_sent": signed_notice_sent,
+                      "rounds": rounds, "overdue": overdue, "settled": paid_all,
+                      "next_action": code, "next_action_label": label})
+    def _keep(it):
+        if filter == "all":
+            return True
+        if filter == "action":
+            return it["next_action"] not in ("wait_payment", "settled", "next_round")
+        if filter == "signing":
+            return not (it["signed_a"] and it["signed_b"])
+        if filter == "signed":
+            return it["signed_a"] and it["signed_b"]
+        if filter == "paying":
+            return any(r["status"] in ("waiting_payment", "need_verification") for r in it["rounds"])
+        if filter == "overdue":
+            return it["overdue"]
+        if filter == "settled":
+            return it["settled"]
+        return True
+    items = [it for it in items if _keep(it)]
+    return {"items": items, "count": len(items), "filter": filter}
 
 
 @app.get("/billing/defaults")

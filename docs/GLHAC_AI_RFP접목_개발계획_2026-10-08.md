@@ -53,5 +53,13 @@
 - v4 `formal-app.js`: 오디터 사전심사 상세 패널(세부 단계·AI 2차·판정·신청서 열람), 기업 `ent-formal` 화면(잠금 안내/신청서 폼+서명 캔버스/대기·접수 표시), 관리자 계약 관리 상단 접수 보드(보기·반려·접수 확인). `AUDQ.pre` 를 판정 대기 케이스까지 확장.
 - 테스트 `tests/test_formal_flow.py` 9건.
 
+## 3c. 묶음 ③ 설계 — 견적·계약·회차 입금·고지 (구현 2026-10-08)
+- 설정(ADM-03/05): `GET/POST /billing/settings`(기존 `billing-defaults:org` 이벤트 패턴 재사용) — 5분야 기본 심사비·품목 추가비·출장비·옵션·지급 조건(lump|split50)·입금 기한(7일)·자동 고지 2종·계좌.
+- 견적(D-07, CTR-01/02): `POST /cases/{id}/quote`(관리자, 산출 근거 lines·버전, 접수 확인 전 409), `GET`, 컨설턴트 `change-request`·관리자 `change-reject`/재발행. 계약 금액 = 최신 견적 총액(`contract/approve`).
+- 계약(CTR-03/04): `sign` 에 당사자 가드(갑=applicant, 을=operator, 컨설턴트 403, 중복 409). 양측 서명 → `confirmed` + D-09 `esign_certificate` + 회차 청구 생성(`invoice.installment` 이벤트, split50: R1 즉시 청구·R2 draft) + 체결 고지(자동 설정 시).
+- 고지(CTR-07~11, NTF-02/03): `_send_notice` 공통(kind 5종, 수신자·채널·기한·문안, 이력 `billing.notice`), `POST /cases/{id}/billing/notice`·`GET …/notices`, 기업 `POST /invoices/{id}/paid-notice`(→입금확인중), 관리자 입금 확인 시 자동 확인 알림, `bill-now` 미리 청구, 인증서 발급 시 R2 자동 청구(CRT-02).
+- 보드(CTR-06): `GET /admin/billing/board?filter=` — 다음 조치 규칙 `_billing_next_action`(접수 확인→계약 발송→서명 요청→GL HAC 서명→체결 고지→입금 고지→재고지→입금 확인→확인 알림→다음 회차→완납).
+- v4 `billing-adm.js`(보드·조치 버튼·발송 창·설정/가격표), `billing-ent.js`(기업 견적서·갑 서명·결제 일정·입금 완료 알림·고지 이력, 컨설턴트 견적 변경 요청). 테스트 `tests/test_billing_flow.py` 9건.
+
 ## 4. 진행 기록
-- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료.
+- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료 — **1차 MVP 핵심 3묶음 완료**. 다음 ④ 분야 5종.

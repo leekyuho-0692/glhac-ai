@@ -40,6 +40,7 @@ def _seed_db(tmp_path):
 
 
 USER = {"uid": "u1", "role": "applicant", "org_id": "org1"}
+OPER = {"uid": "u2", "role": "operator", "org_id": "org1"}
 
 
 def test_company_info_merges_fields(tmp_path):
@@ -86,8 +87,8 @@ def test_contract_generate_pdf_sign(tmp_path):
     assert resp.media_type == "application/pdf" and resp.body[:4] == b"%PDF"
     # 양자 서명 → signed
     m.sign_contract(r["contract_id"], party="A", name="Client Rep", user=USER, db=db)
-    s2 = m.sign_contract(r["contract_id"], party="B", name="GLHAC Rep", user=USER, db=db)
-    assert s2["status"] == "signed"
+    s2 = m.sign_contract(r["contract_id"], party="B", name="GLHAC Rep", user=OPER, db=db)
+    assert s2["status"] in ("signed", "confirmed")
     assert len(s2["signatures"]) == 2
 
 
