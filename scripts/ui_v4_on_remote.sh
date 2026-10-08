@@ -11,19 +11,21 @@ sudo cp "$ENV" "$ENV.bak-ui-$(date +%Y%m%d%H%M%S)"
 
 if [ "$MODE" = "off" ]; then
   # 해제 모드: 활성 v4 줄을 주석 처리
-  if grep -q '^GLHAC_UI_DEFAULT=v4' "$ENV"; then
-    sudo sed -i "s|^GLHAC_UI_DEFAULT=v4.*|# GLHAC_UI_DEFAULT=v4  # $STAMP 해제|" "$ENV"
+  if grep -qE '^GLHAC_UI_DEFAULT=' "$ENV"; then
+    sudo sed -i -E "s|^GLHAC_UI_DEFAULT=.*|# GLHAC_UI_DEFAULT=v4|" "$ENV"
+    sudo sed -i "/^# GLHAC_UI_DEFAULT=v4\$/i # $STAMP 기본화면 v4 해제(구 화면으로 복귀)" "$ENV"
   else
     echo "이미 꺼짐"
   fi
 else
-  # 전환 모드: 주석 처리된 기본 줄을 활성화, 없으면 추가
-  if grep -q '^# GLHAC_UI_DEFAULT=v4' "$ENV"; then
-    sudo sed -i "s|^# GLHAC_UI_DEFAULT=v4.*|GLHAC_UI_DEFAULT=v4  # $STAMP 기본화면 v4 전환(구 화면 /ui/index.html 유지)|" "$ENV"
-  elif grep -q '^GLHAC_UI_DEFAULT=v4' "$ENV"; then
+  # 전환 모드
+  if grep -qE '^GLHAC_UI_DEFAULT=v4[[:space:]]*$' "$ENV"; then
     echo "이미 켜짐"
+  elif grep -qE '^#?[[:space:]]*GLHAC_UI_DEFAULT=' "$ENV"; then
+    sudo sed -i -E "s|^#?[[:space:]]*GLHAC_UI_DEFAULT=.*|GLHAC_UI_DEFAULT=v4|" "$ENV"
+    sudo sed -i "/^GLHAC_UI_DEFAULT=v4\$/i # $STAMP 기본화면 v4 전환(구 화면 \/ui\/index.html 유지)" "$ENV"
   else
-    echo "GLHAC_UI_DEFAULT=v4  # $STAMP 기본화면 v4 전환(구 화면 /ui/index.html 유지)" | sudo tee -a "$ENV"
+    printf '# %s 기본화면 v4 전환(구 화면 /ui/index.html 유지)\nGLHAC_UI_DEFAULT=v4\n' "$STAMP" | sudo tee -a "$ENV" >/dev/null
   fi
 fi
 
