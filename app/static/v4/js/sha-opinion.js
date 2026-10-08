@@ -85,7 +85,9 @@ function SHO_detail(cid, d){
   </section>`;
 }
 
-VIEWS['sha-review'] = () => {
+/* 기존 심의 화면(안건 목록·투표, sha-decide 가승인·서명·결정문, self-declare KFPH)을 감싸서 뒤에 붙인다.
+   예전엔 통째로 대입해 그 화면들이 전부 사라졌다. */
+function SHO_view(){
   const list = (RS.cases||[]).filter(c=>!c.done);
   const sel = S.selFatwa;
   if(!sel) return '';
@@ -103,7 +105,8 @@ VIEWS['sha-review'] = () => {
     return `<section class="panel"><p class="empty">${st===403?'이 화면을 볼 권한이 없습니다.':'검토 의견을 불러오지 못했습니다.'}</p></section>`;
   }
   return SHO_detail(sel, d);
-};
+}
+{ const _shoPrev = VIEWS['sha-review']; VIEWS['sha-review'] = () => (_shoPrev ? _shoPrev() : '') + SHO_view(); }
 
 App.shoSave = async function(cid, idx){
   const d = RS.sho && RS.sho[cid];

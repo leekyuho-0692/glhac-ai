@@ -32,10 +32,13 @@ function AUDD_docTable(cid, rows, mode){
     const open = `<button class="link" onclick="App.docDownload('${d.document_id}','${esc(d.filename||'')}')">열기</button>`;
     let act;
     if(mode === 'aiq'){
+      // 재처리(consultant·operator main.py:5318)·재분류(applicant·consultant·operator 5039) — 오디터는 403 이라 숨김
       act = `<div class="row-act">
-        <button class="btn btn-sm" onclick="App.auddRepro('${cid}','${d.document_id}')">재처리</button>
-        <button class="btn btn-sm" onclick="App.auddRecl('${cid}','${d.document_id}')">재분류</button>
+        ${canCall('POST','/documents/{}/reprocess')?`<button class="btn btn-sm" onclick="App.auddRepro('${cid}','${d.document_id}')">재처리</button>`:''}
+        ${canCall('PATCH','/documents/{}/reclassify')?`<button class="btn btn-sm" onclick="App.auddRecl('${cid}','${d.document_id}')">재분류</button>`:''}
         <button class="btn btn-sm" onclick="App.auddTrans('${d.document_id}')">번역</button></div>`;
+    } else if(!canCall('PATCH','/documents/{}/review')){
+      act = '';
     } else {
       act = `<div class="row-act">
         <button class="btn btn-sm btn-primary" onclick="App.auddReview('${cid}','${d.document_id}','approved')">승인</button>
@@ -61,17 +64,20 @@ function AUDD_aiqPanel(cid){
     const items = pend.items || [];
     const failed = pend.failed || [];
     const rows = items.map((it,i) => `<li class="row"><label style="display:flex;gap:8px;align-items:center;flex:1">
-        <input type="checkbox" class="audd-pick" value="${i}">
+        ${canApply?`<input type="checkbox" class="audd-pick" value="${i}">`:''}
         <span>${esc(it.value||'')} <span class="tag">${it.kind==='material_names'?'원재료':'제품'}</span>
         ${it.filename?`<span class="muted" style="font-size:11px">${esc(it.filename)}</span>`:''}</span></label></li>`).join('');
-    const failHtml = failed.length ? `<div class="note attn"><strong>AI 분석 실패 ${failed.length}건</strong><ul class="rows">${failed.map(f=>`<li class="row"><span>${esc(f.filename||'')}</span><button class="link" onclick="App.auddRepro('${cid}','${f.document_id}')">재처리</button></li>`).join('')}</ul></div>` : '';
+    const canRepro = canCall('POST','/documents/{}/reprocess');
+    // 추출값 반영은 material.add 매트릭스(applicant·consultant·penyelia) — 오디터는 조회만
+    const canApply = canCall('POST','/cases/{}/pending-extractions/apply');
+    const failHtml = failed.length ? `<div class="note attn"><strong>AI 분석 실패 ${failed.length}건</strong><ul class="rows">${failed.map(f=>`<li class="row"><span>${esc(f.filename||'')}</span>${canRepro?`<button class="link" onclick="App.auddRepro('${cid}','${f.document_id}')">재처리</button>`:''}</li>`).join('')}</ul></div>` : '';
     pendHtml = `${failHtml}
       ${pend.note?`<p class="muted" style="font-size:12px">${esc(pend.note)}</p>`:''}
       ${items.length ? `<ul class="rows">${rows}</ul>
-      <div class="inline" style="margin-top:8px">
+      ${canApply?`<div class="inline" style="margin-top:8px">
         <button class="btn btn-sm" onclick="App.auddApply('${cid}')">선택 반영</button>
         <button class="btn btn-sm btn-primary" onclick="App.auddApplyAll('${cid}')">전체 반영</button>
-      </div>` : (failed.length?'':'<p class="empty">확인 대기 중인 항목이 없습니다.</p>')}`;
+      </div>`:'<p class="muted" style="font-size:12px">반영은 인증기업·컨설턴트가 합니다.</p>'}` : (failed.length?'':'<p class="empty">확인 대기 중인 항목이 없습니다.</p>')}`;
   }
   return `<section class="panel"><div class="panel-head"><h2>문서 재처리</h2><span class="count">${docs.rows.length}건</span></div>
     ${AUDD_docTable(cid, docs.rows, 'aiq')}

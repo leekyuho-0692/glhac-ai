@@ -20,7 +20,7 @@ async function HOF_consume(){
       return;
     }
     if(!r.ok){
-      toast('만료되었거나 이미 사용된 링크입니다. 다시 로그인해 주세요.');
+      toast(await apiErr(r, '만료되었거나 이미 사용된 링크입니다. 다시 로그인해 주세요.'));
       return;
     }
     let d;
@@ -48,8 +48,10 @@ async function HOF_consume(){
       const rk = Object.keys(ROLES).find(k => ROLES[k].code === ui);
       if(rk && ROLES[rk] && ROLES[rk].home) S.view = ROLES[rk].home;
     }catch(e){}
+    try{ if(typeof loadRbac === 'function') await loadRbac(); }catch(e){}
     try{
-      if(ui === 'aud') await loadAud();
+      if(ui === 'pen'){ if(typeof loadPen === 'function') await loadPen(); }
+      else if(ui === 'aud') await loadAud();
       else if(ui === 'ent') await loadEnt();
       else if(ui === 'cons') await loadCons();
       else if(ui === 'sha') await loadSha();

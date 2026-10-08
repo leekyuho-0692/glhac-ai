@@ -88,8 +88,8 @@
             + `<td>${B(v.halal_clear)}</td><td class="num">${N(v.cleaning_count)}</td><td>${N(v.next_due)}</td>`
             + `<td class="row-act">`
             + `<button class="btn btn-sm" onclick="App.entlToggle('${v.vehicle_id}')">${on?'닫기':'세척 이력'}</button>`
-            + `<button class="btn btn-sm btn-ghost" onclick="App.entlEdit('${v.vehicle_id}')">수정</button>`
-            + `<button class="btn btn-sm btn-ghost" onclick="App.entlDel('${v.vehicle_id}')">삭제</button>`
+            + (canCall('PATCH','/vehicles/{}')?`<button class="btn btn-sm btn-ghost" onclick="App.entlEdit('${v.vehicle_id}')">수정</button>`:'')
+            + (canCall('DELETE','/vehicles/{}')?`<button class="btn btn-sm btn-ghost" onclick="App.entlDel('${v.vehicle_id}')">삭제</button>`:'')
             + `</td></tr>`;
         }).join('') + '</tbody></table></div>';
     }
@@ -99,7 +99,7 @@
 
     return `<section class="panel">
       <div class="panel-head"><h2>차량·세척 이력</h2>
-        <button class="btn btn-sm btn-primary" onclick="App.entlAdd()">차량 추가</button></div>
+        ${canCall('POST','/orgs/{}/vehicles')?`<button class="btn btn-sm btn-primary" onclick="App.entlAdd()">차량 추가</button>`:''}</div>
       ${listHalf}${detail}</section>`;
   }
 
@@ -128,8 +128,8 @@
         <td>${c.photo_doc_id?`<button class="link" onclick="App.docDownload('${c.photo_doc_id}','photo')">보기</button>`:'<span class="muted">—</span>'}</td>
         <td>${B(c.penyelia_sign)}</td><td>${N(c.signed_at)}</td><td>${N(c.next_due)}</td><td>${N(c.note)}</td>
         <td class="row-act">
-          ${c.penyelia_sign?'':`<button class="btn btn-sm" onclick="App.entlSign('${c.cleaning_id}')">서명</button>`}
-          <button class="btn btn-sm btn-ghost" onclick="App.entlCleanDel('${c.cleaning_id}','${vid}')">삭제</button>
+          ${c.penyelia_sign||!canCall('POST','/cleanings/{}/sign')?'':`<button class="btn btn-sm" onclick="App.entlSign('${c.cleaning_id}')">서명</button>`}
+          ${canCall('DELETE','/cleanings/{}')?`<button class="btn btn-sm btn-ghost" onclick="App.entlCleanDel('${c.cleaning_id}','${vid}')">삭제</button>`:''}
         </td></tr>`).join('')}
       </tbody></table></div></div>`;
   }

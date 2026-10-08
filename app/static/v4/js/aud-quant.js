@@ -75,6 +75,8 @@ function AUDQ_addForm(cid){
   </fieldset>`;
 }
 function AUDQ_renameForm(cid){
+  // 원재료명 교정은 applicant·consultant 전용(main.py:4377) — 오디터에겐 403
+  if(!canCall('PATCH','/materials/{}/rename')) return '';
   const mats = AUDQ_matOptions(cid);
   return `<fieldset><legend>원재료명 교정</legend>
     <div class="grid-2">

@@ -99,6 +99,7 @@
   }
 
   function OPSO_orgSection(){
+    if(!canCall('GET','/admin/orgs')) return '';   // 조직 목록·생성은 admin 전용(main.py:1682·1706) — operator 화면에선 숨김
     const c = RS[OPSO_ORGS];
     if(!c){
       if(!RS._opsoOrgsLoading){ RS._opsoOrgsLoading = true; OPSO_loadOrgs().then(()=>{ RS._opsoOrgsLoading = false; render(); }); }

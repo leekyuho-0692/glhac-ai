@@ -43,7 +43,51 @@ async function SDC_load(cid){
   }catch(e){ RS.sdcStatus = RS.sdcStatus||{}; RS.sdcStatus[cid] = {error:true}; }
 }
 
-/* ── A. 오디터 자기선언 검증 (마스터-디테일) ── */
+/* ── A. 자기선언 상세 블록 — 역할별 화면(aud-selfdecl · cons-status · pen-home)이 공유.
+   버튼은 서버 권한 그대로: 경로 확정·동반자 배정 = consultant(main.py:16368·16787),
+   동반자 검증 = pendamping_pph(rbac pendamping.verify, main.py:16807). 판정·미리보기·PDF 는 전 역할. */
+function SDC_reload(){
+  if(S.role==='pen' && typeof loadPen==='function') return loadPen();
+  if(S.role==='cons' && typeof loadCons==='function') return loadCons();
+  if(typeof loadAud==='function') return loadAud();
+}
+function SDC_blocks(cur){
+  const a = (S.sdcAssess||{})[cur];
+  const canConfirm = canCall('POST','/cases/{}/pathway/confirm');
+  const canAssign = canCall('POST','/cases/{}/pendamping/assign');
+  const canVerify = canCall('POST','/cases/{}/pendamping/verify');
+  let pathBlock = `<fieldset><legend>경로 판정</legend>
+    <div class="inline"><button class="btn btn-sm" onclick="App.sdcAssess('${cur}')">경로 판정 실행</button>${a&&canConfirm?`<button class="btn btn-sm btn-primary" onclick="App.sdcConfirm('${cur}','self_declare')">자기선언으로 확정</button><button class="btn btn-sm" onclick="App.sdcConfirm('${cur}','reguler')">정규로 확정</button>`:''}</div>`;
+  if(a){
+    pathBlock += SDC_dl(a);
+    if(a.data && a.data.assessment){
+      pathBlock += `<dl class="dl"><div><dt>위험등급</dt><dd class="mono">${esc(a.data.assessment.risk_category||'')}</dd></div><div><dt>핵심원료</dt><dd class="mono num">${esc(String(a.data.assessment.critical_ingredient_count))}</dd></div><div><dt>증빙완비</dt><dd class="mono">${a.data.assessment.evidence_complete?'예':'아니오'}</dd></div></dl>`;
+    }
+  }
+  if(!canConfirm) pathBlock += `<div class="muted" style="font-size:11px;margin-top:4px">경로 확정은 전담 컨설턴트가 합니다.</div>`;
+  pathBlock += `</fieldset>`;
+
+  const pendBlock = (canAssign || canVerify) ? `<fieldset><legend>동반자(Pendamping)</legend>
+    <div class="inline">
+      ${canAssign?`<input id="sdc-pend" class="in" placeholder="동반자 아이디(pendamping)">
+      <button class="btn btn-sm" onclick="App.sdcAssign('${cur}')">동반자 배정</button>`:''}
+      ${canVerify?`<button class="btn btn-sm btn-primary" onclick="App.sdcVerify('${cur}','verified')">동반자 검증 완료</button>
+      <button class="btn btn-sm" onclick="App.sdcVerifyRejectOpen('${cur}')">반려</button>
+      <button class="btn btn-sm" onclick="App.sdcVerify('${cur}','rework')">재작업</button>`:''}
+    </div>
+    ${canVerify?'<div class="muted" style="font-size:11px;margin-top:4px">반려 시 경로가 reguler 로 되돌아갑니다.</div>':''}
+  </fieldset>` : `<fieldset><legend>동반자(Pendamping)</legend><div class="muted" style="font-size:12px">배정은 컨설턴트, 검증은 배정된 동반자(PPH)가 합니다.</div></fieldset>`;
+
+  const docBlock = `<fieldset><legend>자기선언서</legend>
+    <div class="inline">
+      <button class="btn btn-sm" onclick="App.sdcPreview('${cur}')">미리보기</button>
+      <button class="btn btn-sm" onclick="App.sdcPdf('${cur}')">PDF</button>
+    </div>
+  </fieldset>`;
+  return `<div style="display:flex;flex-direction:column;gap:18px;margin-top:14px">${pathBlock}${pendBlock}${docBlock}</div>`;
+}
+
+/* ── A-1. 오디터 자기선언 현황 (마스터-디테일, 조회·판정 위주) ── */
 VIEWS['aud-selfdecl'] = () => {
   const list = (RS.cases||[]).filter(c=>!c.done);
   if(!list.length) return `<section class="panel"><p class="empty">대상 업체가 없습니다.</p></section>`;
@@ -53,34 +97,6 @@ VIEWS['aud-selfdecl'] = () => {
     `<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.sdcSel('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')} · ${esc(c.pathway||'')}</span></button>`
   ).join('')}</nav>`;
   const c = list.find(x=>x.case_id===cur) || list[0];
-  const a = (S.sdcAssess||{})[cur];
-
-  let pathBlock = `<fieldset><legend>경로 판정</legend>
-    <div class="inline"><button class="btn btn-sm" onclick="App.sdcAssess('${cur}')">경로 판정 실행</button>${a?`<button class="btn btn-sm btn-primary" onclick="App.sdcConfirm('${cur}','self_declare')">자기선언으로 확정</button><button class="btn btn-sm" onclick="App.sdcConfirm('${cur}','reguler')">정규로 확정</button>`:''}</div>`;
-  if(a){
-    pathBlock += SDC_dl(a);
-    if(a.data && a.data.assessment){
-      pathBlock += `<dl class="dl"><div><dt>위험등급</dt><dd class="mono">${esc(a.data.assessment.risk_category||'')}</dd></div><div><dt>핵심원료</dt><dd class="mono num">${esc(String(a.data.assessment.critical_ingredient_count))}</dd></div><div><dt>증빙완비</dt><dd class="mono">${a.data.assessment.evidence_complete?'예':'아니오'}</dd></div></dl>`;
-    }
-  }
-  pathBlock += `</fieldset>`;
-
-  const pendBlock = `<fieldset><legend>동반자(Pendamping)</legend>
-    <div class="inline"><input id="sdc-pend" class="in" placeholder="사용자 id">
-      <button class="btn btn-sm" onclick="App.sdcAssign('${cur}')">동반자 배정</button>
-      <button class="btn btn-sm btn-primary" onclick="App.sdcVerify('${cur}','verified')">동반자 검증 완료</button>
-      <button class="btn btn-sm" onclick="App.sdcVerifyRejectOpen('${cur}')">반려</button>
-      <button class="btn btn-sm" onclick="App.sdcVerify('${cur}','rework')">재작업</button>
-    </div>
-    <div class="muted" style="font-size:11px;margin-top:4px">반려 시 경로가 reguler 로 되돌아갑니다.</div>
-  </fieldset>`;
-
-  const docBlock = `<fieldset><legend>자기선언서</legend>
-    <div class="inline">
-      <button class="btn btn-sm" onclick="App.sdcPreview('${cur}')">미리보기</button>
-      <button class="btn btn-sm" onclick="App.sdcPdf('${cur}')">PDF</button>
-    </div>
-  </fieldset>`;
 
   const detail = `<section class="panel"><div class="panel-head"><h2>${esc(c.company_name||'')}</h2><span class="badge">${esc(_s8label(c))}</span></div>
     <div class="summary">
@@ -90,11 +106,27 @@ VIEWS['aud-selfdecl'] = () => {
       <div><span class="k">다음 조치</span><span class="v">${esc(c.next_action||'')}</span></div>
     </div>
     ${_stepper8(c.step8, c.hold, c.done)}
-    <div style="display:flex;flex-direction:column;gap:18px;margin-top:14px">${pathBlock}${pendBlock}${docBlock}</div>
+    ${SDC_blocks(cur)}
   </section>`;
 
   return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${detail}</div></div>`;
 };
+
+/* ── A-2. 컨설턴트 업체별 현황(cons-status) — 경로 확정·동반자 배정의 실제 담당 화면 ── */
+{
+  const prev = VIEWS['cons-status'];
+  if(typeof prev === 'function'){
+    VIEWS['cons-status'] = () => {
+      const base = prev();
+      const cid = S.selCompany;
+      const c = (RS.cases||[]).find(x=>x.case_id===cid);
+      if(!c) return base;
+      const show = c.pathway==='self_declare' || c.status==='pathway_determination' || c.status==='consultant_review' || (S.sdcAssess||{})[cid];
+      if(!show) return base;
+      return base + `<section class="panel"><div class="panel-head"><h2>자기선언(SEHATI) 경로</h2><span class="badge">${esc(c.pathway||'-')}</span></div>${SDC_blocks(cid)}</section>`;
+    };
+  }
+}
 App.sdcSel = function(id){ S.selSdc = id; render(); };
 App.sdcAssess = async function(cid){
   const res = await SDC_req('POST', `/cases/${cid}/pathway/assess`);
@@ -106,7 +138,7 @@ App.sdcConfirm = async function(cid, pathway){
   const res = await SDC_req('POST', `/cases/${cid}/pathway/confirm`, {pathway, override_reason:null});
   if(!res.ok) return SDC_err('경로 확정', res);
   toast('경로 확정: '+pathway);
-  if(typeof loadAud==='function') await loadAud();
+  await SDC_reload();
   render();
 };
 App.sdcAssign = async function(cid){
@@ -132,14 +164,14 @@ App.sdcVerifyRejectDo = async function(cid){
   const res = await SDC_req('POST', `/cases/${cid}/pendamping/verify`, {decision:'rejected', note:note, signature_ref:null});
   if(!res.ok) return SDC_err('동반자 검증', res);
   toast('처리 완료: rejected');
-  if(typeof loadAud==='function') await loadAud();
+  await SDC_reload();
   render();
 };
 App.sdcVerify = async function(cid, decision){
   const res = await SDC_req('POST', `/cases/${cid}/pendamping/verify`, {decision, note:null, signature_ref:null});
   if(!res.ok) return SDC_err('동반자 검증', res);
   toast(decision==='verified'?'검증 완료':'처리 완료: '+decision);
-  if(typeof loadAud==='function') await loadAud();
+  await SDC_reload();
   render();
 };
 App.sdcPreview = async function(cid){
@@ -159,7 +191,7 @@ App.sdcPdf = async function(cid){
   const filename = `self-declaration-${cid}.pdf`;
   try{
     const r = await apiFetch(`/cases/${cid}/self-declaration.pdf`);
-    if(!r.ok) return toast('PDF 를 불러올 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, 'PDF 를 불러올 수 없습니다.'));
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = filename;
@@ -218,7 +250,7 @@ App.sdcDecide = async function(cid, decision){
 App.sdcKetetapan = async function(cid){
   try{
     const r = await apiFetch(`/cases/${cid}/committee/ketetapan.pdf`);
-    if(!r.ok) return toast('결정서를 불러올 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, '결정서를 불러올 수 없습니다.'));
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = `ketetapan-${cid}.pdf`;

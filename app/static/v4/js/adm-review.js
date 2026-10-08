@@ -56,8 +56,8 @@ const ADMR_intakeHtml = () => {
       <div class="muted mono" style="font-size:11px">${esc(c.status||'')}</div>
     </div>
     <div class="row-act">
-      <button class="btn btn-sm btn-primary" onclick="App.admrApprove('${c.case_id}')">승인</button>
-      <button class="btn btn-sm" onclick="App.admrReject('${c.case_id}')">거절</button>
+      ${canCall('POST','/ops/companies/{}/approve')?`<button class="btn btn-sm btn-primary" onclick="App.admrApprove('${c.case_id}')">승인</button>`:''}
+      ${canCall('POST','/ops/companies/{}/reject')?`<button class="btn btn-sm" onclick="App.admrReject('${c.case_id}')">거절</button>`:''}
       <button class="btn btn-sm btn-ghost" onclick="App.admrReturn('${c.case_id}')">신청서 반려(보완 요청)</button>
     </div>
   </li>`).join('');
@@ -83,7 +83,8 @@ const ADMR_panel = (d, title, inner) => {
 
 function ADMR_dash(){
   const d = RS.admr.dash, cal = RS.admr.cal, ac = RS.admr.allcases;
-  ADMR_fetch('dash', '/ops/dashboard'); ADMR_fetch('cal','/ops/calendar'); ADMR_fetch('allcases','/admin/cases?limit=100&meta=1');
+  const canAll = canCall('GET','/admin/cases');   // 전체 케이스는 admin 전용(main.py:1715)
+  ADMR_fetch('dash', '/ops/dashboard'); ADMR_fetch('cal','/ops/calendar'); if(canAll) ADMR_fetch('allcases','/admin/cases?limit=100&meta=1');
   const dashHtml = ADMR_panel(d, '운영 대시보드', x => {
     const cap = x.capacity||{}, bl = cap.backlog||{};
     const sum = `<div class="summary">
@@ -115,7 +116,7 @@ function ADMR_dash(){
     const ev = (x.events||[]).map(e=>`<tr><td class="mono">${esc(e.date)}</td><td>${esc(e.company_name)}</td><td>${esc(e.lph_name||'')}</td><td><span class="badge ${e.status==='confirmed'?'strong':'attn'}">${esc(e.status)}</span> ${esc(e.kind)}</td></tr>`).join('');
     return `<div class="tbl-wrap"><table><thead><tr><th>일자</th><th>업체</th><th>심사원</th><th>상태</th></tr></thead><tbody>${ev||'<tr><td colspan="4" class="muted">일정이 없습니다.</td></tr>'}</tbody></table></div>`;
   });
-  const acHtml = ADMR_panel(ac, '전체 케이스', x => {
+  const acHtml = !canAll ? '' : ADMR_panel(ac, '전체 케이스', x => {
     const items = x.items||x;
     const rows = items.map(c=>`<tr><td class="mono">${esc(c.case_id)}</td><td>${esc(c.company_name)}</td><td>${esc(c.status||'')}</td><td>${esc(c.pathway||'')}</td><td>${esc(c.org_id||'')}</td></tr>`).join('');
     const tot = (x.total!=null) ? `<span class="count">총 ${x.total}</span>` : '';

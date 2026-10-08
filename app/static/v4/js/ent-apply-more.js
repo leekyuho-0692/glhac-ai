@@ -53,11 +53,14 @@ function ENTA_checklistPanel(){
 function ENTA_applyPanel(){
   const cid = ENTA_CASE();
   if(!cid) return '';
+  // 임시저장·ZIP 일괄 업로드 — 신청기업·컨설턴트 전용(main.py:6159·5794). 할랄감독자(penyelia)는 403
+  const canDraft = canCall('POST','/cases/{}/save-draft'), canZip = canCall('POST','/cases/{}/intake-zip-stream');
+  if(!canDraft && !canZip) return '';
   const prog = (S.entaProg||'');
   return `<section class="panel"><div class="panel-head"><h2>임시저장 · 일괄 업로드</h2></div>
     <div class="inline" style="flex-wrap:wrap;gap:8px">
-      <button class="btn" onclick="App.entaSaveDraft()">임시저장</button>
-      <button class="btn btn-primary" onclick="(($('#enta-zip')||{}).click||(()=>{}))()">ZIP 파일로 서류 일괄 올리기</button>
+      ${canDraft?`<button class="btn" onclick="App.entaSaveDraft()">임시저장</button>`:''}
+      ${canZip?`<button class="btn btn-primary" onclick="(($('#enta-zip')||{}).click||(()=>{}))()">ZIP 파일로 서류 일괄 올리기</button>`:''}
       <input type="file" id="enta-zip" accept=".zip" hidden onchange="App.entaZip(this.files[0])">
     </div>
     <p class="muted" style="font-size:12px;margin-top:6px">ZIP·RAR·7z 를 압축 해제해 서류를 자동 분류·채웁니다. 처리 중에는 창을 닫지 마세요.</p>
@@ -68,6 +71,8 @@ function ENTA_applyPanel(){
 function ENTA_refundPanel(){
   const cid = ENTA_CASE();
   if(!cid) return '';
+  // 환불 요청은 운영자 전용(main.py:13869) — 인증기업 화면에선 403 이라 패널 자체를 숨긴다
+  if(!canCall('POST','/invoices/{}/refund/request')) return '';
   const d = RS.entaInv;
   if(!d){
     if(RS._entaInvLoading !== cid){ RS._entaInvLoading = cid; ENTA_loadInvoices(cid).then(()=>{ RS._entaInvLoading=null; render(); }); }

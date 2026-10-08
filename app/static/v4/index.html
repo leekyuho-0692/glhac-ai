@@ -558,7 +558,8 @@ const ROLES = {
   consultant:{code:'cons',label:'ws.cons',sub:'role.cons.sub',home:'cons-home',ext:true},
   auditor:{code:'aud',label:'ws.aud',sub:'role.aud.sub',home:'aud-home'},
   sharia:{code:'sha',label:'ws.sha',sub:'role.sha.sub',home:'sha-home'},
-  admin:{code:'adm',label:'ws.adm',sub:'role.adm.sub',home:'adm-home'}
+  admin:{code:'adm',label:'ws.adm',sub:'role.adm.sub',home:'adm-home'},
+  pendamping:{code:'pen',label:'ws.pen',sub:'role.pen.sub',home:'pen-home'}   // 로그인 화면 버튼엔 없음 — 서버 역할 pendamping_pph 로만 진입
 };
 const roleByCode = code => Object.values(ROLES).find(r=>r.code===code);
 
@@ -726,7 +727,7 @@ function consSignup(){
    APP SHELL
    ========================================================= */
 const NAV = {ent:['ent-home','ent-flow','ent-pre','ent-apply','ent-contract','ent-docs','ent-consultant'], cons:['cons-home','cons-new','cons-status','cons-flow','cons-contract','cons-docs','cons-qna'],
-  aud:['aud-home','aud-flow','aud-dossier','aud-inbox','aud-pre','aud-contract','aud-schedule','aud-mock','aud-report','aud-final','aud-cert','aud-eval','aud-materials','aud-aiq','aud-resubmit'], sha:['sha-home','sha-review','sha-history'], adm:['adm-home','adm-flow','adm-members','adm-experts','adm-assign','adm-price','adm-contract','adm-docs','adm-kb','adm-cert']};
+  aud:['aud-home','aud-flow','aud-dossier','aud-inbox','aud-pre','aud-contract','aud-schedule','aud-mock','aud-report','aud-final','aud-cert','aud-eval','aud-materials','aud-aiq','aud-resubmit'], sha:['sha-home','sha-review','sha-history'], adm:['adm-home','adm-flow','adm-members','adm-experts','adm-assign','adm-price','adm-contract','adm-docs','adm-kb','adm-cert'], pen:['pen-home']};
 const NAV_GROUP = {aud:{'aud-home':'개요','aud-inbox':'인증 프로세스','aud-eval':'심사 도구'}};
 
 
@@ -874,13 +875,53 @@ async function apiFetch(path, opts={}){   // 화면이 실API 호출할 때 사�
   if(AUTH.access) opts.headers['Authorization'] = 'Bearer '+AUTH.access;
   let r = await fetch(API_BASE+path, opts);
   if(r.status===401 && await apiRefresh()){ opts.headers['Authorization']='Bearer '+AUTH.access; r = await fetch(API_BASE+path, opts); }
+  else if(r.status===401 && AUTH.access && !path.startsWith('/auth/')) sessionExpired();
   return r;
 }
-// 서버 역할(백엔드 8종) → UI 5역할 코드 (설계서 2.1 매핑, operator·admin→adm / penyelia·pendamping→ent)
-const ROLE_MAP = { applicant:'ent', penyelia_halal:'ent', pendamping_pph:'ent', client:'ent',
+/* refresh 까지 실패(만료·다른 기기 로그아웃으로 TOKEN_REVOKED) — 빈 화면 대신 로그인으로 돌려보낸다 */
+let _expiredShown = false;
+function sessionExpired(){
+  authClear(); S.role=null; S.userId=null; S.auth='login'; closeModal(); render();
+  if(!_expiredShown){ _expiredShown = true; toast('세션이 만료되었습니다. 다시 로그인해 주세요.'); setTimeout(()=>{ _expiredShown=false; }, 3000); }
+}
+/* 서버 오류 본문 → 사람이 읽을 사유. 서버는 {"detail":{"code","message"}} 로 통일돼 있다
+   (422 는 {"detail":{"code":"VALIDATION_ERROR","field","message"}}). 구 FastAPI 배열형도 받는다. */
+async function apiErr(r, fallback){
+  let d = null; try{ d = await r.clone().json(); }catch(e){}
+  const x = d && d.detail !== undefined ? d.detail : d;
+  let msg = '';
+  if(typeof x === 'string') msg = x;
+  else if(Array.isArray(x)) msg = (x[0] && (x[0].msg || x[0].message)) || '';
+  else if(x && typeof x === 'object') msg = x.message || x.code || '';
+  return (fallback || '요청을 처리하지 못했습니다.') + (msg ? ' ('+msg+')' : ' ('+r.status+')');
+}
+function apiCode(d){ const x = d && d.detail !== undefined ? d.detail : d; return x && typeof x === 'object' && !Array.isArray(x) ? x.code : undefined; }
+// 서버 역할(백엔드 8종) → UI 6역할 코드 (설계서 2.1 매핑, operator·admin→adm / penyelia→ent / pendamping→pen 전용 작업공간)
+const ROLE_MAP = { applicant:'ent', penyelia_halal:'ent', pendamping_pph:'pen', client:'ent',
                    consultant:'cons', auditor:'aud', fatwa_liaison:'sha', sharia:'sha',
                    admin:'adm', operator:'adm', ops:'adm' };
-function uiRoleFromServer(role){ return ROLE_MAP[role] || (['ent','cons','aud','sha','adm'].includes(role)?role:null); }
+function uiRoleFromServer(role){ return ROLE_MAP[role] || (['ent','cons','aud','sha','adm','pen'].includes(role)?role:null); }
+/* 로그인 직후·새로고침 복원 공통 — 역할 홈으로 들어가 그 역할의 데이터를 불러온다 */
+async function enterRole(ui){
+  const rk = Object.keys(ROLES).find(k=>ROLES[k].code===ui);
+  S.role=ui; S.view=ROLES[rk].home; S.userId=null;
+  if(typeof loadRbac==='function') await loadRbac();   // 권한 매트릭스 먼저 — 실패해도 진행(js/rbac.js)
+  if(ui==='pen'){ if(typeof loadPen==='function') await loadPen(); }
+  else if(ui==='aud'){ await loadAud(); } else if(ui==='ent'){ await loadEnt(); } else if(ui==='cons'){ await loadCons(); } else if(ui==='sha'){ await loadSha(); } else if(ui==='adm'){ await loadAdm(); }
+  render(); window.scrollTo(0,0);
+}
+/* 새로고침 — 저장된 토큰이 아직 유효하면(/auth/me, 필요 시 refresh) 다시 로그인시키지 않는다 */
+async function restoreSession(){
+  if(!AUTH.access || !AUTH.uiRole) return;
+  try{
+    const r = await apiFetch('/auth/me');
+    if(!r.ok){ authClear(); return; }
+    const me = await r.json(); const ui = uiRoleFromServer(me.role);
+    if(!ui){ authClear(); return; }
+    AUTH.role = me.role; AUTH.uiRole = ui; AUTH.org_id = me.org_id; authSave();
+    await enterRole(ui);
+  }catch(e){ /* 네트워크 오류 — 로그인 화면 유지, 토큰은 남겨 다음 새로고침에 재시도 */ }
+}
 
 const App = {
    closeModal,
@@ -896,23 +937,19 @@ const App = {
     try{
       const r = await fetch(API_BASE+'/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username, password})});
       if(r.status===429){ return toast('로그인 시도가 많습니다. 잠시 후 다시 시도해 주세요.'); }
-      if(!r.ok){ return toast('아이디 또는 비밀번호가 올바르지 않습니다.'); }
+      if(!r.ok){ return toast(await apiErr(r, '아이디 또는 비밀번호가 올바르지 않습니다.')); }
       const d = await r.json();
       const ui = uiRoleFromServer(d.role);
       if(!ui){ return toast('지원하지 않는 역할입니다: '+d.role); }
       AUTH.access=d.token; AUTH.refresh=d.refresh_token; AUTH.role=d.role; AUTH.uiRole=ui; AUTH.username=d.username; AUTH.org_id=d.org_id; authSave();
-      const rk = Object.keys(ROLES).find(k=>ROLES[k].code===ui);
-      S.role=ui; S.view=ROLES[rk].home;
-      S.userId = null;
       S.loginEmail=null;
-      if(ui==='aud'){ await loadAud(); } else if(ui==='ent'){ await loadEnt(); } else if(ui==='cons'){ await loadCons(); } else if(ui==='sha'){ await loadSha(); } else if(ui==='adm'){ await loadAdm(); }
-      render(); window.scrollTo(0,0);
+      await enterRole(ui);
       toast('로그인되었습니다. ('+esc(d.username)+' · '+ui+')');
     }catch(err){ toast('서버에 연결할 수 없습니다. 네트워크를 확인해 주세요.'); }
     finally{ if(btn) btn.disabled=false; }
   },
   logout(){ if(AUTH.access){ fetch(API_BASE+'/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+AUTH.access}}).catch(()=>{}); } authClear(); S.role=null; S.userId=null; S.auth='login'; closeModal(); render(); window.scrollTo(0,0); toast('로그아웃되었습니다.'); },
-  async go(v){ S.view=v; if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } else if(S.role==='cons'){ await loadCons(); } else if(S.role==='sha'){ await loadSha(); } else if(S.role==='adm'){ await loadAdm(); } render(); window.scrollTo(0,0); },
+  async go(v){ S.view=v; if(S.role==='pen'){ if(typeof loadPen==='function') await loadPen(); } else if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } else if(S.role==='cons'){ await loadCons(); } else if(S.role==='sha'){ await loadSha(); } else if(S.role==='adm'){ await loadAdm(); } render(); window.scrollTo(0,0); },
   terms(k){ openModal(TERMS[k].title, TERMS[k].body); },
 
   /* signup */
@@ -930,14 +967,15 @@ const App = {
       if(S.urlRef) body.invite_code = S.urlRef;   // 컨설턴트 초대(?ref=) 귀속
       const r = await fetch(API_BASE+'/auth/register', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
       if(r.status===409) return toast('이미 가입된 계정입니다. 로그인해 주세요.');
-      if(r.status===422){ const d=await r.json().catch(()=>({})); return toast('입력값을 확인해 주세요. '+((d.detail&&d.detail[0]&&d.detail[0].msg)||'')); }
-      if(!r.ok) return toast('가입 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+      if(r.status===422) return toast(await apiErr(r, '입력값을 확인해 주세요.'));
+      if(!r.ok) return toast(await apiErr(r, '가입 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.'));
       const d = await r.json();
       /* register 가 토큰을 반환 → 즉시 로그인 */
       AUTH.access=d.token; AUTH.refresh=d.refresh_token; AUTH.role=d.role; AUTH.uiRole=uiRoleFromServer(d.role); AUTH.username=d.username; AUTH.org_id=d.org_id; authSave();
       const ui=AUTH.uiRole||'ent'; const rk=Object.keys(ROLES).find(k=>ROLES[k].code===ui);
       S.role=ui; S.view=ROLES[rk].home; S.userId=null;
       S.signup=null; S.auth='login';
+      if(typeof loadRbac==='function') await loadRbac();
       await loadEnt();
       render(); window.scrollTo(0,0);
       toast('인증기업 가입이 완료되었습니다.'+(d.referral&&d.referral.consultant?(' 담당 컨설턴트: '+d.referral.consultant):''));
@@ -967,9 +1005,9 @@ const App = {
       const body = { username: email, password: val('cs-pw'), requested_role: (S.staffRole||'consultant'),
                      display_name: val('cs-name'), note: [val('cs-org'),val('cs-title'),val('cs-phone')].filter(Boolean).join(' · ') };
       const r = await fetch(API_BASE+'/auth/staff-signup', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-      if(r.status===409){ const d=await r.json().catch(()=>({})); return toast(d.code==='SIGNUP_PENDING'?'이미 승인 대기 중인 신청이 있습니다.':'이미 가입된 계정입니다.'); }
-      if(r.status===422) return toast('입력값을 확인해 주세요(비밀번호 8자 이상 등).');
-      if(!r.ok) return toast('가입 신청 중 오류가 발생했습니다.');
+      if(r.status===409){ const d=await r.json().catch(()=>({})); return toast(apiCode(d)==='SIGNUP_PENDING'?'이미 승인 대기 중인 신청이 있습니다.':'이미 가입된 계정입니다.'); }
+      if(r.status===422) return toast(await apiErr(r, '입력값을 확인해 주세요.'));
+      if(!r.ok) return toast(await apiErr(r, '가입 신청 중 오류가 발생했습니다.'));
       S.auth='login'; S.loginRole='consultant'; S.loginEmail=email; S.dupEmail=null;
       render(); window.scrollTo(0,0); toast('가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다.');
     }catch(err){ toast('서버에 연결할 수 없습니다.'); }
@@ -1049,6 +1087,14 @@ async function loadAud(){
 const S8_LABELS = ['접수','사전심사','계약','모의심사','현장심사','샤리아 심의','인증서 발급','SiHalal 등록'];
 /* 모듈(js/*.js) 확장 접점 — 배지 가산(NAVC[view]=()=>n), 사이드바 하단 삽입(SHELL_EXT.sideFoot.push(()=>html)) */
 const NAVC = {};
+/* 오디터 업무 큐 — nav8(step8·owner)+상태머신 기준. 목록과 배지가 같은 조건을 쓴다(v4 연결 4) */
+const AUDQ = {
+  pre:   c => c.step8===1 && c.owner==='auditor',                       // supplementation_submitted → 검토 ready
+  mock:  c => c.step8===3 && c.owner==='auditor',                       // document_pre_audit_requested(결제 정리)/in_review
+  sched: c => (c.step8===3 && c.owner==='auditor') || ['lph_assignment','onsite_audit_scheduled'].includes(c.status),
+  report:c => ['onsite_audit_scheduled','onsite_audit_in_progress','corrective_action_submitted'].includes(c.status),
+  final: c => ['audit_closed','hpas_evaluation_ready','final_package_preparation'].includes(c.status),
+};
 const SHELL_EXT = { sideFoot: [] };
 const _s8label = c => (typeof c.step8==='number' ? S8_LABELS[c.step8] : null) || c.step8_label || '-';
 const _myRole = rc => (rc.main_auditor && rc.main_auditor === AUTH.username) ? '메인' : '동반';
@@ -1102,7 +1148,7 @@ VIEWS['aud-inbox'] = () => {
 App.inboxTab = function(k){ S.inboxTab = k; render(); };
 App.audAccept = async function(cid){
   const r = await apiFetch('/cases/'+cid+'/assignment/respond', {method:'POST', body:JSON.stringify({decision:'accepted'})});
-  if(!r.ok){ return toast('수락 처리에 실패했습니다.'); }
+  if(!r.ok){ return toast(await apiErr(r, '수락 처리에 실패했습니다.')); }
   await loadAud(); render(); toast('배정을 수락했습니다. 내 업무에 추가됩니다.');
 };
 App.audDecline = function(cid){
@@ -1114,7 +1160,7 @@ App.audDoDecline = async function(cid){
   const reason = (($('#dc-text')||{}).value || '').trim();
   if(reason.length < 5){ const m=$('#dc-msg'); if(m) m.textContent='거절 사유를 5자 이상 입력해 주세요.'; return; }
   const r = await apiFetch('/cases/'+cid+'/assignment/respond', {method:'POST', body:JSON.stringify({decision:'rejected', reason})});
-  if(!r.ok){ return toast('거절 처리에 실패했습니다.'); }
+  if(!r.ok){ return toast(await apiErr(r, '거절 처리에 실패했습니다.')); }
   closeModal(); await loadAud(); render(); toast('배정을 거절했습니다. 관리자에게 전달됩니다.');
 };
 
@@ -1150,7 +1196,7 @@ function _audPreDetail(cur, d){
   ${reqs.length?`<section class="panel"><div class="panel-head"><h2>보완 요청 이력</h2></div><ul class="rows">${reqs.map(r=>`<li class="row"><div><b>${r.round||''}차</b> <span class="muted">${esc((r.items||[]).map(it=>typeof it==='string'?it:(it.doc_type||it.note||'')).join(', '))}</span>${r.message?`<div class="muted">${esc(r.message)}</div>`:''}</div></li>`).join('')}</ul></section>`:''}`;
 }
 VIEWS['aud-pre'] = () => {
-  const list = (RS.cases||[]).filter(c=>c.step8===1 && c.owner==='auditor');
+  const list = (RS.cases||[]).filter(AUDQ.pre);
   if(!list.length) return `<section class="panel"><p class="empty">검토할 사전심사가 없습니다.</p></section>`;
   let cur = (S.selPre && list.find(c=>c.case_id===S.selPre)) ? S.selPre : list[0].case_id;
   S.selPre = cur;
@@ -1176,9 +1222,10 @@ App.preDoReview = async function(cid, verdict){
   const ok = (verdict==='ready');
   const sections = {documents:{ok, note:''}, materials:{ok, note:''}, process:{ok, note:''}};
   const r = await apiFetch('/cases/'+cid+'/preassess/review', {method:'POST', body:JSON.stringify({verdict, sections, note})});
-  if(!r.ok){ return toast('검토 기록에 실패했습니다.'); }
+  if(!r.ok){ return toast(await apiErr(r, '검토 기록에 실패했습니다.')); }
+  const j = await r.json().catch(()=>({}));
   closeModal(); delete RS.pre[cid]; await loadPre(cid); await loadAud(); render();
-  toast(verdict==='ready'?'사전심사 검토 완료로 기록했습니다.':'보완 필요로 기록했습니다.');
+  toast(verdict==='ready'?(j.transitioned_to?'사전심사 검토 완료 — 컨설턴트 검토 단계로 넘어갑니다.':'사전심사 검토 완료로 기록했습니다.'):'보완 필요로 기록했습니다.');
 };
 App.preDocReq = function(cid){
   openModal('보완 서류 요청', `<p>요청할 서류를 한 줄에 하나씩 적어 주세요.</p><div class="field"><label for="dr-items">요청 서류</label><textarea class="in" id="dr-items" placeholder="원료 공급업체 할랄 인증서&#10;제조공정도"></textarea></div><div class="field"><label for="dr-msg">메시지(선택)</label><textarea class="in" id="dr-msg"></textarea></div><div class="inline-msg" id="dr-emsg"></div>`,
@@ -1189,7 +1236,7 @@ App.preDoDocReq = async function(cid){
   if(!items.length){ const m=$('#dr-emsg'); if(m) m.textContent='요청 서류를 한 개 이상 입력해 주세요.'; return; }
   const message = (($('#dr-msg')||{}).value||'').trim();
   const r = await apiFetch('/cases/'+cid+'/preassess/doc-request', {method:'POST', body:JSON.stringify({items, message})});
-  if(!r.ok){ return toast('보완 요청에 실패했습니다.'); }
+  if(!r.ok){ return toast(await apiErr(r, '보완 요청에 실패했습니다.')); }
   closeModal(); delete RS.pre[cid]; await loadPre(cid); render(); toast('보완 서류를 요청했습니다. 기업에 알림이 전달됩니다.');
 };
 
@@ -1257,7 +1304,7 @@ App.aiqReview = function(cid, extId, status){
 App.aiqDoReview = async function(cid, extId, status){
   const note = (($('#aiq-note')||{}).value||'').trim();
   const r = await apiFetch('/ai-extractions/'+extId+'/review', {method:'PATCH', body:JSON.stringify({reviewer_status:status, note})});
-  if(!r.ok){ return toast('검수 기록에 실패했습니다.'); }
+  if(!r.ok){ return toast(await apiErr(r, '검수 기록에 실패했습니다.')); }
   closeModal(); delete RS.aiq[cid]; await loadAiq(cid); render();
   toast(status==='accepted'?'AI 추출값을 수용했습니다.':'AI 추출값을 재정의로 기록했습니다.');
 };
@@ -1300,7 +1347,7 @@ function _audOnsiteDetail(cid, d){
     <div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.genReport('${cid}')">AI 현장심사 보고서 생성</button></div></section>`;
 }
 VIEWS['aud-report'] = () => {
-  const list = (RS.cases||[]).filter(c=>c.step8===4 && c.owner==='auditor');
+  const list = (RS.cases||[]).filter(AUDQ.report);
   if(!list.length) return `<section class="panel"><p class="empty">현장심사 대상이 없습니다.</p></section>`;
   let cur = (S.selOnsite && list.find(c=>c.case_id===S.selOnsite)) ? S.selOnsite : list[0].case_id;
   S.selOnsite = cur;
@@ -1315,7 +1362,7 @@ App.ckSave = async function(cid, key){
   let result='not_checked'; document.querySelectorAll('input[name="ck_'+key+'"]').forEach(r=>{ if(r.checked) result=r.value; });
   const nEl=document.getElementById('cknote_'+key); const note=nEl?nEl.value:'';
   const r=await apiFetch('/cases/'+cid+'/onsite-checklist',{method:'POST',body:JSON.stringify({item_key:key,result,note})});
-  if(!r.ok) return toast('체크리스트 저장에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '체크리스트 저장에 실패했습니다.'));
   const d=RS.onsite[cid]; if(d&&d.checklist){ const it=d.checklist.items.find(x=>x.item_key===key); if(it){it.result=result;it.note=note;}
     d.checklist.comply=d.checklist.items.filter(x=>x.result==='comply').length;
     d.checklist.nonconformity=d.checklist.items.filter(x=>x.result==='nonconformity').length;
@@ -1326,24 +1373,24 @@ App.fdAdd = async function(cid){
   const finding=(($('#fd-text')||{}).value||'').trim(); if(!finding) return toast('지적 내용을 입력해 주세요.');
   const area=(($('#fd-area')||{}).value||'').trim(); const severity=($('#fd-sev')||{}).value||'minor';
   const r=await apiFetch('/cases/'+cid+'/findings',{method:'POST',body:JSON.stringify({area,finding,severity})});
-  if(!r.ok) return toast('지적 추가에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '지적 추가에 실패했습니다.'));
   await loadOnsite(cid); render(); toast('지적사항을 추가했습니다.');
 };
 App.fdDel = async function(cid, fid){
   const r=await apiFetch('/findings/'+fid,{method:'DELETE'});
-  if(!r.ok) return toast('삭제에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '삭제에 실패했습니다.'));
   await loadOnsite(cid); render(); toast('지적사항을 삭제했습니다.');
 };
 App.opSave = async function(cid){
   const opinion=(($('#au-op')||{}).value||'').trim();
   const r=await apiFetch('/cases/'+cid+'/onsite-opinion',{method:'POST',body:JSON.stringify({opinion})});
-  if(!r.ok) return toast('의견 저장에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '의견 저장에 실패했습니다.'));
   const d=RS.onsite[cid]; if(d) d.opinion=opinion; toast('종합 의견을 저장했습니다.');
 };
 App.genReport = async function(cid){
   toast('보고서를 생성하고 있습니다…');
   const r=await apiFetch('/cases/'+cid+'/audit-report',{method:'POST'});
-  if(!r.ok) return toast('보고서 생성에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '보고서 생성에 실패했습니다.'));
   await loadOnsite(cid); render(); toast('현장심사 보고서 초안을 생성했습니다.');
 };
 
@@ -1400,26 +1447,28 @@ VIEWS['aud-materials'] = () => {
 };
 App.selMat = async function(id){ S.selMat=id; S.matType='전체'; if(!(RS.mats||{})[id]) await loadMats(id); render(); };
 App.matAddR = async function(cid){
+  if(!canCall('POST','/cases/{}/materials')) return toast('원재료 등록은 인증기업·컨설턴트·할랄감독자만 할 수 있습니다.');
   const name=(($('#mt-name')||{}).value||'').trim(); if(!name) return toast('원재료명을 입력해 주세요.');
   const e_number=(($('#mt-enum')||{}).value||'').trim()||null; const supplier=(($('#mt-maker')||{}).value||'').trim()||null;
   const r=await apiFetch('/cases/'+cid+'/materials',{method:'POST',body:JSON.stringify({name,e_number,supplier})});
-  if(!r.ok) return toast('원재료 추가에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '원재료 추가에 실패했습니다.'));
   await loadMats(cid); render(); toast('원재료를 추가하고 스크리닝했습니다.');
 };
 App.matDelR = async function(cid, mid){
+  if(!canCall('DELETE','/materials/{}')) return toast('원재료 삭제는 인증기업·컨설턴트·할랄감독자만 할 수 있습니다.');
   const r=await apiFetch('/materials/'+mid,{method:'DELETE'});
-  if(!r.ok) return toast('삭제에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '삭제에 실패했습니다.'));
   await loadMats(cid); render(); toast('원재료를 삭제했습니다.');
 };
 App.matScreenR = async function(cid, mid){
   const r=await apiFetch('/materials/'+mid+'/screen',{method:'POST'});
-  if(!r.ok) return toast('재판정에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '재판정에 실패했습니다.'));
   await loadMats(cid); render(); toast('재판정했습니다.');
 };
 App.matExportR = async function(cid){
   try{
     const r=await apiFetch('/cases/'+cid+'/materials/export.xlsx');
-    if(!r.ok) return toast('Excel 생성에 실패했습니다.');
+    if(!r.ok) return toast(await apiErr(r, 'Excel 생성에 실패했습니다.'));
     const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
     a.download='materials_'+cid.slice(0,8)+'.xlsx'; document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000); toast('Excel을 내려받았습니다.');
@@ -1455,7 +1504,7 @@ function _audMockDetail(cid, d){
   ${decisions.length?`<section class="panel"><div class="panel-head"><h2>결정 이력</h2></div><ul class="rows">${decisions.map(x=>`<li class="row"><div><b>${x.result==='pass'?'통과':'반려'}</b>${x.reason?` <span class="muted">${esc(x.reason)}</span>`:''}</div><span class="muted mono">${esc((x.at||'').slice(0,19))}</span></li>`).join('')}</ul></section>`:''}`;
 }
 VIEWS['aud-mock'] = () => {
-  const list = (RS.cases||[]).filter(c=>c.step8===3 && c.owner==='auditor');
+  const list = (RS.cases||[]).filter(AUDQ.mock);
   if(!list.length) return `<section class="panel"><p class="empty">모의심사 대상이 없습니다. (계약 후 모의심사 단계 업체가 표시됩니다)</p></section>`;
   let cur = (S.selMock && list.find(c=>c.case_id===S.selMock)) ? S.selMock : list[0].case_id;
   S.selMock = cur;
@@ -1471,7 +1520,7 @@ App.mockEvSave = async function(cid, section){
   const verdict=vEl?vEl.value:''; if(!verdict){ return; }
   const corrective_action=cEl?cEl.value:'';
   const r=await apiFetch('/cases/'+cid+'/mock-audit/evidence-verdict',{method:'POST',body:JSON.stringify({section,verdict,corrective_action})});
-  if(!r.ok) return toast('섹션 판정 저장에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '섹션 판정 저장에 실패했습니다.'));
   await loadMock(cid); render(); toast('섹션 판정을 저장했습니다.');
 };
 App.mockManual = function(cid, decision){
@@ -1483,13 +1532,13 @@ App.mockDoManual = async function(cid, decision){
   const comment=(($('#mm-c')||{}).value||'').trim();
   if(decision==='reject' && !comment){ const e=$('#mm-e'); if(e) e.textContent='사유를 입력해 주세요.'; return; }
   const r=await apiFetch('/cases/'+cid+'/mock-audit/manual',{method:'POST',body:JSON.stringify({decision,comment})});
-  if(!r.ok) return toast('매뉴얼 검토 저장에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '매뉴얼 검토 저장에 실패했습니다.'));
   closeModal(); await loadMock(cid); render(); toast(decision==='approve'?'매뉴얼을 승인했습니다.':'매뉴얼 보완을 요청했습니다.');
 };
 App.mockAiReport = async function(cid){
   toast('보고서를 생성하고 있습니다…');
   const r=await apiFetch('/cases/'+cid+'/mock-audit/ai-report/run',{method:'POST'});
-  if(!r.ok) return toast('보고서 생성에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '보고서 생성에 실패했습니다.'));
   await loadMock(cid); render(); toast('AI 모의심사 보고서를 생성했습니다.');
 };
 App.mockDecide = function(cid, result){
@@ -1501,9 +1550,11 @@ App.mockDoDecide = async function(cid, result){
   const reason=(($('#md-r')||{}).value||'').trim();
   if(result==='reject' && !reason){ const e=$('#md-e'); if(e) e.textContent='사유를 입력해 주세요.'; return; }
   const r=await apiFetch('/cases/'+cid+'/mock-audit/decision',{method:'POST',body:JSON.stringify({result,reason})});
-  if(!r.ok) return toast('결정 처리에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '결정 처리에 실패했습니다.'));
+  const j = await r.json().catch(()=>({})), bl = (j.blockers||[]).map(b=>b.code).filter(Boolean);
   closeModal(); delete RS.mock[cid]; await loadMock(cid); await loadAud(); render();
-  toast(result==='pass'?'모의심사 통과 — 현장심사 단계로 넘어갑니다.':'모의심사를 반려했습니다.');
+  if(bl.length) return toast('판정은 기록했지만 단계가 넘어가지 않았습니다 ('+bl.join(', ')+')');
+  toast(result==='pass'?(j.status==='document_pre_audit_approved'?'모의심사 통과 — 현장심사(LPH 배정) 단계로 넘어갑니다.':'모의심사 통과를 기록했습니다.'):'모의심사를 반려했습니다 — 보완 단계로 돌아갑니다.');
 };
 
 
@@ -1532,7 +1583,7 @@ function _audSchedDetail(cid, st){
   </section>`;
 }
 VIEWS['aud-schedule'] = () => {
-  const list = (RS.cases||[]).filter(c=>(c.step8===3||c.step8===4) && c.owner==='auditor' && !c.done);
+  const list = (RS.cases||[]).filter(c=>!c.done && AUDQ.sched(c));
   if(!list.length) return `<section class="panel"><p class="empty">일정을 조율할 모의·현장심사 대상이 없습니다.</p></section>`;
   let cur=(S.selSched&&list.find(c=>c.case_id===S.selSched))?S.selSched:list[0].case_id; S.selSched=cur;
   const nav=`<nav class="mlist" aria-label="일정 대상"><div class="mh">일정 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selSched('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
@@ -1545,21 +1596,21 @@ App.selSched = async function(id){ S.selSched=id; if(!(RS.sched||{})[id]) await 
 App.schedConfirm = async function(cid, date){
   const time=(($('#sc-time')||{}).value||'').trim();
   const r=await apiFetch('/cases/'+cid+'/onsite-schedule/confirm',{method:'POST',body:JSON.stringify({date,time})});
-  if(!r.ok) return toast('일정 확정에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '일정 확정에 실패했습니다.'));
   await loadSched(cid); render(); toast('방문일을 확정했습니다. 기업에 알림이 전달됩니다.');
 };
 App.schedConfirmDirect = async function(cid){
   const date=(($('#sc-date')||{}).value||'').trim(); if(!date) return toast('방문일을 선택해 주세요.');
   const time=(($('#sc-dtime')||{}).value||'').trim();
   const r=await apiFetch('/cases/'+cid+'/onsite-schedule/confirm',{method:'POST',body:JSON.stringify({date,time})});
-  if(!r.ok) return toast('일정 확정에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '일정 확정에 실패했습니다.'));
   await loadSched(cid); render(); toast('방문일을 확정했습니다.');
 };
 App.schedReplan = async function(cid){
   const dates=(($('#sc-replan')||{}).value||'').split(',').map(x=>x.trim()).filter(Boolean).slice(0,3);
   if(!dates.length) return toast('재조율 후보일을 입력해 주세요.');
   const r=await apiFetch('/cases/'+cid+'/onsite-schedule/reschedule',{method:'POST',body:JSON.stringify({dates})});
-  if(!r.ok) return toast('재조율 제시에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '재조율 제시에 실패했습니다.'));
   await loadSched(cid); render(); toast('재조율 후보일을 제시했습니다. 기업 수락을 기다립니다.');
 };
 
@@ -1582,7 +1633,7 @@ function _audFinalDetail(cid, st){
       <button class="btn" onclick="App.finalGen('${cid}')">${hasReport?'새 버전 생성':'AI 보고서 생성'}</button>
       ${hasReport&&!rep.approved?`<button class="btn btn-primary" onclick="App.finalApprove('${cid}','${esc(rep.gen_doc_id||'')}')">보고서 승인</button>`:''}
       ${rep.approved&&!signed?`<button class="btn btn-primary" onclick="App.finalSign('${cid}')">전자서명</button>`:''}
-      <button class="btn btn-ghost" onclick="App.finalBundle('${cid}')">증거 번들 ZIP</button>
+      ${canCall('GET','/cases/{}/evidence-bundle.zip')?`<button class="btn btn-ghost" onclick="App.finalBundle('${cid}')">증거 번들 ZIP</button>`:''}
     </div></section>
   <section class="panel"><div class="panel-head"><h2>파트와 상정 요건</h2><span class="badge ${gate.ready?'strong':'attn'}">${gate.ready?'충족':'미충족'}</span></div>
     <ul class="rows">${items.map(([l,v])=>`<li class="row"><div><b>${esc(l)}</b></div>${v?'<span class="badge strong">✓ 충족</span>':'<span class="badge attn">미충족</span>'}</li>`).join('')}</ul>
@@ -1591,7 +1642,7 @@ function _audFinalDetail(cid, st){
   </section>`;
 }
 VIEWS['aud-final'] = () => {
-  const list = (RS.cases||[]).filter(c=>c.step8===4 && c.owner==='auditor');
+  const list = (RS.cases||[]).filter(AUDQ.final);
   if(!list.length) return `<section class="panel"><p class="empty">최종 취합할 현장심사 업체가 없습니다.</p></section>`;
   let cur=(S.selFinal&&list.find(c=>c.case_id===S.selFinal))?S.selFinal:list[0].case_id; S.selFinal=cur;
   const nav=`<nav class="mlist" aria-label="최종취합 대상"><div class="mh">최종 취합 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selFinal('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
@@ -1604,13 +1655,13 @@ App.selFinal = async function(id){ S.selFinal=id; if(!(RS.final||{})[id]) await 
 App.finalGen = async function(cid){
   toast('보고서를 생성하고 있습니다…');
   const r=await apiFetch('/cases/'+cid+'/audit-report',{method:'POST'});
-  if(!r.ok) return toast('보고서 생성에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '보고서 생성에 실패했습니다.'));
   await loadFinal(cid); render(); toast('보고서 초안을 생성했습니다.');
 };
 App.finalApprove = async function(cid, gid){
   if(!gid) return toast('보고서를 먼저 생성해 주세요.');
   const r=await apiFetch('/gen-docs/'+gid+'/approve',{method:'POST'});
-  if(!r.ok) return toast('승인에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '승인에 실패했습니다.'));
   await loadFinal(cid); render(); toast('보고서를 승인했습니다.');
 };
 App.finalSign = function(cid){
@@ -1629,7 +1680,7 @@ App.finalSendFatwa = async function(cid){
   await loadFinal(cid); await loadAud(); render(); toast('샤리아 위원회에 상정했습니다.');
 };
 App.finalBundle = async function(cid){
-  try{ const r=await apiFetch('/cases/'+cid+'/evidence-bundle.zip'); if(!r.ok) return toast('번들 생성에 실패했습니다.');
+  try{ const r=await apiFetch('/cases/'+cid+'/evidence-bundle.zip'); if(!r.ok) return toast(await apiErr(r, '번들 생성에 실패했습니다.'));
     const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='evidence_'+cid.slice(0,8)+'.zip';
     document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000); toast('증거 번들을 내려받았습니다.');
   }catch(e){ toast('번들 내보내기에 실패했습니다.'); }
@@ -1691,7 +1742,7 @@ VIEWS['ent-pre'] = () => {
     ${dr.message?`<div class="note"><p>${esc(dr.message)}</p></div>`:''}
     <ul class="rows">${reqItems.map(x=>`<li class="row"><div><b>${esc(x)}</b></div></li>`).join('')}</ul>
     <div class="note"><p>요청 서류를 <b>문서함</b>에서 업로드한 뒤 아래 [보완 완료 제출]을 눌러 주세요.</p></div>
-    <div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.entResubmit('${cid}')">보완 완료 제출</button></div>
+    ${canCall('POST','/cases/{}/preassess/resubmit')?`<div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.entResubmit('${cid}')">보완 완료 제출</button></div>`:''}
   </section>`:''}
   ${resub?`<div class="note"><b>보완 재제출 완료</b> <span class="muted">${esc((resub.note||''))} · ${esc((resub.at||'').slice(0,19))}</span></div>`:''}
   ${hist.length>1?`<section class="panel"><div class="panel-head"><h2>요청 이력</h2></div><ul class="rows">${hist.map(r=>`<li class="row"><div><b>${r.round||''}차</b> <span class="muted">${esc((r.items||[]).map(it=>typeof it==='string'?it:(it.doc_type||'')).join(', '))}</span></div></li>`).join('')}</ul></section>`:''}`;
@@ -1703,7 +1754,7 @@ App.entResubmit = function(cid){
 App.entDoResubmit = async function(cid){
   const note=(($('#er-note')||{}).value||'').trim();
   const r=await apiFetch('/cases/'+cid+'/preassess/resubmit',{method:'POST',body:JSON.stringify({note})});
-  if(!r.ok) return toast('보완 제출에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '보완 제출에 실패했습니다.'));
   closeModal(); delete RS.entPre[cid]; await loadEntPre(cid); await loadEnt(); render();
   toast('보완 제출을 완료했습니다. 오디터에게 알림이 전달됩니다.');
 };
@@ -1745,7 +1796,7 @@ App.entSign = function(cid, contractId){
 App.entDoSign = async function(cid, contractId){
   const name=(($('#ec-name')||{}).value||'').trim(); if(!name){ const e=$('#ec-e'); if(e) e.textContent='서명자 이름을 입력해 주세요.'; return; }
   const r=await apiFetch('/contracts/'+contractId+'/sign?party=A&name='+encodeURIComponent(name),{method:'POST'});
-  if(!r.ok) return toast('서명에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '서명에 실패했습니다.'));
   closeModal(); delete RS.entCt[cid]; await loadEntCt(cid); render(); toast('계약서에 전자서명했습니다.');
 };
 
@@ -1842,7 +1893,7 @@ VIEWS['ent-docs'] = () => {
     <div class="inline" style="flex-wrap:wrap">
       <select class="in" id="doc-type" style="flex:1 1 200px">${DOC_TYPES.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
       <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" style="flex:2 1 240px">
-      <button class="btn btn-primary" onclick="App.docUpload('${cid}')">업로드</button>
+      ${canCall('POST','/cases/{}/parse-file')?`<button class="btn btn-primary" onclick="App.docUpload('${cid}')">업로드</button>`:'<span class="muted">서류 업로드는 신청기업·컨설턴트 계정만 할 수 있습니다.</span>'}
     </div>
   </section>
   <section class="panel"><div class="panel-head"><h2>서류함</h2><input class="in" style="max-width:260px" placeholder="파일명·종류 검색" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
@@ -1870,7 +1921,7 @@ App.docUpload = function(cid){
   rd.readAsDataURL(f);
 };
 App.docDownload = async function(docId, name){
-  try{ const r=await apiFetch('/documents/'+docId+'/file'); if(!r.ok) return toast('파일을 열 수 없습니다.');
+  try{ const r=await apiFetch('/documents/'+docId+'/file'); if(!r.ok) return toast(await apiErr(r, '파일을 열 수 없습니다.'));
     const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name||'document';
     document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000);
   }catch(e){ toast('파일을 열 수 없습니다.'); }
@@ -1909,13 +1960,13 @@ App.consCreateInvite = async function(){
   const note=(($('#iv-note')||{}).value||'').trim()||null;
   const expires_days=parseInt((($('#iv-days')||{}).value||'30'),10)||30;
   const r=await apiFetch('/consultant/invites',{method:'POST',body:JSON.stringify({company_name,note,expires_days,max_uses:1})});
-  if(!r.ok) return toast('초대 생성에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '초대 생성에 실패했습니다.'));
   const d=await r.json(); await loadConsInv(); render();
   toast('초대 링크를 생성했습니다. 코드 '+d.code);
 };
 App.consRevoke = async function(id){
   const r=await apiFetch('/consultant/invites/'+id+'/revoke',{method:'POST'});
-  if(!r.ok) return toast('회수에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '회수에 실패했습니다.'));
   await loadConsInv(); render(); toast('초대를 회수했습니다.');
 };
 App.copyLink = async function(url){
@@ -1984,7 +2035,7 @@ VIEWS['cons-contract'] = () => {
 App.selContract = async function(id){ S.selContract=id; if(!(RS.entCt||{})[id]) await loadEntCt(id); render(); };
 App.consReqContract = async function(cid){
   const r=await apiFetch('/cases/'+cid+'/contract/request',{method:'POST'});
-  if(!r.ok) return toast('계약 신청에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '계약 신청에 실패했습니다.'));
   delete RS.entCt[cid]; await loadEntCt(cid); render(); toast('계약 진행을 신청했습니다. 관리자에게 전달됩니다.');
 };
 
@@ -1999,7 +2050,7 @@ function _docVaultBody(cid, docs){
     <div class="inline" style="flex-wrap:wrap">
       <select class="in" id="doc-type" style="flex:1 1 200px">${DOC_TYPES.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
       <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" style="flex:2 1 240px">
-      <button class="btn btn-primary" onclick="App.docUpload('${cid}')">업로드</button></div></section>
+      ${canCall('POST','/cases/{}/parse-file')?`<button class="btn btn-primary" onclick="App.docUpload('${cid}')">업로드</button>`:''}</div></section>
   <section class="panel"><div class="panel-head"><h2>서류함 ${docs.length}건</h2><input class="in" style="max-width:240px" placeholder="파일명·종류 검색" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
     ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th>등록</th><th></th></tr></thead><tbody>
     ${list.map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td>
@@ -2052,7 +2103,7 @@ App.entAsk = async function(cid){
   const message=(($('#ask-msg')||{}).value||'').trim();
   if(!message) return toast('문의 내용을 입력해 주세요.');
   const r=await apiFetch('/consultations',{method:'POST',body:JSON.stringify({subject,message,case_id:cid})});
-  if(!r.ok) return toast('문의 등록에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '문의 등록에 실패했습니다.'));
   await loadEntAsk(); render(); toast('문의를 등록했습니다.');
 };
 
@@ -2074,25 +2125,25 @@ VIEWS['ent-apply'] = () => {
   ${submitted?`<div class="note ${c.hold?'attn':''}"><b>신청서 제출됨</b><p>현재 <b>${esc(_s8label(c))}</b> 단계입니다. (${esc(c.status||'')})</p></div>`:`<div class="note"><b>인증 신청서 작성</b><p>인증 품목을 등록하고 서류를 올린 뒤 아래에서 AI 사전심사를 신청하세요. 품목이 1개 이상 있어야 신청할 수 있습니다.</p></div>`}
   <section class="panel"><div class="panel-head"><h2>인증 품목 ${prods.length}개</h2></div>
     ${prods.length?`<div class="tbl-wrap"><table><thead><tr><th class="num">No.</th><th style="min-width:200px">제품명</th><th>분류</th>${submitted?'':'<th></th>'}</tr></thead><tbody>
-    ${prods.map((pr,i)=>`<tr><td class="num">${i+1}</td><td><b>${esc(pr.name||'-')}</b>${pr.description?`<div class="muted">${esc(pr.description)}</div>`:''}</td><td class="muted">${esc(pr.category||pr.registration_type||'-')}</td>${submitted?'':`<td><button class="btn btn-sm btn-ghost" onclick="App.entDelProduct('${cid}','${pr.product_id}')">삭제</button></td>`}</tr>`).join('')}
+    ${prods.map((pr,i)=>`<tr><td class="num">${i+1}</td><td><b>${esc(pr.name||'-')}</b>${pr.description?`<div class="muted">${esc(pr.description)}</div>`:''}</td><td class="muted">${esc(pr.category||pr.registration_type||'-')}</td>${submitted?'':`<td>${canCall('DELETE','/cases/{}/products/{}')?`<button class="btn btn-sm btn-ghost" onclick="App.entDelProduct('${cid}','${pr.product_id}')">삭제</button>`:''}</td>`}</tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">등록된 품목이 없습니다.</p>'}
-    ${submitted?'':`<div class="inline" style="flex-wrap:wrap;margin-top:8px"><input class="in" id="pr-name" placeholder="제품명 (예: 프리미엄 홍삼 스틱)" style="flex:2 1 220px"><input class="in" id="pr-cat" placeholder="분류(선택)" style="flex:1 1 140px"><button class="btn" onclick="App.entAddProduct('${cid}')">＋ 품목 추가</button></div>`}
+    ${submitted||!canCall('POST','/cases/{}/products')?'':`<div class="inline" style="flex-wrap:wrap;margin-top:8px"><input class="in" id="pr-name" placeholder="제품명 (예: 프리미엄 홍삼 스틱)" style="flex:2 1 220px"><input class="in" id="pr-cat" placeholder="분류(선택)" style="flex:1 1 140px"><button class="btn" onclick="App.entAddProduct('${cid}')">＋ 품목 추가</button></div>`}
   </section>
   <section class="panel"><div class="panel-head"><h2>필요 서류</h2><button class="link" onclick="App.go('ent-docs')">문서함 열기 →</button></div>
     <p class="muted">사업자등록증·성분분석표·제조공정도 등은 <b>문서함</b>에서 업로드합니다.${docCount!=null?` 현재 ${docCount}건 보관 중.`:''}</p></section>
-  ${submitted?'':`<div class="action-bar"><span class="muted">${prods.length?'AI 사전심사를 신청하면 오디터 검토로 넘어갑니다.':'품목을 1개 이상 등록해야 신청할 수 있습니다.'}</span>
+  ${submitted||!canCall('POST','/cases/{}/submit-application')?'':`<div class="action-bar"><span class="muted">${prods.length?'AI 사전심사를 신청하면 오디터 검토로 넘어갑니다.':'품목을 1개 이상 등록해야 신청할 수 있습니다.'}</span>
     <div class="row-act"><button class="btn btn-primary" ${prods.length?'':'disabled style="opacity:.45;cursor:not-allowed"'} onclick="App.entSubmitApp('${cid}')">AI 사전심사 신청</button></div></div>`}`;
 };
 App.entAddProduct = async function(cid){
   const name=(($('#pr-name')||{}).value||'').trim(); if(!name) return toast('제품명을 입력해 주세요.');
   const category=(($('#pr-cat')||{}).value||'').trim()||null;
   const r=await apiFetch('/cases/'+cid+'/products',{method:'POST',body:JSON.stringify({name,category})});
-  if(!r.ok) return toast('품목 추가에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '품목 추가에 실패했습니다.'));
   await loadEntProd(cid); render(); toast('품목을 추가했습니다.');
 };
 App.entDelProduct = async function(cid, pid){
   const r=await apiFetch('/cases/'+cid+'/products/'+pid,{method:'DELETE'});
-  if(!r.ok) return toast('삭제에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '삭제에 실패했습니다.'));
   await loadEntProd(cid); render(); toast('품목을 삭제했습니다.');
 };
 const BLOCK_KO = {NIB_MISSING:'사업자등록번호(NIB) 누락 — 사업자등록증을 문서함에 올리면 자동 입력됩니다',
@@ -2170,7 +2221,7 @@ VIEWS['sha-history'] = () => {
 App.shaOpen = async function(cid){ S.selFatwa=cid; S.view='sha-review'; if(!(RS.fatwa||{})[cid]) await loadFatwa(cid); render(); window.scrollTo(0,0); };
 App.shaVote = async function(cid, vote){
   const r=await apiFetch('/cases/'+cid+'/fatwa/vote',{method:'POST',body:JSON.stringify({member:AUTH.username, vote})});
-  if(!r.ok) return toast('투표에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '투표에 실패했습니다.'));
   delete RS.fatwa[cid]; await loadFatwa(cid); render(); toast((VOTE_KO[vote]||vote)+' 투표를 기록했습니다.');
 };
 
@@ -2240,7 +2291,7 @@ VIEWS['adm-members'] = () => {
 App.memTab = function(k){ S.memTab=k; render(); };
 App.admApproveSignup = async function(id){
   const r=await apiFetch('/admin/staff-signups/'+id+'/approve',{method:'POST',body:JSON.stringify({})});
-  if(!r.ok) return toast('승인에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '승인에 실패했습니다.'));
   await loadAdmMembers(); render(); toast('가입을 승인했습니다.');
 };
 App.admRejectSignup = function(id){
@@ -2250,7 +2301,7 @@ App.admRejectSignup = function(id){
 App.admDoRejectSignup = async function(id){
   const reason=(($('#rj-r')||{}).value||'').trim();
   const r=await apiFetch('/admin/staff-signups/'+id+'/reject',{method:'POST',body:JSON.stringify({reason})});
-  if(!r.ok) return toast('반려에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '반려에 실패했습니다.'));
   closeModal(); await loadAdmMembers(); render(); toast('가입을 반려했습니다.');
 };
 
@@ -2299,7 +2350,7 @@ App.admAddCo = async function(cid){
 };
 App.admDelCo = async function(cid, uid){
   const r=await apiFetch('/cases/'+cid+'/auditors/'+uid,{method:'DELETE'});
-  if(!r.ok) return toast('해제에 실패했습니다.');
+  if(!r.ok) return toast(await apiErr(r, '해제에 실패했습니다.'));
   await loadAdm(); render(); toast('동반 오디터를 해제했습니다.');
 };
 
@@ -2340,13 +2391,13 @@ App.admIssueCert = async function(cid){
   delete RS.admCert[cid]; await loadAdmCert(cid); render(); toast('인증서 발급을 요청했습니다(2인 승인 대기).');
 };
 App.certPdf = async function(cid){
-  try{ const r=await apiFetch('/cases/'+cid+'/certificate/pdf'); if(!r.ok) return toast('PDF를 불러올 수 없습니다.');
+  try{ const r=await apiFetch('/cases/'+cid+'/certificate/pdf'); if(!r.ok) return toast(await apiErr(r, 'PDF를 불러올 수 없습니다.'));
     const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='certificate_'+cid.slice(0,8)+'.pdf';
     document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000);
   }catch(e){ toast('PDF 오류'); }
 };
 App.certBundle = async function(cid){
-  try{ const r=await apiFetch('/cases/'+cid+'/certificate/bundle.zip'); if(!r.ok) return toast('번들을 불러올 수 없습니다.');
+  try{ const r=await apiFetch('/cases/'+cid+'/certificate/bundle.zip'); if(!r.ok) return toast(await apiErr(r, '번들을 불러올 수 없습니다.'));
     const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='cert_bundle_'+cid.slice(0,8)+'.zip';
     document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000);
   }catch(e){ toast('번들 오류'); }
@@ -2480,7 +2531,7 @@ VIEWS['aud-flow'] = () => {
 };
 App.selFlow = async function(id){ S.selFlow=id; if(!(RS.flow||{})[id]) await loadFlow(id); render(); };
 App.genPdf = async function(gid, name){
-  try{ const r=await apiFetch('/gen-docs/'+gid+'/pdf'); if(!r.ok) return toast('PDF를 불러올 수 없습니다.');
+  try{ const r=await apiFetch('/gen-docs/'+gid+'/pdf'); if(!r.ok) return toast(await apiErr(r, 'PDF를 불러올 수 없습니다.'));
     const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(name||'document')+'.pdf';
     document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000);
   }catch(e){ toast('PDF 오류'); }
@@ -2630,7 +2681,7 @@ App.resubDoCar = async function(cid, carId, status){
   let r;
   try{ r = await apiFetch('/car/'+carId+'/review', {method:'PATCH', body:JSON.stringify({status, note})}); }
   catch(e){ toast('시정조치 검토 기록에 실패했습니다.'); return; }
-  if(!r.ok){ toast('시정조치 검토 기록에 실패했습니다.'); closeModal(); delete RS.resub[cid]; await loadResub(cid); render(); return; }
+  if(!r.ok){ toast(await apiErr(r, '시정조치 검토 기록에 실패했습니다.')); closeModal(); delete RS.resub[cid]; await loadResub(cid); render(); return; }
   closeModal();
   delete RS.resub[cid];
   await loadResub(cid);
@@ -2763,6 +2814,9 @@ VIEWS['aud-contract'] = function () {
       }
     }
 
+    if (exists && ct.status === 'received' && canCall('POST', '/cases/{}/contract/request-signature')) {
+      nextCell += ' <button class="btn btn-sm btn-primary" onclick="App.ccaRequestSignature(\'' + esc(c.case_id) + '\')">서명 요청 발송</button>';
+    }
     rows += '<tr>'
       + '<td style="font-weight:700">' + esc(c.company_name) + '</td>'
       + '<td><span class="badge">' + esc(_s8label(c)) + '</span></td>'
@@ -2858,7 +2912,7 @@ App.evalSet = async function(cid, idx, verdict){
     r = {ok:false};
   }
   if(!r.ok){
-    toast('판정 저장에 실패했습니다.');
+    toast(await apiErr(r, '판정 저장에 실패했습니다.'));
     delete RS.evalH[cid];
     await loadEvalH(cid);
     render();
@@ -2936,9 +2990,9 @@ function navCount(v){
   let n = 0;
   if(S.role==='aud'){
     if(v==='aud-inbox') n = RS.assignPending||0;
-    else if(v==='aud-pre') n = live.filter(c=>c.step8===1 && c.owner==='auditor').length;
-    else if(v==='aud-mock') n = live.filter(c=>c.step8===3).length;
-    else if(v==='aud-report') n = live.filter(c=>c.step8===4 && c.owner==='auditor').length;
+    else if(v==='aud-pre') n = live.filter(AUDQ.pre).length;
+    else if(v==='aud-mock') n = live.filter(AUDQ.mock).length;
+    else if(v==='aud-report') n = live.filter(AUDQ.report).length;
     else if(v==='aud-resubmit') n = live.filter(c=>c.hold).length;
   } else if(S.role==='ent'){
     if(v==='ent-home') n = live.filter(c=>c.owner==='client' || c.hold).length;
@@ -3027,12 +3081,12 @@ App.admQnaDoAnswer = async function(id){
   const e = $('#aq-e');
   if(!v){ if(e) e.textContent = '답변 내용을 입력해 주세요.'; return; }
   const r = await apiFetch('/consultations/'+id+'/respond', {method:'POST', body:JSON.stringify({response:v})});
-  if(!r.ok){ toast('답변 등록에 실패했습니다.'); return; }
+  if(!r.ok){ toast(await apiErr(r, '답변 등록에 실패했습니다.')); return; }
   closeModal(); RS.admQna = null; await loadAdmQna(); render(); toast('답변을 등록했습니다.');
 };
 App.admQnaStatus = async function(id, status){
   const r = await apiFetch('/consultations/'+id, {method:'PATCH', body:JSON.stringify({status:status})});
-  if(!r.ok){ toast('상태 변경에 실패했습니다.'); return; }
+  if(!r.ok){ toast(await apiErr(r, '상태 변경에 실패했습니다.')); return; }
   RS.admQna = null; await loadAdmQna(); render(); toast(status==='closed'?'문의를 종결했습니다.':'문의를 다시 열었습니다.');
 };
 Object.assign(I18N.ko, {'nav.adm-kb':'문의 응대'}); if(I18N.en) Object.assign(I18N.en, {'nav.adm-kb':'Inquiries'}); if(I18N.id) Object.assign(I18N.id, {'nav.adm-kb':'Pertanyaan'});
@@ -3053,7 +3107,7 @@ App.consAskDo = async function(){
   const e = $('#ca-e');
   if(!message){ if(e) e.textContent = '문의 내용을 입력해 주세요.'; return; }
   const r = await apiFetch('/consultations', {method:'POST', body:JSON.stringify({subject:subject, message:message})});
-  if(!r.ok){ toast('문의 등록에 실패했습니다.'); return; }
+  if(!r.ok){ toast(await apiErr(r, '문의 등록에 실패했습니다.')); return; }
   closeModal(); RS.consQna = null; render(); toast('문의를 등록했습니다.');
 };
 
@@ -3066,8 +3120,11 @@ authLoad();
   else if(ref){ S.urlRef=ref; S.auth='signup-ent'; S.loginRole='enterprise'; }
 }catch(e){} })();
 render();
+// 모듈(js/*.js)이 VIEWS 를 다 덮어쓴 뒤에 복원해야 화면이 맞다 — 가입 링크로 들어온 경우는 복원하지 않는다
+document.addEventListener('DOMContentLoaded', () => { if(S.auth==='login' && !S.role) restoreSession(); });
 </script>
 <!-- v4 모듈: 기능 묶음별 파일(js/*.js). 메인 스크립트의 전역(RS·S·VIEWS·App·NAV…)을 그대로 쓴다. -->
+<script src="js/rbac.js"></script>
 <script src="js/ent-tasks.js"></script>
 <script src="js/sha-decide.js"></script>
 <script src="js/approvals.js"></script>
@@ -3089,6 +3146,7 @@ render();
 <script src="js/ent-logistics.js"></script>
 <script src="js/cons-sjph.js"></script>
 <script src="js/self-declare.js"></script>
+<script src="js/pen-workspace.js"></script>
 <script src="js/aud-quant.js"></script>
 <script src="js/aud-docproc.js"></script>
 <script src="js/pay-docs.js"></script>
@@ -3103,6 +3161,12 @@ render();
 <script src="js/i18n-dom.js"></script>
 <script src="js/handoff.js"></script>
 <script src="js/legacy-link.js"></script>
+<script src="js/flow-actions.js"></script>
+<script src="js/case-new.js"></script>
+<script src="js/invoice.js"></script>
+<script src="js/renew.js"></script>
+<script src="js/users.js"></script>
+<script src="js/package-check.js"></script>
 <!--MODULES-->
 </body>
 </html>

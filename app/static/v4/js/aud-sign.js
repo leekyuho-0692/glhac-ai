@@ -237,7 +237,7 @@ App.audsOpinion = async function(cid){
 App.audsDoc = async function(path, filename){
   try{
     const r = await apiFetch(path);
-    if(!r.ok) return toast('아직 생성되지 않았거나 내려받을 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, '아직 생성되지 않았거나 내려받을 수 없습니다.'));
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

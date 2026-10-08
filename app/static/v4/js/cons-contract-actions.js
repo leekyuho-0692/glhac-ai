@@ -53,11 +53,14 @@ function CCA_actions(d, isAdmin){
   // 계약서 생성 (없거나 초안일 때)
   if(!d.exists || st === 'none' || st === 'draft')
     out.push(['generate','계약서 생성','App.ccaGenerate']);
-  // 서명 요청 (오디터 권한 — 관리자 화면에선 노출 안 함)
-  if(!isAdmin && st === 'received')
+  // 서명 요청 (오디터 전용 main.py:7376 — 컨설턴트에겐 403. 오디터 계약 화면(aud-contract)으로 이동)
+  if(!isAdmin && st === 'received' && canCall('POST','/cases/{}/contract/request-signature'))
     out.push(['reqsig','서명 요청 발송','App.ccaRequestSignature']);
+  // 계약서 수령 확인 (신청기업·컨설턴트 main.py:7360)
+  if(!isAdmin && (st === 'sent' || st === 'issued') && canCall('POST','/cases/{}/contract/receive'))
+    out.push(['receive','계약서 수령 확인','App.ccaReceive']);
   // 계약 확정 (운영자·양자 서명 완료)
-  if(isAdmin && signed && st !== 'confirmed')
+  if(isAdmin && signed && st !== 'confirmed' && canCall('POST','/cases/{}/contract/confirm'))
     out.push(['confirm','계약 확정','App.ccaConfirm']);
   // 반려 (되돌릴 수 있는 단계)
   if(['requested','sent','received','signing','signed','confirmed'].indexOf(st) >= 0)
@@ -123,7 +126,7 @@ App.ccaGenerate = async function(cid){
   await CCA_post(cid, '/cases/'+cid+'/contract/generate', {}, '계약서 생성', '계약서를 생성했습니다.', loadCons);
 };
 App.ccaRequestSignature = async function(cid){
-  await CCA_post(cid, '/cases/'+cid+'/contract/request-signature', {}, '서명 요청', '서명 요청을 발송했습니다.', loadCons);
+  await CCA_post(cid, '/cases/'+cid+'/contract/request-signature', {}, '서명 요청', '서명 요청을 발송했습니다.', S.role==='aud'?loadAud:loadCons);
 };
 App.ccaConfirm = async function(cid){
   await CCA_post(cid, '/cases/'+cid+'/contract/confirm', {}, '계약 확정', '계약을 확정했습니다.', S.role==='adm'?loadAdm:loadCons);
@@ -147,14 +150,14 @@ App.ccaApprove = async function(cid){
   await CCA_post(cid, '/cases/'+cid+'/contract/approve', {}, '계약 승인', '계약을 승인·발송했습니다.', loadAdm);
 };
 App.ccaReceive = async function(cid){
-  await CCA_post(cid, '/cases/'+cid+'/contract/receive', {}, '계약서 수령 확인', '접수·확인 처리했습니다.', loadAdm);
+  await CCA_post(cid, '/cases/'+cid+'/contract/receive', {}, '계약서 수령 확인', '접수·확인 처리했습니다.', S.role==='adm'?loadAdm:loadCons);
 };
 
 // ── PDF ──
 App.ccaPdf = async function(cid){
   try{
     const r = await apiFetch('/cases/'+cid+'/contract/pdf');
-    if(!r.ok) return toast('파일을 불러올 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, '파일을 불러올 수 없습니다.'));
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -170,9 +173,10 @@ function CCA_admExtra(cid){
   if(!d || !d.exists) return '';
   const st = d.status;
   const btns = [];
-  if(st === 'requested' || st === 'draft')
+  if((st === 'requested' || st === 'draft') && canCall('POST','/cases/{}/contract/approve'))
     btns.push(`<button class="btn btn-primary" onclick="App.ccaApprove('${esc(cid)}')">계약 승인</button>`);
-  if(st === 'sent' || st === 'issued')
+  // 수령 확인은 신청기업·컨설턴트 권한(main.py:7360) — 운영자에겐 403 이라 숨김(admin 은 통과)
+  if((st === 'sent' || st === 'issued') && canCall('POST','/cases/{}/contract/receive'))
     btns.push(`<button class="btn btn-primary" onclick="App.ccaReceive('${esc(cid)}')">계약서 수령 확인</button>`);
   return btns.length ? `<div class="row-act" style="margin-top:10px;gap:8px">${btns.join('')}</div>` : '';
 }
@@ -196,64 +200,4 @@ function CCA_admExtra(cid){
   }
 })();
 
-// ── 단계 전환 패널 (cons-status) ──
-App.ccaTransition = async function(){
-  const cid = S.selCompany || '';
-  if(!cid) return toast('대상 업체를 선택하세요.');
-  const to = (($('#cca-to')||{}).value||'').trim();
-  if(!to) return toast('전환할 목표 상태를 입력하세요.');
-  S.ccaBlock = null;
-  let r, d = null;
-  try{
-    r = await apiFetch('/cases/'+cid+'/transition', {method:'POST', body: JSON.stringify({to_state: to, action:'transition', actor_type:'system'})});
-    try{ d = await r.json(); }catch(e){ d = null; }
-  }catch(e){ toast('단계 전환에 실패했습니다.'); return; }
-  if(!r.ok){
-    if(r.status === 403){
-      toast('이 작업은 권한이 없습니다.');
-      S.ccaBlock = {kind:'403', msg:'이 전환은 현재 역할로 수행할 권한이 없습니다.'};
-    }else if(r.status === 409 && d && d.detail){
-      const bl = (d.detail.blockers || d.blockers || []);
-      S.ccaBlock = {kind:'409', code: d.detail.code || 'TRANSITION_BLOCKED',
-                    msg: '전환할 수 없습니다.', blockers: bl};
-      toast('단계 전환에 실패했습니다. (' + (d.detail.code||'BLOCKED') + ')');
-    }else{
-      const code = d && d.detail && d.detail.code ? ' (' + d.detail.code + ')' : '';
-      S.ccaBlock = {kind:'err', msg: '단계 전환에 실패했습니다.' + code};
-      toast('단계 전환에 실패했습니다.' + code);
-    }
-    render();
-    return;
-  }
-  S.ccaBlock = null;
-  try{ await loadCons(); }catch(e){}
-  render();
-  toast('다음 단계로 전환했습니다: ' + to);
-};
-
-(function(){
-  const base = VIEWS['cons-status'];
-  if(typeof base === 'function'){
-    VIEWS['cons-status'] = () => {
-      const cid = S.selCompany || '';
-      const c = (RS.cases||[]).find(x=>x.case_id===cid);
-      let blk = '';
-      if(S.ccaBlock){
-        let extra = '';
-        if(S.ccaBlock.blockers && S.ccaBlock.blockers.length){
-          extra = '<ul>' + S.ccaBlock.blockers.map(b=>`<li>${esc(typeof b==='string'?b:JSON.stringify(b))}</li>`).join('') + '</ul>';
-        }
-        blk = `<div class="note attn"><strong>${esc(S.ccaBlock.msg||'')}</strong> ${S.ccaBlock.code?`<span class="mono">(${esc(S.ccaBlock.code)})</span>`:''}${extra}</div>`;
-      }
-      const cur = c ? `<span class="badge">${esc(c.status||'')}</span>` : '<span class="muted">대상 없음</span>';
-      return base() + `<section class="panel"><div class="panel-head"><h2>단계 전환</h2>${cur}</div>
-        ${blk}
-        <div class="inline" style="margin-top:10px">
-          <input id="cca-to" class="in" placeholder="예: consultant_review" />
-          <button class="btn btn-primary" onclick="App.ccaTransition()">다음 단계로 전환</button>
-        </div>
-        <p class="inline-msg">승인·발급 상태는 전용 화면에서만 처리할 수 있습니다.</p>
-      </section>`;
-    };
-  }
-})();
+// (v4 연결 5) 자유입력 단계 전환 패널 제거 — 직무분리 우회(H15). 역할별 전용 버튼은 js/flow-actions.js.

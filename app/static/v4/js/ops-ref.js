@@ -242,8 +242,9 @@
 
   // ---------- 2) LPH 레퍼런스 ----------
   const OPSF_lphPanel = () => {
+    if(!canCall('GET','/admin/lph-references')) return '';   // 조회 admin·consultant(main.py:11066) — operator 는 403
     const head = `<div class="panel-head"><h2>LPH 레퍼런스</h2>
-      <button class="btn btn-primary btn-sm" onclick="App.opsfNewLph()">추가</button></div>`;
+      ${canCall('POST','/admin/lph-references')?`<button class="btn btn-primary btn-sm" onclick="App.opsfNewLph()">추가</button>`:''}</div>`;
     const loading = OPSF_pick('lph','/admin/lph-references');
     if(loading){
       const e = RS.opsf.lph && RS.opsf.lph.error ? RS.opsf.lph : null;
@@ -292,6 +293,7 @@
 
   // ---------- 3) KMA 1360 면제 용어 ----------
   const OPSF_kmaPanel = () => {
+    if(!canCall('GET','/admin/kma1360-exempt')) return '';   // admin 전용(main.py:1779)
     const head = `<div class="panel-head"><h2>KMA 1360 면제 용어</h2></div>`;
     const loading = OPSF_pick('kma','/admin/kma1360-exempt');
     if(loading){
@@ -307,6 +309,7 @@
 
   // ---------- 4) 원재료 온톨로지 ----------
   const OPSF_ontoPanel = () => {
+    if(!canCall('GET','/admin/ontology/stats')) return '';   // 통계·재시드 admin 전용(main.py:1736·1744)
     const head = `<div class="panel-head"><h2>원재료 온톨로지</h2>
       <button class="btn btn-sm" onclick="App.opsfReseedConfirm()">재시드</button></div>`;
     const loading = OPSF_pick('onto','/admin/ontology/stats');

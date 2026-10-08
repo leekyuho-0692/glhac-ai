@@ -153,7 +153,8 @@ App.shadPadClear = function(){
 App.shadSignOpen = function(cid){
   const def = (AUTH && AUTH.username) || '';
   S.shadInk = false;
-  const body = `<div class="field"><label>서명자</label><input class="in" id="shad-signer" value="${esc(def)}"></div>
+  const body = `<div class="field"><label>서명 자격</label><select class="in" id="shad-seat"><option value="chairman">위원장</option><option value="member">위원</option></select></div>
+    <div class="field"><label>서명자</label><input class="in" id="shad-signer" value="${esc(def)}"></div>
     <div class="field"><label>서명</label>
       <canvas id="shad-pad" width="420" height="140" style="border:1px solid var(--line);border-radius:6px;touch-action:none;background:#fff;max-width:100%"></canvas>
       <div class="row-act" style="margin-top:8px"><button class="btn btn-sm btn-ghost" onclick="App.shadPadClear()">지우기</button></div>
@@ -166,15 +167,18 @@ App.shadSignOpen = function(cid){
 };
 
 App.shadSignDo = async function(cid){
-  const member = (($('#shad-signer')||{}).value||'').trim();
+  const name = (($('#shad-signer')||{}).value||'').trim();
+  const seat = (($('#shad-seat')||{}).value||'member');
   const eEl = $('#shad-sign-e');
-  if(!member){ if(eEl) eEl.textContent = '서명자 이름을 입력하세요.'; return; }
+  if(!name){ if(eEl) eEl.textContent = '서명자 이름을 입력하세요.'; return; }
+  // 서버 정족수: member 에 'chairman' 이 든 서명 1건 + 서로 다른 서명자 2명 이상. 위원은 이름별로 구분한다.
+  const member = seat === 'chairman' ? 'chairman' : 'member:' + name;
   if(!S.shadInk){ if(eEl) eEl.textContent = '서명을 그려 주세요.'; return; }
   const pad = document.getElementById('shad-pad');
   const image = pad ? pad.toDataURL('image/png') : '';
   if(!image){ if(eEl) eEl.textContent = '서명을 그려 주세요.'; return; }
   try{
-    const r = await apiFetch('/cases/'+cid+'/fatwa/sign', {method:'POST', body: JSON.stringify({member, image})});
+    const r = await apiFetch('/cases/'+cid+'/fatwa/sign', {method:'POST', body: JSON.stringify({member, name, image})});
     if(!r.ok){
       let code = '';
       try{ const j = await r.json(); code = (j && j.detail && j.detail.code) || ''; }catch(_){}
@@ -206,7 +210,7 @@ App.shadDecree = async function(cid){
 App.shadDecreePdf = async function(cid){
   try{
     const r = await apiFetch('/cases/'+cid+'/fatwa/decree.pdf');
-    if(!r.ok) return toast('파일을 불러올 수 없습니다.');
+    if(!r.ok) return toast(await apiErr(r, '파일을 불러올 수 없습니다.'));
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

@@ -420,6 +420,7 @@
       <span class="pill" id="userPill">👤 —</span>
       <span class="pill" role="button" tabindex="0" aria-label="언어 전환 · Change language" onclick="cycleLang()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();cycleLang()}" id="langPill">🌐 KO · EN · ID</span>
       <span class="pill" role="button" tabindex="0" aria-label="테마 전환 · Toggle theme" onclick="toggleTheme()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleTheme()}" id="themePill">🌙 다크</span>
+      <span class="pill" role="button" tabindex="0" aria-label="비밀번호 변경 · Change password" onclick="changeMyPw()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();changeMyPw()}">🔑 비밀번호</span>
       <span class="pill" role="button" tabindex="0" aria-label="로그아웃 · Logout" onclick="logout()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();logout()}">⏻ 로그아웃</span>
     </div>
     <div id="pages"></div>
@@ -12242,7 +12243,7 @@ SCREEN.system=async()=>{
   const uRows=upg.items.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
       <td><select class="v" style="font-size:12px;padding:3px 6px;width:auto" onchange="patchUserRole('${u.user_id}',this.value)">${roleOpts(u.role)}</select></td>
       <td class="muted small">${esc(u.org_id||"")}</td>
-      <td style="text-align:right"><button class="btn bad" style="padding:3px 8px;font-size:12px" onclick="delUser('${u.user_id}')">✕</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
+      <td style="text-align:right;white-space:nowrap"><button class="btn" style="padding:3px 8px;font-size:12px" title="비밀번호 초기화" onclick="resetUserPw('${u.user_id}','${esc(u.username)}')">🔑</button> <button class="btn bad" style="padding:3px 8px;font-size:12px" onclick="delUser('${u.user_id}')">✕</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
   const oRows=(orgs||[]).map(o=>`<tr><td><b>${esc(o.name||o.org_id)}</b></td><td class="muted small">${esc(o.org_id)}</td><td>${o.case_count==null?(o.cases==null?"—":o.cases):o.case_count}</td><td style="white-space:nowrap"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="tenantPanel('${esc(o.org_id)}')">🌐 ${T('도메인·브랜딩')}</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
   let logiSync={counts:{},items:[]};try{logiSync=await API("/admin/logistics-sync");}catch(_){}
   const lsc=logiSync.counts||{};
@@ -12316,6 +12317,22 @@ SCREEN.system=async()=>{
 function roleOpts(sel){const rs=[["applicant","신청기업"],["consultant","컨설턴트"],["auditor","오디터"],["fatwa_liaison","샤리아"],["operator","최고운영자"],["penyelia_halal","할랄감독자"],["pendamping_pph","동반자"],["admin","ITO 관리자"]];return rs.map(([vv,k])=>`<option value="${vv}"${vv===sel?" selected":""}>${k}</option>`).join("");}
 async function createUser(){const username=v("nuUser"),password=v("nuPass")||"pw",role=v("nuRole");if(!username){toast("아이디 입력");return}try{await API("/admin/users",{method:"POST",body:JSON.stringify({username,password,role})});toast("사용자 생성 · "+username);applyView();}catch(e){toast("생성 실패 · "+EMSG(e));}}
 async function patchUserRole(uid,role){try{await API(`/admin/users/${uid}`,{method:"PATCH",body:JSON.stringify({role})});toast("역할 변경 · "+role);}catch(e){toast("실패 · "+EMSG(e));}}
+/* 비밀번호 초기화(관리자 → 각 계정) — 정책(8자 이상)을 지키는 임시 비밀번호를 만들어 한 번 보여 준다 */
+function tempPw(){const a="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789",b=new Uint32Array(10);crypto.getRandomValues(b);return "Gh-"+Array.from(b,x=>a[x%a.length]).join("");}
+async function resetUserPw(uid,name){if(!confirm(name+" 계정의 비밀번호를 임시 비밀번호로 초기화할까요?"))return;const pw=tempPw();
+  try{await API(`/admin/users/${uid}`,{method:"PATCH",body:JSON.stringify({password:pw})});
+    await dialog("임시 비밀번호 · "+name+" (창을 닫으면 다시 볼 수 없습니다)",[{key:"pw",label:"임시 비밀번호 — 전달 후 본인이 바로 변경하도록 안내하세요",value:pw}]);
+  }catch(e){toast("초기화 실패 · "+EMSG(e));}}
+/* 내 비밀번호 변경(모든 계정) — 바꾸면 다른 기기 로그인은 끊기고 이 화면은 새 토큰으로 이어진다 */
+async function changeMyPw(){const o=await dialog("비밀번호 변경 · Change password",[
+    {key:"cur",label:"현재 비밀번호",type:"password",required:true},
+    {key:"nw",label:"새 비밀번호 (8자 이상)",type:"password",required:true},
+    {key:"nw2",label:"새 비밀번호 확인",type:"password",required:true}]);
+  if(!o)return; if(o.nw!==o.nw2){toast("새 비밀번호가 서로 다릅니다");return;}
+  try{const j=await API("/auth/change-password",{method:"POST",body:JSON.stringify({current_password:o.cur,new_password:o.nw})});
+    localStorage.setItem(TK,j.token);if(j.refresh_token)localStorage.setItem(RTK,j.refresh_token);
+    toast("비밀번호를 변경했습니다. 다른 기기의 로그인은 해제됩니다.");
+  }catch(e){toast("변경 실패 · "+EMSG(e));}}
 async function delUser(uid){if(!confirm("사용자를 삭제할까요?"))return;try{await API(`/admin/users/${uid}`,{method:"DELETE"});toast("사용자 삭제");applyView();}catch(e){toast("삭제 실패 · "+EMSG(e));}}
 /* 스태프 가입 승인/거부 */
 async function approveStaff(rid,uname){
