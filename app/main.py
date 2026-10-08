@@ -16094,9 +16094,14 @@ _DOCAUDIT_STATES = {"document_pre_audit_requested", "document_pre_audit_in_revie
 
 
 def _ops_cases(db, user):
-    """운영자 스코프 케이스(admin=전체, operator=자기 조직)."""
+    """운영자 스코프 케이스 — 인증기관 역할(admin·operator·fatwa_liaison)=전체, 오디터=배정 케이스, 그 외=자기 조직.
+    업체가 각자 조직을 가지면서(10/04 분리) operator 가 자기 조직만 보던 종전 규칙은 운영 화면을 비웠다(/cases 와 동일 기준)."""
     q = db.query(models.CaseApplication)
-    if user["role"] != "admin":
+    if user["role"] in CERTIFIER_ROLES:
+        pass
+    elif user["role"] == "auditor":
+        q = q.filter(models.CaseApplication.case_id.in_(_assigned_case_ids(db, user["uid"]) or [""]))
+    else:
         q = q.filter_by(org_id=user["org_id"])
     return q.order_by(models.CaseApplication.created_at.desc()).all()
 
