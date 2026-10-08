@@ -2391,7 +2391,8 @@ def gen_report(case_id: str, user=Depends(auth.get_current_user), db: Session = 
 @app.get("/cases")
 def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db),
                limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
-               sector: str = Query(None), status: str = Query(None), search: str = Query(None)):
+               sector: str = Query(None), status: str = Query(None), search: str = Query(None),
+               step8: int = Query(None)):
     """케이스 목록(§8.1 페이징). total 포함 봉투 — 클라이언트가 페이지 순회로 전량 적재.
     기존 default 500·no-total은 500건 초과 조직에서 조용히 누락됐음."""
     # 목록도 상세와 같은 규칙을 쓴다 — 목록에 안 보이는데 상세만 열리면 쓸모가 없고,
@@ -2444,6 +2445,13 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
         else:
             u = db.get(models.User, cid)
             cons_name[cid] = u.username if u else None
+    _last_ev = {}
+    if rows:
+        from sqlalchemy import func as _func
+        for _cid, _mx in (db.query(models.WorkflowEvent.case_id, _func.max(models.WorkflowEvent.created_at))
+                          .filter(models.WorkflowEvent.case_id.in_([x.case_id for x in rows]))
+                          .group_by(models.WorkflowEvent.case_id).all()):
+            _last_ev[_cid] = _mx.isoformat() if _mx else None
     items = []
     for c in rows:
         s8 = nav8.compute_step8(db, c)
@@ -2465,7 +2473,12 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
                       "consultant": cons_name.get(_cc) if _cc else None,
                       "main_auditor": a.get("auditor_name"),
                       "co_auditors": co_map.get(c.case_id, []),
+                      "last_event_at": _last_ev.get(c.case_id),
                       "next_action": _STATE_KO.get(next_state, next_state) if next_state else None})
+    if step8 is not None:
+        items = [it for it in items if it.get("step8") == step8]
+        total = len(items)
+
     return {"total": total, "limit": limit, "offset": offset,
             "count": len(items), "items": items}
 
