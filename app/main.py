@@ -982,7 +982,8 @@ def health(db: Session = Depends(get_db)):
         dbok = False
     status = "ok" if dbok else "degraded"
     return JSONResponse(status_code=200 if dbok else 503,
-                        content={"status": status, "service": "glhac-ai", "version": "0.2.0", "db": dbok})
+                        content={"status": status, "service": "glhac-ai", "version": "0.2.0", "db": dbok,
+                                 "demo": os.environ.get("GLHAC_DEV") == "1"})
 
 
 @app.get("/metrics")
