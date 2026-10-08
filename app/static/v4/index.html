@@ -2134,9 +2134,9 @@ VIEWS['ent-apply'] = () => {
     ${submitted||!canCall('POST','/cases/{}/products')?'':`<div class="inline" style="flex-wrap:wrap;margin-top:8px"><input class="in" id="pr-name" placeholder="제품명 (예: 프리미엄 홍삼 스틱)" style="flex:2 1 220px"><input class="in" id="pr-cat" placeholder="분류(선택)" style="flex:1 1 140px"><button class="btn" onclick="App.entAddProduct('${cid}')">＋ 품목 추가</button></div>`}
   </section>
   <section class="panel"><div class="panel-head"><h2>필요 서류</h2><button class="link" onclick="App.go('ent-docs')">문서함 열기 →</button></div>
-    <p class="muted">사업자등록증·성분분석표·제조공정도 등은 <b>문서함</b>에서 업로드합니다.${docCount!=null?` 현재 ${docCount}건 보관 중.`:''}</p></section>
-  ${submitted||!canCall('POST','/cases/{}/submit-application')?'':`<div class="action-bar"><span class="muted">${prods.length?'AI 사전심사를 신청하면 오디터 검토로 넘어갑니다.':'품목을 1개 이상 등록해야 신청할 수 있습니다.'}</span>
-    <div class="row-act"><button class="btn btn-primary" ${prods.length?'':'disabled style="opacity:.45;cursor:not-allowed"'} onclick="App.entSubmitApp('${cid}')">AI 사전심사 신청</button></div></div>`}`;
+    <p class="muted">${c.scheme==='logistics' ? '사업자등록증·SJPH 매뉴얼·취급 범위·세척 SOP·차량 목록(유통)·창고 배치도(보관·포장) 등은' : '사업자등록증·성분분석표·제조공정도 등은'} <b>문서함</b>에서 업로드합니다.${docCount!=null?` 현재 ${docCount}건 보관 중.`:''}</p></section>
+  ${submitted||!canCall('POST','/cases/{}/submit-application')?'':`<div class="action-bar"><span class="muted">${(c.scheme==='logistics' ? !!(c.logistics_scope&&c.logistics_scope.length) : !!prods.length)?'AI 사전심사를 신청하면 오디터 검토로 넘어갑니다.':(c.scheme==='logistics'?'취급 서비스(보관·포장·유통)를 1개 이상 선택해야 신청할 수 있습니다.':'품목을 1개 이상 등록해야 신청할 수 있습니다.')}</span>
+    <div class="row-act"><button class="btn btn-primary" ${(c.scheme==='logistics' ? !!(c.logistics_scope&&c.logistics_scope.length) : !!prods.length)?'':'disabled style="opacity:.45;cursor:not-allowed"'} onclick="App.entSubmitApp('${cid}')">AI 사전심사 신청</button></div></div>`}`;
 };
 App.entAddProduct = async function(cid){
   const name=(($('#pr-name')||{}).value||'').trim(); if(!name) return toast('제품명을 입력해 주세요.');

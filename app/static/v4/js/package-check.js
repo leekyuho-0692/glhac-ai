@@ -1,7 +1,7 @@
 /* 인증 패키지 점검 — 업체·제품·성분(원재료)·공장은 한 묶음이다. 하나라도 빠지면 심사가 성립하지 않는다.
    서류에서 찾지 못한 항목·판독 불가 서류(손글씨 등)를 보여 주고, 그 자리에서 수기 입력하거나
    (업체·컨설턴트) 보완 요청·수기 확인(오디터·운영자)을 한다. 서버: GET /cases/{id}/package-check */
-const PKG_LABEL = {company:'업체 정보', product:'제품', material:'성분(원재료)', factory:'공장'};
+const PKG_LABEL = {company:'업체 정보', product:'제품', material:'성분(원재료)', factory:'공장', scope:'취급 서비스', vehicle:'차량', cleaning:'세척 SOP'};
 const PKG_CO_LABEL = {company_name:'업체명', nib:'사업자등록번호', responsible_person:'대표자', address:'주소'};
 function PKG_canEdit(){ return ['applicant','consultant','admin'].includes(AUTH.role); }
 function PKG_canAudit(){ return ['auditor','operator','admin'].includes(AUTH.role); }
@@ -24,7 +24,14 @@ function PKG_panel(cid){
   const ed = PKG_canEdit();
   const coMiss = ((it.company||{}).missing||[]).map(k=>PKG_CO_LABEL[k]||k).join(', ');
   const unl = ((it.material||{}).unlinked_products||[]);
-  const rows = [
+  const JASA_KO = {penyimpanan:'보관', pengemasan:'포장', pendistribusian:'유통'};
+  const rows = d.scheme==='logistics' ? [
+    row('company', (it.company||{}).ok, coMiss ? '없음: '+esc(coMiss) : '', ed?`<button class="btn btn-sm" onclick="App.pkgEdit('${cid}','company')">수기 입력</button>`:''),
+    row('scope', (it.scope||{}).ok, (it.scope||{}).ok ? ((it.scope||{}).scope||[]).map(s=>JASA_KO[s]||s).join(', ') : '취급 서비스 미선택', ed?`<button class="btn btn-sm" onclick="App.go('ent-apply')">신청서에서 선택</button>`:''),
+    row('vehicle', (it.vehicle||{}).required ? (it.vehicle||{}).ok : true, (it.vehicle||{}).required ? '등록 '+((it.vehicle||{}).count||0)+'대' : '—', (it.vehicle||{}).required && !((it.vehicle||{}).ok) ? (ed?`<button class="btn btn-sm" onclick="App.entlAdd ? App.entlAdd('${cid}') : App.go('ent-apply')">차량 추가</button>`:'') : ''),
+    row('facility', (it.facility||{}).required ? (it.facility||{}).ok : true, (it.facility||{}).required ? '' : '—', (it.facility||{}).required && !((it.facility||{}).ok) ? (ed?`<button class="btn btn-sm" onclick="App.pkgEdit('${cid}','factory')">시설</button>`:'') : ''),
+    row('cleaning', (it.cleaning||{}).ok, '세척 SOP 서류', (it.cleaning||{}).ok ? '' : (ed?`<button class="btn btn-sm" onclick="App.go('ent-docs')">문서함에서 업로드</button>`:'')),
+  ].join('') : [
     row('company', (it.company||{}).ok, coMiss ? '없음: '+esc(coMiss) : '', ed?`<button class="btn btn-sm" onclick="App.pkgEdit('${cid}','company')">수기 입력</button>`:''),
     row('product', (it.product||{}).ok, '등록 '+((it.product||{}).count||0)+'개', ed?`<button class="btn btn-sm" onclick="App.pkgEdit('${cid}','product')">제품 추가</button>`:''),
     row('material', (it.material||{}).ok, '등록 '+((it.material||{}).count||0)+'개'+(unl.length?` · 원재료 미연결 제품: ${esc(unl.slice(0,3).join(', '))}${unl.length>3?' 외 '+(unl.length-3):''}`:''), ed?`<button class="btn btn-sm" onclick="App.pkgEdit('${cid}','material')">원재료 추가</button>`:''),
@@ -39,7 +46,7 @@ function PKG_panel(cid){
   const head = d.complete
     ? `<span class="badge strong">패키지 완비</span>`
     : `<span class="badge attn">확인 필요 ${(d.gaps||[]).length + (un.length?1:0) + (up.length?1:0)}건</span>`;
-  return `<section class="panel"><div class="panel-head"><h2>인증 패키지 점검 · 업체·제품·성분·공장</h2>
+  return `<section class="panel"><div class="panel-head"><h2>${d.scheme==='logistics' ? '인증 패키지 점검 · 업체·취급 서비스·차량·시설·세척 SOP' : '인증 패키지 점검 · 업체·제품·성분·공장'}</h2>
       <div class="row-act">${head}${PKG_canAudit() && !d.complete ? `<button class="btn btn-sm" onclick="App.pkgRequest('${cid}')">업체·컨설턴트에 보완 요청</button>`:''}
       <button class="btn btn-sm btn-ghost" onclick="App.pkgRefresh('${cid}')">다시 점검</button></div></div>
     <div class="tbl-wrap"><table><thead><tr><th>항목</th><th>상태</th><th>내용</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>

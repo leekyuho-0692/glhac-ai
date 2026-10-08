@@ -789,6 +789,22 @@ def _package_check(db, c):
                      "confidence": d.confidence, "has_file": bool(d.content_b64)}
     unreadable = [row(d) for d in docs if d.confidence is not None and d.confidence < PKG_UNREADABLE_CONF]
     unprocessed = [row(d) for d in docs if d.confidence is None]
+    if (c.scheme or "product") == "logistics":
+        scope = list(c.logistics_scope or [])
+        need_vehicle = "pendistribusian" in scope
+        need_facility = bool({"penyimpanan", "pengemasan"} & set(scope))
+        vehicles = db.query(models.Vehicle).filter_by(org_id=c.org_id).count()
+        cleaning = any(d.doc_type == "cleaning_sop" for d in db.query(models.DocumentAsset).filter_by(case_id=c.case_id).all())
+        items = {
+            "company": {"ok": not company_missing, "missing": company_missing},
+            "scope": {"ok": bool(scope), "scope": scope},
+            "vehicle": {"ok": (vehicles > 0) if need_vehicle else True, "count": vehicles, "required": need_vehicle},
+            "facility": {"ok": factory_ok if need_facility else True, "required": need_facility},
+            "cleaning": {"ok": cleaning},
+        }
+        gaps = [k for k, v in items.items() if not v["ok"]]
+        return {"case_id": c.case_id, "scheme": "logistics", "complete": not gaps and not unreadable and not unprocessed,
+                "gaps": gaps, "items": items, "unreadable": unreadable, "unprocessed": unprocessed}
     items = {
         "company": {"ok": not company_missing, "missing": company_missing},
         "product": {"ok": bool(products), "count": len(products)},
@@ -796,7 +812,7 @@ def _package_check(db, c):
         "factory": {"ok": factory_ok},
     }
     gaps = [k for k, v in items.items() if not v["ok"]]
-    return {"case_id": c.case_id, "complete": not gaps and not unreadable and not unprocessed, "gaps": gaps,
+    return {"case_id": c.case_id, "scheme": "product", "complete": not gaps and not unreadable and not unprocessed, "gaps": gaps,
             "items": items, "unreadable": unreadable, "unprocessed": unprocessed}
 
 
