@@ -11149,6 +11149,146 @@ def _audit_report_return_count(db, case_id):
                     models.WorkflowEvent.action == "audit_report.return").count())
 
 
+# ===== SRS ⑥ 영문 정본(D-17)·취합본(D-18) — 3개 언어본 보관 + 문서 지문 =====
+CANONICAL_LANGS = ("en", "id", "ko")           # en 이 정본, 나머지는 번역본(I18N-03)
+CANONICAL_NOTICE = {"en": "This English version is the authoritative text. Translations are for reference.",
+                    "id": "Versi bahasa Inggris adalah naskah resmi. Terjemahan ini hanya untuk referensi.",
+                    "ko": "영문본이 정본이며 이 번역본은 참고용입니다."}
+
+
+def _canonical_dir(case_id):
+    base = os.path.realpath(os.environ.get("GLHAC_UPLOAD_DIR", "/tmp"))
+    d = os.path.join(base, "canonical", case_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _canonical_latest(db, case_id, doc="D-17"):
+    e = nav8.latest_event(db, case_id, "canonical.issued")
+    evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="canonical.issued")
+           .order_by(models.WorkflowEvent.created_at.desc()).all())
+    for e in evs:
+        if (e.payload or {}).get("doc") == doc:
+            return e.payload or {}
+    return None
+
+
+def _issue_canonical_d17(db, c, user):
+    """상정 시점에 D-17 을 3개 언어로 생성해 보관하고 SHA-256 지문을 남긴다. 다시 부르면 새 버전."""
+    prev = _canonical_latest(db, c.case_id, "D-17")
+    version = (int(prev.get("version") or 0) + 1) if prev else 1
+    d = _canonical_dir(c.case_id)
+    files, hashes = {}, {}
+    for lang in CANONICAL_LANGS:
+        data = _factory_audit_docx_bytes(db, c, lang)
+        fn = "D-17_v%d_%s.docx" % (version, lang)
+        with open(os.path.join(d, fn), "wb") as fh:
+            fh.write(data)
+        files[lang] = fn
+        hashes[lang] = hashlib.sha256(data).hexdigest()
+    sign = _audit_report_event_latest(db, c.case_id, "audit_report.sign")
+    csign = _audit_report_event_latest(db, c.case_id, "audit_report.client_sign")
+    payload = {"doc": "D-17", "version": version, "canonical_lang": "en", "langs": list(CANONICAL_LANGS),
+               "files": files, "sha256": hashes, "issued_at": datetime.utcnow().isoformat(), "issued_by": user.get("uid"),
+               "auditor_sign": (sign or {}).get("name") if sign else None,
+               "client_sign": (csign or {}).get("name") if csign else None}
+    sm.record_event(db, c, c.status, c.status, "canonical.issued", user["role"], user["uid"], payload)
+    return payload
+
+
+def _issue_final_package_d18(db, c, user, d17):
+    """D-18 인증 문서 취합본 — 상정에 포함되는 문서 목록·버전·지문(영문 정본 + 번역본 문구)."""
+    import json as _json
+    docs = db.query(models.GeneratedDocument).filter_by(case_id=c.case_id).order_by(models.GeneratedDocument.created_at.asc()).all()
+    latest = {}
+    for g in docs:
+        if g.doc_type in ("final_package",):
+            continue
+        latest[g.doc_type] = g
+    items = [{"doc_type": t, "gen_doc_id": g.gen_doc_id, "version": g.version, "status": g.status,
+              "sha256": hashlib.sha256((g.content or "").encode("utf-8")).hexdigest()} for t, g in latest.items()]
+    items.append({"doc_type": "audit_report_canonical", "version": d17["version"], "status": "canonical",
+                  "sha256": d17["sha256"].get("en"), "langs": d17["langs"], "canonical_lang": "en"})
+    prev = _canonical_latest(db, c.case_id, "D-18")
+    version = (int(prev.get("version") or 0) + 1) if prev else 1
+    content = {"doc": "D-18", "title": {"en": "Certification Document Package", "id": "Paket Dokumen Sertifikasi", "ko": "인증 문서 취합본"},
+               "notice": CANONICAL_NOTICE, "canonical_lang": "en", "company_name": c.company_name, "case_id": c.case_id,
+               "version": version, "items": items, "issued_at": datetime.utcnow().isoformat(), "issued_by": user.get("username")}
+    g = _save_gendoc(db, c, "final_package", _json.dumps(content, ensure_ascii=False), user, status="final")
+    payload = {"doc": "D-18", "version": version, "gen_doc_id": g.gen_doc_id, "canonical_lang": "en",
+               "sha256": hashlib.sha256(g.content.encode("utf-8")).hexdigest(), "issued_at": content["issued_at"], "items": len(items)}
+    sm.record_event(db, c, c.status, c.status, "canonical.issued", user["role"], user["uid"], payload)
+    return payload
+
+
+@app.post("/cases/{case_id}/audit-report/client-sign")
+def audit_report_client_sign(case_id: str, body: dict = None,
+                             user=Depends(auth.require_roles("applicant", "penyelia_halal")), db: Session = Depends(get_db)):
+    """ONS-05 기업 확인 서명 — 승인된 현장심사 보고서에 대표자가 확인 서명(data:image)."""
+    c = _get_case(db, case_id, user)
+    g = _latest_audit_report(db, case_id)
+    if not g or g.status != "approved":
+        raise HTTPException(409, {"code": "REPORT_NOT_APPROVED"})
+    b = dict(body or {})
+    name = (b.get("name") or "").strip()
+    image = b.get("image")
+    if not name or not (isinstance(image, str) and image.startswith("data:image/")):
+        raise HTTPException(422, {"code": "NAME_AND_IMAGE_REQUIRED"})
+    at = datetime.utcnow().isoformat()
+    sm.record_event(db, c, c.status, c.status, "audit_report.client_sign", user["role"], user["uid"],
+                    {"name": name, "gen_doc_id": g.gen_doc_id, "at": at, "image": image[:200000]})
+    _notify(db, c, "audit_report.client_sign", "기업 확인 서명 완료 — 현장심사 보고서", body=name + " 서명", role="auditor")
+    db.commit()
+    return {"ok": True, "name": name, "at": at, "gen_doc_id": g.gen_doc_id}
+
+
+@app.get("/cases/{case_id}/canonical")
+def canonical_get(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """I18N-04 — D-17 정본 세트(언어 탭·지문)와 D-18 메타. 정본 문구를 언어별로 함께 준다."""
+    _get_case(db, case_id, user)
+    d17 = _canonical_latest(db, case_id, "D-17")
+    d18 = _canonical_latest(db, case_id, "D-18")
+    csign = _audit_report_event_latest(db, case_id, "audit_report.client_sign")
+    return {"d17": d17, "d18": d18, "notice": CANONICAL_NOTICE, "canonical_lang": "en",
+            "client_signed": bool(csign), "client_sign_name": (csign or {}).get("name") if csign else None}
+
+
+@app.get("/cases/{case_id}/canonical/D-17.{fmt}")
+def canonical_d17_file(case_id: str, fmt: str, lang: str = Query("en"), version: int = Query(None),
+                       user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """보관된 정본/번역본 내려받기 — docx 는 보관 바이트 그대로(지문 불변), pdf 는 그 docx 를 변환."""
+    from fastapi.responses import Response
+    _get_case(db, case_id, user)
+    if user["role"] == "consultant":
+        raise HTTPException(403, {"code": "DOC_VIEW_ONLY"})
+    if fmt not in ("docx", "pdf") or lang not in CANONICAL_LANGS:
+        raise HTTPException(422, {"code": "BAD_FORMAT_OR_LANG"})
+    meta = None
+    for e in (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="canonical.issued")
+              .order_by(models.WorkflowEvent.created_at.desc()).all()):
+        p = e.payload or {}
+        if p.get("doc") == "D-17" and (version is None or int(p.get("version") or 0) == version):
+            meta = p
+            break
+    if not meta:
+        raise HTTPException(404, {"code": "CANONICAL_NOT_ISSUED"})
+    path = os.path.join(_canonical_dir(case_id), meta["files"][lang])
+    if not os.path.exists(path):
+        raise HTTPException(404, {"code": "CANONICAL_FILE_MISSING"})
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if hashlib.sha256(data).hexdigest() != meta["sha256"].get(lang):
+        raise HTTPException(409, {"code": "FINGERPRINT_MISMATCH"})
+    _audit(db, user, "document.download", "case", case_id, meta={"doc": "D-17", "lang": lang, "version": meta["version"]})
+    db.commit()
+    if fmt == "docx":
+        return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        headers={"Content-Disposition": _content_disposition("D-17_v%d_%s.docx" % (meta["version"], lang))})
+    pdf = _docx_to_pdf_bytes(data)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=D-17_v%d_%s.pdf" % (meta["version"], lang)})
+
+
 def _fatwa_gate_check(db, c):
     """파트와 상정 선행조건 검증 — (미충족 코드 리스트, 근거 dict) 반환.
     (a) audit_report GeneratedDocument approved 존재
@@ -11162,6 +11302,9 @@ def _fatwa_gate_check(db, c):
     sign = _audit_report_event_latest(db, c.case_id, "audit_report.sign")
     if not sign:
         missing.append("AUDITOR_SIGN_REQUIRED")
+    if nav8.formal_flow_on():
+        if not _audit_report_event_latest(db, c.case_id, "audit_report.client_sign"):
+            missing.append("CLIENT_SIGN_REQUIRED")
     have = _ensure_hpas(db, c.case_id)
     hpas_ok = sum(1 for el in HPAS_ELEMENTS if have[el].status == "ok")
     penyelia_ok = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").count() > 0
@@ -12237,6 +12380,8 @@ def _do_send_fatwa(db, c, actor, body):
     missing, ctx = _fatwa_gate_check(db, c)
     if missing:
         raise HTTPException(409, {"code": "FATWA_GATE_BLOCKED", "missing": missing})
+    d17 = _issue_canonical_d17(db, c, actor)
+    d18 = _issue_final_package_d18(db, c, actor, d17)
     target = "fatwa_review"
     transitioned_to = None
     ok, _blk = sm.can_transition(db, c, target)
@@ -12245,16 +12390,19 @@ def _do_send_fatwa(db, c, actor, body):
         sm.apply_side_effects(c, target)
         c.status = target
         sm.record_event(db, c, frm, target, "audit_report.send_fatwa", actor["role"], actor["uid"],
-                        {"gate": "passed", "gen_doc_id": ctx.get("gen_doc_id")})
+                        {"gate": "passed", "gen_doc_id": ctx.get("gen_doc_id"),
+                         "canonical_version": d17["version"], "d18_gen_doc_id": d18["gen_doc_id"]})
         transitioned_to = target
     else:
         sm.record_event(db, c, c.status, c.status, "audit_report.send_fatwa", actor["role"], actor["uid"],
                         {"gate": "passed", "transition_skipped": True,
-                         "gen_doc_id": ctx.get("gen_doc_id")})
+                         "gen_doc_id": ctx.get("gen_doc_id"),
+                         "canonical_version": d17["version"], "d18_gen_doc_id": d18["gen_doc_id"]})
     _notify(db, c, "audit_report.send_fatwa", "파트와 상정 — 현장심사 보고서",
-            body="현장심사 보고서(서명 완료)가 파트와 심의로 상정되었습니다.", role="fatwa_liaison")
+            body="현장심사 보고서(영문 정본 + 인니어·한국어 번역본)와 취합본이 상정되었습니다.", role="fatwa_liaison")
     db.commit()
-    return {"ok": True, "transitioned_to": transitioned_to, "gate": "passed"}
+    return {"ok": True, "transitioned_to": transitioned_to, "gate": "passed",
+            "canonical": d17, "final_package": d18}
 
 
 def _create_approval(db, action_type, c, user, reason):
