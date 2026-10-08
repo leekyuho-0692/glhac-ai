@@ -4025,36 +4025,12 @@ def mock_audit_decide(case_id: str, body: schemas.MockAuditDecisionReq,
         raise HTTPException(422, {"code": "INVALID_RESULT", "allowed": ["pass", "reject"]})
     if result == "reject" and not (body.reason or "").strip():
         raise HTTPException(422, {"code": "REASON_REQUIRED"})
-    sm.record_event(db, c, c.status, c.status, "mock_audit.decision", user["role"], user["uid"],
-                    {"result": result, "reason": body.reason or ""})
-    # ② 상태전이 연동: pass→다음 긍정 단계, reject→시정조치/보완 (유효 전이·가드 통과 시에만)
-    # 모의심사 pass 는 requested→in_review→approved 까지 연쇄(판정 한 번 = 모의심사 통과).
-    # 막히면 blockers 를 돌려준다(종전엔 조용히 기록만 돼 '통과했는데 그대로'로 보였다).
-    transitioned_to = None
-    blockers = []
-    mapping = _MOCK_NEXT.get(c.status)
-    for _hop in range(2):
-        if not mapping:
-            break
-        target = mapping[0] if result == "pass" else mapping[1]
-        if not target:
-            break
-        ok, blk = sm.can_transition(db, c, target)
-        if not ok:
-            blockers = blk
-            break
-        frm = c.status
-        sm.apply_side_effects(c, target)
-        c.status = target
-        sm.record_event(db, c, frm, target, "mock_audit." + result, user["role"], user["uid"],
-                        {"reason": body.reason or ""})
-        transitioned_to = target
-        if result != "pass" or target != "document_pre_audit_in_review":
-            break
-        mapping = _MOCK_NEXT.get(c.status)
-    db.commit()
-    return {"ok": True, "result": result, "transitioned_to": transitioned_to,
-            "status": c.status, "blockers": blockers}
+    b = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+    b["result"] = result
+    pend = _two_person_gate(db, c, user, "mock_audit.decision", b)
+    if pend:
+        return pend
+    return _do_mock_audit_decide(db, c, user, b)
 
 
 # ── P0-5: 모의심사 오디터 뷰 3종 — 스키마 무변경, WorkflowEvent(latest-wins)로 저장 ──
@@ -10230,6 +10206,14 @@ def remove_co_auditor(case_id: str, uid: str,
     row = db.query(models.CaseAuditor).filter_by(case_id=case_id, user_id=uid, role="co").first()
     if not row:
         raise HTTPException(404, {"code": "NOT_FOUND"})
+    others = db.query(models.CaseAuditor).filter(models.CaseAuditor.case_id == case_id,
+                                                 models.CaseAuditor.role == "co",
+                                                 models.CaseAuditor.user_id != uid).count()
+    pending = db.query(models.ApprovalRequest).filter(models.ApprovalRequest.case_id == case_id,
+                                                      models.ApprovalRequest.status == "pending",
+                                                      models.ApprovalRequest.action_type.in_(list(TWO_PERSON_ACTIONS))).count()
+    if others == 0 and pending:
+        raise HTTPException(409, {"code": "LAST_CO_AUDITOR_PENDING"})
     db.delete(row)
     _audit(db, user, "case.co_auditor.remove", "case", case_id, None, {"user_id": uid})
     db.commit()
@@ -10840,27 +10824,13 @@ def audit_report_send_fatwa(case_id: str,
     미충족 시 409 FATWA_GATE_BLOCKED+missing. 통과 시 상태머신 가드가 허용할 때만 fatwa_review로
     전이(강제 점프 금지 — _on_invoice_paid와 동일 철학). 게이트 통과 사실·이벤트는 항상 기록."""
     c = _get_case(db, case_id, user)
-    missing, ctx = _fatwa_gate_check(db, c)
+    missing, _ctx = _fatwa_gate_check(db, c)
     if missing:
         raise HTTPException(409, {"code": "FATWA_GATE_BLOCKED", "missing": missing})
-    target = "fatwa_review"
-    transitioned_to = None
-    ok, _blk = sm.can_transition(db, c, target)
-    if ok:                              # 가드 통과 시에만 전이(아니면 게이트 통과만 기록)
-        frm = c.status
-        sm.apply_side_effects(c, target)
-        c.status = target
-        sm.record_event(db, c, frm, target, "audit_report.send_fatwa", user["role"], user["uid"],
-                        {"gate": "passed", "gen_doc_id": ctx.get("gen_doc_id")})
-        transitioned_to = target
-    else:
-        sm.record_event(db, c, c.status, c.status, "audit_report.send_fatwa", user["role"], user["uid"],
-                        {"gate": "passed", "transition_skipped": True,
-                         "gen_doc_id": ctx.get("gen_doc_id")})
-    _notify(db, c, "audit_report.send_fatwa", "파트와 상정 — 현장심사 보고서",
-            body="현장심사 보고서(서명 완료)가 파트와 심의로 상정되었습니다.", role="fatwa_liaison")
-    db.commit()
-    return {"ok": True, "transitioned_to": transitioned_to, "gate": "passed"}
+    pend = _two_person_gate(db, c, user, "audit_report.send_fatwa", {})
+    if pend:
+        return pend
+    return _do_send_fatwa(db, c, user, {})
 
 
 @app.get("/cases/{case_id}/audit-report/status")
@@ -11694,7 +11664,128 @@ def get_fatwa_status(case_id: str, user=Depends(auth.get_current_user), db: Sess
 MAKER_CHECKER = {
     "certificate.issue":  {"maker": {"operator"}, "checker": {"fatwa_liaison"}, "label": "인증서 발급"},
     "certificate.revoke": {"maker": {"operator"}, "checker": {"admin"}, "label": "인증서 철회"},
+    "preassess.review": {"maker": {"auditor"}, "checker": "co_auditor", "label": "사전심사 판정"},
+    "mock_audit.decision": {"maker": {"auditor"}, "checker": "co_auditor", "label": "모의심사 완료"},
+    "audit_report.send_fatwa": {"maker": {"auditor"}, "checker": "co_auditor", "label": "샤리아 상정"},
 }
+
+TWO_PERSON_ACTIONS = {"preassess.review", "mock_audit.decision", "audit_report.send_fatwa"}
+
+
+def _checker_roles(rule):
+    x = rule.get("checker", set())
+    return ["co_auditor"] if isinstance(x, str) else sorted(x)
+
+
+def _case_main_auditor_uid(db, c):
+    return _ops_latest_assignment(db, [c.case_id]).get(c.case_id, {}).get("auditor_id")
+
+
+def _case_co_auditor_uids(db, case_id):
+    rows = db.query(models.CaseAuditor).filter_by(case_id=case_id, role="co").all()
+    return {r.user_id for r in rows}
+
+
+def _two_person_gate(db, c, user, action_type, payload):
+    cos = _case_co_auditor_uids(db, c.case_id)
+    strict = os.environ.get("GLHAC_TWO_PERSON", "") == "strict"
+    if user["role"] == "auditor" and user["uid"] in cos:
+        raise HTTPException(403, {"code": "NOT_MAIN_AUDITOR", "hint": "서브 오디터는 열람·확인만 할 수 있습니다."})
+    if user["role"] != "auditor":
+        return None
+    if not cos:
+        if strict:
+            raise HTTPException(409, {"code": "CO_AUDITOR_REQUIRED"})
+        return None
+    dup = db.query(models.ApprovalRequest).filter_by(
+        action_type=action_type, case_id=c.case_id, status="pending").first()
+    if dup:
+        raise HTTPException(409, {"code": "APPROVAL_PENDING", "approval_id": dup.id})
+    reason = payload.get("reason") or payload.get("note")
+    ar = models.ApprovalRequest(
+        action_type=action_type, case_id=c.case_id, org_id=c.org_id,
+        reason=reason or None, payload=dict(payload),
+        requested_by=user["uid"], requester_role=user["role"],
+        requester_name=user.get("username"))
+    db.add(ar)
+    sm.record_event(db, c, c.status, c.status, action_type + ".requested",
+                    user["role"], user["uid"], {"approval_id": ar.id, "reason": reason or None})
+    rule = MAKER_CHECKER.get(action_type, {})
+    label = rule.get("label") or action_type
+    _notify(db, c, "two_person.requested", "서브 오디터 확인 요청 — " + label,
+            body=(user.get("username") or "") + " 님의 " + label + " 처리가 서브 오디터 확인을 기다립니다.",
+            role="auditor")
+    db.commit()
+    return {"ok": True, "pending": True, "approval_id": ar.id, "action_type": action_type,
+            "status": c.status, "message": "서브 오디터 확인 대기 — 확인 후 실행됩니다."}
+
+
+def _do_preassess_review(db, c, actor, body):
+    verdict = body["verdict"]
+    sections = body.get("sections") or {}
+    sm.record_event(db, c, c.status, c.status, "preassess.review", actor["role"], actor["uid"],
+                    {"sections": sections, "verdict": verdict, "note": (body.get("note") or "").strip()})
+    advanced = False
+    if verdict == "ready":
+        advanced = _auto_advance(db, c, "consultant_review", actor, "preassess.review.auto")
+    db.commit()
+    return {"ok": True, "verdict": verdict,
+            "transitioned_to": "consultant_review" if advanced else None, "status": c.status}
+
+
+def _do_mock_audit_decide(db, c, actor, body):
+    result = body["result"]
+    sm.record_event(db, c, c.status, c.status, "mock_audit.decision", actor["role"], actor["uid"],
+                    {"result": result, "reason": body.get("reason") or ""})
+    transitioned_to = None
+    blockers = []
+    mapping = _MOCK_NEXT.get(c.status)
+    for _hop in range(2):
+        if not mapping:
+            break
+        target = mapping[0] if result == "pass" else mapping[1]
+        if not target:
+            break
+        ok, blk = sm.can_transition(db, c, target)
+        if not ok:
+            blockers = blk
+            break
+        frm = c.status
+        sm.apply_side_effects(c, target)
+        c.status = target
+        sm.record_event(db, c, frm, target, "mock_audit." + result, actor["role"], actor["uid"],
+                        {"reason": body.get("reason") or ""})
+        transitioned_to = target
+        if result != "pass" or target != "document_pre_audit_in_review":
+            break
+        mapping = _MOCK_NEXT.get(c.status)
+    db.commit()
+    return {"ok": True, "result": result, "transitioned_to": transitioned_to,
+            "status": c.status, "blockers": blockers}
+
+
+def _do_send_fatwa(db, c, actor, body):
+    missing, ctx = _fatwa_gate_check(db, c)
+    if missing:
+        raise HTTPException(409, {"code": "FATWA_GATE_BLOCKED", "missing": missing})
+    target = "fatwa_review"
+    transitioned_to = None
+    ok, _blk = sm.can_transition(db, c, target)
+    if ok:
+        frm = c.status
+        sm.apply_side_effects(c, target)
+        c.status = target
+        sm.record_event(db, c, frm, target, "audit_report.send_fatwa", actor["role"], actor["uid"],
+                        {"gate": "passed", "gen_doc_id": ctx.get("gen_doc_id")})
+        transitioned_to = target
+    else:
+        sm.record_event(db, c, c.status, c.status, "audit_report.send_fatwa", actor["role"], actor["uid"],
+                        {"gate": "passed", "transition_skipped": True,
+                         "gen_doc_id": ctx.get("gen_doc_id")})
+    _notify(db, c, "audit_report.send_fatwa", "파트와 상정 — 현장심사 보고서",
+            body="현장심사 보고서(서명 완료)가 파트와 심의로 상정되었습니다.", role="fatwa_liaison")
+    db.commit()
+    return {"ok": True, "transitioned_to": transitioned_to, "gate": "passed"}
 
 
 def _create_approval(db, action_type, c, user, reason):
@@ -11714,19 +11805,24 @@ def _create_approval(db, action_type, c, user, reason):
     db.commit()
     rule = MAKER_CHECKER.get(action_type, {})
     return {"approval_id": ar.id, "status": "pending", "action_type": action_type,
-            "checker_roles": sorted(rule.get("checker", set())),
+            "checker_roles": _checker_roles(rule),
             "message": "2인 승인 대기 — 승인자 확인 후 %s이(가) 실행됩니다." % (rule.get("label") or action_type)}
 
 
-def _check_checker(ar, user):
+def _check_checker(db, ar, user):
     """checker 자격 검증 — 역할 매핑 + self-approval 금지(설계서 §4.3)."""
     rule = MAKER_CHECKER.get(ar.action_type)
     if not rule:
         raise HTTPException(400, {"code": "UNKNOWN_ACTION"})
-    if user["role"] != "admin" and user["role"] not in rule["checker"]:
-        raise HTTPException(403, {"code": "NOT_A_CHECKER", "required": sorted(rule["checker"])})
     if user["uid"] == ar.requested_by:
         raise HTTPException(403, {"code": "SELF_APPROVAL_FORBIDDEN"})
+    checker = rule["checker"]
+    if user["role"] != "admin":
+        if checker == "co_auditor":
+            if user["uid"] not in _case_co_auditor_uids(db, ar.case_id):
+                raise HTTPException(403, {"code": "NOT_A_CHECKER", "required": ["co_auditor"]})
+        elif user["role"] not in checker:
+            raise HTTPException(403, {"code": "NOT_A_CHECKER", "required": sorted(checker)})
 
 
 def _exec_approved(db, ar, user):
@@ -11734,6 +11830,18 @@ def _exec_approved(db, ar, user):
     c = db.get(models.CaseApplication, ar.case_id)
     if not c:
         raise HTTPException(404, {"code": "CASE_NOT_FOUND", "case_id": ar.case_id})
+    if ar.action_type in TWO_PERSON_ACTIONS:
+        sm.record_event(db, c, c.status, c.status, "two_person.confirmed", user["role"], user["uid"],
+                        {"approval_id": ar.id, "action": ar.action_type,
+                         "main": ar.requested_by, "sub": user["uid"]})
+        actor = {"uid": ar.requested_by, "role": ar.requester_role or "auditor",
+                 "username": ar.requester_name}
+        if ar.action_type == "preassess.review":
+            return _do_preassess_review(db, c, actor, ar.payload or {})
+        if ar.action_type == "mock_audit.decision":
+            return _do_mock_audit_decide(db, c, actor, ar.payload or {})
+        if ar.action_type == "audit_report.send_fatwa":
+            return _do_send_fatwa(db, c, actor, ar.payload or {})
     reason = (ar.payload or {}).get("reason")
     if ar.action_type == "certificate.issue":
         _issue_guards(db, c, ar.case_id)   # 발급 재검증(요청 후 상태 변동 대비)
@@ -11751,10 +11859,19 @@ def list_approvals(status: str = "pending", user=Depends(auth.get_current_user),
     if status:
         q = q.filter_by(status=status)
     rows = q.order_by(models.ApprovalRequest.created_at.desc()).limit(200).all()
+    co_map = {}
+    for r in db.query(models.CaseAuditor).filter_by(role="co").all():
+        co_map.setdefault(r.case_id, set()).add(r.user_id)
+    if user["role"] == "auditor":
+        rows = [ar for ar in rows if ar.requested_by == user["uid"] or user["uid"] in co_map.get(ar.case_id, set())]
     out = []
     for ar in rows:
         rule = MAKER_CHECKER.get(ar.action_type, {})
-        is_checker = (user["role"] == "admin" or user["role"] in rule.get("checker", set()))
+        checker = rule.get("checker", set())
+        if checker == "co_auditor":
+            is_checker = (user["role"] == "admin" or user["uid"] in co_map.get(ar.case_id, set()))
+        else:
+            is_checker = (user["role"] == "admin" or user["role"] in checker)
         can_decide = is_checker and user["uid"] != ar.requested_by and ar.status == "pending"
         c = db.get(models.CaseApplication, ar.case_id) if ar.case_id else None
         out.append({
@@ -11767,7 +11884,9 @@ def list_approvals(status: str = "pending", user=Depends(auth.get_current_user),
             "decided_by": ar.decided_by, "decider_name": ar.decider_name,
             "decision_reason": ar.decision_reason,
             "decided_at": ar.decided_at.isoformat() if ar.decided_at else None,
-            "checker_roles": sorted(rule.get("checker", set())), "can_decide": can_decide})
+            "checker_roles": _checker_roles(rule),
+            "payload": ar.payload, "two_person": ar.action_type in TWO_PERSON_ACTIONS,
+            "can_decide": can_decide})
     return out
 
 
@@ -11780,7 +11899,7 @@ def approve_request(approval_id: str, body: schemas.ApprovalDecisionReq = schema
         raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
     if ar.status != "pending":
         raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
-    _check_checker(ar, user)
+    _check_checker(db, ar, user)
     result = _exec_approved(db, ar, user)   # 액션 본체 실행(내부 commit)
     ar.status = "approved"
     ar.decided_by = user["uid"]; ar.decider_role = user["role"]; ar.decider_name = user.get("username")
@@ -11799,17 +11918,47 @@ def reject_request(approval_id: str, body: schemas.ApprovalDecisionReq = schemas
         raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
     if ar.status != "pending":
         raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
-    _check_checker(ar, user)
+    _check_checker(db, ar, user)
+    if ar.action_type in TWO_PERSON_ACTIONS and not (body.reason or "").strip():
+        raise HTTPException(422, {"code": "OPINION_REQUIRED"})
     ar.status = "rejected"
     ar.decided_by = user["uid"]; ar.decider_role = user["role"]; ar.decider_name = user.get("username")
     ar.decided_at = datetime.utcnow()
     ar.decision_reason = (body.reason or "").strip() or None
     c = db.get(models.CaseApplication, ar.case_id) if ar.case_id else None
     if c:
-        sm.record_event(db, c, c.status, c.status, ar.action_type + ".rejected",
+        two_person = ar.action_type in TWO_PERSON_ACTIONS
+        sm.record_event(db, c, c.status, c.status,
+                        ar.action_type + (".returned" if two_person else ".rejected"),
                         user["role"], user["uid"], {"approval_id": ar.id, "reason": ar.decision_reason})
+        if two_person:
+            rule = MAKER_CHECKER.get(ar.action_type, {})
+            label = rule.get("label") or ar.action_type
+            _notify(db, c, "two_person.returned", "서브 오디터 되돌림 — " + label,
+                    body="의견: " + (ar.decision_reason or ""), role="auditor")
     db.commit()
     return {"approval_id": ar.id, "status": "rejected", "reason": ar.decision_reason}
+
+
+@app.post("/approvals/{approval_id}/cancel")
+def cancel_request(approval_id: str,
+                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """요청자 본인 또는 admin — pending 요청 취소."""
+    ar = db.get(models.ApprovalRequest, approval_id)
+    if not ar:
+        raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
+    if ar.status != "pending":
+        raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
+    if user["role"] != "admin" and ar.requested_by != user["uid"]:
+        raise HTTPException(403, {"code": "NOT_REQUESTER"})
+    ar.status = "cancelled"
+    ar.decided_at = datetime.utcnow()
+    c = db.get(models.CaseApplication, ar.case_id) if ar.case_id else None
+    if c:
+        sm.record_event(db, c, c.status, c.status, ar.action_type + ".cancelled",
+                        user["role"], user["uid"], {"approval_id": ar.id})
+    db.commit()
+    return {"approval_id": ar.id, "status": "cancelled"}
 
 
 def _issue_ready_states():
@@ -15402,6 +15551,24 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
     sm.record_event(db, c, c.status, c.status, "ops.auditor_assigned", user["role"], user["uid"],
                     {"auditor_id": au.user_id, "auditor_name": au.username})
+    # SRS MEM-06: 서브 오디터가 없으면 담당 건수가 가장 적은 오디터(메인 제외)를 자동 배정 — 2인 확인의 전제
+    db.query(models.CaseAuditor).filter_by(case_id=case_id, user_id=au.user_id, role="co").delete()
+    if not db.query(models.CaseAuditor).filter_by(case_id=case_id, role="co").first():
+        cands = db.query(models.User).filter_by(role="auditor", org_id=au.org_id).all()
+        cands = [u for u in cands if u.user_id != au.user_id]
+        if cands:
+            all_assign = _ops_latest_assignment(db, [x.case_id for x in _ops_cases(db, user)])
+            main_load = {}
+            for p in all_assign.values():
+                main_load[p.get("auditor_id")] = main_load.get(p.get("auditor_id"), 0) + 1
+            co_rows = db.query(models.CaseAuditor).filter_by(role="co").all()
+            co_load = {}
+            for r in co_rows:
+                co_load[r.user_id] = co_load.get(r.user_id, 0) + 1
+            pick = min(cands, key=lambda u: (main_load.get(u.user_id, 0) + co_load.get(u.user_id, 0), u.username or ""))
+            db.add(models.CaseAuditor(case_id=case_id, user_id=pick.user_id, role="co", assigned_by=user["uid"]))
+            sm.record_event(db, c, c.status, c.status, "auditor.co_auto_assigned", user["role"], user["uid"],
+                            {"co_auditor_id": pick.user_id, "co_auditor_name": pick.username, "main_auditor_id": au.user_id})
     _notify(db, c, "ops.auditor_assigned", role="auditor",
             msg=("ops.auditor_assigned", {"company": c.company_name or "",
                                           "auditor": au.username}))
@@ -15411,8 +15578,10 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
     cases = _ops_cases(db, user)
     assignments = _ops_latest_assignment(db, [x.case_id for x in cases])
     load = sum(1 for p in assignments.values() if p.get("auditor_id") == au.user_id)
+    co = db.query(models.CaseAuditor).filter_by(case_id=case_id, role="co").first()
     return {"ok": True, "case_id": case_id, "auditor_id": au.user_id,
-            "auditor_name": au.username, "load": load}
+            "auditor_name": au.username, "load": load,
+            "co_auditor_id": (co.user_id if co else None)}
 
 
 _ENUMS = {
@@ -16689,15 +16858,12 @@ def preassess_review(case_id: str, body: schemas.PreassessReviewReq,
     if bad:
         raise HTTPException(422, {"code": "BAD_SECTION", "allowed": list(PREASSESS_SECTIONS),
                                   "got": sorted(bad)})
-    sm.record_event(db, c, c.status, c.status, "preassess.review", user["role"], user["uid"],
-                    {"sections": sections, "verdict": verdict, "note": (body.note or "").strip()})
-    advanced = False
-    if verdict == "ready":   # P2 훅: 보완 재제출 검토 통과→컨설턴트 검토(supplementation_submitted에서만 발화)
-        advanced = _auto_advance(db, c, "consultant_review", user, "preassess.review.auto")
-    db.commit()
-    # v4 5a: 전진 여부를 돌려준다(nav8 이 supplementation_submitted 를 오디터 큐로 보낸다)
-    return {"ok": True, "verdict": verdict,
-            "transitioned_to": "consultant_review" if advanced else None, "status": c.status}
+    b = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+    b["verdict"] = verdict
+    pend = _two_person_gate(db, c, user, "preassess.review", b)
+    if pend:
+        return pend
+    return _do_preassess_review(db, c, user, b)
 
 
 @app.post("/cases/{case_id}/preassess/doc-request")
