@@ -67,5 +67,9 @@
 - MEM-05 컨설턴트 변경 요청 = `ApprovalRequest("consultant.change")`(maker 기업·checker 관리자) → 승인 시 `Org.consultant_id` 교체.
 - v4 `sector.js`: 신청 모달 분야 셀렉트(창고·운송→물류 자동), 가입 분야 저장·초대 프리필, 초대 폼 분야/담당자/연락처(분야 미선택 가드), 변경 요청 모달, 목록 분야 칩(adm-flow·aud-dossier·cons-status). 테스트 `tests/test_sector_flow.py` 7건.
 
+## 3e. 묶음 ⑤ 설계 — 샤리아 정족수 3인·위원장 확정 (구현 2026-10-08)
+- SRS 모드(`GLHAC_FORMAL_FLOW=1`)에서: 위원회 정확히 3인(`FATWA_QUORUM=3`, 설정 불가), 의견 3종(적합/조건부/부적합, 조건부·부적합은 사유 필수, 기권 불가), 투표·서명 키 = 위원 좌석(`chairman`, `member:이름`), 결과는 3인 전원 제출 후 과반(`_fatwa_tally` 통일), 3인 서명(`_fatwa_quorum_ok`: 위원장 포함 3명) 후 **위원장 확정** `POST /cases/{id}/fatwa/confirm` → `FatwaDecision`+D-19 `fatwa_decree`. `PATCH /fatwa` 직접 결정은 409. 재심의 차수 = 상정 횟수. `GET /sharia/agenda`(n/3)·`/sharia/history`. 플래그 off 면 기존 1~7인·과반 유지.
+- v4 `sharia-quorum.js`: 안건 n/3·좌석 선택·3의견·확정 버튼·D-19 PDF·이력, 기존 `App.shaVote` 를 좌석 기반으로 감쌈. 테스트 `tests/test_sharia_quorum.py` 7건.
+
 ## 4. 진행 기록
-- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료(0580127) — **1차 MVP 핵심 3묶음 완료**, 묶음 ④ 완료. 다음 ⑤ 샤리아 정족수.
+- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료(0580127) — **1차 MVP 핵심 3묶음 완료**, 묶음 ④ 완료(897534c), 묶음 ⑤ 완료. 다음 ⑥ D-17·D-18 영문 정본.

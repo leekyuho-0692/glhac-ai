@@ -8012,6 +8012,25 @@ def confirm_contract(case_id: str, user=Depends(auth.require_roles("operator")),
     return {"contract_id": ct.contract_id, "status": ct.status}
 
 
+FATWA_QUORUM = 3                       # SRS SHA-04: 정족수 3인 고정(설정 변경 불가)
+FATWA_VOTES = ("approve", "conditional", "reject", "abstain")
+
+
+def _fatwa_srs(db):
+    return nav8.formal_flow_on()
+
+
+def _fatwa_member_keys(db, org_id):
+    """위원회 3인의 서명/투표 키 — 'chair' + 'member:<이름>' (기존 fatwa.sign 의 member 키 규약과 호환: chair 는 'chairman' 포함)."""
+    return [("chairman" if m.get("role") == "chair" else (m.get("role", "member") + ":" + m.get("name", "")))
+            for m in _fatwa_committee(db, org_id)]
+
+
+def _fatwa_round(db, case_id):
+    """재심의 차수 = 상정(audit_report.send_fatwa) 횟수."""
+    return db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="audit_report.send_fatwa").count() or 1
+
+
 def _fatwa_quorum_ok(db, case_id):
     """파트와 정족수 검증 — fatwa.sign 이벤트(member별 latest-wins) 조회.
     위원장(chairman) 서명 존재 AND 고유 서명자 총 ≥ 2 여부 반환.
@@ -8030,6 +8049,14 @@ def _fatwa_quorum_ok(db, case_id):
         signers[mk] = isinstance(img, str) and img.startswith("data:image/")
     valid = [mk for mk, ok in signers.items() if ok]
     has_chairman = any("chairman" in str(mk).lower() for mk in valid)
+    if _fatwa_srs(db):
+        missing = []
+        if not has_chairman:
+            missing.append("NO_CHAIRMAN")
+        if len(valid) < FATWA_QUORUM:
+            missing.append("NEED_3_SIGNATURES")
+        return (not missing), missing, {"chairman_signed": has_chairman, "signer_count": len(valid),
+                                        "signers": valid, "quorum": FATWA_QUORUM}
     missing = []
     if not has_chairman:
         missing.append("NO_CHAIRMAN")
@@ -11605,8 +11632,9 @@ def set_fatwa_committee(body: dict = None,
                         db: Session = Depends(get_db)):
     """F05: 위원 명단 저장(전체 교체·latest-wins). 위원장 1인 필수, 총 1~7인."""
     members = (body or {}).get("members") or []
-    if not isinstance(members, list) or not (1 <= len(members) <= 7):
-        raise HTTPException(422, {"code": "BAD_MEMBERS", "hint": "1~7인 목록 필요"})
+    _lo, _hi = (FATWA_QUORUM, FATWA_QUORUM) if _fatwa_srs(db) else (1, 7)
+    if not isinstance(members, list) or not (_lo <= len(members) <= _hi):
+        raise HTTPException(422, {"code": "BAD_MEMBERS", "hint": ("정족수 3인 고정 — 위원장 1 + 위원 2" if _lo == _hi else "1~7인 목록 필요")})
     clean = []
     for m in members:
         role = str((m or {}).get("role") or "").strip()
@@ -11997,6 +12025,31 @@ def review_car(car_id: str, body: schemas.CarReviewReq,
 
 # ---------- Fatwa 위원회 투표 (§6.2 fatwa_votes) ----------
 def _fatwa_tally(db, case_id, detail=False):
+    if _fatwa_srs(db):
+        votes = db.query(models.FatwaVote).filter_by(case_id=case_id).all()
+        c = db.get(models.CaseApplication, case_id)
+        keys = _fatwa_member_keys(db, c.org_id if c else None)
+        votes = [v for v in votes if v.member in keys]
+        approve = sum(1 for v in votes if v.vote == "approve")
+        cond = sum(1 for v in votes if v.vote == "conditional")
+        reject = sum(1 for v in votes if v.vote == "reject")
+        need = (FATWA_QUORUM // 2) + 1
+        all_in = len(votes) >= FATWA_QUORUM
+        if all_in and reject >= need:
+            result = "rejected"
+        elif all_in and (approve + cond) >= need:
+            result = "conditional" if cond else "passed"
+        else:
+            result = "pending"
+        ok_sig, _miss, sctx = _fatwa_quorum_ok(db, case_id)
+        out = {"votes_cast": len(votes), "members": FATWA_QUORUM, "approve": approve, "conditional": cond, "reject": reject,
+               "abstain": 0, "quorum_met": all_in, "quorum_need": need, "result": result,
+               "signatures": sctx.get("signer_count", 0), "signatures_ok": ok_sig,
+               "progress": "%d/%d" % (len(votes), FATWA_QUORUM), "round": _fatwa_round(db, case_id),
+               "member_keys": keys, "voted_keys": [v.member for v in votes]}
+        if detail:
+            out["ballots"] = [{"member": v.member, "vote": v.vote, "note": v.note} for v in votes]
+        return out
     votes = db.query(models.FatwaVote).filter_by(case_id=case_id).all()
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     members = (fd.committee_members if fd and fd.committee_members else []) or []
@@ -12020,15 +12073,23 @@ def fatwa_vote(case_id: str, body: schemas.FatwaVoteReq,
                user=Depends(rbac.require_action("fatwa.propose")),
                db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
-    if body.vote not in ("approve", "reject", "abstain"):
+    if body.vote not in FATWA_VOTES:
         raise HTTPException(400, {"code": "BAD_VOTE"})
+    if _fatwa_srs(db):
+        keys = _fatwa_member_keys(db, c.org_id)
+        if body.member not in keys:
+            raise HTTPException(422, {"code": "NOT_COMMITTEE_MEMBER", "allowed": keys})
+        if body.vote == "abstain":
+            raise HTTPException(422, {"code": "OPINION_REQUIRED", "hint": "적합·조건부 적합·부적합 중 하나"})
+        if body.vote in ("conditional", "reject") and not (body.note or "").strip():
+            raise HTTPException(422, {"code": "REASON_REQUIRED"})
     v = db.query(models.FatwaVote).filter_by(case_id=case_id, member=body.member).first()
     if v:
         v.vote, v.note = body.vote, body.note
     else:
         db.add(models.FatwaVote(case_id=case_id, member=body.member, vote=body.vote, note=body.note))
     sm.record_event(db, c, c.status, c.status, "fatwa.vote", user["role"], user["uid"],
-                    {"member": body.member, "vote": body.vote})
+                    {"member": body.member, "vote": body.vote, "note": body.note})
     db.commit()
     return _fatwa_tally(db, case_id)
 
@@ -14273,11 +14334,88 @@ def fatwa_final_approve(case_id: str, user=Depends(rbac.require_action("fatwa.ap
     return {"ok": True, "fatwa_status": "approved", "final_approved_at": str(fd.final_approved_at)}
 
 
+@app.post("/cases/{case_id}/fatwa/confirm")
+def fatwa_confirm(case_id: str, body: dict = None, user=Depends(auth.require_roles("fatwa_liaison")),
+                  db: Session = Depends(get_db)):
+    """SHA-04 위원장 확정 — 3인 의견·3인 서명이 모두 모이면 위원장이 결과를 확정하고 D-19 의결서를 발행한다."""
+    import json as _json
+    c = _get_case(db, case_id, user)
+    t = _fatwa_tally(db, case_id, detail=True)
+    if not t.get("quorum_met"):
+        raise HTTPException(409, {"code": "VOTES_INCOMPLETE", "progress": t.get("progress")})
+    if not t.get("signatures_ok"):
+        raise HTTPException(409, {"code": "SIGNATURES_INCOMPLETE", "signatures": t.get("signatures")})
+    committee = _fatwa_committee(db, c.org_id)
+    chair = next((m for m in committee if m.get("role") == "chair"), None)
+    if chair and chair.get("user") and chair.get("user") != user.get("username"):
+        raise HTTPException(403, {"code": "NOT_CHAIR"})
+    result = t["result"]
+    decision = {"passed": "approved", "conditional": "conditional", "rejected": "rejected"}.get(result)
+    if not decision:
+        raise HTTPException(409, {"code": "NO_RESULT", "result": result})
+    fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
+    if not fd:
+        fd = models.FatwaDecision(case_id=case_id)
+        db.add(fd)
+        db.flush()
+    fd.decision = decision
+    fd.decided_at = datetime.utcnow()
+    if not fd.decision_no:
+        fd.decision_no = "FD-" + fd.id[:8].upper()
+    fd.committee_head = chair.get("name") if chair else fd.committee_head
+    fd.committee_members = [m.get("name") for m in committee]
+    note = ((body or {}).get("note") or "").strip()
+    if note:
+        fd.committee_note = note
+    content = {"doc": "D-19", "title": "샤리아 심의 의결서", "decision_no": fd.decision_no, "company_name": c.company_name,
+               "case_id": case_id, "result": decision, "round": t.get("round"), "ballots": t.get("ballots"),
+               "committee": committee, "decided_at": fd.decided_at.isoformat(), "confirmed_by": user.get("username"), "note": note}
+    g = _save_gendoc(db, c, "fatwa_decree", _json.dumps(content, ensure_ascii=False), user, status="final")
+    c.fatwa_status = "provisional" if decision == "approved" else decision
+    sm.record_event(db, c, c.status, c.status, "fatwa.confirm", user["role"], user["uid"],
+                    {"decision": decision, "decision_no": fd.decision_no, "round": t.get("round"), "gen_doc_id": g.gen_doc_id})
+    for r in ("client", "consultant", "auditor"):
+        _notify(db, c, "fatwa.confirm", "샤리아 심의 결과 — " + {"approved": "적합", "conditional": "조건부 적합", "rejected": "부적합"}[decision],
+                body="의결서 " + fd.decision_no + (" · 보완 후 재심의가 필요합니다." if decision != "approved" else ""), role=r)
+    db.commit()
+    return {"ok": True, "decision": decision, "decision_no": fd.decision_no, "gen_doc_id": g.gen_doc_id, "fatwa_status": c.fatwa_status}
+
+
+@app.get("/sharia/agenda")
+def sharia_agenda(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
+    """SHA-01 안건 목록 — 심의 대기 케이스와 의견 제출 진행(n/3)."""
+    items = []
+    for c in _ops_cases(db, user):
+        if c.status != "fatwa_review":
+            continue
+        t = _fatwa_tally(db, c.case_id)
+        items.append({"case_id": c.case_id, "company_name": c.company_name, "round": t.get("round", 1),
+                      "progress": t.get("progress", "%d/%d" % (t.get("votes_cast", 0), t.get("members", 0))),
+                      "result": t.get("result"), "signatures_ok": t.get("signatures_ok"), "voted_keys": t.get("voted_keys", [])})
+    return {"items": items, "quorum": FATWA_QUORUM}
+
+
+@app.get("/sharia/history")
+def sharia_history(user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
+    """SHA-06 심의 이력 — 의결서 번호·결과·일자."""
+    rows = (db.query(models.FatwaDecision).filter(models.FatwaDecision.decision_no.isnot(None))
+            .order_by(models.FatwaDecision.decided_at.desc()).limit(200).all())
+    out = []
+    for fd in rows:
+        c = db.get(models.CaseApplication, fd.case_id)
+        out.append({"case_id": fd.case_id, "company_name": c.company_name if c else None, "decision_no": fd.decision_no,
+                    "decision": fd.decision, "decided_at": fd.decided_at.isoformat() if fd.decided_at else None,
+                    "final_approved_at": fd.final_approved_at.isoformat() if fd.final_approved_at else None})
+    return {"items": out}
+
+
 @app.patch("/cases/{case_id}/fatwa")
 def patch_fatwa(case_id: str, body: schemas.FatwaReq,
                 user=Depends(rbac.require_action("fatwa.propose")),  # SoD: 가승인=샤리아 전용(최종승인은 operator)
                 db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    if _fatwa_srs(db) and (body.decision in ("approved", "rejected", "conditional")):
+        raise HTTPException(409, {"code": "USE_CHAIR_CONFIRM", "hint": "SRS 모드에서는 위원장 확정(/fatwa/confirm)으로만 결정합니다."})
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     if not fd:
         fd = models.FatwaDecision(case_id=case_id)
