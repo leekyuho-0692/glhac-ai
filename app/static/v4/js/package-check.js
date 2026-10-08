@@ -113,7 +113,7 @@ App.pkgRequestDo = async function(cid){
   closeModal(); toast('업체·컨설턴트에 보완 요청을 보냈습니다.');
 };
 // 화면 연결 — 업체: 홈·신청, 컨설턴트: 업체별 현황, 오디터: 사전심사·업체 상세
-{ const wrap = (v, pick) => { const f = VIEWS[v]; if(typeof f==='function') VIEWS[v] = () => PKG_panel(pick()) + f(); };
+{ const wrap = (v, pick) => { const f = VIEWS[v]; if(typeof f==='function') VIEWS[v] = () => { const h = f(); return PKG_panel(pick()) + h; }; };
   const ent = () => ((RS.cases||[])[0]||{}).case_id;
   wrap('ent-home', ent); wrap('ent-apply', ent);
   wrap('cons-status', () => S.selCompany);
