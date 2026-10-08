@@ -4137,6 +4137,10 @@ def mock_audit_decide(case_id: str, body: schemas.MockAuditDecisionReq,
         raise HTTPException(422, {"code": "REASON_REQUIRED"})
     b = body.model_dump() if hasattr(body, "model_dump") else body.dict()
     b["result"] = result
+    if nav8.formal_flow_on() and result == "pass":
+        _pp = _prep_items(db, c)
+        if not _pp["complete"]:
+            raise HTTPException(409, {"code": "PREP_INCOMPLETE", "done": _pp["done"], "applicable": _pp["applicable"]})
     pend = _two_person_gate(db, c, user, "mock_audit.decision", b)
     if pend:
         return pend
@@ -12371,6 +12375,13 @@ def _do_mock_audit_decide(db, c, actor, body):
         if result != "pass" or target != "document_pre_audit_in_review":
             break
         mapping = _MOCK_NEXT.get(c.status)
+    if result == "pass":
+        import json as _json
+        _g16 = _save_gendoc(db, c, "mock_audit_notice", _json.dumps({"doc": "D-16", "title": "모의심사 결과 통지서", "company_name": c.company_name,
+                            "case_id": c.case_id, "result": "pass", "transitioned_to": transitioned_to,
+                            "issued_at": datetime.utcnow().isoformat(), "issued_by": actor.get("username")}, ensure_ascii=False), actor, status="final")
+        for _r in ("client", "consultant"):
+            _notify(db, c, "mock_audit.notice", "모의심사 결과 통지 (D-16) — 통과", body="준비 서류 사전 점검이 완료되었습니다. 현장심사 일정을 조율합니다.", role=_r)
     db.commit()
     return {"ok": True, "result": result, "transitioned_to": transitioned_to,
             "status": c.status, "blockers": blockers}
@@ -17455,6 +17466,16 @@ SJPH_EVIDENCE_ITEMS = [
     ("purchase_log", "구매 기록"), ("receiving_log", "입고 기록"), ("usage_log", "사용 기록"),
     ("production_log", "생산 기록"), ("distribution_log", "출고 기록"), ("internal_audit", "내부 심사 기록"),
 ]
+# SRS PRP-02 준비 서류 13종 — 업로드는 SjphEvidence(item_key)로 받고, 상태(4단)는 WorkflowEvent(prep.item, latest-wins)로 둔다.
+PREP_ITEMS = [
+    ("org_chart", "조직표"), ("halal_supervisor", "할랄 슈퍼바이저 지정"), ("training", "교육 기록"),
+    ("sjph_manual", "SJPH 매뉴얼"), ("halal_policy", "할랄 정책"), ("production_flow", "제조 공정도"),
+    ("facility_layout", "시설 배치도"), ("material_evidence", "원재료 증빙"), ("cleaning", "세척 기록"),
+    ("purchase_log", "구매 기록"), ("label", "라벨"), ("traceability", "추적성 기록"), ("internal_audit", "내부 심사 기록"),
+]
+PREP_LOGISTICS_EXCLUDED = {"production_flow", "label"}      # 물류 분야는 공정도·라벨 제외
+PREP_STATUSES = ("not_started", "pending_review", "revision_requested", "confirmed", "not_applicable")
+PREP_KEYS = {k for k, _ in PREP_ITEMS}
 # 증빙 항목 이름은 업체가 무엇을 올려야 하는지 보는 문구다 — 한국어만 두면 인니 업체가
 # 무슨 서류인지 알 수 없다.
 # 증빙 항목 이름은 업체가 무엇을 올려야 하는지 보는 문구다 — 사전 한 곳에서 꺼낸다.
@@ -17556,6 +17577,208 @@ def autofile_sjph_evidence(case_id: str,
     return {"filled": filled, "count": len(filled)}
 
 
+# ===== SRS ⑦ 준비 서류 13종 · 교육 서류 D-10~14 =====
+def _prep_states(db, case_id):
+    out = {}
+    for e in (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="prep.item")
+              .order_by(models.WorkflowEvent.created_at.asc(), models.WorkflowEvent.event_id.asc()).all()):
+        p = e.payload or {}
+        if p.get("item_key"):
+            out[p["item_key"]] = dict(p, at=e.created_at.isoformat() if e.created_at else None, by=e.actor_id)
+    return out
+
+
+def _prep_notes(db, case_id):
+    out = {}
+    for e in (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="prep.note")
+              .order_by(models.WorkflowEvent.created_at.asc()).all()):
+        p = e.payload or {}
+        if p.get("item_key"):
+            out.setdefault(p["item_key"], []).append({"note": p.get("note"), "by": e.actor_id, "role": e.actor_type,
+                                                       "at": e.created_at.isoformat() if e.created_at else None})
+    return out
+
+
+def _prep_items(db, c, lang="ko"):
+    have = {e.item_key: e for e in db.query(models.SjphEvidence).filter_by(case_id=c.case_id)}
+    st = _prep_states(db, c.case_id)
+    notes = _prep_notes(db, c.case_id)
+    logi = (c.scheme or "product") == "logistics"
+    items = []
+    for k, ko in PREP_ITEMS:
+        applicable = not (logi and k in PREP_LOGISTICS_EXCLUDED)
+        s = st.get(k, {})
+        status = s.get("status") or ("pending_review" if k in have else "not_started")
+        if not applicable:
+            status = "not_applicable"
+        items.append({"item_key": k, "label": _evidence_label(k, ko, lang), "applicable": applicable, "status": status,
+                      "note": s.get("note") or "", "uploaded": k in have,
+                      "filename": have[k].filename if k in have else None,
+                      "document_id": have[k].document_id if k in have else None,
+                      "updated_at": s.get("at"), "notes": notes.get(k, [])})
+    app_items = [i for i in items if i["applicable"]]
+    done = sum(1 for i in app_items if i["status"] in ("confirmed", "not_applicable"))
+    return {"items": items, "applicable": len(app_items), "done": done,
+            "complete": bool(app_items) and done == len(app_items),
+            "completion": round(done / len(app_items) * 100) if app_items else 0}
+
+
+@app.get("/cases/{case_id}/prep")
+def prep_list(case_id: str, lang: str = Query("ko"), user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """PRP-02/03 — 준비 서류 13종 상태(준비 전·검토 대기·보완 요청·확인 완료·해당 없음)."""
+    c = _get_case(db, case_id, user)
+    out = _prep_items(db, c, lang)
+    out["education_consent"] = bool(nav8.latest_event(db, case_id, "education.consent"))
+    return out
+
+
+@app.patch("/cases/{case_id}/prep/{item_key}")
+def prep_set_status(case_id: str, item_key: str, body: dict = None, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """항목 상태 변경 — 오디터: confirmed | revision_requested(사유 필수) | pending_review(되돌리기). 기업·컨설턴트: not_applicable(사유 필수) | pending_review."""
+    c = _get_case(db, case_id, user)
+    if item_key not in PREP_KEYS:
+        raise HTTPException(404, {"code": "BAD_ITEM_KEY"})
+    b = dict(body or {})
+    status = (b.get("status") or "").strip()
+    note = (b.get("note") or "").strip()
+    if status not in PREP_STATUSES:
+        raise HTTPException(422, {"code": "BAD_STATUS", "allowed": list(PREP_STATUSES)})
+    staff = user["role"] in ("auditor", "operator", "admin")
+    if staff:
+        if status not in ("confirmed", "revision_requested", "pending_review"):
+            raise HTTPException(403, {"code": "STATUS_NOT_ALLOWED"})
+        if status == "revision_requested" and not note:
+            raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    else:
+        if status not in ("not_applicable", "pending_review"):
+            raise HTTPException(403, {"code": "STATUS_NOT_ALLOWED"})
+        if status == "not_applicable" and not note:
+            raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    sm.record_event(db, c, c.status, c.status, "prep.item", user["role"], user["uid"], {"item_key": item_key, "status": status, "note": note})
+    if status == "revision_requested":
+        for r in ("client", "consultant"):
+            _notify(db, c, "prep.revision_requested", "준비 서류 보완 요청 — " + dict(PREP_ITEMS).get(item_key, item_key), body=note, role=r)
+    db.commit()
+    return {"ok": True, "item_key": item_key, "status": status}
+
+
+@app.post("/cases/{case_id}/prep/{item_key}/note")
+def prep_note(case_id: str, item_key: str, body: dict = None,
+              user=Depends(auth.require_roles("consultant", "auditor", "operator")), db: Session = Depends(get_db)):
+    """PRP-04 컨설턴트 항목별 의견(오디터도 가능)."""
+    c = _get_case(db, case_id, user)
+    if item_key not in PREP_KEYS:
+        raise HTTPException(404, {"code": "BAD_ITEM_KEY"})
+    note = ((body or {}).get("note") or "").strip()
+    if not note:
+        raise HTTPException(422, {"code": "NOTE_REQUIRED"})
+    sm.record_event(db, c, c.status, c.status, "prep.note", user["role"], user["uid"], {"item_key": item_key, "note": note})
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/cases/{case_id}/prep/complete")
+def prep_complete(case_id: str, body: dict = None, user=Depends(auth.require_roles("auditor", "operator")), db: Session = Depends(get_db)):
+    """PRP-05 — 모든 해당 항목 확인 완료 → [모의심사 완료·결과 통지] (서브 오디터 2인 확인 → D-16)."""
+    c = _get_case(db, case_id, user)
+    p = _prep_items(db, c)
+    if not p["complete"]:
+        raise HTTPException(409, {"code": "PREP_INCOMPLETE", "done": p["done"], "applicable": p["applicable"]})
+    if nav8.formal_flow_on() and not nav8.latest_event(db, case_id, "education.consent"):
+        raise HTTPException(409, {"code": "EDUCATION_CONSENT_REQUIRED"})
+    payload = {"result": "pass", "reason": ((body or {}).get("note") or "").strip(), "source": "prep.complete"}
+    pend = _two_person_gate(db, c, user, "mock_audit.decision", payload)
+    if pend:
+        return pend
+    return _do_mock_audit_decide(db, c, user, payload)
+
+
+EDU_DOCS = [("D-10", "supervisor_appointment", "할랄 슈퍼바이저 지정·교육 확인서"),
+            ("D-11", "training_consent", "지정 교육 안내·이수 동의서"),
+            ("D-12", "sjph_manual", "할랄 보증 시스템(SJPH) 매뉴얼"),
+            ("D-13", "halal_policy_decl", "할랄 정책 선언서"),
+            ("D-14", "mark_usage_consent", "할랄 인증마크 사용 규정 동의서")]
+
+
+def _edu_text(code, title, c):
+    co = c.company_name or ""
+    rep = c.responsible_person or ""
+    body = {
+        "D-10": "%s 은(는) 할랄 슈퍼바이저를 지정하고 GL HAC 지정 교육을 이수하였음을 확인합니다.\n대표자: %s" % (co, rep),
+        "D-11": "%s 은(는) GL HAC 지정 교육 안내를 받았으며 교육 이수에 동의합니다." % co,
+        "D-12": "%s 의 할랄 보증 시스템(SJPH) 매뉴얼은 시스템에서 생성·관리됩니다(최신 버전은 SJPH 매뉴얼 문서 참조)." % co,
+        "D-13": "%s 은(는) 생산·보관·유통 전 과정에서 할랄 기준을 준수할 것을 선언합니다.\n대표자: %s" % (co, rep),
+        "D-14": "%s 은(는) 할랄 인증마크 사용 규정(BPJPH·GL HAC)을 준수하며 위반 시 사용 중지에 동의합니다." % co,
+    }[code]
+    return "■ %s %s\n\n%s\n\n발행: GL HAC · %s" % (code, title, body, date.today().isoformat())
+
+
+@app.get("/cases/{case_id}/education-docs")
+def education_docs(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """PRP-01 — 계약 후 배포되는 D-10~D-14 와 기업의 일괄 서명·동의 상태."""
+    c = _get_case(db, case_id, user)
+    consent = nav8.latest_event(db, case_id, "education.consent")
+    docs = []
+    for code, dt, title in EDU_DOCS:
+        g = (db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type=dt)
+             .order_by(models.GeneratedDocument.version.desc()).first())
+        docs.append({"code": code, "doc_type": dt, "title": title, "gen_doc_id": g.gen_doc_id if g else None,
+                     "status": g.status if g else "not_issued"})
+    return {"docs": docs, "consented": bool(consent), "consent": (consent.payload or {}) if consent else None,
+            "consented_at": consent.created_at.isoformat() if consent else None}
+
+
+@app.post("/cases/{case_id}/education-docs/issue")
+def education_docs_issue(case_id: str, user=Depends(auth.require_roles("operator", "consultant", "auditor")), db: Session = Depends(get_db)):
+    """D-10~D-14 배포(생성) — 계약 체결(confirmed/signed) 후. 이미 있으면 그대로."""
+    c = _get_case(db, case_id, user)
+    ct = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if nav8.formal_flow_on() and (not ct or ct.status not in ("signed", "confirmed", "invoiced", "paid")):
+        raise HTTPException(409, {"code": "CONTRACT_NOT_SIGNED"})
+    made = []
+    for code, dt, title in EDU_DOCS:
+        if dt == "sjph_manual":
+            continue
+        ex = db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type=dt).first()
+        if ex:
+            continue
+        g = _save_gendoc(db, c, dt, _edu_text(code, title, c), user, status="issued")
+        made.append({"code": code, "gen_doc_id": g.gen_doc_id})
+    sm.record_event(db, c, c.status, c.status, "education.issued", user["role"], user["uid"], {"made": made})
+    _notify(db, c, "education.issued", "교육·매뉴얼 서류 배포 — 서명·동의가 필요합니다", body="D-10 ~ D-14 를 확인하고 한 번에 서명·동의해 주세요.", role="client")
+    db.commit()
+    return {"ok": True, "made": made}
+
+
+@app.post("/cases/{case_id}/education-docs/consent")
+def education_docs_consent(case_id: str, body: dict = None,
+                           user=Depends(auth.require_roles("applicant", "penyelia_halal")), db: Session = Depends(get_db)):
+    """PRP-01 — 기업이 D-10~D-14 를 한 번에 서명·동의(대표자 서명 data:image)."""
+    c = _get_case(db, case_id, user)
+    b = dict(body or {})
+    name = (b.get("name") or "").strip()
+    image = b.get("image")
+    if b.get("agree") is not True:
+        raise HTTPException(422, {"code": "AGREE_REQUIRED"})
+    if not name or not (isinstance(image, str) and image.startswith("data:image/")):
+        raise HTTPException(422, {"code": "NAME_AND_IMAGE_REQUIRED"})
+    signed = []
+    for code, dt, title in EDU_DOCS:
+        g = (db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type=dt)
+             .order_by(models.GeneratedDocument.version.desc()).first())
+        if g:
+            g.status = "signed"
+            signed.append({"code": code, "gen_doc_id": g.gen_doc_id})
+    if not signed:
+        raise HTTPException(409, {"code": "DOCS_NOT_ISSUED"})
+    at = datetime.utcnow().isoformat()
+    sm.record_event(db, c, c.status, c.status, "education.consent", user["role"], user["uid"],
+                    {"name": name, "signed": signed, "at": at, "image": image[:200000]})
+    _notify(db, c, "education.consent", "교육·매뉴얼 서류 서명·동의 완료", body=name + " · " + str(len(signed)) + "건", role="auditor")
+    db.commit()
+    return {"ok": True, "signed": signed, "at": at}
+
+
 @app.get("/cases/{case_id}/sjph-evidence")
 def list_sjph_evidence(case_id: str, lang: str = Query("ko"),
                        user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -17575,7 +17798,7 @@ def add_sjph_evidence(case_id: str, body: schemas.SjphEvidenceReq,
                       db: Session = Depends(get_db)):
     from .intake import _ctype
     _get_case(db, case_id, user)
-    if body.item_key not in {k for k, _ in SJPH_EVIDENCE_ITEMS}:
+    if body.item_key not in ({k for k, _ in SJPH_EVIDENCE_ITEMS} | PREP_KEYS):
         raise HTTPException(422, {"code": "BAD_ITEM_KEY"})
     b64 = _validate_upload(body.file_b64, body.filename)
     doc = models.DocumentAsset(case_id=case_id, filename=body.filename,
@@ -17590,6 +17813,9 @@ def add_sjph_evidence(case_id: str, body: schemas.SjphEvidenceReq,
     else:
         db.add(models.SjphEvidence(case_id=case_id, item_key=body.item_key,
                                    filename=body.filename, document_id=doc.document_id))
+    if body.item_key in PREP_KEYS:
+        c = db.get(models.CaseApplication, case_id)
+        sm.record_event(db, c, c.status, c.status, "prep.item", user["role"], user["uid"], {"item_key": body.item_key, "status": "pending_review", "note": ""})
     db.commit()
     return {"item_key": body.item_key, "ok": True}
 

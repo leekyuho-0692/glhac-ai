@@ -76,5 +76,10 @@
 - `GET /cases/{id}/canonical`(언어 탭 메타·정본 문구), `GET /cases/{id}/canonical/D-17.docx|pdf?lang=&version=`(지문 검증 후 전달, 컨설턴트 열람 전용 403), `POST /cases/{id}/audit-report/client-sign`(기업 확인 서명; SRS 모드 상정 게이트 `CLIENT_SIGN_REQUIRED`).
 - v4 `canonical.js`: 오디터 aud-final·샤리아 sha-review·기업 ent-audit 에 D-17 언어 탭(English 정본/Bahasa/한국어)·지문·DOCX/PDF·D-18 PDF·기업 확인 서명 패드. 테스트 `tests/test_canonical_docs.py` 5건.
 
+## 3g. 묶음 ⑦ 설계 — 준비 서류 13종·교육 서류 일괄 동의 (구현 2026-10-08)
+- `PREP_ITEMS` 13종(물류는 공정도·라벨 제외), 업로드는 기존 `SjphEvidence`(키 확장), 4단 상태는 이벤트 `prep.item` latest-wins(업로드 시 검토 대기 자동). `GET /cases/{id}/prep`, `PATCH /cases/{id}/prep/{key}`(오디터 확인/보완 요청(사유)/되돌리기, 기업·컨설턴트 해당 없음(사유)), `POST …/note`(컨설턴트 의견), `POST /cases/{id}/prep/complete`(전부 확인 시 → 기존 모의심사 pass 경로·2인 확인 → D-16 `mock_audit_notice`). SRS 모드: 모의심사 pass 는 준비 서류 완료 필수, 완료는 교육 동의 필수.
+- 교육 서류 D-10~14: `GET/POST /cases/{id}/education-docs(/issue|/consent)` — D-10·11·13·14 는 텍스트 gendoc 발행, D-12 는 기존 SJPH 매뉴얼, 기업 일괄 서명·동의(`education.consent`).
+- v4 `prep.js`: 기업 `ent-prep`(교육 서류 일괄 서명·13종 업로드/해당 없음), 오디터 aud-mock 패널(확인·보완·되돌리기·완료 D-16), 컨설턴트 `cons-prep`(의견·초안 업로드). 테스트 `tests/test_prep_flow.py` 7건.
+
 ## 4. 진행 기록
-- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료(0580127) — **1차 MVP 핵심 3묶음 완료**, 묶음 ④ 완료(897534c), 묶음 ⑤ 완료(3871e7c), 묶음 ⑥ 완료. 다음 ⑦ 준비 서류 13종.
+- 2026-10-08 갭표 완료, 묶음 ① 완료(576617a), 묶음 ② 완료(614c0cf), 묶음 ③ 완료(0580127) — **1차 MVP 핵심 3묶음 완료**, 묶음 ④ 완료(897534c), 묶음 ⑤ 완료(3871e7c), 묶음 ⑥ 완료(6058564), 묶음 ⑦ 완료. 다음 ⑧ 기간별 보고서.
