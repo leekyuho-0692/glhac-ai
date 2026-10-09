@@ -3121,6 +3121,7 @@ authLoad();
 (function(){ try{ const q=new URLSearchParams(location.search);
   const ref=q.get('ref');
   if(q.get('signup')==='staff'){ S.auth='signup-cons'; S.staffRole='consultant'; }
+  else if(q.get('signup')==='ent'){ S.auth='signup-ent'; S.loginRole='enterprise'; }   // 기업 회원가입 바로가기
   else if(ref){ S.urlRef=ref; S.auth='signup-ent'; S.loginRole='enterprise'; }
 }catch(e){} })();
 render();
@@ -3190,6 +3191,7 @@ document.addEventListener('DOMContentLoaded', () => { if(S.auth==='login' && !S.
 <script src="js/case-insight.js"></script>
 <script src="js/mat-insight.js"></script>
 <script src="js/audit-chain.js"></script>
+<script src="js/nav-config.js"></script>
 <!--MODULES-->
 </body>
 </html>

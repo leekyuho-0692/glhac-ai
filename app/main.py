@@ -20562,6 +20562,93 @@ def save_my_menu_config(body: schemas.MenuAssignReq, user=Depends(auth.get_curre
     return {"saved": len(rows)}
 
 
+# ── v4 화면 메뉴 설정(역할별·개인별 숨김/순서) ──────────────────────────────
+# 구 메뉴(sys_menu)는 구 화면 route 체계라 v4 view id 와 맞지 않는다. v4 는 view id 목록만 저장한다.
+# 저장: WorkflowEvent latest-wins, case_id "v4nav:role:{ui}" / "v4nav:user:{uid}", action "v4nav.config".
+# 화면 노출만 바꾼다 — 실제 권한은 API RBAC 가 지킨다(메뉴를 숨겨도 권한이 생기거나 사라지지 않는다).
+V4NAV_ACTION = "v4nav.config"
+V4NAV_UI_ROLES = ("ent", "cons", "aud", "sha", "adm", "pen")
+V4NAV_ROLE_OF = {"applicant": "ent", "penyelia_halal": "ent", "client": "ent", "pendamping_pph": "pen",
+                 "consultant": "cons", "auditor": "aud", "fatwa_liaison": "sha", "sharia": "sha",
+                 "admin": "adm", "operator": "adm", "ops": "adm"}
+_V4NAV_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+
+
+def _v4nav_clean(body):
+    b = body or {}
+    out = {}
+    for k in ("hidden", "order"):
+        vals = b.get(k) or []
+        if not isinstance(vals, list):
+            raise HTTPException(422, {"code": "BAD_NAV_" + k.upper()})
+        seen, clean = set(), []
+        for v in vals[:80]:
+            v = str(v or "").strip()
+            if not _V4NAV_ID.match(v):
+                raise HTTPException(422, {"code": "BAD_NAV_VIEW", "view": v[:40]})
+            if v not in seen:
+                seen.add(v)
+                clean.append(v)
+        out[k] = clean
+    return out
+
+
+def _v4nav_get(db, key):
+    ev = (db.query(models.WorkflowEvent).filter_by(case_id=key, action=V4NAV_ACTION)
+          .order_by(models.WorkflowEvent.created_at.desc()).first())
+    p = (ev.payload or {}) if ev else {}
+    return {"hidden": list(p.get("hidden") or []), "order": list(p.get("order") or []),
+            "updated_at": ev.created_at.isoformat() if ev else None}
+
+
+def _v4nav_put(db, key, user, cfg, org_id=None):
+    import types as _types
+    sm.record_event(db, _types.SimpleNamespace(case_id=key, org_id=org_id or user.get("org_id")),
+                    "settings", "settings", V4NAV_ACTION, user["role"], user["uid"], cfg)
+
+
+@app.get("/me/v4-nav")
+def my_v4_nav(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """내 v4 메뉴 설정 — 역할 설정(관리자) + 개인 설정. 화면은 역할 숨김 → 개인 숨김 → 개인 순서(없으면 역할 순서)로 적용."""
+    ui = V4NAV_ROLE_OF.get(user["role"])
+    if not ui:
+        return {"ui_role": None, "role": {"hidden": [], "order": []}, "user": {"hidden": [], "order": []}}
+    return {"ui_role": ui, "role": _v4nav_get(db, "v4nav:role:" + ui),
+            "user": _v4nav_get(db, "v4nav:user:" + user["uid"])}
+
+
+@app.put("/me/v4-nav")
+def put_my_v4_nav(body: dict = None, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    cfg = _v4nav_clean(body)
+    _v4nav_put(db, "v4nav:user:" + user["uid"], user, cfg)
+    db.commit()
+    return {"ok": True, "user": _v4nav_get(db, "v4nav:user:" + user["uid"])}
+
+
+@app.post("/me/v4-nav/reset")
+def reset_my_v4_nav(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _v4nav_put(db, "v4nav:user:" + user["uid"], user, {"hidden": [], "order": []})
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/admin/v4-nav")
+def admin_v4_nav(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    return {"roles": {ui: _v4nav_get(db, "v4nav:role:" + ui) for ui in V4NAV_UI_ROLES}}
+
+
+@app.put("/admin/v4-nav/{ui_role}")
+def put_admin_v4_nav(ui_role: str, body: dict = None, user=Depends(auth.require_roles("operator")),
+                     db: Session = Depends(get_db)):
+    if ui_role not in V4NAV_UI_ROLES:
+        raise HTTPException(404, {"code": "UNKNOWN_UI_ROLE", "ui_role": ui_role})
+    cfg = _v4nav_clean(body)
+    _v4nav_put(db, "v4nav:role:" + ui_role, user, cfg)
+    _audit(db, user, "admin.v4nav.set", "v4nav", ui_role, None, {"hidden": cfg["hidden"], "order": cfg["order"]}, commit=False)
+    db.commit()
+    return {"ok": True, "ui_role": ui_role, "config": _v4nav_get(db, "v4nav:role:" + ui_role)}
+
+
 @app.post("/me/menu-config/reset")
 def reset_my_menu_config(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """내 메뉴를 역할 기본값으로 초기화 — 내 sys_user_menu 삭제(역할 기본으로 폴백)."""
