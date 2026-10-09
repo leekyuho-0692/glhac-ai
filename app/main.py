@@ -2184,17 +2184,11 @@ def audit_verify(case_id: str, user=Depends(auth.get_current_user), db: Session 
     _get_case(db, case_id, user)
     evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id)
            .order_by(models.WorkflowEvent.created_at, models.WorkflowEvent.event_id).all())
-    prev, broken = "", None
-    for e in evs:
-        body = _json.dumps({"case": e.case_id, "from": e.from_status, "to": e.to_status,
-                            "action": e.action, "payload": e.payload or {}},
-                           sort_keys=True, ensure_ascii=False)
-        rh = sm.chain_row_hash(prev, body)
-        if rh != e.row_hash:
-            broken = e.event_id
-            break
-        prev = e.row_hash
-    return {"count": len(evs), "integrity_ok": broken is None, "broken_at": broken}
+    r = _verify_wf_chain(evs)
+    # 기존 키(count·integrity_ok·broken_at) 유지 + 구간 구분 필드
+    return {"count": r["count"], "integrity_ok": r["integrity_ok"], "broken_at": r["break_at"],
+            "verified": r["verified"], "legacy": r["legacy"], "legacy_until": r["legacy_until"],
+            "epoch": r["epoch"], "status": r["status"]}
 
 
 @app.get("/admin/audit-log-verify")
@@ -2224,19 +2218,48 @@ def audit_log_verify(actor: str = Query(None), action: str = Query(None),
     return out
 
 
+# 감사체인 서명 키 경계 — 운영 실측(2026-10-09): 507건 중 현재 키로 맞는 179건은 전부 2026-09-10 13:05 이후,
+# 안 맞는 328건은 전부 같은 날 02:30 이전(구식 SHA-256 도 아님) → 그날 서명 키/방식이 바뀌었다.
+# 경계 이전 불일치는 '이전 서명 체계(검증 불가)'로 구분하고 위조로 판정하지 않는다. 경계 이후 불일치만 깨짐.
+# 호출 시점에 읽는다(테스트·운영에서 환경변수로 조정).
+AUDIT_CHAIN_EPOCH_DEFAULT = "2026-09-10T12:00:00"
+
+
+def _audit_chain_epoch():
+    raw = (os.environ.get("GLHAC_AUDIT_CHAIN_EPOCH") or AUDIT_CHAIN_EPOCH_DEFAULT).strip()
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return datetime.fromisoformat(AUDIT_CHAIN_EPOCH_DEFAULT)
+
+
 def _verify_wf_chain(evs):
-    """WorkflowEvent 해시체인 재계산(audit_verify 미러) → (integrity_ok, count, break_at)."""
+    """WorkflowEvent 해시체인 재계산 → integrity_ok·count·break_at + 구간 구분(verified·legacy·status).
+
+    status: 'ok'(전부 현재 키로 검증) · 'ok_with_legacy'(검증 구간 무결, 경계 이전 기록은 검증 불가) · 'broken'.
+    integrity_ok 는 '검증 가능한 구간이 무결한가' 다 — legacy 는 별도 수치로 반드시 함께 보여준다."""
     import json as _json
+    epoch = _audit_chain_epoch()
     prev, broken = "", None
+    verified, legacy, legacy_until = 0, 0, None
     for e in evs:
         body = _json.dumps({"case": e.case_id, "from": e.from_status, "to": e.to_status,
                             "action": e.action, "payload": e.payload or {}},
                            sort_keys=True, ensure_ascii=False)
-        if sm.chain_row_hash(prev, body) != e.row_hash:
+        if sm.chain_row_hash(prev, body) == e.row_hash:
+            verified += 1
+        elif e.created_at is not None and e.created_at < epoch:
+            legacy += 1
+            legacy_until = e.created_at
+        else:
             broken = e.event_id
             break
         prev = e.row_hash
-    return {"integrity_ok": broken is None, "count": len(evs), "break_at": broken}
+    status = "broken" if broken else ("ok_with_legacy" if legacy else "ok")
+    return {"integrity_ok": broken is None, "count": len(evs), "break_at": broken,
+            "verified": verified, "legacy": legacy,
+            "legacy_until": legacy_until.isoformat() if legacy_until else None,
+            "epoch": epoch.isoformat(), "status": status}
 
 
 def _audit_chain_hashes(db):
