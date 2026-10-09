@@ -2213,8 +2213,8 @@ def audit_log_verify(actor: str = Query(None), action: str = Query(None),
     filtered = bool(actor or action or case)
     out = _verify_audit_chain(rows, subset=filtered, known_hashes=_audit_chain_hashes(db))
     gaps = out.get("deleted_predecessor") or []
-    out["summary"] = ("위조 %d건 · 선행로그 삭제로 인한 단절 %d건 (검사 %d행)"
-                      % (out["tampered_count"], len(gaps), out["checked"]))
+    out["summary"] = ("위조 %d건 · 이전 서명 체계 %d건(%s 이전 기록, 현재 키로 검증 불가·위조 아님) · 선행로그 삭제로 인한 단절 %d건 (검사 %d행)"
+                      % (out["tampered_count"], out["legacy"], out["epoch"][:10], len(gaps), out["checked"]))
     return out
 
 
@@ -2282,6 +2282,9 @@ def _verify_audit_chain(rows, subset=False, known_hashes=None):
     단, prev를 만든 행이 DB에 없는 경우(선행 로그 삭제)는 부분집합에서도 실제 단절이므로 보고한다."""
     broken, checked, prev_row, deleted = None, 0, None, []
     tampered = []          # 행 자기무결성 위반 — 본문이 바뀐 진짜 위조 신호
+    # 서명 키 경계 이전 행의 서명 불일치는 '이전 서명 체계'(검증 불가) — 위조로 세지 않는다(WorkflowEvent 와 같은 규칙)
+    epoch = _audit_chain_epoch()
+    legacy, legacy_until = 0, None
     for r in rows:
         meta = r.meta if isinstance(r.meta, dict) else {}
         ch = meta.get("_chain")
@@ -2295,6 +2298,10 @@ def _verify_audit_chain(rows, subset=False, known_hashes=None):
         if known_hashes is not None and prev and prev not in known_hashes:
             deleted.append(r.id)   # 선행 로그가 삭제됨 — 부분집합에서도 실제 단절
         self_ok = sm.chain_row_hash(prev, body) == ch.get("row")
+        if not self_ok and r.created_at is not None and r.created_at < epoch:
+            legacy += 1                     # 경계 이전 서명 — 현재 키로 재검증 불가, 위조 아님
+            legacy_until = r.created_at
+            self_ok = True                  # 이 행은 판정에서 위조로 다루지 않는다(연결 검사는 아래에서 그대로)
         if not self_ok:
             tampered.append(r.id)  # 끝까지 센다 — 몇 건인지가 판단을 가른다
         if broken is None:         # 첫 실패 지점만 기록하고, 탐지는 끝까지 이어간다
@@ -2307,7 +2314,9 @@ def _verify_audit_chain(rows, subset=False, known_hashes=None):
     # (deleted_predecessor)을 갈라 보고해, 읽는 사람이 '위조 0건'인지 바로 알게 한다.
     out = {"integrity_ok": broken is None and not deleted,
            "checked": checked, "break_at": broken,
-           "tampered": tampered, "tampered_count": len(tampered)}
+           "tampered": tampered, "tampered_count": len(tampered),
+           "legacy": legacy, "legacy_until": legacy_until.isoformat() if legacy_until else None,
+           "epoch": epoch.isoformat()}
     if subset:
         out["scope"] = "subset"
         out["note"] = ("부분집합(케이스 범위) 검증 — 감사체인은 전역이므로 행 자기무결성만 대조한다. "
