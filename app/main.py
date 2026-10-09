@@ -10537,7 +10537,8 @@ def get_case_journey(case_id: str, user=Depends(auth.get_current_user), db=Depen
         ("signup", "회원가입", True),
         ("application", "신청", st not in ("onboarding", "application_draft")),
         ("preassess", "사전검토", (st == "document_pre_audit_approved" or mi >= 2)),
-        ("contract", "계약", bool(contract and contract.status in ("issued", "signed"))),
+        # 계약 큐 최종 상태는 confirmed(이후 invoiced·paid) — issued·signed 만 보면 계약을 끝낸 업체가 '계약 진행 중'에 멈춘다
+        ("contract", "계약", bool(contract and contract.status in ("issued", "signed", "confirmed", "invoiced", "paid"))),
         ("payment", "입금확인", bool(paid)),
         ("halal_manual", "할랄매뉴얼", bool(sjph)),
         ("mock_audit", "모의실사", mi >= 2),
