@@ -495,6 +495,15 @@ def _get_case(db, case_id, user=None) -> models.CaseApplication:
     return c
 
 
+def _assert_scope_open(c):
+    """범위 동결(scope_frozen) 케이스의 원재료 변경 차단 — 동결은 심의·위원회 검토 대상을 고정하는
+    것인데, 동결 뒤에도 원재료를 추가·수정·삭제할 수 있어 심사받지 않은 성분이 인증서에 실렸다(감사 K5).
+    재인증이 필요하면 언락(operator) 후 변경한다."""
+    if c.scope_frozen:
+        raise HTTPException(409, {"code": "SCOPE_FROZEN",
+                                  "message": "범위가 동결된 케이스는 원재료를 변경할 수 없습니다"})
+
+
 def _audit_row_body(actor_id, action, resource_type, resource_id, case_id, created_at, meta_wo):
     """AuditLog 정규 본문(체인 해시 대상) — 쓰기(_audit)/검증(audit_log_verify)이 동일 직렬화 사용.
     meta의 _chain(체인 자체)은 제외한 나머지 본문에 대해 해시(자기참조 방지). 스키마 무변경(meta JSON)."""
@@ -4710,7 +4719,7 @@ def add_product(case_id: str, body: schemas.ProductCreate,
 def add_material(case_id: str, body: schemas.MaterialCreate,
                  user=Depends(rbac.require_action("material.add")),
                  db: Session = Depends(get_db)):
-    _get_case(db, case_id, user)
+    _assert_scope_open(_get_case(db, case_id, user))   # 동결 후 원재료 변경 금지(감사 K5)
     sk = True if body.source_known is None else bool(body.source_known)
     r = screening.screen_merged(body.name, body.e_number, body.source, body.cert_no,
                                 bool(body.evidence_provided), sk, body.note or "")
@@ -4732,7 +4741,7 @@ def delete_material(material_id: str,
                     db: Session = Depends(get_db)):
     m = db.get(models.Material, material_id)
     if m:
-        _get_case(db, m.case_id, user)
+        _assert_scope_open(_get_case(db, m.case_id, user))   # 동결 후 원재료 변경 금지(감사 K5)
         # 원재료 삭제는 할랄 문서에서 성분을 빼는 행위다. 무엇을 어떤 판정 상태에서
         # 지웠는지 남겨야 나중에 되짚을 수 있다(삭제 전에 기록 — 행이 사라지면 못 남긴다).
         _audit(db, user, "material.delete", "material", material_id, m.case_id,
@@ -4756,7 +4765,7 @@ def patch_material(material_id: str, body: schemas.MaterialPatch,
     m = db.get(models.Material, material_id)
     if not m:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
-    _get_case(db, m.case_id, user)
+    _assert_scope_open(_get_case(db, m.case_id, user))   # 동결 후 원재료 변경 금지(감사 K5)
     before = {"status": m.screen_status, "result": m.screen_result,
               "cert_no": m.cert_no, "manufacturer": m.manufacturer,
               "supplier": m.supplier, "mat_type": m.mat_type}
@@ -4797,6 +4806,7 @@ def rename_material(material_id: str, body: schemas.MaterialRenameReq,
     if not m:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
     c = _get_case(db, m.case_id, user)
+    _assert_scope_open(c)   # 동결 후 원재료 변경 금지(감사 K5)
     prev = m.name
     m.name = nm
     sc = screening.screen_merged(nm, m.e_number, m.source, m.cert_no,
@@ -5014,6 +5024,7 @@ def reuse_materials(case_id: str, body: dict = None,
                     db: Session = Depends(get_db)):
     """카탈로그에서 선택한 원재료를 현재 케이스로 복사 — 이미 있는 정규화명은 건너뜀(중복 방지)."""
     c = _get_case(db, case_id, user)
+    _assert_scope_open(c)   # 동결 후 원재료 변경 금지(감사 K5)
     names = [str(n).strip() for n in ((body or {}).get("names") or []) if str(n).strip()]
     if not names:
         raise HTTPException(422, {"code": "NO_NAMES"})
@@ -5055,7 +5066,7 @@ def dedup_materials(case_id: str, user=Depends(auth.require_roles("applicant", "
                     db: Session = Depends(get_db)):
     """중복 원재료 정리 — 정규화 동일명(괄호·공백·원산지 차이) 그룹당 1개만 유지.
     증빙 보유 > CLEARED > 짧은 이름 우선 유지, 나머지 삭제. OCR 오탈자는 보수적으로 미병합."""
-    _get_case(db, case_id, user)
+    _assert_scope_open(_get_case(db, case_id, user))   # 동결 후 원재료 변경 금지(감사 K5)
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
     ev = dict(db.query(models.DocumentAsset.material_id, func.count(models.DocumentAsset.document_id))
               .filter(models.DocumentAsset.case_id == case_id,
@@ -18725,6 +18736,7 @@ def materials_from_label(case_id: str, body: schemas.LabelJudgmentReq,
                          user=Depends(auth.require_roles("applicant", "consultant")),
                          db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    _assert_scope_open(c)   # 동결 후 원재료 변경 금지(감사 K5)
     from .ocr_pipeline import judge_label
     res = judge_label(_sandboxed_path(body.image_path), body.locale or "ko-KR")
     if not res.get("ok"):
@@ -18737,6 +18749,7 @@ def materials_from_label_b64(case_id: str, body: schemas.LabelB64Req,
                              user=Depends(auth.require_roles("applicant", "consultant")),
                              db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    _assert_scope_open(c)   # 동결 후 원재료 변경 금지(감사 K5)
     import tempfile
     raw = base64.b64decode(_validate_upload(body.image_b64, body.filename or "label.png"))  # 검증(§9.3)
     path = None
