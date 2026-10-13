@@ -7776,8 +7776,18 @@ def _gen_contract_core(db, c, b, user, status="issued"):
 def gen_contract(case_id: str, body: dict = None, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """Contract (FORM 4.1) 생성 — 정적 법률조항 + 동적(회사·제품·수수료) 병합. Contract 레코드 + gen-doc 저장.
     M4: body.fee(특수조항 계약금액 수동 override)·body.currency 지원."""
+    b = body or {}
+    # 금액·통화 수동 지정은 operator/admin 만 — 신청자가 계약금액을 임의로 바꿔 넣던 결함(감사 K3).
+    if any(b.get(k) not in (None, "") for k in ("fee", "currency")) and user["role"] not in ("operator", "admin"):
+        raise HTTPException(403, {"code": "FEE_OVERRIDE_FORBIDDEN", "message": "계약 금액 설정은 관리자만 가능합니다"})
     c = _get_case(db, case_id, user)
-    contract, gendoc = _gen_contract_core(db, c, body or {}, user, status="issued")
+    # 서명이 들어갔거나 체결된 계약은 다시 만들지 않는다 — 재생성이 금액·상태를 덮어써
+    # 서명된 계약 내용이 바뀌었다(감사 K3).
+    ex = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if ex and (ex.signatures or ex.status in ("signed", "confirmed")):
+        raise HTTPException(409, {"code": "CONTRACT_LOCKED", "status": ex.status,
+                                  "message": "서명된 계약은 다시 생성할 수 없습니다"})
+    contract, gendoc = _gen_contract_core(db, c, b, user, status="issued")
     db.commit()
     return {"contract_id": contract.contract_id, "contract_no": contract.contract_no,
             "gen_doc_id": gendoc.gen_doc_id, "status": contract.status}
