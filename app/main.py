@@ -12999,6 +12999,17 @@ def _issue_guards(db, c, case_id):
     if db.query(models.Invoice).filter(models.Invoice.case_id == case_id,
                                        ~models.Invoice.status.in_(sm.INVOICE_SETTLED)).count() > 0:
         raise HTTPException(409, {"code": "PAYMENT_PENDING"})
+    # 미결제 인보이스만 막아서, 인보이스가 0건이면 돈 한 푼 없이 발급됐다(감사 K4).
+    # 정규 경로는 확정 결제(paid) 인보이스가 최소 1건 있어야 한다. 자기선언(SEHATI)은 무상이라 제외.
+    if c.pathway != "self_declare" and db.query(models.Invoice).filter(
+            models.Invoice.case_id == case_id, models.Invoice.status == "paid").count() == 0:
+        raise HTTPException(409, {"code": "NO_PAYMENT", "message": "결제가 확정되지 않았습니다"})
+    # 하람 원재료가 남은 채 인증서가 나가던 결함(감사 K5) — 판정 BLOCK 또는 상태 haram 이면 발급 금지.
+    haram = db.query(models.Material).filter(
+        models.Material.case_id == case_id,
+        (models.Material.screen_result == "BLOCK") | (models.Material.screen_status == "haram")).all()
+    if haram:
+        raise HTTPException(409, {"code": "HARAM_MATERIAL", "materials": [m.name for m in haram]})
     if sm.open_major_nc(db, case_id) > 0:
         raise HTTPException(409, {"code": "UNRESOLVED_MAJOR_NC"})
     bad_docs = (db.query(models.DocumentAsset)

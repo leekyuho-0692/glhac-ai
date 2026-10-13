@@ -121,10 +121,14 @@ def test_assigned_case_ids_are_scoped_to_the_user(tmp_path):
 # '인증서는 있는데 진행 단계는 심사 중'인 케이스가 남았다.
 
 def _case(db, status, **kw):
+    # 자기선언(위원회 검증) 경로는 self_declare, 그 외는 정규 — 정규는 결제 확정 인보이스가 있어야
+    # 발급된다(감사 K4: 인보이스 0건이면 무결제 발급되던 결함). 발급 가능한 전제를 갖춰 둔다.
     c = models.CaseApplication(case_id="c_iss", org_id=OWN, company_name="발급 검증",
                                status=status, fatwa_status=kw.get("fatwa", "approved"),
-                               scope_frozen=kw.get("frozen", True))
+                               scope_frozen=kw.get("frozen", True),
+                               pathway="self_declare" if status == "committee_verification" else "reguler")
     db.add(c)
+    db.add(models.Invoice(case_id="c_iss", total=1.0, status="paid"))
     db.commit()
     return c
 
