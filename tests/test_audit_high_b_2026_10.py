@@ -77,20 +77,54 @@ def test_b6_ocr_pipeline_returns_llm_error_field():
     assert "llm_error" in source
 
 
-def test_b1_partial_send_lasterror_format():
-    """B1: 부분 발송 — last_error 형식 검증 (채널:사유 포함)."""
-    # drain_notifications의 코드 구조 확인:
-    # failed_by_channel = {r.get("channel"): r.get("reason") for r in results if not r.get("ok")}
-    # last_error = "채널:사유;consent_skipped:..." 형식
-    import re
+def test_b1_all_channels_no_credentials_skipped(monkeypatch):
+    """B1: 모든 채널이 no_credentials → status=skipped, last_error에 채널:no_credentials."""
     from app.main import drain_notifications
-    source = open("/Users/dany/glhac-ai-wt-critfix/app/main.py").read()
-    # failed_by_channel 매핑 확인
-    assert "failed_by_channel = {" in source, "failed_by_channel 매핑 없음"
-    # 채널:사유 형식 확인
-    assert 'f"{ch}:{reason}"' in source, "채널:사유 형식 없음"
-    # consent_skipped 형식 확인
-    assert '"consent_skipped:"' in source, "consent_skipped 형식 없음"
+    from app import notify as _nt
+
+    # notify.dispatch를 monkeypatch: 모든 채널이 no_credentials 실패
+    original_dispatch = _nt.dispatch
+    def mock_dispatch(n, contacts=None, channels=None):
+        # 모든 채널이 no_credentials로 실패
+        return [{"channel": ch, "ok": False, "reason": "no_credentials"} for ch in (channels or ["inapp"])]
+
+    monkeypatch.setattr(_nt, "dispatch", mock_dispatch)
+
+    with TestClient(app) as c:
+        db = SessionLocal()
+        try:
+            # 모든 채널이 실패하는 케이스: inapp만 요청하고 no_credentials 실패
+            c_app = models.CaseApplication(
+                company_name="NoCredB1", org_id="org_demo",
+                notify_consent=True, status="draft"
+            )
+            db.add(c_app)
+            db.flush()
+
+            n = models.Notification(
+                case_id=c_app.case_id,
+                event_type="test",
+                channels=["inapp"],
+                title="Test",
+                body="Test",
+                status="unsent"
+            )
+            db.add(n)
+            db.commit()
+            nid = n.notification_id
+
+            stats = drain_notifications(db)
+            db.expire_all()
+            n_after = db.get(models.Notification, nid)
+
+            # 모든 채널이 no_credentials이므로 skipped 상태
+            assert n_after.status == "skipped", f"status={n_after.status}, 기대: skipped"
+            assert stats["skipped"] == 1, f"stats skipped={stats['skipped']}, 기대: 1"
+            # last_error에 채널:no_credentials 기록
+            assert n_after.last_error, "last_error가 비어있음"
+            assert "inapp:no_credentials" in n_after.last_error, f"last_error={n_after.last_error}"
+        finally:
+            db.close()
 
 
 def test_smoke_basic_auth():

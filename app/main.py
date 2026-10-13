@@ -930,8 +930,13 @@ def drain_notifications(db, batch=50, max_attempts=3):
 
         # 성공한 채널이 있으면 sent, 아니면 skipped 또는 재시도/실패
         if not retryable:
-            n.status = "sent"
-            stats["sent"] += 1
+            # 실제 성공한 채널이 있으면 sent, 없으면 skipped
+            if has_success:
+                n.status = "sent"
+                stats["sent"] += 1
+            else:
+                n.status = "skipped"
+                stats["skipped"] += 1
             # 비록 성공했어도 실패·생략 채널이 있으면 last_error에 기록
             error_parts = []
             for ch, reason in failed_by_channel.items():
