@@ -738,7 +738,7 @@ class FeedbackImage(Base):
     image_id = Column(String, primary_key=True, default=uid)
     feedback_id = Column(String, nullable=False, index=True)
     filename = Column(String)
-    content_b64 = Column(EncryptedType)          # <4MB만 저장(암호화)
+    content_b64 = Column(EncryptedType)          # <10MB만 저장(암호화, 업로드 상한과 동일)
     content_type = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 

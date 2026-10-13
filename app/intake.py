@@ -1281,12 +1281,16 @@ def intake_zip_iter(data, limit=200):
         _lines = []                       # 여기서 읽은 OCR을 버리지 않고 넘긴다
         text = parse_file(name, raw, ocr_sink=_lines)
         cl = classify(name, text)
+        # content_b64는 업로드 상한과 같은 값으로 제한 (10MB)
+        # main.py의 _UPLOAD_MAX_BYTES와 일치하도록 동일 상한 사용
+        UPLOAD_MAX_RAW_BYTES = 10 * 1024 * 1024  # 10MB와 일치
         d = {"filename": os.path.basename(name), "doc_type": cl["doc_type"],
              "ocr_lines": _lines or None,
              "doc_type_ko": DOC_KO.get(cl["doc_type"], cl["doc_type"]),
              "confidence": cl.get("confidence", 0.0), "fields": cl.get("fields", {}),
              "text_len": len(text), "excerpt": text[:300],
-             "content_b64": base64.b64encode(raw).decode() if len(raw) < 3_000_000 else None,
+             "content_b64": base64.b64encode(raw).decode() if len(raw) < UPLOAD_MAX_RAW_BYTES else None,
+             "llm_error": cl.get("llm_error"),
              "content_type": _ctype(name)}
         docs.append(d)
         yield ("progress", {"done": i, "total": total, "file": d["filename"],
