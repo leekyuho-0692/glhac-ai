@@ -11826,11 +11826,19 @@ def update_finding(finding_id: str, body: schemas.FindingStatusReq,
 
 
 @app.delete("/findings/{finding_id}")
-def delete_finding(finding_id: str, user=Depends(auth.require_roles("auditor", "consultant")),
+def delete_finding(finding_id: str, user=Depends(auth.require_roles("auditor")),
                    db: Session = Depends(get_db)):
+    # 부적합 삭제는 오디터만 — 컨설턴트(업체 편)가 지적을 지워 발급 게이트(UNRESOLVED_MAJOR_NC)를
+    # 무력화할 수 있었다(감사 K6).
     f = db.get(models.AuditFinding, finding_id)
     if f:
         _get_case(db, f.case_id, user)
+        # 중대 부적합은 삭제하지 않는다 — 종결은 CAR·상태 변경으로만 해야 근거가 남는다.
+        if (f.severity or "").lower() in ("major", "critical"):
+            raise HTTPException(409, {"code": "MAJOR_FINDING_DELETE_FORBIDDEN", "severity": f.severity,
+                                      "message": "중대 부적합(Major/Critical)은 삭제할 수 없습니다"})
+        _audit(db, user, "finding.delete", "finding", finding_id, f.case_id,
+               {"severity": f.severity, "finding": f.finding, "status": f.status}, commit=False)
         db.delete(f)
         db.commit()
     return {"deleted": finding_id}
