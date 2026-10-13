@@ -58,10 +58,11 @@ cp /opt/glhac/.env /opt/glhac/.env.bak-encryption-$TS
 echo "  ✓ /opt/glhac/.env.bak-encryption-$TS 백업 완료"
 
 # GLHAC_ENCRYPTION 플래그 추가 (주석이 없어야 systemd EnvironmentFile이 제대로 읽음)
+# .env는 rocky 소유이므로 sudo 없이 실행
 if grep -q '^GLHAC_ENCRYPTION=' /opt/glhac/.env; then
-  sudo sed -i 's/^GLHAC_ENCRYPTION=.*/GLHAC_ENCRYPTION=1/' /opt/glhac/.env
+  sed -i 's/^GLHAC_ENCRYPTION=.*/GLHAC_ENCRYPTION=1/' /opt/glhac/.env
 else
-  echo 'GLHAC_ENCRYPTION=1' | sudo tee -a /opt/glhac/.env >/dev/null
+  echo 'GLHAC_ENCRYPTION=1' | tee -a /opt/glhac/.env >/dev/null
 fi
 echo "  ✓ GLHAC_ENCRYPTION=1 설정 완료"
 echo ""
@@ -86,11 +87,14 @@ if [ "$c" != 200 ]; then
 fi
 echo ""
 
-# 5) 암호화 적용
+# 5) 암호화 적용 — DB 소유자 권한으로 실행.
+# .env 는 rocky 소유 600 이라 DB 소유자가 다른 계정이면 직접 못 읽는다 → rocky 가 읽어 stdin 으로 넘긴다
+# (키를 명령줄 인자로 넘기면 ps 에 보이므로 쓰지 않는다).
+backfill() {
+  sudo -u "$DBOWN" bash -c 'set -a; source /dev/stdin; set +a; cd /opt/glhac && PYTHONPATH=/opt/glhac /opt/glhac/.venv/bin/python scripts/encrypt_backfill.py "$@"' _ "$@" < /opt/glhac/.env
+}
 echo "[5/6] 데이터 암호화 중..."
-set -a; source /opt/glhac/.env; set +a
-PY=/opt/glhac/.venv/bin/python
-PYTHONPATH=/opt/glhac $PY scripts/encrypt_backfill.py --apply --allow-derived-key || {
+backfill --apply || {
   echo "❌ 암호화 적용 실패"
   echo ""
   echo "← 되돌리기:"
@@ -102,9 +106,10 @@ PYTHONPATH=/opt/glhac $PY scripts/encrypt_backfill.py --apply --allow-derived-ke
 echo "  ✓ 데이터 암호화 완료"
 echo ""
 
-# 6) 검증
+# 6) 검증 — DB 소유자 권한으로 실행
 echo "[6/6] 암호화 검증 중..."
-PYTHONPATH=/opt/glhac $PY scripts/encrypt_backfill.py --verify || {
+# 적용 중 앱이 같은 칸을 고친 행은 경합으로 건너뛰었을 수 있다 — 한 번 더 적용하고 다시 검증한다.
+backfill --verify || { echo "  … 남은 평문(경합 건너뜀) 재적용"; backfill --apply && backfill --verify; } || {
   echo "❌ 검증 실패 (평문 데이터 남음)"
   exit 1
 }
@@ -115,7 +120,6 @@ echo "✓ 암호화 활성화 완료"
 echo ""
 echo "── 상태 확인 ──"
 echo "GLHAC_ENCRYPTION=$(grep '^GLHAC_ENCRYPTION=' /opt/glhac/.env | cut -d= -f2)"
-echo "GLHAC_ENC_KEY=$(grep '^GLHAC_ENC_KEY=' /opt/glhac/.env | head -c 20)..."
 echo ""
 echo "── 되돌리기 (필요 시) ──"
 echo "sed -i '/^GLHAC_ENCRYPTION=/d' /opt/glhac/.env"

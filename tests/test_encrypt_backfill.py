@@ -231,5 +231,72 @@ def test_backfill_verify_plaintext():
     engine.dispose()
 
 
+def test_backfill_lost_update_protection():
+    """lost update 방지: 읽은 뒤 값이 바뀐 행은 덮어쓰지 않음."""
+    engine = _init_test_db()
+    session = SessionLocal()
+
+    # 테스트 데이터: 평문 2행
+    for i in range(2):
+        test_case = TestCaseForEncryption(
+            id=500 + i,
+            name=f"LostUpdate{i}",
+            nib=f"NIBA-{i}",
+            email=f"email{i}@example.com",
+        )
+        session.add(test_case)
+    session.commit()
+    session.close()
+
+    # 백필이 'NIBA-0' 을 읽은 직후 앱이 같은 칸을 고친 상황 — 배치에는 옛 값이 실려 있다.
+    from scripts.encrypt_backfill import _commit_batch
+    _init_crypto_keys()
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE test_case_for_encryption SET nib = :new WHERE id = :id"),
+                     {"id": 500, "new": "MODIFIED-BY-APP"})
+    updated, skipped = _commit_batch(engine, "test_case_for_encryption", ["id"], "nib",
+                                     [((500,), "NIBA-0"), ((501,), "NIBA-1")])
+    assert (updated, skipped) == (1, 1)
+
+    with engine.connect() as conn:
+        raw = dict(conn.execute(text("SELECT id, nib FROM test_case_for_encryption WHERE id IN (500, 501)")).all())
+    # 앱이 고친 값은 옛 값의 암호문으로 덮이지 않고 그대로 남는다(다음 --apply 가 처리).
+    assert raw[500] == "MODIFIED-BY-APP"
+    assert raw[501].startswith("v1:") and dec(raw[501]) == "NIBA-1"
+    engine.dispose()
+
+
+def test_backfill_batch_rolls_back_on_failure(monkeypatch):
+    """배치 중간에 왕복 검증이 실패하면 그 배치의 앞선 행도 저장되지 않아야 한다."""
+    import scripts.encrypt_backfill as bf
+    engine = _init_test_db()
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO test_case_for_encryption (id, name, nib) VALUES (600, 'a', 'P-600'), (601, 'b', 'P-601')"))
+    _init_crypto_keys()
+    real_dec = bf.dec
+    monkeypatch.setattr(bf, "dec", lambda t: "깨짐" if real_dec(t) == "P-601" else real_dec(t))
+    assert bf._commit_batch(engine, "test_case_for_encryption", ["id"], "nib",
+                            [((600,), "P-600"), ((601,), "P-601")]) == (None, None)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT nib FROM test_case_for_encryption WHERE id=600")).scalar() == "P-600"
+    engine.dispose()
+
+
+def test_apply_requires_dedicated_key_or_explicit_flag(monkeypatch):
+    monkeypatch.delenv("GLHAC_ENC_KEY", raising=False)
+    assert backfill_main(["--apply"]) is False
+
+
+def test_verify_does_not_mistake_v_colon_plaintext(monkeypatch):
+    """'via: ...' 처럼 v 로 시작하고 콜론이 있는 평문을 암호문으로 보지 않는다."""
+    engine = _init_test_db()
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM test_case_for_encryption"))
+        conn.execute(text("INSERT INTO test_case_for_encryption (id, name, nib) VALUES (700, 'v', 'via: Jakarta')"))
+    _init_crypto_keys()
+    assert backfill_main(["--verify"]) is False
+    engine.dispose()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -4,7 +4,6 @@
 사용법:
   python3 scripts/encrypt_backfill.py                           # dry-run(통계만)
   python3 scripts/encrypt_backfill.py --apply                   # 평문→암호화 적용
-  python3 scripts/encrypt_backfill.py --apply --allow-derived-key  # SECRET 파생키로 적용
   python3 scripts/encrypt_backfill.py --verify                  # 남은 평문 수 확인
 
 환경변수:
@@ -18,7 +17,7 @@ import base64
 import logging
 import os
 import sys
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 # 앱 디렉터리 추가
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -82,6 +81,15 @@ def _get_key_source() -> str:
         return "SECRET (파생)"
 
 
+# 암호문 판별 — crypto.is_encrypted 와 같은 기준(앞 3글자가 키버전 접두).
+# LIKE 'v%:%' 같은 느슨한 패턴은 "via: ..." 같은 평문을 암호문으로 오인해 검증을 통과시킨다.
+_ENC_PREFIXES = ("v1:", "v2:", "v3:")
+
+
+def _is_enc_sql(col_name):
+    return "substr(%s, 1, 3) IN (%s)" % (col_name, ", ".join("'%s'" % p for p in _ENC_PREFIXES))
+
+
 def _init_crypto_keys():
     """암호화 모듈 키 초기화."""
     # 지연 로딩 캐시 초기화
@@ -96,6 +104,9 @@ def dry_run(encrypted_cols_map: Dict, db_url: str):
     log.info(f"DB: {db_url}")
     log.info(f"키 소스: {_get_key_source()}")
     log.info("")
+    log.info("테이블/컬럼별 통계:")
+    log.info(f"{'테이블':<25} {'컬럼':<20} {'평문':>10} {'암호됨':>10} {'빈값':>10}")
+    log.info("-" * 75)
 
     engine = create_engine(
         db_url,
@@ -104,6 +115,10 @@ def dry_run(encrypted_cols_map: Dict, db_url: str):
 
     try:
         with engine.connect() as conn:
+            total_plaintext = 0
+            total_encrypted = 0
+            total_empty = 0
+
             for table_name, info in encrypted_cols_map.items():
                 encrypted_cols = info['encrypted_cols']
 
@@ -111,31 +126,50 @@ def dry_run(encrypted_cols_map: Dict, db_url: str):
                     # 비어있지 않은 행 수
                     query = text(
                         f"SELECT COUNT(*) FROM {table_name} "
-                        f"WHERE {col_name} IS NOT NULL AND {col_name} != ''"
+                        f"WHERE {col_name} IS NULL OR {col_name} = ''"
                     )
-                    count = conn.execute(query).scalar()
+                    empty_count = conn.execute(query).scalar()
 
-                    if count > 0:
+                    nonempty = f"{col_name} IS NOT NULL AND {col_name} != ''"
+                    encrypted_count = conn.execute(text(
+                        f"SELECT COUNT(*) FROM {table_name} WHERE {nonempty} AND {_is_enc_sql(col_name)}"
+                    )).scalar()
+                    plaintext_count = conn.execute(text(
+                        f"SELECT COUNT(*) FROM {table_name} WHERE {nonempty} AND NOT ({_is_enc_sql(col_name)})"
+                    )).scalar()
+
+                    if plaintext_count or encrypted_count:
                         log.info(
-                            f"  {table_name}.{col_name}: {count}행 (암호화 대상)"
+                            f"{table_name:<25} {col_name:<20} {plaintext_count:>10} "
+                            f"{encrypted_count:>10} {empty_count:>10}"
                         )
+                        total_plaintext += plaintext_count
+                        total_encrypted += encrypted_count
+
+                    total_empty += empty_count
     finally:
         engine.dispose()
 
+    log.info("-" * 75)
+    log.info(f"{'합계':<25} {'':20} {total_plaintext:>10} {total_encrypted:>10} {total_empty:>10}")
 
-def apply_encryption(encrypted_cols_map: Dict, db_url: str, allow_derived_key: bool, batch_size: int = 200):
-    """실제 암호화 적용 — 배치 커밋."""
+
+def apply_encryption(encrypted_cols_map: Dict, db_url: str, batch_size: int = 200) -> Tuple[bool, int, int]:
+    """실제 암호화 적용 — 배치 커밋 (비교 후 갱신 - lost update 방지).
+
+    Returns:
+      (success, total_updated, total_skipped_conflict)
+    """
     log.info("=== APPLY (암호화 적용) ===")
     log.info(f"DB: {db_url}")
     log.info(f"키 소스: {_get_key_source()}")
+    log.info("")
 
-    if os.environ.get("GLHAC_ENC_KEY") is None and not allow_derived_key:
-        log.error(
-            "ERROR: GLHAC_ENC_KEY가 없고 --allow-derived-key를 지정하지 않았습니다.\n"
-            "SECRET 파생 키로 암호화하려면 --allow-derived-key를 함께 지정하세요.\n"
-            "파생 키를 사용하면 로그인 토큰 서명키(SECRET)가 바뀌면 복호화가 깨집니다."
+    if os.environ.get("GLHAC_ENC_KEY") is None:
+        log.warning(
+            "[crypto] GLHAC_ENC_KEY 미설정 — 앱 SECRET에서 파생(데모 폴백). "
+            "프로덕션은 GLHAC_ENC_KEY에 전용 키 설정 권장."
         )
-        return False
 
     engine = create_engine(
         db_url,
@@ -144,6 +178,7 @@ def apply_encryption(encrypted_cols_map: Dict, db_url: str, allow_derived_key: b
 
     try:
         total_updated = 0
+        total_skipped_conflict = 0
 
         for table_name, info in encrypted_cols_map.items():
             encrypted_cols = info['encrypted_cols']
@@ -156,54 +191,75 @@ def apply_encryption(encrypted_cols_map: Dict, db_url: str, allow_derived_key: b
             pk_expr = ", ".join(pk_cols)
 
             for col_name in encrypted_cols:
+                # 평문 행의 PK 만 먼저 모으고 읽기 연결은 닫는다 — 읽기 트랜잭션을 연 채로 다른
+                # 연결에서 쓰면 WAL 이 아닌 SQLite 에서 'database is locked' 가 난다. 값은 배치마다 다시 읽는다.
                 with engine.connect() as conn:
-                    # 모든 평문 행을 읽기
-                    query = text(
-                        f"SELECT {pk_expr}, {col_name} FROM {table_name} "
+                    pks = [tuple(r) for r in conn.execute(text(
+                        f"SELECT {pk_expr} FROM {table_name} "
                         f"WHERE {col_name} IS NOT NULL AND {col_name} != '' "
-                        f"ORDER BY {pk_cols[0]}"
-                    )
-                    rows = list(conn.execute(query))
+                        f"AND NOT ({_is_enc_sql(col_name)}) ORDER BY {pk_cols[0]}"))]
 
-                    if not rows:
-                        continue
-
-                    # 배치 처리
+                col_updated = col_skipped = 0
+                for i in range(0, len(pks), batch_size):
+                    chunk = pks[i:i + batch_size]
                     batch = []
-                    for row in rows:
-                        pk_vals = row[:-1]
-                        col_val = row[-1]
+                    with engine.connect() as conn:
+                        for pk_vals in chunk:
+                            where = " AND ".join(f"{c} = :{c}" for c in pk_cols)
+                            v = conn.execute(text(f"SELECT {col_name} FROM {table_name} WHERE {where}"),
+                                             dict(zip(pk_cols, pk_vals))).scalar()
+                            if v and not is_encrypted(v):
+                                batch.append((pk_vals, v))
+                    if not batch:
+                        continue
+                    updated, skipped = _commit_batch(engine, table_name, pk_cols, col_name, batch)
+                    if updated is None:  # 왕복 검증 실패 등 — 그 배치는 롤백됐다
+                        return False, total_updated, total_skipped_conflict
+                    col_updated += updated
+                    col_skipped += skipped
 
-                        # 이미 암호화되어 있으면 건너뜀
-                        if is_encrypted(col_val):
-                            continue
+                total_updated += col_updated
+                total_skipped_conflict += col_skipped
+                if col_updated or col_skipped:
+                    log.info(f"  {table_name}.{col_name}: {col_updated}행 암호화, {col_skipped}행 경합 건너뜀")
 
-                        batch.append((pk_vals, col_val))
-
-                        if len(batch) >= batch_size:
-                            if not _commit_batch(engine, table_name, pk_cols, col_name, batch):
-                                return False
-                            total_updated += len(batch)
-                            batch = []
-
-                    # 남은 배치 커밋
-                    if batch:
-                        if not _commit_batch(engine, table_name, pk_cols, col_name, batch):
-                            return False
-                        total_updated += len(batch)
-
-                    if total_updated > 0:
-                        log.info(f"  {table_name}.{col_name}: {total_updated}행 암호화 완료")
-
-        log.info(f"총 업데이트: {total_updated}행")
-        return True
+        log.info(
+            f"총 업데이트: {total_updated}행, 경합 건너뜀: {total_skipped_conflict}행"
+        )
+        return True, total_updated, total_skipped_conflict
 
     finally:
         engine.dispose()
 
 
-def _commit_batch(engine, table_name: str, pk_cols: List[str], col_name: str, batch: List) -> bool:
-    """배치 커밋 및 검증."""
+def _commit_batch(
+    engine,
+    table_name: str,
+    pk_cols: List[str],
+    col_name: str,
+    batch: List,
+) -> Tuple[int, int]:
+    """배치 커밋 및 비교 후 갱신 — lost update 방지.
+
+    Returns:
+      (updated_count, skipped_conflict_count) 또는 에러 시 (None, None)
+    """
+    try:
+        return _commit_batch_tx(engine, table_name, pk_cols, col_name, batch)
+    except _BatchAbort as e:
+        # engine.begin() 블록 안에서 return 하면 커밋된다 — 예외로 빠져나와야 배치 전체가 롤백된다.
+        log.error("배치 롤백 %s.%s: %s", table_name, col_name, e)
+        return None, None
+
+
+class _BatchAbort(Exception):
+    pass
+
+
+def _commit_batch_tx(engine, table_name, pk_cols, col_name, batch):
+    updated_count = 0
+    skipped_conflict = 0
+
     with engine.begin() as conn:
         for pk_vals, col_val in batch:
             # enc() 호출
@@ -212,13 +268,11 @@ def _commit_batch(engine, table_name: str, pk_cols: List[str], col_name: str, ba
             # 검증: dec(enc(v)) == v
             decrypted = dec(encrypted)
             if decrypted != col_val:
-                log.error(
-                    f"검증 실패 {table_name}.{col_name}: "
-                    f"enc/dec 왕복이 일치하지 않음"
-                )
-                return False
+                raise _BatchAbort("enc/dec 왕복이 일치하지 않음")
 
-            # 원시 UPDATE
+            # 비교 후 갱신 — WHERE 절에 원시 값 포함
+            # UPDATE t SET col=:enc WHERE pk=:pk AND col=:old
+            # rowcount 0 = 값이 바뀌었거나 행이 삭제됨 → 경합으로 건너뜀
             pk_where_parts = []
             params = {}
             for c, v in zip(pk_cols, pk_vals):
@@ -226,12 +280,24 @@ def _commit_batch(engine, table_name: str, pk_cols: List[str], col_name: str, ba
                 params[c] = v
 
             pk_where = " AND ".join(pk_where_parts)
-            update_query = text(f"UPDATE {table_name} SET {col_name} = :enc WHERE {pk_where}")
+            # WHERE 절에 col 원시 값도 포함 (lost update 방지)
+            update_query = text(
+                f"UPDATE {table_name} SET {col_name} = :enc "
+                f"WHERE {pk_where} AND {col_name} = :old"
+            )
             params["enc"] = encrypted
+            params["old"] = col_val
 
-            conn.execute(update_query, params)
+            result = conn.execute(update_query, params)
+            if result.rowcount == 1:
+                updated_count += 1
+            elif result.rowcount == 0:
+                # 값이 바뀌었거나 행이 없음 → 경합으로 건너뜀 (다음 --apply에서 다시 시도)
+                skipped_conflict += 1
+            else:
+                raise _BatchAbort(f"예상치 못한 rowcount {result.rowcount} (pk={pk_vals})")
 
-    return True
+    return updated_count, skipped_conflict
 
 
 def verify(encrypted_cols_map: Dict, db_url: str) -> bool:
@@ -252,12 +318,10 @@ def verify(encrypted_cols_map: Dict, db_url: str) -> bool:
                 encrypted_cols = info['encrypted_cols']
 
                 for col_name in encrypted_cols:
-                    # 암호화된 값은 'v1:' 등 접두로 시작
-                    # LIKE 'v%:%' 로 대략 판별
                     query = text(
                         f"SELECT COUNT(*) FROM {table_name} "
                         f"WHERE {col_name} IS NOT NULL AND {col_name} != '' "
-                        f"AND {col_name} NOT LIKE 'v%:%'"
+                        f"AND NOT ({_is_enc_sql(col_name)})"
                     )
                     count = conn.execute(query).scalar()
 
@@ -284,11 +348,6 @@ def main(argv: Optional[List[str]] = None):
         help="실제 암호화 적용 (기본: dry-run)",
     )
     parser.add_argument(
-        "--allow-derived-key",
-        action="store_true",
-        help="SECRET 파생 키로 암호화 허용 (기본: GLHAC_ENC_KEY 필수)",
-    )
-    parser.add_argument(
         "--verify",
         action="store_true",
         help="남은 평문 수 확인 (exit 0 = 전부 암호화됨, 1 = 평문 남음)",
@@ -299,8 +358,19 @@ def main(argv: Optional[List[str]] = None):
         default=200,
         help="배치 크기 (기본: 200)",
     )
+    parser.add_argument(
+        "--allow-derived-key",
+        action="store_true",
+        help="GLHAC_ENC_KEY 없이 SECRET 파생 키로 --apply 허용(운영 비권장)",
+    )
 
     args = parser.parse_args(argv)
+
+    # 파생 키는 로그인 토큰 서명키(GLHAC_SECRET)를 바꾸는 순간 복호화가 깨진다 — 운영 데이터를
+    # 그 키로 굳히지 않도록 명시 동의가 있어야만 진행한다(앱 부팅과는 무관한 스크립트 안전장치).
+    if args.apply and not os.environ.get("GLHAC_ENC_KEY") and not args.allow_derived_key:
+        log.error("GLHAC_ENC_KEY 가 없습니다. 전용 키를 설정하거나, 의도한 것이면 --allow-derived-key 를 함께 주세요.")
+        return False
 
     # 암호화 모듈 키 초기화
     _init_crypto_keys()
@@ -319,12 +389,12 @@ def main(argv: Optional[List[str]] = None):
     log.info("")
 
     if args.apply:
-        return apply_encryption(
+        success, updated, skipped = apply_encryption(
             encrypted_cols_map,
             DB_URL,
-            args.allow_derived_key,
             args.batch_size,
         )
+        return success
     elif args.verify:
         return verify(encrypted_cols_map, DB_URL)
     else:
