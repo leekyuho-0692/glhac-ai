@@ -68,6 +68,11 @@ TRANSITION_ROLES = {
     "supplementation_required": {"consultant", "auditor", "fatwa_liaison", "operator"},
     "audit_closed": {"auditor", "operator"},                    # 오디터 현장심사 완료
     "hpas_evaluation_ready": {"auditor", "fatwa_liaison", "operator"},
+    # 모의심사 진입·진행·승인은 검토자 판단 — 신청자가 raw 전이로 컨설턴트 검토·정식 접수·
+    # 문서심사를 건너뛰던 결함(감사 K4). 결제확정 게이트(_on_invoice_paid)는 역할 검사를 거치지 않는다.
+    "document_pre_audit_requested": {"consultant", "operator"},
+    "document_pre_audit_in_review": {"auditor", "consultant", "operator"},
+    "document_pre_audit_approved": {"auditor", "operator"},
 }
 # 그 외 상태(초기 워크플로 등)는 신청·컨설턴트 등 스태프 진행 허용(applicant 포함)
 DEFAULT_TRANSITION_ROLES = {"applicant", "consultant", "penyelia_halal",
@@ -276,8 +281,20 @@ def guard_car_closed(db, case):
     return g
 
 
+def guard_formal_accepted(db, case):
+    """정식 흐름(GLHAC_FORMAL_FLOW) 이 켜져 있으면 관리자 접수(accepted) 전에는 모의심사로 못 간다.
+    raw 전이로 인증 가능 판정·정식 신청·접수를 건너뛰던 결함(감사 K4). 플래그 OFF 면 기존 동작."""
+    from . import nav8          # nav8 이 state_machine 을 임포트하므로 지연 임포트(순환 회피)
+    if not nav8.formal_flow_on():
+        return []
+    if nav8.formal_state(db, case.case_id) != "accepted":
+        return [{"code": "FORMAL_NOT_ACCEPTED", "formal_state": nav8.formal_state(db, case.case_id)}]
+    return []
+
+
 GUARDS = {
     "ai_pre_assessment_ready": guard_intake_complete,        # §5.2 신청 완비
+    "document_pre_audit_requested": guard_formal_accepted,   # 정식 흐름 접수 확인(K4)
     "final_package_preparation": guard_final_package,
     "document_pre_audit_in_review": guard_payment,
     "document_pre_audit_approved": guard_documents_approved,  # §5.2 문서 all-approved
