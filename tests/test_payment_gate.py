@@ -95,7 +95,8 @@ def test_pay_gate_transitions_to_mock_audit():
     with TestClient(app) as c:
         tok = _tok(c, "consultant1", "pw")
         cid, iid = _mk_case_with_invoice(c, tok, status="consultant_review")
-        r = c.patch("/invoices/%s/pay" % iid, headers=_h(tok))
+        # 결제 확정은 운영자만(감사 K2) — 케이스·청구는 컨설턴트가 만들고 확정은 operator 가 한다
+        r = c.patch("/invoices/%s/pay" % iid, headers=_h(_tok(c, "operator1", "pw")))
         assert r.status_code == 200, r.text
         assert _case_status(cid) == "document_pre_audit_requested", _case_status(cid)
         # 게이트 전이 이벤트 + 오디터 배정 태스크 + 알림
@@ -110,7 +111,8 @@ def test_pay_gate_noop_when_transition_invalid():
     with TestClient(app) as c:
         tok = _tok(c, "consultant1", "pw")
         cid, iid = _mk_case_with_invoice(c, tok, status="onboarding")
-        r = c.patch("/invoices/%s/pay" % iid, headers=_h(tok))
+        # 결제 확정은 운영자만(감사 K2) — 케이스·청구는 컨설턴트가 만들고 확정은 operator 가 한다
+        r = c.patch("/invoices/%s/pay" % iid, headers=_h(_tok(c, "operator1", "pw")))
         assert r.status_code == 200, r.text
         assert _case_status(cid) == "onboarding"
         assert _events(cid, "payment.gate") == []
@@ -122,7 +124,8 @@ def test_pay_gate_idempotent_when_already_in_mock_audit():
     with TestClient(app) as c:
         tok = _tok(c, "consultant1", "pw")
         cid, iid = _mk_case_with_invoice(c, tok, status="document_pre_audit_in_review")
-        r = c.patch("/invoices/%s/pay" % iid, headers=_h(tok))
+        # 결제 확정은 운영자만(감사 K2) — 케이스·청구는 컨설턴트가 만들고 확정은 operator 가 한다
+        r = c.patch("/invoices/%s/pay" % iid, headers=_h(_tok(c, "operator1", "pw")))
         assert r.status_code == 200, r.text
         assert _case_status(cid) == "document_pre_audit_in_review"
         assert _events(cid, "payment.gate") == []

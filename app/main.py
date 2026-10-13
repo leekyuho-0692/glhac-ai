@@ -15112,8 +15112,10 @@ def _on_invoice_paid(db, c, user):
 
 
 @app.patch("/invoices/{invoice_id}/pay")
-def pay_invoice(invoice_id: str, user=Depends(auth.require_roles("applicant", "consultant")),
+def pay_invoice(invoice_id: str, user=Depends(auth.require_roles("operator")),
                 db: Session = Depends(get_db)):
+    # 결제 확정은 운영자(operator/admin)만 — 신청자·컨설턴트가 돈을 안 내고 paid 로 찍어
+    # 모의심사 게이트를 통과시키던 자기결제 결함(감사 K2) 차단.
     inv = db.get(models.Invoice, invoice_id)
     if not inv:
         raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
