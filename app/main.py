@@ -8087,6 +8087,10 @@ def get_contract(case_id: str, user=Depends(auth.get_current_user), db: Session 
             "signatures": sigs}
 
 
+# 서명 가능한 계약 상태 — issued(직접 생성)·sent/received/signing(승인 큐 경로). 한쪽만 서명한 동안은 상태가 유지된다.
+_CONTRACT_SIGNABLE = {"issued", "sent", "received", "signing"}
+
+
 @app.post("/contracts/{contract_id}/sign")
 def sign_contract(contract_id: str, party: str = "A", name: str = "",
                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -8094,6 +8098,12 @@ def sign_contract(contract_id: str, party: str = "A", name: str = "",
     ct = db.get(models.Contract, contract_id)
     if not ct:
         raise HTTPException(404, {"code": "CONTRACT_NOT_FOUND"})
+    # 케이스 접근 검사가 없어 다른 조직 신청자도 계약 id 만 알면 갑(A) 서명을 남길 수 있었다(IDOR, 감사 K3).
+    _get_case(db, ct.case_id, user)
+    # 발행·발송된 계약만 서명한다 — 초안·신청 단계에서 서명이 들어가면 승인 큐를 건너뛴다(감사 K3).
+    if ct.status not in _CONTRACT_SIGNABLE:
+        raise HTTPException(409, {"code": "CONTRACT_NOT_SIGNABLE", "status": ct.status,
+                                  "detail": "현재 상태(%s)에서는 서명할 수 없습니다" % ct.status})
     # SRS CTR-03: 갑(A)=인증기업, 을(B)=GL HAC 관리자. 컨설턴트는 참조일 뿐 서명 권한 없음.
     party = (party or "A").upper()
     if user["role"] == "consultant":
