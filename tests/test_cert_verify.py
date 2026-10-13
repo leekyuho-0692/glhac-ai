@@ -118,8 +118,9 @@ def test_본문에서_번호를_찾는다():
 
 
 def test_플래그_꺼짐이면_기존_승격이_유지된다():
-    """기본 배포는 동작 무변경 — 다만 판정은 기록해 영향 규모를 잴 수 있어야 한다."""
-    result = _with_flag("", lambda: screening.screen_merged("Gelatin", cert_no="398240000"))
+    """명시적으로 끈(off) 배포는 옛 동작 그대로 — 다만 판정은 기록해 영향 규모를 잴 수 있어야 한다.
+    기본값(미설정)은 strict 다(감사 K7)."""
+    result = _with_flag("off", lambda: screening.screen_merged("Gelatin", cert_no="398240000"))
     assert result["status"] == "halal"
     assert result["result"] == "CLEARED"
     assert result["cert_promoted"] is True
@@ -148,7 +149,8 @@ def test_플래그_켜짐이어도_검증되면_승격한다():
 def test_모드_문자열_해석():
     """환경변수 문자열이 의도한 모드로 해석되는지 확인한다."""
     cases = [
-        ("", "off"), ("0", "off"), ("off", "off"), ("false", "off"), ("no", "off"),
+        # 미설정("")은 strict — 기본 off 가 아무 문자열 인증번호 승격을 허용했다(감사 K7)
+        ("", "strict"), ("0", "off"), ("off", "off"), ("false", "off"), ("no", "off"),
         ("format", "format"), ("FORMAT", "format"), ("  format  ", "format"),
         ("1", "strict"), ("true", "strict"), ("on", "strict"), ("yes", "strict"),
         ("strict", "strict"),
@@ -158,12 +160,12 @@ def test_모드_문자열_해석():
         assert got == expected, (value, got, expected)
 
 
-def test_오타값은_off로_떨어진다():
-    """알 수 없는 값은 off 로 폴백된다."""
-    # 오타가 인증 판정을 조용히 강화하거나 완화해서는 안 된다.
+def test_오타값은_strict로_떨어진다():
+    """알 수 없는 값은 strict 로 폴백된다(실패 시 닫힘)."""
+    # 오타가 인증 판정을 조용히 완화해서는 안 된다 — 끄려면 off 를 명시해야 한다(감사 K7).
     for value in ("strictt", "formatt", "verify", "yes please"):
         got = _with_flag(value, screening._cert_verify_mode)
-        assert got == "off", (value, got)
+        assert got == "strict", (value, got)
 
 
 def test_may_promote_모드별():

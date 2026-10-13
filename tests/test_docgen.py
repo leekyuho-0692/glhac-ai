@@ -8,6 +8,8 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("GLHAC_DB_URL", "sqlite:///./glhac_docgen_test.db")
 
+import pytest  # noqa: E402
+from fastapi import HTTPException  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
@@ -242,7 +244,12 @@ def test_material_report_snapshot_and_source_docs(tmp_path):
 
 def test_contract_fee_override(tmp_path):
     db = _seed_db(tmp_path)
-    m.gen_contract("case1", body={"fee": 9999000}, user=USER, db=db)
+    # 금액 override 는 운영자만(감사 K3) — 신청자는 403 FEE_OVERRIDE_FORBIDDEN
+    with pytest.raises(HTTPException) as e:
+        m.gen_contract("case1", body={"fee": 9999000}, user=USER, db=db)
+    assert e.value.status_code == 403 and e.value.detail["code"] == "FEE_OVERRIDE_FORBIDDEN"
+    operator = {"uid": "op1", "role": "operator", "org_id": "org_demo"}
+    m.gen_contract("case1", body={"fee": 9999000}, user=operator, db=db)
     ct = db.query(models.Contract).filter_by(case_id="case1").first()
     assert ct.fee == 9999000  # M4: 특수조항 수동 금액 override
 

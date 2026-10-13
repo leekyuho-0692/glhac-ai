@@ -49,7 +49,9 @@ def test_물이_아닌_air는_물로_보지_않는다():
 
 
 # ── 4) 인증번호 → 할랄 (위험도는 그대로) ─────────────────────────────────
-def test_인증번호가_있으면_의심이_할랄로_올라간다():
+def test_인증번호가_있으면_의심이_할랄로_올라간다(monkeypatch):
+    # 번호만으로 승격하는 옛 동작은 명시적 off 에서만 — 기본은 strict(감사 K7)
+    monkeypatch.setenv("GLHAC_CERT_VERIFY", "off")
     base = screening.screen_merged("Bahan Tidak Dikenal")
     assert base["status"] == "mushbooh"
     got = screening.screen_merged("Bahan Tidak Dikenal", cert_no="ID00410000008400120")
@@ -58,8 +60,10 @@ def test_인증번호가_있으면_의심이_할랄로_올라간다():
     assert got["decision_by"] == "cert_no"
 
 
-def test_인증번호로_올려도_위험도는_바뀌지_않는다():
+def test_인증번호로_올려도_위험도는_바뀌지_않는다(monkeypatch):
     """위험도는 '그 성분이 원래 얼마나 위험한가'다. 번호 하나로 지우면 오디터가 볼 것이 없어진다."""
+    # 번호만으로 승격하는 옛 동작은 명시적 off 에서만 — 기본은 strict(감사 K7)
+    monkeypatch.setenv("GLHAC_CERT_VERIFY", "off")
     a = screening.screen_merged("gelatin")
     b = screening.screen_merged("gelatin", cert_no="ID001")
     assert a["severity"] == b["severity"] == "high"
@@ -164,7 +168,9 @@ def test_목록이_증빙_문서를_개수뿐_아니라_목록으로_준다():
 
 
 # ── 4) 수정 통로 ─────────────────────────────────────────────────────────
-def test_인증번호를_나중에_넣어도_판정이_갱신된다():
+def test_인증번호를_나중에_넣어도_판정이_갱신된다(monkeypatch):
+    # 번호만으로 승격하는 옛 동작은 명시적 off 에서만 — 기본은 strict(감사 K7)
+    monkeypatch.setenv("GLHAC_CERT_VERIFY", "off")
     with TestClient(app) as c:
         h = _tok(c)
         cid = _case(c, h)
@@ -178,8 +184,10 @@ def test_인증번호를_나중에_넣어도_판정이_갱신된다():
         assert row["status"] == "halal" and row["cert_no"] == "ID00410000001"
 
 
-def test_인증번호로_올린_사실이_감사기록에_남는다():
+def test_인증번호로_올린_사실이_감사기록에_남는다(monkeypatch):
     """번호만 적힌 것과 증빙으로 해소된 것은 다르다 — 오디터가 되짚을 수 있어야 한다."""
+    # 번호만으로 승격하는 옛 동작은 명시적 off 에서만 — 기본은 strict(감사 K7)
+    monkeypatch.setenv("GLHAC_CERT_VERIFY", "off")
     import app.models as models
     with TestClient(app) as c:
         h = _tok(c)

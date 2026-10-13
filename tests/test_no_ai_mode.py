@@ -118,6 +118,7 @@ def test_LLM_없어도_원재료_판정은_동작한다(monkeypatch):
     from app import screening
     r = screening.screen_merged("lard")
     assert r["status"] == "haram"
+    monkeypatch.setenv("GLHAC_CERT_VERIFY", "off")   # 번호만으로 승격은 명시적 off 에서만(감사 K7)
     r2 = screening.screen_merged("Bahan Tidak Dikenal", cert_no="ID001")
     assert r2["status"] == "halal" and r2["cert_promoted"] is True
 

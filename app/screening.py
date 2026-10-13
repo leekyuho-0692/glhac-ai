@@ -134,17 +134,17 @@ def _from_docs_enabled():
 
 
 # 3단 모드다. off 는 기존 동작(판정만 기록), format 은 형식 불량만 차단,
-# strict 는 VERIFIED 만 승격. 오타가 인증 판정을 조용히 바꾸면 안 되므로
-# 알 수 없는 값은 off 로 떨어진다. 호출 시점에 읽는 것이 의도적이다.
+# strict 는 VERIFIED 만 승격. 호출 시점에 읽는 것이 의도적이다.
+# 기본값은 strict — 미설정이 off 라 'asdfghjk' 같은 아무 문자열 인증번호로 의심 원재료가
+# 할랄(CLEARED)로 올라갔다(감사 K7). off 는 명시적으로 끌 때만이고, 알 수 없는 값(오타)도
+# 판정을 완화하지 않도록 strict 로 떨어진다(실패 시 닫힘).
 def _cert_verify_mode():
     raw = os.environ.get("GLHAC_CERT_VERIFY", "").strip().lower()
-    if raw in ("", "0", "off", "false", "no"):
+    if raw in ("0", "off", "false", "no"):
         return "off"
     if raw == "format":
         return "format"
-    if raw in ("1", "true", "on", "yes", "strict"):
-        return "strict"
-    return "off"
+    return "strict"
 
 
 def document_evidence(material, docs, content_check="strict"):
