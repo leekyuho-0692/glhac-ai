@@ -81,10 +81,31 @@ def _confirm_contract(case_id):
 
 
 def _mk_case_with_invoice(c, tok, status="consultant_review"):
+    import os
     cid = c.post("/cases", json={"company_name": "PG게이트테스트", "is_msme": True},
                  headers=_h(tok)).json()["case_id"]
     _confirm_contract(cid)   # 청구서 생성 선행조건(계약 게이트) 충족
     _set_status(cid, status)
+
+    # 정식 흐름 활성화 시 정식 신청 제출·접수 기록 — 게이트 통과용
+    if os.environ.get("GLHAC_FORMAL_FLOW") == "1":
+        from app import models, nav8
+        from app.db import SessionLocal
+        from app import state_machine as sm
+
+        db = SessionLocal()
+        try:
+            case = db.get(models.CaseApplication, cid)
+            # 정식 신청 제출 기록
+            sm.record_event(db, case, case.status, case.status, "formal_application.submitted",
+                          "consultant", "con_demo", {})
+            # 정식 신청 접수 기록(관리자 확인)
+            sm.record_event(db, case, case.status, case.status, "formal_application.accepted",
+                          "operator", "op_demo", {})
+            db.commit()
+        finally:
+            db.close()
+
     iid = c.post("/cases/%s/invoices" % cid, json={"service_type": "pre_audit", "amount": 1000000},
                  headers=_h(tok)).json()["invoice_id"]
     return cid, iid
