@@ -6261,9 +6261,19 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
                   db: Session = Depends(get_db)):
     """압축파일 업로드 → 파일 전수 파싱 → AI 분류 → 필수서류 라우팅 (Document Intake AI)."""
     c = _get_case(db, case_id, user)
-    raw = base64.b64decode(body.zip_b64.split(",")[-1])
-    from .intake import intake_zip
-    res = intake_zip(raw)
+    # ZIP 크기 검증 — 업로드 상한과 동일하게 적용
+    b64_str = body.zip_b64.split(",")[-1]
+    if len(b64_str) > _UPLOAD_MAX_BYTES * 4 // 3 + 1:  # base64는 raw보다 ~33% 큼
+        raise HTTPException(413, {"code": "ZIP_TOO_LARGE",
+                                  "message": "파일이 너무 큽니다 (최대 10MB)"})
+    raw = base64.b64decode(b64_str)
+    # ZIP 파일 검증
+    from .intake import intake_zip, ArchiveError
+    try:
+        res = intake_zip(raw)
+    except ArchiveError as e:
+        raise HTTPException(400, {"code": "BAD_ARCHIVE",
+                                  "message": str(e)})
     applied = _apply_intake_autofill(db, c, res)
     sm.record_event(db, c, c.status, c.status, "documents.intake", "ai", user["uid"],
                     {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})

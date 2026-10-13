@@ -7,6 +7,11 @@ import unicodedata
 import zipfile
 from . import ai_local
 
+# ZIP 추출 상한 — 압축폭탄 방어
+ZIP_MAX_UNCOMPRESSED = int(os.environ.get("GLHAC_ZIP_MAX_UNCOMPRESSED", "200000000"))  # 기본 200MB
+ZIP_MAX_SINGLE_FILE = int(os.environ.get("GLHAC_ZIP_MAX_SINGLE_FILE", ZIP_MAX_UNCOMPRESSED))  # 단일 파일도 동일
+ZIP_MAX_COMPRESSION_RATIO = float(os.environ.get("GLHAC_ZIP_MAX_COMPRESSION_RATIO", "100"))  # 압축비 100 초과 차단
+
 _MIME = {"pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
          "bmp": "image/bmp", "tiff": "image/tiff", "tif": "image/tiff", "webp": "image/webp",
          "txt": "text/plain; charset=utf-8", "csv": "text/csv",
@@ -304,11 +309,20 @@ def _extract_with_tool(data, suffix):
             raise ArchiveError("압축을 풀지 못했습니다: %s"
                                % (r.stderr.decode("utf-8", "ignore")[:200] or "unknown"))
         out = []
-        for root, _dirs, names in os.walk(dst):
+        # 심볼릭 링크 방어: followlinks=False + 경로 검증
+        dst_real = os.path.realpath(dst)
+        for root, _dirs, names in os.walk(dst, followlinks=False):
             for n in sorted(names):
                 if n.startswith("."):
                     continue
                 p = os.path.join(root, n)
+                # 심볼릭 링크 건너뛰기
+                if os.path.islink(p):
+                    continue
+                # 해제 디렉터리 밖을 가리키는 경로 검증
+                p_real = os.path.realpath(p)
+                if not p_real.startswith(dst_real):
+                    continue
                 rel = _nfc(os.path.relpath(p, dst))   # macOS 압축은 NFD
                 if "__MACOSX" in rel:
                     continue
@@ -337,6 +351,25 @@ def extract_zip(data):
     except zipfile.BadZipFile as e:
         raise ArchiveError("ZIP 파일이 손상되었습니다: %s" % e) from e
     with z:
+        # 압축폭탄 방어: 전체 해제 크기 및 엔트리별 검증
+        total_uncompressed = 0
+        for zi in z.infolist():
+            if zi.is_dir():
+                continue
+            # 엔트리 크기 검증
+            if zi.file_size > ZIP_MAX_SINGLE_FILE:
+                raise ArchiveError(f"파일이 너무 큽니다 ({zi.filename}: {zi.file_size} bytes > {ZIP_MAX_SINGLE_FILE})")
+            total_uncompressed += zi.file_size
+            # 전체 크기 검증
+            if total_uncompressed > ZIP_MAX_UNCOMPRESSED:
+                raise ArchiveError(f"압축 해제 후 크기가 너무 큽니다 (총 {total_uncompressed} bytes > {ZIP_MAX_UNCOMPRESSED})")
+            # 압축비 검증 (압축폭탄)
+            if zi.compress_size > 0:
+                ratio = zi.file_size / zi.compress_size
+                if ratio > ZIP_MAX_COMPRESSION_RATIO:
+                    raise ArchiveError(f"압축폭탄 의심 ({zi.filename}: 압축비 {ratio:.1f} > {ZIP_MAX_COMPRESSION_RATIO})")
+
+        # 실제 파일 추출
         for zi in z.infolist():
             if zi.is_dir():
                 continue
