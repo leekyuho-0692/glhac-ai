@@ -45,11 +45,11 @@ def test_b2_intake_preserves_llm_error():
 
 
 def test_b3_upload_limit_unified():
-    """B3: 업로드 상한이 일관되게 10MB로 설정."""
+    """B3: 업로드 상한이 일관되게 20MB(SRS NFR-05)로 설정."""
     from app.main import _UPLOAD_MAX_BYTES
     from app.intake import ZIP_MAX_UNCOMPRESSED
     # 스크립트 상수 확인
-    assert _UPLOAD_MAX_BYTES == 10 * 1024 * 1024  # 10MB
+    assert _UPLOAD_MAX_BYTES == 20 * 1024 * 1024  # 20MB
     # ZIP 상한도 확인 가능
     assert ZIP_MAX_UNCOMPRESSED > 0
 

@@ -100,24 +100,75 @@ def needs_rehash(stored) -> bool:
 
 
 # ---- 로그인 레이트리밋 (인메모리 슬라이딩 윈도; 단일 프로세스 가정) ----
-_LOGIN_ATTEMPTS = {}   # key -> [timestamps]
-_RL_WINDOW = 300       # 5분
-_RL_MAX = 10           # 윈도당 최대 실패
+_LOGIN_ATTEMPTS = {}       # key -> [timestamps] (username 단위)
+_RL_WINDOW = 300           # 5분
+_RL_MAX = 10               # 윈도당 최대 실패
+
+_IP_LOGIN_ATTEMPTS = {}    # ip -> [timestamps] (IP 단위)
+_IP_RL_WINDOW = 600        # 10분
+_IP_RL_MAX = 30            # 윈도당 최대 실패
 
 
 def rate_limited(key) -> bool:
+    """username 단위 레이트 리밋."""
     now = time.time()
     arr = [t for t in _LOGIN_ATTEMPTS.get(key, []) if now - t < _RL_WINDOW]
     _LOGIN_ATTEMPTS[key] = arr
     return len(arr) >= _RL_MAX
 
 
+def rate_limited_by_ip(ip: str) -> bool:
+    """IP 단위 레이트 리밋. GLHAC_LOGIN_IP_LIMIT으로 제어 (0이면 끔)."""
+    import os
+    try:
+        limit = int(os.environ.get("GLHAC_LOGIN_IP_LIMIT", "30"))
+    except (TypeError, ValueError):
+        limit = 30
+    if limit <= 0:
+        return False
+    now = time.time()
+    arr = [t for t in _IP_LOGIN_ATTEMPTS.get(ip, []) if now - t < _IP_RL_WINDOW]
+    _IP_LOGIN_ATTEMPTS[ip] = arr
+    return len(arr) >= limit
+
+
 def record_attempt(key):
+    """username 단위 실패 기록."""
     _LOGIN_ATTEMPTS.setdefault(key, []).append(time.time())
 
 
+def record_ip_attempt(ip: str):
+    """IP 단위 실패 기록."""
+    _IP_LOGIN_ATTEMPTS.setdefault(ip, []).append(time.time())
+
+
 def clear_attempts(key):
+    """username 단위 실패 초기화."""
     _LOGIN_ATTEMPTS.pop(key, None)
+
+
+def clear_ip_attempts(ip: str):
+    """IP 단위 실패 초기화."""
+    _IP_LOGIN_ATTEMPTS.pop(ip, None)
+
+
+# ---- username 중복 확인 레이트리밋 (IP 단위, 분당) ----
+_USERNAME_CHECK_ATTEMPTS = {}  # ip -> [timestamps]
+_UC_WINDOW = 60                # 1분
+_UC_MAX = 20                   # 분당 최대 20회
+
+
+def check_username_rate_limited(ip: str) -> bool:
+    """username 중복 확인 IP 제한 (분당 20회)."""
+    now = time.time()
+    arr = [t for t in _USERNAME_CHECK_ATTEMPTS.get(ip, []) if now - t < _UC_WINDOW]
+    _USERNAME_CHECK_ATTEMPTS[ip] = arr
+    return len(arr) >= _UC_MAX
+
+
+def record_username_check(ip: str):
+    """username 확인 기록."""
+    _USERNAME_CHECK_ATTEMPTS.setdefault(ip, []).append(time.time())
 
 
 def make_token(user, typ="access", ttl=None):

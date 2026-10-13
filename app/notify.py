@@ -133,11 +133,24 @@ def _send_email(contacts, text, notification=None):
         msg["Subject"] = "[GL-HAC] " + subj
         msg["From"] = frm
         msg["To"] = to
-        s = smtplib.SMTP(host, port, timeout=10)
-        try:
-            s.starttls()
-        except Exception:  # noqa: BLE001
-            pass
+
+        # GLHAC_SMTP_SSL=1이면 SSL 접속, 아니면 STARTTLS 사용
+        use_ssl = os.environ.get("GLHAC_SMTP_SSL") == "1"
+        if use_ssl:
+            s = smtplib.SMTP_SSL(host, port, timeout=10)
+        else:
+            s = smtplib.SMTP(host, port, timeout=10)
+            try:
+                s.starttls()
+            except Exception as e:  # noqa: BLE001
+                # starttls 실패 → 평문으로 login 하지 않고 실패 반환 (재시도 가능)
+                log.warning("[Email STARTTLS 실패] host=%s err=%s", host, e)
+                try:
+                    s.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                return {"channel": "email", "ok": False, "reason": "smtp_tls_failed"}
+
         if user and pw:
             s.login(user, pw)
         s.sendmail(frm, [to], msg.as_string())

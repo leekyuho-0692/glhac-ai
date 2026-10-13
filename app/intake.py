@@ -4,10 +4,18 @@ import io
 import os
 import re
 import unicodedata
+import logging
 import zipfile
 from . import ai_local
 
+log = logging.getLogger(__name__)
+
 # ZIP 추출 상한 — 압축폭탄 방어
+# 업로드 1건 상한 20MB (SRS NFR-05) — main.py 의 _UPLOAD_MAX_BYTES 와 원본 보관(content_b64) 상한이 같은 상수를 쓴다.
+UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+PDF_MAX_PAGES = 40          # PDF 최대 처리 쪽수
+PDF_MAX_TEXT_CHARS = 200000  # PDF 추출 텍스트 상한(20만 자)
+ZIP_MAX_ENTRIES = 200   # 압축 묶음 1건에서 처리할 최대 파일 수
 ZIP_MAX_UNCOMPRESSED = int(os.environ.get("GLHAC_ZIP_MAX_UNCOMPRESSED", "200000000"))  # 기본 200MB
 ZIP_MAX_SINGLE_FILE = int(os.environ.get("GLHAC_ZIP_MAX_SINGLE_FILE", ZIP_MAX_UNCOMPRESSED))  # 단일 파일도 동일
 ZIP_MAX_COMPRESSION_RATIO = float(os.environ.get("GLHAC_ZIP_MAX_COMPRESSION_RATIO", "100"))  # 압축비 100 초과 차단
@@ -334,6 +342,11 @@ def _extract_with_tool(data, suffix):
         return out
 
 
+class _ExtractedFiles(list):
+    """[(파일명, 바이트)] 목록 — 개수 상한 때문에 건너뛴 엔트리 수를 skipped 로 함께 싣는다."""
+    skipped = 0
+
+
 def extract_zip(data):
     """압축 묶음 → [(파일명, 바이트)]. ZIP·RAR·7z 를 모두 받는다.
 
@@ -345,7 +358,7 @@ def extract_zip(data):
         return _extract_with_tool(data, "." + kind)
     if kind is None:
         raise ArchiveError("압축 파일이 아닙니다 (ZIP·RAR·7z 만 지원합니다)")
-    out = []
+    out = _ExtractedFiles()
     try:
         z = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as e:
@@ -369,8 +382,14 @@ def extract_zip(data):
                 if ratio > ZIP_MAX_COMPRESSION_RATIO:
                     raise ArchiveError(f"압축폭탄 의심 ({zi.filename}: 압축비 {ratio:.1f} > {ZIP_MAX_COMPRESSION_RATIO})")
 
-        # 실제 파일 추출
-        for zi in z.infolist():
+        # 실제 파일 추출 — 최대 ZIP_MAX_ENTRIES 개, 초과분은 skipped 로 센다
+        infos = z.infolist()
+        for i, zi in enumerate(infos):
+            if len(out) >= ZIP_MAX_ENTRIES:
+                out.skipped = sum(1 for x in infos[i:] if not x.is_dir())
+                if out.skipped:
+                    log.warning("ZIP 엔트리 초과: %d개 건너뜀 (최대 %d개)", out.skipped, ZIP_MAX_ENTRIES)
+                break
             if zi.is_dir():
                 continue
             name = _zip_name(zi)
@@ -379,8 +398,8 @@ def extract_zip(data):
                 continue
             try:
                 out.append((name, z.read(zi)))
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001
+                log.warning("ZIP 엔트리 읽기 실패 %s: %s", zi.filename, e)
     return out
 
 
@@ -633,18 +652,37 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
             import fitz
             doc = fitz.open(stream=data, filetype="pdf")
             txt = ""
-            for pg in list(doc)[:8]:
+            max_pages = PDF_MAX_PAGES
+            max_text_len = PDF_MAX_TEXT_CHARS
+            for pg in list(doc)[:max_pages]:
+                if len(txt) > max_text_len:  # 상한 도달 → 중단
+                    break
                 t = pg.get_text()
                 if len(t.strip()) < 20:  # 스캔본 → PNG 렌더 후 OCR (파일경로 없이 bytes)
                     t = _ocr_bytes(pg.get_pixmap(dpi=_dpi).tobytes("png"), "png")
                 txt += t + "\n"
-            return txt
+            return txt[:max_text_len]  # 상한 적용
         if ext in ("txt", "csv"):
             return _decode_text(data)
         if ext == "docx":
             import docx
             d = docx.Document(io.BytesIO(data))
-            return "\n".join(pp.text for pp in d.paragraphs)
+            out = []
+            # 단락과 표를 순서대로 추출
+            for pp in d.paragraphs:
+                if pp.text.strip():
+                    out.append(pp.text)
+            # 표 셀 텍스트도 행 단위로 추출
+            for table in d.tables:
+                for row in table.rows:
+                    cells = []
+                    for cell in row.cells:
+                        cell_text = " ".join(p.text for p in cell.paragraphs).strip()
+                        if cell_text:
+                            cells.append(cell_text)
+                    if cells:
+                        out.append(" | ".join(cells))
+            return "\n".join(out)
         if ext == "xlsx":
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
@@ -678,7 +716,8 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
                         out.append(" ".join(cells))
             wb.close()
             return "\n".join(out)[:20000]
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        log.warning("파일 파싱 실패 %s: %s", name, e)
         return ""
     return ""
 
@@ -1314,15 +1353,14 @@ def intake_zip_iter(data, limit=200):
         _lines = []                       # 여기서 읽은 OCR을 버리지 않고 넘긴다
         text = parse_file(name, raw, ocr_sink=_lines)
         cl = classify(name, text)
-        # content_b64는 업로드 상한과 같은 값으로 제한 (10MB)
-        # main.py의 _UPLOAD_MAX_BYTES와 일치하도록 동일 상한 사용
-        UPLOAD_MAX_RAW_BYTES = 10 * 1024 * 1024  # 10MB와 일치
+        # content_b64는 업로드 상한과 같은 값으로 제한 (20MB)
+        # main.py 의 _UPLOAD_MAX_BYTES 와 같은 상수(UPLOAD_MAX_BYTES)를 공유한다 (SRS NFR-05)
         d = {"filename": os.path.basename(name), "doc_type": cl["doc_type"],
              "ocr_lines": _lines or None,
              "doc_type_ko": DOC_KO.get(cl["doc_type"], cl["doc_type"]),
              "confidence": cl.get("confidence", 0.0), "fields": cl.get("fields", {}),
              "text_len": len(text), "excerpt": text[:300],
-             "content_b64": base64.b64encode(raw).decode() if len(raw) < UPLOAD_MAX_RAW_BYTES else None,
+             "content_b64": base64.b64encode(raw).decode() if len(raw) <= UPLOAD_MAX_BYTES else None,
              "llm_error": cl.get("llm_error"),
              "content_type": _ctype(name)}
         docs.append(d)
@@ -1333,7 +1371,10 @@ def intake_zip_iter(data, limit=200):
                   "files": [d["filename"] for d in docs if d["doc_type"] == dt]}
                  for dt in REQUIRED_DOCS]
     missing = [c["doc_type_ko"] for c in checklist if not c["satisfied"]]
-    yield ("result", {"file_count": len(files), "classified": docs, "checklist": checklist,
+    skipped = getattr(files, "skipped", 0) + max(0, len(files) - limit)
+    if skipped:
+        log.warning("인테이크 대상 초과: %d개 건너뜀", skipped)
+    yield ("result", {"file_count": len(files), "skipped_entries": skipped, "classified": docs, "checklist": checklist,
                       "missing": missing, "complete": len(missing) == 0,
                       "extracted": aggregate_fields(docs)})
 

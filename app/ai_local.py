@@ -48,14 +48,18 @@ def _ollama_up(timeout=2.5):
 
 
 def provider(refresh=False):
-    """지금 어느 공급자를 쓰는가. auto 는 30초 캐시 — 호출마다 헬스체크하면 느려진다."""
+    """지금 어느 공급자를 쓰는가. auto 는 30초 캐시 — 호출마다 헬스체크하면 느려진다.
+
+    원격 자동 폴백은 금지한다. auto 모드는 로컬(ollama)만 시도하고 실패하면 'none'을 반환한다.
+    원격은 GLHAC_LLM_PROVIDER=openai 를 명시했을 때만 사용한다."""
     import time as _t
     if PROVIDER in ("none", "ollama", "openai"):
         return PROVIDER
+    # auto 모드: 로컬만 시도, 실패하면 none (원격 폴백 금지)
     now = _t.time()
     if not refresh and _provider_cache["value"] and now - _provider_cache["at"] < 30:
         return _provider_cache["value"]
-    val = "ollama" if _ollama_up() else ("openai" if OPENAI_KEY else "none")
+    val = "ollama" if _ollama_up() else "none"
     _provider_cache.update({"value": val, "at": now})
     return val
 
