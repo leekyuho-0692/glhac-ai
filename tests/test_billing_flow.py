@@ -122,13 +122,13 @@ def test_견적_산출_근거와_버전():
         cid = _mkcase(c, admin)
         q1 = _quote(c, operator, cid, {"product_count": 3, "onsite": True, "options": ["sihalal_registration"]})
         assert q1["subtotal"] == 9100000
-        assert q1["ppn"] == 1001000
-        assert q1["total"] == 10101000
+        assert q1["ppn"] == 910000          # MA1: 기본 부가세 10%
+        assert q1["total"] == 10010000
         codes = {l["code"] for l in q1["lines"]}
         assert {"base", "product_extra", "onsite_travel", "opt:sihalal_registration"} <= codes
         q2 = _quote(c, operator, cid, {"product_count": 1, "onsite": False})
         assert q2["version"] == 2
-        assert q2["total"] == round(6500000 * 1.11)
+        assert q2["total"] == round(6500000 * 1.10)
         r = c.get("/cases/%s/quote" % cid, headers=operator)
         assert r.status_code == 200, r.text
         assert len(r.json()["history"]) == 2

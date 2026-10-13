@@ -296,7 +296,7 @@ class FatwaDecision(Base):
 
 
 class Invoice(Base):
-    """청구/인보이스 (v1 상속) — PPN 11% + 전이게이트."""
+    """청구/인보이스 (v1 상속) — PPN 기본 10%(청구 설정 ppn_rate) + 전이게이트."""
     __tablename__ = "invoice"
     invoice_id = Column(String, primary_key=True, default=uid)
     case_id = Column(String, nullable=False)
@@ -646,7 +646,7 @@ class Payment(Base):
     invoice_id = Column(String, index=True)
     case_id = Column(String, index=True)
     amount = Column(Float)
-    currency = Column(String, default="IDR")
+    currency = Column(String, default="KRW")  # MA1: KRW 통일(기록 시 케이스 계약 통화로 덮어씀)
     method = Column(String)           # bank_transfer|va|card|manual
     reference = Column(String)
     status = Column(String, default="confirmed")  # pending|confirmed
@@ -678,7 +678,7 @@ class Deposit(Base):
     account_no_masked = Column(String)
     depositor_name = Column(String)
     amount = Column(Float)
-    currency = Column(String, default="IDR")
+    currency = Column(String, default="KRW")  # MA1: KRW 통일(기록 시 케이스 계약 통화로 덮어씀)
     ref_memo = Column(String)                 # 이체 메모(invoice_no/payment_ref 포함 가능)
     deposit_at = Column(DateTime, default=datetime.utcnow)
     matched_invoice_id = Column(String, index=True)
@@ -960,7 +960,7 @@ class ConsultantPayout(Base):
     base_amount = Column(Float)       # 정산 근거 매출 합계
     rate = Column(Float)              # 적용 수수료율(%) — 지급 시점 값을 박아둔다
     amount = Column(Float)            # 실지급액
-    currency = Column(String, default="IDR")
+    currency = Column(String, default="KRW")  # MA1: KRW 통일(기록 시 케이스 계약 통화로 덮어씀)
     invoice_ids = Column(JSON)        # 어느 인보이스가 근거인지 — 되짚을 수 있어야 한다
     status = Column(String, default="pending")   # pending|paid|cancelled
     paid_at = Column(DateTime)

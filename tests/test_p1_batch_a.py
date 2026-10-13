@@ -62,7 +62,7 @@ def _count(case_id, model, **filt):
 
 
 def test_a_multi_line_invoice_saves_items_and_sums():
-    """(a) 다항목 청구 생성 → 라인아이템 저장·합계(DPP=Σamount, PPN 11%) 반영."""
+    """(a) 다항목 청구 생성 → 라인아이템 저장·합계(DPP=Σamount, PPN 10%(MA1: 한국 부가세 기본)) 반영."""
     with TestClient(app) as c:
         con = _tok(c, "consultant1", "pw")
         cid = _mkcase(c, _tok(c, "admin", "admin"))
@@ -75,8 +75,8 @@ def test_a_multi_line_invoice_saves_items_and_sums():
         assert r.status_code == 200, r.text
         body = r.json()
         assert len(body["line_items"]) == 2, body
-        assert body["ppn"] == round(7500000 * 0.11, 2), body      # DPP=7.5M → PPN
-        assert body["total"] == round(7500000 * 1.11, 2), body
+        assert body["ppn"] == round(7500000 * 0.10, 2), body      # DPP=7.5M → PPN
+        assert body["total"] == round(7500000 * 1.10, 2), body
         # 조회 병합(list) 시에도 라인아이템 반환
         lst = c.get(f"/cases/{cid}/invoices", headers=_h(con)).json()
         assert lst[0]["line_items"] and len(lst[0]["line_items"]) == 2, lst

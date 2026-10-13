@@ -14062,7 +14062,7 @@ def _render_finance_pdf(kind, inv, c, pay=None, items=None):
 
     # 금액
     dpp = float(inv.amount or 0)
-    ppn = float(inv.ppn) if getattr(inv, "ppn", None) is not None else round(dpp * 0.11)
+    ppn = float(inv.ppn) if getattr(inv, "ppn", None) is not None else round(dpp * 0.10)
     total = float(inv.total) if getattr(inv, "total", None) is not None else dpp + ppn
     inv_no = inv.invoice_no or "-"
     today = date.today().isoformat()
@@ -15218,7 +15218,8 @@ def add_invoice(case_id: str, body: schemas.InvoiceReq,
     # P1-#1: 라인아이템이 있으면 DPP(amount)는 라인 합계로 산정(특수조항 수동조정 반영).
     items = _norm_line_items(body.line_items)
     amount = round(sum(it["amount"] for it in items), 2) if items else body.amount
-    ppn = round(amount * 0.11, 2)
+    # MA1: 부가세율은 청구 설정(ppn_rate, 저장값 존중·기본 0.10)에서 — 0.11 하드코딩 제거
+    ppn = round(amount * float(_billing_settings(db, c.org_id).get("ppn_rate", 0.10)), 2)
     total = round(amount + ppn, 2)
     inv = models.Invoice(case_id=case_id, service_type=body.service_type, amount=amount,
                          ppn=ppn, total=total, status="waiting_payment",
@@ -15303,7 +15304,7 @@ def record_payment(invoice_id: str, body: schemas.PaymentReq,
     auto = (can_auto_confirm and body.method in ("va", "card")
             and abs((paid_amt or 0) - (inv.total or 0)) < 0.01)
     p = models.Payment(invoice_id=invoice_id, case_id=inv.case_id, amount=paid_amt,
-                       method=body.method, reference=body.reference,
+                       currency=_case_currency(db, inv.case_id), method=body.method, reference=body.reference,
                        status=("confirmed" if auto else "pending"), paid_by=user["uid"])
     db.add(p)
     frm = inv.status
@@ -15327,6 +15328,14 @@ def list_payments(case_id: str, user=Depends(auth.get_current_user), db: Session
             .order_by(models.Payment.paid_at.desc()).all())
     return [{"id": p.id, "invoice_id": p.invoice_id, "amount": p.amount, "method": p.method,
              "reference": p.reference, "status": p.status, "paid_at": str(p.paid_at)} for p in rows]
+
+
+def _case_currency(db, case_id):
+    """MA1: 결제·입금·청구 기록의 통화 — 그 케이스 계약(Contract.currency)에서 가져온다(없으면 KRW).
+    통화를 코드에 박지 않는다(과거 하드코딩 "IDR" 제거, 사용자 결정: KRW 통일)."""
+    ct = (db.query(models.Contract).filter_by(case_id=case_id)
+          .order_by(models.Contract.created_at.desc()).first()) if case_id else None
+    return (ct.currency if ct and ct.currency else "KRW")
 
 
 _INVOICE_STATES = {"draft", "invoice_created", "waiting_payment", "payment_processing",
@@ -15353,7 +15362,7 @@ def set_invoice_status(invoice_id: str, body: schemas.InvoiceStatusReq,
             models.Payment.amount > 0).first()
         if not pend and not has_pos:
             db.add(models.Payment(invoice_id=invoice_id, case_id=inv.case_id, amount=(inv.total or 0),
-                                  currency="IDR", method="manual", status="confirmed", paid_by=user["uid"]))
+                                  currency=_case_currency(db, inv.case_id), method="manual", status="confirmed", paid_by=user["uid"]))
     _audit(db, user, "payment.status", "invoice", invoice_id, inv.case_id,
            {"before": frm, "after": body.status, "reason": body.reason}, commit=False)
     if body.status == "paid":       # 관리자 결제확정 → 모의심사 진입 게이트
@@ -15467,7 +15476,7 @@ async def pg_webhook(provider: str, request: Request, db: Session = Depends(get_
                 inv.status = new_status
                 # Payment 기록
                 db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, method=provider,
-                                      amount=amt, currency="IDR", status="confirmed",
+                                      amount=amt, currency=_case_currency(db, inv.case_id), status="confirmed",
                                       reference=str(order_id)))
                 for p in db.query(models.Payment).filter_by(invoice_id=inv.invoice_id, status="pending"):
                     p.status = "confirmed"
@@ -15576,7 +15585,7 @@ def decide_refund(refund_id: str, body: schemas.RefundDecideReq,
     if body.decision == "approved" and inv:
         inv.status = "refunded"
         db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, amount=-(r.amount or 0),
-                              method="refund", reference=refund_id, status="confirmed",
+                              currency=_case_currency(db, inv.case_id), method="refund", reference=refund_id, status="confirmed",
                               paid_by=user["uid"]))
     _audit(db, user, "payment.refund." + body.decision, "invoice", r.invoice_id, r.case_id,
            {"refund_id": refund_id, "amount": r.amount, "requester": r.requested_by}, commit=False)
@@ -15769,8 +15778,9 @@ def add_deposit(body: schemas.DepositReq, user=Depends(auth.require_roles("opera
         inv = cands[0]["invoice"]
         inv.status = "paid"
         dep.matched_invoice_id = inv.invoice_id; dep.match_status = "matched"
+        dep.currency = _case_currency(db, inv.case_id)   # MA1: 입금 통화 = 매칭된 케이스 계약 통화
         db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, amount=dep.amount,
-                              method="bank_transfer", reference=dep.ref_memo,
+                              currency=dep.currency, method="bank_transfer", reference=dep.ref_memo,
                               status="confirmed", paid_by=user["uid"]))
         _audit(db, user, "payment.match.auto", "invoice", inv.invoice_id, inv.case_id,
                {"deposit_id": dep.id, "score": cands[0]["score"], "auto": True}, commit=False)
@@ -15826,8 +15836,11 @@ def decide_match(candidate_id: str, body: schemas.MatchDecisionReq,
         inv = db.get(models.Invoice, cand.invoice_id); dep = db.get(models.Deposit, cand.deposit_id)
         if inv:
             frm = inv.status; inv.status = "paid"
+            _cur = _case_currency(db, inv.case_id)   # MA1
+            if dep:
+                dep.currency = _cur
             db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id,
-                   amount=(dep.amount if dep else inv.total), method="bank_transfer",
+                   amount=(dep.amount if dep else inv.total), currency=_cur, method="bank_transfer",
                    reference=(dep.ref_memo if dep else None), status="confirmed", paid_by=user["uid"]))
         if dep:
             dep.matched_invoice_id = cand.invoice_id; dep.match_status = "matched"
@@ -16698,7 +16711,7 @@ BILLING_SETTINGS_DEFAULT = {
     "per_product_extra": 300000,          # 2번째 품목부터 품목당
     "onsite_travel": 1500000,             # 현장심사 출장비
     "options": {"sihalal_registration": 500000},
-    "ppn_rate": 0.11,
+    "ppn_rate": 0.10,           # MA1: 한국 부가세 10%(저장된 설정은 그대로 존중)
     "payment_terms": "split50",           # lump | split50 (계약 시 50% · 인증서 발급 시 50%)
     "due_days": 7,
     "auto_notice_contract": True,
@@ -16791,7 +16804,7 @@ def _quote_compute(db, c, settings, opts):
             continue
         lines.append({"code": "adjust", "label": str(adj.get("label") or "조정"), "qty": 1, "unit": amt, "amount": amt})
     subtotal = round(sum(l["amount"] for l in lines), 2)
-    ppn = round(subtotal * float(settings.get("ppn_rate", 0.11)), 2)
+    ppn = round(subtotal * float(settings.get("ppn_rate", 0.10)), 2)
     return {"sector": sector, "product_count": n_prod, "lines": lines, "subtotal": subtotal, "ppn": ppn,
             "total": round(subtotal + ppn, 2), "payment_terms": settings.get("payment_terms"),
             "currency": "KRW"}
@@ -16872,7 +16885,7 @@ def _create_installments(db, c, contract, settings, user):
     plan = [(1, total, "contract")] if terms == "lump" else [(1, round(total / 2, 2), "contract"), (2, round(total - round(total / 2, 2), 2), "certificate")]
     out = []
     for rnd, amt, stage in plan:
-        base = round(amt / (1 + float(settings.get("ppn_rate", 0.11))), 2)
+        base = round(amt / (1 + float(settings.get("ppn_rate", 0.10))), 2)
         inv = models.Invoice(case_id=c.case_id, service_type="installment", amount=base, ppn=round(amt - base, 2), total=amt,
                              status="waiting_payment" if stage == "contract" else "draft",
                              due_date=(datetime.utcnow() + timedelta(days=int(settings.get("due_days") or 7))) if stage == "contract" else None)
@@ -17116,7 +17129,8 @@ def get_billing_defaults(user=Depends(auth.get_current_user), db: Session = Depe
     return {"rates": [{"service_type": k, "label": BILLING_SERVICE_KO[k], "amount": rates[k],
                        "is_default": rates[k] == BILLING_FALLBACK[k]}
                       for k in BILLING_SERVICE_TYPES],
-            "customized": customized, "updated_at": at, "ppn_rate": 0.11}
+            "customized": customized, "updated_at": at,
+            "ppn_rate": float(_billing_settings(db, user.get("org_id")).get("ppn_rate", 0.10))}
 
 
 @app.post("/billing/defaults")
