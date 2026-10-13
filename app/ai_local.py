@@ -225,6 +225,10 @@ def ocr_image(path, lang="korean"):
     if OCR_MODE == "inproc":
         return _ocr_image_inproc(path, lang)
     r = _worker_call({"op": "ocr_lines", "path": path, "lang": lang})
+    # 타임아웃은 폴백하지 않음 — 웹 프로세스에서 대형 모델 로드 시 OOM 위험
+    if isinstance(r, dict) and str(r.get("error", "")) == "WORKER_TIMEOUT":
+        return r
+    # WORKER_FAILED는 폴백 가능
     if isinstance(r, dict) and str(r.get("error", "")).startswith("WORKER_FAILED"):
         return _ocr_image_inproc(path, lang)
     return r
@@ -395,6 +399,7 @@ def _worker_call(req):
     """워커에 한 건 보내고 결과를 받는다. 죽어 있으면 띄우고, 실패하면 되살린다."""
     import json as _j
     import time as _t
+    import select
     with _wlock():
         if not _worker_alive():
             _worker_start()
@@ -402,6 +407,12 @@ def _worker_call(req):
         try:
             p.stdin.write(_j.dumps(req, ensure_ascii=False) + "\n")
             p.stdin.flush()
+            # select를 사용해 타임아웃 구현 — 응답 없으면 OCR_TIMEOUT 초 후 실패
+            readable, _, _ = select.select([p.stdout], [], [], OCR_TIMEOUT)
+            if not readable:
+                # 타임아웃 발생 — 워커 프로세스 강제 종료
+                _worker_stop()
+                return {"ok": False, "error": "WORKER_TIMEOUT"}
             line = p.stdout.readline()
             if not line:
                 raise RuntimeError("worker closed")
@@ -432,11 +443,17 @@ def ocr_text_multi(path, langs):
     """여러 언어로 OCR → 텍스트 병합. 기본은 별도 워커 프로세스에서 돈다.
 
     웹 프로세스가 모델을 이고 있지 않게 하려는 것이다(실측 2.4~7.8GB).
-    워커가 죽거나 못 뜨면 in-process 로 떨어진다 — 서류 접수가 멈추는 것보다 낫다."""
+    워커가 죽거나 못 뜨면 in-process 로 떨어진다 — 서류 접수가 멈추는 것보다 낫다.
+    단, 타임아웃 실패는 폴백하지 않음 — OOM 위험."""
     if OCR_MODE == "inproc":
         return _ocr_text_multi_inproc(path, langs)
     r = _worker_call({"op": "ocr", "path": path, "langs": list(langs or [])})
-    if isinstance(r, dict) and str(r.get("error", "")).startswith("WORKER_FAILED"):
+    # 타임아웃은 폴백하지 않음
+    error_msg = str(r.get("error", "")) if isinstance(r, dict) else ""
+    if error_msg == "WORKER_TIMEOUT":
+        return r
+    # WORKER_FAILED는 폴백 가능
+    if error_msg.startswith("WORKER_FAILED"):
         log_msg = r.get("error")
         try:
             import logging
