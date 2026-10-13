@@ -69,6 +69,17 @@ jobs:
           GLHAC_E2E_SKIP_OLLAMA: '1'                             # 러너에 Ollama 가 없다
         run: bash tests/run_isolated.sh
 
+      - name: 테스트 (암호화 모드)
+        env:
+          PYTHON: python
+          GLHAC_COV: '1'
+          GLHAC_E2E_BASE: http://127.0.0.1:8899
+          GLHAC_DB_URL: sqlite:///${{ runner.temp }}/ci_encrypted.db
+          GLHAC_E2E_SKIP_OLLAMA: '1'
+          GLHAC_ENCRYPTION: '1'
+          GLHAC_ENC_KEY: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='  # base64 32바이트 고정값 (테스트용)
+        run: bash tests/run_isolated.sh
+
       - name: 서버 로그 (실패 원인 추적)
         if: always()
         run: cat "${{ runner.temp }}/server.log" || true
