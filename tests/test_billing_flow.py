@@ -278,7 +278,7 @@ def test_입금고지_재고지_입금완료_확인_자동알림():
         assert r.status_code == 200, r.text
         it = _board(c, operator, cid)
         assert it["next_action"] == "confirm_paid"
-        r = c.patch("/invoices/%s/status" % iid, headers=operator, json={"status": "paid", "reason": ""})
+        r = c.patch("/invoices/%s/status" % iid, headers=operator, json={"status": "paid", "reason": "입금 확인"})
         assert r.status_code == 200, r.text
         db = SessionLocal()
         try:
@@ -316,8 +316,12 @@ def test_미리청구와_완납():
         assert r.status_code == 200, r.text
         assert any(n["kind"] == "payment_due" and n["invoice_id"] == draft for n in r.json()["items"])
         for i in invs:
+            if i["status"] == "draft":   # MA2: draft → paid 직행 금지 — 청구 발행(waiting_payment) 후 확정
+                r = c.patch("/invoices/%s/status" % i["invoice_id"], headers=operator,
+                            json={"status": "waiting_payment", "reason": "미리 청구"})
+                assert r.status_code == 200, r.text
             r = c.patch("/invoices/%s/status" % i["invoice_id"], headers=operator,
-                        json={"status": "paid", "reason": ""})
+                        json={"status": "paid", "reason": "입금 확인"})
             assert r.status_code == 200, r.text
         it = _board(c, operator, cid)
         assert it["settled"] is True

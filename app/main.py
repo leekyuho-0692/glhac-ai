@@ -15339,19 +15339,40 @@ def _case_currency(db, case_id):
 
 
 _INVOICE_STATES = {"draft", "invoice_created", "waiting_payment", "payment_processing",
-                   "need_verification", "paid", "rejected", "refunded", "expired"}
+                   "need_verification", "paid", "rejected", "refunded", "expired", "cancelled"}
+
+# MA2: PATCH /invoices/{id}/status 허용 전이표(from → {to}). 표에 없는 전이는 409.
+# paid 에서 나가는 전이는 이 라우트에서 금지 — 환불은 기존 환불 흐름(/invoices/{id}/refund/request → /refunds/{id}/decide, maker-checker)으로만.
+_INVOICE_TRANSITIONS = {
+    "draft": {"invoice_created", "waiting_payment", "cancelled"},
+    "invoice_created": {"waiting_payment", "cancelled"},
+    "waiting_payment": {"payment_processing", "need_verification", "paid", "expired", "cancelled"},
+    "payment_processing": {"paid", "need_verification", "rejected"},
+    "need_verification": {"paid", "rejected"},
+    "rejected": {"waiting_payment"},
+    "expired": {"waiting_payment"},
+}
 
 
 @app.patch("/invoices/{invoice_id}/status")
 def set_invoice_status(invoice_id: str, body: schemas.InvoiceStatusReq,
                        user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
-    """결제 상태 확정/변경 — 관리자(operator/admin) 전용, maker-checker + 감사로그(§9)."""
+    """결제 상태 변경 — 관리자(operator/admin) 전용. 허용 전이표(_INVOICE_TRANSITIONS)만 통과하고,
+    사유(reason) 필수 + 감사로그(§9)를 남긴다. 별도 승인자(checker)는 없다 — 이 라우트는 maker-checker 가
+    아니다(maker-checker 는 환불 승인에만 적용). paid 확정 후 되돌림은 환불 흐름으로만 가능."""
     if body.status not in _INVOICE_STATES:
         raise HTTPException(422, {"code": "BAD_STATUS", "allowed": sorted(_INVOICE_STATES)})
+    if not (body.reason or "").strip():
+        raise HTTPException(422, {"code": "REASON_REQUIRED", "detail": "상태 변경 사유(reason)는 필수입니다."})
     inv = db.get(models.Invoice, invoice_id)
     if not inv:
         raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
     frm = inv.status
+    cur_state = "waiting_payment" if frm == "unpaid" else frm   # 레거시 unpaid = waiting_payment
+    allowed = _INVOICE_TRANSITIONS.get(cur_state, set())
+    if body.status not in allowed:
+        raise HTTPException(409, {"code": "INVALID_INVOICE_TRANSITION", "from": frm, "to": body.status,
+                                  "allowed": sorted(allowed)})
     inv.status = body.status
     if body.status == "paid":   # 확정 시 대기중 결제 confirmed 처리
         pend = db.query(models.Payment).filter_by(invoice_id=invoice_id, status="pending").all()

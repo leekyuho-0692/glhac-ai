@@ -186,3 +186,73 @@ def test_ma1_청구서_생성_부가세는_설정_기본_10퍼센트():
                    json={"service_type": "pre_audit", "amount": 1_000_000})
         assert r.status_code == 200, r.text
         assert r.json()["ppn"] == 100_000.0 and r.json()["total"] == 1_100_000.0
+
+
+# ======== MA2: 청구 상태 전이표 ========
+
+def _patch(c, h, iid, status, reason="사유"):
+    return c.patch(f"/invoices/{iid}/status", headers=h, json={"status": status, "reason": reason})
+
+
+@pytest.mark.parametrize("frm,to", [
+    ("draft", "invoice_created"), ("draft", "waiting_payment"), ("draft", "cancelled"),
+    ("invoice_created", "waiting_payment"), ("invoice_created", "cancelled"),
+    ("waiting_payment", "payment_processing"), ("waiting_payment", "need_verification"),
+    ("waiting_payment", "expired"), ("waiting_payment", "cancelled"),
+    ("payment_processing", "need_verification"), ("payment_processing", "rejected"),
+    ("need_verification", "rejected"), ("rejected", "waiting_payment"), ("expired", "waiting_payment"),
+])
+def test_ma2_허용_전이는_200(frm, to):
+    """표의 허용 전이는 통과(paid 목적지는 MA3 합산 검증이 별도라 여기서 제외).
+    수정 전에는 cancelled 가 BAD_STATUS(422)라 *→cancelled 가 실패한다."""
+    iid = _invoice(_db_case(), status=frm)
+    with TestClient(app) as c:
+        r = _patch(c, _op(c), iid, to)
+        assert r.status_code == 200, r.text
+    assert _inv_status(iid) == to
+
+
+@pytest.mark.parametrize("frm,to", [
+    ("draft", "paid"), ("draft", "payment_processing"), ("invoice_created", "paid"),
+    ("waiting_payment", "draft"), ("waiting_payment", "rejected"),
+    ("payment_processing", "waiting_payment"), ("need_verification", "waiting_payment"),
+    ("rejected", "paid"), ("expired", "paid"), ("cancelled", "waiting_payment"),
+    ("refunded", "paid"),
+    ("paid", "waiting_payment"), ("paid", "rejected"), ("paid", "refunded"), ("paid", "need_verification"),
+])
+def test_ma2_금지_전이는_409(frm, to):
+    """수정 전에는 어떤 전이든 200 (paid → waiting_payment 로 되돌려 결제 게이트 우회 가능했음)."""
+    iid = _invoice(_db_case(), status=frm)
+    with TestClient(app) as c:
+        r = _patch(c, _op(c), iid, to)
+        assert r.status_code == 409, r.text
+        assert _code(r) == "INVALID_INVOICE_TRANSITION"
+        assert r.json()["detail"]["from"] == frm
+    assert _inv_status(iid) == frm   # 상태·결제 부작용 없음
+    assert _payments(iid) == []
+
+
+def test_ma2_사유_필수_빈값_공백_누락_422():
+    """수정 전에는 reason 이 비어도 200."""
+    iid = _invoice(_db_case(), status="waiting_payment")
+    with TestClient(app) as c:
+        h = _op(c)
+        for body in ({"status": "expired", "reason": ""}, {"status": "expired", "reason": "   "},
+                     {"status": "expired"}):
+            r = c.patch(f"/invoices/{iid}/status", headers=h, json=body)
+            assert r.status_code == 422, r.text
+            assert _code(r) == "REASON_REQUIRED"
+    assert _inv_status(iid) == "waiting_payment"
+
+
+def test_ma2_레거시_unpaid는_waiting_payment로_취급():
+    iid = _invoice(_db_case(), status="unpaid")
+    with TestClient(app) as c:
+        assert _patch(c, _op(c), iid, "expired").status_code == 200
+
+
+def test_ma2_알수없는_상태는_422():
+    iid = _invoice(_db_case())
+    with TestClient(app) as c:
+        r = _patch(c, _op(c), iid, "bogus")
+        assert r.status_code == 422 and _code(r) == "BAD_STATUS"
