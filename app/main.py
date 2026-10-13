@@ -1044,24 +1044,30 @@ def health(db: Session = Depends(get_db)):
 
 
 @app.get("/metrics")
-def metrics(request: Request, user=Depends(auth.get_current_user)):
+def metrics(request: Request):
     """Prometheus 메트릭 노출(§11.3) — 집계값만(PII 없음). 스크레이프용. 인증 보호 (A7)."""
     import os as _os
     import hmac
     from fastapi.responses import PlainTextResponse
 
     token_env = _os.environ.get("GLHAC_METRICS_TOKEN")
+    auth_header = request.headers.get("Authorization", "").strip()
+
     if token_env:
         # 토큰 환경변수 설정 시 Bearer 토큰 검증
-        auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             raise HTTPException(401, {"code": "TOKEN_REQUIRED"})
         provided_token = auth_header[7:]
         if not hmac.compare_digest(provided_token, token_env):
             raise HTTPException(403, {"code": "INVALID_TOKEN"})
     else:
-        # 미설정 시 operator/admin만 허용
-        if user["role"] not in ("operator", "admin"):
+        # 미설정 시: Authorization 헤더의 JWT로 operator/admin 검증
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(401, {"code": "NO_AUTH"})
+        payload = auth.verify_token(auth_header[7:])
+        if not payload:
+            raise HTTPException(401, {"code": "INVALID_TOKEN"})
+        if payload.get("role") not in ("operator", "admin"):
             raise HTTPException(403, {"code": "FORBIDDEN_ROLE"})
 
     return PlainTextResponse(obs.render_prometheus(),
@@ -6725,9 +6731,9 @@ def return_application(case_id: str, body: schemas.ReturnReq,
     # 승인 후 케이스는 반려 불가 (A2)
     locked_states = {"fatwa_approved", "certificate_issued", "post_certification_monitoring",
                      "change_impact", "renewal_preparation"}
-    if c.status in locked_states or db.query(models.CertificateIssued).filter(
-            models.CertificateIssued.case_id == case_id,
-            models.CertificateIssued.status == "active").count() > 0:
+    if c.status in locked_states or db.query(models.HalalCertificate).filter(
+            models.HalalCertificate.case_id == case_id,
+            models.HalalCertificate.status == "active").count() > 0:
         raise HTTPException(409, {"code": "CASE_LOCKED_AFTER_APPROVAL"})
     prev = c.status
     c.draft_state = "returned"
@@ -15389,15 +15395,25 @@ async def pg_webhook(provider: str, request: Request, db: Session = Depends(get_
             new_status = None  # 상태 변경 없음
         elif new_status == "paid":
             # paid: 금액 검증 (A4-1)
-            amt = payload.get("gross_amount") or payload.get("amount") or inv.total
-            if amt and abs(float(amt or 0) - inv.total) > 0.01:
-                inv.status = "need_verification"  # 금액 불일치 시 검증 필요
+            amt_raw = payload.get("gross_amount") or payload.get("amount")
+            # 금액 없거나 변환 실패면 need_verification (A4)
+            amt_ok = False
+            if amt_raw is not None:
+                try:
+                    amt = float(amt_raw)
+                    if abs(amt - inv.total) <= 0.01:
+                        amt_ok = True
+                except (ValueError, TypeError):
+                    pass  # 변환 실패 → need_verification
+
+            if not amt_ok:
+                inv.status = "need_verification"
                 applied = {"invoice_id": inv.invoice_id, "from": frm, "to": "need_verification"}
             else:
                 inv.status = new_status
                 # Payment 기록
                 db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, method=provider,
-                                      amount=float(amt or 0), currency="IDR", status="confirmed",
+                                      amount=amt, currency="IDR", status="confirmed",
                                       reference=str(order_id)))
                 for p in db.query(models.Payment).filter_by(invoice_id=inv.invoice_id, status="pending"):
                     p.status = "confirmed"

@@ -223,8 +223,9 @@ INVOICE_SETTLED = {"paid", "refunded", "expired", "cancelled"}
 
 def has_unpaid_invoice(db, case_id):
     from .models import Invoice
+    # draft는 아직 청구 전 상태이므로 미결로 세지 않음 (A1)
     return db.query(Invoice).filter(Invoice.case_id == case_id,
-                                    ~Invoice.status.in_(INVOICE_SETTLED)).count() > 0
+                                    Invoice.status.notin_(INVOICE_SETTLED | {"draft"})).count() > 0
 
 
 def guard_payment(db, case):
