@@ -1563,11 +1563,13 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
                .order_by(models.WorkflowEvent.created_at.desc()).first())
         _meta = dict((_ev.payload or {})) if _ev else {}
     _reg_sectors = [s for s in (body.sectors or _meta.get("sectors") or []) if s in intake.SECTORS]
-    # 회사1:직원N — 소속회사명으로 기존 org(Company) 매핑 (Phase 2)
-    existing = db.query(models.Org).filter(models.Org.name == company_name).first() if company_name else None
+    # 자가가입은 회사명이 같아도 기존 org 에 편입하지 않는다 — 회사명만 맞추면 남의 회사
+    # 케이스·문서를 열람할 수 있었다(교차 조직 침입, 2026-10 감사 K1).
+    # 기존 회사 직원 추가는 /orgs/{org_id}/accounts 발급 경로로만 한다.
+    existing = None
     if existing:
         org = existing.org_id
-        company_role = "client_staff"    # 기존 회사 추가 직원 = 업무자
+        company_role = "client_staff"
     else:
         org = "org_" + models.uid()[:8]
         company_role = "client_admin"    # 새 회사 첫 가입자 = 기업업무 관리자
