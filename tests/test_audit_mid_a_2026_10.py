@@ -452,3 +452,86 @@ def test_ma5_원재료_삭제시_연결삭제_문서보존():
         assert db.query(models.AuditLog).filter_by(action="material.delete", resource_id=m1).count() == 1
     finally:
         db.close()
+
+
+# ======== MA6: alembic 단일 head · _migrate 오류 처리 ========
+
+def test_ma6_alembic_head_는_하나():
+    """ScriptDirectory.get_heads() 길이 1. 수정 전: 0007_audit_log / 42fd1a346122 두 개."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    cfg = Config(os.path.join(ROOT, "alembic.ini"))
+    cfg.set_main_option("script_location", os.path.join(ROOT, "alembic"))   # 레포 루트 기준 절대경로
+    heads = ScriptDirectory.from_config(cfg).get_heads()
+    assert len(heads) == 1, heads
+
+
+def test_ma6_fresh_DB_에서_upgrade_head_가_성공(tmp_path):
+    """병합 리비전 포함 `alembic upgrade head` 가 새 SQLite 에서 끝까지 적용된다."""
+    import subprocess
+    env = dict(os.environ, GLHAC_DB_URL="sqlite:///" + str(tmp_path / "mig.db"))
+    r = subprocess.run([sys.executable, "-m", "alembic", "upgrade", "head"], cwd=ROOT, env=env,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-800:]
+
+
+@pytest.fixture
+def _ma6_tables():
+    """_migrate 가 보는 메타데이터에 임시 테이블 3개를 얹고 끝나면 제거(다른 테스트 오염 방지)."""
+    import sqlalchemy as sa
+    from app.db import Base, engine
+    made = []
+    with engine.begin() as conn:
+        conn.exec_driver_sql('CREATE TABLE ma6_add (id TEXT PRIMARY KEY)')
+        conn.exec_driver_sql('CREATE TABLE ma6_bad (id TEXT PRIMARY KEY)')
+        conn.exec_driver_sql('CREATE TABLE ma6_dup (id TEXT PRIMARY KEY, dupcol TEXT)')
+    made.append(sa.Table("ma6_add", Base.metadata, sa.Column("id", sa.String, primary_key=True),
+                         sa.Column("extra", sa.String)))
+    made.append(sa.Table("ma6_bad", Base.metadata, sa.Column("id", sa.String, primary_key=True),
+                         sa.Column('bad"col', sa.String)))   # 따옴표 때문에 ALTER 가 구문 오류
+    made.append(sa.Table("ma6_dup", Base.metadata, sa.Column("id", sa.String, primary_key=True),
+                         sa.Column("dupcol", sa.String)))
+    yield
+    for t in made:
+        Base.metadata.remove(t)
+    with engine.begin() as conn:
+        for n in ("ma6_add", "ma6_bad", "ma6_dup"):
+            conn.exec_driver_sql(f"DROP TABLE IF EXISTS {n}")
+
+
+def test_ma6_migrate_누락컬럼_추가_오류는_로그_duplicate는_무시(_ma6_tables, caplog, monkeypatch):
+    """실제 _migrate() 호출.
+    · 누락 컬럼은 추가된다  · 구문 오류 ALTER 는 log.error(테이블·컬럼·오류) 후 계속(예외 전파 없음)
+    · duplicate column 은 로그 없이 무시. 수정 전: 모든 예외를 삼켜 error 로그가 0건."""
+    import logging
+    import sqlalchemy
+    from app.db import engine
+    from app.main import _migrate
+
+    real_inspect = sqlalchemy.inspect
+
+    class _StaleInspector:   # ma6_dup 의 dupcol 이 없다고 보고 → ALTER 시도 → SQLite 'duplicate column name'
+        def __init__(self, insp):
+            self._i = insp
+
+        def has_table(self, n):
+            return self._i.has_table(n)
+
+        def get_columns(self, n):
+            cols = self._i.get_columns(n)
+            return [c for c in cols if not (n == "ma6_dup" and c["name"] == "dupcol")]
+
+    monkeypatch.setattr(sqlalchemy, "inspect", lambda e: _StaleInspector(real_inspect(e)))
+    import app.main as _m
+    dup_hits = []
+    real_dup = _m._is_duplicate_column_error
+    monkeypatch.setattr(_m, "_is_duplicate_column_error", lambda e: dup_hits.append(1) or real_dup(e))
+    with caplog.at_level(logging.ERROR, logger="glhac.migrate"):
+        _migrate()
+    msgs = [r.getMessage() for r in caplog.records if r.name == "glhac.migrate"]
+    assert len(msgs) == 1, msgs                                  # bad 한 건만
+    assert "ma6_bad" in msgs[0] and 'bad"col' in msgs[0]         # 테이블·컬럼 포함
+    assert not any("ma6_dup" in m for m in msgs)                 # duplicate 는 무시
+    assert len(dup_hits) == 2                                    # dup·bad 두 ALTER 실패가 판별 함수를 거쳤다
+    cols = {c["name"] for c in real_inspect(engine).get_columns("ma6_add")}
+    assert "extra" in cols                                       # 정상 컬럼은 추가됨(부팅 계속)

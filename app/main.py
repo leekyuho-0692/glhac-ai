@@ -260,24 +260,38 @@ def _validate_upload(file_b64, filename, max_bytes=_UPLOAD_MAX_BYTES):
     return b64
 
 
+def _is_duplicate_column_error(e):
+    """ALTER TABLE ADD COLUMN 이 '이미 있는 컬럼' 때문에 실패했는가 — SQLite 'duplicate column name',
+    PostgreSQL 'column ... already exists'(DuplicateColumn). 그 외 오류는 진짜 실패다."""
+    msg = str(getattr(e, "orig", e) or e).lower()
+    return "duplicate column" in msg or ("column" in msg and "already exists" in msg)
+
+
 def _migrate():
     """경량 마이그레이션 — 모델 정의와 기존 테이블을 대조해 누락 컬럼 idempotent 추가.
-    create_all은 기존 테이블을 ALTER하지 않으므로, baseline 이후 추가된 전 컬럼을 자동 보강(P0-5)."""
+    create_all은 기존 테이블을 ALTER하지 않으므로, baseline 이후 추가된 전 컬럼을 자동 보강(P0-5).
+
+    MA6: 이미 있는 컬럼(duplicate column)만 조용히 건너뛰고, 그 외 ALTER 오류는 테이블·컬럼·오류를
+    log.error 로 남긴 뒤 부팅을 계속한다(예전에는 모든 예외를 삼켜 컬럼이 안 생겨도 알 수 없었다).
+    ALTER 마다 별도 트랜잭션 — PostgreSQL 은 실패한 문장이 트랜잭션을 abort 시켜 뒤 문장까지 연쇄 실패한다."""
     from sqlalchemy import text as _sql, inspect as _inspect
+    mlog = logging.getLogger("glhac.migrate")
     insp = _inspect(engine)
-    with engine.begin() as conn:
-        for table in Base.metadata.sorted_tables:
-            if not insp.has_table(table.name):
-                continue  # create_all이 신규 테이블은 처리
-            existing = {c["name"] for c in insp.get_columns(table.name)}
-            for col in table.columns:
-                if col.name in existing:
-                    continue
-                try:
-                    typ = col.type.compile(engine.dialect)
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue  # create_all이 신규 테이블은 처리
+        existing = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name in existing:
+                continue
+            try:
+                typ = col.type.compile(engine.dialect)
+                with engine.begin() as conn:
                     conn.execute(_sql(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {typ}'))
-                except Exception:  # noqa: BLE001 — 제약 있는 컬럼 등은 skip
-                    pass
+            except Exception as e:  # noqa: BLE001
+                if _is_duplicate_column_error(e):
+                    continue
+                mlog.error("마이그레이션 ALTER 실패 — 테이블=%s 컬럼=%s 오류=%s", table.name, col.name, e)
 
 
 # Phase B: 핫 컬럼 인덱스(테이블스캔 제거) — SQLite/Postgres 양립, 기존 DB 포함.
