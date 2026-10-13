@@ -1288,6 +1288,17 @@ def set_org_branding(org_id: str, body: dict = None, user=Depends(auth.require_r
     return {"org_id": org_id, "branding": branding}
 
 
+def _own_cert(db, case_id):
+    """MA7: 케이스의 '우리 인증서' — status="external"(인테이크가 업체의 기존 인증서 문서로 만든 참고
+    레코드)은 제외한다. active 를 우선, 없으면 정지/철회 등 나머지. 상태·유효기간·발급 여부를 읽는 곳은
+    case_id 만으로 .first() 하지 말고 이 함수를 쓴다(external 을 우리 인증서로 오인 방지)."""
+    HC = models.HalalCertificate
+    cert = db.query(HC).filter_by(case_id=case_id, status="active").first()
+    if cert:
+        return cert
+    return (db.query(HC).filter(HC.case_id == case_id, HC.status.is_distinct_from("external")).first())
+
+
 @app.get("/verify/{qr_token}")
 def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
     """공개 인증서 검증(§11.5·§14 P1) — 인증 불필요, 민감정보 미노출.
@@ -1295,7 +1306,7 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
     base_token, _, prod_frag = qr_token.partition(".")
     cert = (db.query(models.HalalCertificate).filter_by(qr_token=base_token).first()
             if base_token else None)
-    if not cert:
+    if not cert or cert.status == "external":   # MA7: 외부 인증서 사본은 공개 검증 대상 아님
         raise HTTPException(404, {"code": "CERT_NOT_FOUND", "valid": False})
     product_scope = None
     if prod_frag:
@@ -2518,7 +2529,7 @@ def gen_report(case_id: str, user=Depends(auth.get_current_user), db: Session = 
     have = _ensure_hpas(db, case_id)
     findings = db.query(models.AuditFinding).filter_by(case_id=case_id).all()
     invs = db.query(models.Invoice).filter_by(case_id=case_id).all()
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    cert = _own_cert(db, case_id)
     prods = [p.name for p in db.query(models.Product).filter_by(case_id=case_id)]
     L = ["=" * 50, "AI 할랄 인증 준비 보고서", "=" * 50,
          "회사: %s (NIB: %s)" % (c.company_name or "-", c.nib or "-"),
@@ -6106,7 +6117,11 @@ def _process_doc(db, c, d, applied):
         cn = flds.get("cert_no")
         if cn and not db.query(models.HalalCertificate).filter_by(
                 case_id=c.case_id, certificate_no=cn).first():
-            # 여기 날짜는 **AI 가 서류에서 읽은 값**이다. 그대로 status=active 인증서로
+            # MA7: 이 인증서는 **업체가 이미 가진 외부 인증서의 문서 사본**이지 우리가 발급한 게 아니다 —
+            # status="external". active 로 저장하면 만료 스캔·갱신·공개 검증이 외부 인증서를 우리 것으로 오인하고,
+            # 정식 발급(active 레코드 신규 생성)도 '이미 active 있음'으로 막힌다. 정식 발급은 별도 active 레코드를
+            # 만든다(external 을 대체하지 않는다).
+            # 여기 날짜는 **AI 가 서류에서 읽은 값**이다. 그대로 인증서로
             # 저장하면 나중에 date.fromisoformat 으로 읽는 곳(만료 경보·유효성 판정)이
             # 죽는다. 읽히지 않는 날짜는 비워 두고, 앞뒤가 뒤집힌 쌍은 둘 다 버린다 —
             # 지어낸 유효기간으로 '유효한 인증서'를 만들지 않는다.
@@ -6117,7 +6132,7 @@ def _process_doc(db, c, d, applied):
             db.add(models.HalalCertificate(
                 case_id=c.case_id, certificate_no=cn,
                 issue_date=_iss, expiry_date=_exp,
-                scope=flds.get("scope"), status="active"))
+                scope=flds.get("scope"), status="external"))
             applied["halal_cert"] = cn
             if _note:
                 applied["halal_cert_note"] = _note
@@ -8594,7 +8609,7 @@ def gen_fatwa_decree(case_id, user=Depends(rbac.require_action("fatwa.document.r
     _audit(db, user, "fatwa.decree.generate", "fatwa", case_id, case_id)
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     prods = db.query(models.Product).filter_by(case_id=case_id).all()
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    cert = _own_cert(db, case_id)
     lines = []
     lines.append("[할랄 판결문 · Fatwa Decision (HALAL DECREE) — %s]" % (c.company_name or case_id[:8]))
     lines.append("결정번호: %s" % (fd.decision_no if fd and fd.decision_no else "(미발급)"))
@@ -8618,7 +8633,7 @@ def get_fatwa_decree_pdf(case_id, user=Depends(rbac.require_action("fatwa.docume
     c = _get_case(db, case_id, user)
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     prods = db.query(models.Product).filter_by(case_id=case_id).all()
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    cert = _own_cert(db, case_id)
     head = fd.committee_head if fd else None
     sec = fd.committee_secretary if fd else None
     members = (fd.committee_members or []) if fd else []
@@ -10686,7 +10701,7 @@ def get_case_journey(case_id: str, user=Depends(auth.get_current_user), db=Depen
     sjph = db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type="sjph_manual").first()
     areport = db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type="audit_report").first()
     fatwa = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    cert = _own_cert(db, case_id)
     stages = [
         ("signup", "회원가입", True),
         ("application", "신청", st not in ("onboarding", "application_draft")),
@@ -13889,7 +13904,7 @@ def product_certificate_pdf(case_id: str, product_id: str,
 def get_certificate(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     _audit(db, user, "certificate.read", "certificate", case_id, case_id)
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    cert = _own_cert(db, case_id)
     if not cert:
         return {"issued": False}
     days = None
@@ -13922,7 +13937,7 @@ def certificate_pdf(case_id: str, user=Depends(auth.get_current_user), db: Sessi
     from fastapi.responses import Response
     from urllib.parse import quote
     c = _get_case(db, case_id, user)
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    cert = _own_cert(db, case_id)
     if not cert:
         raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
     pdf = _cert_pdf_bytes(db, c, cert)   # 할랄마크번호·파트와결정번호 포함(공통 렌더)
@@ -13940,7 +13955,7 @@ def certificate_bundle(case_id: str, user=Depends(auth.get_current_user), db: Se
     from fastapi.responses import StreamingResponse
     from urllib.parse import quote
     c = _get_case(db, case_id, user)
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    cert = _own_cert(db, case_id)
     if not cert:
         raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
     _audit(db, user, "certificate.bundle", "certificate", case_id, case_id)
@@ -14359,7 +14374,7 @@ def _cert_status_change(db, case_id, user, action, new_status, from_status, reas
                         event, title, body):
     """정지/철회/재개 공통 — from_status 인증서만 대상, 사유·통지·감사."""
     c = _get_case(db, case_id, user)
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    cert = _own_cert(db, case_id)
     if not cert:
         raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
     if cert.status != from_status:
@@ -14451,7 +14466,7 @@ def _revoke_guards(db, case_id):
                     models.HalalCertificate.status.in_(("active", "suspended")))
             .first())
     if not cert:
-        exists = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+        exists = _own_cert(db, case_id)   # MA7: external 만 있으면 우리 인증서 없음 → 404
         if not exists:
             raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
         raise HTTPException(409, {"code": "BAD_CERT_STATE", "have": exists.status})
@@ -15959,7 +15974,9 @@ def _report_metrics(db, cases, s, e):
         contract_amount += float(ct.fee or 0) if ct else 0.0
     pays = db.query(models.Payment).filter(models.Payment.case_id.in_(list(ids)) if ids else False).all() if ids else []
     paid_amount = round(sum(float(p.amount or 0) for p in pays if p.status == "confirmed" and _in(p.paid_at, s, e)), 2)
-    certs = db.query(models.HalalCertificate).filter(models.HalalCertificate.case_id.in_(list(ids)) if ids else False).all() if ids else []
+    certs = (db.query(models.HalalCertificate)
+             .filter(models.HalalCertificate.case_id.in_(list(ids)),
+                     models.HalalCertificate.status.is_distinct_from("external")).all() if ids else [])   # MA7: 외부 인증서는 발급 실적 아님
     issued = sum(1 for ct in certs if ct.issue_date and s.isoformat() <= ct.issue_date[:10] < e.isoformat())
     return {"new_cases": new_cases, "eligible": eligible, "contracts_signed": len(signed_evs),
             "contract_amount": round(contract_amount, 2), "paid_amount": paid_amount,
@@ -16158,7 +16175,8 @@ def analytics_summary(user=Depends(auth.require_roles("operator")), db: Session 
             by_month[mk] = by_month.get(mk, 0) + 1
     case_ids = [c.case_id for c in cases]
     certs = (db.query(models.HalalCertificate)
-             .filter(models.HalalCertificate.case_id.in_(case_ids)).all() if case_ids else [])
+             .filter(models.HalalCertificate.case_id.in_(case_ids),
+                     models.HalalCertificate.status.is_distinct_from("external")).all() if case_ids else [])   # MA7
     certs_by_month = {}
     for ct in certs:
         try:
@@ -18252,7 +18270,7 @@ def ask_ai(case_id: str, body: schemas.AskReq,
     have = _ensure_hpas(db, case_id)
     sjph_ok = sum(1 for h in have.values() if h.status == "ok")
     open_find = db.query(models.AuditFinding).filter_by(case_id=case_id, status="open").count()
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    cert = _own_cert(db, case_id)
     ctx = "\n".join([
         "회사: %s" % (c.company_name or "-"),
         "경로: %s, 상태: %s, MSME: %s" % (c.pathway, c.status, c.is_msme),
@@ -19684,7 +19702,7 @@ def export_case_json(case_id: str, user=Depends(auth.get_current_user),
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
     findings = db.query(models.AuditFinding).filter_by(case_id=case_id).all()
     fw = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
-    cert = db.query(models.HalalCertificate).filter_by(case_id=case_id).first()
+    cert = _own_cert(db, case_id)
     cl_items = db.query(models.OnsiteChecklist).filter_by(case_id=case_id).all()
     pool = db.query(models.AuditorPool).filter_by(case_id=case_id).all()
     invs = db.query(models.Invoice).filter_by(case_id=case_id).all()

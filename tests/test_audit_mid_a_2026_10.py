@@ -535,3 +535,109 @@ def test_ma6_migrate_누락컬럼_추가_오류는_로그_duplicate는_무시(_m
     assert len(dup_hits) == 2                                    # dup·bad 두 ALTER 실패가 판별 함수를 거쳤다
     cols = {c["name"] for c in real_inspect(engine).get_columns("ma6_add")}
     assert "extra" in cols                                       # 정상 컬럼은 추가됨(부팅 계속)
+
+
+# ======== MA7: 인테이크 할랄 인증서 = external, 우리 인증서로 오인 금지 ========
+
+def _intake_external_cert(cid, cert_no="EXT-ID-001", expiry=None):
+    """실제 인테이크 처리 함수(_process_doc)로 외부 인증서 레코드를 만든다."""
+    from datetime import date, timedelta
+    from app.main import _process_doc
+    expiry = expiry or (date.today() + timedelta(days=10)).isoformat()
+    db = SessionLocal()
+    try:
+        c = db.get(models.CaseApplication, cid)
+        applied = {}
+        _process_doc(db, c, {"doc_type": "halal_certificate",
+                             "fields": {"cert_no": cert_no, "issue_date": "2024-01-01",
+                                        "expiry_date": expiry, "scope": ["외부 제품"]}}, applied)
+        db.commit()
+        assert applied.get("halal_cert") == cert_no
+        return db.query(models.HalalCertificate).filter_by(case_id=cid, certificate_no=cert_no).one().id
+    finally:
+        db.close()
+
+
+def test_ma7_인테이크_인증서는_external():
+    """수정 전: status="active"."""
+    cid = _db_case("MA7-a")
+    xid = _intake_external_cert(cid)
+    db = SessionLocal()
+    try:
+        assert db.get(models.HalalCertificate, xid).status == "external"
+    finally:
+        db.close()
+
+
+def test_ma7_external_은_우리_인증서로_조회되지_않는다():
+    """GET certificate · /verify · suspend/revoke · 만료스캔이 external 을 무시한다.
+    수정 전: issued=True, 정지/철회가 외부 인증서를 변경, 만료 알림이 외부 인증서 기준으로 발송."""
+    cid = _db_case("MA7-b")
+    xid = _intake_external_cert(cid, "EXT-ID-002")
+    db = SessionLocal()
+    try:
+        db.get(models.HalalCertificate, xid).qr_token = "ma7-ext-token"   # 토큰이 있어도 공개검증 불가
+        db.commit()
+    finally:
+        db.close()
+    with TestClient(app) as c:
+        h = _tok(c, "admin", "admin")
+        assert c.get(f"/cases/{cid}/certificate", headers=h).json() == {"issued": False}
+        assert c.get(f"/cases/{cid}/certificate/pdf", headers=h).status_code == 404
+        assert c.get("/verify/ma7-ext-token").status_code == 404
+        for act in ("suspend", "revoke"):
+            r = c.post(f"/cases/{cid}/certificate/{act}", headers=h, json={"reason": "외부 인증서 테스트"})
+            assert r.status_code == 404, (act, r.text)
+            assert _code(r) == "CERT_NOT_FOUND"
+        before = db_count_notifs(cid)
+        r = c.post("/admin/scan-expiry", headers=h)
+        assert r.status_code == 200, r.text
+        assert db_count_notifs(cid) == before          # 외부 인증서 만료 임박 알림 없음
+    db = SessionLocal()
+    try:
+        assert db.get(models.HalalCertificate, xid).status == "external"   # 변경되지 않음
+    finally:
+        db.close()
+
+
+def db_count_notifs(cid):
+    db = SessionLocal()
+    try:
+        return db.query(models.Notification).filter_by(case_id=cid, event_type="expiry_soon").count()
+    finally:
+        db.close()
+
+
+def test_ma7_정식발급은_별도_active_레코드_external_은_그대로():
+    """external 이 있어도 정식 발급이 새 active 를 만들고(대체 아님), 이후 조회는 active 를 가리킨다."""
+    from app.main import _do_issue_certificate
+    cid = _db_case("MA7-c")
+    xid = _intake_external_cert(cid, "EXT-ID-003")
+    db = SessionLocal()
+    try:
+        c = db.get(models.CaseApplication, cid)
+        res = _do_issue_certificate(db, c, {"uid": "u1", "role": "admin", "org_id": "org_demo"})
+        db.commit()
+        assert not res.get("existing")
+        certs = db.query(models.HalalCertificate).filter_by(case_id=cid).all()
+        assert sorted(x.status for x in certs) == ["active", "external"]
+        assert db.get(models.HalalCertificate, xid).certificate_no == "EXT-ID-003"
+        active = [x for x in certs if x.status == "active"][0]
+        assert active.id != xid and active.certificate_no.startswith("HC-")
+    finally:
+        db.close()
+    with TestClient(app) as c:
+        h = _tok(c, "admin", "admin")
+        body = c.get(f"/cases/{cid}/certificate", headers=h).json()
+        assert body["certificate_no"] == active.certificate_no
+
+
+def test_ma7_분석요약_발급실적은_external_제외():
+    """GET /analytics/summary 의 월별 발급 집계가 외부 인증서(발급일 2024-01)를 세지 않는다.
+    수정 전: certs_by_month 에 '2024-01': 1."""
+    cid = _db_case("MA7-d")
+    _intake_external_cert(cid, "EXT-ID-004")
+    with TestClient(app) as c:
+        r = c.get("/analytics/summary", headers=_tok(c, "admin", "admin"))
+        assert r.status_code == 200, r.text
+        assert "2024-01" not in (r.json().get("certs_by_month") or {})
