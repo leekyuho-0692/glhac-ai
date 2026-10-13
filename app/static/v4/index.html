@@ -877,10 +877,26 @@ async function apiRefresh(){
 async function apiFetch(path, opts={}){   // 화면이 실API 호출할 때 사용 (Bearer + 401 자동 refresh)
   opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
   if(AUTH.access) opts.headers['Authorization'] = 'Bearer '+AUTH.access;
-  let r = await fetch(API_BASE+path, opts);
-  if(r.status===401 && await apiRefresh()){ opts.headers['Authorization']='Bearer '+AUTH.access; r = await fetch(API_BASE+path, opts); }
-  else if(r.status===401 && AUTH.access && !path.startsWith('/auth/')) sessionExpired();
-  return r;
+  /* 타임아웃: 업로드·접수는 180초, 그 외 30초. 호출자가 signal 을 넘겼으면 그 취소도 함께 존중한다(둘 중 먼저 오는 쪽으로 중단). */
+  const timeout = (path.includes('intake') || path.includes('upload')) ? 180000 : 30000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  const outer = opts.signal;
+  let onOuterAbort = null;
+  if(outer){
+    if(outer.aborted) controller.abort();
+    else{ onOuterAbort = () => controller.abort(); outer.addEventListener('abort', onOuterAbort); }
+  }
+  try{
+    opts = Object.assign({}, opts, {signal: controller.signal});   // 호출자의 opts 객체는 건드리지 않는다
+    let r = await fetch(API_BASE+path, opts);
+    if(r.status===401 && await apiRefresh()){ opts.headers['Authorization']='Bearer '+AUTH.access; r = await fetch(API_BASE+path, opts); }
+    else if(r.status===401 && AUTH.access && !path.startsWith('/auth/')) sessionExpired();
+    return r;
+  }finally{
+    clearTimeout(timeoutId);
+    if(outer && onOuterAbort) outer.removeEventListener('abort', onOuterAbort);
+  }
 }
 /* refresh 까지 실패(만료·다른 기기 로그아웃으로 TOKEN_REVOKED) — 빈 화면 대신 로그인으로 돌려보낸다 */
 let _expiredShown = false;
