@@ -4104,7 +4104,7 @@ def scan_expiry(user=Depends(auth.require_roles()), db: Session = Depends(get_db
 
 def _company_org_for(db, user, company_name):
     """업체 신청을 대신 만드는 스태프(컨설턴트·관리자)용 — 업체 조직을 찾거나 만든다.
-    같은 이름의 조직이 있고 (내 담당이거나 담당이 없으면) 재사용, 아니면 새로 만든다.
+    같은 이름의 조직이 내 담당이면(관리자는 무조건) 재사용, 아니면 새로 만든다.
     컨설턴트가 만들면 담당 컨설턴트로 연결한다(접근·수수료 근거, _is_my_client_org)."""
     if not company_name:
         raise HTTPException(422, {"code": "COMPANY_NAME_REQUIRED", "message": "업체명을 입력해 주세요"})
@@ -4112,9 +4112,10 @@ def _company_org_for(db, user, company_name):
     for o in db.query(models.Org).filter(models.Org.name == company_name).all():
         if o.org_id in ("org_demo", "*"):
             continue
-        if not o.consultant_id or o.consultant_id == mine or user["role"] == "admin":
-            if mine and not o.consultant_id:
-                o.consultant_id, o.consultant_linked_at = mine, datetime.utcnow()
+        # 컨설턴트는 자기 담당 조직만 재사용한다. 담당 없는 조직(자가가입 업체)을 회사명으로
+        # 집어 담당을 자기에게 붙이면 남의 고객 케이스 열람·수수료 귀속을 가로챌 수 있었다(감사 K1-2).
+        # 관리자는 전 조직 접근 권한이 있어 재사용하되 담당 귀속은 건드리지 않는다.
+        if (mine and o.consultant_id == mine) or user["role"] == "admin":
             return o.org_id
     o = models.Org(org_id="org_" + models.uid()[:8], name=company_name)
     if mine:
