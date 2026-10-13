@@ -88,12 +88,13 @@ def test_auto는_로컬을_먼저_본다(monkeypatch):
         _restore(old)
 
 
-def test_auto는_로컬이_없으면_원격으로(monkeypatch):
+def test_auto는_로컬이_없어도_원격으로_가지_않는다(monkeypatch):
+    """MB5: 업체 서류 원문이 외부로 나가므로 원격은 GLHAC_LLM_PROVIDER=openai 명시 때만."""
     m, old = _reload(OPENAI_API_KEY="sk-x")
     try:
         monkeypatch.setattr(m, "_ollama_up", lambda timeout=2.5: False)
         m._provider_cache.update({"value": None, "at": 0})
-        assert m.provider(refresh=True) == "openai"
+        assert m.provider(refresh=True) == "none"
     finally:
         _restore(old)
 
