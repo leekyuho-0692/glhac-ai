@@ -384,7 +384,9 @@ def test_public_list_hides_content():
               author_name="김대현", contact="010-3333-4444", password="pub12345")
         rows = c.get("/board/public").json()["items"]   # 로그인 없이
         assert rows and "body" not in rows[0] and "contact" not in rows[0]
-        me = [r for r in rows if r["title"] == "공개목록"][0]
+        # 공개 목록은 제목을 주지 않는다(제목이 업체 정보를 드러냄 — 이전 단언이 유출을 고정했음)
+        assert all("title" not in r for r in rows)
+        me = [r for r in rows if r["contact_masked"] == "010-****-4444"][0]
         assert me["author_masked"] == "김**"
         assert me["contact_masked"] == "010-****-4444"
 

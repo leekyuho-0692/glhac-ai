@@ -5,6 +5,7 @@ import os
 import secrets
 import re
 import time
+import threading
 import base64
 import logging
 from datetime import datetime, date, timedelta
@@ -116,8 +117,7 @@ def _rl_actor_key(request: Request) -> str:
         p = auth.verify_token(authz[7:])
         if p and p.get("uid"):
             return "uid:" + str(p["uid"])
-    client = request.client
-    return "ip:" + (client.host if client else "unknown")
+    return "ip:" + _extract_real_ip(request)
 
 
 @app.middleware("http")
@@ -218,7 +218,7 @@ def _sandboxed_path(raw_path: str) -> str:
 
 
 # 문서 P0(§9.3): 업로드 검증 — 크기·확장자 allowlist·매직바이트 sniff
-_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+_UPLOAD_MAX_BYTES = intake.UPLOAD_MAX_BYTES  # 20MB (SRS NFR-05) — 원본 보관 상한과 같은 상수
 _UPLOAD_EXT_ALLOW = {"pdf", "png", "jpg", "jpeg", "webp", "gif",
                      "xlsx", "xls", "docx", "doc", "csv", "txt", "hwp",
                      "mp4", "mov", "webm", "m4v"}   # 모의감사 생산공정 영상(§P0-5 클라이언트 뷰)
@@ -880,6 +880,41 @@ _NOTIFY_NONRETRY = ("no_credentials", "no_contact", "not_implemented")
 _USER_CHANNELS = {"sms", "whatsapp", "email", "kakao"}   # 수신동의 필요(사용자 대상)
 
 
+# 알림 수신 역할 중 '업체' 쪽. role 이 비어 있으면 조직 전체(=업체) 대상이다.
+_NOTIFY_COMPANY_ROLES = (None, "", "applicant", "client", "client_admin", "client_staff")
+
+
+def _notification_contacts(db, n):
+    """알림 수신자의 연락처 → (contacts, consent).
+
+    예전에는 수신 역할과 무관하게 항상 케이스(업체)의 전화·이메일로 보냈다 — 컨설턴트·오디터용
+    알림(보완 요청 통보 등)이 업체 담당자에게 SMS/이메일로 나가는 오배정이었다.
+    업체 대상(role 비어 있음/applicant/client…)이면 케이스 연락처 + 업체의 수신동의를 쓴다.
+    그 외 역할은 해당 담당자의 연락처만 쓰고, 찾지 못하면 빈 연락처({} → no_contact)로 두어
+    업체로 새지 않게 한다. 오디터는 연락처를 저장하는 필드가 없어 현재는 항상 no_contact 다.
+    webhook 은 시스템 연동 주소(역할 무관)라 그대로 둔다."""
+    webhook = os.environ.get("GLHAC_WEBHOOK_URL")
+    c = db.get(models.CaseApplication, n.case_id) if n.case_id else None
+    if n.role in _NOTIFY_COMPANY_ROLES:
+        if not c:
+            return {}, False
+        return ({"phone": c.phone, "email": c.email, "webhook": webhook},
+                bool(c.notify_consent))
+    contacts = {"webhook": webhook}
+    if n.role == "consultant":
+        cid = None
+        org = db.get(models.Org, (c.org_id if c else n.org_id)) if (c or n.org_id) else None
+        if org is not None:
+            cid = org.consultant_id
+        prof = db.get(models.ConsultantProfile, cid) if cid else None
+        if prof is not None and (prof.status or "active") == "active":
+            contacts.update({"phone": prof.phone, "email": prof.email})
+            return contacts, True    # 담당자 본인 연락처 — 업체의 수신동의와 무관
+    # auditor 및 그 밖의 직원 역할: 연락처 필드 없음 → 업체로 보내지 않는다(no_contact).
+    # 수신동의는 업체 개념이라 여기선 게이트하지 않는다(동의 미달로 조용히 사라지지 않고 no_contact 로 남는다).
+    return contacts, True
+
+
 def drain_notifications(db, batch=50, max_attempts=3):
     """미발송 알림 큐를 드레인 — 원자 클레임(중복발송 방지) + 수신동의 게이트 + 재시도."""
     from . import notify as _nt
@@ -903,13 +938,7 @@ def drain_notifications(db, batch=50, max_attempts=3):
     stats = {"processed": 0, "sent": 0, "retried": 0, "failed": 0, "skipped": 0}
     for n in claimed:
         stats["processed"] += 1
-        contacts, consent = {}, False
-        if n.case_id:
-            c = db.get(models.CaseApplication, n.case_id)
-            if c:
-                contacts = {"phone": c.phone, "email": c.email,
-                            "webhook": os.environ.get("GLHAC_WEBHOOK_URL")}
-                consent = bool(c.notify_consent)
+        contacts, consent = _notification_contacts(db, n)
         # 수신동의 게이트 — 사용자 대상 채널(sms/whatsapp/email/kakao)은 동의 시에만.
         # inapp·webhook(시스템 연동)은 항상 발송.
         requested = n.channels or ["inapp"]
@@ -951,7 +980,7 @@ def drain_notifications(db, batch=50, max_attempts=3):
             obs.inc("glhac_notification_failed_total")
         else:
             n.status = "unsent"   # 재시도 위해 큐로 복귀
-            n.last_error = "; ".join(fail_reasons)
+            n.last_error = "; ".join("%s:%s" % (ch, rs) for ch, rs in failed_by_channel.items())
             stats["retried"] += 1
     db.commit()
     return stats
@@ -1271,6 +1300,28 @@ def set_org_branding(org_id: str, body: dict = None, user=Depends(auth.require_r
     return {"org_id": org_id, "branding": branding}
 
 
+def _cert_signature_status(cert, sig, sig_valid):
+    """서명 검증 결과를 3단계로 구분한다: valid · legacy · invalid (서명 자체가 없으면 'unsigned').
+
+    legacy: 서명이 안 맞지만 감사체인 키 경계(GLHAC_AUDIT_CHAIN_EPOCH) 이전에 발급 — 그날 서명 키/방식이
+    바뀌어 지금 키로는 검증할 수 없는 기록이다(위조 판정 아님). 경계 이후의 불일치만 invalid.
+    기준 시각은 서명 시각(signed_at, 시·분까지 정확)을 우선하고 없으면 발급일(issue_date)을 쓴다.
+    시각을 알 수 없으면 legacy 로 봐주지 않고 invalid 로 둔다."""
+    if not sig:
+        return "unsigned"
+    if sig_valid:
+        return "valid"
+    when = getattr(sig, "signed_at", None)
+    if not isinstance(when, datetime):
+        try:
+            when = datetime.fromisoformat(str(cert.issue_date)[:19])
+        except (TypeError, ValueError):
+            when = None
+    if when is not None and when < _audit_chain_epoch():
+        return "legacy"
+    return "invalid"
+
+
 @app.get("/verify/{qr_token}")
 def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
     """공개 인증서 검증(§11.5·§14 P1) — 인증 불필요, 민감정보 미노출.
@@ -1299,6 +1350,7 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
     if sig:
         _, expected = _sign_payload(_cert_canonical(cert))
         sig_valid = (expected == sig.signature_value)
+    sig_status = _cert_signature_status(cert, sig, sig_valid)
     official = _official_bpjph_no(db, cert.case_id)
     _scheme = (c.scheme if c else None) or "product"
     out = {"valid": valid, "certificate_no": cert.certificate_no,
@@ -1307,6 +1359,7 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
            "status": cert.status, "issue_date": cert.issue_date,
            "expiry_date": cert.expiry_date, "scope": cert.scope,
            "signed": bool(sig), "signature_valid": sig_valid,
+           "signature_status": sig_status,
            # 법적효력 Phase 0 — 공식성·서명 성격 고지(오인 차단)
            "halal_no_is_official": bool(official),
            "official_bpjph_no": official,
@@ -1406,15 +1459,25 @@ def system_capabilities():
 
 
 @app.post("/auth/login")
-def login(body: schemas.LoginReq, db: Session = Depends(get_db)):
+def login(body: schemas.LoginReq, request: Request, db: Session = Depends(get_db)):
     rl_key = (body.username or "").lower()
+    ip = _extract_real_ip(request)
+
+    # username 단위 제한 확인
     if auth.rate_limited(rl_key):
         raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS", "retry_after_sec": auth._RL_WINDOW})
+
+    # IP 단위 제한 확인
+    if auth.rate_limited_by_ip(ip):
+        raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS", "retry_after_sec": auth._IP_RL_WINDOW})
+
     u = db.query(models.User).filter_by(username=body.username).first()
     if not u or not auth.verify_pw(body.password, u.password_hash):
         auth.record_attempt(rl_key)
+        auth.record_ip_attempt(ip)
         raise HTTPException(401, {"code": "BAD_CREDENTIALS"})
     auth.clear_attempts(rl_key)
+    auth.clear_ip_attempts(ip)
     if _user_suspended(db, u.user_id):
         raise HTTPException(403, {"code": "USER_SUSPENDED"})
     if auth.needs_rehash(u.password_hash):   # 레거시 sha256 → pbkdf2 자동 승격
@@ -1604,8 +1667,15 @@ def auth_ocr_extract(body: schemas.OCRExtractReq):
 
 
 @app.get("/auth/check-username")
-def check_username(username: str, db: Session = Depends(get_db)):
-    """회원가입 id 중복검사 (자체 DB). SIHALAL 회사 등록조회는 /sihalal/lookup 별도 사용."""
+def check_username(username: str, request: Request, db: Session = Depends(get_db)):
+    """회원가입 id 중복검사 (자체 DB). SIHALAL 회사 등록조회는 /sihalal/lookup 별도 사용.
+
+    IP당 분당 20회 제한 (가입 화면에서만 사용하므로 막지는 않되, 스프레이 방지)."""
+    ip = _extract_real_ip(request)
+    if auth.check_username_rate_limited(ip):
+        raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS"})
+
+    auth.record_username_check(ip)
     dup = bool(db.query(models.User).filter_by(username=username).first())
     return {"username": username, "available": not dup, "duplicate": dup, "source": "internal"}
 
@@ -3253,10 +3323,22 @@ _BOARD_RL_WINDOW = int(os.environ.get("GLHAC_BOARD_RATE_WINDOW", "3600"))
 _BOARD_STAFF = ("consultant", "auditor", "operator", "admin", "fatwa_liaison")
 
 
+def _extract_real_ip(request: Request) -> str:
+    """실제 클라이언트 IP 추출 (해싱 없음).
+
+    X-Forwarded-For 헤더가 있으면 마지막 값(실제 프록시 IP)을 사용한다.
+    nginx는 $proxy_add_x_forwarded_for로 끝에 실제 접속 IP를 붙이므로
+    첫 번째 값(클라이언트 제어 가능)이 아닌 마지막 값을 신뢰한다."""
+    xff = request.headers.get("x-forwarded-for", "").strip()
+    last = xff.split(",")[-1].strip() if xff else ""
+    if last:
+        return last  # 마지막 값
+    return request.client.host if request.client else "unknown"
+
+
 def _ip_hash(request: Request) -> str:
     """도배 차단용 식별자. 원문 IP 는 저장하지 않는다(불필요한 개인정보)."""
-    ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-          or (request.client.host if request.client else "?"))
+    ip = _extract_real_ip(request)
     return hashlib.sha256((ip + auth.SECRET.decode("utf-8", "ignore")).encode()).hexdigest()[:32]
 
 
@@ -3468,7 +3550,7 @@ def board_public(page: int = 1, size: int = 10, db: Session = Depends(get_db)):
                          .group_by(models.BoardReply.post_id)):
             cnt[pid] = n
     return dict(meta, items=[{
-        "post_id": r.post_id, "post_no": r.post_no, "title": r.title,
+        "post_id": r.post_id, "post_no": r.post_no,
         "author_masked": _mask_name(r.author_name),
         "contact_masked": _mask_contact(r.contact),
         "status": r.status, "reply_count": cnt.get(r.post_id, 0),
@@ -3493,13 +3575,13 @@ def board_find(body: schemas.BoardFindReq, request: Request, db: Session = Depen
               .order_by(models.BoardPost.created_at.desc()).limit(50).all())
 
     if not body.password:
-        # 연락처만 — 목록만 준다. 제목·내용은 없다(전화번호만 알면 남의 문의 제목을
-        # 훑을 수 있으면 안 된다). 번호 훑기도 막아야 하므로 같이 센다.
+        # 연락처만 — 번호·날짜·상태만 준다. 제목·내용은 비밀번호가 맞을 때만(전화번호만
+        # 알면 남의 문의 제목을 훑을 수 있으면 안 된다). 번호 훑기도 막아야 하므로 같이 센다.
         if not rows:
             auth.record_attempt("board:" + iph)
             raise HTTPException(404, {"code": "NO_POSTS",
                                       "message": "그 연락처로 남긴 문의가 없습니다."})
-        return [{"post_id": r.post_id, "post_no": r.post_no, "title": r.title,
+        return [{"post_id": r.post_id, "post_no": r.post_no,
                  "contact_masked": _mask_contact(r.contact),
                  "status": r.status, "created_at": str(r.created_at)} for r in rows]
 
@@ -5629,7 +5711,9 @@ def _apply_agg_to_case(db, c, agg):
 # 이 스레드는 대기만 하고 웹 메모리를 늘리지 않는다.
 _AUTOPARSE = os.environ.get("GLHAC_AUTOPARSE", "1") == "1"
 _autoparse_q = None
-_autoparse_state = {"queued": 0, "done": 0, "failed": 0, "running": None}
+_autoparse_state = {"queued": 0, "done": 0, "failed": 0, "running": None, "dropped": 0}
+_autoparse_inflight = set()   # 큐에 있거나 처리 중인 문서 id — 같은 문서를 두 번 넣지 않는다
+_autoparse_lock = threading.Lock()
 
 
 def _autoparse_worker():
@@ -5652,16 +5736,50 @@ def _autoparse_worker():
         finally:
             db.close()
             _autoparse_state["running"] = None
+            with _autoparse_lock:
+                _autoparse_inflight.discard(doc_id)   # 성공·실패 모두 투입 목록에서 뺀다
             _autoparse_q.task_done()
 
 
 def autoparse_enqueue(document_id, keep_doc_type=False):
-    """업로드 직후 호출 — 큐가 없으면(비활성) 조용히 넘어간다."""
+    """업로드 직후 호출 — 큐가 없으면(비활성) 조용히 넘어간다.
+
+    put_nowait: 큐가 가득 차도 업로드 요청을 붙잡지 않는다. 못 넣은 문서는 confidence 를 NULL 로
+    두어(reprocess-pending 대상) 사람이 나중에 다시 돌릴 수 있게 하고 로그를 남긴다.
+    이미 큐에 있거나 처리 중인 문서는 다시 넣지 않는다(False)."""
+    import queue
     if not _AUTOPARSE or _autoparse_q is None:
         return False
-    _autoparse_q.put((document_id, keep_doc_type))
+    with _autoparse_lock:
+        if document_id in _autoparse_inflight:
+            return False
+        _autoparse_inflight.add(document_id)
+    try:
+        _autoparse_q.put_nowait((document_id, keep_doc_type))
+    except queue.Full:
+        with _autoparse_lock:
+            _autoparse_inflight.discard(document_id)
+        _autoparse_state["dropped"] += 1
+        log.warning("자동 파싱 큐 가득 참 — 문서 %s 를 대기 상태로 둠(reprocess-pending 으로 재투입)", document_id)
+        _autoparse_mark_pending(document_id)
+        return False
     _autoparse_state["queued"] += 1
     return True
+
+
+def _autoparse_mark_pending(document_id):
+    """큐에 못 넣은 문서를 confidence NULL(판독 전)로 둔다 — reprocess-pending 이 집어 간다."""
+    db = SessionLocal()
+    try:
+        d = db.get(models.DocumentAsset, document_id)
+        if d is not None and d.confidence is not None:
+            d.confidence = None
+            db.commit()
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        log.warning("대기 상태 표시 실패 %s: %s", document_id, e)
+    finally:
+        db.close()
 
 
 def _autoparse_start():
@@ -6282,9 +6400,9 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     c = _get_case(db, case_id, user)
     # ZIP 크기 검증 — 업로드 상한과 동일하게 적용
     b64_str = body.zip_b64.split(",")[-1]
-    if len(b64_str) > _UPLOAD_MAX_BYTES * 4 // 3 + 1:  # base64는 raw보다 ~33% 큼
+    if len(b64_str) > _UPLOAD_MAX_BYTES * 4 // 3 + 4:  # base64는 raw보다 ~33% 큼(패딩 포함)
         raise HTTPException(413, {"code": "ZIP_TOO_LARGE",
-                                  "message": "파일이 너무 큽니다 (최대 10MB)"})
+                                  "message": "파일이 너무 큽니다 (최대 20MB)"})
     raw = base64.b64decode(b64_str)
     # ZIP 파일 검증
     from .intake import intake_zip, ArchiveError
@@ -6310,7 +6428,11 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
     from fastapi.responses import StreamingResponse
     from .intake import intake_zip_iter
     c = _get_case(db, case_id, user)
-    raw = base64.b64decode(body.zip_b64.split(",")[-1])
+    _b64 = body.zip_b64.split(",")[-1]
+    if len(_b64) > _UPLOAD_MAX_BYTES * 4 // 3 + 4:   # base64 는 원본보다 ~33% 크다
+        raise HTTPException(413, {"code": "ZIP_TOO_LARGE",
+                                  "message": "파일이 너무 큽니다 (최대 20MB)"})
+    raw = base64.b64decode(_b64)
     # 압축을 못 여는 건 서버 잘못이 아니라 입력 문제다 — 스트림 시작 전에 422로 돌려준다.
     # 예전에는 생성기 안에서 BadZipFile 이 터져 500이 났고, 화면은 그걸 '완료'로 표시했다.
     from .intake import ArchiveError, archive_kind
@@ -13505,8 +13627,14 @@ def _psre_sign(payload_hash, signer, doc_ref):
         try:
             body = r.json()
         except Exception:  # noqa: BLE001
-            body = {}
+            body = None
     except Exception:  # noqa: BLE001
+        return None
+    # 2xx 라도 JSON 객체가 아니거나 서명값(signature_ref/id/document_id)이 없으면 서명 성공이 아니다
+    # → None(내부 HMAC 서명 유지). 값 없이 '공인서명 완료'로 기록하면 가짜 공인서명이 된다.
+    if not isinstance(body, dict) or not (body.get("signature_ref") or body.get("id")
+                                          or body.get("document_id")):
+        logging.getLogger(__name__).warning("[PSrE] 응답에 서명값 없음/비JSON — 공인서명 미적용(내부 서명 유지)")
         return None
     # 벤더별 응답 키가 상이하므로 관용적 후보들로 매핑(설정형) — 확보 스펙에 맞춰 최종화.
     return {"provider": cfg["provider"],
@@ -13563,12 +13691,17 @@ def _tsa_stamp(digest):
         try:
             body = r.json()
         except Exception:  # noqa: BLE001
-            body = {}
+            body = None
     except Exception:  # noqa: BLE001
         return None
-    return {"tsa_time": (body.get("tsa_time") or body.get("timestamp")
-                         or datetime.utcnow().isoformat()),
-            "tsa_ref": (body.get("tsa_ref") or body.get("serial") or body.get("id"))}
+    # 2xx 라도 JSON 객체가 아니거나 스탬프 값(시각·tsa_ref/serial/id)이 없으면 실패 — 내부 시각 유지.
+    # (예전에는 시각이 없으면 우리 시계를 '신뢰 타임스탬프'로 적었다.)
+    _t = isinstance(body, dict) and (body.get("tsa_time") or body.get("timestamp"))
+    _ref = isinstance(body, dict) and (body.get("tsa_ref") or body.get("serial") or body.get("id"))
+    if not (_t and _ref):
+        logging.getLogger(__name__).warning("[TSA] 응답에 스탬프 값 없음/비JSON — 신뢰 타임스탬프 미적용")
+        return None
+    return {"tsa_time": _t, "tsa_ref": _ref}
 
 
 def _tsa_meta(digest):
@@ -19573,8 +19706,19 @@ def sihalal_verify(eid: str, body: schemas.SihalalVerify,
     match = bool(stored) and body.expected_identifier.strip().lower() == stored
     ei.identifier_match = match
     ei.verification_status = "verified" if match else "mismatch_found"
+    # 이 '검증'은 컨설턴트가 입력한 식별자와 저장값을 맞춰 본 것이다 — SIHALAL 에 실제로 조회한 게 아니다.
+    # 저장 상태값·게이트(SIHALAL_IDENTITY_UNVERIFIED)는 그대로 두되, 응답·이벤트에 방법과
+    # 외부 검증 여부를 명시해 '외부 검증 완료'로 오인되지 않게 한다.
+    res = {"verification_status": ei.verification_status, "identifier_match": match,
+           "method": "consultant_match", "external_verified": False}
+    c = db.get(models.CaseApplication, ei.case_id) if ei.case_id else None
+    if c:
+        sm.record_event(db, c, c.status, c.status, "sihalal.identity_consultant_check", "user",
+                        user["uid"], {"external_identity_id": eid, "identifier_match": match,
+                                      "method": "consultant_match", "external_verified": False})
+    log.info("[SIHALAL 컨설턴트 확인] eid=%s 일치=%s (외부 검증 아님)", eid, match)
     db.commit()
-    return {"verification_status": ei.verification_status, "identifier_match": match}
+    return res
 
 
 # ── S4-1: E-number 자동완성 (ontology 검색) ──────────────────────────────────
