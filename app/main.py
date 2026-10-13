@@ -976,7 +976,9 @@ def _save_ai_extraction(db, case_id, source, extracted, confidence=None, evidenc
 
 
 def _register_from_judgment(db, c, res):
+    from . import screening
     created = []
+    # 온톨로지 매칭 성분 등록
     for ing in res["ingredients"]:
         m = models.Material(case_id=c.case_id, name=ing["name"], e_number=ing.get("e_number"),
                             screen_result=ing["result"], screen_status=ing["status"],
@@ -984,20 +986,37 @@ def _register_from_judgment(db, c, res):
         db.add(m)
         db.flush()
         created.append({"material_id": m.material_id, "name": m.name, "result": m.screen_result})
+
+    # 미등재 성분(llm_unmatched) 등록 — ontology 판정값으로
+    for unmatched in res.get("llm_unmatched", []):
+        name = unmatched.get("name") if isinstance(unmatched, dict) else unmatched
+        enum = unmatched.get("e_number") if isinstance(unmatched, dict) else None
+        # 미등재 성분의 판정: ontology 스크린 결과 사용
+        sc = screening.screen_raw(name, enum)
+        m = models.Material(case_id=c.case_id, name=name, e_number=enum,
+                            screen_result=sc.get("result"), screen_status=sc.get("status"),
+                            screen_severity=sc.get("severity"), matched_uid=sc.get("matched_uid"))
+        db.add(m)
+        db.flush()
+        created.append({"material_id": m.material_id, "name": m.name, "result": m.screen_result})
+
     # §7.2 AI 근거저장 — 라벨 판정 원문/신뢰도 보존(Human-in-the-loop 추적)
     ext = _save_ai_extraction(db, c.case_id, "label_judgment",
                               {"ingredients": res.get("ingredients"),
                                "critical_count": res.get("critical_count"),
-                               "pathway_implication": res.get("pathway_implication")},
+                               "pathway_implication": res.get("pathway_implication"),
+                               "llm_error": res.get("llm_error")},
                               confidence=res.get("confidence"),
                               evidence=res.get("raw_text") or res.get("explanation", ""),
                               model_name="ocr_pipeline")
     sm.record_event(db, c, c.status, c.status, "materials.from_label", "ai", None,
-                    {"count": len(created), "source": "label_ocr", "ai_extraction_id": ext.id})
+                    {"count": len(created), "source": "label_ocr", "ai_extraction_id": ext.id,
+                     "llm_error": res.get("llm_error")})
     db.commit()
     return {"created": created, "count": len(created),
             "critical_count": res["critical_count"], "pathway_implication": res["pathway_implication"],
-            "explanation": res.get("explanation", ""), "ai_extraction_id": ext.id}
+            "explanation": res.get("explanation", ""), "llm_error": res.get("llm_error"),
+            "ai_extraction_id": ext.id}
 
 
 # ---------- health / auth ----------

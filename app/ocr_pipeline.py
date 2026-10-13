@@ -66,7 +66,8 @@ def judge_label(image_path, locale="ko-KR"):
 
     # 3) (보조) qwen 추출 — OCR 토큰화가 놓친 항목 보강. ontology 미매칭은 분리 표기.
     extracted = ai_local.llm_json(_EXTRACT_SYS, raw)
-    cands = extracted.get("ingredients", []) if isinstance(extracted, dict) else []
+    llm_error = extracted.get("error") if isinstance(extracted, dict) else None
+    cands = extracted.get("ingredients", []) if isinstance(extracted, dict) and not llm_error else []
     llm_unmatched = []
     for c in cands:
         name = (c.get("name") or "").strip()
@@ -83,13 +84,20 @@ def judge_label(image_path, locale="ko-KR"):
             else:
                 by_uid[uid] = {"name": name, "e_number": enum, "source": "llm", **sc}
         else:
-            llm_unmatched.append(name)
+            # 미등재 성분도 등록하되 기본 판정값으로 (ontology 미매칭=증거 필요)
+            llm_unmatched.append({"name": name, "e_number": enum})
 
     judged = list(by_uid.values())
     criticals = [j for j in judged if j["result"] in ("BLOCK", "NEEDS_EVIDENCE")]
 
     # 4) 설명 — ontology 사실에서 결정적 생성(LLM 환각 차단)
     explanation = build_explanation(criticals)
+
+    # LLM 실패 시 판정 보류 (self_declare_candidate 아님)
+    if llm_error:
+        pathway = "undetermined"  # 판정 보류
+    else:
+        pathway = "reguler" if criticals else "self_declare_candidate"
 
     return {
         "ok": True,
@@ -98,7 +106,8 @@ def judge_label(image_path, locale="ko-KR"):
         "ingredients": judged,
         "critical_count": len(criticals),
         "llm_unmatched": llm_unmatched,
-        "pathway_implication": "reguler" if criticals else "self_declare_candidate",
+        "llm_error": llm_error,
+        "pathway_implication": pathway,
         "explanation": explanation,
         "note": "판정·설명=ontology(결정적, OCR직매칭 우선·환각 없음). LLM=성분 추출 보조만. 최종 할랄성은 Komite Fatwa.",
     }
