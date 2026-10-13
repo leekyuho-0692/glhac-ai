@@ -318,3 +318,103 @@ def test_ma3_결제기록이_전혀_없으면_수기_전액_확정_기존동작_
         assert _patch(c, _op(c), iid, "paid", "수기 확인").status_code == 200
     ps = _payments(iid)
     assert len(ps) == 1 and ps[0].amount == 100.0 and ps[0].method == "manual"
+
+
+# ======== MA4: 해시체인 동시성 (서로 다른 세션·커밋) ========
+
+def _run_threads(n, body):
+    import threading
+    barrier = threading.Barrier(n)
+    errors = []
+
+    def runner(i):
+        db = SessionLocal()
+        try:
+            barrier.wait()
+            body(db, i)
+            db.commit()
+        except Exception as e:  # noqa: BLE001
+            errors.append(repr(e))
+            db.rollback()
+        finally:
+            db.close()
+
+    ts = [threading.Thread(target=runner, args=(i,)) for i in range(n)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    return errors
+
+
+def test_ma4_스레드8개_각자세션_커밋_WorkflowEvent_체인_무결():
+    """스레드 8개가 각자 세션에서 record_event 2회(flush 후 지연, 커밋은 나중) → 체인 검증 무결·prev_hash 중복 0.
+    flush 까지만 쥐는 프로세스 Lock(이전 구현)은 이 시나리오에서 같은 prev_hash 를 허용한다 — 다른 세션이
+    미커밋 꼬리를 못 보기 때문. 락이 커밋까지 가야 통과한다."""
+    import time
+    from app import state_machine as sm
+    from app.main import _verify_wf_chain
+    cid = _db_case("MA4-wf")
+
+    def body(db, i):
+        case = db.get(models.CaseApplication, cid)
+        sm.record_event(db, case, case.status, case.status, "ma4.a", "system", f"t{i}", {"i": i})
+        time.sleep(0.02)   # flush~commit 사이 창을 넓혀 경쟁을 재현
+        sm.record_event(db, case, case.status, case.status, "ma4.b", "system", f"t{i}", {"i": i})
+
+    assert _run_threads(8, body) == []
+    db = SessionLocal()
+    try:
+        evs = (db.query(models.WorkflowEvent).filter_by(case_id=cid)
+               .order_by(models.WorkflowEvent.created_at, models.WorkflowEvent.event_id).all())
+        assert len(evs) == 16
+        prevs = [e.prev_hash for e in evs]
+        assert len(set(prevs)) == len(prevs), "prev_hash 중복 = 체인 분기"
+        r = _verify_wf_chain(evs)
+        assert r["integrity_ok"] and r["status"] == "ok", r
+    finally:
+        db.close()
+
+
+def test_ma4_스레드8개_전역_AuditLog_체인_무결():
+    """전역 _audit 체인 — 8세션이 flush 후 지연 뒤 커밋해도 분기 없음."""
+    import time
+    from app.main import _audit, _verify_audit_chain
+    cid = _db_case("MA4-audit")
+    marker = "ma4.audit"
+
+    def body(db, i):
+        _audit(db, {"uid": f"u{i}", "role": "operator", "org_id": "org_demo"}, marker, "case", cid, cid,
+               {"i": i}, commit=False)
+        time.sleep(0.02)
+
+    assert _run_threads(8, body) == []
+    db = SessionLocal()
+    try:
+        rows = (db.query(models.AuditLog).order_by(models.AuditLog.created_at, models.AuditLog.id).all())
+        mine = [r for r in rows if r.action == marker]
+        assert len(mine) == 8
+        prevs = [r.meta["_chain"]["prev"] for r in mine]
+        assert len(set(prevs)) == 8, "prev 중복 = 전역 체인 분기"
+        ok = _verify_audit_chain(rows)
+        assert ok["integrity_ok"], ok
+    finally:
+        db.close()
+
+
+def test_ma4_같은_요청_다중_이벤트는_데드락_없이_이어진다():
+    """한 세션이 record_event→_audit→record_event (락 재진입). 쓰기 락을 이미 쥐고 있어도 BEGIN IMMEDIATE 를
+    다시 걸지 않아야 한다(걸면 'cannot start a transaction within a transaction')."""
+    from app import state_machine as sm
+    from app.main import _audit
+    cid = _db_case("MA4-reent")
+    db = SessionLocal()
+    try:
+        case = db.get(models.CaseApplication, cid)
+        e1 = sm.record_event(db, case, case.status, case.status, "r.1")
+        _audit(db, {"uid": "u", "role": "operator", "org_id": "org_demo"}, "r.audit", None, None, cid, {}, commit=False)
+        e2 = sm.record_event(db, case, case.status, case.status, "r.2")
+        db.commit()
+        assert e2.prev_hash == e1.row_hash
+    finally:
+        db.close()

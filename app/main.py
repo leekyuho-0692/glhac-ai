@@ -23,7 +23,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
-from .db import Base, engine, get_db, SessionLocal
+from .db import Base, engine, get_db, SessionLocal, lock_chain_tail
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from . import nav8
 from . import intake
@@ -541,8 +541,11 @@ def _audit(db, user, action, resource_type=None, resource_id=None, case_id=None,
     """접근/조회 감사로그 기록(§2.4). commit=False면 상위 트랜잭션에 합류.
     법적효력 P3a — 각 로그에 HMAC 체인(meta._chain={prev,row})을 얹어 tamper-evident화(스키마 무변경).
     체인은 WorkflowEvent record_event와 동일한 chain_row_hash(HMAC(SECRET)) 헬퍼를 재사용한다."""
+    # MA4: 전역 체인 — 꼬리 조회 전에 DB 쓰기 락(커밋까지 유지)을 잡아 다른 세션(요청)과 직렬화.
+    # (flush 까지만 쥐는 프로세스 Lock 으로는 미커밋 꼬리를 못 봐 prev 가 갈라진다 — db.lock_chain_tail 참조)
+    lock_chain_tail(db, "audit:global")
     meta = dict(meta) if isinstance(meta, dict) else {}   # meta 없던 로그도 dict 생성
-    created = datetime.utcnow()
+    created = datetime.utcnow()   # 락 획득 후 — 체인 순서(created_at)가 락 순서와 일치
     base = {k: v for k, v in meta.items() if k != "_chain"}
     prev = _last_audit_hash(db)
     body = _audit_row_body(user.get("uid"), action, resource_type, resource_id, case_id, created, base)

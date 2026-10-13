@@ -3,6 +3,7 @@ from datetime import date as _date
 import hashlib
 import json
 from datetime import datetime
+from .db import lock_chain_tail
 from .models import (CaseApplication, Material, PenyeliaHalal,
                      PendampingAssignment, ExternalIdentity, WorkflowEvent)
 
@@ -413,6 +414,8 @@ def chain_row_hash(prev, body):
 
 
 def record_event(db, case, frm, to, action, actor_type="system", actor_id=None, payload=None):
+    # MA4: 꼬리 조회 전에 DB 쓰기 락(커밋까지 유지)을 잡아 다른 세션과 직렬화 — 근거는 db.lock_chain_tail.
+    lock_chain_tail(db, "wf:" + case.case_id)
     prev = _last_hash(db, case.case_id)
     body = json.dumps({"case": case.case_id, "from": frm, "to": to, "action": action,
                        "payload": payload or {}}, sort_keys=True, ensure_ascii=False)
