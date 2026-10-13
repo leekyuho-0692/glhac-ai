@@ -1699,10 +1699,10 @@ App.finalBundle = async function(cid){
 async function loadEnt(){
   try{
     const r = await apiFetch('/cases');
-    RS.cases = r.ok ? ((await r.json()).items || []) : [];
+    RS.cases = r.ok ? ((await r.json()).items || []) : {error:true, status: r.status};
     RS.entAsk = null;
     RS.loadedFor = AUTH.username;
-  }catch(e){ RS.cases = []; }
+  }catch(e){ RS.cases = {error:true, message: String(e)}; }
 }
 function _stepper8(step, hold, done){
   return `<ol class="stepper" style="grid-template-columns:repeat(8,minmax(0,1fr))">${S8_LABELS.map((l,i)=>{
@@ -1711,7 +1711,10 @@ function _stepper8(step, hold, done){
   }).join('')}</ol>`;
 }
 VIEWS['ent-home'] = () => {
-  const c = (RS.cases||[])[0];
+  if(RS.cases && RS.cases.error){
+    return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  }
+  const c = (Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다. 인증 신청서를 작성해 주세요.</p></section>`;
   return `
   <section class="summary">
@@ -1734,7 +1737,8 @@ async function loadEntPre(cid){
   catch(e){ RS.entPre[cid]={}; }
 }
 VIEWS['ent-pre'] = () => {
-  const c=(RS.cases||[])[0];
+  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
   const cid=c.case_id, d=(RS.entPre||{})[cid];
   if(!d){ if(RS._entPreLoading!==cid){ RS._entPreLoading=cid; loadEntPre(cid).then(()=>{RS._entPreLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
@@ -1778,7 +1782,8 @@ async function loadEntCt(cid){
 const _money = (n,cur) => (n==null?'-':(Number(n).toLocaleString()+' '+(cur||'KRW')));
 const INV_ST = {waiting_payment:'입금 대기', paid:'입금 완료', settlement:'정산', settled:'정산완료', draft:'작성중', refunded:'환불', expired:'기한만료', billed:'청구'};
 VIEWS['ent-contract'] = () => {
-  const c=(RS.cases||[])[0];
+  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
   const cid=c.case_id, d=(RS.entCt||{})[cid];
   if(!d){ if(RS._entCtLoading!==cid){ RS._entCtLoading=cid; loadEntCt(cid).then(()=>{RS._entCtLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
@@ -1883,7 +1888,8 @@ async function loadEntDocs(cid){
   catch(e){ RS.entDocs[cid]=[]; }
 }
 VIEWS['ent-docs'] = () => {
-  const c=(RS.cases||[])[0];
+  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
   const cid=c.case_id, docs=(RS.entDocs||{})[cid];
   if(!docs){ if(RS._entDocsLoading!==cid){ RS._entDocsLoading=cid; loadEntDocs(cid).then(()=>{RS._entDocsLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
@@ -2122,7 +2128,8 @@ async function loadEntProd(cid){
   catch(e){ RS.entProd[cid]=[]; }
 }
 VIEWS['ent-apply'] = () => {
-  const c=(RS.cases||[])[0];
+  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
   const cid=c.case_id, prods=(RS.entProd||{})[cid];
   if(!prods){ if(RS._entProdLoading!==cid){ RS._entProdLoading=cid; loadEntProd(cid).then(()=>{RS._entProdLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
