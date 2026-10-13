@@ -93,7 +93,23 @@ if [ "$DRY" = 1 ]; then say "dry-run — 아무것도 바꾸지 않았습니다"
 say "백업 중"
 "${SSH[@]}" bash -se <<EOS
 set -euo pipefail
-sudo cp /var/lib/glhac/glhac_v3.db /var/lib/glhac/glhac_v3.db.bak-deploy-$TS
+DBOWN=\$(stat -c %U /var/lib/glhac/glhac_v3.db)
+sudo -u "\$DBOWN" /opt/glhac/.venv/bin/python << 'PYEOF'
+import sqlite3
+db_path = "/var/lib/glhac/glhac_v3.db"
+backup_path = "/var/lib/glhac/glhac_v3.db.bak-deploy-$TS"
+conn = sqlite3.connect("file:/var/lib/glhac/glhac_v3.db?mode=ro", uri=True)
+backup_conn = sqlite3.connect(backup_path)
+conn.backup(backup_conn)
+backup_conn.close()
+conn.close()
+print(f"DB 백업 완료: {backup_path}")
+PYEOF
+result=\$(sudo -u "\$DBOWN" sqlite3 /var/lib/glhac/glhac_v3.db.bak-deploy-$TS "PRAGMA integrity_check")
+if [ "\$result" != "ok" ]; then
+  echo "❌ 백업 무결성 검사 실패: \$result"
+  exit 1
+fi
 sudo tar czf /opt/glhac-app-bak-$TS.tgz -C /opt/glhac app
 sudo tar czf /opt/glhac-home-bak-$TS.tgz -C /var/www glhac-home
 # 백업이 무한정 쌓이지 않게 최근 10개만 남긴다

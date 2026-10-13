@@ -4,7 +4,23 @@
 set -e
 TS=$(date +%Y%m%d%H%M%S)
 cd /opt/glhac
-sudo cp /var/lib/glhac/glhac_v3.db /var/lib/glhac/glhac_v3.db.bak-formalflow-$TS
+DBOWN=$(stat -c %U /var/lib/glhac/glhac_v3.db)
+sudo -u "$DBOWN" /opt/glhac/.venv/bin/python << EOF
+import sqlite3
+db_path = "/var/lib/glhac/glhac_v3.db"
+backup_path = "/var/lib/glhac/glhac_v3.db.bak-formalflow-$TS"
+conn = sqlite3.connect("file:/var/lib/glhac/glhac_v3.db?mode=ro", uri=True)
+backup_conn = sqlite3.connect(backup_path)
+conn.backup(backup_conn)
+backup_conn.close()
+conn.close()
+print(f"DB 백업 완료: {backup_path}")
+EOF
+result=$(sudo -u "$DBOWN" sqlite3 /var/lib/glhac/glhac_v3.db.bak-formalflow-$TS "PRAGMA integrity_check")
+if [ "$result" != "ok" ]; then
+  echo "❌ 백업 무결성 검사 실패: $result"
+  exit 1
+fi
 echo "DB 백업: /var/lib/glhac/glhac_v3.db.bak-formalflow-$TS"
 set -a; source /opt/glhac/.env; set +a
 PY=/opt/glhac/.venv/bin/python
