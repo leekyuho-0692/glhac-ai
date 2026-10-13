@@ -239,9 +239,9 @@ _A4_DEFECT = pytest.mark.xfail(strict=True, reason="제품 결함: main.py pg_we
 
 
 @pytest.mark.parametrize("st", [
-    pytest.param("pending", marks=_A4_DEFECT), "expire",
-    pytest.param("failed", marks=_A4_DEFECT), pytest.param("deny", marks=_A4_DEFECT),
-    pytest.param("cancel", marks=_A4_DEFECT)])
+    "pending", "expire",
+    "failed", "deny",
+    "cancel"])
 def test_a4_paid_not_regressed(st):
     """이미 paid 인 인보이스가 지연·재전송 콜백으로 역행하면 안 된다."""
     os.environ.pop("GLHAC_PG_WEBHOOK_SECRET", None)
@@ -254,7 +254,6 @@ def test_a4_paid_not_regressed(st):
         assert _db_get(models.Invoice, iid).status == "paid", (st, r.json())
 
 
-@_A4_DEFECT
 def test_a4_paid_replay_without_amount_not_downgraded():
     """이미 paid 인 인보이스에 (다른 event_id 의) paid 재전송이 금액 없이 오면 need_verification 으로
     강등되거나 Payment 가 중복되면 안 된다."""
@@ -265,6 +264,37 @@ def test_a4_paid_replay_without_amount_not_downgraded():
         r = _hook(c, "ORD-A4-REPLAY", "settlement", event_id="evt-replay-1")
         assert r.status_code == 200, r.text
         assert _db_get(models.Invoice, iid).status == "paid", r.json()
+
+
+def test_a4_paid_with_correct_amount_not_duplicated():
+    """이미 paid 인 인보이스에 (다른 event_id 의) paid 재전송이 금액 맞게 오면
+    인보이스 상태는 유지되고 Payment 가 중복 생성되지 않는다."""
+    os.environ.pop("GLHAC_PG_WEBHOOK_SECRET", None)
+    with TestClient(app) as c:
+        cid = _db_case("PT A4paid-dup")
+        iid = _invoice(cid, status="paid", ref="ORD-A4-DUP", total=1_110_000.0)
+        # 처음 payment 생성
+        db = SessionLocal()
+        try:
+            db.add(models.Payment(invoice_id=iid, case_id=cid, method="test",
+                                 amount=1_110_000.0, currency="IDR", status="confirmed",
+                                 reference="ORD-A4-DUP"))
+            db.commit()
+            count_before = db.query(models.Payment).filter_by(invoice_id=iid, status="confirmed").count()
+        finally:
+            db.close()
+        assert count_before == 1
+        # 금액 맞게 재전송 (다른 event_id)
+        r = _hook(c, "ORD-A4-DUP", "settlement", gross_amount="1110000.00", event_id="evt-dup-2")
+        assert r.status_code == 200, r.text
+        # 인보이스 상태 유지, Payment 중복 없음
+        assert _db_get(models.Invoice, iid).status == "paid"
+        db = SessionLocal()
+        try:
+            count_after = db.query(models.Payment).filter_by(invoice_id=iid, status="confirmed").count()
+        finally:
+            db.close()
+        assert count_after == 1, "paid 재전송이 Payment 중복 생성"
 
 
 # ---------- A5. GET /approvals 범위 ----------
