@@ -126,3 +126,16 @@ def test_mc6_version_file_is_gitignored():
         lines = [x.strip() for x in f.read().splitlines()]
     assert "app/VERSION" in lines
     assert ".pytest_cache/" in lines   # 줄바꿈 누락으로 두 항목이 붙지 않았는지
+
+
+def test_mc7_mobile_header_markup_served():
+    """MC7: 햄버거 버튼·토글 함수·≤480px 규칙·사이드바 링크 색이 실제로 서빙되는 화면에 들어 있다."""
+    html = client.get("/ui/v4/").text
+    assert 'class="menu-btn"' in html and "App.menuToggle(this)" in html
+    assert "menuToggle(btn)" in html
+    assert "@media (max-width:480px)" in html
+    assert ".sidebar .link{color:#e8f2eb}" in html
+    assert 'id="side-nav"' in html
+    # 알림 버튼은 접힌 상단바에서 아이콘만 남도록 라벨이 span 으로 분리돼 있다
+    with open(os.path.join(_V4, "js", "notify-bell.js"), encoding="utf-8") as f:
+        assert 'class="ntf-lbl"' in f.read()
