@@ -900,6 +900,10 @@ function toast(m){const t=document.getElementById("toast");t.textContent=(LANG==
 function _dualSplit(s){const i=s.lastIndexOf(" · ");if(i<0)return null;const ko=s.slice(0,i),en=s.slice(i+3);if(/[가-힣]/.test(ko)&&/[A-Za-z]/.test(en)&&!/[가-힣]/.test(en))return{ko:ko,en:en};return null;}
 /* LANG: 0=EN(기본) 1=KO 2=ID. 병기는 렌더 시 언어별 선택, Bahasa는 UI_STRINGS 매핑. */
 var EN_STRINGS={
+  "상태 변경 사유":"Reason for status change",
+  "상태를 바꾸는 이유를 적어 주세요":"Please enter the reason for the status change",
+  "사유를 입력해야 합니다":"A reason is required",
+  "이 상태로는 바꿀 수 없습니다(허용되지 않는 전이)":"Cannot change to this status (transition not allowed)",
   "물류 서비스 범위":"Logistics scope",
   "범위 저장":"Save scope",
   /* 스태프·클라이언트 가입 링크 */
@@ -1656,6 +1660,10 @@ function capBanner(){
 /* ── i18n 스캐폴딩(Phase D): 렌더 후 DOM-walk 치환. 호출부 수정 없이 사전만 확장하면 커버리지↑ ──
    키=한글 렌더 문자열(정확히 일치하는 텍스트 노드/속성만), 값=Bahasa. LANG===2에서만 동작. */
 const UI_STRINGS={
+  "상태 변경 사유":"Alasan perubahan status",
+  "상태를 바꾸는 이유를 적어 주세요":"Tuliskan alasan perubahan status",
+  "사유를 입력해야 합니다":"Alasan wajib diisi",
+  "이 상태로는 바꿀 수 없습니다(허용되지 않는 전이)":"Tidak dapat diubah ke status ini (transisi tidak diizinkan)",
   "물류 서비스 범위":"Ruang lingkup jasa",
   "범위 저장":"Simpan lingkup",
   /* 스태프·클라이언트 가입 링크 */
