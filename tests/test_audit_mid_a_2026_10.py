@@ -418,3 +418,37 @@ def test_ma4_같은_요청_다중_이벤트는_데드락_없이_이어진다():
         assert e2.prev_hash == e1.row_hash
     finally:
         db.close()
+
+
+# ======== MA5: 원재료 삭제 고아행 ========
+
+def test_ma5_원재료_삭제시_연결삭제_문서보존():
+    """DELETE /materials/{id} — 제품연결·증빙링크 삭제, 문서는 보존하고 material_id 만 해제,
+    다른 원재료의 행은 건드리지 않는다. 수정 전: 모두 고아로 남아 문서가 지워진 원재료를 가리킨다."""
+    cid = _db_case("MA5")
+    m1 = _add(models.Material(case_id=cid, name="삭제대상")).material_id
+    m2 = _add(models.Material(case_id=cid, name="유지")).material_id
+    _add(models.ProductMaterial(case_id=cid, product_id="p1", material_id=m1))
+    _add(models.ProductMaterial(case_id=cid, product_id="p1", material_id=m2))
+    d1 = _add(models.DocumentAsset(case_id=cid, filename="a.pdf", material_id=m1)).document_id
+    d2 = _add(models.DocumentAsset(case_id=cid, filename="b.pdf", material_id=m2)).document_id
+    _add(models.MaterialEvidenceLink(case_id=cid, document_id=d1, material_id=m1))
+    _add(models.MaterialEvidenceLink(case_id=cid, document_id=d2, material_id=m2))
+    with TestClient(app) as c:
+        r = c.delete(f"/materials/{m1}", headers=_tok(c, "consultant1", "pw"))
+        assert r.status_code == 200, r.text
+    db = SessionLocal()
+    try:
+        assert db.get(models.Material, m1) is None
+        assert db.query(models.ProductMaterial).filter_by(material_id=m1).count() == 0
+        assert db.query(models.MaterialEvidenceLink).filter_by(material_id=m1).count() == 0
+        doc = db.get(models.DocumentAsset, d1)
+        assert doc is not None and doc.material_id is None          # 문서 보존
+        # 다른 원재료는 그대로
+        assert db.query(models.ProductMaterial).filter_by(material_id=m2).count() == 1
+        assert db.query(models.MaterialEvidenceLink).filter_by(material_id=m2).count() == 1
+        assert db.get(models.DocumentAsset, d2).material_id == m2
+        # 감사로그도 같은 트랜잭션에서 커밋됨
+        assert db.query(models.AuditLog).filter_by(action="material.delete", resource_id=m1).count() == 1
+    finally:
+        db.close()

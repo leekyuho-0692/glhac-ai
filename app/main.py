@@ -4822,6 +4822,12 @@ def delete_material(material_id: str,
                {"name": m.name, "screen_result": m.screen_result,
                 "screen_status": m.screen_status, "supplier": m.supplier,
                 "cert_no": m.cert_no}, commit=False)
+        # MA5: 같은 트랜잭션에서 고아행 정리 — 제품-원재료 연결과 문서↔원재료 링크는 삭제,
+        # 증빙 문서(DocumentAsset)는 보존하고 원재료 연결만 해제한다(문서는 증거라 지우지 않는다).
+        db.query(models.ProductMaterial).filter_by(material_id=material_id).delete(synchronize_session=False)
+        db.query(models.MaterialEvidenceLink).filter_by(material_id=material_id).delete(synchronize_session=False)
+        db.query(models.DocumentAsset).filter_by(material_id=material_id).update(
+            {models.DocumentAsset.material_id: None}, synchronize_session=False)
         db.delete(m)
         db.commit()
     return {"deleted": material_id}
