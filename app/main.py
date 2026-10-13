@@ -15373,17 +15373,27 @@ def set_invoice_status(invoice_id: str, body: schemas.InvoiceStatusReq,
     if body.status not in allowed:
         raise HTTPException(409, {"code": "INVALID_INVOICE_TRANSITION", "from": frm, "to": body.status,
                                   "allowed": sorted(allowed)})
+    pend = []
+    if body.status == "paid":
+        # MA3: 확정될 pending + 이미 confirmed 합계가 청구 total 이상일 때만 paid. 부분입금 확정 차단.
+        # (기록된 결제가 전혀 없으면 관리자가 수기로 전액 수령을 확인하는 기존 경로 — 아래 manual Payment — 유지)
+        pend = db.query(models.Payment).filter_by(invoice_id=invoice_id, status="pending").all()
+        conf = db.query(models.Payment).filter_by(invoice_id=invoice_id, status="confirmed").all()
+        has_pos = any((p.amount or 0) > 0 for p in conf)
+        if pend or has_pos:
+            paid_sum = round(sum((p.amount or 0) for p in conf) + sum((p.amount or 0) for p in pend), 2)
+            total = round(inv.total or 0, 2)
+            if paid_sum < total - 0.01:
+                raise HTTPException(409, {"code": "UNDERPAID", "paid_sum": paid_sum, "total": total})
     inv.status = body.status
     if body.status == "paid":   # 확정 시 대기중 결제 confirmed 처리
-        pend = db.query(models.Payment).filter_by(invoice_id=invoice_id, status="pending").all()
         for p in pend:
             p.status = "confirmed"
         # 확인된 결제(+)가 하나도 없으면 정산 현금흐름용 Payment 생성(단일소스)
-        has_pos = db.query(models.Payment).filter_by(invoice_id=invoice_id, status="confirmed").filter(
-            models.Payment.amount > 0).first()
         if not pend and not has_pos:
             db.add(models.Payment(invoice_id=invoice_id, case_id=inv.case_id, amount=(inv.total or 0),
-                                  currency=_case_currency(db, inv.case_id), method="manual", status="confirmed", paid_by=user["uid"]))
+                                  currency=_case_currency(db, inv.case_id), method="manual",
+                                  status="confirmed", paid_by=user["uid"]))
     _audit(db, user, "payment.status", "invoice", invoice_id, inv.case_id,
            {"before": frm, "after": body.status, "reason": body.reason}, commit=False)
     if body.status == "paid":       # 관리자 결제확정 → 모의심사 진입 게이트

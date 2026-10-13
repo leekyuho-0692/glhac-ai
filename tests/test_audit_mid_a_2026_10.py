@@ -256,3 +256,65 @@ def test_ma2_알수없는_상태는_422():
     with TestClient(app) as c:
         r = _patch(c, _op(c), iid, "bogus")
         assert r.status_code == 422 and _code(r) == "BAD_STATUS"
+
+
+# ======== MA3: 부분입금 paid 확정 차단 ========
+
+def _pay(cid, iid, amount, status):
+    _add(models.Payment(invoice_id=iid, case_id=cid, amount=amount, method="bank_transfer", status=status))
+
+
+def test_ma3_모자라면_409_UNDERPAID_상태_결제_불변():
+    """수정 전에는 pending 60 만 있어도 paid 로 확정되어 pending 이 confirmed 로 바뀐다."""
+    cid = _db_case()
+    iid = _invoice(cid, status="need_verification", total=100.0)
+    _pay(cid, iid, 60.0, "pending")
+    with TestClient(app) as c:
+        r = _patch(c, _op(c), iid, "paid", "검증")
+        assert r.status_code == 409, r.text
+        d = r.json()["detail"]
+        assert d["code"] == "UNDERPAID" and d["paid_sum"] == 60.0 and d["total"] == 100.0
+    assert _inv_status(iid) == "need_verification"
+    assert [p.status for p in _payments(iid)] == ["pending"]
+
+
+def test_ma3_confirmed_와_pending_합이_total_이상이면_확정되고_pending은_confirmed():
+    cid = _db_case()
+    iid = _invoice(cid, status="need_verification", total=100.0)
+    _pay(cid, iid, 40.0, "confirmed")
+    _pay(cid, iid, 60.0, "pending")
+    with TestClient(app) as c:
+        r = _patch(c, _op(c), iid, "paid", "검증")
+        assert r.status_code == 200, r.text
+    assert _inv_status(iid) == "paid"
+    assert sorted(p.status for p in _payments(iid)) == ["confirmed", "confirmed"]
+
+
+def test_ma3_confirmed_만_부분이면_pending_없어도_UNDERPAID():
+    """수정 전: pending 이 없고 confirmed(+)가 있으면 아무 검증 없이 paid."""
+    cid = _db_case()
+    iid = _invoice(cid, status="waiting_payment", total=100.0)
+    _pay(cid, iid, 30.0, "confirmed")
+    with TestClient(app) as c:
+        r = _patch(c, _op(c), iid, "paid", "수기")
+        assert r.status_code == 409 and _code(r) == "UNDERPAID", r.text
+        assert r.json()["detail"]["paid_sum"] == 30.0
+
+
+def test_ma3_초과입금과_분할_pending_합산은_허용():
+    cid = _db_case()
+    iid = _invoice(cid, status="need_verification", total=100.0)
+    _pay(cid, iid, 70.0, "pending")
+    _pay(cid, iid, 50.0, "pending")
+    with TestClient(app) as c:
+        assert _patch(c, _op(c), iid, "paid", "검증").status_code == 200
+
+
+def test_ma3_결제기록이_전혀_없으면_수기_전액_확정_기존동작_유지():
+    """결제 기록 없이 관리자가 수기 확정하면 total 전액 manual Payment 를 만든다(기존 동작)."""
+    cid = _db_case()
+    iid = _invoice(cid, status="waiting_payment", total=100.0)
+    with TestClient(app) as c:
+        assert _patch(c, _op(c), iid, "paid", "수기 확인").status_code == 200
+    ps = _payments(iid)
+    assert len(ps) == 1 and ps[0].amount == 100.0 and ps[0].method == "manual"
