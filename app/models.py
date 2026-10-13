@@ -79,7 +79,7 @@ class Notification(Base):
     # title/body 는 한국어로 저장한 뒤 그대로 보여줬다. 인니어 화면에도 한국어 알림이 떴다
     # (실측: 인니어 화면에 남은 한글 245건 중 대부분). 발송 채널(SMS·WhatsApp)은 저장된
     # 문구를 그대로 쓰므로 건드리지 않고, 화면에 보일 때만 payload 로 다시 조립한다.
-    status = Column(String, default="unsent")  # unsent|sent|failed
+    status = Column(String, default="unsent")  # unsent|sent|failed|skipped
     attempts = Column(Integer, default=0)      # 발송 시도 횟수(비동기 워커)
     last_error = Column(String)
     read = Column(Boolean, default=False)

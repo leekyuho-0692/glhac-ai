@@ -900,7 +900,7 @@ def drain_notifications(db, batch=50, max_attempts=3):
             claimed.append(n)
     db.commit()
 
-    stats = {"processed": 0, "sent": 0, "retried": 0, "failed": 0, "consent_skipped": 0}
+    stats = {"processed": 0, "sent": 0, "retried": 0, "failed": 0, "skipped": 0}
     for n in claimed:
         stats["processed"] += 1
         contacts, consent = {}, False
@@ -922,12 +922,28 @@ def drain_notifications(db, batch=50, max_attempts=3):
         retryable = any((not r.get("ok")) and r.get("reason") not in _NOTIFY_NONRETRY
                         for r in results)
         n.attempts = (n.attempts or 0) + 1
+        # 실제 성공한 채널과 실패 사유 확인
+        has_success = any(r.get("ok") for r in results)
+        fail_reasons = [r.get("reason", "") for r in results if not r.get("ok")]
+
+        # 성공한 채널이 있으면 sent, 아니면 skipped 또는 재시도/실패
         if not retryable:
-            n.status = "sent"
-            stats["sent"] += 1
-            if dropped:
-                n.last_error = "consent_skipped:" + ",".join(dropped)
-                stats["consent_skipped"] += 1
+            # 실제 발송 성공한 경우만 "sent"
+            if has_success:
+                n.status = "sent"
+                stats["sent"] += 1
+            else:
+                # no_credentials, no_contact, 수신동의 안 한 경우는 skipped
+                n.status = "skipped"
+                stats["skipped"] += 1
+                error_parts = []
+                if "no_credentials" in fail_reasons:
+                    error_parts.append("no_credentials")
+                if "no_contact" in fail_reasons:
+                    error_parts.append("no_contact")
+                if dropped:
+                    error_parts.append("consent_skipped:" + ",".join(dropped))
+                n.last_error = ";".join(error_parts)
         elif n.attempts >= max_attempts:
             n.status = "failed"
             n.last_error = "max_attempts"
@@ -935,7 +951,7 @@ def drain_notifications(db, batch=50, max_attempts=3):
             obs.inc("glhac_notification_failed_total")
         else:
             n.status = "unsent"   # 재시도 위해 큐로 복귀
-            n.last_error = "; ".join(r.get("reason", "") for r in results if not r.get("ok"))
+            n.last_error = "; ".join(fail_reasons)
             stats["retried"] += 1
     db.commit()
     return stats
