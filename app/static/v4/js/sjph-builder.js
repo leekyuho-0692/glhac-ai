@@ -226,7 +226,7 @@ App.sjbImg = async function(cid, i){
 };
 
 App.sjbImgDel = async function(cid, i){
-  if(!confirm('이 섹션의 이미지를 뺄까요?')) return;
+  if(!confirm(I18D_tr('이 섹션의 이미지를 뺄까요?'))) return;
   const ok = await SJB_saveLayout(cid, (st, L) => {
     const s = (L.sections||[])[i];
     if(s) delete st.inserts[s.key];
@@ -319,7 +319,7 @@ App.sjbPlace = async function(cid, k, val){
 };
 
 App.sjbPlaceReset = async function(cid){
-  if(!confirm('사람이 지정한 배치를 모두 지우고 AI 추정으로 되돌립니다. 계속할까요?')) return;
+  if(!confirm(I18D_tr('사람이 지정한 배치를 모두 지우고 AI 추정으로 되돌립니다. 계속할까요?'))) return;
   try{
     const r = await apiFetch('/cases/'+cid+'/manual-placement', {method:'PUT', body:JSON.stringify({slots:{}})});
     if(!r.ok){ await SJB_fail(r); return; }

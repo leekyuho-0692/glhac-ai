@@ -135,7 +135,7 @@ App.ctlPoolDel = async function(cid, idx){
   const pool = RS.ctlPool[cid];
   if(!Array.isArray(pool) || !pool[idx]) return;
   const m = pool[idx];
-  if(!confirm('이 심사원을 팀에서 뺄까요?')) return;
+  if(!confirm(I18D_tr('이 심사원을 팀에서 뺄까요?'))) return;
   try{
     const r = await apiFetch('/cases/' + cid + '/auditor-pool/' + encodeURIComponent(m.id), {method:'DELETE'});
     if(!r.ok){
@@ -228,7 +228,7 @@ App.ctlPreassessDocx = function(cid){
 };
 
 App.ctlReclassify = async function(cid){
-  if(!confirm('업로드된 문서 종류를 다시 판정합니다. 진행할까요?')) return;
+  if(!confirm(I18D_tr('업로드된 문서 종류를 다시 판정합니다. 진행할까요?'))) return;
   try{
     const r = await apiFetch('/cases/' + cid + '/documents/re-classify', {method:'POST'});
     if(!r.ok){
