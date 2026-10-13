@@ -325,6 +325,7 @@ td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabu
 .sidebar .lang select option{color:#151515;background:#fff}
 .sidebar .btn{background:transparent;border-color:rgba(255,255,255,.45);color:#fff}
 .sidebar .btn:hover{background:rgba(255,255,255,.1)}
+.sidebar .link{color:#e8f2eb}   /* MC7: 기본 .link 가 --ink(검정)라 어두운 사이드바에서 안 읽혔다 */
 .page-head h1{color:var(--brand-text)}
 /* blocks */
 .panel{border-color:var(--brand-line);border-radius:var(--rl)}
@@ -454,6 +455,44 @@ td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabu
   .msg{max-width:90%}
 }
 @media (max-width:520px){ .seg small{display:none} .seg button{align-items:center;text-align:center} }
+/* ---------- MC7 모바일 헤더(≤480px): 한 줄 상단바 + 햄버거로 여닫는 메뉴 ----------
+   사이드바를 상단바로 쓴다 — 로고 · (알림) · 언어 · ☰ 한 줄, 메뉴 항목과 계정·로그아웃은 ☰ 로 펼칠 때만 보인다.
+   .side-foot 를 display:contents 로 풀어 언어 선택·알림만 상단바에 남기고 나머지는 접는다. */
+.menu-btn{display:none}
+fieldset{min-width:0}                 /* 표가 든 fieldset 이 내용 폭만큼 부풀어 가로 스크롤을 깨지 않게 */
+.tbl-wrap{-webkit-overflow-scrolling:touch}
+@media (max-width:480px){
+  .sidebar{position:sticky;top:0;z-index:50;display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:0 8px;padding:0 12px;max-height:100vh}
+  .sidebar.menu-open{overflow-y:auto}
+  .side-brand{order:1;flex:1 1 auto;min-width:0;padding:8px 0;border:0}
+  .side-brand .wordmark span,.side-ws{display:none}
+  .side-brand .logo-img{width:32px}
+  .side-brand .wordmark b{font-size:15px}
+  .side-foot{display:contents}
+  .sidebar .lang{order:2;flex:none}
+  .sidebar .lang span{display:none}
+  .sidebar .lang select{width:auto;max-width:104px;padding:6px 6px;font-size:12px}
+  .menu-btn{order:3;display:inline-grid;place-items:center;flex:none;width:40px;height:40px;border:1px solid rgba(255,255,255,.45);border-radius:var(--r);background:transparent;color:#fff;font-size:20px;line-height:1;cursor:pointer}
+  .menu-btn:hover{background:rgba(255,255,255,.1)}
+  /* 알림 버튼은 접힌 상태에서도 상단바에 남긴다 */
+  .side-foot>button[onclick*="ntfOpen"]{order:2;flex:none;width:auto;padding:6px 10px;font-size:14px}
+  .ntf-lbl{display:none}
+  .sidebar:not(.menu-open) .side-nav,
+  .sidebar:not(.menu-open) .side-foot>:not(.lang):not([onclick*="ntfOpen"]){display:none}
+  /* 펼친 메뉴 */
+  .side-nav{order:4;flex:1 1 100%;flex-direction:column;overflow-x:visible;padding:6px 0;border-top:1px solid rgba(255,255,255,.12)}
+  .nav-item{white-space:normal;width:100%;padding:9px 14px}
+  .nav-grp{display:block}
+  .side-foot>:not(.lang):not([onclick*="ntfOpen"]){order:5;flex:1 1 100%;margin:0 0 10px}
+  .side-foot>.btn{width:100%}
+  .side-user{flex-direction:column;gap:0}
+  /* 페이지 머리말도 한 줄로 */
+  .page-head{padding:12px 16px;align-items:center;gap:2px 12px}
+  .page-head .eyebrow{display:none}
+  .page-head h1{font-size:19px;margin-top:0}
+  .head-meta{font-size:12px}
+}
+@media (max-width:360px){ .side-brand .wordmark{display:none} }   /* 아주 좁은 폰은 로고만 */
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 .df-row.fut{opacity:.55}
 .df-fut .panel-head h2{color:var(--ink-3)}
@@ -743,7 +782,8 @@ function renderShell(){
   return `<div class="shell">
     <aside class="sidebar">
       <div class="side-brand">${brand()}<div class="side-ws">${t(roleByCode(S.role).label)}</div></div>
-      <nav class="side-nav" aria-label="주 메뉴">${NAV[S.role].map(v=>`${(NAV_GROUP[S.role]||{})[v]?`<div class="nav-grp">${(NAV_GROUP[S.role])[v]}</div>`:''}<button class="nav-item ${S.view===v?'on':''}" onclick="App.go('${v}')" ${S.view===v?'aria-current="page"':''}><span>${t('nav.'+v)}</span>${navCount(v)}</button>`).join('')}</nav>
+      <button type="button" class="menu-btn" aria-label="메뉴" aria-expanded="false" aria-controls="side-nav" onclick="App.menuToggle(this)">☰</button>
+      <nav class="side-nav" id="side-nav" aria-label="주 메뉴">${NAV[S.role].map(v=>`${(NAV_GROUP[S.role]||{})[v]?`<div class="nav-grp">${(NAV_GROUP[S.role])[v]}</div>`:''}<button class="nav-item ${S.view===v?'on':''}" onclick="App.go('${v}')" ${S.view===v?'aria-current="page"':''}><span>${t('nav.'+v)}</span>${navCount(v)}</button>`).join('')}</nav>
       <div class="side-foot">
         ${SHELL_EXT.sideFoot.map(f=>f()).join('')}
         <div class="side-user"><b>${esc(who)}</b><span>${esc(whoSub)}</span></div>
@@ -877,10 +917,26 @@ async function apiRefresh(){
 async function apiFetch(path, opts={}){   // 화면이 실API 호출할 때 사용 (Bearer + 401 자동 refresh)
   opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers||{});
   if(AUTH.access) opts.headers['Authorization'] = 'Bearer '+AUTH.access;
-  let r = await fetch(API_BASE+path, opts);
-  if(r.status===401 && await apiRefresh()){ opts.headers['Authorization']='Bearer '+AUTH.access; r = await fetch(API_BASE+path, opts); }
-  else if(r.status===401 && AUTH.access && !path.startsWith('/auth/')) sessionExpired();
-  return r;
+  /* 타임아웃: 업로드·접수는 180초, 그 외 30초. 호출자가 signal 을 넘겼으면 그 취소도 함께 존중한다(둘 중 먼저 오는 쪽으로 중단). */
+  const timeout = (path.includes('intake') || path.includes('upload')) ? 180000 : 30000;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  const outer = opts.signal;
+  let onOuterAbort = null;
+  if(outer){
+    if(outer.aborted) controller.abort();
+    else{ onOuterAbort = () => controller.abort(); outer.addEventListener('abort', onOuterAbort); }
+  }
+  try{
+    opts = Object.assign({}, opts, {signal: controller.signal});   // 호출자의 opts 객체는 건드리지 않는다
+    let r = await fetch(API_BASE+path, opts);
+    if(r.status===401 && await apiRefresh()){ opts.headers['Authorization']='Bearer '+AUTH.access; r = await fetch(API_BASE+path, opts); }
+    else if(r.status===401 && AUTH.access && !path.startsWith('/auth/')) sessionExpired();
+    return r;
+  }finally{
+    clearTimeout(timeoutId);
+    if(outer && onOuterAbort) outer.removeEventListener('abort', onOuterAbort);
+  }
 }
 /* refresh 까지 실패(만료·다른 기기 로그아웃으로 TOKEN_REVOKED) — 빈 화면 대신 로그인으로 돌려보낸다 */
 let _expiredShown = false;
@@ -929,6 +985,11 @@ async function restoreSession(){
 
 const App = {
    closeModal,
+  menuToggle(btn){   /* 모바일 햄버거 — 사이드바에 menu-open 토글(화면 이동·언어 변경 시 render() 가 닫힌 상태로 다시 그린다) */
+    const sb = document.querySelector('.sidebar'); if(!sb) return;
+    const on = sb.classList.toggle('menu-open');
+    if(btn){ btn.setAttribute('aria-expanded', on ? 'true' : 'false'); btn.textContent = on ? '✕' : '☰'; }
+  },
   setLang(l){ S.lang=l; try{ localStorage.setItem('glhac_v4_lang', l); }catch(e){} render(); },
   loginRole(r){ S.loginRole=r; S.loginEmail=null; render(); },
   goSignup(){ S.auth = S.loginRole==='enterprise'?'signup-ent':'signup-cons'; S.signup=null; S.consPick=null; S.dupEmail=null; render(); window.scrollTo(0,0); },
@@ -1699,10 +1760,10 @@ App.finalBundle = async function(cid){
 async function loadEnt(){
   try{
     const r = await apiFetch('/cases');
-    RS.cases = r.ok ? ((await r.json()).items || []) : [];
+    RS.cases = r.ok ? ((await r.json()).items || []) : {error:true, status: r.status};
     RS.entAsk = null;
     RS.loadedFor = AUTH.username;
-  }catch(e){ RS.cases = []; }
+  }catch(e){ RS.cases = {error:true, message: String(e)}; }
 }
 function _stepper8(step, hold, done){
   return `<ol class="stepper" style="grid-template-columns:repeat(8,minmax(0,1fr))">${S8_LABELS.map((l,i)=>{
@@ -1711,7 +1772,10 @@ function _stepper8(step, hold, done){
   }).join('')}</ol>`;
 }
 VIEWS['ent-home'] = () => {
-  const c = (RS.cases||[])[0];
+  if(RS.cases && RS.cases.error){
+    return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  }
+  const c = (Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다. 인증 신청서를 작성해 주세요.</p></section>`;
   return `
   <section class="summary">
@@ -1734,7 +1798,8 @@ async function loadEntPre(cid){
   catch(e){ RS.entPre[cid]={}; }
 }
 VIEWS['ent-pre'] = () => {
-  const c=(RS.cases||[])[0];
+  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
   const cid=c.case_id, d=(RS.entPre||{})[cid];
   if(!d){ if(RS._entPreLoading!==cid){ RS._entPreLoading=cid; loadEntPre(cid).then(()=>{RS._entPreLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
@@ -1778,7 +1843,8 @@ async function loadEntCt(cid){
 const _money = (n,cur) => (n==null?'-':(Number(n).toLocaleString()+' '+(cur||'KRW')));
 const INV_ST = {waiting_payment:'입금 대기', paid:'입금 완료', settlement:'정산', settled:'정산완료', draft:'작성중', refunded:'환불', expired:'기한만료', billed:'청구'};
 VIEWS['ent-contract'] = () => {
-  const c=(RS.cases||[])[0];
+  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
   const cid=c.case_id, d=(RS.entCt||{})[cid];
   if(!d){ if(RS._entCtLoading!==cid){ RS._entCtLoading=cid; loadEntCt(cid).then(()=>{RS._entCtLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
@@ -1883,7 +1949,8 @@ async function loadEntDocs(cid){
   catch(e){ RS.entDocs[cid]=[]; }
 }
 VIEWS['ent-docs'] = () => {
-  const c=(RS.cases||[])[0];
+  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
   const cid=c.case_id, docs=(RS.entDocs||{})[cid];
   if(!docs){ if(RS._entDocsLoading!==cid){ RS._entDocsLoading=cid; loadEntDocs(cid).then(()=>{RS._entDocsLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
@@ -2122,7 +2189,8 @@ async function loadEntProd(cid){
   catch(e){ RS.entProd[cid]=[]; }
 }
 VIEWS['ent-apply'] = () => {
-  const c=(RS.cases||[])[0];
+  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
   const cid=c.case_id, prods=(RS.entProd||{})[cid];
   if(!prods){ if(RS._entProdLoading!==cid){ RS._entProdLoading=cid; loadEntProd(cid).then(()=>{RS._entProdLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }

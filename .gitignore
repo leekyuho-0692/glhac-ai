@@ -15,3 +15,6 @@ demo_shots/
 coverage.xml
 htmlcov/
 .pytest_cache/
+# 배포 스크립트가 생성하는 빌드 식별 파일
+app/VERSION
+

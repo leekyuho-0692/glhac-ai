@@ -118,8 +118,11 @@ App.blaSignBDo = async function(i){
 };
 App.blaConfirmPaid = async function(i, invoiceId){
   const it = BLA_it(i); if(!it) return toast('항목을 찾을 수 없습니다.'); const cid = it.case_id;
-  const r = await apiFetch('/invoices/'+invoiceId+'/status', {method:'PATCH', body:JSON.stringify({status:'paid', reason:''})});
-  if(!r.ok){ const e = await r.json().catch(()=>({})); return toast('입금 확인에 실패했습니다.'+(e.detail&&e.detail.code?' ('+e.detail.code+')':'')); }
+  const r = await apiFetch('/invoices/'+invoiceId+'/status', {method:'PATCH', body:JSON.stringify({status:'paid', reason:'입금 확인'})});
+  if(!r.ok){ const e = await r.json().catch(()=>({})); const c = e.detail&&e.detail.code;
+    if(c==='REASON_REQUIRED') return toast('사유가 필요합니다.');
+    if(c==='INVALID_INVOICE_TRANSITION') return toast('현재 상태에서는 입금 확인을 할 수 없습니다.');
+    return toast('입금 확인에 실패했습니다.'+(c?' ('+c+')':'')); }
   delete RS.blaBoard; render(); toast('입금을 확인했습니다');
 };
 App.blaBillNow = async function(i, invoiceId){

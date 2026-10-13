@@ -140,7 +140,7 @@ App.nvcMineSave = async function(){
 };
 
 App.nvcMineReset = async function(){
-  if(!confirm('내 메뉴를 기본값으로 되돌릴까요?')) return;
+  if(!confirm(I18D_tr('내 메뉴를 기본값으로 되돌릴까요?'))) return;
   try{
     const r = await apiFetch('/me/v4-nav/reset', {method:'POST'});
     if(!r.ok) return toast('기본값으로 되돌리지 못했습니다.');
@@ -261,7 +261,7 @@ App.nvcAdmSave = async function(){
 
 App.nvcAdmReset = async function(){
   const r = S.nvcRole || 'ent';
-  if(!confirm('이 역할 메뉴를 기본값으로 되돌릴까요?')) return;
+  if(!confirm(I18D_tr('이 역할 메뉴를 기본값으로 되돌릴까요?'))) return;
   try{
     const res = await apiFetch('/admin/v4-nav/' + r, {method:'PUT', body:JSON.stringify({hidden:[], order:[]})});
     if(!res.ok){

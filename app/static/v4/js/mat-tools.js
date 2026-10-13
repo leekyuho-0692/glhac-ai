@@ -47,7 +47,7 @@ const MTL_rows = (q) => {
 };
 
 App.mtlDedup = async function (cid) {
-  if (!confirm('이름이 같은(괄호·공백·원산지 표기만 다른) 원재료를 하나만 남기고 정리합니다. 증빙이 붙은 항목은 지우지 않습니다. 진행할까요?')) return;
+  if (!confirm(I18D_tr('이름이 같은(괄호·공백·원산지 표기만 다른) 원재료를 하나만 남기고 정리합니다. 증빙이 붙은 항목은 지우지 않습니다. 진행할까요?'))) return;
   try {
     const r = await apiFetch(`/cases/${cid}/materials/dedup`, { method: 'POST', body: JSON.stringify({}) });
     if (!r.ok) return MTL_err(r, '중복 정리');

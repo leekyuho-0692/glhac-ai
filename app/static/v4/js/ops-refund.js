@@ -100,15 +100,18 @@
     const rsn = (($('#opsd-inv-rsn')||{}).value||'').trim();
     if(!iid){ toast('청구 ID를 입력하세요.'); return; }
     if(OPSD_INV_STATES.indexOf(st) < 0){ toast('상태를 선택하세요.'); return; }
+    if(!rsn){ toast('변경 사유를 입력하세요.'); const re = $('#opsd-inv-rsn'); if(re) re.focus(); return; }
     try{
       const r = await apiFetch('/invoices/' + encodeURIComponent(iid) + '/status', {
-        method:'PATCH', body: JSON.stringify({status:st, reason: rsn || null})
+        method:'PATCH', body: JSON.stringify({status:st, reason: rsn})
       });
       if(!r.ok){
         let code = '';
         try{ const j = await r.json(); code = (j && j.detail && j.detail.code) || (j && j.code) || ''; }catch(_){}
         if(r.status === 403) toast('권한이 없습니다 (operator 필요)' + (code?' ('+code+')':''));
         else if(r.status === 404) toast('청구를 찾을 수 없습니다' + (code?' ('+code+')':''));
+        else if(code === 'REASON_REQUIRED') toast('변경 사유를 입력하세요.');
+        else if(code === 'INVALID_INVOICE_TRANSITION') toast('이 상태로는 바꿀 수 없습니다(허용되지 않는 전이).');
         else toast('상태 변경에 실패했습니다.' + (code?' ('+code+')':''));
         return;
       }
@@ -214,7 +217,7 @@
         <select class="in" id="opsd-inv-st">${opts}</select>
       </div>
       <div class="inline" style="margin-top:8px">
-        <input class="in" id="opsd-inv-rsn" placeholder="사유(선택)" />
+        <input class="in" id="opsd-inv-rsn" placeholder="사유(필수)" />
         <button class="btn btn-primary" onclick="App.opsdSetInvoice()">변경</button>
       </div>
       <p class="note">상태를 <span class="mono">paid</span> 로 변경하면 결제 확정 및 모의심사 진입 게이트가 트리거됩니다. maker-checker 감사로그가 기록됩니다.</p>

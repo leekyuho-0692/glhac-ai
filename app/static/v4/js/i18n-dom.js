@@ -1,6 +1,8 @@
 /* ===== v4 본문 3개 국어(KO/EN/ID) 런타임 번역기 ===== */
 const I18D_HANGUL = /[가-힣]/;
 const I18D_RE_CACHE = {};
+/* lookbehind 지원 여부 — 미지원 브라우저에선 정규식 리터럴이 아닌 생성자로만 검사해 파싱 오류를 피한다 */
+let I18D_LB = (function(){ try{ new RegExp('(?<!a)b'); return true; }catch(e){ return false; } })();
 const I18D_UNITS = { en:{'개사':' companies','건':' items','명':' people','개':'','종':' types','회':' times','일':' days','차':' round','장':' pages','분':' min','시간':' hr','원':' KRW','점':' pts'}, id:{'개사':' perusahaan','건':' item','명':' orang','개':'','종':' jenis','회':' kali','일':' hari','차':' putaran','장':' halaman','분':' mnt','시간':' jam','원':' KRW','점':' poin'} };
 
 function I18D_dict(){
@@ -20,9 +22,28 @@ function I18D_re(lang){
   if(!dict) { I18D_RE_CACHE[lang] = null; return null; }
   const keys = Object.keys(dict).filter(k => k.length >= 2).sort((a, b) => b.length - a.length);
   if(!keys.length) { I18D_RE_CACHE[lang] = null; return null; }
-  const re = new RegExp('(?<![가-힣])(?:' + keys.map(I18D_escRe).join('|') + ')(?![가-힣])', 'g');
+
+  // lookbehind 를 못 쓰는 구형 Safari(iOS<16.4)는 앞 글자 검사를 치환 쪽(I18D_replace)에서 한다.
+  const alt = '(?:' + keys.map(I18D_escRe).join('|') + ')(?![가-힣])';
+  const re = new RegExp((I18D_LB ? '(?<![가-힣])' : '') + alt, 'g');
   I18D_RE_CACHE[lang] = re;
   return re;
+}
+
+/* 사전 치환. lookbehind 정규식이면 replace 한 번, 아니면 같은 조건(앞 글자가 한글이면 치환 안 함)을 exec 루프로 재현한다.
+   앞 글자 때문에 거절하면 lastIndex=i+1 로 다음 위치부터 다시 찾으므로 lookbehind 와 결과가 정확히 같다. */
+function I18D_replace(out, re, dict){
+  const has = Object.prototype.hasOwnProperty;
+  if(I18D_LB) return out.replace(re, mm => (has.call(dict, mm) ? dict[mm] : mm));
+  let res = '', last = 0, m;
+  re.lastIndex = 0;
+  while((m = re.exec(out))){
+    const i = m.index;
+    if(i > 0 && I18D_HANGUL.test(out.charAt(i - 1))){ re.lastIndex = i + 1; continue; }
+    res += out.slice(last, i) + (has.call(dict, m[0]) ? dict[m[0]] : m[0]);
+    last = i + m[0].length;
+  }
+  return res + out.slice(last);
 }
 
 function I18D_tr(text){
@@ -44,7 +65,8 @@ function I18D_tr(text){
   }
   const re = I18D_re(S.lang);
   if(!re) return out;
-  return out.replace(re, mm => (Object.prototype.hasOwnProperty.call(dict, mm) ? dict[mm] : mm));
+
+  return I18D_replace(out, re, dict);
 }
 
 function I18D_apply(root){

@@ -99,7 +99,7 @@ SHELL_EXT.sideFoot.push(() => {
     }
   }
   const cnt = (typeof n === 'number' && n > 0) ? ` <span class="count">${n}</span>` : '';
-  return `<button class="btn btn-block btn-ghost" onclick="App.ntfOpen()">🔔 알림${cnt}</button>`;
+  return `<button class="btn btn-block btn-ghost" aria-label="알림" onclick="App.ntfOpen()">🔔<span class="ntf-lbl"> 알림</span>${cnt}</button>`;
 });
 
 { const g = App.go; App.go = async function(v){ RS.ntfUnread = undefined; return g.call(App, v); }; }

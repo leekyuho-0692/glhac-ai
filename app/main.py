@@ -44,7 +44,7 @@ app = FastAPI(
 )
 
 # GZip 압축 — 451KB index.html 등 정적/JSON 응답 전송 최적화(1KB 이상만 압축).
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # CORS — 기본은 동일 출처만. GLHAC_CORS_ORIGINS(콤마구분)로 SPA 출처 명시 허용.
 _cors_env = os.environ.get("GLHAC_CORS_ORIGINS", "").strip()
@@ -1119,8 +1119,20 @@ def health(db: Session = Depends(get_db)):
     except Exception:  # noqa: BLE001
         dbok = False
     status = "ok" if dbok else "degraded"
+
+    # VERSION 파일에서 빌드 정보 읽기 (배포 스크립트가 생성)
+    build_info = "unknown"
+    version_file = os.path.join(os.path.dirname(__file__), "VERSION")
+    if os.path.isfile(version_file):
+        try:
+            with open(version_file, "r", encoding="utf-8") as f:
+                build_info = f.read().strip() or "unknown"
+        except Exception:  # noqa: BLE001
+            build_info = "unknown"
+
     return JSONResponse(status_code=200 if dbok else 503,
-                        content={"status": status, "service": "glhac-ai", "version": "0.2.0", "db": dbok,
+                        content={"status": status, "service": "glhac-ai", "version": "0.2.0",
+                                 "build": build_info, "db": dbok,
                                  "demo": os.environ.get("GLHAC_DEV") == "1"})
 
 
@@ -20249,14 +20261,23 @@ def regulation_transition(reg_id: str, body: schemas.RegulationTransitionReq,
 
 # ---------- 정적 UI (M2) ----------
 class NoCacheStaticFiles(StaticFiles):
-    """UI 정적파일을 항상 재검증(no-cache) — 배포 후 하드리프레시 없이 최신 반영."""
+    """UI 정적파일 캐싱 전략.
+    - HTML·그 밖의 파일: 항상 재검증(no-cache) — 배포 후 하드리프레시 없이 최신 반영.
+    - /ui/v4 의 js·css·폰트만 1시간 캐시(파일명에 해시가 없어 길게 잡지 않는다).
+    구 화면(/ui/ 바로 아래)은 예전 그대로 전부 no-cache 다."""
+    _V4_ASSET_EXT = (".js", ".css", ".ttf", ".woff", ".woff2")
+
     async def get_response(self, path, scope):
         resp = await super().get_response(path, scope)
-        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        resp.headers["Pragma"] = "no-cache"
-        resp.headers["Expires"] = "0"
+        # get_response 의 path 는 마운트 기준 상대경로("v4/js/x.js")다.
+        is_v4_asset = path.startswith("v4/") and path.lower().endswith(self._V4_ASSET_EXT)
+        if is_v4_asset and resp.status_code in (200, 304):
+            resp.headers["Cache-Control"] = "public, max-age=3600"
+        else:
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
         return resp
-
 
 
 def _ui_default():
