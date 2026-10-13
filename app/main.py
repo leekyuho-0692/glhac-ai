@@ -15141,7 +15141,11 @@ def record_payment(invoice_id: str, body: schemas.PaymentReq,
     if body.method not in ("bank_transfer", "va", "card", "manual"):
         raise HTTPException(400, {"code": "BAD_METHOD"})
     paid_amt = body.amount if body.amount is not None else inv.total
-    auto = body.method in ("va", "card") and abs((paid_amt or 0) - (inv.total or 0)) < 0.01
+    # 자동 확정(paid)은 operator/admin 기록만 — 신청자가 method=card·금액일치로 자기 결제를
+    # 확정해 게이트를 통과하던 결함(감사 K2). 그 외 기록은 pending → 관리자 검증으로 간다.
+    can_auto_confirm = user["role"] in ("operator", "admin")
+    auto = (can_auto_confirm and body.method in ("va", "card")
+            and abs((paid_amt or 0) - (inv.total or 0)) < 0.01)
     p = models.Payment(invoice_id=invoice_id, case_id=inv.case_id, amount=paid_amt,
                        method=body.method, reference=body.reference,
                        status=("confirmed" if auto else "pending"), paid_by=user["uid"])
