@@ -59,7 +59,7 @@ function ENTA_applyPanel(){
   const prog = (S.entaProg||'');
   return `<section class="panel"><div class="panel-head"><h2>임시저장 · 일괄 업로드</h2></div>
     <div class="inline" style="flex-wrap:wrap;gap:8px">
-      ${canDraft?`<button class="btn" onclick="App.entaSaveDraft()">임시저장</button>`:''}
+      ${canDraft?`<button class="btn" onclick="once(this, ()=>App.entaSaveDraft())">임시저장</button>`:''}
       ${canZip?`<button class="btn btn-primary" onclick="(($('#enta-zip')||{}).click||(()=>{}))()">ZIP 파일로 서류 일괄 올리기</button>`:''}
       <input type="file" id="enta-zip" accept=".zip" hidden onchange="App.entaZip(this.files[0])">
     </div>

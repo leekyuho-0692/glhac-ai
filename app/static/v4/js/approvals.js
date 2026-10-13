@@ -51,8 +51,8 @@ function APRV_row(it, i){
     ? `<span class="muted" style="font-size:11px">내가 요청한 건 — 다른 계정이 승인해야 합니다</span>`
     : !APRV_canDecide(it)
     ? `<span class="muted" style="font-size:11px">결정 권한 없음${(it.checker_roles||[]).length?` — 승인 역할: ${esc(it.checker_roles.map(r=>ROLE_LABEL[r]||r).join(', '))}`:''}</span>`
-    : `<button class="btn btn-sm btn-primary" onclick="App.aprvApprove(${i})">승인</button>
-      <button class="btn btn-sm" onclick="App.aprvReject(${i})">반려</button>`;
+    : `<button class="btn btn-sm btn-primary" onclick="once(this, ()=>App.aprvApprove(${i}))">승인</button>
+      <button class="btn btn-sm" onclick="once(this, ()=>App.aprvReject(${i}))">반려</button>`;
   return `<li class="row">
     <div style="min-width:0">
       <div style="font-weight:600;margin-bottom:2px">${esc(label)}</div>
@@ -120,7 +120,7 @@ App.aprvReject = function(i){
     </div>
     <div class="note" style="margin-top:10px">${esc(label)} — ${esc(it.company_name || it.case_id || '')}</div>`;
   const foot = `<button class="btn" onclick="App.closeModal()">취소</button>
-    <button class="btn btn-primary" onclick="App.aprvRejectDo(${i})">반려</button>`;
+    <button class="btn btn-primary" onclick="once(this, ()=>App.aprvRejectDo(${i}))">반려</button>`;
   openModal('요청 반려', body, foot);
 };
 

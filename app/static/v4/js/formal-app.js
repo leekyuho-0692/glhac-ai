@@ -63,7 +63,7 @@ function FA_audPanel(cid){
     if(bl.length) h += `<p>${bl.map(b=>`<span class="badge attn">${esc(b)}</span>`).join(' ')}</p>`;
     if(m) h += `<p class="muted">원재료 증빙 ${esc(String(m.with_evidence))}/${esc(String(m.total))}</p>`;
   }
-  h += `<button class="btn btn-sm" onclick="App.faRunAi2('${jsq(cid)}')" ${ai2Ready?'':'disabled'}>AI 2차 분석 실행</button>`;
+  h += `<button class="btn btn-sm" onclick="once(this, ()=>App.faRunAi2('${jsq(cid)}'))" ${ai2Ready?'':'disabled'}>AI 2차 분석 실행</button>`;
   if(!ai2Ready) h += `<p class="muted" style="font-size:12px">사전심사 '가능' 판정 후 실행</p>`;
   h += `</div>`;
   // 판정
@@ -111,7 +111,7 @@ App.faRunAi2 = async function(cid){
 
 App.faVerdict = function(cid, v){
   const body = `<div class="fieldset">${v==='not_eligible'?`<div class="field"><label>판정 사유 <span class="req">*</span></label><textarea class="in" id="fa-reason"></textarea></div>`:''}<div class="field"><label>메모</label><textarea class="in" id="fa-note"></textarea></div></div>`;
-  openModal(v==='eligible'?'인증 가능 판정':'인증 불가 판정', body, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.faVerdictDo('${jsq(cid)}','${jsq(v)}')">확인</button>`);
+  openModal(v==='eligible'?'인증 가능 판정':'인증 불가 판정', body, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="once(this, ()=>App.faVerdictDo('${jsq(cid)}','${jsq(v)}'))">확인</button>`);
 };
 
 App.faVerdictDo = async function(cid, v){
@@ -178,7 +178,7 @@ VIEWS['ent-formal'] = () => {
   h += `<div class="field"><label>대표자 성명 <span class="req">*</span></label><input class="in" id="fa-signer"></div>`;
   h += `<div class="field"><label>서명</label><canvas id="fa-pad" width="420" height="140" style="border:1px solid var(--line);max-width:100%"></canvas><button class="btn btn-sm" onclick="App.faPadClear()">지우기</button></div>`;
   h += `<p class="inline-msg" id="fa-msg"></p>`;
-  h += `<button class="btn btn-primary" onclick="App.faSubmit('${jsq(cid)}')">정식 인증 신청서 제출</button>`;
+  h += `<button class="btn btn-primary" onclick="once(this, ()=>App.faSubmit('${jsq(cid)}'))">정식 인증 신청서 제출</button>`;
   h += `</div></section>`;
   setTimeout(FA_padInit, 0);
   return h;
@@ -272,7 +272,7 @@ function FA_admPanel(){
 
 App.faReturn = function(cid){
   const o=RS.faOps||{}; const items=o.items||[]; const it=items.find(x=>x.case_id===cid); if(!it) return;
-  openModal('신청 반려', `<div class="field"><label>업체</label><p class="mono">${esc(it.company_name)}</p></div><div class="field"><label>반려 사유 <span class="req">*</span></label><textarea class="in" id="fa-ret-reason"></textarea></div>`, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.faReturnDo('${jsq(cid)}')">반려</button>`);
+  openModal('신청 반려', `<div class="field"><label>업체</label><p class="mono">${esc(it.company_name)}</p></div><div class="field"><label>반려 사유 <span class="req">*</span></label><textarea class="in" id="fa-ret-reason"></textarea></div>`, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="once(this, ()=>App.faReturnDo('${jsq(cid)}'))">반려</button>`);
 };
 
 App.faReturnDo = async function(cid){
@@ -287,7 +287,7 @@ App.faReturnDo = async function(cid){
 
 App.faAccept = async function(cid){
   const o=RS.faOps||{}; const items=o.items||[]; const it=items.find(x=>x.case_id===cid); if(!it) return;
-  openModal('신청 접수 확인', `<div class="field"><label>업체</label><p class="mono">${esc(it.company_name)}</p></div><p>이 신청을 접수하시겠습니까?</p>`, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.faAcceptDo('${jsq(cid)}')">접수 확인</button>`);
+  openModal('신청 접수 확인', `<div class="field"><label>업체</label><p class="mono">${esc(it.company_name)}</p></div><p>이 신청을 접수하시겠습니까?</p>`, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="once(this, ()=>App.faAcceptDo('${jsq(cid)}'))">접수 확인</button>`);
 };
 
 App.faAcceptDo = async function(cid){

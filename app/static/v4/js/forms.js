@@ -99,6 +99,15 @@ render = function(){ try{
   if(S && S.role && S.fmLangApplied !== S.role){
     let l = null;
     try{ l = localStorage.getItem('glhac_lang_'+S.role); }catch(e){}
+    if(!l){
+      try{ l = localStorage.getItem('glhac_v4_lang'); }catch(e){}
+    }
+    if(!l){
+      const navLang = (navigator.language || '').toLowerCase();
+      if(navLang.startsWith('id')) l = 'id';
+      else if(navLang.startsWith('ko')) l = 'ko';
+      else l = 'en';
+    }
     if(!l) l = FM_DEFAULT_LANG[S.role] || FM_LANG_DEFAULT;
     S.lang = l; S.fmLangApplied = S.role;
   }

@@ -84,7 +84,7 @@ render = function(){
 document.addEventListener('click', e=>{
   const b = e.target.closest('button');
   if(!b || S.view!=='cons-new') return;
-  if(!/초대|링크/.test(b.innerText)) return;
+  if(b.getAttribute('data-act')!=='invite') return;
   const checked = document.querySelectorAll('input[name=iv-sector]:checked');
   if(!checked.length){ e.stopImmediatePropagation(); e.preventDefault(); toast('분야를 1개 이상 선택해 주세요.'); return; }
   S.scInvitePending = {sectors:[...checked].map(x=>x.value), contact_name:(($('#iv-contact')||{}).value||'').trim(), phone:(($('#iv-phone')||{}).value||'').trim()};
