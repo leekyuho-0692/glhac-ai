@@ -15432,9 +15432,10 @@ async def pg_webhook(provider: str, request: Request, db: Session = Depends(get_
     applied = None
     if inv and new_status:
         frm = inv.status
-        # 이미 paid 상태면 다른 상태로 되돌리지 않음 (A4-2)
-        if frm == "paid" and new_status in ("pending", "expired", "failed"):
-            new_status = None  # 상태 변경 없음
+        # 이미 paid 상태면 다른 상태로 되돌리지 않음 (A4-2: refunded 제외)
+        if frm == "paid" and new_status != "refunded":
+            # no-op: 이미 paid 상태는 refunded만 허용
+            applied = {"invoice_id": inv.invoice_id, "from": "paid", "to": None, "ignored": "already_paid"}
         elif new_status == "paid":
             # paid: 금액 검증 (A4-1)
             amt_raw = payload.get("gross_amount") or payload.get("amount")
@@ -15450,7 +15451,18 @@ async def pg_webhook(provider: str, request: Request, db: Session = Depends(get_
 
             if not amt_ok:
                 inv.status = "need_verification"
-                applied = {"invoice_id": inv.invoice_id, "from": frm, "to": "need_verification"}
+                # 금액 검증 실패 사유 기록
+                if amt_raw is None:
+                    reason = "amount_missing"
+                else:
+                    try:
+                        float(amt_raw)
+                        reason = "amount_mismatch"
+                    except (ValueError, TypeError):
+                        reason = "amount_unparseable"
+                applied = {"invoice_id": inv.invoice_id, "from": frm, "to": "need_verification",
+                          "reason": reason, "amount_received": amt_raw, "amount_expected": inv.total}
+                log.warning("[pg-webhook] %s 금액 검증 실패 — %s (받음: %s, 기대: %.2f)", provider, reason, amt_raw, inv.total)
             else:
                 inv.status = new_status
                 # Payment 기록
