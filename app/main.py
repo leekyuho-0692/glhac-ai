@@ -1044,30 +1044,27 @@ def health(db: Session = Depends(get_db)):
 
 
 @app.get("/metrics")
-def metrics(request: Request):
+def metrics(request: Request, db: Session = Depends(get_db)):
     """Prometheus 메트릭 노출(§11.3) — 집계값만(PII 없음). 스크레이프용. 인증 보호 (A7)."""
     import os as _os
     import hmac
     from fastapi.responses import PlainTextResponse
 
     token_env = _os.environ.get("GLHAC_METRICS_TOKEN")
-    auth_header = request.headers.get("Authorization", "").strip()
 
     if token_env:
-        # 토큰 환경변수 설정 시 Bearer 토큰 검증
+        # 토큰 환경변수 설정 시 Bearer 토큰만 검증
+        auth_header = request.headers.get("Authorization", "").strip()
         if not auth_header.startswith("Bearer "):
             raise HTTPException(401, {"code": "TOKEN_REQUIRED"})
         provided_token = auth_header[7:]
         if not hmac.compare_digest(provided_token, token_env):
             raise HTTPException(403, {"code": "INVALID_TOKEN"})
     else:
-        # 미설정 시: Authorization 헤더의 JWT로 operator/admin 검증
-        if not auth_header.startswith("Bearer "):
-            raise HTTPException(401, {"code": "NO_AUTH"})
-        payload = auth.verify_token(auth_header[7:])
-        if not payload:
-            raise HTTPException(401, {"code": "INVALID_TOKEN"})
-        if payload.get("role") not in ("operator", "admin"):
+        # 미설정 시: auth.get_current_user로 JWT 전체 검증(refresh 거부·token_version·정지 사용자 체크)
+        auth_header = request.headers.get("Authorization", "")
+        user = auth.get_current_user(authorization=auth_header, db=db)
+        if user["role"] not in ("operator", "admin"):
             raise HTTPException(403, {"code": "FORBIDDEN_ROLE"})
 
     return PlainTextResponse(obs.render_prometheus(),
