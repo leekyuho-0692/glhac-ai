@@ -89,6 +89,19 @@ if [ "$DO_APP" = 1 ]; then
 fi
 if [ "$DRY" = 1 ]; then say "dry-run — 아무것도 바꾸지 않았습니다"; exit 0; fi
 
+# ── 배포 버전 정보 생성 ────────────────────────────────────────────────────
+# app/VERSION 한 줄("<해시>[-dirty] <시각>")을 만들어 코드와 함께 보낸다. /health 의 build 로 노출된다.
+# (app/VERSION 은 .gitignore 라 이 파일 때문에 -dirty 가 되지는 않는다. 코드 배포를 건너뛰면 빈 값.)
+BUILD_ID=""
+if [ "$DO_APP" = 1 ]; then
+  GIT_HASH=$(cd "$APP_SRC" && git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+  GIT_DIRTY=""
+  if [ -n "$(cd "$APP_SRC" && git status --porcelain 2>/dev/null)" ]; then GIT_DIRTY="-dirty"; fi
+  BUILD_ID="$GIT_HASH$GIT_DIRTY $(date '+%Y-%m-%d %H:%M:%S %Z')"
+  printf '%s\n' "$BUILD_ID" > "$APP_SRC/app/VERSION"
+  say "버전 파일 생성: $BUILD_ID"
+fi
+
 # ── 백업 ──────────────────────────────────────────────────────────────────
 say "백업 중"
 "${SSH[@]}" bash -se <<EOS
@@ -166,6 +179,17 @@ if [ "\$APPLIED" = 1 ]; then
   fi
 fi
 echo "  ui:   \$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8800/ui/)"
+
+# 배포된 버전 확인 — 방금 보낸 VERSION 과 /health 의 build 가 같아야 새 코드가 떠 있는 것이다.
+# (BUILD_ID 는 로컬에서 확장돼 따옴표 안에 들어가고, \$ 로 쓴 것은 원격에서 확장된다)
+if [ "\$APPLIED" = 1 ]; then
+  expected_build='$BUILD_ID'
+  remote_build=\$(curl -s $HEALTH 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('build','unknown'))" 2>/dev/null || echo "unknown")
+  echo "  build: \$remote_build"
+  if [ "\$remote_build" != "\$expected_build" ]; then
+    echo "  ⚠️  build 불일치 — 기대: \$expected_build / 실제: \$remote_build (옛 프로세스가 떠 있거나 VERSION 이 전송되지 않았을 수 있음)"
+  fi
+fi
 EOS
 
 # ── 바깥에서 실제로 열리는지 ──────────────────────────────────────────────

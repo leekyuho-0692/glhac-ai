@@ -1073,8 +1073,20 @@ def health(db: Session = Depends(get_db)):
     except Exception:  # noqa: BLE001
         dbok = False
     status = "ok" if dbok else "degraded"
+
+    # VERSION 파일에서 빌드 정보 읽기 (배포 스크립트가 생성)
+    build_info = "unknown"
+    version_file = os.path.join(os.path.dirname(__file__), "VERSION")
+    if os.path.isfile(version_file):
+        try:
+            with open(version_file, "r", encoding="utf-8") as f:
+                build_info = f.read().strip() or "unknown"
+        except Exception:  # noqa: BLE001
+            build_info = "unknown"
+
     return JSONResponse(status_code=200 if dbok else 503,
-                        content={"status": status, "service": "glhac-ai", "version": "0.2.0", "db": dbok,
+                        content={"status": status, "service": "glhac-ai", "version": "0.2.0",
+                                 "build": build_info, "db": dbok,
                                  "demo": os.environ.get("GLHAC_DEV") == "1"})
 
 
