@@ -31,7 +31,16 @@ from . import observability as obs
 from . import domain_dict as _dd_mod
 from .ontology_seed import seed
 
-app = FastAPI(title="GL-HAC AI Dual-Pathway API", version="0.2.0")
+import os as _os
+# 운영 노출 차단: 개발 모드가 아니면 docs 비활성화 (A7)
+_docs_enabled = _os.environ.get("GLHAC_DEV") == "1" or _os.environ.get("GLHAC_API_DOCS") == "1"
+app = FastAPI(
+    title="GL-HAC AI Dual-Pathway API",
+    version="0.2.0",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None
+)
 
 # GZip 압축 — 451KB index.html 등 정적/JSON 응답 전송 최적화(1KB 이상만 압축).
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -978,10 +987,10 @@ def _register_from_judgment(db, c, res):
 # ---------- health / auth ----------
 @app.get("/debug/stream-test")
 def debug_stream_test(mode: str = Query("ndjson"), n: int = Query(6)):
-    """프록시 버퍼링 진단용 — 1초마다 한 줄. 업무 로직 없음(OCR/LLM 미사용).
-
-    인테이크가 몇 분간 침묵하는 원인이 우리 코드인지 앞단(프록시)인지 가르기 위한 것.
-    로컬에서 1초 간격으로 도착하는데 터널에서 끝에 몰려 오면 앞단 버퍼링이다."""
+    """프록시 버퍼링 진단용 — 1초마다 한 줄. 업무 로직 없음(OCR/LLM 미사용). 개발 모드만 (A7)."""
+    import os as _os
+    if _os.environ.get("GLHAC_DEV") != "1":
+        raise HTTPException(404, {"code": "NOT_FOUND"})
     import json as _json
     import time as _t
     from fastapi.responses import StreamingResponse
@@ -1035,9 +1044,26 @@ def health(db: Session = Depends(get_db)):
 
 
 @app.get("/metrics")
-def metrics():
-    """Prometheus 메트릭 노출(§11.3) — 집계값만(PII 없음). 스크레이프용."""
+def metrics(request: Request, user=Depends(auth.get_current_user)):
+    """Prometheus 메트릭 노출(§11.3) — 집계값만(PII 없음). 스크레이프용. 인증 보호 (A7)."""
+    import os as _os
+    import hmac
     from fastapi.responses import PlainTextResponse
+
+    token_env = _os.environ.get("GLHAC_METRICS_TOKEN")
+    if token_env:
+        # 토큰 환경변수 설정 시 Bearer 토큰 검증
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(401, {"code": "TOKEN_REQUIRED"})
+        provided_token = auth_header[7:]
+        if not hmac.compare_digest(provided_token, token_env):
+            raise HTTPException(403, {"code": "INVALID_TOKEN"})
+    else:
+        # 미설정 시 operator/admin만 허용
+        if user["role"] not in ("operator", "admin"):
+            raise HTTPException(403, {"code": "FORBIDDEN_ROLE"})
+
     return PlainTextResponse(obs.render_prometheus(),
                              media_type="text/plain; version=0.0.4; charset=utf-8")
 
@@ -1821,12 +1847,19 @@ def admin_patch_user(user_id: str, body: schemas.AdminUserPatchReq,
     u = db.get(models.User, user_id)
     if not u:
         raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    token_invalidate = False
     if body.role is not None:
         if body.role not in _ALL_ROLES:
             raise HTTPException(422, {"code": "BAD_ROLE"})
-        u.role = body.role
+        if u.role != body.role:
+            u.role = body.role
+            token_invalidate = True  # 역할 변경 시 토큰 무효화 (A8)
     if body.password:
         u.password_hash = auth.hash_pw(body.password)
+        token_invalidate = True  # 비밀번호 변경 시 토큰 무효화 (A8)
+    # 토큰 버전 증가로 기존 토큰 무효화
+    if token_invalidate:
+        u.token_version = (u.token_version or 0) + 1
     _audit(db, user, "admin.user.patch", "user", user_id, None,
            {"role": body.role, "password_changed": bool(body.password)}, commit=False)
     db.commit()
@@ -6689,6 +6722,13 @@ def return_application(case_id: str, body: schemas.ReturnReq,
     if not (body.reason or "").strip():
         raise HTTPException(422, {"code": "REASON_REQUIRED"})
     c = _get_case(db, case_id, user)
+    # 승인 후 케이스는 반려 불가 (A2)
+    locked_states = {"fatwa_approved", "certificate_issued", "post_certification_monitoring",
+                     "change_impact", "renewal_preparation"}
+    if c.status in locked_states or db.query(models.CertificateIssued).filter(
+            models.CertificateIssued.case_id == case_id,
+            models.CertificateIssued.status == "active").count() > 0:
+        raise HTTPException(409, {"code": "CASE_LOCKED_AFTER_APPROVAL"})
     prev = c.status
     c.draft_state = "returned"
     c.return_reason = body.reason.strip()
@@ -12888,6 +12928,18 @@ def list_approvals(status: str = "pending", user=Depends(auth.get_current_user),
         co_map.setdefault(r.case_id, set()).add(r.user_id)
     if user["role"] == "auditor":
         rows = [ar for ar in rows if ar.requested_by == user["uid"] or user["uid"] in co_map.get(ar.case_id, set())]
+    elif user["role"] not in ("operator", "admin", "fatwa_liaison"):
+        # applicant, consultant 등: 자신이 접근 가능한 케이스만 (A5)
+        filtered = []
+        for ar in rows:
+            if not ar.case_id:
+                continue  # case_id 없으면 제외
+            try:
+                _get_case(db, ar.case_id, user)
+                filtered.append(ar)
+            except HTTPException:
+                pass  # 접근 불가면 제외
+        rows = filtered
     out = []
     for ar in rows:
         rule = MAKER_CHECKER.get(ar.action_type, {})
@@ -13007,8 +13059,9 @@ def _issue_guards(db, c, case_id):
         raise HTTPException(409, {"code": "FATWA_NOT_APPROVED"})
     if not c.scope_frozen:
         raise HTTPException(409, {"code": "SCOPE_NOT_FROZEN"})
+    # draft는 아직 청구 전 상태이므로 미결로 세지 않음 (분할 청구 A1)
     if db.query(models.Invoice).filter(models.Invoice.case_id == case_id,
-                                       ~models.Invoice.status.in_(sm.INVOICE_SETTLED)).count() > 0:
+                                       models.Invoice.status.notin_(sm.INVOICE_SETTLED | {"draft"})).count() > 0:
         raise HTTPException(409, {"code": "PAYMENT_PENDING"})
     # 미결제 인보이스만 막아서, 인보이스가 0건이면 돈 한 푼 없이 발급됐다(감사 K4).
     # 정규 경로는 확정 결제(paid) 인보이스가 최소 1건 있어야 한다. 자기선언(SEHATI)은 무상이라 제외.
@@ -15008,6 +15061,11 @@ def fatwa_return_to_auditor(case_id: str, body: schemas.FatwaReturnReq,
     reason = (body.reason or "").strip()
     if not reason:
         raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    # 특정 상태에서만 오디터로 반려 가능 (A3)
+    allowed_states = {"fatwa_review", "final_package_preparation", "hpas_evaluation_ready"}
+    if c.status not in allowed_states:
+        raise HTTPException(409, {"code": "INVALID_STATE", "status": c.status,
+                                 "allowed": sorted(allowed_states)})
     # P2(G2): 반려 대상 분기 — 기본=오디터 재작업(audit_closed), 선택=클라이언트 보완(supplementation_required,
     # 상태머신 fatwa_review→supplementation_required 전이 활성화)
     target = (body.target or "audit_closed").strip()
@@ -15326,15 +15384,31 @@ async def pg_webhook(provider: str, request: Request, db: Session = Depends(get_
     applied = None
     if inv and new_status:
         frm = inv.status
-        inv.status = new_status
-        if new_status == "paid":
+        # 이미 paid 상태면 다른 상태로 되돌리지 않음 (A4-2)
+        if frm == "paid" and new_status in ("pending", "expired", "failed"):
+            new_status = None  # 상태 변경 없음
+        elif new_status == "paid":
+            # paid: 금액 검증 (A4-1)
             amt = payload.get("gross_amount") or payload.get("amount") or inv.total
-            db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, method=provider,
-                                  amount=float(amt or 0), currency="IDR", status="confirmed",
-                                  reference=str(order_id)))
-            for p in db.query(models.Payment).filter_by(invoice_id=inv.invoice_id, status="pending"):
-                p.status = "confirmed"
-        applied = {"invoice_id": inv.invoice_id, "from": frm, "to": new_status}
+            if amt and abs(float(amt or 0) - inv.total) > 0.01:
+                inv.status = "need_verification"  # 금액 불일치 시 검증 필요
+                applied = {"invoice_id": inv.invoice_id, "from": frm, "to": "need_verification"}
+            else:
+                inv.status = new_status
+                # Payment 기록
+                db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, method=provider,
+                                      amount=float(amt or 0), currency="IDR", status="confirmed",
+                                      reference=str(order_id)))
+                for p in db.query(models.Payment).filter_by(invoice_id=inv.invoice_id, status="pending"):
+                    p.status = "confirmed"
+                # 케이스 전진 게이트 호출 (A4-3)
+                case = db.get(models.CaseApplication, inv.case_id)
+                if case:
+                    _on_invoice_paid(db, case, None)
+                applied = {"invoice_id": inv.invoice_id, "from": frm, "to": new_status}
+        else:
+            inv.status = new_status
+            applied = {"invoice_id": inv.invoice_id, "from": frm, "to": new_status}
     ev = models.IntegrationEvent(
         provider=provider, event_type="pg.webhook." + (status_raw or "unknown"),
         external_id=str(order_id or ""), idempotency_key=idem,
@@ -19970,6 +20044,8 @@ def list_facilities(org_id: str, case_id: str = Query(None),
 @app.post("/orgs/{org_id}/facilities")
 def add_facility(org_id: str, body: schemas.FacilityReq,
                  user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    # 같은 조직만 시설 추가 가능 (A6-1)
+    _assert_org_access(db, user, org_id)
     if not (body.name or "").strip():
         raise HTTPException(422, {"code": "NAME_REQUIRED"})
     f = models.Facility(org_id=org_id, name=body.name.strip(), address=body.address, city=body.city,
@@ -19986,6 +20062,8 @@ def update_facility(facility_id: str, body: schemas.FacilityUpdateReq,
     f = db.get(models.Facility, facility_id)
     if not f:
         raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
+    # 같은 조직만 시설 편집 가능 (A6-3)
+    _assert_org_access(db, user, f.org_id)
     for k in ("name", "address", "city", "country", "zip", "reg_no"):
         v = getattr(body, k)
         if v is not None:
@@ -20001,6 +20079,8 @@ def del_facility(facility_id: str, user=Depends(auth.get_current_user), db: Sess
     f = db.get(models.Facility, facility_id)
     if not f:
         raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
+    # 같은 조직만 시설 삭제 가능 (A6-2)
+    _assert_org_access(db, user, f.org_id)
     db.delete(f)
     db.commit()
     return {"deleted": facility_id}
