@@ -63,7 +63,7 @@ function FA_audPanel(cid){
     if(bl.length) h += `<p>${bl.map(b=>`<span class="badge attn">${esc(b)}</span>`).join(' ')}</p>`;
     if(m) h += `<p class="muted">원재료 증빙 ${esc(String(m.with_evidence))}/${esc(String(m.total))}</p>`;
   }
-  h += `<button class="btn btn-sm" onclick="App.faRunAi2('${esc(cid)}')" ${ai2Ready?'':'disabled'}>AI 2차 분석 실행</button>`;
+  h += `<button class="btn btn-sm" onclick="App.faRunAi2('${jsq(cid)}')" ${ai2Ready?'':'disabled'}>AI 2차 분석 실행</button>`;
   if(!ai2Ready) h += `<p class="muted" style="font-size:12px">사전심사 '가능' 판정 후 실행</p>`;
   h += `</div>`;
   // 판정
@@ -71,15 +71,15 @@ function FA_audPanel(cid){
   if(f && e.verdict){
     h += `<p><span class="badge ${e.verdict==='eligible'?'strong':'attn'}">${e.verdict==='eligible'?'인증 가능':'인증 불가'}</span></p>`;
     if(e.reason) h += `<p class="muted">${esc(e.reason)}</p>`;
-    if(e.gen_doc_id) h += `<button class="btn btn-sm" onclick="App.genPdf('${esc(e.gen_doc_id)}','D-05_인증가능판정통지서.pdf')">D-05 통지서 PDF</button>`;
+    if(e.gen_doc_id) h += `<button class="btn btn-sm" onclick="App.genPdf('${jsq(e.gen_doc_id)}','D-05_인증가능판정통지서.pdf')">D-05 통지서 PDF</button>`;
   } else if(e.verdict){
     h += `<p><span class="badge strong">${e.verdict==='eligible'?'인증 가능':'인증 불가'}</span></p>`;
     if(e.reason) h += `<p class="muted">${esc(e.reason)}</p>`;
-    if(e.gen_doc_id) h += `<button class="btn btn-sm" onclick="App.genPdf('${esc(e.gen_doc_id)}','D-05_인증가능판정통지서.pdf')">D-05 통지서 PDF</button>`;
+    if(e.gen_doc_id) h += `<button class="btn btn-sm" onclick="App.genPdf('${jsq(e.gen_doc_id)}','D-05_인증가능판정통지서.pdf')">D-05 통지서 PDF</button>`;
   } else {
     const canV = e.ai2_probability!=null;
-    h += `<button class="btn btn-sm btn-primary" onclick="App.faVerdict('${esc(cid)}','eligible')" ${canV?'':'disabled'}>인증 가능</button> `;
-    h += `<button class="btn btn-sm" onclick="App.faVerdict('${esc(cid)}','not_eligible')" ${canV?'':'disabled'}>인증 불가</button>`;
+    h += `<button class="btn btn-sm btn-primary" onclick="App.faVerdict('${jsq(cid)}','eligible')" ${canV?'':'disabled'}>인증 가능</button> `;
+    h += `<button class="btn btn-sm" onclick="App.faVerdict('${jsq(cid)}','not_eligible')" ${canV?'':'disabled'}>인증 불가</button>`;
     if(!canV) h += `<p class="muted" style="font-size:12px">AI 2차 분석 후 판정할 수 있습니다.</p>`;
   }
   h += `</div>`;
@@ -87,7 +87,7 @@ function FA_audPanel(cid){
   h += `<div><strong>정식 신청 (FRM-07)</strong>`;
   h += `<p>${esc(FA_statusText(f))}</p>`;
   if(f.status==='returned' && f.return_reason) h += `<p class="muted">반려 사유: ${esc(f.return_reason)}</p>`;
-  if(f.status) h += `<button class="btn btn-sm" onclick="App.faViewFormal('${esc(cid)}')">신청서 보기</button>`;
+  if(f.status) h += `<button class="btn btn-sm" onclick="App.faViewFormal('${jsq(cid)}')">신청서 보기</button>`;
   h += `</div>`;
   h += `</div></section>`;
   return h;
@@ -111,7 +111,7 @@ App.faRunAi2 = async function(cid){
 
 App.faVerdict = function(cid, v){
   const body = `<div class="fieldset">${v==='not_eligible'?`<div class="field"><label>판정 사유 <span class="req">*</span></label><textarea class="in" id="fa-reason"></textarea></div>`:''}<div class="field"><label>메모</label><textarea class="in" id="fa-note"></textarea></div></div>`;
-  openModal(v==='eligible'?'인증 가능 판정':'인증 불가 판정', body, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.faVerdictDo('${esc(cid)}','${esc(v)}')">확인</button>`);
+  openModal(v==='eligible'?'인증 가능 판정':'인증 불가 판정', body, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.faVerdictDo('${jsq(cid)}','${jsq(v)}')">확인</button>`);
 };
 
 App.faVerdictDo = async function(cid, v){
@@ -161,7 +161,7 @@ VIEWS['ent-formal'] = () => {
     h += FA_steps(e);
     if(f.status==='submitted') h += `<p class="note attn">접수 대기 중${f.at?' · 제출 '+esc(String(f.at)):''}</p>`;
     else h += `<p class="note">접수 완료 — 견적서·계약서를 기다려 주세요.</p>`;
-    h += `<button class="btn btn-sm" onclick="App.faViewFormal('${esc(cid)}')">제출한 신청서 보기</button> `;
+    h += `<button class="btn btn-sm" onclick="App.faViewFormal('${jsq(cid)}')">제출한 신청서 보기</button> `;
     if(f.status==='accepted') h += `<button class="btn btn-sm btn-primary" onclick="App.go('ent-contract')">④ 계약으로 이동</button>`;
     return h + `</section>`;
   }
@@ -178,7 +178,7 @@ VIEWS['ent-formal'] = () => {
   h += `<div class="field"><label>대표자 성명 <span class="req">*</span></label><input class="in" id="fa-signer"></div>`;
   h += `<div class="field"><label>서명</label><canvas id="fa-pad" width="420" height="140" style="border:1px solid var(--line);max-width:100%"></canvas><button class="btn btn-sm" onclick="App.faPadClear()">지우기</button></div>`;
   h += `<p class="inline-msg" id="fa-msg"></p>`;
-  h += `<button class="btn btn-primary" onclick="App.faSubmit('${esc(cid)}')">정식 인증 신청서 제출</button>`;
+  h += `<button class="btn btn-primary" onclick="App.faSubmit('${jsq(cid)}')">정식 인증 신청서 제출</button>`;
   h += `</div></section>`;
   setTimeout(FA_padInit, 0);
   return h;
@@ -259,10 +259,10 @@ function FA_admPanel(){
     const st=it.formal;
     const badge = st==='submitted'?'attn':(st==='accepted'?'strong':'');
     h += `<tr><td>${esc(it.company_name)}</td><td><span class="badge ${badge}">${esc(st||'')}</span></td><td class="muted mono">${esc(it.submitted_at||it.at||'')}</td><td><div class="row-act">`;
-    h += `<button class="btn btn-sm" onclick="App.faViewFormal('${esc(it.case_id)}')">신청서 보기</button>`;
+    h += `<button class="btn btn-sm" onclick="App.faViewFormal('${jsq(it.case_id)}')">신청서 보기</button>`;
     if(st==='submitted'){
-      h += `<button class="btn btn-sm" onclick="App.faReturn(${i})">반려</button>`;
-      h += `<button class="btn btn-sm btn-primary" onclick="App.faAccept(${i})">접수 확인</button>`;
+      h += `<button class="btn btn-sm" onclick="App.faReturn('${jsq(it.case_id)}')">반려</button>`;
+      h += `<button class="btn btn-sm btn-primary" onclick="App.faAccept('${jsq(it.case_id)}')">접수 확인</button>`;
     }
     h += `</div></td></tr>`;
   });
@@ -270,26 +270,29 @@ function FA_admPanel(){
   return h;
 }
 
-App.faReturn = function(i){
-  const o=RS.faOps||{}; const items=o.items||[]; const it=items[i]; if(!it) return;
-  openModal('신청 반려', `<div class="field"><label>반려 사유 <span class="req">*</span></label><textarea class="in" id="fa-ret-reason"></textarea></div>`, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.faReturnDo(${i})">반려</button>`);
+App.faReturn = function(cid){
+  const o=RS.faOps||{}; const items=o.items||[]; const it=items.find(x=>x.case_id===cid); if(!it) return;
+  openModal('신청 반려', `<div class="field"><label>업체</label><p class="mono">${esc(it.company_name)}</p></div><div class="field"><label>반려 사유 <span class="req">*</span></label><textarea class="in" id="fa-ret-reason"></textarea></div>`, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.faReturnDo('${jsq(cid)}')">반려</button>`);
 };
 
-App.faReturnDo = async function(i){
-  const o=RS.faOps||{}; const items=o.items||[]; const it=items[i]; if(!it) return;
+App.faReturnDo = async function(cid){
   const reason=(($('#fa-ret-reason')||{}).value||'').trim();
   if(!reason){ toast('반려 사유를 입력해 주세요.'); return; }
   try{
-    const r = await apiFetch('/cases/'+it.case_id+'/formal-application/return', {method:'POST', body:JSON.stringify({reason})});
+    const r = await apiFetch('/cases/'+cid+'/formal-application/return', {method:'POST', body:JSON.stringify({reason})});
     if(!r.ok){ toast('반려에 실패했습니다.'); return; }
     App.closeModal(); RS.faOps=undefined; await loadAdm(); render(); toast('반려했습니다.');
   }catch(e){ toast('반려에 실패했습니다.'); }
 };
 
-App.faAccept = async function(i){
-  const o=RS.faOps||{}; const items=o.items||[]; const it=items[i]; if(!it) return;
+App.faAccept = async function(cid){
+  const o=RS.faOps||{}; const items=o.items||[]; const it=items.find(x=>x.case_id===cid); if(!it) return;
+  openModal('신청 접수 확인', `<div class="field"><label>업체</label><p class="mono">${esc(it.company_name)}</p></div><p>이 신청을 접수하시겠습니까?</p>`, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.faAcceptDo('${jsq(cid)}')">접수 확인</button>`);
+};
+
+App.faAcceptDo = async function(cid){
   try{
-    const r = await apiFetch('/cases/'+it.case_id+'/formal-application/accept', {method:'POST', body:'{}'});
+    const r = await apiFetch('/cases/'+cid+'/formal-application/accept', {method:'POST', body:'{}'});
     if(!r.ok){ toast('접수에 실패했습니다.'); return; }
     RS.faOps=undefined; await loadAdm(); render(); toast('접수했습니다 — 계약 관리에서 견적서·계약서를 발송하세요.');
   }catch(e){ toast('접수에 실패했습니다.'); }
@@ -313,7 +316,7 @@ App.faViewFormal = async function(cid){
     body += `<dl>${Object.keys(FA_FIELD_KO).map(k=>`<div><dt>${esc(FA_FIELD_KO[k])}</dt><dd>${esc(flds[k]==null?'':(typeof flds[k]==='boolean'?(flds[k]?'예':'아니오'):String(flds[k])))}</dd></div>`).join('')}</dl>`;
     body += `<p>서약: ${doc.pledge?'✔ 동의':'—'}</p>`;
     if(doc.signature && /^data:image\//.test(doc.signature)) body += `<img style="max-width:240px;border:1px solid var(--line)" src="${doc.signature}">`;
-    const foot = (d.gen_doc_id?`<button class="btn" onclick="App.genPdf('${esc(d.gen_doc_id)}','D-06_정식인증신청서.pdf')">PDF</button>`:'') + `<button class="btn btn-primary" onclick="App.closeModal()">닫기</button>`;
+    const foot = (d.gen_doc_id?`<button class="btn" onclick="App.genPdf('${jsq(d.gen_doc_id)}','D-06_정식인증신청서.pdf')">PDF</button>`:'') + `<button class="btn btn-primary" onclick="App.closeModal()">닫기</button>`;
     openModal('정식 인증 신청서 (D-06)', body, foot, true);
   }catch(e){ toast('신청서를 불러올 수 없습니다.'); }
 };

@@ -28,7 +28,7 @@ function IV_issuePanel(cid){
   if(!cid || !IV_role('consultant')) return '';
   return `<section class="panel"><div class="panel-head"><h2>청구서 발행</h2><span class="muted">계약 최종 확인 후 발행 가능</span></div>
     <p class="muted">서비스 유형과 청구 항목(항목명·수량·단가)을 입력하면 DPP 합계에 PPN 11%가 더해져 청구됩니다.</p>
-    <div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.ivNew('${esc(cid)}')">＋ 청구서 발행</button></div></section>`;
+    <div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.ivNew('${jsq(cid)}')">＋ 청구서 발행</button></div></section>`;
 }
 App.ivNew = async function(cid){
   let rates = [{service_type:'pre_audit', label:'사전심사', amount:0}, {service_type:'onsite', label:'현장심사', amount:0}];
@@ -94,7 +94,7 @@ App.ivPay = function(iid, total, cid, ctx){
     <div class="field"><label for="ip-p">입금자명</label><input class="in" id="ip-p" placeholder="(선택)"></div>
     <div class="field"><label for="ip-r">참조번호</label><input class="in" id="ip-r" placeholder="TRX-..."></div>
     <p class="muted" style="font-size:12.5px">가상계좌·카드로 청구 합계와 같은 금액을 기록하면 즉시 입금 완료 처리됩니다. 계좌이체·수기 또는 금액 불일치는 관리자 확인이 필요합니다.</p>`,
-    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.ivDoPay('${esc(iid)}','${esc(cid||'')}','${esc(ctx||'')}')">기록</button>`);
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.ivDoPay('${jsq(iid)}','${jsq(cid||'')}','${jsq(ctx||'')}')">기록</button>`);
 };
 App.ivDoPay = async function(iid, cid, ctx){
   const v = id => ((($('#'+id)||{}).value)||'').trim();
@@ -136,7 +136,7 @@ function IV_payPanel(cid, ctx){
     ${open.length?`<div class="tbl-wrap"><table><thead><tr><th>청구번호</th><th>구분</th><th>청구액</th><th>상태</th><th></th></tr></thead><tbody>
     ${open.map(i=>`<tr><td class="mono">${esc(i.invoice_no||String(i.invoice_id).slice(0,8))}</td><td>${esc(i.service_type||'-')}</td><td class="mono">${_money(i.total!=null?i.total:i.amount,'IDR')}</td>
       <td><span class="badge attn">${IV_ST[i.status]||esc(i.status)}</span></td>
-      <td><div class="row-act">${canRec?`<button class="btn btn-sm btn-primary" onclick="App.ivPay('${esc(i.invoice_id)}',${Number(i.total)||0},'${esc(cid)}','${ctx}')">결제 기록</button>`:''}${canMark&&i.status!=='need_verification'?`<button class="btn btn-sm btn-ghost" onclick="App.ivMarkPaid('${esc(i.invoice_id)}','${esc(cid)}','${ctx}')">간이 결제표시</button>`:''}</div></td></tr>`).join('')}
+      <td><div class="row-act">${canRec?`<button class="btn btn-sm btn-primary" onclick="App.ivPay('${jsq(i.invoice_id)}',${Number(i.total)||0},'${jsq(cid)}','${ctx}')">결제 기록</button>`:''}${canMark&&i.status!=='need_verification'?`<button class="btn btn-sm btn-ghost" onclick="App.ivMarkPaid('${jsq(i.invoice_id)}','${jsq(cid)}','${ctx}')">간이 결제표시</button>`:''}</div></td></tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">결제할 청구가 없습니다.</p>'}
     ${pays.length?`<b style="font-size:13px">결제 내역 ${pays.length}건</b><div class="tbl-wrap"><table><thead><tr><th>방식</th><th>금액</th><th>참조</th><th>상태</th><th>일시</th></tr></thead><tbody>
     ${pays.map(p=>`<tr><td>${esc((IV_PAY_METHODS.find(m=>m[0]===p.method)||[0,p.method])[1])}</td><td class="mono">${_money(p.amount,'IDR')}</td><td class="muted">${esc(p.reference||'-')}</td>
@@ -153,8 +153,8 @@ function IV_admPanel(){
     <div class="tbl-wrap"><table><thead><tr><th>청구번호</th><th style="min-width:150px">기업</th><th>금액</th><th>상태</th><th></th></tr></thead><tbody>
     ${open.map(i=>`<tr><td class="mono">${esc(i.invoice_no||'-')}</td><td><b>${esc(i.company||'-')}</b></td><td class="mono">${_money(i.total,'IDR')}</td>
       <td><span class="badge attn">${IV_ST[i.status]||esc(i.status)}</span>${i.payments?` <span class="muted">결제 ${i.payments}</span>`:''}</td>
-      <td><div class="row-act"><button class="btn btn-sm" onclick="App.ivPay('${esc(i.invoice_id)}',${Number(i.total)||0},'${esc(i.case_id||'')}','adm')">결제 기록</button>
-        <button class="btn btn-sm btn-primary" onclick="App.ivConfirm('${esc(i.invoice_id)}','${esc(i.case_id||'')}')">입금 확인</button></div></td></tr>`).join('')}
+      <td><div class="row-act"><button class="btn btn-sm" onclick="App.ivPay('${jsq(i.invoice_id)}',${Number(i.total)||0},'${jsq(i.case_id||'')}','adm')">결제 기록</button>
+        <button class="btn btn-sm btn-primary" onclick="App.ivConfirm('${jsq(i.invoice_id)}','${jsq(i.case_id||'')}')">입금 확인</button></div></td></tr>`).join('')}
     </tbody></table></div>
     <p class="muted" style="font-size:12.5px">입금 확인은 청구를 paid로 확정하고, 대기 중 결제를 확인 처리합니다(감사로그 기록). 상담검토 단계 케이스는 모의심사 요청 단계로 진행됩니다.</p></section>`;
 }

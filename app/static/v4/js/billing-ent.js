@@ -40,7 +40,7 @@ function BLE_quotePanel(cid, d){
       <div><dt>부가세</dt><dd class="mono">${BLE_money(q.ppn)}</dd></div>
       <div><dt>총액</dt><dd class="mono"><strong>${BLE_money(q.total)}</strong></dd></div>
     </dl>
-    ${q.gen_doc_id?`<div class="row-act"><button class="btn btn-sm" onclick="App.genPdf('${esc(q.gen_doc_id)}','견적서.pdf')">PDF</button></div>`:''}
+    ${q.gen_doc_id?`<div class="row-act"><button class="btn btn-sm" onclick="App.genPdf('${jsq(q.gen_doc_id)}','견적서.pdf')">PDF</button></div>`:''}
   </section>`;
 }
 
@@ -56,7 +56,7 @@ function BLE_contractPanel(cid, d){
       <span class="chip ${aOk?'on':''}">갑 ${aOk?'✔':'대기'}</span>
       <span class="chip ${bOk?'on':''}">을 ${bOk?'✔':'대기'}</span>
     </div>
-    ${done?`<p class="note">계약 체결 완료 — 전자서명 확인서(D-09) 발급</p>`:(!aOk&&ct.contract_id?`<div class="row-act"><button class="btn btn-primary" onclick="App.bleSignA('${esc(cid)}','${esc(ct.contract_id)}')">계약서 서명</button></div>`:'')}
+    ${done?`<p class="note">계약 체결 완료 — 전자서명 확인서(D-09) 발급</p>`:(!aOk&&ct.contract_id?`<div class="row-act"><button class="btn btn-primary" onclick="App.bleSignA('${jsq(cid)}','${jsq(ct.contract_id)}')">계약서 서명</button></div>`:'')}
   </section>`;
 }
 
@@ -71,7 +71,7 @@ function BLE_payPanel(cid, d){
       <td class="num mono">${BLE_money(iv.total)}</td>
       <td>${od?`<span class="badge attn">기한 경과</span>`:`<span class="badge">${esc(BLE_ST[iv.status]||iv.status||'')}</span>`}</td>
       <td class="mono">${esc(iv.due_date||'')}</td>
-      <td class="row-act">${iv.status==='waiting_payment'?`<button class="btn btn-sm" onclick="App.blePaidNotice('${esc(cid)}','${esc(iv.invoice_id)}')">입금 완료 알림</button>`:''}</td>
+      <td class="row-act">${iv.status==='waiting_payment'?`<button class="btn btn-sm" onclick="App.blePaidNotice('${jsq(cid)}','${jsq(iv.invoice_id)}')">입금 완료 알림</button>`:''}</td>
     </tr>`;
   }).join('');
   return `<section class="panel">
@@ -129,7 +129,7 @@ function BLE_consPanel(){
         `<dl class="dl"><div><dt>총액</dt><dd class="mono">${BLE_money(quote.total)}</dd></div></dl>`:
         '<p class="empty">견적서가 발급되지 않았습니다.</p>'}
       ${pending?'<p class="note attn">견적 변경 요청 대기 중입니다.</p>':''}
-      <div class="row-act"><button class="btn" onclick="App.bleChangeReq('${esc(cid)}')">견적 변경 요청</button></div>
+      <div class="row-act"><button class="btn" onclick="App.bleChangeReq('${jsq(cid)}')">견적 변경 요청</button></div>
     </section>
     <section class="panel">
       <div class="panel-head"><h2>계약 서명 진행</h2></div>
@@ -146,7 +146,7 @@ if(typeof App.go==='function'){ const g=App.go; App.go=function(v){ RS.bleCt={};
 
 App.bleSignA = function(cid, contractId){
   openModal('계약서 서명', `<div class="field"><label>서명자 이름</label><input id="ble-signer" class="in"></div>`,
-    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.bleSignASubmit('${esc(cid)}','${esc(contractId)}')">서명</button>`);
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.bleSignASubmit('${jsq(cid)}','${jsq(contractId)}')">서명</button>`);
 };
 App.bleSignASubmit = async function(cid, contractId){
   const name = (($('#ble-signer')||{}).value||'').trim();
@@ -165,7 +165,7 @@ App.bleSignASubmit = async function(cid, contractId){
 
 App.blePaidNotice = function(cid, invoiceId){
   openModal('입금 완료 알림', `<div class="field"><label>메모 (선택)</label><textarea id="ble-note" class="in"></textarea></div>`,
-    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.blePaidNoticeSubmit('${esc(cid)}','${esc(invoiceId)}')">알림</button>`);
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.blePaidNoticeSubmit('${jsq(cid)}','${jsq(invoiceId)}')">알림</button>`);
 };
 App.blePaidNoticeSubmit = async function(cid, invoiceId){
   const note = (($('#ble-note')||{}).value||'').trim();
@@ -183,7 +183,7 @@ App.blePaidNoticeSubmit = async function(cid, invoiceId){
 
 App.bleChangeReq = function(cid){
   openModal('견적 변경 요청', `<div class="field"><label class="req">사유</label><textarea id="ble-reason" class="in"></textarea></div>`,
-    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.bleChangeReqSubmit('${esc(cid)}')">요청</button>`);
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.bleChangeReqSubmit('${jsq(cid)}')">요청</button>`);
 };
 App.bleChangeReqSubmit = async function(cid){
   const reason = (($('#ble-reason')||{}).value||'').trim();

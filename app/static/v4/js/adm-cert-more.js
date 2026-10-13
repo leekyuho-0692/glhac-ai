@@ -94,7 +94,7 @@ function ADMCM_sihalalPanel(cid){
       const rows = (lk.matches||[]).map((m,i)=>`<tr>
         <td>${esc(m.name||'-')}</td>
         <td class="mono">${esc(m.sihalal_id||'-')}</td>
-        <td>${canLink?`<button class="btn btn-sm" onclick="App.admcmLink('${cid}',${i},'${esc(lk.type||'penyelia')}')">이 업체로 연결</button>`:''}</td>
+        <td>${canLink?`<button class="btn btn-sm" onclick="App.admcmLink('${cid}',${i},'${jsq(lk.type||'penyelia')}')">이 업체로 연결</button>`:''}</td>
       </tr>`);
       const dup = lk.duplicate ? `<div class="note attn">중복 등록 감지: ${esc(lk.duplicate.name)} (유사도 ${esc(String(lk.duplicate.similarity))})</div>` : '';
       result = `${dup}
@@ -115,7 +115,7 @@ function ADMCM_sihalalPanel(cid){
       ${id.verification_status==='verified'?'<p class="note">식별자 검증 완료.</p>':!canVerify?'':
         `<div class="inline" style="margin-top:10px">
           <input class="in" id="admcm-expect" placeholder="GL-HAC 식별자(이메일/NIB)"/>
-          <button class="btn" onclick="App.admcmVerify('${esc(id.external_identity_id)}')">동일성 검증</button>
+          <button class="btn" onclick="App.admcmVerify('${jsq(id.external_identity_id)}')">동일성 검증</button>
         </div>`}
     </div>`;
   }

@@ -539,6 +539,9 @@ const $ = s => document.querySelector(s);
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
+// onclick 등 이벤트 속성 안의 '...' JS 문자열 리터럴 전용 — JS 이스케이프 후 HTML 이스케이프
+const jsq = s => esc(String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/\r?\n/g,'\\n').replace(/</g,'\\x3c'));
+
 const t = k => (I18N[S.lang] && I18N[S.lang][k]) || I18N.ko[k] || k;
 const pad = n => String(n).padStart(2,'0');
 
@@ -1573,7 +1576,7 @@ function _audSchedDetail(cid, st){
     ${cf&&cf.date?`<div class="note"><b>확정 방문일: <span class="mono">${esc(cf.date)}${cf.time?(' '+esc(cf.time)):''}</span></b></div>`:''}
     ${cd.length?`<div style="margin-top:8px"><b style="font-size:13px">기업 제시 후보일</b>
       <div class="row-act" style="flex-wrap:wrap;align-items:center;margin-top:6px"><input class="in mono" id="sc-time" type="time" style="max-width:120px" title="확정 시각(선택)">
-      ${cd.map(d=>`<button class="btn btn-sm btn-primary" onclick="App.schedConfirm('${cid}','${esc(d)}')">${esc(d)} 확정</button>`).join('')}</div></div>`:''}
+      ${cd.map(d=>`<button class="btn btn-sm btn-primary" onclick="App.schedConfirm('${cid}','${jsq(d)}')">${esc(d)} 확정</button>`).join('')}</div></div>`:''}
     ${ad.length?`<div style="margin-top:8px"><b style="font-size:13px">오디터 재조율 제시(기업 수락 대기)</b><p class="muted mono">${ad.map(esc).join(', ')}</p></div>`:''}
   </section>
   <section class="panel"><div class="panel-head"><h2>직접 확정 / 재조율</h2></div>
@@ -1633,7 +1636,7 @@ function _audFinalDetail(cid, st){
     ${signed?`<div class="note"><b>오디터 서명 완료</b> <span class="muted">${esc(signed.name||'')} · ${esc((signed.at||'').slice(0,19))}</span></div>`:''}
     <div class="row-act" style="flex-wrap:wrap">
       <button class="btn" onclick="App.finalGen('${cid}')">${hasReport?'새 버전 생성':'AI 보고서 생성'}</button>
-      ${hasReport&&!rep.approved?`<button class="btn btn-primary" onclick="App.finalApprove('${cid}','${esc(rep.gen_doc_id||'')}')">보고서 승인</button>`:''}
+      ${hasReport&&!rep.approved?`<button class="btn btn-primary" onclick="App.finalApprove('${cid}','${jsq(rep.gen_doc_id||'')}')">보고서 승인</button>`:''}
       ${rep.approved&&!signed?`<button class="btn btn-primary" onclick="App.finalSign('${cid}')">전자서명</button>`:''}
       ${canCall('GET','/cases/{}/evidence-bundle.zip')?`<button class="btn btn-ghost" onclick="App.finalBundle('${cid}')">증거 번들 ZIP</button>`:''}
     </div></section>
@@ -1784,7 +1787,7 @@ VIEWS['ent-contract'] = () => {
         <dl class="dl"><div><dt>계약 번호</dt><dd class="mono">${esc(ct.contract_no||'-')}</dd></div><div><dt>계약 금액</dt><dd class="mono">${_money(ct.fee,ct.currency)}</dd></div>
           <div><dt>효력일</dt><dd class="mono">${esc(ct.effective_date||'-')}</dd></div>
           <div><dt>서명</dt><dd>기업 ${ct.signed_a?'<span class="badge strong">완료</span>':'<span class="badge attn">대기</span>'} · GL HAC ${ct.signed_b?'<span class="badge strong">완료</span>':'<span class="badge">대기</span>'}</dd></div></dl>
-        ${!ct.signed_a?`<div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.entSign('${cid}','${esc(ct.contract_id)}')">계약서 전자서명</button></div>`:''}
+        ${!ct.signed_a?`<div class="row-act" style="justify-content:flex-end"><button class="btn btn-primary" onclick="App.entSign('${cid}','${jsq(ct.contract_id)}')">계약서 전자서명</button></div>`:''}
       </section>`
     : `<section class="panel"><div class="panel-head"><h2>용역 계약</h2></div><p class="empty">계약서가 아직 준비되지 않았습니다. 사전심사 통과 후 컨설턴트가 견적·계약서를 발송합니다.</p></section>`;
   const invPanel = `<section class="panel"><div class="panel-head"><h2>청구·입금</h2><span class="muted">${invs.length}건</span></div>
@@ -1905,7 +1908,7 @@ VIEWS['ent-docs'] = () => {
     ${list.map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td>
       <td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
       <td class="mono">${esc((d.created_at||'').slice(0,10))}</td>
-      <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${esc((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
+      <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${jsq((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">보관된 서류가 없습니다. 위에서 올려 주세요.</p>'}
   </section>`;
 };
@@ -1956,7 +1959,7 @@ VIEWS['cons-new'] = () => {
         return `<li class="row" style="flex-wrap:wrap;gap:6px"><div style="min-width:0"><b class="mono">${esc(i.code)}</b> ${i.company_name?`<span class="muted">· ${esc(i.company_name)}</span>`:''}
           <div class="muted mono" style="font-size:11px;word-break:break-all">${esc(rl)}</div>
           <span class="muted" style="font-size:11px">사용 ${i.used_count||0}/${i.max_uses||1} · 만료 ${esc((i.expires_at||'').slice(0,10))}</span></div>
-          <div class="row-act">${dead?`<span class="badge">${i.revoked?'회수됨':'만료'}</span>`:`<span class="badge strong">유효</span><button class="btn btn-sm btn-ghost" onclick="App.copyLink('${esc(rl)}')">링크 복사</button><button class="btn btn-sm btn-ghost" onclick="App.consRevoke('${i.invite_id}')">회수</button>`}</div></li>`;}).join('')}</ul>`:'<p class="empty">발급한 초대가 없습니다.</p>'}
+          <div class="row-act">${dead?`<span class="badge">${i.revoked?'회수됨':'만료'}</span>`:`<span class="badge strong">유효</span><button class="btn btn-sm btn-ghost" onclick="App.copyLink('${jsq(rl)}')">링크 복사</button><button class="btn btn-sm btn-ghost" onclick="App.consRevoke('${i.invite_id}')">회수</button>`}</div></li>`;}).join('')}</ul>`:'<p class="empty">발급한 초대가 없습니다.</p>'}
     </section></div>`;
 };
 App.consCreateInvite = async function(){
@@ -2060,7 +2063,7 @@ function _docVaultBody(cid, docs){
     ${list.map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td>
       <td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
       <td class="mono">${esc((d.created_at||'').slice(0,10))}</td>
-      <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${esc((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
+      <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${jsq((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">보관된 서류가 없습니다.</p>'}</section>`;
 }
 VIEWS['cons-docs'] = () => {
@@ -2522,12 +2525,12 @@ VIEWS['aud-flow'] = () => {
       <section class="panel"><div class="panel-head"><h2>생성 문서 ${gen.length}건</h2><span class="muted">심사·인증 산출물</span></div>
         ${gen.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:180px">문서</th><th>버전</th><th>상태</th><th>생성</th><th></th></tr></thead><tbody>
         ${gen.map(g=>`<tr><td><b>${esc(GENDOC_KO[g.doc_type]||g.doc_type)}</b></td><td class="mono">v${g.version||1}</td><td><span class="badge ${g.status==='approved'?'strong':''}">${esc(g.status||'')}</span></td><td class="mono">${esc((g.created_at||'').slice(0,10))}</td>
-          <td><button class="btn btn-sm btn-ghost" onclick="App.genPdf('${g.gen_doc_id}','${esc(GENDOC_KO[g.doc_type]||g.doc_type)}')">PDF</button></td></tr>`).join('')}
+          <td><button class="btn btn-sm btn-ghost" onclick="App.genPdf('${g.gen_doc_id}','${jsq(GENDOC_KO[g.doc_type]||g.doc_type)}')">PDF</button></td></tr>`).join('')}
         </tbody></table></div>`:'<p class="empty">생성된 문서가 없습니다.</p>'}</section>
       <section class="panel"><div class="panel-head"><h2>업로드 문서 ${docs.length}건</h2><span class="muted">제출 서류</span></div>
         ${docs.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th></th></tr></thead><tbody>
         ${docs.slice().reverse().map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td><td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
-          <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${esc((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
+          <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${jsq((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
         </tbody></table></div>`:'<p class="empty">업로드된 문서가 없습니다.</p>'}</section>
       <div class="note"><p>문서별 발신·수신 흐름과 전자서명·동의 기록 표시는 준비 중입니다. 지금은 생성 문서와 업로드 문서를 내려받을 수 있습니다.</p></div></div>`;
   }

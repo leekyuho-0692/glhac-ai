@@ -49,7 +49,7 @@ function ENTF_facTable(cid, list) {
     <td><div class="row-act">
       <button class="btn btn-sm" onclick="App.entfFacEdit(${i})">수정</button>
       <button class="btn btn-sm btn-ghost" onclick="App.entfFacDel(${i})">삭제</button>
-      <button class="btn btn-sm btn-ghost" onclick="App.entfFacPdf('${esc(cid)}','${esc(f.facility_id)}')">공장 프로필 PDF</button>
+      <button class="btn btn-sm btn-ghost" onclick="App.entfFacPdf('${jsq(cid)}','${jsq(f.facility_id)}')">공장 프로필 PDF</button>
     </div></td>
   </tr>`).join('');
   return `<div class="tbl-wrap"><table><thead><tr><th>라벨</th><th>이름</th><th>주소</th><th>등록번호</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -121,7 +121,7 @@ function ENTF_orgPanel(cid) {
         ${ENTF_orgMembersTable(mem, true)}
         <div style="margin-top:8px"><button class="btn btn-sm" onclick="App.entfOrgAddMember()">행 추가</button></div>
       </fieldset>
-      ${canCall('PUT','/cases/{}/halal-org')?`<div style="margin-top:10px"><button class="btn btn-primary" onclick="App.entfOrgSave('${esc(cid)}')">저장</button></div>`:''}
+      ${canCall('PUT','/cases/{}/halal-org')?`<div style="margin-top:10px"><button class="btn btn-primary" onclick="App.entfOrgSave('${jsq(cid)}')">저장</button></div>`:''}
     `;
   }
   return `<section class="panel"><div class="panel-head"><h2>할랄 관리 조직</h2></div>${body}</section>`;
@@ -169,7 +169,7 @@ App.entfFacEdit = function(idx){
   const pe = f.profile_ext || {};
   const peFields = ENTF_PEF.map(k => `<div class="field"><label>${k}</label><input class="in" id="entf-pe-${k}" value="${esc(pe[k] || '')}"></div>`).join('');
   openModal('공장 수정', `<div class="grid-2">${fields}</div><fieldset><legend>추가 정보</legend><div class="grid-2">${peFields}</div></fieldset>`,
-    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.entfFacEditSave('${esc(f.facility_id)}')">저장</button>`);
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.entfFacEditSave('${jsq(f.facility_id)}')">저장</button>`);
 };
 
 App.entfFacEditSave = async function(fid){
@@ -192,7 +192,7 @@ App.entfFacDel = function(idx){
   const list = RS.ENTF.fac[cid] || [];
   const f = list[idx]; if (!f) return;
   openModal('공장 삭제', `<p>케이스에서 <b>${esc(f.label || f.name || '공장')}</b> 연결을 해제합니다. 다른 케이스에서도 사용 중이면 레코드는 유지됩니다.</p>`,
-    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.entfFacDelDo('${esc(f.facility_id)}')">삭제</button>`);
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.entfFacDelDo('${jsq(f.facility_id)}')">삭제</button>`);
 };
 
 App.entfFacDelDo = async function(fid){

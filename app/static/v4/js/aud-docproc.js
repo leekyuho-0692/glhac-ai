@@ -29,7 +29,7 @@ function AUDD_docTable(cid, rows, mode){
   const body = rows.map(d => {
     const kind = esc(d.doc_type_ko || d.doc_type || '');
     const st = AUDD_DOC_STATUS[d.review_status || 'pending'] || esc(d.review_status || '');
-    const open = `<button class="link" onclick="App.docDownload('${d.document_id}','${esc(d.filename||'')}')">열기</button>`;
+    const open = `<button class="link" onclick="App.docDownload('${d.document_id}','${jsq(d.filename||'')}')">열기</button>`;
     let act;
     if(mode === 'aiq'){
       // 재처리(consultant·operator main.py:5318)·재분류(applicant·consultant·operator 5039) — 오디터는 403 이라 숨김

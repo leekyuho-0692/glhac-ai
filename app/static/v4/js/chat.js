@@ -36,8 +36,8 @@ function CHT_panel(cid){
   }
   const foot = `<div class="inline" style="margin-top:10px">
       <textarea id="${idAttr}" class="in" rows="2" placeholder="${esc(t('chat.placeholder')||'메시지를 입력하세요…')}"></textarea>
-      <button class="btn btn-primary" onclick="App.chtSend('${esc(cid)}')">보내기</button>
-      <button class="btn btn-ghost" onclick="App.chtReload('${esc(cid)}')">새로고침</button>
+      <button class="btn btn-primary" onclick="App.chtSend('${jsq(cid)}')">보내기</button>
+      <button class="btn btn-ghost" onclick="App.chtReload('${jsq(cid)}')">새로고침</button>
     </div>`;
   return `<section class="panel"><div class="panel-head"><h2>협의</h2></div>${inner}${foot}</section>`;
 }

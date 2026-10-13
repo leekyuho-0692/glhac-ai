@@ -52,7 +52,7 @@ function AUDQ_measTable(cid){
     <td>${AUDQ_verdictLabel(m.verdict)}</td>
     <td class="mono">${esc(m.tested_at||'')}</td>
     <td>${esc(m.lab_name||'')}</td>
-    <td><button class="btn btn-sm btn-ghost" onclick="App.audqDel('${esc(m.measurement_id)}')">삭제</button></td>
+    <td><button class="btn btn-sm btn-ghost" onclick="App.audqDel('${jsq(m.measurement_id)}')">삭제</button></td>
   </tr>`).join('')}</tbody></table></div>`;
 }
 function AUDQ_addForm(cid){
@@ -71,7 +71,7 @@ function AUDQ_addForm(cid){
       <div class="field"><label>시험일</label><input class="in" id="audq-tested" type="date" /></div>
     </div>
     <div class="field"><label>비고</label><input class="in" id="audq-note" /></div>
-    <button class="btn btn-primary" onclick="App.audqAdd('${esc(cid)}')">추가</button>
+    <button class="btn btn-primary" onclick="App.audqAdd('${jsq(cid)}')">추가</button>
   </fieldset>`;
 }
 function AUDQ_renameForm(cid){
@@ -85,7 +85,7 @@ function AUDQ_renameForm(cid){
       <div class="field"><label>새 이름 <span class="req">*</span></label>
         <input class="in" id="audq-name" /></div>
     </div>
-    <button class="btn btn-primary" onclick="App.audqRename('${esc(cid)}')">이름 교정</button>
+    <button class="btn btn-primary" onclick="App.audqRename('${jsq(cid)}')">이름 교정</button>
   </fieldset>`;
 }
 VIEWS['aud-materials'] = (() => {

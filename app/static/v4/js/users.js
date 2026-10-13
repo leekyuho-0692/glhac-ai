@@ -29,7 +29,7 @@ App.admApproveSignup = function(id){
   openModal('스태프 가입 승인', `<p><b>${esc(x.display_name||x.username||'')}</b> <span class="muted">${esc(x.username||'')}</span></p>
     <div class="field"><label for="ap-role">부여할 역할</label><select class="in" id="ap-role">${US_opts(US_STAFF_ROLES, x.requested_role||'consultant')}</select>
     <span class="muted" style="font-size:12.5px">신청 역할: ${esc(x.requested_role||'-')}</span></div>`,
-    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.usDoApprove('${esc(id)}')">승인</button>`);
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.usDoApprove('${jsq(id)}')">승인</button>`);
 };
 App.usDoApprove = async function(id){
   const role = (($('#ap-role')||{}).value)||null;
@@ -49,9 +49,9 @@ function US_panel(){
     <div class="tbl-wrap"><table><thead><tr><th style="min-width:170px">아이디</th><th>org</th><th style="min-width:230px">역할</th><th></th></tr></thead><tbody>
     ${L.slice(0,100).map(u=>`<tr><td><b>${esc(u.username)}</b></td><td class="mono muted">${esc(u.org_id||'-')}</td>
       <td><select class="in" id="us-r-${esc(u.user_id)}">${US_opts(US_ALL_ROLES, u.role)}${US_ALL_ROLES.some(r=>r[0]===u.role)?'':`<option selected value="${esc(u.role)}">${esc(u.role)}</option>`}</select></td>
-      <td><div class="row-act"><button class="btn btn-sm" onclick="App.usRole('${esc(u.user_id)}')">역할 변경</button>
-        <button class="btn btn-sm" onclick="App.usPwReset('${esc(u.user_id)}','${esc(u.username)}')">비밀번호 초기화</button>
-        ${u.username==='admin'?'':`<button class="btn btn-sm btn-ghost" onclick="App.usDel('${esc(u.user_id)}','${esc(u.username)}')">삭제</button>`}</div></td></tr>`).join('')||'<tr><td colspan="4" class="empty">사용자 없음</td></tr>'}
+      <td><div class="row-act"><button class="btn btn-sm" onclick="App.usRole('${jsq(u.user_id)}')">역할 변경</button>
+        <button class="btn btn-sm" onclick="App.usPwReset('${jsq(u.user_id)}','${jsq(u.username)}')">비밀번호 초기화</button>
+        ${u.username==='admin'?'':`<button class="btn btn-sm btn-ghost" onclick="App.usDel('${jsq(u.user_id)}','${jsq(u.username)}')">삭제</button>`}</div></td></tr>`).join('')||'<tr><td colspan="4" class="empty">사용자 없음</td></tr>'}
     </tbody></table></div>${L.length>100?`<p class="muted">상위 100명만 표시 — 검색으로 좁혀 주세요.</p>`:''}</section>`;
 }
 App.usSearch = function(v){ S.usQ = v; render(); };
@@ -82,7 +82,7 @@ App.usRole = async function(uid){
 };
 App.usDel = function(uid, name){
   openModal('사용자 삭제', `<p><b>${esc(name)}</b> 계정을 삭제합니다. 되돌릴 수 없습니다(비활성화 기능 없음).</p>`,
-    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.usDoDel('${esc(uid)}')">삭제</button>`);
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.usDoDel('${jsq(uid)}')">삭제</button>`);
 };
 App.usDoDel = async function(uid){
   const r = await apiFetch('/admin/users/'+uid, {method:'DELETE'});
@@ -98,7 +98,7 @@ function US_tempPw(){
 }
 App.usPwReset = function(uid, name){
   openModal('비밀번호 초기화', `<p><b>${esc(name)}</b> 계정의 비밀번호를 임시 비밀번호로 바꿉니다. 이 계정의 다른 로그인은 유지되니, 전달 후 본인이 바로 변경하도록 안내하세요.</p>`,
-    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.usPwResetDo('${esc(uid)}','${esc(name)}')">초기화</button>`);
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.usPwResetDo('${jsq(uid)}','${jsq(name)}')">초기화</button>`);
 };
 App.usPwResetDo = async function(uid, name){
   const pw = US_tempPw();
@@ -145,7 +145,7 @@ App.oaIssue = function(org, company){
   openModal('기업 계정 발급', `<p><b>${esc(company||org)}</b> 전용 신청인 계정을 만듭니다. 임시 비밀번호는 발급 직후 한 번만 보입니다.</p>
     <div class="field"><label for="oa-u">아이디 <span class="req">영문·숫자 3~32자 또는 이메일</span></label><input class="in" id="oa-u" autocomplete="off"></div>
     <div class="inline-msg" id="oa-e"></div>`,
-    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.oaIssueDo('${esc(org)}','${esc(company||'')}')">발급</button>`);
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.oaIssueDo('${jsq(org)}','${jsq(company||'')}')">발급</button>`);
 };
 App.oaIssueDo = async function(org, company){
   const username = ((($('#oa-u')||{}).value)||'').trim();
@@ -159,13 +159,13 @@ App.oaIssueDo = async function(org, company){
     <div class="field"><label>아이디</label><input class="in mono" readonly value="${esc(d.username)}"></div>
     <div class="field"><label>임시 비밀번호</label><input class="in mono" id="oa-pw" readonly value="${esc(d.temp_password)}" onclick="this.select()"></div>
     <p class="muted">첫 로그인 후 사이드바 '비밀번호 변경'으로 바꾸도록 안내하세요.</p>`,
-    `<button class="btn" onclick="(navigator.clipboard&&navigator.clipboard.writeText('아이디: ${esc(d.username)}\\n임시 비밀번호: '+$('#oa-pw').value)).then(()=>toast('복사했습니다.'))">복사</button><button class="btn btn-primary" onclick="App.closeModal()">닫기</button>`);
+    `<button class="btn" onclick="(navigator.clipboard&&navigator.clipboard.writeText('아이디: ${jsq(d.username)}\\n임시 비밀번호: '+$('#oa-pw').value)).then(()=>toast('복사했습니다.'))">복사</button><button class="btn btn-primary" onclick="App.closeModal()">닫기</button>`);
 };
 // 컨설턴트 업체별 현황 — 선택 업체에 발급 버튼
 { const f = VIEWS['cons-status']; if(typeof f==='function') VIEWS['cons-status'] = () => {
     const c = (RS.cases||[]).find(x => x.case_id === S.selCompany);
     const btn = c && OA_canIssue() && OA_isCompanyOrg(c.org_id)
-      ? `<section class="panel"><div class="panel-head"><h2>기업 계정</h2><button class="btn btn-sm" onclick="App.oaIssue('${esc(c.org_id)}','${esc(c.company_name||'')}')">＋ 기업 계정 발급</button></div><p class="muted">업체가 직접 로그인해 서류·계약을 처리하는 신청인 계정입니다.</p></section>`
+      ? `<section class="panel"><div class="panel-head"><h2>기업 계정</h2><button class="btn btn-sm" onclick="App.oaIssue('${jsq(c.org_id)}','${jsq(c.company_name||'')}')">＋ 기업 계정 발급</button></div><p class="muted">업체가 직접 로그인해 서류·계약을 처리하는 신청인 계정입니다.</p></section>`
       : (c && !OA_isCompanyOrg(c.org_id) ? `<section class="panel"><p class="muted">이 신청은 업체 전용 조직이 아닌 공용 조직에 있어 기업 계정을 발급할 수 없습니다. 관리자에게 업체 분리를 요청하세요.</p></section>` : '');
     return f() + btn; }; }
 // 업체별 기업 계정 발급 목록 — 관리자는 회원 관리, 운영자는 배정 관리에서(회원 관리는 admin 전용 화면, rbac.js VIEW_ROLES)
@@ -175,7 +175,7 @@ function OA_panel(){
     return `<section class="panel"><div class="panel-head"><h2>업체별 기업 계정 발급</h2></div>
       <div class="tbl-wrap"><table><thead><tr><th>업체</th><th>org</th><th></th></tr></thead><tbody>
       ${rows.map(c=>`<tr><td><b>${esc(c.company_name||'-')}</b></td><td class="mono muted">${esc(c.org_id)}</td>
-        <td><button class="btn btn-sm" onclick="App.oaIssue('${esc(c.org_id)}','${esc(c.company_name||'')}')">＋ 기업 계정 발급</button></td></tr>`).join('') || '<tr><td colspan="3" class="empty">업체 전용 조직이 없습니다</td></tr>'}
+        <td><button class="btn btn-sm" onclick="App.oaIssue('${jsq(c.org_id)}','${jsq(c.company_name||'')}')">＋ 기업 계정 발급</button></td></tr>`).join('') || '<tr><td colspan="3" class="empty">업체 전용 조직이 없습니다</td></tr>'}
       </tbody></table></div></section>`;
 }
 { const f = VIEWS['adm-members']; if(typeof f==='function') VIEWS['adm-members'] = () => f() + (OA_canIssue() ? OA_panel() : ''); }

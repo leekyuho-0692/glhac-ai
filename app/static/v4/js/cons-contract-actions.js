@@ -105,7 +105,7 @@ function CCA_panel(cid, isAdmin){
   ].filter(x=>x).join('');
 
   const acts = CCA_actions(d, isAdmin);
-  const btns = acts.map(([k,l,fn])=>`<button class="btn ${k==='pdf'?'btn-ghost':'btn-primary'}" onclick="${fn}('${esc(cid)}')">${esc(l)}</button>`).join('');
+  const btns = acts.map(([k,l,fn])=>`<button class="btn ${k==='pdf'?'btn-ghost':'btn-primary'}" onclick="${fn}('${jsq(cid)}')">${esc(l)}</button>`).join('');
 
   return `<section class="panel"><div class="panel-head"><h2>계약 처리</h2></div>${picker}
     <dl class="dl">${rows}</dl>
@@ -136,7 +136,7 @@ App.ccaReturnOpen = function(cid){
     `<div class="field"><label>반려 사유</label><textarea id="cca-reason" class="in" rows="3" placeholder="이전 단계로 되돌리는 사유를 적어 주세요."></textarea></div>
      <p class="inline-msg">사유는 상대 담당자에게 그대로 전달됩니다.</p>`,
     `<button class="btn" onclick="App.closeModal()">취소</button>
-     <button class="btn btn-primary" onclick="App.ccaReturn('${esc(cid)}')">반려</button>`);
+     <button class="btn btn-primary" onclick="App.ccaReturn('${jsq(cid)}')">반려</button>`);
 };
 App.ccaReturn = async function(cid){
   const reason = (($('#cca-reason')||{}).value||'').trim();
@@ -174,10 +174,10 @@ function CCA_admExtra(cid){
   const st = d.status;
   const btns = [];
   if((st === 'requested' || st === 'draft') && canCall('POST','/cases/{}/contract/approve'))
-    btns.push(`<button class="btn btn-primary" onclick="App.ccaApprove('${esc(cid)}')">계약 승인</button>`);
+    btns.push(`<button class="btn btn-primary" onclick="App.ccaApprove('${jsq(cid)}')">계약 승인</button>`);
   // 수령 확인은 신청기업·컨설턴트 권한(main.py:7360) — 운영자에겐 403 이라 숨김(admin 은 통과)
   if((st === 'sent' || st === 'issued') && canCall('POST','/cases/{}/contract/receive'))
-    btns.push(`<button class="btn btn-primary" onclick="App.ccaReceive('${esc(cid)}')">계약서 수령 확인</button>`);
+    btns.push(`<button class="btn btn-primary" onclick="App.ccaReceive('${jsq(cid)}')">계약서 수령 확인</button>`);
   return btns.length ? `<div class="row-act" style="margin-top:10px;gap:8px">${btns.join('')}</div>` : '';
 }
 

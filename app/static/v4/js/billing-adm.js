@@ -9,25 +9,26 @@ async function BLA_load(){
   catch(e){ RS.blaBoard = {error:true}; }
 }
 const BLA_it = (i) => (RS.blaBoard && RS.blaBoard.items && RS.blaBoard.items[i]) || null;
-function BLA_row(i){
+function BLA_row(item, idx){
+  const i = item;  // 기존 코드 호환성을 위해 i 변수명 유지
   const inv = (arr, st) => (i.rounds||[]).find(x => x.status === st);
   const done = i.rounds && i.rounds.length && i.rounds.every(x => x.status === 'paid');
   const rounds = (i.rounds||[]).map(x => `R${esc(x.round)} ${esc(Number(x.total||0).toLocaleString())} ${esc(BLA_ISTAT[x.status]||x.status)} ${x.due_date?'기한 '+esc(String(x.due_date).slice(0,10)):''} ${x.overdue?'<span class="badge attn">기한 경과</span>':''}`).join('<br>');
   const na = i.next_action;
   let act = '';
   if(na==='accept_formal') act = '<span class="muted">위 접수 보드에서 접수 확인</span>';
-  else if(na==='send_contract') act = `<button class="btn btn-sm" onclick="App.blaQuote(${i})">견적·계약서 발송</button>`;
-  else if(na==='request_signature') act = `<button class="btn btn-sm" onclick="App.blaNotice(${i},'signature_request')">서명 요청 발송</button>`;
-  else if(na==='sign_b') act = `<button class="btn btn-sm btn-primary" onclick="App.blaSignB(${i})">GL HAC 서명</button>`;
-  else if(na==='notice_contract') act = `<button class="btn btn-sm" onclick="App.blaNotice(${i},'contract_signed')">체결 고지</button>`;
-  else if(na==='notice_due'){ const w = inv(i.rounds,'waiting_payment'); act = `<button class="btn btn-sm" onclick="App.blaNotice(${i},'payment_due','${w?esc(w.invoice_id):''}')">입금 고지</button>`; }
-  else if(na==='notice_reminder'){ const o = inv(i.rounds,'waiting_payment'); act = `<button class="btn btn-sm" onclick="App.blaNotice(${i},'payment_reminder','${o?esc(o.invoice_id):''}')">재고지</button>`; }
-  else if(na==='confirm_paid'){ const v = inv(i.rounds,'need_verification'); act = `<button class="btn btn-sm btn-primary" onclick="App.blaConfirmPaid(${i},'${v?esc(v.invoice_id):''}')">입금 확인</button>`; }
-  else if(na==='notice_paid'){ const p = (i.rounds||[]).find(x=>x.status==='paid' && !x.confirmed_notice_at); act = `<button class="btn btn-sm" onclick="App.blaNotice(${i},'payment_confirmed','${p?esc(p.invoice_id):''}')">확인 알림</button>`; }
-  else if(na==='next_round'){ const d = inv(i.rounds,'draft'); act = `<button class="btn btn-sm" onclick="App.blaBillNow(${i},'${d?esc(d.invoice_id):''}')">미리 청구</button>`; }
+  else if(na==='send_contract') act = `<button class="btn btn-sm" onclick="App.blaQuote(${idx})">견적·계약서 발송</button>`;
+  else if(na==='request_signature') act = `<button class="btn btn-sm" onclick="App.blaNotice(${idx},'signature_request')">서명 요청 발송</button>`;
+  else if(na==='sign_b') act = `<button class="btn btn-sm btn-primary" onclick="App.blaSignB(${idx})">GL HAC 서명</button>`;
+  else if(na==='notice_contract') act = `<button class="btn btn-sm" onclick="App.blaNotice(${idx},'contract_signed')">체결 고지</button>`;
+  else if(na==='notice_due'){ const w = inv(i.rounds,'waiting_payment'); act = `<button class="btn btn-sm" onclick="App.blaNotice(${idx},'payment_due','${w?esc(w.invoice_id):''}')">입금 고지</button>`; }
+  else if(na==='notice_reminder'){ const o = inv(i.rounds,'waiting_payment'); act = `<button class="btn btn-sm" onclick="App.blaNotice(${idx},'payment_reminder','${o?esc(o.invoice_id):''}')">재고지</button>`; }
+  else if(na==='confirm_paid'){ const v = inv(i.rounds,'need_verification'); act = `<button class="btn btn-sm btn-primary" onclick="App.blaConfirmPaid(${idx},'${v?esc(v.invoice_id):''}')">입금 확인</button>`; }
+  else if(na==='notice_paid'){ const p = (i.rounds||[]).find(x=>x.status==='paid' && !x.confirmed_notice_at); act = `<button class="btn btn-sm" onclick="App.blaNotice(${idx},'payment_confirmed','${p?esc(p.invoice_id):''}')">확인 알림</button>`; }
+  else if(na==='next_round'){ const d = inv(i.rounds,'draft'); act = `<button class="btn btn-sm" onclick="App.blaBillNow(${idx},'${d?esc(d.invoice_id):''}')">미리 청구</button>`; }
   else if(na==='wait_payment') act = '<span class="muted">입금 대기</span>';
   else if(na==='settled') act = '<span class="badge strong">완납</span>';
-  return `<tr><td>${esc(i.company_name)}</td><td class="num mono">${esc(Number(i.fee||i.quote_total||0).toLocaleString())}</td><td>${i.signed_a?'✔':'—'} / ${i.signed_b?'✔':'—'}</td><td>${i.signed_notice_sent?'✔':'—'}</td><td style="font-size:12px">${rounds||'—'}</td><td>${i.next_action_label?'<span class="badge attn">'+esc(i.next_action_label)+'</span>':''}</td><td><div class="row-act">${act}<button class="btn btn-sm btn-ghost" onclick="App.blaNotices(${i})">알림 이력</button></div></td></tr>`;
+  return `<tr><td>${esc(i.company_name)}</td><td class="num mono">${esc(Number(i.fee||i.quote_total||0).toLocaleString())}</td><td>${i.signed_a?'✔':'—'} / ${i.signed_b?'✔':'—'}</td><td>${i.signed_notice_sent?'✔':'—'}</td><td style="font-size:12px">${rounds||'—'}</td><td>${i.next_action_label?'<span class="badge attn">'+esc(i.next_action_label)+'</span>':''}</td><td><div class="row-act">${act}<button class="btn btn-sm btn-ghost" onclick="App.blaNotices(${idx})">알림 이력</button></div></td></tr>`;
 }
 function BLA_board(){
   if(S.role!=='adm') return '';

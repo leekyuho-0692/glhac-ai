@@ -39,8 +39,8 @@ function PKG_panel(cid){
   ].join('');
   const un = d.unreadable || [];
   const unRows = un.map(u=>`<tr><td>${esc(u.filename||'-')}</td><td class="mono">${u.confidence==null?'-':Number(u.confidence).toFixed(2)}</td>
-      <td><div class="row-act"><button class="btn btn-sm btn-ghost" onclick="App.docDownload('${esc(u.document_id)}','${esc(u.filename||'')}')">원본</button>
-      ${PKG_canAudit()?`<button class="btn btn-sm" onclick="App.pkgDocOk('${cid}','${esc(u.document_id)}')">수기 확인 완료</button>`:''}</div></td></tr>`).join('');
+      <td><div class="row-act"><button class="btn btn-sm btn-ghost" onclick="App.docDownload('${jsq(u.document_id)}','${jsq(u.filename||'')}')">원본</button>
+      ${PKG_canAudit()?`<button class="btn btn-sm" onclick="App.pkgDocOk('${cid}','${jsq(u.document_id)}')">수기 확인 완료</button>`:''}</div></td></tr>`).join('');
   const up = d.unprocessed || [];
   const canReproc = ['consultant','operator','auditor','admin'].includes(AUTH.role);
   const head = d.complete

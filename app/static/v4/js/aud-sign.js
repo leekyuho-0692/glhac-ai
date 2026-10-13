@@ -56,7 +56,7 @@ function AUDS_onsite(){
 
   const signBtns = ['auditor','supervisor'].map(p=>{
     if(s[p]) return '';
-    return `<button class="btn btn-sm" onclick="App.audsSign('${esc(cid)}','${p}')">${AUDS_PARTY_KO[p]} 서명</button>`;
+    return `<button class="btn btn-sm" onclick="App.audsSign('${jsq(cid)}','${p}')">${AUDS_PARTY_KO[p]} 서명</button>`;
   }).join(' ');
 
   const opRows = opKeys.length
@@ -92,7 +92,7 @@ function AUDS_onsite(){
         <label for="auds-op">의견</label>
         <textarea class="in" id="auds-op" rows="3" placeholder="항목 의견을 입력하세요"></textarea>
       </div>
-      <div class="inline"><button class="btn btn-primary" onclick="App.audsOpinion('${esc(cid)}')">의견 등록</button></div>`
+      <div class="inline"><button class="btn btn-primary" onclick="App.audsOpinion('${jsq(cid)}')">의견 등록</button></div>`
     : '<p class="muted">검토 의견은 샤리아 위원·운영관리자가 작성합니다.</p>';
 
   const docBtns = [
@@ -100,7 +100,7 @@ function AUDS_onsite(){
     ['/cases/'+cid+'/factory-audit.docx', '현장심사 보고서 DOCX'],
     ['/cases/'+cid+'/preassess-report.pdf', '사전심사 보고서 PDF'],
     ['/cases/'+cid+'/mock-audit/ai-report.pdf', '모의심사 AI 보고서 PDF']
-  ].map(([p,l])=>`<button class="btn btn-sm" onclick="App.audsDoc('${esc(p)}','${esc(l)}')">${l}</button>`).join(' ');
+  ].map(([p,l])=>`<button class="btn btn-sm" onclick="App.audsDoc('${jsq(p)}','${jsq(l)}')">${l}</button>`).join(' ');
 
   return `
     <section class="panel">
@@ -177,7 +177,7 @@ App.audsSign = function(cid, party){
       </div>
       <div class="inline-msg" id="auds-sign-err"></div>
     </div>
-  `, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.audsSignSubmit('${esc(cid)}','${party}')">확인</button>`);
+  `, `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.audsSignSubmit('${jsq(cid)}','${party}')">확인</button>`);
   setTimeout(AUDS_padInit, 0);
 };
 
@@ -284,15 +284,15 @@ function AUDS_finalPanel(){
         <label for="auds-ret">보완 요청 사유 <span class="req">*</span></label>
         <textarea class="in" id="auds-ret" rows="3" placeholder="보완이 필요한 부분을 구체적으로 입력하세요"></textarea>
       </div>
-      <div class="inline"><button class="btn btn-primary" onclick="App.audsFinal('${esc(cid)}','return')">보완 반려</button></div>
+      <div class="inline"><button class="btn btn-primary" onclick="App.audsFinal('${jsq(cid)}','return')">보완 반려</button></div>
       <hr style="margin:16px 0;border:none;border-top:1px solid var(--line,#e5e7eb)">
       <div class="field">
         <label for="auds-rec-note">확인 메모 (선택)</label>
         <input class="in" id="auds-rec-note" placeholder="수정 내용에 대한 메모">
       </div>
       <div class="inline">
-        <button class="btn" onclick="App.audsFinal('${esc(cid)}','ok')">수정 확인(적합)</button>
-        <button class="btn btn-ghost" onclick="App.audsFinal('${esc(cid)}','hold')">다시 보완 요청</button>
+        <button class="btn" onclick="App.audsFinal('${jsq(cid)}','ok')">수정 확인(적합)</button>
+        <button class="btn btn-ghost" onclick="App.audsFinal('${jsq(cid)}','hold')">다시 보완 요청</button>
       </div>
     </section>`;
 }

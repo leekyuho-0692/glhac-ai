@@ -131,7 +131,7 @@ const RP_listPanel = () => {
   if(!L) body = '<p class="empty">불러오는 중…</p>';
   else if(L.error) body = `<p class="empty">${L.status===403?'권한이 없습니다.':'불러오지 못했습니다.'}</p>`;
   else if(!(L.items||[]).length) body = '<p class="empty">보고서가 없습니다.</p>';
-  else body = `<div class="tbl-wrap"><table><thead><tr><th>번호</th><th>기간</th><th>생성일</th><th></th></tr></thead><tbody>${L.items.map(it=>`<tr><td class="mono">${esc(it.report_no||'')}</td><td>${esc((it.period&&it.period.label)||'')}</td><td class="mono">${esc(it.at||'')}</td><td class="row-act"><button class="link" onclick="App.rpPdf('${esc(it.gen_doc_id)}','${esc(it.report_no)}')">PDF</button></td></tr>`).join('')}</tbody></table></div>`;
+  else body = `<div class="tbl-wrap"><table><thead><tr><th>번호</th><th>기간</th><th>생성일</th><th></th></tr></thead><tbody>${L.items.map(it=>`<tr><td class="mono">${esc(it.report_no||'')}</td><td>${esc((it.period&&it.period.label)||'')}</td><td class="mono">${esc(it.at||'')}</td><td class="row-act"><button class="link" onclick="App.rpPdf('${jsq(it.gen_doc_id)}','${jsq(it.report_no)}')">PDF</button></td></tr>`).join('')}</tbody></table></div>`;
   return `<section class="panel"><div class="panel-head"><h2>생성된 보고서</h2><button class="btn btn-primary" onclick="App.rpCreate()">보고서 만들기</button></div>${body}</section>`;
 };
 

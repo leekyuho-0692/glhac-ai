@@ -124,9 +124,9 @@ const BRD_detail = function(postId) {
   }
 
   const stBtns = [];
-  if (d.status !== 'answered') stBtns.push(`<button class="btn btn-primary btn-sm" onclick="App.brdStatus('${esc(postId)}','answered')">답변완료</button>`);
-  if (d.status !== 'closed') stBtns.push(`<button class="btn btn-sm" onclick="App.brdStatus('${esc(postId)}','closed')">종결</button>`);
-  if (d.status !== 'open') stBtns.push(`<button class="btn btn-ghost btn-sm" onclick="App.brdStatus('${esc(postId)}','open')">다시 열기</button>`);
+  if (d.status !== 'answered') stBtns.push(`<button class="btn btn-primary btn-sm" onclick="App.brdStatus('${jsq(postId)}','answered')">답변완료</button>`);
+  if (d.status !== 'closed') stBtns.push(`<button class="btn btn-sm" onclick="App.brdStatus('${jsq(postId)}','closed')">종결</button>`);
+  if (d.status !== 'open') stBtns.push(`<button class="btn btn-ghost btn-sm" onclick="App.brdStatus('${jsq(postId)}','open')">다시 열기</button>`);
 
   const head = `<div class="panel-head"><h2>
     <span class="mono muted" style="font-size:13px">#${esc(String(d.post_no != null ? d.post_no : ''))}</span>
@@ -159,7 +159,7 @@ const BRD_detail = function(postId) {
           ${isChild && pr ? `<div class="muted" style="font-size:11px">↳ ${esc((pr.body || '').slice(0, 40))}${(pr.body || '').length > 40 ? '…' : ''}</div>` : ''}
           <div style="white-space:pre-wrap;margin-top:6px">${esc(r.body || '')}</div>
           <div class="row-act" style="margin-top:6px">
-            <button class="link" onclick="App.brdReplyTo('${esc(r.reply_id)}'${r.parent_reply_id ? '' : ',"1"'})">답글</button>
+            <button class="link" onclick="App.brdReplyTo('${jsq(r.reply_id)}'${r.parent_reply_id ? '' : ',"1"'})">답글</button>
           </div>
         </li>`;
       }).join('')}</ul>`
@@ -170,7 +170,7 @@ const BRD_detail = function(postId) {
       <button class="link" onclick="App.brdReplyCancel()">취소</button></div>` : ''}
     <textarea id="brd-reply" class="in" rows="3" placeholder="답변을 입력하세요"></textarea>
     <div class="inline" style="margin-top:8px">
-      <button class="btn btn-primary" onclick="App.brdReply('${esc(postId)}')">답글 등록</button>
+      <button class="btn btn-primary" onclick="App.brdReply('${jsq(postId)}')">답글 등록</button>
       <span class="muted" style="font-size:12px">직원 토큰으로 등록됩니다.</span>
     </div>
     <div class="inline-msg" id="brd-reply-msg"></div>

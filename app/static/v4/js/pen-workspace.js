@@ -33,7 +33,7 @@ VIEWS['pen-home'] = () => {
   let cur = (S.selPen && list.find(x=>x.case_id===S.selPen)) ? S.selPen : list[0].case_id;
   S.selPen = cur;
   const nav = `<nav class="mlist" aria-label="배정 목록"><div class="mh">배정 ${list.length}건</div>${list.map(x=>
-    `<button class="mitem ${x.case_id===cur?'on':''}" onclick="App.penSel('${esc(x.case_id)}')"><span class="t"><span>${esc(x.company_name||x.case_id)}</span><span class="badge ${x.decision==='verified'?'strong':(_penOpen(x)?'attn':'')}">${esc(PEN_DECISION[x.decision]||'검증 대기')}</span></span><span class="muted mono" style="font-size:11px">${esc(x.status||'')} · ${esc(x.pathway||'')}</span></button>`
+    `<button class="mitem ${x.case_id===cur?'on':''}" onclick="App.penSel('${jsq(x.case_id)}')"><span class="t"><span>${esc(x.company_name||x.case_id)}</span><span class="badge ${x.decision==='verified'?'strong':(_penOpen(x)?'attn':'')}">${esc(PEN_DECISION[x.decision]||'검증 대기')}</span></span><span class="muted mono" style="font-size:11px">${esc(x.status||'')} · ${esc(x.pathway||'')}</span></button>`
   ).join('')}</nav>`;
   const it = list.find(x=>x.case_id===cur);
   const done = it.decision && it.decision !== 'rework';

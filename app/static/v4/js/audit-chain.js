@@ -56,7 +56,7 @@ function ACH_panel(cid){
       `<div><span class="k">이전 서명 체계</span><span class="v mono">${legacy}</span></div>` +
     `</section>`;
 
-  return `<section class="panel"><div class="panel-head"><h2>감사 기록 무결성</h2><div class="row-act"><button class="btn btn-sm btn-ghost" onclick="App.achRecheck('${esc(cid)}')">다시 검증</button></div></div>${body}${summary}</section>`;
+  return `<section class="panel"><div class="panel-head"><h2>감사 기록 무결성</h2><div class="row-act"><button class="btn btn-sm btn-ghost" onclick="App.achRecheck('${jsq(cid)}')">다시 검증</button></div></div>${body}${summary}</section>`;
 }
 
 App.achRecheck = function(cid){

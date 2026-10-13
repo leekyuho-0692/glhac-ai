@@ -61,9 +61,9 @@ function OPSC_rowCons(c, sel) {
     <td>${c.status ? `<span class="badge ${c.status === "active" ? "strong" : "attn"}">${esc(c.status)}</span>` : '<span class="muted">-</span>'}</td>
     <td class="num">${esc(String(c.client_count != null ? c.client_count : 0))}</td>
     <td><div class="row-act">
-      <button class="btn btn-sm" onclick="App.opscEdit('${esc(c.consultant_id)}')">수정</button>
-      <button class="btn btn-sm" onclick="App.opscCommission('${esc(c.consultant_id)}')">수수료</button>
-      <button class="btn btn-sm btn-ghost" onclick="App.opscConfirmDelete('${esc(c.consultant_id)}',${Math.min(Number(c.client_count)||0,99999)})">삭제</button>
+      <button class="btn btn-sm" onclick="App.opscEdit('${jsq(c.consultant_id)}')">수정</button>
+      <button class="btn btn-sm" onclick="App.opscCommission('${jsq(c.consultant_id)}')">수수료</button>
+      <button class="btn btn-sm btn-ghost" onclick="App.opscConfirmDelete('${jsq(c.consultant_id)}',${Math.min(Number(c.client_count)||0,99999)})">삭제</button>
     </div></td>
   </tr>`;
 }
@@ -137,7 +137,7 @@ function OPSC_commissionBlock() {
         <td class="num">${OPSC_money(p.amount)}</td>
         <td>${p.status === "paid" ? '<span class="badge strong">paid</span>' : '<span class="badge attn">pending</span>'}</td>
         <td class="mono">${esc(String(p.paid_at || "").slice(0, 10))}</td>
-        <td>${p.status !== "paid" ? `<div class="row-act"><button class="btn btn-sm" onclick="App.opscPayoutPaid('${esc(p.payout_id)}')">지급 완료 처리</button></div>` : ""}</td>
+        <td>${p.status !== "paid" ? `<div class="row-act"><button class="btn btn-sm" onclick="App.opscPayoutPaid('${jsq(p.payout_id)}')">지급 완료 처리</button></div>` : ""}</td>
       </tr>`).join("")}</tbody></table></div>
       ${paid.length > 100 ? `<p class="muted">외 ${paid.length - 100}건</p>` : ""}` : `<p class="empty">지급 내역이 없습니다.</p>`}
   </section>`;
@@ -299,7 +299,7 @@ App.opscEdit = function (cid) {
     <div class="field"><label>계약 메모</label><textarea class="in" id="opsc-e-contract_note" rows="2">${v(p.contract_note)}</textarea></div>
     <div class="inline-msg" id="opsc-e-msg"></div>`;
   const foot = `<button class="btn" onclick="App.closeModal()">취소</button>
-    <button class="btn btn-primary" onclick="App.opscEditSubmit('${esc(cid)}')">저장</button>`;
+    <button class="btn btn-primary" onclick="App.opscEditSubmit('${jsq(cid)}')">저장</button>`;
   openModal("컨설턴트 수정", body, foot, true);
 };
 
@@ -343,7 +343,7 @@ App.opscConfirmDelete = function (cid, clientCount) {
     ? `<p class="note attn">담당 업체가 ${clientCount}개 있습니다. 담당을 넘기거나 해제하기 전에는 삭제할 수 없습니다.</p>`
     : `<p class="note">삭제하면 되돌릴 수 없습니다. 정산 이력이 있으면 거부됩니다.</p>`;
   const foot = `<button class="btn" onclick="App.closeModal()">취소</button>
-    <button class="btn btn-primary" onclick="App.opscDelete('${esc(cid)}')">삭제</button>`;
+    <button class="btn btn-primary" onclick="App.opscDelete('${jsq(cid)}')">삭제</button>`;
   openModal("컨설턴트 삭제", warn, foot);
 };
 

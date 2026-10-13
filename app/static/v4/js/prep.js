@@ -176,7 +176,7 @@ const PR_docsTable = (cid, edu)=>{
   if(edu.error) return `<section class="panel"><p class="empty">${edu.status===403?'이 화면을 볼 권한이 없습니다.':'불러오지 못했습니다.'}</p></section>`;
   const docs = edu.docs||[];
   if(!docs.length) return '<section class="panel"><p class="empty">계약 체결 후 배포됩니다.</p></section>';
-  const rows = docs.map(d=>`<li class="row"><span>${esc(d.code||'')}</span><span>${esc(d.title||'')}</span><span>${esc(d.status||'')}</span><span class="row-act">${d.gen_doc_id?`<button class="btn btn-sm" onclick="App.genPdf('${esc(d.gen_doc_id)}','${esc(d.title||d.code||'')}')">[보기]</button>`:''}</span></li>`).join('');
+  const rows = docs.map(d=>`<li class="row"><span>${esc(d.code||'')}</span><span>${esc(d.title||'')}</span><span>${esc(d.status||'')}</span><span class="row-act">${d.gen_doc_id?`<button class="btn btn-sm" onclick="App.genPdf('${jsq(d.gen_doc_id)}','${jsq(d.title||d.code||'')}')">[보기]</button>`:''}</span></li>`).join('');
   return `<section class="panel"><div class="panel-head"><h2>교육·매뉴얼 서류</h2>${edu.consented?`<span class="badge strong">동의 완료</span>`:''}</div><ul class="rows">${rows}</ul>${edu.consented?`<p class="muted" style="margin-top:10px">서명·동의 완료 ${esc(edu.consented_at||'')}</p>`:''}</section>`;
 };
 
@@ -202,7 +202,7 @@ const PR_itemsTable = (cid, d, mode)=>{
       else acts = `<button class="btn btn-sm" onclick="App.prPick('${key}')">업로드</button><input type="file" id="pr-file-${key}" style="display:none" onchange="App.prUpload('${cid}','${key}')">
         <button class="btn btn-sm btn-ghost" onclick="App.prNA('${cid}','${key}')">해당 없음</button>`;
     }
-    const fileHtml = it.uploaded && it.filename ? `<button class="link" onclick="App.docDownload('${esc(it.document_id||'')}','${esc(it.filename||'')}')">[파일] ${esc(it.filename)}</button>` : '';
+    const fileHtml = it.uploaded && it.filename ? `<button class="link" onclick="App.docDownload('${jsq(it.document_id||'')}','${jsq(it.filename||'')}')">[파일] ${esc(it.filename)}</button>` : '';
     return `<li class="row"><span>${esc(it.label||key)}</span><span>${PR_stBadge(it.status)}</span><span>${fileHtml}${note}${cnote}</span><span class="row-act">${acts}</span></li>`;
   }).join('');
   return `<ul class="rows">${rows}</ul>`;

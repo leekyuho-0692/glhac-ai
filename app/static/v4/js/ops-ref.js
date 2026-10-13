@@ -45,9 +45,9 @@
         <td class="mono">${esc(r.effective_date||'-')}</td>
         <td class="num mono">v${esc(String(r.version_count||1))}</td>
         <td class="row-act">
-          <button class="btn btn-sm" onclick="App.opsfViewReg('${esc(r.reg_id)}')">보기</button>
-          <button class="btn btn-sm" onclick="App.opsfEditReg('${esc(r.reg_id)}')">수정</button>
-          <button class="btn btn-sm" onclick="App.opsfTransReg('${esc(r.reg_id)}')">상태 전환</button>
+          <button class="btn btn-sm" onclick="App.opsfViewReg('${jsq(r.reg_id)}')">보기</button>
+          <button class="btn btn-sm" onclick="App.opsfEditReg('${jsq(r.reg_id)}')">수정</button>
+          <button class="btn btn-sm" onclick="App.opsfTransReg('${jsq(r.reg_id)}')">상태 전환</button>
         </td>
       </tr>`;
     }).join('');
@@ -186,7 +186,7 @@
       const d = await r.json(); const cur = d.content||{};
       openModal('규정 수정', OPSF_regFormBody(meta, cur),
         `<button class="btn" onclick="App.closeModal()">취소</button>
-         <button class="btn btn-primary" onclick="App.opsfUpdateReg('${esc(regId)}')">저장</button>`, true);
+         <button class="btn btn-primary" onclick="App.opsfUpdateReg('${jsq(regId)}')">저장</button>`, true);
     }catch(e){ toast('규정을 불러오지 못했습니다.'); }
   };
 
@@ -223,7 +223,7 @@
       <p class="note attn">발효 시 운영·감사 역할로 알림이 전송됩니다.</p>
     </div>`,
       `<button class="btn" onclick="App.closeModal()">취소</button>
-       <button class="btn btn-primary" onclick="App.opsfDoTrans('${esc(regId)}')">전환</button>`, true);
+       <button class="btn btn-primary" onclick="App.opsfDoTrans('${jsq(regId)}')">전환</button>`, true);
   };
 
   App.opsfDoTrans = async function(regId){
@@ -386,7 +386,7 @@
         <td><span class="${badge}">${esc(OPSF_LS_KO[st]||st)}</span>
           ${x.retry_count?`<div class="muted mono" style="font-size:11px">재시도 ${esc(String(x.retry_count))}회</div>`:''}</td>
         <td class="mono">${esc(x.certificate_no||'-')}${err}</td>
-        <td class="row-act">${canResend?`<button class="btn btn-sm" onclick="App.opsfResend('${esc(x.id)}')">재전송</button>`:''}</td>
+        <td class="row-act">${canResend?`<button class="btn btn-sm" onclick="App.opsfResend('${jsq(x.id)}')">재전송</button>`:''}</td>
       </tr>`;
     }).join('');
     const more = items.length>100 ? `<p class="muted" style="margin-top:8px">최근 100건 표시 (외 ${items.length-100}건)</p>` : '';

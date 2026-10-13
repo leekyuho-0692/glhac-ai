@@ -88,8 +88,8 @@ App.minExplainFree = async function () {
     h += `<p class="muted" style="font-size:12px">원재료를 고르면 걸린 이유·예외 조건·이 건의 근거·확인할 것을 보여줍니다. AI 초안이며 판단은 오디터가 합니다.</p>`;
     if (mats.length) {
       h += `<div class="row-act"><select id="min-sel">${mats.map((m,i)=>`<option value="${i}">${esc(m.name)}${m.e_number?' ('+esc(m.e_number)+')':''}</option>`).join('')}</select>`;
-      h += `<button class="btn btn-sm" onclick="App.minNote('${esc(cid)}')">심사 참고 의견</button>`;
-      h += `<button class="btn btn-sm btn-ghost" onclick="App.minExplainSel('${esc(cid)}')">AI 해설</button></div>`;
+      h += `<button class="btn btn-sm" onclick="App.minNote('${jsq(cid)}')">심사 참고 의견</button>`;
+      h += `<button class="btn btn-sm btn-ghost" onclick="App.minExplainSel('${jsq(cid)}')">AI 해설</button></div>`;
     } else {
       h += `<p class="empty">원재료가 없습니다.</p>`;
     }

@@ -159,7 +159,7 @@ function ENTP_penHtml(){
     <td>${esc(x.cert_expiry || '')}</td>
     <td><span class="badge ${x.status === 'active' ? 'strong' : 'attn'}">${esc(x.status || '')}</span></td>
     <td><div class="row-act">
-      <button class="btn btn-sm" onclick="App.entpPenEdit('${x.penyelia_id}','${esc(x.status||'')}')">수정</button>
+      <button class="btn btn-sm" onclick="App.entpPenEdit('${x.penyelia_id}','${jsq(x.status||'')}')">수정</button>
     </div></td>
   </tr>`).join('');
   return `<section class="panel">

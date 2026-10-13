@@ -92,7 +92,7 @@ function ADMCP_productsPanel(cid, d){
       <td class="mono">${esc(off)}</td>
       <td class="mono" style="font-size:12px">${valid}</td>
       <td>${esc(it.status||'')}</td>
-      <td><button class="btn btn-sm" onclick="App.admcpProductPdf('${cid}','${esc(it.product_id)}','${esc(it.certificate_no||'cert')}.pdf')">PDF</button></td>
+      <td><button class="btn btn-sm" onclick="App.admcpProductPdf('${cid}','${jsq(it.product_id)}','${jsq(it.certificate_no||'cert')}.pdf')">PDF</button></td>
     </tr>`;
   }).join('');
   return `<section class="panel"><div class="panel-head"><h2>제품별 인증서 <span class="count">${p.count||0}</span></h2></div>
