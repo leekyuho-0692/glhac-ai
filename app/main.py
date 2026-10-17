@@ -26,6 +26,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from .db import Base, engine, get_db, SessionLocal
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from . import nav8
+from . import intake
 from . import observability as obs
 from . import domain_dict as _dd_mod
 from .ontology_seed import seed
@@ -585,6 +586,7 @@ def _case_dict(c):
             "draft_state": c.draft_state, "return_reason": c.return_reason,
             "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
             "scheme_frozen": bool(c.scheme_frozen),
+            "sector": (c.profile_ext or {}).get("sector"),
             "profile_ext": c.profile_ext or {}, "facility_ids": c.facility_ids or []}
 
 
@@ -767,7 +769,9 @@ def _notify(db, case, event_type, title=None, body="", channels=None, role=None,
 # 아무에게도 통보되지 않았다(2026-09-23).
 PKG_UNREADABLE_CONF = 0.5
 PKG_GAP_EVENT = "package.gap.notified"
-_PKG_LABEL = {"company": "업체 정보", "product": "제품", "material": "성분(원재료)", "factory": "공장"}
+_PKG_LABEL = {"company": "업체 정보", "product": "제품", "material": "성분(원재료)", "factory": "공장",
+              # 물류(운송·창고) 패키지 점검 항목 — 없으면 통보 문구 조립에서 KeyError 로 500
+              "scope": "취급 서비스", "vehicle": "운송 차량", "facility": "보관·포장 시설", "cleaning": "세척 SOP 서류"}
 
 
 def _package_check(db, c):
@@ -787,6 +791,22 @@ def _package_check(db, c):
                      "confidence": d.confidence, "has_file": bool(d.content_b64)}
     unreadable = [row(d) for d in docs if d.confidence is not None and d.confidence < PKG_UNREADABLE_CONF]
     unprocessed = [row(d) for d in docs if d.confidence is None]
+    if (c.scheme or "product") == "logistics":
+        scope = list(c.logistics_scope or [])
+        need_vehicle = "pendistribusian" in scope
+        need_facility = bool({"penyimpanan", "pengemasan"} & set(scope))
+        vehicles = db.query(models.Vehicle).filter_by(org_id=c.org_id).count()
+        cleaning = any(d.doc_type == "cleaning_sop" for d in db.query(models.DocumentAsset).filter_by(case_id=c.case_id).all())
+        items = {
+            "company": {"ok": not company_missing, "missing": company_missing},
+            "scope": {"ok": bool(scope), "scope": scope},
+            "vehicle": {"ok": (vehicles > 0) if need_vehicle else True, "count": vehicles, "required": need_vehicle},
+            "facility": {"ok": factory_ok if need_facility else True, "required": need_facility},
+            "cleaning": {"ok": cleaning},
+        }
+        gaps = [k for k, v in items.items() if not v["ok"]]
+        return {"case_id": c.case_id, "scheme": "logistics", "complete": not gaps and not unreadable and not unprocessed,
+                "gaps": gaps, "items": items, "unreadable": unreadable, "unprocessed": unprocessed}
     items = {
         "company": {"ok": not company_missing, "missing": company_missing},
         "product": {"ok": bool(products), "count": len(products)},
@@ -794,7 +814,7 @@ def _package_check(db, c):
         "factory": {"ok": factory_ok},
     }
     gaps = [k for k, v in items.items() if not v["ok"]]
-    return {"case_id": c.case_id, "complete": not gaps and not unreadable and not unprocessed, "gaps": gaps,
+    return {"case_id": c.case_id, "scheme": "product", "complete": not gaps and not unreadable and not unprocessed, "gaps": gaps,
             "items": items, "unreadable": unreadable, "unprocessed": unprocessed}
 
 
@@ -816,7 +836,7 @@ def _notify_package_gaps(db, c, force=False):
             .order_by(models.WorkflowEvent.created_at.desc()).first())
     if not force and last and (last.payload or {}).get("fp") == fp and (last.payload or {}).get("auditor_id") == auditor:
         return chk
-    parts = ["%s 누락" % _PKG_LABEL[g] for g in chk["gaps"]]
+    parts = ["%s 누락" % _PKG_LABEL.get(g, g) for g in chk["gaps"]]
     if chk["unreadable"]:
         parts.append("판독 실패 서류 %d건(손글씨·저품질 등)" % len(chk["unreadable"]))
     if chk["unprocessed"]:
@@ -969,6 +989,27 @@ def debug_stream_test(mode: str = Query("ndjson"), n: int = Query(6)):
                                       "X-Accel-Buffering": "no"})
 
 
+@app.get("/auth/demo-accounts")
+def demo_accounts(db: Session = Depends(get_db)):
+    """데모 모드(GLHAC_DEV=1) 전용 — 로그인 화면 역할 버튼에 매칭할 계정. 기업은 '실제 케이스가 있는 업체 계정'만."""
+    if os.environ.get("GLHAC_DEV") != "1":
+        raise HTTPException(404, {"code": "NOT_FOUND"})
+    staff = {"consultant": "consultant1", "auditor": "auditor1", "sharia": "fatwa1", "admin": "admin"}
+    ents = []
+    for u in db.query(models.User).filter_by(role="applicant").order_by(models.User.username).all():
+        if u.username == "applicant1":
+            continue
+        cases = db.query(models.CaseApplication).filter_by(org_id=u.org_id).order_by(models.CaseApplication.created_at.desc()).all()
+        if not cases:
+            continue
+        o = db.get(models.Org, u.org_id)
+        c = cases[0]
+        s8 = nav8.compute_step8(db, c)
+        ents.append({"username": u.username, "company": (o.name if o else None) or c.company_name,
+                     "scheme": c.scheme or "product", "status": c.status, "step_label": s8.get("step_label"), "cases": len(cases)})
+    return {"demo": True, "password_hint": "pw", "staff": staff, "enterprise": ents}
+
+
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
     """라이브니스+DB 체크 — 로드밸런서/오케스트레이터용."""
@@ -980,7 +1021,8 @@ def health(db: Session = Depends(get_db)):
         dbok = False
     status = "ok" if dbok else "degraded"
     return JSONResponse(status_code=200 if dbok else 503,
-                        content={"status": status, "service": "glhac-ai", "version": "0.2.0", "db": dbok})
+                        content={"status": status, "service": "glhac-ai", "version": "0.2.0", "db": dbok,
+                                 "demo": os.environ.get("GLHAC_DEV") == "1"})
 
 
 @app.get("/metrics")
@@ -1300,6 +1342,8 @@ def login(body: schemas.LoginReq, db: Session = Depends(get_db)):
         auth.record_attempt(rl_key)
         raise HTTPException(401, {"code": "BAD_CREDENTIALS"})
     auth.clear_attempts(rl_key)
+    if _user_suspended(db, u.user_id):
+        raise HTTPException(403, {"code": "USER_SUSPENDED"})
     if auth.needs_rehash(u.password_hash):   # 레거시 sha256 → pbkdf2 자동 승격
         u.password_hash = auth.hash_pw(body.password)
         db.commit()
@@ -1342,6 +1386,8 @@ def handoff_login(body: schemas.LoginReq, db: Session = Depends(get_db)):
         auth.record_attempt(rl_key)
         raise HTTPException(401, {"code": "BAD_CREDENTIALS"})
     auth.clear_attempts(rl_key)
+    if _user_suspended(db, u.user_id):
+        raise HTTPException(403, {"code": "USER_SUSPENDED"})
     _handoff_sweep()
     code = secrets.token_urlsafe(24)
     _HANDOFF[code] = (time.time(), {**auth.make_tokens(u), "role": u.role,
@@ -1511,6 +1557,12 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
             invite_note, inv = "EXPIRED", None
         elif inv.used_count >= inv.max_uses:
             invite_note, inv = "USED_UP", None
+    _meta = {}
+    if inv:
+        _ev = (db.query(models.WorkflowEvent).filter_by(case_id="invite:" + inv.code, action="invite.meta")
+               .order_by(models.WorkflowEvent.created_at.desc()).first())
+        _meta = dict((_ev.payload or {})) if _ev else {}
+    _reg_sectors = [s for s in (body.sectors or _meta.get("sectors") or []) if s in intake.SECTORS]
     # 회사1:직원N — 소속회사명으로 기존 org(Company) 매핑 (Phase 2)
     existing = db.query(models.Org).filter(models.Org.name == company_name).first() if company_name else None
     if existing:
@@ -1519,7 +1571,8 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     else:
         org = "org_" + models.uid()[:8]
         company_role = "client_admin"    # 새 회사 첫 가입자 = 기업업무 관리자
-        _o = models.Org(org_id=org, name=company_name or "My Company", address=body.address)
+        _o = models.Org(org_id=org, name=company_name or "My Company", address=body.address,
+                        profile_ext=(({"sector": _reg_sectors[0], "sectors": _reg_sectors}) if _reg_sectors else None))
         # 컨설턴트 초대만 담당으로 귀속한다. 관리자 발급 클라이언트 초대(kind="client")는
         # 특정 컨설턴트에 안 묶이므로 consultant_id 를 붙이지 않는다(귀속 없음).
         if inv and (getattr(inv, "kind", "consultant") or "consultant") != "client":
@@ -1533,9 +1586,12 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     db.add(u)
     # 새 회사(관리자)만 초기 케이스 프리필(Rizky #1) — 기존 회사 직원은 기존 케이스 활용
     if not existing and (company_name or body.nib):
+        _reg_scheme, _reg_scope = intake.sector_defaults(_reg_sectors[0]) if _reg_sectors else ("product", None)
         c = models.CaseApplication(org_id=org, company_name=company_name or "My Company",
                                    nib=body.nib, responsible_person=body.responsible_person,
                                    address=body.address, factory_address=body.factory_address,
+                                   scheme=_reg_scheme, logistics_scope=_reg_scope,
+                                   profile_ext=(({"sector": _reg_sectors[0], "sectors": _reg_sectors}) if _reg_sectors else None),
                                    is_msme=True)
         db.add(c)
         db.flush()
@@ -1691,7 +1747,7 @@ def admin_list_users(user=Depends(auth.require_roles()), db: Session = Depends(g
     col = {"username": M.username, "role": M.role, "org_id": M.org_id}.get(sort, M.username)
     Q = Q.order_by(col.desc() if dir == "desc" else col.asc())
     rows = Q.offset(offset).limit(limit).all()
-    items = [{"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id} for u in rows]
+    items = [{"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id, "suspended": _user_suspended(db, u.user_id)} for u in rows]
     return {"items": items, "total": total, "limit": limit, "offset": offset} if meta else items
 
 
@@ -1707,6 +1763,45 @@ def admin_create_user(body: schemas.AdminUserReq, user=Depends(rbac.require_acti
     db.add(u)
     db.commit()
     return {"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id}
+
+
+USER_STATUS_ACTION = "user.status"
+
+
+def _user_suspended(db, user_id):
+    e = (db.query(models.WorkflowEvent).filter_by(case_id="users:" + user_id, action=USER_STATUS_ACTION)
+         .order_by(models.WorkflowEvent.created_at.desc()).first())
+    return bool(e and (e.payload or {}).get("status") == "suspended")
+
+
+@app.post("/admin/users/{user_id}/suspend")
+def admin_user_suspend(user_id: str, body: dict = None, user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    """MEM-09 정지 — 기존 토큰 즉시 무효(token_version) + 로그인 차단."""
+    import types as _types
+    u = db.get(models.User, user_id)
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    if u.user_id == user["uid"]:
+        raise HTTPException(409, {"code": "CANNOT_SUSPEND_SELF"})
+    u.token_version = (u.token_version or 0) + 1
+    sm.record_event(db, _types.SimpleNamespace(case_id="users:" + user_id, org_id=u.org_id), "user", "user",
+                    USER_STATUS_ACTION, user["role"], user["uid"], {"status": "suspended", "reason": ((body or {}).get("reason") or "").strip()})
+    _audit(db, user, "admin.user.suspend", "user", user_id, None, {"reason": (body or {}).get("reason")}, commit=False)
+    db.commit()
+    return {"ok": True, "user_id": user_id, "status": "suspended"}
+
+
+@app.post("/admin/users/{user_id}/unsuspend")
+def admin_user_unsuspend(user_id: str, user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    import types as _types
+    u = db.get(models.User, user_id)
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    sm.record_event(db, _types.SimpleNamespace(case_id="users:" + user_id, org_id=u.org_id), "user", "user",
+                    USER_STATUS_ACTION, user["role"], user["uid"], {"status": "active"})
+    _audit(db, user, "admin.user.unsuspend", "user", user_id, None, {}, commit=False)
+    db.commit()
+    return {"ok": True, "user_id": user_id, "status": "active"}
 
 
 @app.patch("/admin/users/{user_id}")
@@ -2089,17 +2184,11 @@ def audit_verify(case_id: str, user=Depends(auth.get_current_user), db: Session 
     _get_case(db, case_id, user)
     evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id)
            .order_by(models.WorkflowEvent.created_at, models.WorkflowEvent.event_id).all())
-    prev, broken = "", None
-    for e in evs:
-        body = _json.dumps({"case": e.case_id, "from": e.from_status, "to": e.to_status,
-                            "action": e.action, "payload": e.payload or {}},
-                           sort_keys=True, ensure_ascii=False)
-        rh = sm.chain_row_hash(prev, body)
-        if rh != e.row_hash:
-            broken = e.event_id
-            break
-        prev = e.row_hash
-    return {"count": len(evs), "integrity_ok": broken is None, "broken_at": broken}
+    r = _verify_wf_chain(evs)
+    # 기존 키(count·integrity_ok·broken_at) 유지 + 구간 구분 필드
+    return {"count": r["count"], "integrity_ok": r["integrity_ok"], "broken_at": r["break_at"],
+            "verified": r["verified"], "legacy": r["legacy"], "legacy_until": r["legacy_until"],
+            "epoch": r["epoch"], "status": r["status"]}
 
 
 @app.get("/admin/audit-log-verify")
@@ -2129,19 +2218,48 @@ def audit_log_verify(actor: str = Query(None), action: str = Query(None),
     return out
 
 
+# 감사체인 서명 키 경계 — 운영 실측(2026-10-09): 507건 중 현재 키로 맞는 179건은 전부 2026-09-10 13:05 이후,
+# 안 맞는 328건은 전부 같은 날 02:30 이전(구식 SHA-256 도 아님) → 그날 서명 키/방식이 바뀌었다.
+# 경계 이전 불일치는 '이전 서명 체계(검증 불가)'로 구분하고 위조로 판정하지 않는다. 경계 이후 불일치만 깨짐.
+# 호출 시점에 읽는다(테스트·운영에서 환경변수로 조정).
+AUDIT_CHAIN_EPOCH_DEFAULT = "2026-09-10T12:00:00"
+
+
+def _audit_chain_epoch():
+    raw = (os.environ.get("GLHAC_AUDIT_CHAIN_EPOCH") or AUDIT_CHAIN_EPOCH_DEFAULT).strip()
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return datetime.fromisoformat(AUDIT_CHAIN_EPOCH_DEFAULT)
+
+
 def _verify_wf_chain(evs):
-    """WorkflowEvent 해시체인 재계산(audit_verify 미러) → (integrity_ok, count, break_at)."""
+    """WorkflowEvent 해시체인 재계산 → integrity_ok·count·break_at + 구간 구분(verified·legacy·status).
+
+    status: 'ok'(전부 현재 키로 검증) · 'ok_with_legacy'(검증 구간 무결, 경계 이전 기록은 검증 불가) · 'broken'.
+    integrity_ok 는 '검증 가능한 구간이 무결한가' 다 — legacy 는 별도 수치로 반드시 함께 보여준다."""
     import json as _json
+    epoch = _audit_chain_epoch()
     prev, broken = "", None
+    verified, legacy, legacy_until = 0, 0, None
     for e in evs:
         body = _json.dumps({"case": e.case_id, "from": e.from_status, "to": e.to_status,
                             "action": e.action, "payload": e.payload or {}},
                            sort_keys=True, ensure_ascii=False)
-        if sm.chain_row_hash(prev, body) != e.row_hash:
+        if sm.chain_row_hash(prev, body) == e.row_hash:
+            verified += 1
+        elif e.created_at is not None and e.created_at < epoch:
+            legacy += 1
+            legacy_until = e.created_at
+        else:
             broken = e.event_id
             break
         prev = e.row_hash
-    return {"integrity_ok": broken is None, "count": len(evs), "break_at": broken}
+    status = "broken" if broken else ("ok_with_legacy" if legacy else "ok")
+    return {"integrity_ok": broken is None, "count": len(evs), "break_at": broken,
+            "verified": verified, "legacy": legacy,
+            "legacy_until": legacy_until.isoformat() if legacy_until else None,
+            "epoch": epoch.isoformat(), "status": status}
 
 
 def _audit_chain_hashes(db):
@@ -2313,7 +2431,9 @@ def gen_report(case_id: str, user=Depends(auth.get_current_user), db: Session = 
 # ---------- cases ----------
 @app.get("/cases")
 def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db),
-               limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0)):
+               limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0),
+               sector: str = Query(None), status: str = Query(None), search: str = Query(None),
+               step8: int = Query(None)):
     """케이스 목록(§8.1 페이징). total 포함 봉투 — 클라이언트가 페이지 순회로 전량 적재.
     기존 default 500·no-total은 500건 초과 조직에서 조용히 누락됐음."""
     # 목록도 상세와 같은 규칙을 쓴다 — 목록에 안 보이는데 상세만 열리면 쓸모가 없고,
@@ -2335,6 +2455,14 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     total = q.count()
     rows = (q.order_by(models.CaseApplication.created_at.desc(), models.CaseApplication.case_id.desc())
             .offset(offset).limit(limit).all())
+    # SRS COM-08: 분야·상태·업체명/번호 검색 (python 측 — profile_ext JSON 은 DB 필터 불가)
+    if sector or status or search:
+        _s = (search or "").strip().lower()
+        rows = [c for c in rows
+                if (not sector or ((c.profile_ext or {}).get("sector") == sector))
+                and (not status or c.status == status)
+                and (not _s or _s in (c.company_name or "").lower() or _s in (c.case_id or "").lower())]
+        total = len(rows)
     # E2/M2: 배정 오디터(ops.auditor_assigned latest-wins) — 목록에 담당자 노출·오디터 KPI 집계용
     _cids = [c.case_id for c in rows]
     assign = _ops_latest_assignment(db, _cids)
@@ -2359,6 +2487,13 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
         else:
             u = db.get(models.User, cid)
             cons_name[cid] = u.username if u else None
+    _last_ev = {}
+    if rows:
+        from sqlalchemy import func as _func
+        for _cid, _mx in (db.query(models.WorkflowEvent.case_id, _func.max(models.WorkflowEvent.created_at))
+                          .filter(models.WorkflowEvent.case_id.in_([x.case_id for x in rows]))
+                          .group_by(models.WorkflowEvent.case_id).all()):
+            _last_ev[_cid] = _mx.isoformat() if _mx else None
     items = []
     for c in rows:
         s8 = nav8.compute_step8(db, c)
@@ -2371,6 +2506,7 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
                       "company_decision": company_decisions.get(c.case_id),
                       "intake_pending": (c.status == "onboarding" and c.draft_state != "returned"
                                          and company_decisions.get(c.case_id) not in ("approved", "rejected")),
+                      "sector": (c.profile_ext or {}).get("sector"),
                       "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
                       "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
                       "province": _province_of(c.factory_address or c.address),
@@ -2379,10 +2515,16 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
                       # P2 신규(하위호환 — 필드 추가만)
                       "step8": s8["step"], "step8_label": s8["step_label"], "done": s8["done"],
                       "hold": s8["hold"], "owner": s8["owner"],
+                      "eligibility": s8.get("eligibility"), "formal": s8.get("formal"),
                       "consultant": cons_name.get(_cc) if _cc else None,
                       "main_auditor": a.get("auditor_name"),
                       "co_auditors": co_map.get(c.case_id, []),
+                      "last_event_at": _last_ev.get(c.case_id),
                       "next_action": _STATE_KO.get(next_state, next_state) if next_state else None})
+    if step8 is not None:
+        items = [it for it in items if it.get("step8") == step8]
+        total = len(items)
+
     return {"total": total, "limit": limit, "offset": offset,
             "count": len(items), "items": items}
 
@@ -2938,12 +3080,19 @@ def create_invite(body: schemas.InviteCreate,
         max_uses=max(1, int(body.max_uses or 1)),
         expires_at=datetime.utcnow() + timedelta(days=max(1, min(365, days))))
     db.add(inv)
+    db.flush()
+    _sec = [s for s in (body.sectors or []) if s in intake.SECTORS]
+    if _sec or body.contact_name or body.phone:
+        import types as _types
+        sm.record_event(db, _types.SimpleNamespace(case_id="invite:" + inv.code, org_id=user.get("org_id")), "invite", "invite",
+                        "invite.meta", user["role"], user["uid"], {"sectors": _sec, "contact_name": body.contact_name, "phone": body.phone})
     _audit(db, user, "consultant.invite.created", "invite", inv.invite_id,
            meta={"code": inv.code, "company_name": inv.company_name}, commit=False)
     db.commit()
     return {"invite_id": inv.invite_id, "code": inv.code,
             "company_name": inv.company_name, "max_uses": inv.max_uses,
-            "used_count": inv.used_count, "expires_at": str(inv.expires_at)}
+            "used_count": inv.used_count, "expires_at": str(inv.expires_at),
+            "sectors": _sec}
 
 
 @app.get("/consultant/invites")
@@ -3676,18 +3825,87 @@ def check_invite(code: str, db: Session = Depends(get_db)):
         return {"valid": False, "reason": "EXPIRED"}
     if inv.used_count >= inv.max_uses:
         return {"valid": False, "reason": "USED_UP"}
+    _ev = (db.query(models.WorkflowEvent).filter_by(case_id="invite:" + inv.code, action="invite.meta")
+           .order_by(models.WorkflowEvent.created_at.desc()).first())
+    _m = dict((_ev.payload or {})) if _ev else {}
     if (getattr(inv, "kind", "consultant") or "consultant") == "client":
         # 관리자 발급 클라이언트 초대 — 특정 컨설턴트 귀속 없음(발급자 노출 안 함).
         return {"valid": True, "kind": "client", "consultant": None,
-                "company_name": inv.company_name}
+                "company_name": inv.company_name,
+                "sectors": _m.get("sectors") or []}
     u = db.get(models.User, inv.consultant_id)
     prof = db.get(models.ConsultantProfile, inv.consultant_id)
     return {"valid": True, "kind": "consultant", "company_name": inv.company_name,
+            "sectors": _m.get("sectors") or [],
             "consultant": (prof.display_name if prof and prof.display_name
                            else (u.username if u else None))}
 
 
 # ── 유치 관계 ─────────────────────────────────────────────────────────────
+@app.post("/cases/{case_id}/sector")
+def set_case_sector(case_id: str, body: dict = None,
+                    user=Depends(auth.require_roles("applicant", "penyelia_halal", "consultant", "operator")),
+                    db: Session = Depends(get_db)):
+    """SRS PRE-02 — 신청 분야(5종) 지정. 접수·작성 단계에서만 scheme/물류 범위를 분야 기본값으로 맞춘다."""
+    c = _get_case(db, case_id, user)
+    b = dict(body or {})
+    sectors = [s for s in (b.get("sectors") or ([b.get("sector")] if b.get("sector") else [])) if s in intake.SECTORS]
+    if not sectors:
+        raise HTTPException(422, {"code": "BAD_SECTOR", "allowed": list(intake.SECTORS)})
+    pe = dict(c.profile_ext or {})
+    pe["sector"], pe["sectors"] = sectors[0], sectors
+    c.profile_ext = pe
+    if (c.status or "onboarding") in ("onboarding", "application_draft") and not c.scheme_frozen:
+        scheme, scope = intake.sector_defaults(sectors[0])
+        c.scheme = scheme
+        c.logistics_scope = scope if scheme == "logistics" else None
+    sm.record_event(db, c, c.status, c.status, "case.sector", user["role"], user["uid"], {"sector": sectors[0], "sectors": sectors})
+    db.commit()
+    return {"ok": True, "sector": sectors[0], "sectors": sectors, "scheme": c.scheme, "logistics_scope": c.logistics_scope}
+
+
+@app.post("/consultant/invites/{invite_id}/meta")
+def set_invite_meta(invite_id: str, body: dict = None, user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
+    """초대 링크 메타(분야·담당자·연락처) — 가입 시 프리필."""
+    inv = db.get(models.ConsultantInvite, invite_id)
+    if not inv or inv.consultant_id != user["uid"]:
+        raise HTTPException(404, {"code": "INVITE_NOT_FOUND"})
+    b = dict(body or {})
+    sec = [s for s in (b.get("sectors") or []) if s in intake.SECTORS]
+    import types as _types
+    sm.record_event(db, _types.SimpleNamespace(case_id="invite:" + inv.code, org_id=user.get("org_id")), "invite", "invite",
+                    "invite.meta", user["role"], user["uid"], {"sectors": sec, "contact_name": b.get("contact_name"), "phone": b.get("phone")})
+    db.commit()
+    return {"ok": True, "sectors": sec}
+
+
+@app.post("/orgs/{org_id}/consultant-change-request")
+def consultant_change_request(org_id: str, body: dict = None,
+                              user=Depends(auth.require_roles("applicant", "penyelia_halal")), db: Session = Depends(get_db)):
+    """MEM-05 — 기업이 사유·희망 컨설턴트를 적어 요청 → 관리자 승인(ApprovalRequest)·반려."""
+    if user["role"] != "admin" and user.get("org_id") != org_id:
+        raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
+    o = db.get(models.Org, org_id)
+    if not o:
+        o = models.Org(org_id=org_id, name=org_id)
+        db.add(o)
+        db.flush()
+    b = dict(body or {})
+    reason = (b.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    c = db.query(models.CaseApplication).filter_by(org_id=org_id).order_by(models.CaseApplication.created_at.desc()).first()
+    if not c:
+        raise HTTPException(409, {"code": "NO_CASE"})
+    res = _create_approval(db, "consultant.change", c, user, reason)
+    ar = db.get(models.ApprovalRequest, res["approval_id"])
+    ar.payload = dict(ar.payload or {}, preferred_consultant=(b.get("preferred_consultant") or "").strip(), org_id=org_id)
+    db.commit()
+    _notify(db, c, "consultant.change_requested", "담당 컨설턴트 변경 요청", body="사유: " + reason, role="operator")
+    db.commit()
+    return res
+
+
 @app.put("/admin/orgs/{org_id}/consultant")
 def set_org_consultant(org_id: str, body: schemas.OrgConsultantReq,
                        user=Depends(auth.require_roles("operator", "admin")),
@@ -3942,11 +4160,22 @@ def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("appli
     # 조직(org) 회사 프로필 역상속 — 신청 직접 진입 시 회사정보 자동 프리필
     org_row = db.get(models.Org, org)
     oext = dict(org_row.profile_ext or {}) if org_row else {}
+    _sectors = [s for s in (body.sectors or ([body.sector] if body.sector else [])) if s in intake.SECTORS]
+    if not _sectors and (oext.get("sectors") or oext.get("sector")):
+        _sectors = [s for s in (oext.get("sectors") or [oext.get("sector")]) if s in intake.SECTORS]
+    _sector = _sectors[0] if _sectors else None
+    _scheme, _scope = intake.sector_defaults(_sector) if _sector else ((body.scheme or "product"), (body.logistics_scope or None))
+    if body.scheme and body.scheme != "product" and not _sector:
+        _scheme, _scope = body.scheme, (body.logistics_scope or None)
+    if body.logistics_scope:
+        _scope = body.logistics_scope
+    if _sector:
+        oext = dict(oext, sector=_sector, sectors=_sectors)
     c = models.CaseApplication(
         org_id=org, is_msme=bool(body.is_msme),
         company_name=body.company_name or oext.get("company_name") or (org_row.name if org_row else None),
-        scheme=(body.scheme or "product"),
-        logistics_scope=(body.logistics_scope or None),
+        scheme=_scheme,
+        logistics_scope=_scope,
         profile_ext=(oext or None))
     # 회사 프로필 상속 — 단, 상호가 다르면 '그 회사를 특정하는 값'은 물려받지 않는다.
     # org=회사가 전제지만 실제로는 한 org 에 여러 회사가 들어있다. 그대로 상속하면 인도네시아
@@ -4030,36 +4259,16 @@ def mock_audit_decide(case_id: str, body: schemas.MockAuditDecisionReq,
         raise HTTPException(422, {"code": "INVALID_RESULT", "allowed": ["pass", "reject"]})
     if result == "reject" and not (body.reason or "").strip():
         raise HTTPException(422, {"code": "REASON_REQUIRED"})
-    sm.record_event(db, c, c.status, c.status, "mock_audit.decision", user["role"], user["uid"],
-                    {"result": result, "reason": body.reason or ""})
-    # ② 상태전이 연동: pass→다음 긍정 단계, reject→시정조치/보완 (유효 전이·가드 통과 시에만)
-    # 모의심사 pass 는 requested→in_review→approved 까지 연쇄(판정 한 번 = 모의심사 통과).
-    # 막히면 blockers 를 돌려준다(종전엔 조용히 기록만 돼 '통과했는데 그대로'로 보였다).
-    transitioned_to = None
-    blockers = []
-    mapping = _MOCK_NEXT.get(c.status)
-    for _hop in range(2):
-        if not mapping:
-            break
-        target = mapping[0] if result == "pass" else mapping[1]
-        if not target:
-            break
-        ok, blk = sm.can_transition(db, c, target)
-        if not ok:
-            blockers = blk
-            break
-        frm = c.status
-        sm.apply_side_effects(c, target)
-        c.status = target
-        sm.record_event(db, c, frm, target, "mock_audit." + result, user["role"], user["uid"],
-                        {"reason": body.reason or ""})
-        transitioned_to = target
-        if result != "pass" or target != "document_pre_audit_in_review":
-            break
-        mapping = _MOCK_NEXT.get(c.status)
-    db.commit()
-    return {"ok": True, "result": result, "transitioned_to": transitioned_to,
-            "status": c.status, "blockers": blockers}
+    b = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+    b["result"] = result
+    if nav8.formal_flow_on() and result == "pass":
+        _pp = _prep_items(db, c)
+        if not _pp["complete"]:
+            raise HTTPException(409, {"code": "PREP_INCOMPLETE", "done": _pp["done"], "applicable": _pp["applicable"]})
+    pend = _two_person_gate(db, c, user, "mock_audit.decision", b)
+    if pend:
+        return pend
+    return _do_mock_audit_decide(db, c, user, b)
 
 
 # ── P0-5: 모의심사 오디터 뷰 3종 — 스키마 무변경, WorkflowEvent(latest-wins)로 저장 ──
@@ -6063,7 +6272,7 @@ def package_check_request(case_id: str, body: dict = None,
     c = _get_case(db, case_id, user)
     chk = _package_check(db, c)
     note = ((body or {}).get("note") or "").strip()
-    parts = ["%s" % _PKG_LABEL[g] for g in chk["gaps"]]
+    parts = ["%s" % _PKG_LABEL.get(g, g) for g in chk["gaps"]]
     if chk["unreadable"]:
         parts.append("판독 불가 서류 %d건 재제출 또는 수기 입력" % len(chk["unreadable"]))
     if not parts and not note:
@@ -7594,7 +7803,14 @@ def contract_request(case_id: str, user=Depends(auth.require_roles("applicant", 
 def contract_approve(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
     """② 승인·계약서 발송(관리자) — 계약서 생성 + status=sent. 클라이언트 접수 큐로 이관."""
     c = _get_case(db, case_id, user)
-    contract, gendoc = _gen_contract_core(db, c, body or {}, user, status="sent")
+    # SRS FRM-05: 흐름 스위치가 켜져 있으면 정식 신청 접수 확인 전에는 견적·계약서를 발송하지 않는다
+    if nav8.formal_flow_on() and nav8.formal_state(db, case_id) != "accepted":
+        raise HTTPException(409, {"code": "FORMAL_NOT_ACCEPTED", "hint": "정식 인증 신청서 접수 확인 후 발송할 수 있습니다."})
+    b = dict(body or {})
+    q = _latest_quote(db, case_id)
+    if b.get("fee") in (None, "") and q:          # D-07 견적 총액을 계약 금액으로
+        b["fee"] = q.get("total")
+    contract, gendoc = _gen_contract_core(db, c, b, user, status="sent")
     _audit(db, user, "contract.approve", "contract", contract.contract_id, case_id, {}, commit=False)
     sm.record_event(db, c, c.status, c.status, "contract.approve", user["role"], user["uid"],
                     {"contract_no": contract.contract_no})
@@ -7861,11 +8077,33 @@ def sign_contract(contract_id: str, party: str = "A", name: str = "",
     ct = db.get(models.Contract, contract_id)
     if not ct:
         raise HTTPException(404, {"code": "CONTRACT_NOT_FOUND"})
+    # SRS CTR-03: 갑(A)=인증기업, 을(B)=GL HAC 관리자. 컨설턴트는 참조일 뿐 서명 권한 없음.
+    party = (party or "A").upper()
+    if user["role"] == "consultant":
+        raise HTTPException(403, {"code": "CONSULTANT_CANNOT_SIGN"})
+    if party == "A" and user["role"] not in ("applicant", "penyelia_halal", "client", "admin"):
+        raise HTTPException(403, {"code": "NOT_PARTY_A"})
+    if party == "B" and user["role"] not in ("operator", "admin"):
+        raise HTTPException(403, {"code": "NOT_PARTY_B"})
+    if any(s.get("party") == party for s in (ct.signatures or [])):
+        raise HTTPException(409, {"code": "ALREADY_SIGNED", "party": party})
     sigs = list(ct.signatures or [])
     sigs.append({"party": party, "name": name, "title": "", "signed_at": str(datetime.utcnow())})
     ct.signatures = sigs
     if any(s.get("party") == "A" for s in sigs) and any(s.get("party") == "B" for s in sigs):
         ct.status = "signed"
+        # SRS CTR-04: 체결 → D-09 전자서명 확인서 · 관리자 확인(confirmed) · 회차 청구 생성 · 체결 고지(자동 설정 시)
+        import json as _json
+        _c = db.get(models.CaseApplication, ct.case_id)
+        _settings = _billing_settings(db, user.get("org_id") if user["role"] in ("operator", "admin") else _c.org_id)
+        _g = _save_gendoc(db, _c, "esign_certificate", _json.dumps({"doc": "D-09", "title": "전자서명 확인서", "contract_no": ct.contract_no,
+                          "company_name": _c.company_name, "signatures": sigs, "signed_at": str(datetime.utcnow())}, ensure_ascii=False), user, status="final")
+        ct.status = "confirmed"
+        inst = _create_installments(db, _c, ct, _settings, user)
+        sm.record_event(db, _c, _c.status, _c.status, "contract.signed", user["role"], user["uid"],
+                        {"contract_no": ct.contract_no, "esign_doc_id": _g.gen_doc_id, "installments": inst})
+        if _settings.get("auto_notice_contract"):
+            _send_notice(db, _c, "contract_signed", user, auto=True)
         _sc = db.query(models.CaseApplication).filter_by(case_id=ct.case_id).first()
         if _sc:
             _notify(db, _sc, "contract.signed", role="operator",
@@ -7902,6 +8140,33 @@ def confirm_contract(case_id: str, user=Depends(auth.require_roles("operator")),
     return {"contract_id": ct.contract_id, "status": ct.status}
 
 
+FATWA_QUORUM = 3                       # SRS SHA-04: 정족수 3인 고정(설정 변경 불가)
+FATWA_VOTES = ("approve", "conditional", "reject", "abstain")
+
+
+def _fatwa_srs(db):
+    return nav8.formal_flow_on()
+
+
+def _fatwa_proxy(db, org_id):
+    """오디터 대리 모드 — SRS 모드이지만 위원회가 정족수(3인) 미만으로 등록돼 있으면 오디터가 샤리아 심의를 대신한다."""
+    return _fatwa_srs(db) and len(_fatwa_committee(db, org_id)) < FATWA_QUORUM
+
+
+FATWA_PROXY_KEY = "auditor"
+
+
+def _fatwa_member_keys(db, org_id):
+    """위원회 3인의 서명/투표 키 — 'chair' + 'member:<이름>' (기존 fatwa.sign 의 member 키 규약과 호환: chair 는 'chairman' 포함)."""
+    return [("chairman" if m.get("role") == "chair" else (m.get("role", "member") + ":" + m.get("name", "")))
+            for m in _fatwa_committee(db, org_id)]
+
+
+def _fatwa_round(db, case_id):
+    """재심의 차수 = 상정(audit_report.send_fatwa) 횟수."""
+    return db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="audit_report.send_fatwa").count() or 1
+
+
 def _fatwa_quorum_ok(db, case_id):
     """파트와 정족수 검증 — fatwa.sign 이벤트(member별 latest-wins) 조회.
     위원장(chairman) 서명 존재 AND 고유 서명자 총 ≥ 2 여부 반환.
@@ -7920,6 +8185,18 @@ def _fatwa_quorum_ok(db, case_id):
         signers[mk] = isinstance(img, str) and img.startswith("data:image/")
     valid = [mk for mk, ok in signers.items() if ok]
     has_chairman = any("chairman" in str(mk).lower() for mk in valid)
+    c0 = db.get(models.CaseApplication, case_id)
+    if _fatwa_proxy(db, c0.org_id if c0 else None):
+        ok = len(valid) >= 1
+        return ok, ([] if ok else ["AUDITOR_SIGN_REQUIRED"]), {"chairman_signed": False, "signer_count": len(valid), "signers": valid, "proxy": True}
+    if _fatwa_srs(db):
+        missing = []
+        if not has_chairman:
+            missing.append("NO_CHAIRMAN")
+        if len(valid) < FATWA_QUORUM:
+            missing.append("NEED_3_SIGNATURES")
+        return (not missing), missing, {"chairman_signed": has_chairman, "signer_count": len(valid),
+                                        "signers": valid, "quorum": FATWA_QUORUM}
     missing = []
     if not has_chairman:
         missing.append("NO_CHAIRMAN")
@@ -8805,6 +9082,174 @@ def _sjph_blocks_to_text(company, blocks):
 SJPH_TEMPLATE_DOCX = os.path.join(os.path.dirname(__file__), "assets", "GLHAC_HPAS_SJPH_Template.docx")
 
 
+# ===== SRS ⑨ 양식 관리(DOC-04) — 서식(F-) 업로드·버전·적용일, 코드 자산은 기본값 =====
+FORM_KEYS = {
+    "factory_audit": {"label": "현장심사 보고서 서식 (F-17)", "default": None},
+    "sjph_manual": {"label": "SJPH 매뉴얼 서식 (F-12)", "default": SJPH_TEMPLATE_DOCX},
+}
+
+
+def _forms_dir(key):
+    d = os.path.join(os.path.realpath(os.environ.get("GLHAC_UPLOAD_DIR", "/tmp")), "forms", key)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _form_versions(db, org_id, key):
+    evs = (db.query(models.WorkflowEvent).filter_by(case_id="forms:" + (org_id or "org_demo"), action="form.version")
+           .order_by(models.WorkflowEvent.created_at.asc()).all())
+    out = [dict(e.payload or {}, at=e.created_at.isoformat() if e.created_at else None, by=e.actor_id) for e in evs
+           if (e.payload or {}).get("key") == key]
+    return out
+
+
+def _form_active(db, org_id, key):
+    """활성 버전 — 마지막 'activate' 가 가리키는 버전, 없으면 마지막 업로드."""
+    vs = _form_versions(db, org_id, key)
+    act = [v for v in vs if v.get("op") == "activate"]
+    ups = [v for v in vs if v.get("op") == "upload"]
+    if act:
+        n = act[-1].get("version")
+        return next((u for u in ups if u.get("version") == n), None)
+    return ups[-1] if ups else None
+
+
+def _template_path(db, org_id, key, default):
+    a = _form_active(db, org_id, key)
+    if a and a.get("path") and os.path.exists(a["path"]):
+        return a["path"]
+    return default
+
+
+@app.get("/admin/forms")
+def admin_forms(user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    out = []
+    for key, meta in FORM_KEYS.items():
+        vs = [v for v in _form_versions(db, user.get("org_id"), key) if v.get("op") == "upload"]
+        a = _form_active(db, user.get("org_id"), key)
+        out.append({"key": key, "label": meta["label"], "versions": vs, "active_version": a.get("version") if a else None,
+                    "active_since": a.get("applied_at") if a else None, "using_default": a is None})
+    return {"items": out}
+
+
+@app.post("/admin/forms/{key}")
+def admin_form_upload(key: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """서식 파일(docx)을 올리면 새 버전이 되고 즉시 적용된다(적용일 = 지금 또는 body.applied_at)."""
+    import base64 as _b64
+    if key not in FORM_KEYS:
+        raise HTTPException(404, {"code": "FORM_NOT_FOUND", "allowed": list(FORM_KEYS)})
+    b = dict(body or {})
+    fn = (b.get("filename") or "").strip()
+    if not fn.lower().endswith(".docx"):
+        raise HTTPException(422, {"code": "DOCX_REQUIRED"})
+    raw = _validate_upload(b.get("file_b64") or "", fn)
+    data = _b64.b64decode(raw)
+    if data[:2] != b"PK":
+        raise HTTPException(422, {"code": "NOT_A_DOCX"})
+    ups = [v for v in _form_versions(db, user.get("org_id"), key) if v.get("op") == "upload"]
+    version = (ups[-1]["version"] + 1) if ups else 1
+    path = os.path.join(_forms_dir(key), "v%d.docx" % version)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    shim = _billing_shim(user.get("org_id"))
+    shim.case_id = "forms:" + (user.get("org_id") or "org_demo")
+    payload = {"key": key, "op": "upload", "version": version, "filename": fn, "path": path, "size": len(data),
+               "note": (b.get("note") or "").strip(), "applied_at": (b.get("applied_at") or datetime.utcnow().isoformat())}
+    sm.record_event(db, shim, "forms", "forms", "form.version", user["role"], user["uid"], payload)
+    sm.record_event(db, shim, "forms", "forms", "form.version", user["role"], user["uid"], {"key": key, "op": "activate", "version": version})
+    db.commit()
+    return {"ok": True, "key": key, "version": version}
+
+
+@app.post("/admin/forms/{key}/activate")
+def admin_form_activate(key: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """이전 버전으로 되돌리기(version=0 이면 코드 기본 서식)."""
+    if key not in FORM_KEYS:
+        raise HTTPException(404, {"code": "FORM_NOT_FOUND"})
+    try:
+        version = int((body or {}).get("version"))
+    except (TypeError, ValueError):
+        raise HTTPException(422, {"code": "BAD_VERSION"})
+    ups = {v["version"] for v in _form_versions(db, user.get("org_id"), key) if v.get("op") == "upload"}
+    if version != 0 and version not in ups:
+        raise HTTPException(404, {"code": "VERSION_NOT_FOUND"})
+    shim = _billing_shim(user.get("org_id"))
+    shim.case_id = "forms:" + (user.get("org_id") or "org_demo")
+    sm.record_event(db, shim, "forms", "forms", "form.version", user["role"], user["uid"], {"key": key, "op": "activate", "version": version})
+    db.commit()
+    return {"ok": True, "key": key, "active_version": version or None}
+
+
+@app.get("/admin/forms/{key}/download")
+def admin_form_download(key: str, version: int = Query(None), user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    if key not in FORM_KEYS:
+        raise HTTPException(404, {"code": "FORM_NOT_FOUND"})
+    ups = [v for v in _form_versions(db, user.get("org_id"), key) if v.get("op") == "upload"]
+    v = next((u for u in ups if u.get("version") == version), None) if version else (_form_active(db, user.get("org_id"), key))
+    path = v.get("path") if v else FORM_KEYS[key]["default"]
+    if not path or not os.path.exists(path):
+        raise HTTPException(404, {"code": "FORM_FILE_MISSING"})
+    with open(path, "rb") as fh:
+        data = fh.read()
+    return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": _content_disposition("%s_v%s.docx" % (key, (v or {}).get("version") or "default"))})
+
+
+# ===== SRS ⑨ 문서 열람 권한표(DOC-05/06) =====
+CLIENT_ROLES = {"applicant", "penyelia_halal", "pendamping_pph", "client"}
+# doc_type → 열람 불가 역할. 없으면 전원 열람.
+DOC_DENY = {
+    "ai_second_analysis": CLIENT_ROLES | {"consultant"},        # D-04 기업·컨설턴트 비공개
+    "preassess_report": {"fatwa_liaison"},                      # D-02R 샤리아 비공개
+}
+# 컨설턴트는 보기만 — 다운로드·인쇄(PDF) 불가 (DOC-06)
+CONSULTANT_VIEW_ONLY = {"audit_report", "final_package", "fatwa_decree", "eligibility_notice", "contract", "esign_certificate"}
+
+
+def _doc_can_view(user, doc_type):
+    return user["role"] == "admin" or user["role"] not in DOC_DENY.get(doc_type, set())
+
+
+# ===== SRS ⑨ 심사 설정(ADM-04) =====
+AUDIT_SETTINGS_DEFAULT = {"max_cases_per_auditor": 6, "decision_rule": "majority", "training_hours": 4, "quorum": FATWA_QUORUM}
+
+
+def _audit_settings(db, org_id):
+    ev = (db.query(models.WorkflowEvent).filter_by(case_id="billing-defaults:" + (org_id or "org_demo"), action="audit.settings")
+          .order_by(models.WorkflowEvent.created_at.desc()).first())
+    out = dict(AUDIT_SETTINGS_DEFAULT)
+    if ev and isinstance((ev.payload or {}).get("settings"), dict):
+        out.update({k: v for k, v in ev.payload["settings"].items() if k in out and k != "quorum"})
+    out["quorum"] = FATWA_QUORUM
+    return out
+
+
+@app.get("/admin/audit-settings")
+def get_audit_settings(user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    return _audit_settings(db, user.get("org_id"))
+
+
+@app.post("/admin/audit-settings")
+def set_audit_settings(body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    b = dict(body or {})
+    if "quorum" in b:
+        raise HTTPException(422, {"code": "QUORUM_FIXED", "quorum": FATWA_QUORUM})
+    if "decision_rule" in b and b["decision_rule"] not in ("majority", "unanimous"):
+        raise HTTPException(422, {"code": "BAD_DECISION_RULE"})
+    for k in ("max_cases_per_auditor", "training_hours"):
+        if k in b:
+            try:
+                b[k] = int(b[k])
+            except (TypeError, ValueError):
+                raise HTTPException(422, {"code": "BAD_" + k.upper()})
+            if not (1 <= b[k] <= 100):
+                raise HTTPException(422, {"code": "BAD_" + k.upper()})
+    sm.record_event(db, _billing_shim(user.get("org_id")), "settings", "settings", "audit.settings", user["role"], user["uid"], {"settings": b})
+    db.commit()
+    return _audit_settings(db, user.get("org_id"))
+
+
 def _sjph_docx_para_replace(p, repl):
     txt = p.text
     new = txt
@@ -9344,6 +9789,7 @@ def _sjph_check_hpas_yes(doc):
 
 FACTORY_AUDIT_TEMPLATE = os.path.join(os.path.dirname(__file__), "assets",
                                       "GLHAC_Factory_Audit_Template.docx")
+FORM_KEYS["factory_audit"]["default"] = FACTORY_AUDIT_TEMPLATE
 
 
 def _doc_image_bytes(d):
@@ -9530,7 +9976,7 @@ def _factory_audit_docx_bytes(db, c, lang="ko"):
     양식은 템플릿 원본 그대로 두고 값만 채운다."""
     import io as _io
     import docx as _docx
-    doc = _docx.Document(FACTORY_AUDIT_TEMPLATE)
+    doc = _docx.Document(_template_path(db, c.org_id, "factory_audit", FACTORY_AUDIT_TEMPLATE))
     # 서식 라벨(Company Information 기업정보 …)은 템플릿 소유라 번역하지 않는다.
     # 우리가 채워 넣는 '값'만 언어를 따른다 — LPH 심사원이 읽는 것은 값이다.
     L = _dd_mod.text_fn(lang)
@@ -9634,7 +10080,7 @@ def _sjph_manual_docx_bytes(db, c):
     """기준 템플릿 docx를 열어 실데이터 병합 — 양식(표지·표·부록17·EN/KO 병기) 원본 그대로 유지."""
     import io as _io
     import docx as _docx
-    doc = _docx.Document(SJPH_TEMPLATE_DOCX)
+    doc = _docx.Document(_template_path(db, c.org_id, "sjph_manual", SJPH_TEMPLATE_DOCX))
     company = c.company_name or ""
     px = c.profile_ext or {}
     today = date.today().isoformat()
@@ -10096,7 +10542,8 @@ def get_case_journey(case_id: str, user=Depends(auth.get_current_user), db=Depen
         ("signup", "회원가입", True),
         ("application", "신청", st not in ("onboarding", "application_draft")),
         ("preassess", "사전검토", (st == "document_pre_audit_approved" or mi >= 2)),
-        ("contract", "계약", bool(contract and contract.status in ("issued", "signed"))),
+        # 계약 큐 최종 상태는 confirmed(이후 invoiced·paid) — issued·signed 만 보면 계약을 끝낸 업체가 '계약 진행 중'에 멈춘다
+        ("contract", "계약", bool(contract and contract.status in ("issued", "signed", "confirmed", "invoiced", "paid"))),
         ("payment", "입금확인", bool(paid)),
         ("halal_manual", "할랄매뉴얼", bool(sjph)),
         ("mock_audit", "모의실사", mi >= 2),
@@ -10235,6 +10682,14 @@ def remove_co_auditor(case_id: str, uid: str,
     row = db.query(models.CaseAuditor).filter_by(case_id=case_id, user_id=uid, role="co").first()
     if not row:
         raise HTTPException(404, {"code": "NOT_FOUND"})
+    others = db.query(models.CaseAuditor).filter(models.CaseAuditor.case_id == case_id,
+                                                 models.CaseAuditor.role == "co",
+                                                 models.CaseAuditor.user_id != uid).count()
+    pending = db.query(models.ApprovalRequest).filter(models.ApprovalRequest.case_id == case_id,
+                                                      models.ApprovalRequest.status == "pending",
+                                                      models.ApprovalRequest.action_type.in_(list(TWO_PERSON_ACTIONS))).count()
+    if others == 0 and pending:
+        raise HTTPException(409, {"code": "LAST_CO_AUDITOR_PENDING"})
     db.delete(row)
     _audit(db, user, "case.co_auditor.remove", "case", case_id, None, {"user_id": uid})
     db.commit()
@@ -10371,6 +10826,269 @@ def upload_case_document(case_id: str, body: dict = None,
             "sjph_evidence": filed, "autoparse_queued": queued}
 
 
+# ===== SRS ② 인증 가능 판정 — AI 2차 분석(D-04) · 인증 가능 여부 판정(D-05) =====
+STAFF_ROLES = {"auditor", "fatwa_liaison", "operator", "admin"}
+
+
+def _ai_second_analysis_compute(db, c):
+    """보완 서류를 반영한 재분석 — 규칙 기반 인증 가능성(%)·권고. 사람이 반드시 확인한다(AI-04)."""
+    a = sm.assess_pathway(db, c)
+    blockers = [b.get("code") for b in sm.evaluate_blocking(db, c)]
+    mats = sm.materials(db, c.case_id)
+    with_ev = sum(1 for m in mats if sm._has_evidence(m))
+    crit = len(sm.critical_materials(db, c.case_id))
+    p = 95
+    if "HARAM_INGREDIENT" in blockers:
+        p -= 40
+    p -= min(45, 15 * blockers.count("CRITICAL_MATERIAL_NO_EVIDENCE"))
+    if any(b in ("PENYELIA_HALAL_MISSING", "PENYELIA_CERT_EXPIRED") for b in blockers):
+        p -= 10
+    if "SIHALAL_IDENTITY_UNVERIFIED" in blockers:
+        p -= 5
+    risk = a.get("risk_category")
+    p -= 15 if risk == "high" else (5 if risk == "medium" else 0)
+    p = max(5, min(98, p))
+    if p >= 80:
+        rec = "인증 가능 — 정식 인증 신청을 권고합니다."
+    elif p >= 50:
+        rec = "보완 후 가능 — 지적 항목(원재료 증빙·할랄 감독자)을 보완한 뒤 판정을 권고합니다."
+    else:
+        rec = "현 상태로는 인증이 어렵습니다 — 원재료 대체 또는 증빙 확보가 필요합니다."
+    return {"probability": p, "risk_category": risk, "suggested_pathway": a.get("suggested_pathway"),
+            "blockers": blockers, "materials": {"total": len(mats), "with_evidence": with_ev, "critical": crit},
+            "recommendation": rec}
+
+
+def _preassess_ready(db, case_id):
+    e = nav8.latest_event(db, case_id, "preassess.review")
+    return bool(e) and (e.payload or {}).get("verdict") == "ready"
+
+
+@app.post("/cases/{case_id}/ai-second-analysis")
+def ai_second_analysis(case_id: str, user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator")),
+                       db: Session = Depends(get_db)):
+    """FRM-01 AI 2차 분석 — 사전심사 '가능(ready)' 이후에만. 결과는 D-04 로 저장(기업·컨설턴트 비공개)."""
+    import json as _json
+    c = _get_case(db, case_id, user)
+    if not _preassess_ready(db, case_id):
+        raise HTTPException(409, {"code": "PREASSESS_NOT_READY"})
+    prev = nav8.latest_event(db, case_id, "ai_second_analysis")
+    prev_p = (prev.payload or {}).get("probability") if prev else None
+    res = _ai_second_analysis_compute(db, c)
+    res["previous_probability"] = prev_p
+    res["analyzed_at"] = datetime.utcnow().isoformat()
+    g = _save_gendoc(db, c, "ai_second_analysis",
+                     _json.dumps(dict(res, company_name=c.company_name, case_id=case_id), ensure_ascii=False),
+                     user, status="final")
+    res["gen_doc_id"] = g.gen_doc_id
+    sm.record_event(db, c, c.status, c.status, "ai_second_analysis", user["role"], user["uid"], res)
+    db.commit()
+    return res
+
+
+@app.get("/cases/{case_id}/ai-second-analysis")
+def ai_second_analysis_get(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    if user["role"] not in STAFF_ROLES:
+        raise HTTPException(403, {"code": "DOC_RESTRICTED", "doc": "D-04"})
+    e = nav8.latest_event(db, case_id, "ai_second_analysis")
+    if not e:
+        return {"exists": False}
+    return dict(e.payload or {}, exists=True)
+
+
+def _do_eligibility_verdict(db, c, actor, body):
+    """FRM-02 인증 가능 여부 판정 본체 — 이벤트 + D-05 통지서 + 기업·컨설턴트 알림(가능·불가만)."""
+    import json as _json
+    verdict = (body.get("verdict") or "").lower()
+    reason = (body.get("reason") or "").strip()
+    note = (body.get("note") or "").strip()
+    label = "가능" if verdict == "eligible" else "불가"
+    content = {"doc": "D-05", "title": "인증 가능 여부 판정 통지서", "company_name": c.company_name,
+               "case_id": c.case_id, "verdict": verdict, "verdict_label": label,
+               "reason": reason if verdict == "not_eligible" else "",
+               "decided_at": datetime.utcnow().isoformat(), "decided_by": actor.get("username")}
+    g = _save_gendoc(db, c, "eligibility_notice", _json.dumps(content, ensure_ascii=False), actor, status="final")
+    sm.record_event(db, c, c.status, c.status, "eligibility.verdict", actor["role"], actor["uid"],
+                    {"verdict": verdict, "reason": reason, "note": note, "gen_doc_id": g.gen_doc_id})
+    body_txt = "인증 가능 여부 판정 결과: " + label + (("\n사유: " + reason) if verdict == "not_eligible" else "")
+    for r in ("client", "consultant"):
+        _notify(db, c, "eligibility.verdict", "인증 가능 여부 판정 — " + label, body=body_txt, role=r)
+    db.commit()
+    return {"ok": True, "verdict": verdict, "gen_doc_id": g.gen_doc_id, "status": c.status}
+
+
+@app.post("/cases/{case_id}/eligibility/verdict")
+def eligibility_verdict(case_id: str, body: dict = None,
+                        user=Depends(auth.require_roles("auditor", "operator")), db: Session = Depends(get_db)):
+    """FRM-02 — 메인 오디터 판정(가능·불가, 불가는 사유 필수) → 서브 오디터 확인(2인) → D-05."""
+    c = _get_case(db, case_id, user)
+    b = dict(body or {})
+    verdict = (b.get("verdict") or "").lower()
+    if verdict not in ("eligible", "not_eligible"):
+        raise HTTPException(422, {"code": "INVALID_VERDICT", "allowed": ["eligible", "not_eligible"]})
+    if verdict == "not_eligible" and not (b.get("reason") or "").strip():
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    if not nav8.latest_event(db, case_id, "ai_second_analysis"):
+        raise HTTPException(409, {"code": "AI2_REQUIRED", "hint": "AI 2차 분석을 먼저 실행하세요."})
+    b["verdict"] = verdict
+    pend = _two_person_gate(db, c, user, "eligibility.verdict", b)
+    if pend:
+        return pend
+    return _do_eligibility_verdict(db, c, user, b)
+
+
+@app.get("/cases/{case_id}/eligibility")
+def eligibility_get(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """COM-05 사전심사 세부 단계 — 판정·AI 2차·정식 신청 상태를 한 번에(역할별 노출 차등)."""
+    _get_case(db, case_id, user)
+    staff = user["role"] in STAFF_ROLES
+    ev = nav8.latest_event(db, case_id, "eligibility.verdict")
+    ai2 = nav8.latest_event(db, case_id, "ai_second_analysis")
+    fm = nav8.latest_event(db, case_id, "formal_application.submitted", "formal_application.returned",
+                           "formal_application.accepted")
+    pv = (ev.payload or {}) if ev else {}
+    out = {"flow_on": nav8.formal_flow_on(), "preassess_ready": _preassess_ready(db, case_id),
+           "verdict": pv.get("verdict"), "reason": pv.get("reason") if (staff or pv.get("verdict") == "not_eligible") else None,
+           "note": pv.get("note") if staff else None, "gen_doc_id": pv.get("gen_doc_id"),
+           "decided_at": ev.created_at.isoformat() if ev else None,
+           "ai2": bool(ai2), "ai2_probability": (ai2.payload or {}).get("probability") if (ai2 and staff) else None,
+           "formal": {"status": fm.action.split(".")[-1] if fm else None,
+                      "at": fm.created_at.isoformat() if fm else None,
+                      "return_reason": (fm.payload or {}).get("reason") if (fm and fm.action.endswith("returned")) else None,
+                      "gen_doc_id": (fm.payload or {}).get("gen_doc_id") if fm else None}}
+    return out
+
+
+# ===== SRS ② 정식 인증 신청서(D-06) → 관리자 접수·반려 =====
+FORMAL_REQUIRED = ("process_summary", "halal_management", "preferred_audit_period", "signer_name")
+
+
+def _formal_latest(db, case_id):
+    return nav8.latest_event(db, case_id, "formal_application.submitted", "formal_application.returned",
+                             "formal_application.accepted")
+
+
+@app.post("/cases/{case_id}/formal-application")
+def formal_application_submit(case_id: str, body: dict = None,
+                              user=Depends(auth.require_roles("applicant", "penyelia_halal", "consultant")),
+                              db: Session = Depends(get_db)):
+    """FRM-03/04 — 인증 가능 판정 뒤에만 작성 가능. 사전심사 자료 이관 + 공정·할랄 관리·비할랄 취급·
+    희망 심사 시기·판매처·서약·대표자 서명 → D-06 저장 → 관리자 접수 대기."""
+    import json as _json
+    c = _get_case(db, case_id, user)
+    if nav8.eligibility_state(db, case_id) != "eligible":
+        raise HTTPException(409, {"code": "ELIGIBILITY_REQUIRED", "hint": "인증 가능 판정 후 작성할 수 있습니다."})
+    st = nav8.formal_state(db, case_id)
+    if st == "submitted":
+        raise HTTPException(409, {"code": "FORMAL_ALREADY_SUBMITTED"})
+    if st == "accepted":
+        raise HTTPException(409, {"code": "FORMAL_ALREADY_ACCEPTED"})
+    b = dict(body or {})
+    missing = [k for k in FORMAL_REQUIRED if not str(b.get(k) or "").strip()]
+    if missing:
+        raise HTTPException(422, {"code": "FIELDS_REQUIRED", "fields": missing})
+    if b.get("pledge") is not True:
+        raise HTTPException(422, {"code": "PLEDGE_REQUIRED"})
+    sig = b.get("signature") or ""
+    if not (isinstance(sig, str) and sig.startswith("data:image/")):
+        raise HTTPException(422, {"code": "SIGNATURE_REQUIRED"})
+    fields = {k: b.get(k) for k in ("process_summary", "halal_management", "non_halal_handling", "non_halal_desc",
+                                    "preferred_audit_period", "sales_channels", "signer_name")}
+    submitted_at = datetime.utcnow().isoformat()
+    content = {"doc": "D-06", "title": "정식 인증 신청서", "case_id": case_id, "company_name": c.company_name,
+               "nib": c.nib, "responsible_person": c.responsible_person, "address": c.address,
+               "factory_address": c.factory_address, "scheme": c.scheme or "product", "pathway": c.pathway,
+               "fields": fields, "pledge": True, "signature": sig, "submitted_by": user.get("username"),
+               "submitted_role": user["role"], "submitted_at": submitted_at}
+    g = _save_gendoc(db, c, "formal_application", _json.dumps(content, ensure_ascii=False), user, status="submitted")
+    sm.record_event(db, c, c.status, c.status, "formal_application.submitted", user["role"], user["uid"],
+                    dict(fields, gen_doc_id=g.gen_doc_id, submitted_at=submitted_at))
+    _notify(db, c, "formal_application.submitted", "정식 인증 신청서 접수 대기 — " + (c.company_name or ""),
+            body="정식 인증 신청서가 제출되었습니다. 접수 확인 또는 반려해 주세요.", role="operator")
+    db.commit()
+    return {"ok": True, "status": "submitted", "gen_doc_id": g.gen_doc_id, "submitted_at": submitted_at}
+
+
+@app.get("/cases/{case_id}/formal-application")
+def formal_application_get(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """FRM-07 — 오디터·관리자·기업·컨설턴트 열람(서명 이미지는 기업·인증기관만)."""
+    import json as _json
+    _get_case(db, case_id, user)
+    e = _formal_latest(db, case_id)
+    if not e:
+        return {"status": None}
+    sub = nav8.latest_event(db, case_id, "formal_application.submitted")
+    gid = (sub.payload or {}).get("gen_doc_id") if sub else None
+    g = db.get(models.GeneratedDocument, gid) if gid else None
+    doc = {}
+    if g and g.content:
+        try:
+            doc = _json.loads(g.content)
+        except Exception:
+            doc = {}
+    if user["role"] == "consultant":
+        doc.pop("signature", None)
+    status = e.action.split(".")[-1]
+    return {"status": status, "at": e.created_at.isoformat() if e.created_at else None,
+            "return_reason": (e.payload or {}).get("reason") if status == "returned" else None,
+            "gen_doc_id": gid, "doc": doc, "can_accept": user["role"] in ("operator", "admin") and status == "submitted"}
+
+
+@app.post("/cases/{case_id}/formal-application/return")
+def formal_application_return(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")),
+                              db: Session = Depends(get_db)):
+    """FRM-06 반려 — 사유 필수, 기업이 다시 작성·제출."""
+    c = _get_case(db, case_id, user)
+    reason = ((body or {}).get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    if nav8.formal_state(db, case_id) != "submitted":
+        raise HTTPException(409, {"code": "FORMAL_NOT_SUBMITTED"})
+    sm.record_event(db, c, c.status, c.status, "formal_application.returned", user["role"], user["uid"], {"reason": reason})
+    for r in ("client", "consultant"):
+        _notify(db, c, "formal_application.returned", "정식 인증 신청서 반려", body="반려 사유: " + reason, role=r)
+    db.commit()
+    return {"ok": True, "status": "returned", "reason": reason}
+
+
+@app.post("/cases/{case_id}/formal-application/accept")
+def formal_application_accept(case_id: str, user=Depends(auth.require_roles("operator")),
+                              db: Session = Depends(get_db)):
+    """FRM-05 접수 확인(관리자) — 이후 견적서·계약서 발송(contract/approve)으로 이어진다."""
+    c = _get_case(db, case_id, user)
+    if nav8.formal_state(db, case_id) != "submitted":
+        raise HTTPException(409, {"code": "FORMAL_NOT_SUBMITTED"})
+    sm.record_event(db, c, c.status, c.status, "formal_application.accepted", user["role"], user["uid"], {})
+    for r in ("client", "consultant"):
+        _notify(db, c, "formal_application.accepted", "정식 인증 신청 접수 완료",
+                body="정식 인증 신청서가 접수되었습니다. 견적서·계약서가 곧 발송됩니다.", role=r)
+    db.commit()
+    return {"ok": True, "status": "accepted"}
+
+
+@app.get("/ops/formal-applications")
+def ops_formal_applications(status: str = "submitted", user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")),
+                            db: Session = Depends(get_db)):
+    """FRM-05 접수 대기 목록(관리자) — status=submitted|returned|accepted|all. 오디터는 열람만."""
+    items = []
+    for c in _ops_cases(db, user):
+        e = _formal_latest(db, c.case_id)
+        if not e:
+            continue
+        stt = e.action.split(".")[-1]
+        if status != "all" and stt != status:
+            continue
+        sub = nav8.latest_event(db, c.case_id, "formal_application.submitted")
+        items.append({"case_id": c.case_id, "company_name": c.company_name, "case_status": c.status,
+                      "formal": stt, "at": e.created_at.isoformat() if e.created_at else None,
+                      "submitted_at": (sub.payload or {}).get("submitted_at") if sub else None,
+                      "gen_doc_id": (sub.payload or {}).get("gen_doc_id") if sub else None,
+                      "return_reason": (e.payload or {}).get("reason") if stt == "returned" else None})
+    items.sort(key=lambda x: x.get("at") or "", reverse=True)
+    return {"items": items, "count": len(items)}
+
+
 @app.get("/cases/{case_id}/gen-docs")
 def list_gendocs(case_id: str, doc_type: str = None,
                  user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -10380,6 +11098,7 @@ def list_gendocs(case_id: str, doc_type: str = None,
         q = q.filter_by(doc_type=doc_type)
     rows = q.order_by(models.GeneratedDocument.doc_type,
                       models.GeneratedDocument.version.desc()).all()
+    rows = [g for g in rows if _doc_can_view(user, g.doc_type)]
     return [{"gen_doc_id": g.gen_doc_id, "doc_type": g.doc_type, "version": g.version,
              "status": g.status, "created_at": str(g.created_at)} for g in rows]
 
@@ -10390,6 +11109,8 @@ def get_gendoc(gen_doc_id: str, user=Depends(auth.get_current_user), db: Session
     if not g:
         raise HTTPException(404, {"code": "GENDOC_NOT_FOUND"})
     _get_case(db, g.case_id, user)  # 조직격리
+    if not _doc_can_view(user, g.doc_type):
+        raise HTTPException(403, {"code": "DOC_RESTRICTED", "doc_type": g.doc_type})
     return {"gen_doc_id": g.gen_doc_id, "doc_type": g.doc_type, "version": g.version,
             "status": g.status, "content": g.content, "created_at": str(g.created_at)}
 
@@ -10664,6 +11385,10 @@ def get_gendoc_pdf(gen_doc_id: str, user=Depends(auth.get_current_user), db: Ses
     g = db.get(models.GeneratedDocument, gen_doc_id)
     if not g:
         raise HTTPException(404, {"code": "GENDOC_NOT_FOUND"})
+    if not _doc_can_view(user, g.doc_type):
+        raise HTTPException(403, {"code": "DOC_RESTRICTED", "doc_type": g.doc_type})
+    if user["role"] == "consultant" and g.doc_type in CONSULTANT_VIEW_ONLY:
+        raise HTTPException(403, {"code": "DOC_VIEW_ONLY"})
     c = _get_case(db, g.case_id, user)
     # 계약서 gen-doc은 텍스트 요약이 아니라 실제 10p FORM 4.1 원본 양식으로 서빙(로고 포함)
     if g.doc_type == "contract":
@@ -10737,6 +11462,146 @@ def _audit_report_return_count(db, case_id):
                     models.WorkflowEvent.action == "audit_report.return").count())
 
 
+# ===== SRS ⑥ 영문 정본(D-17)·취합본(D-18) — 3개 언어본 보관 + 문서 지문 =====
+CANONICAL_LANGS = ("en", "id", "ko")           # en 이 정본, 나머지는 번역본(I18N-03)
+CANONICAL_NOTICE = {"en": "This English version is the authoritative text. Translations are for reference.",
+                    "id": "Versi bahasa Inggris adalah naskah resmi. Terjemahan ini hanya untuk referensi.",
+                    "ko": "영문본이 정본이며 이 번역본은 참고용입니다."}
+
+
+def _canonical_dir(case_id):
+    base = os.path.realpath(os.environ.get("GLHAC_UPLOAD_DIR", "/tmp"))
+    d = os.path.join(base, "canonical", case_id)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _canonical_latest(db, case_id, doc="D-17"):
+    e = nav8.latest_event(db, case_id, "canonical.issued")
+    evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="canonical.issued")
+           .order_by(models.WorkflowEvent.created_at.desc()).all())
+    for e in evs:
+        if (e.payload or {}).get("doc") == doc:
+            return e.payload or {}
+    return None
+
+
+def _issue_canonical_d17(db, c, user):
+    """상정 시점에 D-17 을 3개 언어로 생성해 보관하고 SHA-256 지문을 남긴다. 다시 부르면 새 버전."""
+    prev = _canonical_latest(db, c.case_id, "D-17")
+    version = (int(prev.get("version") or 0) + 1) if prev else 1
+    d = _canonical_dir(c.case_id)
+    files, hashes = {}, {}
+    for lang in CANONICAL_LANGS:
+        data = _factory_audit_docx_bytes(db, c, lang)
+        fn = "D-17_v%d_%s.docx" % (version, lang)
+        with open(os.path.join(d, fn), "wb") as fh:
+            fh.write(data)
+        files[lang] = fn
+        hashes[lang] = hashlib.sha256(data).hexdigest()
+    sign = _audit_report_event_latest(db, c.case_id, "audit_report.sign")
+    csign = _audit_report_event_latest(db, c.case_id, "audit_report.client_sign")
+    payload = {"doc": "D-17", "version": version, "canonical_lang": "en", "langs": list(CANONICAL_LANGS),
+               "files": files, "sha256": hashes, "issued_at": datetime.utcnow().isoformat(), "issued_by": user.get("uid"),
+               "auditor_sign": (sign or {}).get("name") if sign else None,
+               "client_sign": (csign or {}).get("name") if csign else None}
+    sm.record_event(db, c, c.status, c.status, "canonical.issued", user["role"], user["uid"], payload)
+    return payload
+
+
+def _issue_final_package_d18(db, c, user, d17):
+    """D-18 인증 문서 취합본 — 상정에 포함되는 문서 목록·버전·지문(영문 정본 + 번역본 문구)."""
+    import json as _json
+    docs = db.query(models.GeneratedDocument).filter_by(case_id=c.case_id).order_by(models.GeneratedDocument.created_at.asc()).all()
+    latest = {}
+    for g in docs:
+        if g.doc_type in ("final_package",):
+            continue
+        latest[g.doc_type] = g
+    items = [{"doc_type": t, "gen_doc_id": g.gen_doc_id, "version": g.version, "status": g.status,
+              "sha256": hashlib.sha256((g.content or "").encode("utf-8")).hexdigest()} for t, g in latest.items()]
+    items.append({"doc_type": "audit_report_canonical", "version": d17["version"], "status": "canonical",
+                  "sha256": d17["sha256"].get("en"), "langs": d17["langs"], "canonical_lang": "en"})
+    prev = _canonical_latest(db, c.case_id, "D-18")
+    version = (int(prev.get("version") or 0) + 1) if prev else 1
+    content = {"doc": "D-18", "title": {"en": "Certification Document Package", "id": "Paket Dokumen Sertifikasi", "ko": "인증 문서 취합본"},
+               "notice": CANONICAL_NOTICE, "canonical_lang": "en", "company_name": c.company_name, "case_id": c.case_id,
+               "version": version, "items": items, "issued_at": datetime.utcnow().isoformat(), "issued_by": user.get("username")}
+    g = _save_gendoc(db, c, "final_package", _json.dumps(content, ensure_ascii=False), user, status="final")
+    payload = {"doc": "D-18", "version": version, "gen_doc_id": g.gen_doc_id, "canonical_lang": "en",
+               "sha256": hashlib.sha256(g.content.encode("utf-8")).hexdigest(), "issued_at": content["issued_at"], "items": len(items)}
+    sm.record_event(db, c, c.status, c.status, "canonical.issued", user["role"], user["uid"], payload)
+    return payload
+
+
+@app.post("/cases/{case_id}/audit-report/client-sign")
+def audit_report_client_sign(case_id: str, body: dict = None,
+                             user=Depends(auth.require_roles("applicant", "penyelia_halal")), db: Session = Depends(get_db)):
+    """ONS-05 기업 확인 서명 — 승인된 현장심사 보고서에 대표자가 확인 서명(data:image)."""
+    c = _get_case(db, case_id, user)
+    g = _latest_audit_report(db, case_id)
+    if not g or g.status != "approved":
+        raise HTTPException(409, {"code": "REPORT_NOT_APPROVED"})
+    b = dict(body or {})
+    name = (b.get("name") or "").strip()
+    image = b.get("image")
+    if not name or not (isinstance(image, str) and image.startswith("data:image/")):
+        raise HTTPException(422, {"code": "NAME_AND_IMAGE_REQUIRED"})
+    at = datetime.utcnow().isoformat()
+    sm.record_event(db, c, c.status, c.status, "audit_report.client_sign", user["role"], user["uid"],
+                    {"name": name, "gen_doc_id": g.gen_doc_id, "at": at, "image": image[:200000]})
+    _notify(db, c, "audit_report.client_sign", "기업 확인 서명 완료 — 현장심사 보고서", body=name + " 서명", role="auditor")
+    db.commit()
+    return {"ok": True, "name": name, "at": at, "gen_doc_id": g.gen_doc_id}
+
+
+@app.get("/cases/{case_id}/canonical")
+def canonical_get(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """I18N-04 — D-17 정본 세트(언어 탭·지문)와 D-18 메타. 정본 문구를 언어별로 함께 준다."""
+    _get_case(db, case_id, user)
+    d17 = _canonical_latest(db, case_id, "D-17")
+    d18 = _canonical_latest(db, case_id, "D-18")
+    csign = _audit_report_event_latest(db, case_id, "audit_report.client_sign")
+    return {"d17": d17, "d18": d18, "notice": CANONICAL_NOTICE, "canonical_lang": "en",
+            "client_signed": bool(csign), "client_sign_name": (csign or {}).get("name") if csign else None}
+
+
+@app.get("/cases/{case_id}/canonical/D-17.{fmt}")
+def canonical_d17_file(case_id: str, fmt: str, lang: str = Query("en"), version: int = Query(None),
+                       user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """보관된 정본/번역본 내려받기 — docx 는 보관 바이트 그대로(지문 불변), pdf 는 그 docx 를 변환."""
+    from fastapi.responses import Response
+    _get_case(db, case_id, user)
+    if user["role"] == "consultant":
+        raise HTTPException(403, {"code": "DOC_VIEW_ONLY"})
+    if fmt not in ("docx", "pdf") or lang not in CANONICAL_LANGS:
+        raise HTTPException(422, {"code": "BAD_FORMAT_OR_LANG"})
+    meta = None
+    for e in (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="canonical.issued")
+              .order_by(models.WorkflowEvent.created_at.desc()).all()):
+        p = e.payload or {}
+        if p.get("doc") == "D-17" and (version is None or int(p.get("version") or 0) == version):
+            meta = p
+            break
+    if not meta:
+        raise HTTPException(404, {"code": "CANONICAL_NOT_ISSUED"})
+    path = os.path.join(_canonical_dir(case_id), meta["files"][lang])
+    if not os.path.exists(path):
+        raise HTTPException(404, {"code": "CANONICAL_FILE_MISSING"})
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if hashlib.sha256(data).hexdigest() != meta["sha256"].get(lang):
+        raise HTTPException(409, {"code": "FINGERPRINT_MISMATCH"})
+    _audit(db, user, "document.download", "case", case_id, meta={"doc": "D-17", "lang": lang, "version": meta["version"]})
+    db.commit()
+    if fmt == "docx":
+        return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        headers={"Content-Disposition": _content_disposition("D-17_v%d_%s.docx" % (meta["version"], lang))})
+    pdf = _docx_to_pdf_bytes(data)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=D-17_v%d_%s.pdf" % (meta["version"], lang)})
+
+
 def _fatwa_gate_check(db, c):
     """파트와 상정 선행조건 검증 — (미충족 코드 리스트, 근거 dict) 반환.
     (a) audit_report GeneratedDocument approved 존재
@@ -10750,6 +11615,9 @@ def _fatwa_gate_check(db, c):
     sign = _audit_report_event_latest(db, c.case_id, "audit_report.sign")
     if not sign:
         missing.append("AUDITOR_SIGN_REQUIRED")
+    if nav8.formal_flow_on():
+        if not _audit_report_event_latest(db, c.case_id, "audit_report.client_sign"):
+            missing.append("CLIENT_SIGN_REQUIRED")
     have = _ensure_hpas(db, c.case_id)
     hpas_ok = sum(1 for el in HPAS_ELEMENTS if have[el].status == "ok")
     penyelia_ok = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").count() > 0
@@ -10845,27 +11713,13 @@ def audit_report_send_fatwa(case_id: str,
     미충족 시 409 FATWA_GATE_BLOCKED+missing. 통과 시 상태머신 가드가 허용할 때만 fatwa_review로
     전이(강제 점프 금지 — _on_invoice_paid와 동일 철학). 게이트 통과 사실·이벤트는 항상 기록."""
     c = _get_case(db, case_id, user)
-    missing, ctx = _fatwa_gate_check(db, c)
+    missing, _ctx = _fatwa_gate_check(db, c)
     if missing:
         raise HTTPException(409, {"code": "FATWA_GATE_BLOCKED", "missing": missing})
-    target = "fatwa_review"
-    transitioned_to = None
-    ok, _blk = sm.can_transition(db, c, target)
-    if ok:                              # 가드 통과 시에만 전이(아니면 게이트 통과만 기록)
-        frm = c.status
-        sm.apply_side_effects(c, target)
-        c.status = target
-        sm.record_event(db, c, frm, target, "audit_report.send_fatwa", user["role"], user["uid"],
-                        {"gate": "passed", "gen_doc_id": ctx.get("gen_doc_id")})
-        transitioned_to = target
-    else:
-        sm.record_event(db, c, c.status, c.status, "audit_report.send_fatwa", user["role"], user["uid"],
-                        {"gate": "passed", "transition_skipped": True,
-                         "gen_doc_id": ctx.get("gen_doc_id")})
-    _notify(db, c, "audit_report.send_fatwa", "파트와 상정 — 현장심사 보고서",
-            body="현장심사 보고서(서명 완료)가 파트와 심의로 상정되었습니다.", role="fatwa_liaison")
-    db.commit()
-    return {"ok": True, "transitioned_to": transitioned_to, "gate": "passed"}
+    pend = _two_person_gate(db, c, user, "audit_report.send_fatwa", {})
+    if pend:
+        return pend
+    return _do_send_fatwa(db, c, user, {})
 
 
 @app.get("/cases/{case_id}/audit-report/status")
@@ -11182,7 +12036,7 @@ def get_onsite_opinion(case_id: str, user=Depends(auth.get_current_user),
 #    onsite.sign 패턴 동일. 기존 fatwa 투표/결정(P0-4)과 별개의 위원 개별 캔버스 서명. ──
 @app.post("/cases/{case_id}/fatwa/sign")
 def fatwa_sign(case_id: str, body: dict = None,
-               user=Depends(auth.require_roles("fatwa_liaison", "operator")), db: Session = Depends(get_db)):
+               user=Depends(auth.require_roles("fatwa_liaison", "operator", "auditor")), db: Session = Depends(get_db)):
     b = body or {}
     member = (b.get("member") or "").strip()
     if not member:
@@ -11194,6 +12048,8 @@ def fatwa_sign(case_id: str, body: dict = None,
         raise HTTPException(413, {"code": "IMAGE_TOO_LARGE"})
     name = (b.get("name") or "").strip() or None
     c = _get_case(db, case_id, user)
+    if user["role"] == "auditor" and not _fatwa_proxy(db, c.org_id):
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
     sm.record_event(db, c, c.status, c.status, "fatwa.sign", user["role"], user["uid"],
                     {"member": member, "image": image, "name": name})
     # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op). 내부 서명 이벤트는 위에서 그대로 병행.
@@ -11234,8 +12090,9 @@ def set_fatwa_committee(body: dict = None,
                         db: Session = Depends(get_db)):
     """F05: 위원 명단 저장(전체 교체·latest-wins). 위원장 1인 필수, 총 1~7인."""
     members = (body or {}).get("members") or []
-    if not isinstance(members, list) or not (1 <= len(members) <= 7):
-        raise HTTPException(422, {"code": "BAD_MEMBERS", "hint": "1~7인 목록 필요"})
+    _lo, _hi = (FATWA_QUORUM, FATWA_QUORUM) if _fatwa_srs(db) else (1, 7)
+    if not isinstance(members, list) or not (_lo <= len(members) <= _hi):
+        raise HTTPException(422, {"code": "BAD_MEMBERS", "hint": ("정족수 3인 고정 — 위원장 1 + 위원 2" if _lo == _hi else "1~7인 목록 필요")})
     clean = []
     for m in members:
         role = str((m or {}).get("role") or "").strip()
@@ -11626,6 +12483,43 @@ def review_car(car_id: str, body: schemas.CarReviewReq,
 
 # ---------- Fatwa 위원회 투표 (§6.2 fatwa_votes) ----------
 def _fatwa_tally(db, case_id, detail=False):
+    if _fatwa_srs(db):
+        votes = db.query(models.FatwaVote).filter_by(case_id=case_id).all()
+        c = db.get(models.CaseApplication, case_id)
+        keys = _fatwa_member_keys(db, c.org_id if c else None)
+        if _fatwa_proxy(db, c.org_id if c else None):
+            votes = [v for v in votes if v.member == FATWA_PROXY_KEY]
+            v0 = votes[-1] if votes else None
+            result = {"approve": "passed", "conditional": "conditional", "reject": "rejected"}.get(v0.vote if v0 else None, "pending")
+            ok_sig, _miss, sctx = _fatwa_quorum_ok(db, case_id)
+            out = {"votes_cast": len(votes), "members": 1, "approve": int(bool(v0 and v0.vote == "approve")), "conditional": int(bool(v0 and v0.vote == "conditional")),
+                   "reject": int(bool(v0 and v0.vote == "reject")), "abstain": 0, "quorum_met": bool(v0), "quorum_need": 1, "result": result,
+                   "signatures": sctx.get("signer_count", 0), "signatures_ok": ok_sig, "progress": "%d/1" % (1 if v0 else 0),
+                   "round": _fatwa_round(db, case_id), "member_keys": [FATWA_PROXY_KEY], "voted_keys": [FATWA_PROXY_KEY] if v0 else [], "proxy": True}
+            if detail:
+                out["ballots"] = [{"member": v.member, "vote": v.vote, "note": v.note} for v in votes]
+            return out
+        votes = [v for v in votes if v.member in keys]
+        approve = sum(1 for v in votes if v.vote == "approve")
+        cond = sum(1 for v in votes if v.vote == "conditional")
+        reject = sum(1 for v in votes if v.vote == "reject")
+        need = FATWA_QUORUM if _audit_settings(db, c.org_id if c else None).get("decision_rule") == "unanimous" else (FATWA_QUORUM // 2) + 1
+        all_in = len(votes) >= FATWA_QUORUM
+        if all_in and reject >= need:
+            result = "rejected"
+        elif all_in and (approve + cond) >= need:
+            result = "conditional" if cond else "passed"
+        else:
+            result = "pending"
+        ok_sig, _miss, sctx = _fatwa_quorum_ok(db, case_id)
+        out = {"votes_cast": len(votes), "members": FATWA_QUORUM, "approve": approve, "conditional": cond, "reject": reject,
+               "abstain": 0, "quorum_met": all_in, "quorum_need": need, "result": result,
+               "signatures": sctx.get("signer_count", 0), "signatures_ok": ok_sig,
+               "progress": "%d/%d" % (len(votes), FATWA_QUORUM), "round": _fatwa_round(db, case_id),
+               "member_keys": keys, "voted_keys": [v.member for v in votes]}
+        if detail:
+            out["ballots"] = [{"member": v.member, "vote": v.vote, "note": v.note} for v in votes]
+        return out
     votes = db.query(models.FatwaVote).filter_by(case_id=case_id).all()
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     members = (fd.committee_members if fd and fd.committee_members else []) or []
@@ -11646,18 +12540,28 @@ def _fatwa_tally(db, case_id, detail=False):
 
 @app.post("/cases/{case_id}/fatwa/vote")
 def fatwa_vote(case_id: str, body: schemas.FatwaVoteReq,
-               user=Depends(rbac.require_action("fatwa.propose")),
+               user=Depends(auth.require_roles("fatwa_liaison", "auditor", "operator")),
                db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
-    if body.vote not in ("approve", "reject", "abstain"):
+    if user["role"] in ("auditor", "operator") and not _fatwa_proxy(db, c.org_id):
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED", "hint": "샤리아 위원회가 등록된 상태에서는 위원만 의견을 낼 수 있습니다."})
+    if body.vote not in FATWA_VOTES:
         raise HTTPException(400, {"code": "BAD_VOTE"})
+    if _fatwa_srs(db):
+        keys = [FATWA_PROXY_KEY] if _fatwa_proxy(db, c.org_id) else _fatwa_member_keys(db, c.org_id)
+        if body.member not in keys:
+            raise HTTPException(422, {"code": "NOT_COMMITTEE_MEMBER", "allowed": keys})
+        if body.vote == "abstain":
+            raise HTTPException(422, {"code": "OPINION_REQUIRED", "hint": "적합·조건부 적합·부적합 중 하나"})
+        if body.vote in ("conditional", "reject") and not (body.note or "").strip():
+            raise HTTPException(422, {"code": "REASON_REQUIRED"})
     v = db.query(models.FatwaVote).filter_by(case_id=case_id, member=body.member).first()
     if v:
         v.vote, v.note = body.vote, body.note
     else:
         db.add(models.FatwaVote(case_id=case_id, member=body.member, vote=body.vote, note=body.note))
     sm.record_event(db, c, c.status, c.status, "fatwa.vote", user["role"], user["uid"],
-                    {"member": body.member, "vote": body.vote})
+                    {"member": body.member, "vote": body.vote, "note": body.note})
     db.commit()
     return _fatwa_tally(db, case_id)
 
@@ -11665,7 +12569,8 @@ def fatwa_vote(case_id: str, body: schemas.FatwaVoteReq,
 @app.get("/cases/{case_id}/fatwa/votes")
 def get_fatwa_votes(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
-    if not _fatwa_privileged(user):   # 위원회 투표 상세는 sharia/operator/admin만
+    _c0 = db.get(models.CaseApplication, case_id)
+    if not _fatwa_privileged(user) and not (user["role"] == "auditor" and _fatwa_proxy(db, _c0.org_id if _c0 else None)):   # 위원회 투표 상세는 sharia/operator/admin + 대리 모드 오디터
         raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
     _audit(db, user, "fatwa.votes.read", "fatwa", case_id, case_id)
     return _fatwa_tally(db, case_id, detail=True)
@@ -11697,9 +12602,147 @@ def get_fatwa_status(case_id: str, user=Depends(auth.get_current_user), db: Sess
 
 # ========== 2인 승인(maker-checker) 프레임워크 — 설계서 보강안 §4.3 ==========
 MAKER_CHECKER = {
+    "consultant.change": {"maker": {"applicant", "penyelia_halal"}, "checker": {"operator", "admin"}, "label": "담당 컨설턴트 변경"},
     "certificate.issue":  {"maker": {"operator"}, "checker": {"fatwa_liaison"}, "label": "인증서 발급"},
     "certificate.revoke": {"maker": {"operator"}, "checker": {"admin"}, "label": "인증서 철회"},
+    "preassess.review": {"maker": {"auditor"}, "checker": "co_auditor", "label": "사전심사 판정"},
+    "mock_audit.decision": {"maker": {"auditor"}, "checker": "co_auditor", "label": "모의심사 완료"},
+    "audit_report.send_fatwa": {"maker": {"auditor"}, "checker": "co_auditor", "label": "샤리아 상정"},
+    "eligibility.verdict": {"maker": {"auditor"}, "checker": "co_auditor", "label": "인증 가능 판정"},
 }
+
+TWO_PERSON_ACTIONS = {"preassess.review", "mock_audit.decision", "audit_report.send_fatwa", "eligibility.verdict"}
+
+
+def _checker_roles(rule):
+    x = rule.get("checker", set())
+    return ["co_auditor"] if isinstance(x, str) else sorted(x)
+
+
+def _case_main_auditor_uid(db, c):
+    return _ops_latest_assignment(db, [c.case_id]).get(c.case_id, {}).get("auditor_id")
+
+
+def _case_co_auditor_uids(db, case_id):
+    rows = db.query(models.CaseAuditor).filter_by(case_id=case_id, role="co").all()
+    return {r.user_id for r in rows}
+
+
+def _two_person_gate(db, c, user, action_type, payload):
+    cos = _case_co_auditor_uids(db, c.case_id)
+    strict = os.environ.get("GLHAC_TWO_PERSON", "") == "strict"
+    if user["role"] == "auditor" and user["uid"] in cos:
+        raise HTTPException(403, {"code": "NOT_MAIN_AUDITOR", "hint": "서브 오디터는 열람·확인만 할 수 있습니다."})
+    if user["role"] != "auditor":
+        return None
+    if not cos:
+        if strict:
+            raise HTTPException(409, {"code": "CO_AUDITOR_REQUIRED"})
+        return None
+    dup = db.query(models.ApprovalRequest).filter_by(
+        action_type=action_type, case_id=c.case_id, status="pending").first()
+    if dup:
+        raise HTTPException(409, {"code": "APPROVAL_PENDING", "approval_id": dup.id})
+    reason = payload.get("reason") or payload.get("note")
+    ar = models.ApprovalRequest(
+        action_type=action_type, case_id=c.case_id, org_id=c.org_id,
+        reason=reason or None, payload=dict(payload),
+        requested_by=user["uid"], requester_role=user["role"],
+        requester_name=user.get("username"))
+    db.add(ar)
+    sm.record_event(db, c, c.status, c.status, action_type + ".requested",
+                    user["role"], user["uid"], {"approval_id": ar.id, "reason": reason or None})
+    rule = MAKER_CHECKER.get(action_type, {})
+    label = rule.get("label") or action_type
+    _notify(db, c, "two_person.requested", "서브 오디터 확인 요청 — " + label,
+            body=(user.get("username") or "") + " 님의 " + label + " 처리가 서브 오디터 확인을 기다립니다.",
+            role="auditor")
+    db.commit()
+    return {"ok": True, "pending": True, "approval_id": ar.id, "action_type": action_type,
+            "status": c.status, "message": "서브 오디터 확인 대기 — 확인 후 실행됩니다."}
+
+
+def _do_preassess_review(db, c, actor, body):
+    verdict = body["verdict"]
+    sections = body.get("sections") or {}
+    sm.record_event(db, c, c.status, c.status, "preassess.review", actor["role"], actor["uid"],
+                    {"sections": sections, "verdict": verdict, "note": (body.get("note") or "").strip()})
+    advanced = False
+    if verdict == "reject":   # SRS PRE-10: 불가 → 사유 통지, 보완 후 재신청(새 사전심사 건)
+        for _r in ("client", "consultant"):
+            _notify(db, c, "preassess.reject", "AI 사전심사 결과 — 불가", body="사유: " + (body.get("note") or ""), role=_r)
+    if verdict == "ready":
+        advanced = _auto_advance(db, c, "consultant_review", actor, "preassess.review.auto")
+    db.commit()
+    return {"ok": True, "verdict": verdict,
+            "transitioned_to": "consultant_review" if advanced else None, "status": c.status}
+
+
+def _do_mock_audit_decide(db, c, actor, body):
+    result = body["result"]
+    sm.record_event(db, c, c.status, c.status, "mock_audit.decision", actor["role"], actor["uid"],
+                    {"result": result, "reason": body.get("reason") or ""})
+    transitioned_to = None
+    blockers = []
+    mapping = _MOCK_NEXT.get(c.status)
+    for _hop in range(2):
+        if not mapping:
+            break
+        target = mapping[0] if result == "pass" else mapping[1]
+        if not target:
+            break
+        ok, blk = sm.can_transition(db, c, target)
+        if not ok:
+            blockers = blk
+            break
+        frm = c.status
+        sm.apply_side_effects(c, target)
+        c.status = target
+        sm.record_event(db, c, frm, target, "mock_audit." + result, actor["role"], actor["uid"],
+                        {"reason": body.get("reason") or ""})
+        transitioned_to = target
+        if result != "pass" or target != "document_pre_audit_in_review":
+            break
+        mapping = _MOCK_NEXT.get(c.status)
+    if result == "pass":
+        import json as _json
+        _g16 = _save_gendoc(db, c, "mock_audit_notice", _json.dumps({"doc": "D-16", "title": "모의심사 결과 통지서", "company_name": c.company_name,
+                            "case_id": c.case_id, "result": "pass", "transitioned_to": transitioned_to,
+                            "issued_at": datetime.utcnow().isoformat(), "issued_by": actor.get("username")}, ensure_ascii=False), actor, status="final")
+        for _r in ("client", "consultant"):
+            _notify(db, c, "mock_audit.notice", "모의심사 결과 통지 (D-16) — 통과", body="준비 서류 사전 점검이 완료되었습니다. 현장심사 일정을 조율합니다.", role=_r)
+    db.commit()
+    return {"ok": True, "result": result, "transitioned_to": transitioned_to,
+            "status": c.status, "blockers": blockers}
+
+
+def _do_send_fatwa(db, c, actor, body):
+    missing, ctx = _fatwa_gate_check(db, c)
+    if missing:
+        raise HTTPException(409, {"code": "FATWA_GATE_BLOCKED", "missing": missing})
+    d17 = _issue_canonical_d17(db, c, actor)
+    d18 = _issue_final_package_d18(db, c, actor, d17)
+    target = "fatwa_review"
+    transitioned_to = None
+    ok, _blk = sm.can_transition(db, c, target)
+    if ok:
+        frm = c.status
+        sm.apply_side_effects(c, target)
+        c.status = target
+        sm.record_event(db, c, frm, target, "audit_report.send_fatwa", actor["role"], actor["uid"],
+                        {"gate": "passed", "gen_doc_id": ctx.get("gen_doc_id"),
+                         "canonical_version": d17["version"], "d18_gen_doc_id": d18["gen_doc_id"]})
+        transitioned_to = target
+    else:
+        sm.record_event(db, c, c.status, c.status, "audit_report.send_fatwa", actor["role"], actor["uid"],
+                        {"gate": "passed", "transition_skipped": True,
+                         "gen_doc_id": ctx.get("gen_doc_id"),
+                         "canonical_version": d17["version"], "d18_gen_doc_id": d18["gen_doc_id"]})
+    _notify(db, c, "audit_report.send_fatwa", "파트와 상정 — 현장심사 보고서",
+            body="현장심사 보고서(영문 정본 + 인니어·한국어 번역본)와 취합본이 상정되었습니다.", role="fatwa_liaison")
+    db.commit()
+    return {"ok": True, "transitioned_to": transitioned_to, "gate": "passed",
+            "canonical": d17, "final_package": d18}
 
 
 def _create_approval(db, action_type, c, user, reason):
@@ -11719,19 +12762,24 @@ def _create_approval(db, action_type, c, user, reason):
     db.commit()
     rule = MAKER_CHECKER.get(action_type, {})
     return {"approval_id": ar.id, "status": "pending", "action_type": action_type,
-            "checker_roles": sorted(rule.get("checker", set())),
+            "checker_roles": _checker_roles(rule),
             "message": "2인 승인 대기 — 승인자 확인 후 %s이(가) 실행됩니다." % (rule.get("label") or action_type)}
 
 
-def _check_checker(ar, user):
+def _check_checker(db, ar, user):
     """checker 자격 검증 — 역할 매핑 + self-approval 금지(설계서 §4.3)."""
     rule = MAKER_CHECKER.get(ar.action_type)
     if not rule:
         raise HTTPException(400, {"code": "UNKNOWN_ACTION"})
-    if user["role"] != "admin" and user["role"] not in rule["checker"]:
-        raise HTTPException(403, {"code": "NOT_A_CHECKER", "required": sorted(rule["checker"])})
     if user["uid"] == ar.requested_by:
         raise HTTPException(403, {"code": "SELF_APPROVAL_FORBIDDEN"})
+    checker = rule["checker"]
+    if user["role"] != "admin":
+        if checker == "co_auditor":
+            if user["uid"] not in _case_co_auditor_uids(db, ar.case_id):
+                raise HTTPException(403, {"code": "NOT_A_CHECKER", "required": ["co_auditor"]})
+        elif user["role"] not in checker:
+            raise HTTPException(403, {"code": "NOT_A_CHECKER", "required": sorted(checker)})
 
 
 def _exec_approved(db, ar, user):
@@ -11739,6 +12787,39 @@ def _exec_approved(db, ar, user):
     c = db.get(models.CaseApplication, ar.case_id)
     if not c:
         raise HTTPException(404, {"code": "CASE_NOT_FOUND", "case_id": ar.case_id})
+    if ar.action_type in TWO_PERSON_ACTIONS:
+        sm.record_event(db, c, c.status, c.status, "two_person.confirmed", user["role"], user["uid"],
+                        {"approval_id": ar.id, "action": ar.action_type,
+                         "main": ar.requested_by, "sub": user["uid"]})
+        actor = {"uid": ar.requested_by, "role": ar.requester_role or "auditor",
+                 "username": ar.requester_name}
+        if ar.action_type == "preassess.review":
+            return _do_preassess_review(db, c, actor, ar.payload or {})
+        if ar.action_type == "mock_audit.decision":
+            return _do_mock_audit_decide(db, c, actor, ar.payload or {})
+        if ar.action_type == "audit_report.send_fatwa":
+            return _do_send_fatwa(db, c, actor, ar.payload or {})
+        if ar.action_type == "eligibility.verdict":
+            return _do_eligibility_verdict(db, c, actor, ar.payload or {})
+    if ar.action_type == "consultant.change":
+        p = ar.payload or {}
+        o = db.get(models.Org, p.get("org_id") or c.org_id)
+        if not o:
+            o = models.Org(org_id=p.get("org_id") or c.org_id, name=c.company_name or "")
+            db.add(o)
+            db.flush()
+        pref = (p.get("preferred_consultant") or "").strip()
+        if not pref:
+            return {"ok": True, "changed": False}
+        cu = _resolve_consultant(db, pref)
+        before = o.consultant_id
+        o.consultant_id = cu.user_id
+        o.consultant_linked_at = datetime.utcnow()
+        sm.record_event(db, c, c.status, c.status, "consultant.changed", user["role"], user["uid"],
+                        {"before": before, "after": cu.user_id, "approval_id": ar.id})
+        _notify(db, c, "consultant.changed", "담당 컨설턴트 변경 완료", body="새 담당: " + (cu.username or ""), role="client")
+        db.commit()
+        return {"ok": True, "changed": True, "consultant_id": cu.user_id}
     reason = (ar.payload or {}).get("reason")
     if ar.action_type == "certificate.issue":
         _issue_guards(db, c, ar.case_id)   # 발급 재검증(요청 후 상태 변동 대비)
@@ -11756,10 +12837,19 @@ def list_approvals(status: str = "pending", user=Depends(auth.get_current_user),
     if status:
         q = q.filter_by(status=status)
     rows = q.order_by(models.ApprovalRequest.created_at.desc()).limit(200).all()
+    co_map = {}
+    for r in db.query(models.CaseAuditor).filter_by(role="co").all():
+        co_map.setdefault(r.case_id, set()).add(r.user_id)
+    if user["role"] == "auditor":
+        rows = [ar for ar in rows if ar.requested_by == user["uid"] or user["uid"] in co_map.get(ar.case_id, set())]
     out = []
     for ar in rows:
         rule = MAKER_CHECKER.get(ar.action_type, {})
-        is_checker = (user["role"] == "admin" or user["role"] in rule.get("checker", set()))
+        checker = rule.get("checker", set())
+        if checker == "co_auditor":
+            is_checker = (user["role"] == "admin" or user["uid"] in co_map.get(ar.case_id, set()))
+        else:
+            is_checker = (user["role"] == "admin" or user["role"] in checker)
         can_decide = is_checker and user["uid"] != ar.requested_by and ar.status == "pending"
         c = db.get(models.CaseApplication, ar.case_id) if ar.case_id else None
         out.append({
@@ -11772,7 +12862,9 @@ def list_approvals(status: str = "pending", user=Depends(auth.get_current_user),
             "decided_by": ar.decided_by, "decider_name": ar.decider_name,
             "decision_reason": ar.decision_reason,
             "decided_at": ar.decided_at.isoformat() if ar.decided_at else None,
-            "checker_roles": sorted(rule.get("checker", set())), "can_decide": can_decide})
+            "checker_roles": _checker_roles(rule),
+            "payload": ar.payload, "two_person": ar.action_type in TWO_PERSON_ACTIONS,
+            "can_decide": can_decide})
     return out
 
 
@@ -11785,7 +12877,7 @@ def approve_request(approval_id: str, body: schemas.ApprovalDecisionReq = schema
         raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
     if ar.status != "pending":
         raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
-    _check_checker(ar, user)
+    _check_checker(db, ar, user)
     result = _exec_approved(db, ar, user)   # 액션 본체 실행(내부 commit)
     ar.status = "approved"
     ar.decided_by = user["uid"]; ar.decider_role = user["role"]; ar.decider_name = user.get("username")
@@ -11804,17 +12896,47 @@ def reject_request(approval_id: str, body: schemas.ApprovalDecisionReq = schemas
         raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
     if ar.status != "pending":
         raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
-    _check_checker(ar, user)
+    _check_checker(db, ar, user)
+    if ar.action_type in TWO_PERSON_ACTIONS and not (body.reason or "").strip():
+        raise HTTPException(422, {"code": "OPINION_REQUIRED"})
     ar.status = "rejected"
     ar.decided_by = user["uid"]; ar.decider_role = user["role"]; ar.decider_name = user.get("username")
     ar.decided_at = datetime.utcnow()
     ar.decision_reason = (body.reason or "").strip() or None
     c = db.get(models.CaseApplication, ar.case_id) if ar.case_id else None
     if c:
-        sm.record_event(db, c, c.status, c.status, ar.action_type + ".rejected",
+        two_person = ar.action_type in TWO_PERSON_ACTIONS
+        sm.record_event(db, c, c.status, c.status,
+                        ar.action_type + (".returned" if two_person else ".rejected"),
                         user["role"], user["uid"], {"approval_id": ar.id, "reason": ar.decision_reason})
+        if two_person:
+            rule = MAKER_CHECKER.get(ar.action_type, {})
+            label = rule.get("label") or ar.action_type
+            _notify(db, c, "two_person.returned", "서브 오디터 되돌림 — " + label,
+                    body="의견: " + (ar.decision_reason or ""), role="auditor")
     db.commit()
     return {"approval_id": ar.id, "status": "rejected", "reason": ar.decision_reason}
+
+
+@app.post("/approvals/{approval_id}/cancel")
+def cancel_request(approval_id: str,
+                   user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """요청자 본인 또는 admin — pending 요청 취소."""
+    ar = db.get(models.ApprovalRequest, approval_id)
+    if not ar:
+        raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
+    if ar.status != "pending":
+        raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
+    if user["role"] != "admin" and ar.requested_by != user["uid"]:
+        raise HTTPException(403, {"code": "NOT_REQUESTER"})
+    ar.status = "cancelled"
+    ar.decided_at = datetime.utcnow()
+    c = db.get(models.CaseApplication, ar.case_id) if ar.case_id else None
+    if c:
+        sm.record_event(db, c, c.status, c.status, ar.action_type + ".cancelled",
+                        user["role"], user["uid"], {"approval_id": ar.id})
+    db.commit()
+    return {"approval_id": ar.id, "status": "cancelled"}
 
 
 def _issue_ready_states():
@@ -12007,6 +13129,12 @@ def _do_issue_certificate(db, c, user, reason=None):
     frm = c.status
     if "certificate_issued" in sm.TRANSITIONS.get(c.status, set()):
         c.status = "certificate_issued"
+    # SRS CRT-02: 인증서 발급 시점 회차(stage=certificate, draft)를 청구·입금 고지
+    for _e in db.query(models.WorkflowEvent).filter_by(case_id=c.case_id, action="invoice.installment").all():
+        if (_e.payload or {}).get("stage") == "certificate":
+            _inv = db.get(models.Invoice, (_e.payload or {}).get("invoice_id"))
+            if _inv and _inv.status == "draft":
+                _send_notice(db, c, "payment_due", user, invoice=_inv, auto=True)
     _issue_payload = {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None}
     _issue_payload.update(_tsa_meta(cert.certificate_no or str(cert.id)))   # P3d: TSA configured 시만 병기(미설정 불변)
     sm.record_event(db, c, frm, c.status, "certificate.issue", "system", user["uid"], _issue_payload)
@@ -13694,11 +14822,92 @@ def fatwa_final_approve(case_id: str, user=Depends(rbac.require_action("fatwa.ap
     return {"ok": True, "fatwa_status": "approved", "final_approved_at": str(fd.final_approved_at)}
 
 
+@app.post("/cases/{case_id}/fatwa/confirm")
+def fatwa_confirm(case_id: str, body: dict = None, user=Depends(auth.require_roles("fatwa_liaison", "auditor", "operator")),
+                  db: Session = Depends(get_db)):
+    """SHA-04 위원장 확정 — 3인 의견·3인 서명이 모두 모이면 위원장이 결과를 확정하고 D-19 의결서를 발행한다."""
+    import json as _json
+    c = _get_case(db, case_id, user)
+    proxy = _fatwa_proxy(db, c.org_id)
+    if user["role"] in ("auditor", "operator") and not proxy:
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
+    t = _fatwa_tally(db, case_id, detail=True)
+    if not t.get("quorum_met"):
+        raise HTTPException(409, {"code": "VOTES_INCOMPLETE", "progress": t.get("progress")})
+    if not t.get("signatures_ok"):
+        raise HTTPException(409, {"code": "SIGNATURES_INCOMPLETE", "signatures": t.get("signatures")})
+    committee = _fatwa_committee(db, c.org_id)
+    chair = next((m for m in committee if m.get("role") == "chair"), None)
+    if not proxy and chair and chair.get("user") and chair.get("user") != user.get("username"):
+        raise HTTPException(403, {"code": "NOT_CHAIR"})
+    result = t["result"]
+    decision = {"passed": "approved", "conditional": "conditional", "rejected": "rejected"}.get(result)
+    if not decision:
+        raise HTTPException(409, {"code": "NO_RESULT", "result": result})
+    fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
+    if not fd:
+        fd = models.FatwaDecision(case_id=case_id)
+        db.add(fd)
+        db.flush()
+    fd.decision = decision
+    fd.decided_at = datetime.utcnow()
+    if not fd.decision_no:
+        fd.decision_no = "FD-" + fd.id[:8].upper()
+    fd.committee_head = chair.get("name") if chair else fd.committee_head
+    fd.committee_members = [m.get("name") for m in committee]
+    note = ((body or {}).get("note") or "").strip()
+    if note:
+        fd.committee_note = note
+    content = {"doc": "D-19", "title": "샤리아 심의 의결서", "decision_no": fd.decision_no, "company_name": c.company_name,
+               "case_id": case_id, "result": decision, "round": t.get("round"), "ballots": t.get("ballots"),
+               "committee": ([{"role": "auditor_proxy", "name": user.get("username")}] if proxy else committee), "proxy": proxy, "decided_at": fd.decided_at.isoformat(), "confirmed_by": user.get("username"), "note": note}
+    g = _save_gendoc(db, c, "fatwa_decree", _json.dumps(content, ensure_ascii=False), user, status="final")
+    c.fatwa_status = "provisional" if decision == "approved" else decision
+    sm.record_event(db, c, c.status, c.status, "fatwa.confirm", user["role"], user["uid"],
+                    {"decision": decision, "decision_no": fd.decision_no, "round": t.get("round"), "gen_doc_id": g.gen_doc_id})
+    for r in ("client", "consultant", "auditor"):
+        _notify(db, c, "fatwa.confirm", "샤리아 심의 결과 — " + {"approved": "적합", "conditional": "조건부 적합", "rejected": "부적합"}[decision],
+                body="의결서 " + fd.decision_no + (" · 보완 후 재심의가 필요합니다." if decision != "approved" else ""), role=r)
+    db.commit()
+    return {"ok": True, "decision": decision, "decision_no": fd.decision_no, "gen_doc_id": g.gen_doc_id, "fatwa_status": c.fatwa_status}
+
+
+@app.get("/sharia/agenda")
+def sharia_agenda(user=Depends(auth.require_roles("fatwa_liaison", "operator", "auditor")), db: Session = Depends(get_db)):
+    """SHA-01 안건 목록 — 심의 대기 케이스와 의견 제출 진행(n/3)."""
+    items = []
+    for c in _ops_cases(db, user):
+        if c.status != "fatwa_review":
+            continue
+        t = _fatwa_tally(db, c.case_id)
+        items.append({"case_id": c.case_id, "company_name": c.company_name, "round": t.get("round", 1),
+                      "progress": t.get("progress", "%d/%d" % (t.get("votes_cast", 0), t.get("members", 0))),
+                      "result": t.get("result"), "signatures_ok": t.get("signatures_ok"), "voted_keys": t.get("voted_keys", []),
+                      "proxy": _fatwa_proxy(db, c.org_id)})
+    return {"items": items, "quorum": FATWA_QUORUM}
+
+
+@app.get("/sharia/history")
+def sharia_history(user=Depends(auth.require_roles("fatwa_liaison", "operator", "auditor")), db: Session = Depends(get_db)):
+    """SHA-06 심의 이력 — 의결서 번호·결과·일자."""
+    rows = (db.query(models.FatwaDecision).filter(models.FatwaDecision.decision_no.isnot(None))
+            .order_by(models.FatwaDecision.decided_at.desc()).limit(200).all())
+    out = []
+    for fd in rows:
+        c = db.get(models.CaseApplication, fd.case_id)
+        out.append({"case_id": fd.case_id, "company_name": c.company_name if c else None, "decision_no": fd.decision_no,
+                    "decision": fd.decision, "decided_at": fd.decided_at.isoformat() if fd.decided_at else None,
+                    "final_approved_at": fd.final_approved_at.isoformat() if fd.final_approved_at else None})
+    return {"items": out}
+
+
 @app.patch("/cases/{case_id}/fatwa")
 def patch_fatwa(case_id: str, body: schemas.FatwaReq,
                 user=Depends(rbac.require_action("fatwa.propose")),  # SoD: 가승인=샤리아 전용(최종승인은 operator)
                 db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    if _fatwa_srs(db) and (body.decision in ("approved", "rejected", "conditional")):
+        raise HTTPException(409, {"code": "USE_CHAIR_CONFIRM", "hint": "SRS 모드에서는 위원장 확정(/fatwa/confirm)으로만 결정합니다."})
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     if not fd:
         fd = models.FatwaDecision(case_id=case_id)
@@ -13980,6 +15189,9 @@ def set_invoice_status(invoice_id: str, body: schemas.InvoiceStatusReq,
            {"before": frm, "after": body.status, "reason": body.reason}, commit=False)
     if body.status == "paid":       # 관리자 결제확정 → 모의심사 진입 게이트
         c = _get_case(db, inv.case_id, user)
+        _st = _billing_settings(db, user.get("org_id"))
+        if _st.get("auto_notice_paid"):
+            _send_notice(db, c, "payment_confirmed", user, invoice=inv, auto=True)
         _on_invoice_paid(db, c, user)
     db.commit()
     return {"invoice_id": invoice_id, "status": inv.status}
@@ -14423,6 +15635,239 @@ def decide_match(candidate_id: str, body: schemas.MatchDecisionReq,
 
 
 # ---------- 대시보드 분석 (§11.3 analytics) ----------
+# ===== SRS ⑧ 기간별 인증 현황·보고서 =====
+REPORT_GRANULARITIES = ("daily", "weekly", "monthly", "quarterly", "half", "yearly")
+
+
+def _period_range(granularity, d):
+    """기간 [start, end) 와 라벨. d 는 date."""
+    import calendar
+    if granularity == "daily":
+        s = d; e = d + timedelta(days=1); label = d.isoformat()
+    elif granularity == "weekly":
+        s = d - timedelta(days=d.weekday()); e = s + timedelta(days=7); label = "%s ~ %s" % (s.isoformat(), (e - timedelta(days=1)).isoformat())
+    elif granularity == "monthly":
+        s = d.replace(day=1); e = (s.replace(day=28) + timedelta(days=4)).replace(day=1); label = s.strftime("%Y-%m")
+    elif granularity == "quarterly":
+        qm = ((d.month - 1) // 3) * 3 + 1; s = d.replace(month=qm, day=1)
+        e = (s.replace(month=qm + 2, day=28) + timedelta(days=4)).replace(day=1); label = "%d Q%d" % (d.year, (d.month - 1) // 3 + 1)
+    elif granularity == "half":
+        hm = 1 if d.month <= 6 else 7; s = d.replace(month=hm, day=1)
+        e = date(d.year + 1, 1, 1) if hm == 7 else d.replace(month=7, day=1); label = "%d H%d" % (d.year, 1 if hm == 1 else 2)
+    else:
+        s = d.replace(month=1, day=1); e = date(d.year + 1, 1, 1); label = str(d.year)
+    return s, e, label
+
+
+def _prev_period(granularity, s):
+    return _period_range(granularity, s - timedelta(days=1))
+
+
+def _in(dt, s, e):
+    if dt is None:
+        return False
+    d = dt.date() if isinstance(dt, datetime) else dt
+    return s <= d < e
+
+
+def _report_metrics(db, cases, s, e):
+    """RPT-02 주요 지표 — 기간 [s,e)."""
+    ids = {c.case_id for c in cases}
+    evs = (db.query(models.WorkflowEvent).filter(models.WorkflowEvent.case_id.in_(list(ids)) if ids else False).all()) if ids else []
+    def cnt(action=None, to_status=None):
+        return sum(1 for ev in evs if _in(ev.created_at, s, e) and (action is None or ev.action == action) and (to_status is None or ev.to_status == to_status))
+    new_cases = sum(1 for c in cases if _in(c.created_at, s, e))
+    eligible = sum(1 for ev in evs if _in(ev.created_at, s, e) and ev.action == "eligibility.verdict" and (ev.payload or {}).get("verdict") == "eligible")
+    signed_evs = [ev for ev in evs if _in(ev.created_at, s, e) and ev.action == "contract.signed"]
+    contract_amount = 0.0
+    for ev in signed_evs:
+        ct = db.query(models.Contract).filter_by(case_id=ev.case_id).order_by(models.Contract.created_at.desc()).first()
+        contract_amount += float(ct.fee or 0) if ct else 0.0
+    pays = db.query(models.Payment).filter(models.Payment.case_id.in_(list(ids)) if ids else False).all() if ids else []
+    paid_amount = round(sum(float(p.amount or 0) for p in pays if p.status == "confirmed" and _in(p.paid_at, s, e)), 2)
+    certs = db.query(models.HalalCertificate).filter(models.HalalCertificate.case_id.in_(list(ids)) if ids else False).all() if ids else []
+    issued = sum(1 for ct in certs if ct.issue_date and s.isoformat() <= ct.issue_date[:10] < e.isoformat())
+    return {"new_cases": new_cases, "eligible": eligible, "contracts_signed": len(signed_evs),
+            "contract_amount": round(contract_amount, 2), "paid_amount": paid_amount,
+            "onsite_audits": cnt(to_status="onsite_audit_in_progress"), "fatwa_submitted": cnt(action="audit_report.send_fatwa"),
+            "certificates_issued": issued}, evs, pays, certs
+
+
+def _report_trend(db, cases, evs, pays, certs, granularity, s, e):
+    """RPT-03 추이 — daily/weekly 는 일 단위, 그 외 월 단위 버킷."""
+    unit = "day" if granularity in ("daily", "weekly") else "month"
+    def key(d):
+        d = d.date() if hasattr(d, "date") and not isinstance(d, date) else d
+        return d.isoformat() if unit == "day" else d.strftime("%Y-%m")
+    buckets = {}
+    cur = s
+    while cur < e:
+        buckets[key(cur)] = {"new_cases": 0, "contracts_signed": 0, "certificates_issued": 0, "paid_amount": 0.0}
+        cur = cur + timedelta(days=1) if unit == "day" else (cur.replace(day=28) + timedelta(days=4)).replace(day=1)
+    for c in cases:
+        if _in(c.created_at, s, e):
+            buckets[key(c.created_at)]["new_cases"] += 1
+    for ev in evs:
+        if ev.action == "contract.signed" and _in(ev.created_at, s, e):
+            buckets[key(ev.created_at)]["contracts_signed"] += 1
+    for p in pays:
+        if p.status == "confirmed" and _in(p.paid_at, s, e):
+            buckets[key(p.paid_at)]["paid_amount"] += float(p.amount or 0)
+    for ct in certs:
+        if ct.issue_date and s.isoformat() <= ct.issue_date[:10] < e.isoformat():
+            k = ct.issue_date[:10] if unit == "day" else ct.issue_date[:7]
+            if k in buckets:
+                buckets[k]["certificates_issued"] += 1
+    return [dict(bucket=k, **v) for k, v in buckets.items()]
+
+
+def _report_actions(db, cases):
+    """RPT-06 조치 필요 — 접수 대기·서명 대기·입금 기한 경과·입금 확인·서브 확인 대기·오디터 배정 필요."""
+    now = datetime.utcnow()
+    ids = [c.case_id for c in cases]
+    formal_wait = [c.case_id for c in cases if nav8.formal_state(db, c.case_id) == "submitted"]
+    sig_wait = [ct.case_id for ct in db.query(models.Contract).filter(models.Contract.case_id.in_(ids) if ids else False).all()
+                if ct.status in ("sent", "received", "signing")] if ids else []
+    invs = db.query(models.Invoice).filter(models.Invoice.case_id.in_(ids) if ids else False).all() if ids else []
+    overdue = [i.case_id for i in invs if i.status == "waiting_payment" and i.due_date and i.due_date < now]
+    verify = [i.case_id for i in invs if i.status == "need_verification"]
+    pend2 = db.query(models.ApprovalRequest).filter_by(status="pending").count()
+    assigned = {(ev.payload or {}).get("auditor_id") and ev.case_id for ev in db.query(models.WorkflowEvent)
+                .filter(models.WorkflowEvent.action == "ops.auditor_assigned", models.WorkflowEvent.case_id.in_(ids) if ids else False).all()} if ids else set()
+    need_assign = [c.case_id for c in cases if c.status in ("consultant_review", "document_pre_audit_requested") and c.case_id not in assigned]
+    return {"formal_wait": formal_wait, "signature_wait": sig_wait, "payment_overdue": overdue, "payment_verify": verify,
+            "two_person_pending": pend2, "auditor_unassigned": need_assign}
+
+
+def _build_period_report(db, user, granularity, d):
+    if granularity not in REPORT_GRANULARITIES:
+        raise HTTPException(422, {"code": "BAD_GRANULARITY", "allowed": list(REPORT_GRANULARITIES)})
+    s, e, label = _period_range(granularity, d)
+    today = date.today()
+    in_progress = s <= today < e
+    eff_e = min(e, today + timedelta(days=1)) if in_progress else e
+    cases = _ops_cases(db, user)
+    m, evs, pays, certs = _report_metrics(db, cases, s, eff_e)
+    ps, pe, plabel = _prev_period(granularity, s)
+    pm, _, _, _ = _report_metrics(db, cases, ps, pe)
+    delta = {k: (m[k] - pm[k]) for k in m}
+    # RPT-04 현재 진행(오늘 기준)
+    steps = {i: 0 for i in range(len(nav8.STEP8_LABELS))}
+    stages = {}
+    sectors = {k: {"applied": 0, "issued": 0} for k in SECTOR_KO}
+    cert_case = {ct.case_id for ct in certs if ct.issue_date and s.isoformat() <= ct.issue_date[:10] < eff_e.isoformat()}
+    for c in cases:
+        s8 = nav8.compute_step8(db, c)
+        steps[s8["step"]] += 1
+        sec = (c.profile_ext or {}).get("sector")
+        if sec in sectors:
+            if _in(c.created_at, s, eff_e):
+                sectors[sec]["applied"] += 1
+            if c.case_id in cert_case:
+                sectors[sec]["issued"] += 1
+    # RPT-05 단계 처리 실적(기간 내 전이 to_status 상위 12) · 심사원별 처리 건수
+    auditors = {}
+    users = {u.user_id: u for u in db.query(models.User).filter_by(role="auditor").all()}
+    for ev in evs:
+        if not _in(ev.created_at, s, eff_e):
+            continue
+        if ev.to_status and ev.to_status != ev.from_status:
+            stages[ev.to_status] = stages.get(ev.to_status, 0) + 1
+        if ev.actor_id in users:
+            auditors[users[ev.actor_id].username] = auditors.get(users[ev.actor_id].username, 0) + 1
+    stages_top = sorted(stages.items(), key=lambda x: -x[1])[:12]
+    return {"granularity": granularity, "date": d.isoformat(), "period": {"start": s.isoformat(), "end": (eff_e - timedelta(days=1)).isoformat(), "label": label, "in_progress": in_progress},
+            "previous": {"start": ps.isoformat(), "end": (pe - timedelta(days=1)).isoformat(), "label": plabel},
+            "metrics": m, "previous_metrics": pm, "delta": delta,
+            "trend": _report_trend(db, cases, evs, pays, certs, granularity, s, eff_e),
+            "in_progress_steps": [{"step": i, "label": nav8.STEP8_LABELS[i], "count": steps[i]} for i in steps],
+            "stages": [{"status": k, "count": v} for k, v in stages_top],
+            "sectors": [{"sector": k, "label": SECTOR_KO[k], **v} for k, v in sectors.items()],
+            "auditors": [{"auditor": k, "count": v} for k, v in sorted(auditors.items(), key=lambda x: -x[1])],
+            "actions": _report_actions(db, cases)}
+
+
+@app.get("/admin/reports/period")
+def admin_report_period(granularity: str = Query("monthly"), date_: str = Query(None, alias="date"),
+                        user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    """RPT-01~06 — 기간 선택(일·주·월·분기·반기·연), 진행 중 기간은 오늘까지 집계 + 전기 비교."""
+    try:
+        d = date.fromisoformat(date_) if date_ else date.today()
+    except ValueError:
+        raise HTTPException(422, {"code": "BAD_DATE"})
+    return _build_period_report(db, user, granularity, d)
+
+
+def _report_text(r, report_no):
+    m, pm, dl = r["metrics"], r["previous_metrics"], r["delta"]
+    def row(k, label, money=False):
+        f = (lambda v: format(int(v), ",") + " 원") if money else (lambda v: str(v))
+        return "- %s: %s (전기 %s, %s%s)" % (label, f(m[k]), f(pm[k]), "+" if dl[k] >= 0 else "", f(dl[k]))
+    L = ["■ 인증 현황 보고서 %s" % report_no, "기간: %s (%s ~ %s)%s" % (r["period"]["label"], r["period"]["start"], r["period"]["end"], " · 진행 중(오늘까지)" if r["period"]["in_progress"] else ""),
+         "전기: %s" % r["previous"]["label"], "", "■ 주요 지표",
+         row("new_cases", "신규 신청"), row("eligible", "인증 가능 판정"), row("contracts_signed", "계약 체결"),
+         row("contract_amount", "계약 금액", True), row("paid_amount", "입금액", True), row("onsite_audits", "현장심사"),
+         row("fatwa_submitted", "샤리아 상정"), row("certificates_issued", "인증서 발급"), "", "■ 현재 진행(단계별)"]
+    L += ["- %s: %d건" % (x["label"], x["count"]) for x in r["in_progress_steps"]]
+    L += ["", "■ 단계별 처리 실적"] + (["- %s: %d" % (x["status"], x["count"]) for x in r["stages"]] or ["- 없음"])
+    L += ["", "■ 분야별 신청·발급"] + ["- %s: 신청 %d · 발급 %d" % (x["label"], x["applied"], x["issued"]) for x in r["sectors"]]
+    L += ["", "■ 심사원별 처리 건수"] + (["- %s: %d" % (x["auditor"], x["count"]) for x in r["auditors"]] or ["- 없음"])
+    a = r["actions"]
+    L += ["", "■ 조치 필요", "- 접수 대기 %d · 서명 대기 %d · 입금 기한 경과 %d · 입금 확인 %d · 서브 확인 대기 %d · 오디터 배정 필요 %d"
+          % (len(a["formal_wait"]), len(a["signature_wait"]), len(a["payment_overdue"]), len(a["payment_verify"]), a["two_person_pending"], len(a["auditor_unassigned"]))]
+    L += ["", "■ 결재", "작성: ____________    검토: ____________    승인: ____________", "", "※ 생성 시점의 수치로 고정 보관됩니다(RPT-07)."]
+    return "\n".join(L)
+
+
+@app.post("/admin/reports")
+def admin_report_create(body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """RPT-07 보고서 생성 — 번호 부여(RPT-연도-NNN)·수치 고정 보관(GeneratedDocument period_report + 이벤트 스냅샷)."""
+    import json as _json
+    import types as _types
+    b = dict(body or {})
+    try:
+        d = date.fromisoformat(b.get("date")) if b.get("date") else date.today()
+    except ValueError:
+        raise HTTPException(422, {"code": "BAD_DATE"})
+    r = _build_period_report(db, user, b.get("granularity") or "monthly", d)
+    shim = _types.SimpleNamespace(case_id="reports:" + (user.get("org_id") or "org_demo"), org_id=user.get("org_id"))
+    n = db.query(models.WorkflowEvent).filter_by(case_id=shim.case_id, action="report.issued").count() + 1
+    report_no = "RPT-%d-%03d" % (d.year, n)
+    text = _report_text(r, report_no)
+    g = _save_gendoc(db, shim, "period_report", text, user, status="final")
+    sm.record_event(db, shim, "report", "report", "report.issued", user["role"], user["uid"],
+                    {"report_no": report_no, "gen_doc_id": g.gen_doc_id, "granularity": r["granularity"], "period": r["period"],
+                     "metrics": r["metrics"], "previous_metrics": r["previous_metrics"]})
+    db.commit()
+    return {"ok": True, "report_no": report_no, "gen_doc_id": g.gen_doc_id, "period": r["period"], "metrics": r["metrics"]}
+
+
+@app.get("/admin/reports")
+def admin_report_list(user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    rows = (db.query(models.WorkflowEvent).filter_by(case_id="reports:" + (user.get("org_id") or "org_demo"), action="report.issued")
+            .order_by(models.WorkflowEvent.created_at.desc()).limit(100).all())
+    return {"items": [dict(e.payload or {}, at=e.created_at.isoformat() if e.created_at else None, by=e.actor_id) for e in rows]}
+
+
+@app.get("/admin/reports/{gen_doc_id}")
+def admin_report_get(gen_doc_id: str, user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    g = db.get(models.GeneratedDocument, gen_doc_id)
+    if not g or g.doc_type != "period_report":
+        raise HTTPException(404, {"code": "REPORT_NOT_FOUND"})
+    return {"gen_doc_id": g.gen_doc_id, "content": g.content, "created_at": str(g.created_at), "status": g.status}
+
+
+@app.get("/admin/reports/{gen_doc_id}/pdf")
+def admin_report_pdf(gen_doc_id: str, user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")), db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    g = db.get(models.GeneratedDocument, gen_doc_id)
+    if not g or g.doc_type != "period_report":
+        raise HTTPException(404, {"code": "REPORT_NOT_FOUND"})
+    first = (g.content or "").split("\n", 1)[0].replace("■ ", "")
+    pdf = _render_pdf(first, g.content or "", subtitle="GL HAC · 인증 현황 보고서")
+    return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": _content_disposition(first.replace(" ", "_") + ".pdf")})
+
+
 @app.get("/analytics/summary")
 def analytics_summary(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
     """운영 분석 — 상태/경로/월별 추이·인증서·매출 집계(operator/admin)."""
@@ -14543,7 +15988,8 @@ def _calc_readiness(db, case_id):
                            (_c.profile_ext or {}).get("country") if _c else None,
                            _c.is_msme if _c else None,
                            scheme=(_c.scheme if _c else "product"),
-                           logistics_scope=(_c.logistics_scope if _c else None))["required"]
+                           logistics_scope=(_c.logistics_scope if _c else None),
+                           sector=((_c.profile_ext or {}).get("sector") if _c else None))["required"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     have_types = {d.doc_type for d in docs if d.review_status != "rejected"}
     doc_score = (sum(1 for r in req if r in have_types) / len(req)) if req else 1.0
@@ -14728,9 +16174,14 @@ _DOCAUDIT_STATES = {"document_pre_audit_requested", "document_pre_audit_in_revie
 
 
 def _ops_cases(db, user):
-    """운영자 스코프 케이스(admin=전체, operator=자기 조직)."""
+    """운영자 스코프 케이스 — 인증기관 역할(admin·operator·fatwa_liaison)=전체, 오디터=배정 케이스, 그 외=자기 조직.
+    업체가 각자 조직을 가지면서(10/04 분리) operator 가 자기 조직만 보던 종전 규칙은 운영 화면을 비웠다(/cases 와 동일 기준)."""
     q = db.query(models.CaseApplication)
-    if user["role"] != "admin":
+    if user["role"] in CERTIFIER_ROLES:
+        pass
+    elif user["role"] == "auditor":
+        q = q.filter(models.CaseApplication.case_id.in_(_assigned_case_ids(db, user["uid"]) or [""]))
+    else:
         q = q.filter_by(org_id=user["org_id"])
     return q.order_by(models.CaseApplication.created_at.desc()).all()
 
@@ -14801,6 +16252,10 @@ def _ops_latest_assignment(db, case_ids):
                 cur["reject_reason"] = p.get("reason")
                 cur["responded_at"] = str(e.created_at)
     return out
+
+
+def _is_demo_auditor(user):
+    return user.org_id == "org_demo" and user.username in (set(auth.DEFAULT_AUDITOR_PROFILES) | {"test"})
 
 
 def _ops_auditor_users(db, user):
@@ -14924,7 +16379,7 @@ def _ops_auditors_data(db, user, cases=None):
         n = load.get(a.user_id, 0)
         return {"user_id": a.user_id, "username": a.username, "load": n,
                 "display_name": names.get(a.username) or a.username,
-                "is_demo": a.org_id == "org_demo" and a.username in auth.DEFAULT_AUDITOR_PROFILES,
+                "is_demo": _is_demo_auditor(a),
                 "load_pct": _auditor_load_pct(n), "capacity": AUDITOR_BASE_CAPACITY,
                 "specialty": prof.get("specialty"),
                 "languages": prof.get("languages", []) or [],
@@ -15038,6 +16493,426 @@ def _billing_defaults(db, org_id):
             except (TypeError, ValueError):
                 pass
     return out, (bool(ev), (ev.created_at.isoformat() if ev and ev.created_at else None))
+
+
+# ===== SRS ③ 계약·입금 설정(ADM-05) · 분야 가격표(ADM-03) · 견적 자동 산출(D-07) =====
+BILLING_SETTINGS_ACTION = "billing.settings"
+SECTORS = ("food", "cosmetics", "household", "warehouse", "transport")
+SECTOR_KO = {"food": "식품", "cosmetics": "화장품", "household": "생활용품", "warehouse": "창고", "transport": "운송"}
+BILLING_SETTINGS_DEFAULT = {
+    "sector_base": {"food": 6500000, "cosmetics": 6500000, "household": 6000000, "warehouse": 5500000, "transport": 5500000},
+    "per_product_extra": 300000,          # 2번째 품목부터 품목당
+    "onsite_travel": 1500000,             # 현장심사 출장비
+    "options": {"sihalal_registration": 500000},
+    "ppn_rate": 0.11,
+    "payment_terms": "split50",           # lump | split50 (계약 시 50% · 인증서 발급 시 50%)
+    "due_days": 7,
+    "auto_notice_contract": True,
+    "auto_notice_paid": True,
+    "bank_account": {"bank": "", "number": "", "holder": "GL HAC"},
+}
+
+
+def _billing_settings(db, org_id):
+    ev = (db.query(models.WorkflowEvent)
+          .filter_by(case_id="billing-defaults:" + (org_id or "org_demo"), action=BILLING_SETTINGS_ACTION)
+          .order_by(models.WorkflowEvent.created_at.desc()).first())
+    import copy
+    out = copy.deepcopy(BILLING_SETTINGS_DEFAULT)
+    saved = (ev.payload or {}).get("settings") if ev else None
+    if isinstance(saved, dict):
+        for k, v in saved.items():
+            if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+                out[k].update(v)
+            elif k in out:
+                out[k] = v
+    return out
+
+
+@app.get("/billing/settings")
+def get_billing_settings(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    s = _billing_settings(db, user.get("org_id"))
+    if user["role"] not in ("operator", "admin", "fatwa_liaison"):
+        s = {k: s[k] for k in ("payment_terms", "due_days", "bank_account", "ppn_rate")}
+    return s
+
+
+@app.post("/billing/settings")
+def set_billing_settings(body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """ADM-03/05 — 분야별 기본 심사비·품목 추가비·출장비·옵션·지급 조건·입금 기한·자동 발송·계좌."""
+    b = dict(body or {})
+    if "payment_terms" in b and b["payment_terms"] not in ("lump", "split50"):
+        raise HTTPException(422, {"code": "BAD_PAYMENT_TERMS"})
+    if "due_days" in b:
+        try:
+            b["due_days"] = int(b["due_days"])
+        except (TypeError, ValueError):
+            raise HTTPException(422, {"code": "BAD_DUE_DAYS"})
+        if not (1 <= b["due_days"] <= 90):
+            raise HTTPException(422, {"code": "BAD_DUE_DAYS"})
+    for k in ("sector_base", "options"):
+        if k in b:
+            if not isinstance(b[k], dict):
+                raise HTTPException(422, {"code": "BAD_" + k.upper()})
+            for kk, vv in b[k].items():
+                try:
+                    b[k][kk] = float(vv)
+                except (TypeError, ValueError):
+                    raise HTTPException(422, {"code": "BAD_AMOUNT", "key": kk})
+    sm.record_event(db, _billing_shim(user.get("org_id")), "billing", "billing",
+                    BILLING_SETTINGS_ACTION, user["role"], user["uid"], {"settings": b})
+    db.commit()
+    return _billing_settings(db, user.get("org_id"))
+
+
+def _case_sector(c):
+    pe = c.profile_ext or {}
+    s = pe.get("sector") or (pe.get("sectors") or [None])[0]
+    if s in SECTORS:
+        return s
+    return "warehouse" if (c.scheme or "product") == "logistics" else "food"
+
+
+def _quote_compute(db, c, settings, opts):
+    """CTR-01 — 분야 기본 심사비 + 품목당 추가(2번째부터) + 출장비 + 선택 옵션 + 부가세. 산출 근거를 lines 로."""
+    sector = opts.get("sector") if opts.get("sector") in SECTORS else _case_sector(c)
+    n_prod = int(opts.get("product_count") if opts.get("product_count") is not None else len(c.product_ids or []))
+    lines = [{"code": "base", "label": "기본 심사비 (" + SECTOR_KO[sector] + ")", "qty": 1,
+              "unit": float(settings["sector_base"][sector]), "amount": float(settings["sector_base"][sector])}]
+    extra_n = max(0, n_prod - 1)
+    if extra_n:
+        lines.append({"code": "product_extra", "label": "품목 추가 (2번째부터)", "qty": extra_n,
+                      "unit": float(settings["per_product_extra"]), "amount": float(settings["per_product_extra"]) * extra_n})
+    if opts.get("onsite", True):
+        lines.append({"code": "onsite_travel", "label": "현장심사 출장비", "qty": 1,
+                      "unit": float(settings["onsite_travel"]), "amount": float(settings["onsite_travel"])})
+    for o in (opts.get("options") or []):
+        if o in settings["options"]:
+            lines.append({"code": "opt:" + o, "label": "선택 옵션 (" + o + ")", "qty": 1,
+                          "unit": float(settings["options"][o]), "amount": float(settings["options"][o])})
+    for adj in (opts.get("adjustments") or []):
+        try:
+            amt = float(adj.get("amount"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        lines.append({"code": "adjust", "label": str(adj.get("label") or "조정"), "qty": 1, "unit": amt, "amount": amt})
+    subtotal = round(sum(l["amount"] for l in lines), 2)
+    ppn = round(subtotal * float(settings.get("ppn_rate", 0.11)), 2)
+    return {"sector": sector, "product_count": n_prod, "lines": lines, "subtotal": subtotal, "ppn": ppn,
+            "total": round(subtotal + ppn, 2), "payment_terms": settings.get("payment_terms"),
+            "currency": "KRW"}
+
+
+def _latest_quote(db, case_id):
+    e = nav8.latest_event(db, case_id, "quote.issued")
+    return (e.payload or {}) if e else None
+
+
+@app.post("/cases/{case_id}/quote")
+def issue_quote(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """D-07 견적서 자동 산출(관리자). body: {sector?, product_count?, onsite?(기본 true), options?[], adjustments?[{label,amount}], note?}.
+    다시 부르면 새 버전(변경 요청 반영)."""
+    import json as _json
+    c = _get_case(db, case_id, user)
+    if nav8.formal_flow_on() and nav8.formal_state(db, case_id) != "accepted":
+        raise HTTPException(409, {"code": "FORMAL_NOT_ACCEPTED"})
+    settings = _billing_settings(db, user.get("org_id"))
+    q = _quote_compute(db, c, settings, dict(body or {}))
+    prev = _latest_quote(db, case_id)
+    q["version"] = (int(prev.get("version") or 0) + 1) if prev else 1
+    q["note"] = ((body or {}).get("note") or "").strip()
+    q["issued_at"] = datetime.utcnow().isoformat()
+    g = _save_gendoc(db, c, "quotation", _json.dumps(dict(q, doc="D-07", company_name=c.company_name, case_id=case_id), ensure_ascii=False), user, status="final")
+    q["gen_doc_id"] = g.gen_doc_id
+    sm.record_event(db, c, c.status, c.status, "quote.issued", user["role"], user["uid"], q)
+    for r in ("client", "consultant"):
+        _notify(db, c, "quote.issued", "견적서 발송 (v%d)" % q["version"], body="총액 %s원" % format(int(q["total"]), ","), role=r)
+    db.commit()
+    return q
+
+
+@app.get("/cases/{case_id}/quote")
+def get_quote(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _get_case(db, case_id, user)
+    q = _latest_quote(db, case_id)
+    cr = nav8.latest_event(db, case_id, "quote.change_requested", "quote.change_rejected", "quote.issued")
+    hist = [dict(e.payload or {}, action=e.action, at=e.created_at.isoformat() if e.created_at else None, by=e.actor_id)
+            for e in db.query(models.WorkflowEvent).filter(models.WorkflowEvent.case_id == case_id,
+                                                           models.WorkflowEvent.action.in_(["quote.issued", "quote.change_requested", "quote.change_rejected"]))
+            .order_by(models.WorkflowEvent.created_at.asc()).all()]
+    pending_change = bool(cr and cr.action == "quote.change_requested")
+    return {"quote": q, "pending_change": pending_change, "history": hist}
+
+
+@app.post("/cases/{case_id}/quote/change-request")
+def quote_change_request(case_id: str, body: dict = None, user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
+    """CTR-02 — 컨설턴트가 사유와 함께 변경 요청 → 관리자가 조정 견적(재발행) 또는 반려."""
+    c = _get_case(db, case_id, user)
+    reason = ((body or {}).get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    if not _latest_quote(db, case_id):
+        raise HTTPException(409, {"code": "QUOTE_NOT_ISSUED"})
+    sm.record_event(db, c, c.status, c.status, "quote.change_requested", user["role"], user["uid"], {"reason": reason})
+    _notify(db, c, "quote.change_requested", "견적 변경 요청", body="사유: " + reason, role="operator")
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/cases/{case_id}/quote/change-reject")
+def quote_change_reject(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    c = _get_case(db, case_id, user)
+    reason = ((body or {}).get("reason") or "").strip()
+    sm.record_event(db, c, c.status, c.status, "quote.change_rejected", user["role"], user["uid"], {"reason": reason})
+    _notify(db, c, "quote.change_rejected", "견적 변경 반려", body=("사유: " + reason) if reason else "", role="consultant")
+    db.commit()
+    return {"ok": True}
+
+
+def _create_installments(db, c, contract, settings, user):
+    """CTR-05 — 계약 체결 시 지급 조건에 따라 회차 청구서 생성. split50: 1회차(계약 시) 즉시 청구·2회차(인증서 발급 시) 대기(draft)."""
+    total = float(contract.fee or 0)
+    if total <= 0:
+        return []
+    terms = settings.get("payment_terms") or "split50"
+    plan = [(1, total, "contract")] if terms == "lump" else [(1, round(total / 2, 2), "contract"), (2, round(total - round(total / 2, 2), 2), "certificate")]
+    out = []
+    for rnd, amt, stage in plan:
+        base = round(amt / (1 + float(settings.get("ppn_rate", 0.11))), 2)
+        inv = models.Invoice(case_id=c.case_id, service_type="installment", amount=base, ppn=round(amt - base, 2), total=amt,
+                             status="waiting_payment" if stage == "contract" else "draft",
+                             due_date=(datetime.utcnow() + timedelta(days=int(settings.get("due_days") or 7))) if stage == "contract" else None)
+        db.add(inv)
+        db.flush()
+        inv.invoice_no = "INV-" + inv.invoice_id[:8].upper() + "-R%d" % rnd
+        inv.payment_ref = "PAY-" + inv.invoice_id[:8].upper()
+        sm.record_event(db, c, c.status, c.status, "invoice.installment", user["role"], user["uid"],
+                        {"invoice_id": inv.invoice_id, "round": rnd, "stage": stage, "total": amt, "of": len(plan)})
+        out.append({"invoice_id": inv.invoice_id, "round": rnd, "stage": stage, "total": amt, "status": inv.status})
+    return out
+
+
+# ===== SRS ③ 고지·알림(관리자 결정형) · 입금 확인 · 계약·입금 보드 =====
+NOTICE_KINDS = {
+    "signature_request": "전자서명 요청", "contract_signed": "계약 체결 고지", "payment_due": "입금 고지",
+    "payment_reminder": "입금 재고지(기한 경과)", "payment_confirmed": "입금 확인 알림",
+}
+_NOTICE_DEFAULT_RECIPIENTS = {"signature_request": ["client"], "contract_signed": ["client", "consultant", "auditor"],
+                              "payment_due": ["client", "consultant"], "payment_reminder": ["client", "consultant"],
+                              "payment_confirmed": ["client", "consultant"]}
+
+
+def _installment_map(db, case_id):
+    """invoice_id → {round, stage, of} (invoice.installment 이벤트)."""
+    out = {}
+    for e in db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="invoice.installment").all():
+        p = e.payload or {}
+        if p.get("invoice_id"):
+            out[p["invoice_id"]] = {"round": p.get("round"), "stage": p.get("stage"), "of": p.get("of")}
+    return out
+
+
+def _last_notice(db, case_id, kind, invoice_id=None):
+    evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="billing.notice")
+           .order_by(models.WorkflowEvent.created_at.desc()).all())
+    for e in evs:
+        p = e.payload or {}
+        if p.get("kind") == kind and (invoice_id is None or p.get("invoice_id") == invoice_id):
+            return e
+    return None
+
+
+def _send_notice(db, c, kind, user, invoice=None, recipients=None, channels=None, message=None, due_days=None, auto=False):
+    """고지·알림 한 건 발송 + 이력(billing.notice). payment_due 는 청구서 기한·상태도 갱신한다."""
+    if kind not in NOTICE_KINDS:
+        raise HTTPException(422, {"code": "BAD_NOTICE_KIND", "allowed": sorted(NOTICE_KINDS)})
+    settings = _billing_settings(db, c.org_id if user is None or user["role"] not in ("operator", "admin") else user.get("org_id"))
+    recipients = [r for r in (recipients or _NOTICE_DEFAULT_RECIPIENTS[kind]) if r in ("client", "consultant", "auditor")]
+    channels = channels or ["inapp", "email"]
+    due_date = None
+    if kind in ("payment_due", "payment_reminder"):
+        if not invoice:
+            raise HTTPException(422, {"code": "INVOICE_REQUIRED"})
+        if kind == "payment_due":
+            invoice.due_date = datetime.utcnow() + timedelta(days=int(due_days or settings.get("due_days") or 7))
+            if invoice.status == "draft":
+                invoice.status = "waiting_payment"
+        due_date = invoice.due_date.isoformat() if invoice.due_date else None
+    title = NOTICE_KINDS[kind] + ((" — " + invoice.invoice_no) if invoice and invoice.invoice_no else "")
+    body = (message or "").strip()
+    if not body:
+        if kind == "payment_due":
+            ba = settings.get("bank_account") or {}
+            body = "청구 금액 %s원 · 입금 기한 %s · 계좌 %s %s (%s)" % (format(int(invoice.total or 0), ","), (due_date or "")[:10],
+                                                                ba.get("bank", ""), ba.get("number", ""), ba.get("holder", ""))
+        elif kind == "payment_reminder":
+            body = "입금 기한(%s)이 지났습니다. 청구 금액 %s원을 입금해 주세요." % ((due_date or "")[:10], format(int(invoice.total or 0), ","))
+        elif kind == "payment_confirmed":
+            body = "입금이 확인되었습니다. 감사합니다." + ((" (" + invoice.invoice_no + ")") if invoice and invoice.invoice_no else "")
+        elif kind == "contract_signed":
+            body = "할랄인증 계약이 체결되었습니다."
+        else:
+            body = "계약서 전자서명을 요청드립니다. 시스템에서 서명해 주세요."
+    for r in recipients:
+        _notify(db, c, "billing." + kind, title, body=body, channels=channels, role=r)
+    payload = {"kind": kind, "invoice_id": invoice.invoice_id if invoice else None, "recipients": recipients,
+               "channels": channels, "message": body, "due_date": due_date, "auto": auto}
+    sm.record_event(db, c, c.status, c.status, "billing.notice", (user or {}).get("role", "system"), (user or {}).get("uid"), payload)
+    return payload
+
+
+@app.post("/cases/{case_id}/billing/notice")
+def billing_notice(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """NTF-02 관리자 결정형 발송 창 — {kind, invoice_id?, recipients?[], channels?[], due_days?, message?}."""
+    c = _get_case(db, case_id, user)
+    b = dict(body or {})
+    inv = db.get(models.Invoice, b.get("invoice_id")) if b.get("invoice_id") else None
+    if b.get("invoice_id") and (not inv or inv.case_id != case_id):
+        raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    p = _send_notice(db, c, b.get("kind"), user, invoice=inv, recipients=b.get("recipients"), channels=b.get("channels"),
+                     message=b.get("message"), due_days=b.get("due_days"))
+    db.commit()
+    return {"ok": True, "notice": p}
+
+
+@app.get("/cases/{case_id}/billing/notices")
+def billing_notices(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """NTF-03 업체별 고지·알림 이력."""
+    _get_case(db, case_id, user)
+    evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="billing.notice")
+           .order_by(models.WorkflowEvent.created_at.desc()).limit(100).all())
+    return {"items": [dict(e.payload or {}, at=e.created_at.isoformat() if e.created_at else None, by=e.actor_id,
+                           kind_label=NOTICE_KINDS.get((e.payload or {}).get("kind"), "")) for e in evs]}
+
+
+@app.post("/invoices/{invoice_id}/paid-notice")
+def invoice_paid_notice(invoice_id: str, body: dict = None, user=Depends(auth.require_roles("applicant", "penyelia_halal", "consultant")),
+                        db: Session = Depends(get_db)):
+    """CTR-10 기업 [입금 완료 알림] → 입금확인중(need_verification) + 관리자 알림."""
+    inv = db.get(models.Invoice, invoice_id)
+    if not inv:
+        raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    c = _get_case(db, inv.case_id, user)
+    if inv.status in ("paid", "refunded", "cancelled"):
+        raise HTTPException(409, {"code": "INVOICE_SETTLED", "status": inv.status})
+    inv.status = "need_verification"
+    note = ((body or {}).get("note") or "").strip()
+    sm.record_event(db, c, c.status, c.status, "invoice.client_paid_notice", user["role"], user["uid"],
+                    {"invoice_id": invoice_id, "note": note})
+    _notify(db, c, "invoice.client_paid_notice", "입금 완료 알림 — " + (inv.invoice_no or ""),
+            body=(c.company_name or "") + " 입금 완료를 알려 왔습니다. 입금을 확인해 주세요." + ((" 메모: " + note) if note else ""), role="operator")
+    db.commit()
+    return {"invoice_id": invoice_id, "status": inv.status}
+
+
+@app.post("/invoices/{invoice_id}/bill-now")
+def invoice_bill_now(invoice_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """CTR-11 미리 청구 — 대기(draft) 회차를 지급 시점 전에 청구·입금 고지."""
+    inv = db.get(models.Invoice, invoice_id)
+    if not inv:
+        raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    c = _get_case(db, inv.case_id, user)
+    if inv.status != "draft":
+        raise HTTPException(409, {"code": "NOT_DRAFT", "status": inv.status})
+    p = _send_notice(db, c, "payment_due", user, invoice=inv, due_days=(body or {}).get("due_days"), message=(body or {}).get("message"))
+    sm.record_event(db, c, c.status, c.status, "invoice.bill_early", user["role"], user["uid"], {"invoice_id": invoice_id})
+    db.commit()
+    return {"invoice_id": invoice_id, "status": inv.status, "notice": p}
+
+
+def _billing_next_action(formal, contract, quote, invoices, inst, signed_notice_sent, notices_by_inv, now):
+    """CTR-07 다음 조치 규칙: 접수 확인 → 서명 요청 → GL HAC 서명 → 체결 고지 → 입금 고지 → (기한 경과 재고지) → 입금 확인 → 확인 알림 → 다음 회차 · 완납."""
+    if nav8.formal_flow_on() and formal != "accepted":
+        return "accept_formal", "접수 확인"
+    if not contract or contract.status in ("requested", "draft"):
+        return "send_contract", "견적·계약서 발송"
+    sigs = {s.get("party") for s in (contract.signatures or [])}
+    if "A" not in sigs:
+        return "request_signature", "서명 요청(기업)"
+    if "B" not in sigs:
+        return "sign_b", "GL HAC 서명"
+    if not signed_notice_sent:
+        return "notice_contract", "체결 고지"
+    rounds = sorted(invoices, key=lambda i: (inst.get(i.invoice_id, {}).get("round") or 99))
+    for inv in rounds:
+        if inv.status == "paid":
+            if not notices_by_inv.get((inv.invoice_id, "payment_confirmed")):
+                return "notice_paid", "입금 확인 알림"
+            continue
+        if inv.status == "need_verification":
+            return "confirm_paid", "입금 확인"
+        if inv.status == "draft":
+            return "next_round", "다음 회차(발급 시 청구)"
+        if not notices_by_inv.get((inv.invoice_id, "payment_due")):
+            return "notice_due", "입금 고지"
+        if inv.due_date and inv.due_date < now:
+            return "notice_reminder", "재고지(기한 경과)"
+        return "wait_payment", "입금 대기"
+    return "settled", "완납" if invoices else "회차 없음"
+
+
+@app.get("/admin/billing/board")
+def admin_billing_board(filter: str = "all", user=Depends(auth.require_roles("operator", "fatwa_liaison", "auditor")),
+                        db: Session = Depends(get_db)):
+    """CTR-06 계약·입금 처리 보드 — 업체별 계약 금액·서명(갑·을)·체결 고지·회차별 입금·다음 조치. filter: action|signing|signed|paying|overdue|settled|all."""
+    now = datetime.utcnow()
+    items = []
+    for c in _ops_cases(db, user):
+        contract = db.query(models.Contract).filter_by(case_id=c.case_id).order_by(models.Contract.created_at.desc()).first()
+        quote = _latest_quote(db, c.case_id)
+        if not contract and not quote and not (nav8.formal_flow_on() and nav8.formal_state(db, c.case_id)):
+            continue
+        inst = _installment_map(db, c.case_id)
+        invoices = [i for i in db.query(models.Invoice).filter_by(case_id=c.case_id).all() if i.invoice_id in inst] or \
+                   db.query(models.Invoice).filter_by(case_id=c.case_id).all()
+        notices_by_inv = {}
+        signed_notice_sent = False
+        for e in db.query(models.WorkflowEvent).filter_by(case_id=c.case_id, action="billing.notice").all():
+            p = e.payload or {}
+            if p.get("kind") == "contract_signed":
+                signed_notice_sent = True
+            if p.get("invoice_id"):
+                notices_by_inv[(p["invoice_id"], p.get("kind"))] = e.created_at.isoformat() if e.created_at else True
+        sigs = {s.get("party"): s for s in (contract.signatures or [])} if contract else {}
+        formal = nav8.formal_state(db, c.case_id)
+        code, label = _billing_next_action(formal, contract, quote, invoices, inst, signed_notice_sent, notices_by_inv, now)
+        rounds = []
+        overdue = False
+        for inv in sorted(invoices, key=lambda i: (inst.get(i.invoice_id, {}).get("round") or 99)):
+            od = bool(inv.due_date and inv.due_date < now and inv.status in ("waiting_payment",))
+            overdue = overdue or od
+            rounds.append({"invoice_id": inv.invoice_id, "invoice_no": inv.invoice_no, "round": inst.get(inv.invoice_id, {}).get("round"),
+                           "stage": inst.get(inv.invoice_id, {}).get("stage"), "total": inv.total, "status": inv.status,
+                           "due_date": inv.due_date.isoformat() if inv.due_date else None, "overdue": od,
+                           "due_notice_at": notices_by_inv.get((inv.invoice_id, "payment_due")),
+                           "reminder_at": notices_by_inv.get((inv.invoice_id, "payment_reminder")),
+                           "confirmed_notice_at": notices_by_inv.get((inv.invoice_id, "payment_confirmed"))})
+        paid_all = bool(rounds) and all(r["status"] == "paid" for r in rounds)
+        items.append({"case_id": c.case_id, "company_name": c.company_name, "case_status": c.status,
+                      "formal": formal, "quote_total": (quote or {}).get("total"),
+                      "contract_id": contract.contract_id if contract else None, "contract_no": contract.contract_no if contract else None,
+                      "contract_status": contract.status if contract else None, "fee": contract.fee if contract else None,
+                      "signed_a": bool(sigs.get("A")), "signed_b": bool(sigs.get("B")), "signed_notice_sent": signed_notice_sent,
+                      "rounds": rounds, "overdue": overdue, "settled": paid_all,
+                      "next_action": code, "next_action_label": label})
+    def _keep(it):
+        if filter == "all":
+            return True
+        if filter == "action":
+            return it["next_action"] not in ("wait_payment", "settled", "next_round")
+        if filter == "signing":
+            return not (it["signed_a"] and it["signed_b"])
+        if filter == "signed":
+            return it["signed_a"] and it["signed_b"]
+        if filter == "paying":
+            return any(r["status"] in ("waiting_payment", "need_verification") for r in it["rounds"])
+        if filter == "overdue":
+            return it["overdue"]
+        if filter == "settled":
+            return it["settled"]
+        return True
+    items = [it for it in items if _keep(it)]
+    return {"items": items, "count": len(items), "filter": filter}
 
 
 @app.get("/billing/defaults")
@@ -15422,10 +17297,35 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
     au = db.get(models.User, body.auditor_id)
     if not au or au.role != "auditor":
         raise HTTPException(404, {"code": "AUDITOR_NOT_FOUND", "auditor_id": body.auditor_id})
+    if _is_demo_auditor(au) and not auth.dev_mode():
+        raise HTTPException(409, {"code": "DEMO_AUDITOR_NOT_ASSIGNABLE", "message": "샘플 계정에는 운영 심사를 배정할 수 없습니다. 실제 심사원 계정을 등록해 주세요."})
     if user["role"] != "admin" and au.org_id != user["org_id"]:
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
+    _limit = _audit_settings(db, user.get("org_id")).get("max_cases_per_auditor") or 6
+    _assign_all = _ops_latest_assignment(db, [x.case_id for x in _ops_cases(db, user)])
+    _load = sum(1 for p in _assign_all.values() if p.get("auditor_id") == au.user_id)
+    if _load >= _limit and not (body.__dict__.get("force") if hasattr(body, "__dict__") else False):
+        raise HTTPException(409, {"code": "AUDITOR_OVERLOADED", "load": _load, "limit": _limit})
     sm.record_event(db, c, c.status, c.status, "ops.auditor_assigned", user["role"], user["uid"],
                     {"auditor_id": au.user_id, "auditor_name": au.username})
+    # SRS MEM-06: 서브 오디터가 없으면 담당 건수가 가장 적은 오디터(메인 제외)를 자동 배정 — 2인 확인의 전제
+    db.query(models.CaseAuditor).filter_by(case_id=case_id, user_id=au.user_id, role="co").delete()
+    if not db.query(models.CaseAuditor).filter_by(case_id=case_id, role="co").first():
+        cands = db.query(models.User).filter_by(role="auditor", org_id=au.org_id).all()
+        cands = [u for u in cands if u.user_id != au.user_id and (auth.dev_mode() or not _is_demo_auditor(u))]
+        if cands:
+            all_assign = _ops_latest_assignment(db, [x.case_id for x in _ops_cases(db, user)])
+            main_load = {}
+            for p in all_assign.values():
+                main_load[p.get("auditor_id")] = main_load.get(p.get("auditor_id"), 0) + 1
+            co_rows = db.query(models.CaseAuditor).filter_by(role="co").all()
+            co_load = {}
+            for r in co_rows:
+                co_load[r.user_id] = co_load.get(r.user_id, 0) + 1
+            pick = min(cands, key=lambda u: (main_load.get(u.user_id, 0) + co_load.get(u.user_id, 0), u.username or ""))
+            db.add(models.CaseAuditor(case_id=case_id, user_id=pick.user_id, role="co", assigned_by=user["uid"]))
+            sm.record_event(db, c, c.status, c.status, "auditor.co_auto_assigned", user["role"], user["uid"],
+                            {"co_auditor_id": pick.user_id, "co_auditor_name": pick.username, "main_auditor_id": au.user_id})
     _notify(db, c, "ops.auditor_assigned", role="auditor",
             msg=("ops.auditor_assigned", {"company": c.company_name or "",
                                           "auditor": au.username}))
@@ -15435,8 +17335,10 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
     cases = _ops_cases(db, user)
     assignments = _ops_latest_assignment(db, [x.case_id for x in cases])
     load = sum(1 for p in assignments.values() if p.get("auditor_id") == au.user_id)
+    co = db.query(models.CaseAuditor).filter_by(case_id=case_id, role="co").first()
     return {"ok": True, "case_id": case_id, "auditor_id": au.user_id,
-            "auditor_name": au.username, "load": load}
+            "auditor_name": au.username, "load": load,
+            "co_auditor_id": (co.user_id if co else None)}
 
 
 _ENUMS = {
@@ -15703,8 +17605,8 @@ def util_romanize(body: dict = None, user=Depends(auth.get_current_user)):
 
 @app.get("/cases/{case_id}/preassess-report.docx")
 def preassess_report_docx(case_id: str, lang: str = Query("ko"),
-                          user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
-                                                          "consultant")),
+                          user=Depends(auth.require_roles("auditor", "operator", "consultant",
+                                                          "applicant", "penyelia_halal")),
                           db: Session = Depends(get_db)):
     """사전심사 결과 보고서 — 편집 가능한 Word(.docx). 기업·공장·문서·성분(부정 우선)·판정 수록.
     lang=ko|en|id — 제목·표머리·판정어 등 고정 라벨을 현지화한다(성분 근거 서술은 원문 유지)."""
@@ -15876,8 +17778,8 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
 
 @app.get("/cases/{case_id}/preassess-report.pdf")
 def preassess_report_pdf(case_id: str, lang: str = Query("ko"),
-                         user=Depends(auth.require_roles("auditor", "fatwa_liaison", "operator",
-                                                         "consultant")),
+                         user=Depends(auth.require_roles("auditor", "operator", "consultant",
+                                                         "applicant", "penyelia_halal")),
                          db: Session = Depends(get_db)):
     """사전심사 보고서 PDF — docx를 LibreOffice로 변환(인라인 미리보기용, docx와 동일 양식).
     soffice 부재 시 docx 그대로 반환(다운로드 폴백)."""
@@ -16165,6 +18067,16 @@ SJPH_EVIDENCE_ITEMS = [
     ("purchase_log", "구매 기록"), ("receiving_log", "입고 기록"), ("usage_log", "사용 기록"),
     ("production_log", "생산 기록"), ("distribution_log", "출고 기록"), ("internal_audit", "내부 심사 기록"),
 ]
+# SRS PRP-02 준비 서류 13종 — 업로드는 SjphEvidence(item_key)로 받고, 상태(4단)는 WorkflowEvent(prep.item, latest-wins)로 둔다.
+PREP_ITEMS = [
+    ("org_chart", "조직표"), ("halal_supervisor", "할랄 슈퍼바이저 지정"), ("training", "교육 기록"),
+    ("sjph_manual", "SJPH 매뉴얼"), ("halal_policy", "할랄 정책"), ("production_flow", "제조 공정도"),
+    ("facility_layout", "시설 배치도"), ("material_evidence", "원재료 증빙"), ("cleaning", "세척 기록"),
+    ("purchase_log", "구매 기록"), ("label", "라벨"), ("traceability", "추적성 기록"), ("internal_audit", "내부 심사 기록"),
+]
+PREP_LOGISTICS_EXCLUDED = {"production_flow", "label"}      # 물류 분야는 공정도·라벨 제외
+PREP_STATUSES = ("not_started", "pending_review", "revision_requested", "confirmed", "not_applicable")
+PREP_KEYS = {k for k, _ in PREP_ITEMS}
 # 증빙 항목 이름은 업체가 무엇을 올려야 하는지 보는 문구다 — 한국어만 두면 인니 업체가
 # 무슨 서류인지 알 수 없다.
 # 증빙 항목 이름은 업체가 무엇을 올려야 하는지 보는 문구다 — 사전 한 곳에서 꺼낸다.
@@ -16266,6 +18178,208 @@ def autofile_sjph_evidence(case_id: str,
     return {"filled": filled, "count": len(filled)}
 
 
+# ===== SRS ⑦ 준비 서류 13종 · 교육 서류 D-10~14 =====
+def _prep_states(db, case_id):
+    out = {}
+    for e in (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="prep.item")
+              .order_by(models.WorkflowEvent.created_at.asc(), models.WorkflowEvent.event_id.asc()).all()):
+        p = e.payload or {}
+        if p.get("item_key"):
+            out[p["item_key"]] = dict(p, at=e.created_at.isoformat() if e.created_at else None, by=e.actor_id)
+    return out
+
+
+def _prep_notes(db, case_id):
+    out = {}
+    for e in (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="prep.note")
+              .order_by(models.WorkflowEvent.created_at.asc()).all()):
+        p = e.payload or {}
+        if p.get("item_key"):
+            out.setdefault(p["item_key"], []).append({"note": p.get("note"), "by": e.actor_id, "role": e.actor_type,
+                                                       "at": e.created_at.isoformat() if e.created_at else None})
+    return out
+
+
+def _prep_items(db, c, lang="ko"):
+    have = {e.item_key: e for e in db.query(models.SjphEvidence).filter_by(case_id=c.case_id)}
+    st = _prep_states(db, c.case_id)
+    notes = _prep_notes(db, c.case_id)
+    logi = (c.scheme or "product") == "logistics"
+    items = []
+    for k, ko in PREP_ITEMS:
+        applicable = not (logi and k in PREP_LOGISTICS_EXCLUDED)
+        s = st.get(k, {})
+        status = s.get("status") or ("pending_review" if k in have else "not_started")
+        if not applicable:
+            status = "not_applicable"
+        items.append({"item_key": k, "label": _evidence_label(k, ko, lang), "applicable": applicable, "status": status,
+                      "note": s.get("note") or "", "uploaded": k in have,
+                      "filename": have[k].filename if k in have else None,
+                      "document_id": have[k].document_id if k in have else None,
+                      "updated_at": s.get("at"), "notes": notes.get(k, [])})
+    app_items = [i for i in items if i["applicable"]]
+    done = sum(1 for i in app_items if i["status"] in ("confirmed", "not_applicable"))
+    return {"items": items, "applicable": len(app_items), "done": done,
+            "complete": bool(app_items) and done == len(app_items),
+            "completion": round(done / len(app_items) * 100) if app_items else 0}
+
+
+@app.get("/cases/{case_id}/prep")
+def prep_list(case_id: str, lang: str = Query("ko"), user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """PRP-02/03 — 준비 서류 13종 상태(준비 전·검토 대기·보완 요청·확인 완료·해당 없음)."""
+    c = _get_case(db, case_id, user)
+    out = _prep_items(db, c, lang)
+    out["education_consent"] = bool(nav8.latest_event(db, case_id, "education.consent"))
+    return out
+
+
+@app.patch("/cases/{case_id}/prep/{item_key}")
+def prep_set_status(case_id: str, item_key: str, body: dict = None, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """항목 상태 변경 — 오디터: confirmed | revision_requested(사유 필수) | pending_review(되돌리기). 기업·컨설턴트: not_applicable(사유 필수) | pending_review."""
+    c = _get_case(db, case_id, user)
+    if item_key not in PREP_KEYS:
+        raise HTTPException(404, {"code": "BAD_ITEM_KEY"})
+    b = dict(body or {})
+    status = (b.get("status") or "").strip()
+    note = (b.get("note") or "").strip()
+    if status not in PREP_STATUSES:
+        raise HTTPException(422, {"code": "BAD_STATUS", "allowed": list(PREP_STATUSES)})
+    staff = user["role"] in ("auditor", "operator", "admin")
+    if staff:
+        if status not in ("confirmed", "revision_requested", "pending_review"):
+            raise HTTPException(403, {"code": "STATUS_NOT_ALLOWED"})
+        if status == "revision_requested" and not note:
+            raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    else:
+        if status not in ("not_applicable", "pending_review"):
+            raise HTTPException(403, {"code": "STATUS_NOT_ALLOWED"})
+        if status == "not_applicable" and not note:
+            raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    sm.record_event(db, c, c.status, c.status, "prep.item", user["role"], user["uid"], {"item_key": item_key, "status": status, "note": note})
+    if status == "revision_requested":
+        for r in ("client", "consultant"):
+            _notify(db, c, "prep.revision_requested", "준비 서류 보완 요청 — " + dict(PREP_ITEMS).get(item_key, item_key), body=note, role=r)
+    db.commit()
+    return {"ok": True, "item_key": item_key, "status": status}
+
+
+@app.post("/cases/{case_id}/prep/{item_key}/note")
+def prep_note(case_id: str, item_key: str, body: dict = None,
+              user=Depends(auth.require_roles("consultant", "auditor", "operator")), db: Session = Depends(get_db)):
+    """PRP-04 컨설턴트 항목별 의견(오디터도 가능)."""
+    c = _get_case(db, case_id, user)
+    if item_key not in PREP_KEYS:
+        raise HTTPException(404, {"code": "BAD_ITEM_KEY"})
+    note = ((body or {}).get("note") or "").strip()
+    if not note:
+        raise HTTPException(422, {"code": "NOTE_REQUIRED"})
+    sm.record_event(db, c, c.status, c.status, "prep.note", user["role"], user["uid"], {"item_key": item_key, "note": note})
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/cases/{case_id}/prep/complete")
+def prep_complete(case_id: str, body: dict = None, user=Depends(auth.require_roles("auditor", "operator")), db: Session = Depends(get_db)):
+    """PRP-05 — 모든 해당 항목 확인 완료 → [모의심사 완료·결과 통지] (서브 오디터 2인 확인 → D-16)."""
+    c = _get_case(db, case_id, user)
+    p = _prep_items(db, c)
+    if not p["complete"]:
+        raise HTTPException(409, {"code": "PREP_INCOMPLETE", "done": p["done"], "applicable": p["applicable"]})
+    if nav8.formal_flow_on() and not nav8.latest_event(db, case_id, "education.consent"):
+        raise HTTPException(409, {"code": "EDUCATION_CONSENT_REQUIRED"})
+    payload = {"result": "pass", "reason": ((body or {}).get("note") or "").strip(), "source": "prep.complete"}
+    pend = _two_person_gate(db, c, user, "mock_audit.decision", payload)
+    if pend:
+        return pend
+    return _do_mock_audit_decide(db, c, user, payload)
+
+
+EDU_DOCS = [("D-10", "supervisor_appointment", "할랄 슈퍼바이저 지정·교육 확인서"),
+            ("D-11", "training_consent", "지정 교육 안내·이수 동의서"),
+            ("D-12", "sjph_manual", "할랄 보증 시스템(SJPH) 매뉴얼"),
+            ("D-13", "halal_policy_decl", "할랄 정책 선언서"),
+            ("D-14", "mark_usage_consent", "할랄 인증마크 사용 규정 동의서")]
+
+
+def _edu_text(code, title, c):
+    co = c.company_name or ""
+    rep = c.responsible_person or ""
+    body = {
+        "D-10": "%s 은(는) 할랄 슈퍼바이저를 지정하고 GL HAC 지정 교육을 이수하였음을 확인합니다.\n대표자: %s" % (co, rep),
+        "D-11": "%s 은(는) GL HAC 지정 교육 안내를 받았으며 교육 이수에 동의합니다." % co,
+        "D-12": "%s 의 할랄 보증 시스템(SJPH) 매뉴얼은 시스템에서 생성·관리됩니다(최신 버전은 SJPH 매뉴얼 문서 참조)." % co,
+        "D-13": "%s 은(는) 생산·보관·유통 전 과정에서 할랄 기준을 준수할 것을 선언합니다.\n대표자: %s" % (co, rep),
+        "D-14": "%s 은(는) 할랄 인증마크 사용 규정(BPJPH·GL HAC)을 준수하며 위반 시 사용 중지에 동의합니다." % co,
+    }[code]
+    return "■ %s %s\n\n%s\n\n발행: GL HAC · %s" % (code, title, body, date.today().isoformat())
+
+
+@app.get("/cases/{case_id}/education-docs")
+def education_docs(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """PRP-01 — 계약 후 배포되는 D-10~D-14 와 기업의 일괄 서명·동의 상태."""
+    c = _get_case(db, case_id, user)
+    consent = nav8.latest_event(db, case_id, "education.consent")
+    docs = []
+    for code, dt, title in EDU_DOCS:
+        g = (db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type=dt)
+             .order_by(models.GeneratedDocument.version.desc()).first())
+        docs.append({"code": code, "doc_type": dt, "title": title, "gen_doc_id": g.gen_doc_id if g else None,
+                     "status": g.status if g else "not_issued"})
+    return {"docs": docs, "consented": bool(consent), "consent": (consent.payload or {}) if consent else None,
+            "consented_at": consent.created_at.isoformat() if consent else None}
+
+
+@app.post("/cases/{case_id}/education-docs/issue")
+def education_docs_issue(case_id: str, user=Depends(auth.require_roles("operator", "consultant", "auditor")), db: Session = Depends(get_db)):
+    """D-10~D-14 배포(생성) — 계약 체결(confirmed/signed) 후. 이미 있으면 그대로."""
+    c = _get_case(db, case_id, user)
+    ct = db.query(models.Contract).filter_by(case_id=case_id).first()
+    if nav8.formal_flow_on() and (not ct or ct.status not in ("signed", "confirmed", "invoiced", "paid")):
+        raise HTTPException(409, {"code": "CONTRACT_NOT_SIGNED"})
+    made = []
+    for code, dt, title in EDU_DOCS:
+        if dt == "sjph_manual":
+            continue
+        ex = db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type=dt).first()
+        if ex:
+            continue
+        g = _save_gendoc(db, c, dt, _edu_text(code, title, c), user, status="issued")
+        made.append({"code": code, "gen_doc_id": g.gen_doc_id})
+    sm.record_event(db, c, c.status, c.status, "education.issued", user["role"], user["uid"], {"made": made})
+    _notify(db, c, "education.issued", "교육·매뉴얼 서류 배포 — 서명·동의가 필요합니다", body="D-10 ~ D-14 를 확인하고 한 번에 서명·동의해 주세요.", role="client")
+    db.commit()
+    return {"ok": True, "made": made}
+
+
+@app.post("/cases/{case_id}/education-docs/consent")
+def education_docs_consent(case_id: str, body: dict = None,
+                           user=Depends(auth.require_roles("applicant", "penyelia_halal")), db: Session = Depends(get_db)):
+    """PRP-01 — 기업이 D-10~D-14 를 한 번에 서명·동의(대표자 서명 data:image)."""
+    c = _get_case(db, case_id, user)
+    b = dict(body or {})
+    name = (b.get("name") or "").strip()
+    image = b.get("image")
+    if b.get("agree") is not True:
+        raise HTTPException(422, {"code": "AGREE_REQUIRED"})
+    if not name or not (isinstance(image, str) and image.startswith("data:image/")):
+        raise HTTPException(422, {"code": "NAME_AND_IMAGE_REQUIRED"})
+    signed = []
+    for code, dt, title in EDU_DOCS:
+        g = (db.query(models.GeneratedDocument).filter_by(case_id=case_id, doc_type=dt)
+             .order_by(models.GeneratedDocument.version.desc()).first())
+        if g:
+            g.status = "signed"
+            signed.append({"code": code, "gen_doc_id": g.gen_doc_id})
+    if not signed:
+        raise HTTPException(409, {"code": "DOCS_NOT_ISSUED"})
+    at = datetime.utcnow().isoformat()
+    sm.record_event(db, c, c.status, c.status, "education.consent", user["role"], user["uid"],
+                    {"name": name, "signed": signed, "at": at, "image": image[:200000]})
+    _notify(db, c, "education.consent", "교육·매뉴얼 서류 서명·동의 완료", body=name + " · " + str(len(signed)) + "건", role="auditor")
+    db.commit()
+    return {"ok": True, "signed": signed, "at": at}
+
+
 @app.get("/cases/{case_id}/sjph-evidence")
 def list_sjph_evidence(case_id: str, lang: str = Query("ko"),
                        user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
@@ -16285,7 +18399,7 @@ def add_sjph_evidence(case_id: str, body: schemas.SjphEvidenceReq,
                       db: Session = Depends(get_db)):
     from .intake import _ctype
     _get_case(db, case_id, user)
-    if body.item_key not in {k for k, _ in SJPH_EVIDENCE_ITEMS}:
+    if body.item_key not in ({k for k, _ in SJPH_EVIDENCE_ITEMS} | PREP_KEYS):
         raise HTTPException(422, {"code": "BAD_ITEM_KEY"})
     b64 = _validate_upload(body.file_b64, body.filename)
     doc = models.DocumentAsset(case_id=case_id, filename=body.filename,
@@ -16300,6 +18414,9 @@ def add_sjph_evidence(case_id: str, body: schemas.SjphEvidenceReq,
     else:
         db.add(models.SjphEvidence(case_id=case_id, item_key=body.item_key,
                                    filename=body.filename, document_id=doc.document_id))
+    if body.item_key in PREP_KEYS:
+        c = db.get(models.CaseApplication, case_id)
+        sm.record_event(db, c, c.status, c.status, "prep.item", user["role"], user["uid"], {"item_key": body.item_key, "status": "pending_review", "note": ""})
     db.commit()
     return {"item_key": body.item_key, "ok": True}
 
@@ -16452,7 +18569,8 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
     # '해당 없음'으로 사유와 함께 보여준다 — 조용히 사라지면 심사자가 빠뜨린 것인지
     # 면제인지 구분할 수 없다.
     _rq = doc_requirements(c.pathway, (c.profile_ext or {}).get("country"), c.is_msme,
-                           scheme=c.scheme, logistics_scope=c.logistics_scope)
+                           scheme=c.scheme, logistics_scope=c.logistics_scope,
+                           sector=(c.profile_ext or {}).get("sector"))
     _req, _na, _alt = _rq["required"], _rq["not_applicable"], _rq["alt"]
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     by_type = {}
@@ -16706,22 +18824,21 @@ def preassess_review(case_id: str, body: schemas.PreassessReviewReq,
     """① 오디터 3섹션(문서·재료·제조) 검토 기록 — auditor_reviewed 근거. latest-wins."""
     c = _get_case(db, case_id, user)
     verdict = (body.verdict or "").lower()
-    if verdict not in ("ready", "supplement"):
-        raise HTTPException(422, {"code": "INVALID_VERDICT", "allowed": ["ready", "supplement"]})
+    if verdict not in ("ready", "supplement", "reject"):
+        raise HTTPException(422, {"code": "INVALID_VERDICT", "allowed": ["ready", "supplement", "reject"]})
+    if verdict == "reject" and not (body.note or "").strip():
+        raise HTTPException(422, {"code": "REASON_REQUIRED", "hint": "불가 판정은 사유가 필요합니다."})
     sections = body.sections or {}
     bad = set(sections.keys()) - set(PREASSESS_SECTIONS)
     if bad:
         raise HTTPException(422, {"code": "BAD_SECTION", "allowed": list(PREASSESS_SECTIONS),
                                   "got": sorted(bad)})
-    sm.record_event(db, c, c.status, c.status, "preassess.review", user["role"], user["uid"],
-                    {"sections": sections, "verdict": verdict, "note": (body.note or "").strip()})
-    advanced = False
-    if verdict == "ready":   # P2 훅: 보완 재제출 검토 통과→컨설턴트 검토(supplementation_submitted에서만 발화)
-        advanced = _auto_advance(db, c, "consultant_review", user, "preassess.review.auto")
-    db.commit()
-    # v4 5a: 전진 여부를 돌려준다(nav8 이 supplementation_submitted 를 오디터 큐로 보낸다)
-    return {"ok": True, "verdict": verdict,
-            "transitioned_to": "consultant_review" if advanced else None, "status": c.status}
+    b = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+    b["verdict"] = verdict
+    pend = _two_person_gate(db, c, user, "preassess.review", b)
+    if pend:
+        return pend
+    return _do_preassess_review(db, c, user, b)
 
 
 @app.post("/cases/{case_id}/preassess/doc-request")
@@ -18474,6 +20591,93 @@ def save_my_menu_config(body: schemas.MenuAssignReq, user=Depends(auth.get_curre
         db.add(models.SysUserMenu(user_id=user["uid"], menu_id=mid, sort_order=so))
     db.commit()
     return {"saved": len(rows)}
+
+
+# ── v4 화면 메뉴 설정(역할별·개인별 숨김/순서) ──────────────────────────────
+# 구 메뉴(sys_menu)는 구 화면 route 체계라 v4 view id 와 맞지 않는다. v4 는 view id 목록만 저장한다.
+# 저장: WorkflowEvent latest-wins, case_id "v4nav:role:{ui}" / "v4nav:user:{uid}", action "v4nav.config".
+# 화면 노출만 바꾼다 — 실제 권한은 API RBAC 가 지킨다(메뉴를 숨겨도 권한이 생기거나 사라지지 않는다).
+V4NAV_ACTION = "v4nav.config"
+V4NAV_UI_ROLES = ("ent", "cons", "aud", "sha", "adm", "pen")
+V4NAV_ROLE_OF = {"applicant": "ent", "penyelia_halal": "ent", "client": "ent", "pendamping_pph": "pen",
+                 "consultant": "cons", "auditor": "aud", "fatwa_liaison": "sha", "sharia": "sha",
+                 "admin": "adm", "operator": "adm", "ops": "adm"}
+_V4NAV_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
+
+
+def _v4nav_clean(body):
+    b = body or {}
+    out = {}
+    for k in ("hidden", "order"):
+        vals = b.get(k) or []
+        if not isinstance(vals, list):
+            raise HTTPException(422, {"code": "BAD_NAV_" + k.upper()})
+        seen, clean = set(), []
+        for v in vals[:80]:
+            v = str(v or "").strip()
+            if not _V4NAV_ID.match(v):
+                raise HTTPException(422, {"code": "BAD_NAV_VIEW", "view": v[:40]})
+            if v not in seen:
+                seen.add(v)
+                clean.append(v)
+        out[k] = clean
+    return out
+
+
+def _v4nav_get(db, key):
+    ev = (db.query(models.WorkflowEvent).filter_by(case_id=key, action=V4NAV_ACTION)
+          .order_by(models.WorkflowEvent.created_at.desc()).first())
+    p = (ev.payload or {}) if ev else {}
+    return {"hidden": list(p.get("hidden") or []), "order": list(p.get("order") or []),
+            "updated_at": ev.created_at.isoformat() if ev else None}
+
+
+def _v4nav_put(db, key, user, cfg, org_id=None):
+    import types as _types
+    sm.record_event(db, _types.SimpleNamespace(case_id=key, org_id=org_id or user.get("org_id")),
+                    "settings", "settings", V4NAV_ACTION, user["role"], user["uid"], cfg)
+
+
+@app.get("/me/v4-nav")
+def my_v4_nav(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """내 v4 메뉴 설정 — 역할 설정(관리자) + 개인 설정. 화면은 역할 숨김 → 개인 숨김 → 개인 순서(없으면 역할 순서)로 적용."""
+    ui = V4NAV_ROLE_OF.get(user["role"])
+    if not ui:
+        return {"ui_role": None, "role": {"hidden": [], "order": []}, "user": {"hidden": [], "order": []}}
+    return {"ui_role": ui, "role": _v4nav_get(db, "v4nav:role:" + ui),
+            "user": _v4nav_get(db, "v4nav:user:" + user["uid"])}
+
+
+@app.put("/me/v4-nav")
+def put_my_v4_nav(body: dict = None, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    cfg = _v4nav_clean(body)
+    _v4nav_put(db, "v4nav:user:" + user["uid"], user, cfg)
+    db.commit()
+    return {"ok": True, "user": _v4nav_get(db, "v4nav:user:" + user["uid"])}
+
+
+@app.post("/me/v4-nav/reset")
+def reset_my_v4_nav(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    _v4nav_put(db, "v4nav:user:" + user["uid"], user, {"hidden": [], "order": []})
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/admin/v4-nav")
+def admin_v4_nav(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    return {"roles": {ui: _v4nav_get(db, "v4nav:role:" + ui) for ui in V4NAV_UI_ROLES}}
+
+
+@app.put("/admin/v4-nav/{ui_role}")
+def put_admin_v4_nav(ui_role: str, body: dict = None, user=Depends(auth.require_roles("operator")),
+                     db: Session = Depends(get_db)):
+    if ui_role not in V4NAV_UI_ROLES:
+        raise HTTPException(404, {"code": "UNKNOWN_UI_ROLE", "ui_role": ui_role})
+    cfg = _v4nav_clean(body)
+    _v4nav_put(db, "v4nav:role:" + ui_role, user, cfg)
+    _audit(db, user, "admin.v4nav.set", "v4nav", ui_role, None, {"hidden": cfg["hidden"], "order": cfg["order"]}, commit=False)
+    db.commit()
+    return {"ok": True, "ui_role": ui_role, "config": _v4nav_get(db, "v4nav:role:" + ui_role)}
 
 
 @app.post("/me/menu-config/reset")

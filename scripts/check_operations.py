@@ -52,7 +52,7 @@ def check():
     db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)
     try:
         result['roles'] = dict(db.execute('SELECT role, COUNT(*) FROM app_user GROUP BY role'))
-        result['auditors'] = dict(db.execute("SELECT CASE WHEN username IN ('auditor1','auditor2','auditor3') AND org_id='org_demo' THEN 'sample' ELSE 'real' END, COUNT(*) FROM app_user WHERE role='auditor' GROUP BY 1"))
+        result['auditors'] = dict(db.execute("SELECT CASE WHEN username IN ('auditor1','auditor2','auditor3','test') AND org_id='org_demo' THEN 'sample' ELSE 'real' END, COUNT(*) FROM app_user WHERE role='auditor' GROUP BY 1"))
         result['cases'] = db.execute('SELECT COUNT(*) FROM case_application').fetchone()[0]
         result['cases_without_real_client_account'] = db.execute("SELECT COUNT(*) FROM case_application c WHERE NOT EXISTS (SELECT 1 FROM app_user u WHERE u.org_id=c.org_id AND u.role IN ('applicant','penyelia_halal') AND u.username NOT IN ('applicant1','penyelia1'))").fetchone()[0]
         result['cases_using_demo_org'] = db.execute("SELECT COUNT(*) FROM case_application WHERE org_id='org_demo'").fetchone()[0]

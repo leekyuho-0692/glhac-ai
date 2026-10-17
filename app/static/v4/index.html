@@ -1223,8 +1223,9 @@ App.preDoReview = async function(cid, verdict){
   const ok = (verdict==='ready');
   const sections = {documents:{ok, note:''}, materials:{ok, note:''}, process:{ok, note:''}};
   const r = await apiFetch('/cases/'+cid+'/preassess/review', {method:'POST', body:JSON.stringify({verdict, sections, note})});
-  if(!r.ok){ return toast(await apiErr(r, '검토 기록에 실패했습니다.')); }
+  if(!r.ok){ if(r.status===403){ const d=await r.clone().json().catch(()=>({})); if(d.detail&&d.detail.code==='NOT_MAIN_AUDITOR') return toast('서브 오디터는 열람·확인만 할 수 있습니다.'); } return toast(await apiErr(r, '검토 기록에 실패했습니다.')); }
   const j = await r.json().catch(()=>({}));
+  if(j.pending){ closeModal(); delete RS.pre[cid]; await loadPre(cid); await loadAud(); render(); return toast('서브 오디터 확인 대기 — 승인 후 판정이 실행됩니다.'); }
   closeModal(); delete RS.pre[cid]; await loadPre(cid); await loadAud(); render();
   toast(verdict==='ready'?(j.transitioned_to?'사전심사 검토 완료 — 컨설턴트 검토 단계로 넘어갑니다.':'사전심사 검토 완료로 기록했습니다.'):'보완 필요로 기록했습니다.');
 };
@@ -1551,8 +1552,9 @@ App.mockDoDecide = async function(cid, result){
   const reason=(($('#md-r')||{}).value||'').trim();
   if(result==='reject' && !reason){ const e=$('#md-e'); if(e) e.textContent='사유를 입력해 주세요.'; return; }
   const r=await apiFetch('/cases/'+cid+'/mock-audit/decision',{method:'POST',body:JSON.stringify({result,reason})});
-  if(!r.ok) return toast(await apiErr(r, '결정 처리에 실패했습니다.'));
+  if(!r.ok){ if(r.status===403){ const d=await r.clone().json().catch(()=>({})); if(d.detail&&d.detail.code==='NOT_MAIN_AUDITOR') return toast('서브 오디터는 열람·확인만 할 수 있습니다.'); } return toast(await apiErr(r, '결정 처리에 실패했습니다.')); }
   const j = await r.json().catch(()=>({})), bl = (j.blockers||[]).map(b=>b.code).filter(Boolean);
+  if(j.pending){ closeModal(); delete RS.mock[cid]; await loadMock(cid); await loadAud(); render(); return toast('서브 오디터 확인 대기 — 승인 후 판정이 실행됩니다.'); }
   closeModal(); delete RS.mock[cid]; await loadMock(cid); await loadAud(); render();
   if(bl.length) return toast('판정은 기록했지만 단계가 넘어가지 않았습니다 ('+bl.join(', ')+')');
   toast(result==='pass'?(j.status==='document_pre_audit_approved'?'모의심사 통과 — 현장심사(LPH 배정) 단계로 넘어갑니다.':'모의심사 통과를 기록했습니다.'):'모의심사를 반려했습니다 — 보완 단계로 돌아갑니다.');
@@ -1677,7 +1679,9 @@ App.finalDoSign = async function(cid){
 };
 App.finalSendFatwa = async function(cid){
   const r=await apiFetch('/cases/'+cid+'/audit-report/send-fatwa',{method:'POST'});
-  if(!r.ok){ const d=await r.json().catch(()=>({})); const miss=(d.detail&&d.detail.missing)||[]; return toast('상정 불가 — 미충족: '+(miss.join(', ')||'게이트')); }
+  if(!r.ok){ if(r.status===403){ const d=await r.clone().json().catch(()=>({})); if(d.detail&&d.detail.code==='NOT_MAIN_AUDITOR') return toast('서브 오디터는 열람·확인만 할 수 있습니다.'); } const d=await r.json().catch(()=>({})); const miss=(d.detail&&d.detail.missing)||[]; return toast('상정 불가 — 미충족: '+(miss.join(', ')||'게이트')); }
+  const j=await r.json().catch(()=>({}));
+  if(j.pending){ await loadFinal(cid); await loadAud(); render(); return toast('서브 오디터 확인 대기 — 승인 후 상정됩니다.'); }
   await loadFinal(cid); await loadAud(); render(); toast('샤리아 위원회에 상정했습니다.');
 };
 App.finalBundle = async function(cid){
@@ -2131,9 +2135,9 @@ VIEWS['ent-apply'] = () => {
     ${submitted||!canCall('POST','/cases/{}/products')?'':`<div class="inline" style="flex-wrap:wrap;margin-top:8px"><input class="in" id="pr-name" placeholder="제품명 (예: 프리미엄 홍삼 스틱)" style="flex:2 1 220px"><input class="in" id="pr-cat" placeholder="분류(선택)" style="flex:1 1 140px"><button class="btn" onclick="App.entAddProduct('${cid}')">＋ 품목 추가</button></div>`}
   </section>
   <section class="panel"><div class="panel-head"><h2>필요 서류</h2><button class="link" onclick="App.go('ent-docs')">문서함 열기 →</button></div>
-    <p class="muted">사업자등록증·성분분석표·제조공정도 등은 <b>문서함</b>에서 업로드합니다.${docCount!=null?` 현재 ${docCount}건 보관 중.`:''}</p></section>
-  ${submitted||!canCall('POST','/cases/{}/submit-application')?'':`<div class="action-bar"><span class="muted">${prods.length?'AI 사전심사를 신청하면 오디터 검토로 넘어갑니다.':'품목을 1개 이상 등록해야 신청할 수 있습니다.'}</span>
-    <div class="row-act"><button class="btn btn-primary" ${prods.length?'':'disabled style="opacity:.45;cursor:not-allowed"'} onclick="App.entSubmitApp('${cid}')">AI 사전심사 신청</button></div></div>`}`;
+    <p class="muted">${c.scheme==='logistics' ? '사업자등록증·SJPH 매뉴얼·취급 범위·세척 SOP·차량 목록(유통)·창고 배치도(보관·포장) 등은' : '사업자등록증·성분분석표·제조공정도 등은'} <b>문서함</b>에서 업로드합니다.${docCount!=null?` 현재 ${docCount}건 보관 중.`:''}</p></section>
+  ${submitted||!canCall('POST','/cases/{}/submit-application')?'':`<div class="action-bar"><span class="muted">${(c.scheme==='logistics' ? !!(c.logistics_scope&&c.logistics_scope.length) : !!prods.length)?'AI 사전심사를 신청하면 오디터 검토로 넘어갑니다.':(c.scheme==='logistics'?'취급 서비스(보관·포장·유통)를 1개 이상 선택해야 신청할 수 있습니다.':'품목을 1개 이상 등록해야 신청할 수 있습니다.')}</span>
+    <div class="row-act"><button class="btn btn-primary" ${(c.scheme==='logistics' ? !!(c.logistics_scope&&c.logistics_scope.length) : !!prods.length)?'':'disabled style="opacity:.45;cursor:not-allowed"'} onclick="App.entSubmitApp('${cid}')">AI 사전심사 신청</button></div></div>`}`;
 };
 App.entAddProduct = async function(cid){
   const name=(($('#pr-name')||{}).value||'').trim(); if(!name) return toast('제품명을 입력해 주세요.');
@@ -3139,6 +3143,7 @@ authLoad();
 (function(){ try{ const q=new URLSearchParams(location.search);
   const ref=q.get('ref');
   if(q.get('signup')==='staff'){ S.auth='signup-cons'; S.staffRole='consultant'; }
+  else if(q.get('signup')==='ent'){ S.auth='signup-ent'; S.loginRole='enterprise'; }   // 기업 회원가입 바로가기
   else if(ref){ S.urlRef=ref; S.auth='signup-ent'; S.loginRole='enterprise'; }
 }catch(e){} })();
 render();
@@ -3189,6 +3194,27 @@ document.addEventListener('DOMContentLoaded', () => { if(S.auth==='login' && !S.
 <script src="js/renew.js"></script>
 <script src="js/users.js"></script>
 <script src="js/package-check.js"></script>
+<script src="js/two-person.js"></script>
+<script src="js/formal-app.js"></script>
+<script src="js/billing-adm.js"></script>
+<script src="js/billing-ent.js"></script>
+<script src="js/sector.js"></script>
+<script src="js/sharia-quorum.js"></script>
+<script src="js/canonical.js"></script>
+<script src="js/prep.js"></script>
+<script src="js/report.js"></script>
+<script src="js/forms.js"></script>
+<script src="js/polish.js"></script>
+<script src="js/demo-login.js"></script>
+<script src="js/stage-list.js"></script>
+<script src="js/mat-tools.js"></script>
+<script src="js/sjph-builder.js"></script>
+<script src="js/audit-deploy.js"></script>
+<script src="js/case-insight.js"></script>
+<script src="js/mat-insight.js"></script>
+<script src="js/audit-chain.js"></script>
+<script src="js/case-tools.js"></script>
+<script src="js/nav-config.js"></script>
 <!--MODULES-->
 <script src="js/mail.js"></script>
 </body>

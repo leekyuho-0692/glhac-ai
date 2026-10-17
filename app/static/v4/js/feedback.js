@@ -113,7 +113,7 @@
   function FDB_detailHost(fid){
     const d = RS.fdbDetail[fid];
     if(!d){
-      FDB_loadDetail(fid).then(()=>render());
+      FDB_loadDetail(fid).then(()=>{ if($('#modal-root .dialog')) FDB_draw(); else render(); });
       return `<p class="empty">불러오는 중…</p>`;
     }
     if(d.error){
@@ -163,6 +163,13 @@
         <legend>답변 스레드 <span class="count">${cmts.length}</span></legend>
         ${cmtHtml}
       </div>
+      <div class="fieldset" style="margin-top:10px">
+        <legend>첨부 이미지 <span class="count">${(d.images || []).length}</span></legend>
+        ${(d.images || []).length
+          ? `<div class="inline">${(d.images || []).map((im, i) => `<button class="btn btn-sm btn-ghost" onclick="App.fdbImgView('${fid}', ${i})">${esc(im.filename || ('이미지 ' + (i + 1)))}</button>`).join('')}</div>`
+          : `<p class="empty">첨부 이미지가 없습니다.</p>`}
+        <div class="inline" style="margin-top:6px"><button class="btn btn-sm" onclick="App.fdbImgAdd('${fid}')">이미지 첨부</button></div>
+      </div>
       ${adminBox}
     </div>`;
   }
@@ -195,9 +202,9 @@
   App.fdbTab = function(k){
     S.fdbTab = k;
     if(k === 'list' && !RS.fdbList){
-      RS.fdbList = null; FDB_loadList().then(()=>{ if($('.modal')) FDB_draw(); else render(); });
+      RS.fdbList = null; FDB_loadList().then(()=>{ if($('#modal-root .dialog')) FDB_draw(); else render(); });
     }
-    if($('.modal')) FDB_draw(); else render();
+    if($('#modal-root .dialog')) FDB_draw(); else render();
   };
 
   App.fdbShow = function(i){
@@ -205,8 +212,8 @@
     if(!box || !box.items || !box.items[i]) return;
     const fid = box.items[i].feedback_id;
     if(S.fdbShow === fid){ S.fdbShow = null; }
-    else { S.fdbShow = fid; if(!RS.fdbDetail[fid]) FDB_loadDetail(fid); }
-    if($('.modal')) FDB_draw(); else render();
+    else { S.fdbShow = fid; if(!RS.fdbDetail[fid]) FDB_loadDetail(fid).then(()=>{ if($('#modal-root .dialog')) FDB_draw(); else render(); }); }
+    if($('#modal-root .dialog')) FDB_draw(); else render();
   };
 
   App.fdbSend = async function(){
@@ -229,7 +236,7 @@
       S.fdbShow = null;
       await FDB_loadList();
       toast('피드백을 보냈습니다.');
-      if($('.modal')) FDB_draw(); else render();
+      if($('#modal-root .dialog')) FDB_draw(); else render();
     }catch(e){ toast('피드백 등록에 실패했습니다.'); }
   };
 
@@ -250,8 +257,50 @@
       await FDB_loadDetail(fid);
       await FDB_loadList();
       toast('답변을 등록했습니다.');
-      if($('.modal')) FDB_draw(); else render();
+      if($('#modal-root .dialog')) FDB_draw(); else render();
     }catch(e){ toast('답변 등록에 실패했습니다.'); }
+  };
+
+  // 첨부 이미지 보기 — 인증 헤더가 필요해 blob 으로 받아 새 탭에 연다
+  App.fdbImgView = async function(fid, i){
+    const d = RS.fdbDetail[fid] || {};
+    const im = (d.images || [])[i];
+    if(!im) return;
+    try{
+      const r = await apiFetch(`/feedback/${fid}/image/${im.image_id}`);
+      if(!r.ok) return toast(r.status === 403 ? '권한이 없습니다.' : '이미지를 불러오지 못했습니다.');
+      const url = URL.createObjectURL(await r.blob());
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }catch(e){ toast('이미지를 불러오지 못했습니다.'); }
+  };
+
+  App.fdbImgAdd = function(fid){
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'image/*';
+    inp.onchange = () => {
+      const file = inp.files && inp.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try{
+          const r = await apiFetch(`/feedback/${fid}/images`, {method:'POST', body: JSON.stringify({file_b64: reader.result, filename: file.name})});
+          if(!r.ok){
+            if(r.status === 403) return toast('권한이 없습니다.');
+            if(r.status === 413) return toast('파일이 너무 큽니다.');
+            let detail = '';
+            try{ const j = await r.json(); detail = j && j.detail && j.detail.code ? ` (${j.detail.code})` : ''; }catch(e){}
+            return toast('이미지 첨부에 실패했습니다.' + detail);
+          }
+          delete RS.fdbDetail[fid];
+          await FDB_loadDetail(fid);
+          toast('이미지를 첨부했습니다.');
+          if($('#modal-root .dialog')) FDB_draw(); else render();
+        }catch(e){ toast('이미지 첨부에 실패했습니다.'); }
+      };
+      reader.readAsDataURL(file);
+    };
+    inp.click();
   };
 
   App.fdbSetStatus = async function(fid){
@@ -272,7 +321,7 @@
       await FDB_loadDetail(fid);
       await FDB_loadList();
       toast('상태를 변경했습니다.');
-      if($('.modal')) FDB_draw(); else render();
+      if($('#modal-root .dialog')) FDB_draw(); else render();
     }catch(e){ toast('상태 변경에 실패했습니다.'); }
   };
 })();

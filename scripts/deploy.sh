@@ -83,23 +83,32 @@ RS_EXCL=(--exclude '__pycache__' --exclude '*.bak-*' --exclude '*.pyc'
          --exclude '.DS_Store' --exclude '*.db' --exclude '*.db-*')
 if [ "$DO_APP" = 1 ]; then
   say "── 코드 변경분 ──"
-  rsync -az --delete --dry-run --itemize-changes -e "$RSYNC_SSH" \
-    "${RS_EXCL[@]}" "$APP_SRC/app/" "$HOST:/tmp/dep-app-$TS/" 2>/dev/null \
+  rsync -azc --dry-run --itemize-changes -e "$RSYNC_SSH" \
+    "${RS_EXCL[@]}" "$APP_SRC/app/" "$HOST:$REMOTE_APP/" 2>/dev/null \
     | grep -vE '^\.d|^$' | head -30 || true
 fi
 if [ "$DRY" = 1 ]; then say "dry-run — 아무것도 바꾸지 않았습니다"; exit 0; fi
+
+# Stop if an operator changed previously deployed files directly on the server.
+"${SSH[@]}" bash -se <<'EOS'
+set -euo pipefail
+if [ -f /opt/glhac/.app-deploy-checksums ]; then
+  cd /opt/glhac/app
+  if ! sha256sum --quiet -c /opt/glhac/.app-deploy-checksums; then
+    echo '서버에 미반영 소스 변경이 있습니다. 운영본을 먼저 보존·병합하세요.' >&2
+    exit 1
+  fi
+fi
+EOS
 
 # ── 백업 ──────────────────────────────────────────────────────────────────
 say "백업 중"
 "${SSH[@]}" bash -se <<EOS
 set -euo pipefail
-sudo cp /var/lib/glhac/glhac_v3.db /var/lib/glhac/glhac_v3.db.bak-deploy-$TS
+sudo /opt/glhac/.venv/bin/python -c 'import sqlite3,sys; source=sqlite3.connect("file:/var/lib/glhac/glhac_v3.db?mode=ro",uri=True); target=sqlite3.connect(sys.argv[1]); source.backup(target); target.close(); source.close()' /var/lib/glhac/glhac_v3.db.bak-deploy-$TS
 sudo tar czf /opt/glhac-app-bak-$TS.tgz -C /opt/glhac app
 sudo tar czf /opt/glhac-home-bak-$TS.tgz -C /var/www glhac-home
-# 백업이 무한정 쌓이지 않게 최근 10개만 남긴다
-ls -t /opt/glhac-app-bak-*.tgz  2>/dev/null | tail -n +11 | xargs -r sudo rm -f
-ls -t /opt/glhac-home-bak-*.tgz 2>/dev/null | tail -n +11 | xargs -r sudo rm -f
-ls -t /var/lib/glhac/glhac_v3.db.bak-deploy-* 2>/dev/null | tail -n +6 | xargs -r sudo rm -f
+# Backup retention is handled separately; deployment preserves existing recovery points.
 EOS
 
 # ── 전송 ──────────────────────────────────────────────────────────────────
@@ -120,7 +129,7 @@ say "적용 후 확인"
 set -uo pipefail
 APPLIED=0
 if [ -d /tmp/dep-app-$TS ]; then
-  sudo rsync -a --delete /tmp/dep-app-$TS/ $REMOTE_APP/
+  sudo rsync -ac /tmp/dep-app-$TS/ $REMOTE_APP/
   sudo chown -R $OWNER $REMOTE_APP          # root 로 두면 서비스가 못 읽는다
   APPLIED=1
 fi
@@ -148,6 +157,8 @@ if [ "\$APPLIED" = 1 ]; then
     echo "  되돌린 뒤 health: \$(curl -s -o /dev/null -w '%{http_code}' $HEALTH)"
     exit 1
   fi
+  (cd $REMOTE_APP && find . -type f ! -path '*/__pycache__/*' ! -name '*.pyc' ! -name '*.bak-*' ! -name '*.db*' ! -name '.DS_Store' -print0 | sort -z | xargs -0 sha256sum) | sudo tee /opt/glhac/.app-deploy-checksums >/dev/null
+  sudo chmod 644 /opt/glhac/.app-deploy-checksums
 fi
 echo "  ui:   \$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8800/ui/)"
 EOS

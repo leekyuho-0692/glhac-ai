@@ -225,10 +225,27 @@ def test_real_auditor_is_listed_and_demo_accounts_are_marked():
     with SessionLocal() as db:
         auditor = models.User(username="real-auditor@example.com", password_hash=auth.hash_pw("TestOnly123!"),
                               role="auditor", org_id="org_demo")
-        db.add(auditor)
+        sample = models.User(username="test", password_hash=auth.hash_pw("TestOnly123!"), role="auditor", org_id="org_demo")
+        db.add_all([auditor, sample])
         db.commit()
     with TestClient(app) as client:
         rows = client.get('/ops/auditors', headers=_h(_tok(client, 'admin', 'admin'))).json()['auditors']
         assert next(x for x in rows if x['username'] == 'auditor1')['is_demo'] is True
+        assert next(x for x in rows if x['username'] == 'test')['is_demo'] is True
         actual = next(x for x in rows if x['username'] == 'real-auditor@example.com')
         assert actual['is_demo'] is False and actual['display_name'] == 'real-auditor@example.com'
+
+
+def test_production_cannot_assign_demo_auditor(monkeypatch):
+    from app import auth
+    cid = _mk_case('document_pre_audit_requested', 'No demo assignment')
+    with TestClient(app) as client:
+        headers = _h(_tok(client, 'admin', 'admin'))
+        with SessionLocal() as db:
+            auditor = db.query(models.User).filter_by(username='auditor1').first()
+            aid = auditor.user_id
+        monkeypatch.setattr(auth, 'dev_mode', lambda: False)
+        response = client.post('/ops/cases/' + cid + '/assign-auditor', headers=headers, json={'auditor_id': aid})
+        assert response.status_code == 409
+        assert response.json()['detail']['code'] == 'DEMO_AUDITOR_NOT_ASSIGNABLE'
+    assert _events(cid, 'ops.auditor_assigned') == 0

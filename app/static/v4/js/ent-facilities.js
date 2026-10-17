@@ -8,7 +8,7 @@ const ENTF_DIVISIONS = ['management', 'production', 'qc', 'sanitation', 'warehou
 
 async function ENTF_req(path, opts, cacheKey) {
   try {
-    const r = await apiFetch(path, opts);
+    const r = await apiFetch(path, opts || {});
     if (!r.ok) {
       let code = '';
       try { const j = await r.json(); code = (j && j.detail && j.detail.code) || ''; } catch (e) {}

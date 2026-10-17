@@ -135,8 +135,25 @@ def required_docs(pathway=None):
     return REQUIRED_DOCS_BY_PATHWAY.get((pathway or "").lower(), REQUIRED_DOCS)
 
 
+SECTORS = ("food", "cosmetics", "household", "warehouse", "transport")
+SECTOR_SCHEME = {"food": "product", "cosmetics": "product", "household": "product",
+                 "warehouse": "logistics", "transport": "logistics"}
+SECTOR_DEFAULT_SCOPE = {"warehouse": ["penyimpanan", "pengemasan"], "transport": ["pendistribusian"]}
+# 분야별 추가 요구 서류(제품 분야: 성분분석표). 화장품은 공장등록증 자리에 제조업 등록필증이 온다(라벨 메모).
+SECTOR_EXTRA_DOCS = {"food": ["coa_msds"], "cosmetics": ["coa_msds"], "household": ["coa_msds"]}
+SECTOR_DOC_NOTE = {"cosmetics": {"factory_registration": "화장품 — 제조업 등록필증으로 갈음"}}
+
+
+def sector_defaults(sector):
+    """분야 → (scheme, logistics_scope 기본값). 모르는 분야는 제품."""
+    s = (sector or "").lower()
+    if s not in SECTORS:
+        return "product", None
+    return SECTOR_SCHEME[s], list(SECTOR_DEFAULT_SCOPE.get(s) or []) or None
+
+
 def doc_requirements(pathway=None, country=None, is_msme=None, scheme="product",
-                    logistics_scope=None):
+                    logistics_scope=None, sector=None):
     """이 신청 건에 실제로 요구되는 서류 — 인증 종류(scheme)·경로(pathway)·관할·규모를 함께 본다.
 
     scheme 이 가장 바깥 축이다. 물류(logistics)는 제품과 서류 세트 자체가 다르므로
@@ -156,14 +173,19 @@ def doc_requirements(pathway=None, country=None, is_msme=None, scheme="product",
         _all = set(REQUIRED_DOCS_LOGISTICS)
         for d in _all - set(req):
             na[d] = "선택한 물류 서비스(jasa)에 해당하지 않는 서류입니다"
-        return {"required": req, "not_applicable": na, "alt": {}}
+        return {"required": req, "not_applicable": na, "alt": {}, "notes": {}}
     pw = (pathway or "").lower()
     req = list(required_docs(pw))
     na = dict(DOC_NOT_APPLICABLE.get(pw, {}))
     na.update(DOC_JURISDICTION.get((_country_key(country), bool(is_msme)), {}))
     req = [d for d in req if d not in na]
     alt = {k: v for k, v in DOC_ALT_SATISFY.get(pw, {}).items() if k in req}
-    return {"required": req, "not_applicable": na, "alt": alt}
+    if sector in SECTOR_EXTRA_DOCS:
+        for _d in SECTOR_EXTRA_DOCS[sector]:
+            if _d not in req:
+                req.append(_d)
+    return {"required": req, "not_applicable": na, "alt": alt,
+            "notes": dict(SECTOR_DOC_NOTE.get(sector) or {})}
 
 # 필수 서류별 요구 내용(보완 안내용) — 무엇이 담겨야 하는지 상세 설명
 DOC_REQUIREMENT = {

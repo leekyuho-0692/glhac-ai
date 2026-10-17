@@ -74,6 +74,8 @@ def _assigned_case(c, status):
     cid, org, ent = _new_company(c)
     _set_status(cid, status)
     op = _tok(c, "operator1")
+    # Capacity enforcement is tested separately; these scenarios share one auditor.
+    assert c.post('/admin/audit-settings', headers=_h(op), json={'max_cases_per_auditor': 100}).status_code == 200
     r = c.post("/ops/cases/%s/assign-auditor" % cid, json={"auditor_id": _uid("auditor1")}, headers=_h(op))
     assert r.status_code == 200, r.text
     return cid, org, ent
@@ -87,6 +89,24 @@ def _item(c, tok, cid):
     return next(x for x in c.get("/cases", headers=_h(tok)).json()["items"] if x["case_id"] == cid)
 
 
+def _checked(c, response, cid):
+    """A maker submits; the assigned co-auditor must approve before execution."""
+    assert response.status_code == 200, response.text
+    pending = response.json()
+    assert pending['pending'] is True
+    approval_id = pending['approval_id']
+    maker = _tok(c, 'auditor1')
+    assert c.post('/approvals/' + approval_id + '/approve', headers=_h(maker), json={}).status_code == 403
+    def co_name(db):
+        co = db.query(models.CaseAuditor).filter_by(case_id=cid, role='co').first()
+        assert co is not None
+        return db.get(models.User, co.user_id).username
+    checker = _tok(c, _db_do(co_name))
+    approved = c.post('/approvals/' + approval_id + '/approve', headers=_h(checker), json={})
+    assert approved.status_code == 200, approved.text
+    return approved.json()['result']
+
+
 # ---------- a) 사전심사 ready · 모의심사 판정 ----------
 def test_a_사전심사_ready_가_컨설턴트검토로_전진():
     with TestClient(app) as c:
@@ -97,7 +117,7 @@ def test_a_사전심사_ready_가_컨설턴트검토로_전진():
         r = c.post(f"/cases/{cid}/preassess/review", headers=_h(au),
                    json={"verdict": "ready", "sections": {}, "note": ""})
         assert r.status_code == 200, r.text
-        assert r.json()["transitioned_to"] == "consultant_review"
+        assert _checked(c, r, cid)["transitioned_to"] == "consultant_review"
         assert _status(cid) == "consultant_review"
 
 
@@ -112,7 +132,7 @@ def test_a_모의심사_pass_는_requested_에서_approved_까지_연쇄():
                       headers=_h(ent)).status_code == 403
         r = c.post(f"/cases/{cid}/mock-audit/decision", json={"result": "pass"}, headers=_h(au))
         assert r.status_code == 200, r.text
-        assert r.json()["status"] == "document_pre_audit_approved", r.json()
+        assert _checked(c, r, cid)["status"] == "document_pre_audit_approved"
         assert _status(cid) == "document_pre_audit_approved"
         it = _item(c, au, cid)
         assert (it["step8"], it["owner"]) == (4, "ops")
@@ -125,7 +145,7 @@ def test_a_모의심사_reject_는_보완으로_돌아간다():
         r = c.post(f"/cases/{cid}/mock-audit/decision", json={"result": "reject", "reason": "증빙 부족"},
                    headers=_h(au))
         assert r.status_code == 200, r.text
-        assert r.json()["transitioned_to"] == "supplementation_required"
+        assert _checked(c, r, cid)["transitioned_to"] == "supplementation_required"
         assert _status(cid) == "supplementation_required"
 
 
@@ -136,7 +156,8 @@ def test_a_미결제_인보이스면_모의심사_착수_차단_사유_반환():
         au = _tok(c, "auditor1")
         it = _item(c, au, cid)
         assert (it["step8"], it["owner"]) == (2, "client")           # 계약·결제 단계, 기업 차례
-        r = c.post(f"/cases/{cid}/mock-audit/decision", json={"result": "pass"}, headers=_h(au)).json()
+        response = c.post(f"/cases/{cid}/mock-audit/decision", json={"result": "pass"}, headers=_h(au))
+        r = _checked(c, response, cid)
         assert r["transitioned_to"] is None
         assert any(b["code"] == "UNPAID_INVOICE" for b in r["blockers"]), r
         assert _status(cid) == "document_pre_audit_requested"
@@ -217,6 +238,8 @@ def test_d_HPAS_5요소_good_이면_오디터_판정으로_최종패키지_자�
             r = c.post(f"/cases/{cid}/evaluation/verdict", json={"element": el, "verdict": "good"},
                        headers=_h(au))
             assert r.status_code == 200, r.text
+            if el != "monitoring":
+                assert _status(cid) == "hpas_evaluation_ready"
         assert _status(cid) == "final_package_preparation"
         it = _item(c, au, cid)
         assert (it["step8"], it["owner"]) == (4, "auditor")          # e) 오디터 최종 화면에 남는다
