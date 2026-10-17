@@ -40,9 +40,25 @@ jobs:
           [ -n "$HOST" ] || { echo "::error::GLHAC_SSH_HOST 가 없습니다"; exit 1; }
 
       - uses: actions/setup-python@v5
+        # Production diagnostics below use only the remote system Python stdlib.
         with:
           python-version: '3.11'
           cache: pip
+
+      - name: 운영 계정·메일 설정 점검 (읽기 전용)
+        env:
+          DEPLOY_KEY: ${{ secrets.GLHAC_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.GLHAC_SSH_HOST }}
+        run: |
+          key_file=$(mktemp)
+          hosts_file=$(mktemp)
+          trap 'rm -f "$key_file" "$hosts_file"' EXIT
+          printf '%s\n' "$DEPLOY_KEY" > "$key_file"
+          chmod 600 "$key_file"
+          ssh-keyscan -H "${DEPLOY_HOST#*@}" > "$hosts_file" 2>/dev/null
+          ssh -i "$key_file" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$hosts_file" -o ConnectTimeout=15 \
+            "$DEPLOY_HOST" python3 - < scripts/check_operations.py
 
       - name: 의존성
         run: |
@@ -52,6 +68,9 @@ jobs:
           pip install -r /tmp/req.txt "pytest>=8.0"
 
       # 깨진 코드를 서버에 올리지 않는다
+      - name: 관리자 목록·페이징 회귀 검사
+        run: node tests/test_adm_intake_ui.cjs
+
       - name: 테스트 (실패하면 배포하지 않는다)
         env:
           GLHAC_DEV: '1'
@@ -79,7 +98,7 @@ jobs:
       - name: 배포 확인
         run: |
           for u in https://glhac.co.kr/ui/ https://glhac.co.kr/health; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' -m 20 "$u")
+            code=$(curl -L -s -o /dev/null -w '%{http_code}' -m 20 "$u")
             echo "  $u → $code"
             [ "$code" = "200" ] || { echo "::error::$u 가 200 이 아닙니다"; exit 1; }
           done

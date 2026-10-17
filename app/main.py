@@ -2333,11 +2333,12 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
         else:
             q = q.filter(own)
     total = q.count()
-    rows = (q.order_by(models.CaseApplication.created_at.desc())
+    rows = (q.order_by(models.CaseApplication.created_at.desc(), models.CaseApplication.case_id.desc())
             .offset(offset).limit(limit).all())
     # E2/M2: 배정 오디터(ops.auditor_assigned latest-wins) — 목록에 담당자 노출·오디터 KPI 집계용
     _cids = [c.case_id for c in rows]
     assign = _ops_latest_assignment(db, _cids)
+    company_decisions = _ops_latest_company_decision(db, _cids)
     # 수정요청 001 P3 — 계약 큐 처리대기 배지용: 케이스별 계약 상태 배치 조회
     _cts = {ct.case_id: ct.status for ct in
             db.query(models.Contract).filter(models.Contract.case_id.in_(_cids)).all()} if _cids else {}
@@ -2366,6 +2367,10 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
         a = assign.get(c.case_id) or {}
         _cc = org_cons.get(c.org_id)
         items.append({"case_id": c.case_id, "org_id": c.org_id, "company_name": c.company_name, "status": c.status,
+                      "created_at": c.created_at,
+                      "company_decision": company_decisions.get(c.case_id),
+                      "intake_pending": (c.status == "onboarding" and c.draft_state != "returned"
+                                         and company_decisions.get(c.case_id) not in ("approved", "rejected")),
                       "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
                       "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
                       "province": _province_of(c.factory_address or c.address),
@@ -14760,6 +14765,10 @@ def _ops_latest_company_decision(db, case_ids):
            .order_by(models.WorkflowEvent.created_at.asc(),
                      models.WorkflowEvent.event_id.asc()).all())
     for e in evs:   # asc 순회 → 마지막(최신)이 out에 남음
+        # Older versions recorded approval even when the transition failed.
+        if (e.action == "ops.company_approved" and "transitioned_to" in (e.payload or {})
+                and not e.payload["transitioned_to"]):
+            continue
         out[e.case_id] = "approved" if e.action.endswith("approved") else "rejected"
     return out
 
@@ -14907,10 +14916,15 @@ def _ops_auditors_data(db, user, cases=None):
         if aid:
             load[aid] = load.get(aid, 0) + 1
 
+    names = {r.username: r.display_name for r in db.query(models.StaffSignupRequest)
+             .filter_by(status="approved", requested_role="auditor").all() if r.display_name}
+
     def _auditor_row(a):
         prof = _auditor_profile(db, a.user_id) or {}
         n = load.get(a.user_id, 0)
         return {"user_id": a.user_id, "username": a.username, "load": n,
+                "display_name": names.get(a.username) or a.username,
+                "is_demo": a.org_id == "org_demo" and a.username in auth.DEFAULT_AUDITOR_PROFILES,
                 "load_pct": _auditor_load_pct(n), "capacity": AUDITOR_BASE_CAPACITY,
                 "specialty": prof.get("specialty"),
                 "languages": prof.get("languages", []) or [],
@@ -15280,12 +15294,22 @@ def ops_company_approve(case_id: str, user=Depends(auth.require_roles("operator"
     c = _get_case(db, case_id, user)
     frm = c.status
     target = "application_draft"
-    transitioned = None
+    decision = _ops_latest_company_decision(db, [case_id]).get(case_id)
+    if decision == "approved":
+        return {"ok": True, "already_approved": True, "transitioned_to": None, "blockers": []}
+    if frm != "onboarding" or decision == "rejected" or c.draft_state == "returned":
+        raise HTTPException(409, {"code": "NOT_PENDING_COMPANY", "message": "승인 대기 중인 업체가 아닙니다. 목록을 새로고침해 주세요."})
     ok, blk = sm.can_transition(db, c, target)
-    if ok:
-        sm.apply_side_effects(c, target)
-        c.status = target
-        transitioned = target
+    if not ok:
+        raise HTTPException(409, {"code": "TRANSITION_BLOCKED", "message": "승인 조건을 충족하지 못했습니다.", "blockers": blk})
+    claimed = db.query(models.CaseApplication).filter_by(case_id=case_id, status=frm).update(
+        {models.CaseApplication.status: target}, synchronize_session=False)
+    if claimed != 1:
+        db.rollback()
+        raise HTTPException(409, {"code": "NOT_PENDING_COMPANY", "message": "이미 처리된 업체입니다. 목록을 새로고침해 주세요."})
+    sm.apply_side_effects(c, target)
+    c.status = target
+    transitioned = target
     sm.record_event(db, c, frm, c.status, "ops.company_approved", user["role"], user["uid"],
                     {"transitioned_to": transitioned})
     _notify(db, c, "ops.company_approved", role="consultant",
@@ -18649,6 +18673,9 @@ def put_permissions(atype: str, target_id: str, body: schemas.MenuPermissionReq,
     db.commit()
     return {"saved": len(body.permissions or {})}
 
+
+from .mail_features import register_routes as _register_mail_routes
+_register_mail_routes(app, _consultant_primary_invite, _qr_response, HOME_BASE_URL)
 
 _static = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/ui", NoCacheStaticFiles(directory=_static, html=True), name="ui")

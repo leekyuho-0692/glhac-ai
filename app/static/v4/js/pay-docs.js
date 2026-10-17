@@ -104,7 +104,12 @@ function PAYD_qrHtml(qr){
       <div><span class="k">가입 링크</span><span class="v mono" style="word-break:break-all">${esc(qr.url||'')}</span></div>
       <div><span class="k">사용 횟수</span><span class="v mono">${esc(String(qr.used_count||0))}</span></div>
     </div>
-    <div class="inline"><button class="btn btn-sm" onclick="App.paydQr()">QR 내려받기</button></div>`;
+    <div class="inline"><button class="btn btn-sm" onclick="App.paydQr()">QR 내려받기</button></div>
+    <form onsubmit="App.sendQrMail(event)" style="margin-top:16px">
+      <div class="field"><label for="qr-mail-to">받는 고객 이메일</label><input class="in" id="qr-mail-to" type="email" maxlength="254" required autocomplete="email"></div>
+      <p class="muted">내 영업 QR 이미지와 가입 링크 주소를 함께 보냅니다.</p>
+      <button class="btn btn-primary" type="submit">QR · 가입 링크 이메일 발송</button><p role="status" class="inline-msg"></p>
+    </form>`;
 }
 
 function PAYD_commHtml(cm){
