@@ -157,9 +157,13 @@ def test_code_check_does_not_leak_contact_details(db):
     db.commit()
     _invite(db)
     r = m.check_invite("AAAA-BBBB", db=db)
-    # kind 는 초대 종류(consultant|client) 표시용 — 연락처·계좌 같은 민감정보가 아니다.
-    assert set(r) == {"valid", "kind", "company_name", "sectors", "consultant"}
+    # kind 는 초대 종류(consultant|client) 표시용. consultant_id(불투명 UUID)·가린 username 은 10/17 운영에
+    # 들어간 가입 화면 컨설턴트 표시용 — 연락처·계좌 같은 민감정보가 아니다.
+    assert set(r) == {"valid", "kind", "company_name", "sectors", "consultant", "consultant_id", "username"}
     assert "phone" not in r and "bank_account" not in r   # 민감정보 누출 없음
+    # 로그인 아이디(이메일일 수 있음)를 그대로 주지 않는다 — 앞 두 글자만.
+    u = db.get(models.User, CON)
+    assert "***" in r["username"] and r["username"] != u.username and r["consultant"] != u.username
 
 
 # ── 수수료 근거 ─────────────────────────────────────────────────────────

@@ -333,6 +333,7 @@
     <div class="sub">할랄·샤리아 인증 플랫폼 · Halal Certification</div>
     <input id="loginUser" placeholder="아이디 · Username" autocomplete="username" autofocus>
     <input id="loginPass" type="password" placeholder="비밀번호 · Password" autocomplete="current-password">
+    <button type="button" class="btn" onclick="GLHACMail.emailReset()">비밀번호를 잊으셨나요?</button>
     <div style="display:flex;gap:8px">
       <button class="btn pri" style="flex:1;justify-content:center;padding:11px" type="submit">로그인 · Sign in</button>
       <button type="button" class="btn" style="justify-content:center;padding:11px 16px;white-space:nowrap" onclick="showRegister(true)">회원가입</button>
@@ -10397,6 +10398,11 @@ async function inqQR(){
           <button class="btn" onclick="shareQr('${url}','${esc(info.code)}','${esc(info.url)}')">📤 ${T('공유')}</button>
           <button class="btn" onclick="copyLink('${esc(info.url)}')">🔗 ${T('링크 복사')}</button>
         </div>
+        <form onsubmit="GLHACMail.sendQrMail(event)" style="margin-top:12px">
+          <label>받는 고객 이메일 <input type="email" required maxlength="254" autocomplete="email"></label>
+          <p class="muted small">내 영업 QR 이미지와 가입 링크 주소를 함께 보냅니다.</p>
+          <button class="btn pri" type="submit">QR · 가입 링크 이메일 발송</button><p role="status"></p>
+        </form>
       </div></div>`;
     localizeUI();
   }catch(e){ box.innerHTML=errCard(e); }
@@ -12675,4 +12681,5 @@ async function boot(){
 // 홈페이지에서 넘어왔으면 먼저 인계를 처리하고 부팅한다(로그인 화면이 잠깐 스치지 않게)
 (async function(){ await consumeHandoff(); boot(); })();
 </script>
+<script src="/ui/v4/js/mail.js"></script>
 </body></html>

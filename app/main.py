@@ -1720,6 +1720,58 @@ def check_username(username: str, request: Request, db: Session = Depends(get_db
     return {"username": username, "available": not dup, "duplicate": dup, "source": "internal"}
 
 
+def _signup_consultant(db, ident):
+    u = _resolve_consultant(db, ident)
+    prof = db.get(models.ConsultantProfile, u.user_id)
+    if (_user_suspended(db, u.user_id) or (prof and prof.status != "active") or
+            (u.org_id == "org_demo" and u.username == "consultant1")):
+        raise HTTPException(422, {"code": "CONSULTANT_UNAVAILABLE", "message": "배정 가능한 컨설턴트를 선택해 주세요."})
+    return u, prof
+
+
+def _mask_login(login):
+    """가입 전 공개 화면용 로그인 아이디 가림 — 아이디가 이메일일 수 있어(이메일 아이디 허용) 그대로 주면
+    누구나 컨설턴트의 로그인 아이디·이메일을 얻는다. 동명이인 구분에 필요한 앞 두 글자만 남긴다."""
+    s = str(login or "")
+    local, at, domain = s.partition("@")
+    masked = (local[:2] + "***") if local else "***"
+    return masked + ("@" + domain[:1] + "***" if at else "")
+
+
+@app.get("/auth/consultants/search")
+def search_signup_consultants(request: Request, q: str = Query(..., min_length=2, max_length=80),
+                              db: Session = Depends(get_db)):
+    # 가입 전 공개 검색이라 두 글자 질의를 돌려가며 컨설턴트 로그인 아이디를 열거할 수 있다 —
+    # 아이디 중복확인과 같은 IP 당 분당 제한을 공유한다(가입 화면 정상 사용은 막지 않는 수준).
+    ip = _extract_real_ip(request)
+    if auth.check_username_rate_limited(ip):
+        raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS"})
+    auth.record_username_check(ip)
+    term = q.strip()
+    if len(term) < 2:
+        return {"items": []}
+    pattern = "%" + term.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+    staff_name = (db.query(models.StaffSignupRequest.display_name)
+                  .filter(models.StaffSignupRequest.username == models.User.username,
+                          models.StaffSignupRequest.status == "approved")
+                  .order_by(models.StaffSignupRequest.created_at.desc(), models.StaffSignupRequest.request_id.desc())
+                  .limit(1).correlate(models.User).scalar_subquery())
+    display_name = func.coalesce(func.nullif(models.ConsultantProfile.display_name, ""),
+                                 func.nullif(staff_name, ""), models.User.username)
+    rows = (db.query(models.User, display_name)
+            .outerjoin(models.ConsultantProfile, models.User.user_id == models.ConsultantProfile.consultant_id)
+            .filter(models.User.role == "consultant")
+            .filter((models.ConsultantProfile.status == "active") | (models.ConsultantProfile.consultant_id.is_(None)))
+            .filter(~((models.User.org_id == "org_demo") & (models.User.username == "consultant1")))
+            .filter(models.User.username.ilike(pattern, escape="!") |
+                    display_name.ilike(pattern, escape="!"))
+            .order_by(models.User.username).limit(20).all())
+    # 표기명이 없어 아이디로 대신 보이던 경우도 가린다(공개 응답).
+    return {"items": [{"consultant_id": u.user_id, "username": _mask_login(u.username),
+                       "display_name": _mask_login(name) if name == u.username else name}
+                      for u, name in rows if not _user_suspended(db, u.user_id)]}
+
+
 @app.post("/auth/register")
 def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     if db.query(models.User).filter_by(username=body.username).first():
@@ -1740,6 +1792,11 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
             invite_note, inv = "EXPIRED", None
         elif inv.used_count >= inv.max_uses:
             invite_note, inv = "USED_UP", None
+    selected = None
+    if body.consultant_id:
+        selected, _ = _signup_consultant(db, body.consultant_id)
+        if inv and (inv.kind or "consultant") != "client" and selected.user_id != inv.consultant_id:
+            raise HTTPException(422, {"code": "REFERRAL_CONFLICT", "message": "QR 초대 컨설턴트와 선택한 컨설턴트가 다릅니다."})
     _meta = {}
     if inv:
         _ev = (db.query(models.WorkflowEvent).filter_by(case_id="invite:" + inv.code, action="invite.meta")
@@ -1762,6 +1819,9 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         # 특정 컨설턴트에 안 묶이므로 consultant_id 를 붙이지 않는다(귀속 없음).
         if inv and (getattr(inv, "kind", "consultant") or "consultant") != "client":
             _o.consultant_id = inv.consultant_id      # 누가 데려왔는지 — 수수료 근거
+            _o.consultant_linked_at = datetime.utcnow()
+        if selected:
+            _o.consultant_id = selected.user_id
             _o.consultant_linked_at = datetime.utcnow()
         db.add(_o)
     if inv:
@@ -1790,6 +1850,9 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         _cu = db.get(models.User, inv.consultant_id)
         _ref = {"consultant": (_cp.display_name if _cp and _cp.display_name
                                else (_cu.username if _cu else None))}
+    elif selected:
+        _cp = db.get(models.ConsultantProfile, selected.user_id)
+        _ref = {"consultant": (_cp.display_name if _cp else None) or selected.username}
     elif invite_note:
         _ref = {"invite_error": invite_note}
     return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username,
@@ -2654,7 +2717,7 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
         else:
             q = q.filter(own)
     total = q.count()
-    rows = (q.order_by(models.CaseApplication.created_at.desc())
+    rows = (q.order_by(models.CaseApplication.created_at.desc(), models.CaseApplication.case_id.desc())
             .offset(offset).limit(limit).all())
     # SRS COM-08: 분야·상태·업체명/번호 검색 (python 측 — profile_ext JSON 은 DB 필터 불가)
     if sector or status or search:
@@ -2667,6 +2730,7 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     # E2/M2: 배정 오디터(ops.auditor_assigned latest-wins) — 목록에 담당자 노출·오디터 KPI 집계용
     _cids = [c.case_id for c in rows]
     assign = _ops_latest_assignment(db, _cids)
+    company_decisions = _ops_latest_company_decision(db, _cids)
     # 수정요청 001 P3 — 계약 큐 처리대기 배지용: 케이스별 계약 상태 배치 조회
     _cts = {ct.case_id: ct.status for ct in
             db.query(models.Contract).filter(models.Contract.case_id.in_(_cids)).all()} if _cids else {}
@@ -2702,6 +2766,10 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
         a = assign.get(c.case_id) or {}
         _cc = org_cons.get(c.org_id)
         items.append({"case_id": c.case_id, "org_id": c.org_id, "company_name": c.company_name, "status": c.status,
+                      "created_at": c.created_at,
+                      "company_decision": company_decisions.get(c.case_id),
+                      "intake_pending": (c.status == "onboarding" and c.draft_state != "returned"
+                                         and company_decisions.get(c.case_id) not in ("approved", "rejected")),
                       "sector": (c.profile_ext or {}).get("sector"),
                       "pathway": c.pathway, "due_date": c.due_date, "draft_state": c.draft_state,
                       "scheme": c.scheme or "product", "logistics_scope": c.logistics_scope or [],
@@ -4023,7 +4091,7 @@ def admin_staff_signup_qr(fmt: str = "png",
 def check_invite(code: str, db: Session = Depends(get_db)):
     """가입 화면이 코드를 확인한다 — 누구 담당으로 들어가는지 미리 보여준다.
 
-    인증 없이 연다(가입 전이다). 컨설턴트의 표기명만 돌려주고 연락처·계좌는 주지 않는다."""
+    인증 없이 연다(가입 전이다). 담당자 이름·아이디만 돌려주고 연락처·계좌는 주지 않는다."""
     inv = db.query(models.ConsultantInvite).filter_by(code=(code or "").strip().upper()).first()
     if not inv:
         return {"valid": False, "reason": "NOT_FOUND"}
@@ -4043,10 +4111,16 @@ def check_invite(code: str, db: Session = Depends(get_db)):
                 "sectors": _m.get("sectors") or []}
     u = db.get(models.User, inv.consultant_id)
     prof = db.get(models.ConsultantProfile, inv.consultant_id)
+    if not u or u.role != "consultant":
+        return {"valid": False, "reason": "CONSULTANT_NOT_FOUND"}
+    signup = (db.query(models.StaffSignupRequest)
+              .filter_by(username=u.username, status="approved")
+              .order_by(models.StaffSignupRequest.created_at.desc(), models.StaffSignupRequest.request_id.desc()).first())
     return {"valid": True, "kind": "consultant", "company_name": inv.company_name,
+            "consultant_id": u.user_id, "username": _mask_login(u.username),   # 공개 응답 — 아이디 가림
             "sectors": _m.get("sectors") or [],
             "consultant": (prof.display_name if prof and prof.display_name
-                           else (u.username if u else None))}
+                           else (signup.display_name if signup and signup.display_name else _mask_login(u.username)))}
 
 
 # ── 유치 관계 ─────────────────────────────────────────────────────────────
@@ -16653,6 +16727,10 @@ def _ops_latest_company_decision(db, case_ids):
            .order_by(models.WorkflowEvent.created_at.asc(),
                      models.WorkflowEvent.event_id.asc()).all())
     for e in evs:   # asc 순회 → 마지막(최신)이 out에 남음
+        # Older versions recorded approval even when the transition failed.
+        if (e.action == "ops.company_approved" and "transitioned_to" in (e.payload or {})
+                and not e.payload["transitioned_to"]):
+            continue
         out[e.case_id] = "approved" if e.action.endswith("approved") else "rejected"
     return out
 
@@ -16685,6 +16763,10 @@ def _ops_latest_assignment(db, case_ids):
                 cur["reject_reason"] = p.get("reason")
                 cur["responded_at"] = str(e.created_at)
     return out
+
+
+def _is_demo_auditor(user):
+    return user.org_id == "org_demo" and user.username in (set(auth.DEFAULT_AUDITOR_PROFILES) | {"test"})
 
 
 def _ops_auditor_users(db, user):
@@ -16800,10 +16882,15 @@ def _ops_auditors_data(db, user, cases=None):
         if aid:
             load[aid] = load.get(aid, 0) + 1
 
+    names = {r.username: r.display_name for r in db.query(models.StaffSignupRequest)
+             .filter_by(status="approved", requested_role="auditor").all() if r.display_name}
+
     def _auditor_row(a):
         prof = _auditor_profile(db, a.user_id) or {}
         n = load.get(a.user_id, 0)
         return {"user_id": a.user_id, "username": a.username, "load": n,
+                "display_name": names.get(a.username) or a.username,
+                "is_demo": _is_demo_auditor(a),
                 "load_pct": _auditor_load_pct(n), "capacity": AUDITOR_BASE_CAPACITY,
                 "specialty": prof.get("specialty"),
                 "languages": prof.get("languages", []) or [],
@@ -17594,12 +17681,22 @@ def ops_company_approve(case_id: str, user=Depends(auth.require_roles("operator"
     c = _get_case(db, case_id, user)
     frm = c.status
     target = "application_draft"
-    transitioned = None
+    decision = _ops_latest_company_decision(db, [case_id]).get(case_id)
+    if decision == "approved":
+        return {"ok": True, "already_approved": True, "transitioned_to": None, "blockers": []}
+    if frm != "onboarding" or decision == "rejected" or c.draft_state == "returned":
+        raise HTTPException(409, {"code": "NOT_PENDING_COMPANY", "message": "승인 대기 중인 업체가 아닙니다. 목록을 새로고침해 주세요."})
     ok, blk = sm.can_transition(db, c, target)
-    if ok:
-        sm.apply_side_effects(c, target)
-        c.status = target
-        transitioned = target
+    if not ok:
+        raise HTTPException(409, {"code": "TRANSITION_BLOCKED", "message": "승인 조건을 충족하지 못했습니다.", "blockers": blk})
+    claimed = db.query(models.CaseApplication).filter_by(case_id=case_id, status=frm).update(
+        {models.CaseApplication.status: target}, synchronize_session=False)
+    if claimed != 1:
+        db.rollback()
+        raise HTTPException(409, {"code": "NOT_PENDING_COMPANY", "message": "이미 처리된 업체입니다. 목록을 새로고침해 주세요."})
+    sm.apply_side_effects(c, target)
+    c.status = target
+    transitioned = target
     sm.record_event(db, c, frm, c.status, "ops.company_approved", user["role"], user["uid"],
                     {"transitioned_to": transitioned})
     _notify(db, c, "ops.company_approved", role="consultant",
@@ -17712,6 +17809,8 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
     au = db.get(models.User, body.auditor_id)
     if not au or au.role != "auditor":
         raise HTTPException(404, {"code": "AUDITOR_NOT_FOUND", "auditor_id": body.auditor_id})
+    if _is_demo_auditor(au) and not auth.dev_mode():
+        raise HTTPException(409, {"code": "DEMO_AUDITOR_NOT_ASSIGNABLE", "message": "샘플 계정에는 운영 심사를 배정할 수 없습니다. 실제 심사원 계정을 등록해 주세요."})
     if user["role"] != "admin" and au.org_id != user["org_id"]:
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
     _limit = _audit_settings(db, user.get("org_id")).get("max_cases_per_auditor") or 6
@@ -17725,7 +17824,7 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
     db.query(models.CaseAuditor).filter_by(case_id=case_id, user_id=au.user_id, role="co").delete()
     if not db.query(models.CaseAuditor).filter_by(case_id=case_id, role="co").first():
         cands = db.query(models.User).filter_by(role="auditor", org_id=au.org_id).all()
-        cands = [u for u in cands if u.user_id != au.user_id]
+        cands = [u for u in cands if u.user_id != au.user_id and (auth.dev_mode() or not _is_demo_auditor(u))]
         if cands:
             all_assign = _ops_latest_assignment(db, [x.case_id for x in _ops_cases(db, user)])
             main_load = {}
@@ -21318,6 +21417,9 @@ def put_permissions(atype: str, target_id: str, body: schemas.MenuPermissionReq,
     db.commit()
     return {"saved": len(body.permissions or {})}
 
+
+from .mail_features import register_routes as _register_mail_routes
+_register_mail_routes(app, _consultant_primary_invite, _qr_response, HOME_BASE_URL)
 
 _static = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/ui", NoCacheStaticFiles(directory=_static, html=True), name="ui")

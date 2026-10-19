@@ -159,3 +159,93 @@ def test_e_applicant_forbidden():
         assert c.get("/ops/dashboard", headers=_h(tok)).status_code == 403
         assert c.get("/ops/regions", headers=_h(tok)).status_code == 403
         assert c.post("/ops/companies/%s/approve" % cid, headers=_h(tok)).status_code == 403
+
+
+def test_approval_moves_out_of_intake_and_duplicate_has_no_side_effects():
+    cid = _mk_case("onboarding", "Intake paging approval")
+    with TestClient(app) as client:
+        headers = _h(_tok(client, "admin", "admin"))
+        def item():
+            return next(x for x in client.get("/cases?limit=500", headers=headers).json()["items"] if x["case_id"] == cid)
+        assert item()["intake_pending"] is True
+        first = client.post("/ops/companies/%s/approve" % cid, headers=headers)
+        assert first.status_code == 200
+        assert item()["intake_pending"] is False
+        assert item()["company_decision"] == "approved"
+        with SessionLocal() as db:
+            before = db.query(models.Notification).filter_by(case_id=cid, event_type="ops.company_approved").count()
+        again = client.post("/ops/companies/%s/approve" % cid, headers=headers)
+        assert again.status_code == 200 and again.json()["already_approved"] is True
+        with SessionLocal() as db:
+            assert db.query(models.Notification).filter_by(case_id=cid, event_type="ops.company_approved").count() == before
+        assert _events(cid, "ops.company_approved") == 1
+
+
+def test_approval_blocked_does_not_record_success(monkeypatch):
+    from app import main
+    cid = _mk_case("onboarding", "Blocked intake")
+    monkeypatch.setattr(main.sm, "can_transition", lambda *args: (False, [{"code": "TEST_BLOCKER"}]))
+    with TestClient(app) as client:
+        headers = _h(_tok(client, "admin", "admin"))
+        r = client.post("/ops/companies/%s/approve" % cid, headers=headers)
+        assert r.status_code == 409 and r.json()["detail"]["blockers"] == [{"code": "TEST_BLOCKER"}]
+    assert _case_status(cid) == "onboarding"
+    assert _events(cid, "ops.company_approved") == 0
+
+
+def test_non_pending_approval_rejected_and_rejected_case_not_pending():
+    draft = _mk_case("application_draft", "Already drafting")
+    rejected = _mk_case("onboarding", "Rejected intake")
+    with TestClient(app) as client:
+        headers = _h(_tok(client, "admin", "admin"))
+        assert client.post("/ops/companies/%s/approve" % draft, headers=headers).status_code == 409
+        assert client.post("/ops/companies/%s/reject" % rejected, headers=headers, json={"reason": "Test rejection"}).status_code == 200
+        assert client.post("/ops/companies/%s/approve" % rejected, headers=headers).status_code == 409
+        rows = {x["case_id"]: x for x in client.get("/cases?limit=500", headers=headers).json()["items"]}
+        assert not rows[draft]["intake_pending"]
+        assert rows[rejected]["company_decision"] == "rejected" and not rows[rejected]["intake_pending"]
+
+
+def test_old_failed_approval_event_does_not_hide_pending_case():
+    from app import main
+    cid = _mk_case("onboarding", "Historical false success")
+    with SessionLocal() as db:
+        case = db.get(models.CaseApplication, cid)
+        main.sm.record_event(db, case, case.status, case.status, "ops.company_approved", "admin", "old-admin", {"transitioned_to": None})
+        db.commit()
+    with TestClient(app) as client:
+        headers = _h(_tok(client, "admin", "admin"))
+        row = next(x for x in client.get("/cases?limit=500", headers=headers).json()["items"] if x["case_id"] == cid)
+        assert row["intake_pending"] is True and row["company_decision"] is None
+        assert client.post("/ops/companies/%s/approve" % cid, headers=headers).status_code == 200
+
+
+def test_real_auditor_is_listed_and_demo_accounts_are_marked():
+    from app import auth
+    with SessionLocal() as db:
+        auditor = models.User(username="real-auditor@example.com", password_hash=auth.hash_pw("TestOnly123!"),
+                              role="auditor", org_id="org_demo")
+        sample = models.User(username="test", password_hash=auth.hash_pw("TestOnly123!"), role="auditor", org_id="org_demo")
+        db.add_all([auditor, sample])
+        db.commit()
+    with TestClient(app) as client:
+        rows = client.get('/ops/auditors', headers=_h(_tok(client, 'admin', 'admin'))).json()['auditors']
+        assert next(x for x in rows if x['username'] == 'auditor1')['is_demo'] is True
+        assert next(x for x in rows if x['username'] == 'test')['is_demo'] is True
+        actual = next(x for x in rows if x['username'] == 'real-auditor@example.com')
+        assert actual['is_demo'] is False and actual['display_name'] == 'real-auditor@example.com'
+
+
+def test_production_cannot_assign_demo_auditor(monkeypatch):
+    from app import auth
+    cid = _mk_case('document_pre_audit_requested', 'No demo assignment')
+    with TestClient(app) as client:
+        headers = _h(_tok(client, 'admin', 'admin'))
+        with SessionLocal() as db:
+            auditor = db.query(models.User).filter_by(username='auditor1').first()
+            aid = auditor.user_id
+        monkeypatch.setattr(auth, 'dev_mode', lambda: False)
+        response = client.post('/ops/cases/' + cid + '/assign-auditor', headers=headers, json={'auditor_id': aid})
+        assert response.status_code == 409
+        assert response.json()['detail']['code'] == 'DEMO_AUDITOR_NOT_ASSIGNABLE'
+    assert _events(cid, 'ops.auditor_assigned') == 0

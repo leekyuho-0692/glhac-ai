@@ -4,6 +4,8 @@
 import os
 import sys
 from datetime import datetime
+import pytest
+from fastapi import HTTPException
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("GLHAC_DB_URL", "sqlite:///./glhac_docgen_test.db")
@@ -87,9 +89,13 @@ def test_contract_generate_pdf_sign(tmp_path):
     # 리치 PDF 렌더(정적 법률조항 + 제품표 + 서명블록)
     resp = m.get_contract_pdf("case1", USER, db)
     assert resp.media_type == "application/pdf" and resp.body[:4] == b"%PDF"
-    # 양자 서명 → signed
+    # Each party signs with its own role; both signatures trigger confirmation.
     m.sign_contract(r["contract_id"], party="A", name="Client Rep", user=USER, db=db)
-    s2 = m.sign_contract(r["contract_id"], party="B", name="GLHAC Rep", user=OPER, db=db)
+    with pytest.raises(HTTPException) as denied:
+        m.sign_contract(r["contract_id"], party="B", name="GLHAC Rep", user=USER, db=db)
+    assert denied.value.status_code == 403
+    operator = {"uid": "operator-test", "role": "operator", "org_id": "org1"}
+    s2 = m.sign_contract(r["contract_id"], party="B", name="GLHAC Rep", user=operator, db=db)
     assert s2["status"] in ("signed", "confirmed")
     assert len(s2["signatures"]) == 2
 
