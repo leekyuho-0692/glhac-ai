@@ -507,7 +507,8 @@ def _assert_case_access(db, user, c):
       케이스마다 배정하지만, 컨설턴트는 업체가 들어올 때 이미 관계가 있다. 배정을 기다리게
       하면 자기가 데려온 고객을 못 본다.
     · 오디터: 자기 조직 + 배정받은 케이스.
-    · 그 외(신청기업·할랄감독자·동반자): 자기 조직만.
+    · 동반자: 자기 조직 + 배정(PendampingAssignment)받은 케이스.
+    · 그 외(신청기업·할랄감독자): 자기 조직만.
     """
     role = user.get("role")
     if role in CERTIFIER_ROLES:
@@ -517,6 +518,12 @@ def _assert_case_access(db, user, c):
     if _is_my_client_org(db, user, c.org_id):
         return
     if role in ASSIGNED_ROLES and str(user.get("uid")) in _assigned_staff(db, c.case_id):
+        return
+    # 동반자(Pendamping PPH)는 자기선언 케이스에 배정돼 검증하는 외부 인력이다. 업체별 조직 분리(10/04)
+    # 이후 케이스는 업체 조직에 있어, '자기 조직만' 규칙으로는 배정(/pendamping/assign)을 받아도
+    # 검증(/pendamping/verify)이 403 이었다 — 배정 레코드가 있는 그 케이스만 연다.
+    if role == "pendamping_pph" and db.query(models.PendampingAssignment).filter_by(
+            case_id=c.case_id, pendamping_id=str(user.get("uid"))).first():
         return
     raise HTTPException(403, {"code": "ORG_FORBIDDEN", "case_org": c.org_id,
                               "user_org": user.get("org_id"),
