@@ -15,6 +15,7 @@
 #   bash scripts/deploy.sh --home-only     # 홈페이지만
 #   bash scripts/deploy.sh --dry-run       # 뭘 보낼지만 보여 준다
 #   bash scripts/deploy.sh --rollback      # 직전 백업으로 되돌린다
+#   bash scripts/deploy.sh --check-deps    # (선택) requirements.lock 과 운영 venv 차이를 경고만 한다(배포는 그대로)
 #
 # 환경변수(없으면 아래 기본값):
 #   GLHAC_SSH_KEY  GLHAC_SSH_HOST  GLHAC_HOME_SRC
@@ -31,14 +32,15 @@ SVC=glhac-app
 OWNER=rocky:rocky            # 서비스 실행 계정 — root 로 바꾸면 앱이 못 읽는다
 HEALTH=http://127.0.0.1:8800/health
 
-DO_APP=1; DO_HOME=1; DRY=0; ROLLBACK=0
+DO_APP=1; DO_HOME=1; DRY=0; ROLLBACK=0; CHECK_DEPS=0
 for a in "$@"; do
   case "$a" in
     --app-only)  DO_HOME=0 ;;
     --home-only) DO_APP=0 ;;
     --dry-run)   DRY=1 ;;
     --rollback)  ROLLBACK=1 ;;
-    -h|--help)   sed -n '2,26p' "$0"; exit 0 ;;
+    --check-deps) CHECK_DEPS=1 ;;
+    -h|--help)   sed -n '2,27p' "$0"; exit 0 ;;
     *) echo "모르는 옵션: $a"; exit 2 ;;
   esac
 done
@@ -47,6 +49,24 @@ SSH=(ssh -i "$KEY" -o StrictHostKeyChecking=no "$HOST")
 RSYNC_SSH="ssh -i $KEY -o StrictHostKeyChecking=no"
 TS="$(date +%Y%m%d%H%M%S)"
 say() { printf '  %s\n' "$*"; }
+
+# ── (선택) 의존성 점검 — 경고만, 배포 흐름·종료코드에 영향 없음 ──────────────────
+if [ "$CHECK_DEPS" = 1 ]; then
+  LOCK="$APP_SRC/requirements.lock"
+  if [ ! -f "$LOCK" ]; then
+    say "경고: requirements.lock 이 없어 의존성 점검을 건너뜁니다"
+  elif ! RFREEZE="$("${SSH[@]}" /opt/glhac/.venv/bin/pip freeze 2>/dev/null)" || [ -z "$RFREEZE" ]; then
+    say "경고: 운영 venv 의 pip freeze 를 읽지 못했습니다 — 의존성 점검을 건너뜁니다"
+  else
+    DEPDIFF="$(diff <(grep -vE '^[[:space:]]*(#|$)' "$LOCK" | sort -f) <(printf '%s\n' "$RFREEZE" | sort -f) || true)"
+    if [ -n "$DEPDIFF" ]; then
+      say "경고: requirements.lock 과 운영 venv 가 다릅니다( < lock / > 운영 ) — 배포는 계속합니다"
+      printf '%s\n' "$DEPDIFF" | sed 's/^/    /'
+    else
+      say "의존성: requirements.lock 과 운영 venv 일치"
+    fi
+  fi
+fi
 
 # ── 되돌리기 ──────────────────────────────────────────────────────────────
 if [ "$ROLLBACK" = 1 ]; then

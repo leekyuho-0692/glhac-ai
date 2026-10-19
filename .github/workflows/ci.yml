@@ -35,13 +35,13 @@ jobs:
       - name: 의존성 (무거운 OCR 은 제외)
         run: |
           python -m pip install --upgrade pip
-          # requirements.txt 에서 paddle* 만 뺀다. 목록을 여기 손으로 적어 두면
-          # 새 의존을 추가했을 때 CI 에서만 ModuleNotFoundError 가 난다(실측: segno).
-          sed 's/[[:space:]]*#.*$//' requirements.txt \
-            | grep -vE '^[[:space:]]*$' | grep -viE '^paddle' > /tmp/ci-reqs.txt
+          # requirements.txt 의 직접 의존에서 paddle* 만 빼고, 버전은 requirements.lock(운영 venv freeze)의
+          # 정확한 값으로 고정한다 — 운영과 같은 버전으로 테스트. lock 에 없는 항목은 범위 선언 그대로
+          # (목록을 손으로 적지 않는다: 새 의존 추가 시 CI 에서만 ModuleNotFoundError 나는 문제, 실측 segno).
+          python scripts/pin_from_lock.py --skip paddle > /tmp/ci-reqs.txt
           echo "--- 설치 목록 ---"; cat /tmp/ci-reqs.txt
           pip install -r /tmp/ci-reqs.txt
-          pip install "pytest>=8.0" "pytest-cov>=5.0" "coverage>=7.0"
+          pip install -r requirements-dev.txt
           python -c "import fastapi, sqlalchemy, httpx, pydantic, fitz, openpyxl, docx, Crypto, PIL, segno; print('deps OK')"
 
       # e2e 는 HTTP 로 서버를 때린다. 대상이 없으면 run_isolated.sh 가 건너뛰므로

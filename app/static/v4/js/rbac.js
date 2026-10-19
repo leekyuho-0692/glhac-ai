@@ -49,7 +49,10 @@ const SERVER_ROLES_FOR = {
   'POST /cases/{}/sihalal/identity/link':        ['applicant','consultant'],                     // main.py:16989
   'POST /sihalal/identity/{}/verify':            ['consultant'],                                 // main.py:17004
   // adm (admin 전용 = require_roles() / require_roles("admin"))
-  'GET /admin/users':                            [],                                             // main.py:1584
+  'GET /admin/users':                            ['operator'],                                             // main.py:1584
+  'GET /admin/users/{}':                         ['operator'],                                   // 상세(조회)
+  'PATCH /admin/users/{}':                       [],                                             // 수정 — admin 전용
+  'DELETE /admin/users/{}':                      [],                                             // 삭제 — admin 전용
   'GET /admin/staff-signups':                    [],                                             // main.py:1517
   'GET /admin/orgs':                             [],                                             // main.py:1682
   'POST /admin/orgs':                            [],                                             // main.py:1706
@@ -70,7 +73,8 @@ const SERVER_ROLES_FOR = {
 };
 /* 화면(사이드바) 단위 — 표에 없으면 노출 */
 const VIEW_ROLES = {
-  'adm-members': [],   // GET /admin/users(main.py:1584)·/admin/staff-signups(1517) 모두 admin 전용
+  'adm-user-detail': ['operator'],   // GET /admin/users/{id} — operator·admin 조회(수정은 admin)
+  'adm-members': ['operator'],   // 회원 목록 GET /admin/users 는 operator 조회 허용(가입 승인·수정은 admin) // GET /admin/users(main.py:1584)·/admin/staff-signups(1517) 모두 admin 전용
 };
 
 function _rbacKey(method, path){

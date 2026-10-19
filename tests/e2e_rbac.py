@@ -45,7 +45,11 @@ CASES = [
     ("모의심사 결정", "POST", f"/cases/{CID}/mock-audit/decision", {"result": "pass"}, {"auditor", "fatwa_liaison", "operator", "admin"}),
     ("자기선언 검증", "POST", f"/cases/{CID}/pendamping/verify", {"decision": "verified"}, {"pendamping_pph", "admin"}),
     ("결제 표시", "PATCH", "/invoices/nope/pay", None, {"consultant", "applicant", "admin"}),
-    ("admin 사용자목록", "GET", "/admin/users", None, {"admin"}),
+    # 사용자 목록·상세는 operator 조회 허용(정책 변경), 수정·삭제는 admin 전용 유지
+    ("admin 사용자목록", "GET", "/admin/users", None, {"operator", "admin"}),
+    ("admin 사용자상세", "GET", "/admin/users/nope", None, {"operator", "admin"}),
+    ("admin 사용자수정", "PATCH", "/admin/users/nope", {"role": "auditor"}, {"admin"}),
+    ("admin 사용자삭제", "DELETE", "/admin/users/nope", None, {"admin"}),
     ("admin 사용자생성", "POST", "/admin/users", {"username": "z", "password": "halal-test-1", "role": "auditor"}, {"admin"}),
     ("admin 전체케이스", "GET", "/admin/cases", None, {"admin"}),
     ("admin 온톨로지", "GET", "/admin/ontology/stats", None, {"admin"}),

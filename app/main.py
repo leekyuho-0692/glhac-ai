@@ -953,7 +953,7 @@ def _notification_contacts(db, n):
     알림(보완 요청 통보 등)이 업체 담당자에게 SMS/이메일로 나가는 오배정이었다.
     업체 대상(role 비어 있음/applicant/client…)이면 케이스 연락처 + 업체의 수신동의를 쓴다.
     그 외 역할은 해당 담당자의 연락처만 쓰고, 찾지 못하면 빈 연락처({} → no_contact)로 두어
-    업체로 새지 않게 한다. 오디터는 연락처를 저장하는 필드가 없어 현재는 항상 no_contact 다.
+    업체로 새지 않게 한다. 직원 연락처는 User.contact_email/contact_phone(암호화)에서 읽는다.
     webhook 은 시스템 연동 주소(역할 무관)라 그대로 둔다."""
     webhook = os.environ.get("GLHAC_WEBHOOK_URL")
     c = db.get(models.CaseApplication, n.case_id) if n.case_id else None
@@ -972,9 +972,29 @@ def _notification_contacts(db, n):
         if prof is not None and (prof.status or "active") == "active":
             contacts.update({"phone": prof.phone, "email": prof.email})
             return contacts, True    # 담당자 본인 연락처 — 업체의 수신동의와 무관
-    # auditor 및 그 밖의 직원 역할: 연락처 필드 없음 → 업체로 보내지 않는다(no_contact).
+    # 오디터·샤리아·운영자 등 직원 역할: 배정된 사람(없으면 같은 역할 중 연락처가 있는 첫 활성 계정)의
+    # User 연락처를 쓴다. 연락처가 없으면 빈 채로 두어 no_contact — 업체로 보내지 않는다.
     # 수신동의는 업체 개념이라 여기선 게이트하지 않는다(동의 미달로 조용히 사라지지 않고 no_contact 로 남는다).
+    staff = _notify_staff_user(db, n)
+    if staff is not None:
+        contacts.update({"phone": staff.contact_phone, "email": staff.contact_email})
     return contacts, True
+
+
+def _notify_staff_user(db, n):
+    """직원 역할 알림의 수신자 User — 오디터는 케이스의 배정 오디터(_assigned_auditor_id 재사용),
+    그 외(fatwa_liaison·operator·admin)는 배정 개념이 없어 해당 역할 활성 계정 중 연락처가 있는 첫 사람(아이디순)."""
+    if n.role == "auditor":
+        uid = _assigned_auditor_id(db, n.case_id) if n.case_id else None
+        u = db.get(models.User, uid) if uid else None
+        if u is not None and u.role == "auditor" and not _user_suspended(db, u.user_id):
+            return u
+        return None
+    if n.role in ("fatwa_liaison", "operator", "admin"):
+        for u in db.query(models.User).filter_by(role=n.role).order_by(models.User.username).all():
+            if (u.contact_email or u.contact_phone) and not _user_suspended(db, u.user_id):
+                return u
+    return None
 
 
 def drain_notifications(db, batch=50, max_attempts=3):
@@ -1433,8 +1453,8 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
            .order_by(models.Signature.signed_at.desc()).first())
     sig_valid = False
     if sig:
-        _, expected = _sign_payload(_cert_canonical(cert))
-        sig_valid = (expected == sig.signature_value)
+        _, expected = _sign_payload(_cert_canonical(cert), stored=sig.signature_value or "")
+        sig_valid = bool(expected) and (expected == sig.signature_value)
     sig_status = _cert_signature_status(cert, sig, sig_valid)
     official = _official_bpjph_no(db, cert.case_id)
     _scheme = (c.scheme if c else None) or "product"
@@ -1567,7 +1587,8 @@ def login(body: schemas.LoginReq, request: Request, db: Session = Depends(get_db
         raise HTTPException(403, {"code": "USER_SUSPENDED"})
     if auth.needs_rehash(u.password_hash):   # 레거시 sha256 → pbkdf2 자동 승격
         u.password_hash = auth.hash_pw(body.password)
-        db.commit()
+    u.last_login_at = datetime.utcnow()
+    db.commit()
     return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username}
 
 
@@ -1930,6 +1951,134 @@ def change_password(body: schemas.ChangePasswordReq, user=Depends(auth.get_curre
     return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username}
 
 
+_CONTACT_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_CONTACT_PHONE_RE = re.compile(r"^\+?[0-9][0-9\s\-().]{5,24}$")
+
+
+def _apply_contact(u, email, phone):
+    """User 연락처 반영 — None=변경 없음, ''=삭제. 형식이 틀리면 422. 바뀐 필드명 목록을 돌려준다(값은 로그에 남기지 않는다)."""
+    changed = []
+    if email is not None:
+        v = email.strip()
+        if v and (len(v) > 200 or not _CONTACT_EMAIL_RE.match(v)):
+            raise HTTPException(422, {"code": "BAD_CONTACT_EMAIL"})
+        u.contact_email = v or None
+        changed.append("contact_email")
+    if phone is not None:
+        v = phone.strip()
+        if v and not _CONTACT_PHONE_RE.match(v):
+            raise HTTPException(422, {"code": "BAD_CONTACT_PHONE"})
+        u.contact_phone = v or None
+        changed.append("contact_phone")
+    return changed
+
+
+@app.patch("/me/contact")
+def patch_my_contact(body: schemas.ContactReq, user=Depends(auth.get_current_user),
+                     db: Session = Depends(get_db)):
+    """본인 알림 연락처(이메일·전화) 수정 — 자기 계정만(경로에 대상 id 없음)."""
+    u = db.get(models.User, user["uid"])
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    changed = _apply_contact(u, body.contact_email, body.contact_phone)
+    _audit(db, user, "user.contact.update", "user", u.user_id, None, {"fields": changed}, commit=False)
+    db.commit()
+    return {"contact_email": u.contact_email, "contact_phone": u.contact_phone}
+
+
+_PROFILE_NAME_ROLES = {"consultant", "auditor", "fatwa_liaison", "operator", "admin"}   # 표기명을 쓰는 역할(스태프)
+_ENT_ROLES = {"applicant", "penyelia_halal", "pendamping_pph", "client_admin", "client_staff"}
+
+
+def _mask_user_contact(v):
+    """목록용 가린 연락처 — 이메일은 아이디 앞 2자, 전화는 앞 4자만 남긴다."""
+    v = (v or "").strip()
+    if not v:
+        return None
+    if "@" in v:
+        local, _, dom = v.partition("@")
+        return local[:2] + "***@" + dom
+    return v[:4] + "***"
+
+
+def _user_status(db, u):
+    return "suspended" if _user_suspended(db, u.user_id) else "active"
+
+
+def _user_display_name(db, u):
+    if u.role == "consultant":
+        cp = db.get(models.ConsultantProfile, u.user_id)
+        if cp is not None and cp.display_name:
+            return cp.display_name
+    return u.display_name
+
+
+def _user_summary(db, u):
+    """역할별 요약 수치 — 컨설턴트: 초대코드·담당 업체 수, 스태프: 배정 케이스 수, 기업: 조직 케이스 수."""
+    if u.role == "consultant":
+        return {"invite_count": db.query(models.ConsultantInvite).filter_by(consultant_id=u.user_id, kind="consultant").count(),
+                "client_count": len(_my_client_org_ids(db, u.user_id))}
+    if u.role in ("auditor",):
+        return {"assigned_case_count": len(_assigned_case_ids(db, u.user_id))}
+    if u.role in _ENT_ROLES:
+        return {"case_count": db.query(models.CaseApplication).filter_by(org_id=u.org_id).count()}
+    return {}
+
+
+def _user_base(db, u, mask):
+    org = db.get(models.Org, u.org_id) if u.org_id else None
+    em, ph = u.contact_email, u.contact_phone
+    return {"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id,
+            "company_name": org.name if org else None, "company_role": u.company_role,
+            "display_name": _user_display_name(db, u),
+            "status": _user_status(db, u), "suspended": _user_suspended(db, u.user_id),
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+            "contact_email": _mask_user_contact(em) if mask else em,
+            "contact_phone": _mask_user_contact(ph) if mask else ph}
+
+
+@app.get("/me/profile")
+def get_my_profile(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """내 정보 — 토큰이 아니라 DB 의 본인 계정 상태(/auth/me 는 토큰 정보라 그대로 둔다)."""
+    u = db.get(models.User, user["uid"])
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    out = _user_base(db, u, mask=False)
+    out["summary"] = _user_summary(db, u)
+    if u.role in _ENT_ROLES:
+        org = db.get(models.Org, u.org_id)
+        cid = org.consultant_id if org else None
+        cp = db.get(models.ConsultantProfile, cid) if cid else None
+        cu = db.get(models.User, cid) if cid else None
+        out["consultant_name"] = (cp.display_name if cp and cp.display_name else (cu.username if cu else None))
+    out["can_edit_display_name"] = u.role in _PROFILE_NAME_ROLES
+    return out
+
+
+@app.patch("/me/profile")
+def patch_my_profile(body: schemas.ProfileReq, user=Depends(auth.get_current_user),
+                     db: Session = Depends(get_db)):
+    """내 정보 수정 — 본인 계정만(경로에 대상 id 없음), 허용 필드(연락처·표기명)만. 권한 필드는 422."""
+    u = db.get(models.User, user["uid"])
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    changed = _apply_contact(u, body.contact_email, body.contact_phone)
+    if body.display_name is not None:
+        if u.role not in _PROFILE_NAME_ROLES:
+            raise HTTPException(422, {"code": "DISPLAY_NAME_NOT_ALLOWED"})
+        name = body.display_name.strip()
+        u.display_name = name or None
+        cp = db.get(models.ConsultantProfile, u.user_id) if u.role == "consultant" else None
+        if cp is not None:
+            cp.display_name = name or None
+            cp.updated_at = datetime.utcnow()
+        changed.append("display_name")
+    _audit(db, user, "user.profile.update", "user", u.user_id, None, {"fields": changed}, commit=False)
+    db.commit()
+    return get_my_profile(user=user, db=db)
+
+
 # ── 스태프 가입 신청 + 관리자 승인 ────────────────────────────────────────
 # 컨설턴트·오디터·파트와·관리자는 자가가입이 곧 권한상승이라, 신청은 대기(pending)로
 # 받아두고 관리자가 승인해야 실제 User 가 만들어진다. 대기건은 users 에 없으므로
@@ -2028,22 +2177,88 @@ _ALL_ROLES = ["applicant", "consultant", "penyelia_halal", "pendamping_pph",
 
 
 @app.get("/admin/users")
-def admin_list_users(user=Depends(auth.require_roles()), db: Session = Depends(get_db),
+def admin_list_users(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db),
                      limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0),
                      q: str = Query(""), sort: str = Query("username"),
-                     dir: str = Query("asc"), meta: int = Query(0)):
-    """DataList 표준(§8.2): 서버 검색·정렬·페이지네이션·meta(total)."""
-    M = models.User
-    Q = db.query(M)
+                     dir: str = Query("asc"), meta: int = Query(0),
+                     page: int = Query(0, ge=0), size: int = Query(20, ge=1, le=200),
+                     role: str = Query(""), status: str = Query(""), org_id: str = Query("")):
+    """DataList 표준(§8.2): 서버 검색·정렬·페이지네이션·meta(total).
+    page(1부터)를 주면 size 단위 서버 페이지네이션(meta 형식으로 응답). 검색 q 는 아이디·표기명·회사명·역할·org.
+    필터 role·status(active|suspended)·org_id. 연락처는 가린 값, 비밀번호 해시·토큰은 응답에 없다."""
+    M, O = models.User, models.Org
+    Q = db.query(M).outerjoin(O, O.org_id == M.org_id)
     if q:
         like = "%%%s%%" % q
-        Q = Q.filter(or_(M.username.ilike(like), M.role.ilike(like), M.org_id.ilike(like)))
+        Q = Q.filter(or_(M.username.ilike(like), M.role.ilike(like), M.org_id.ilike(like),
+                         M.display_name.ilike(like), O.name.ilike(like)))
+    if role:
+        Q = Q.filter(M.role == role)
+    if org_id:
+        Q = Q.filter(M.org_id == org_id)
+    if status in ("active", "suspended"):
+        latest = {}
+        for e in (db.query(models.WorkflowEvent).filter_by(action=USER_STATUS_ACTION)
+                  .order_by(models.WorkflowEvent.created_at.asc(), models.WorkflowEvent.event_id.asc()).all()):
+            latest[e.case_id[len("users:"):]] = (e.payload or {}).get("status")
+        susp = [k for k, v in latest.items() if v == "suspended"]
+        Q = Q.filter(M.user_id.in_(susp)) if status == "suspended" else (Q.filter(~M.user_id.in_(susp)) if susp else Q)
     total = Q.count()
-    col = {"username": M.username, "role": M.role, "org_id": M.org_id}.get(sort, M.username)
-    Q = Q.order_by(col.desc() if dir == "desc" else col.asc())
+    cols = {"username": M.username, "role": M.role, "org_id": M.org_id,
+            "created_at": M.created_at, "last_login_at": M.last_login_at}
+    col = cols.get(sort, M.username)
+    Q = Q.order_by(col.desc() if dir == "desc" else col.asc(), M.username.asc())
+    if page:
+        offset, limit = (page - 1) * size, size
     rows = Q.offset(offset).limit(limit).all()
-    items = [{"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id, "suspended": _user_suspended(db, u.user_id)} for u in rows]
+    items = [_user_base(db, u, mask=True) for u in rows]
+    if page:
+        return {"items": items, "total": total, "page": page, "size": size,
+                "pages": max(1, -(-total // size)), "limit": limit, "offset": offset}
     return {"items": items, "total": total, "limit": limit, "offset": offset} if meta else items
+
+
+@app.get("/admin/users/{user_id}")
+def admin_user_detail(user_id: str, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """사용자 상세(operator·admin 조회 전용 — 수정은 admin) — 연락처 원문 포함이라 열람 자체를 감사로그(user.view)에 남긴다."""
+    u = db.get(models.User, user_id)
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    out = _user_base(db, u, mask=False)
+    out["summary"] = _user_summary(db, u)
+    org = db.get(models.Org, u.org_id) if u.org_id else None
+    out["org"] = ({"org_id": org.org_id, "name": org.name, "consultant_id": org.consultant_id} if org else None)
+    out["status_history"] = [
+        {"status": (e.payload or {}).get("status"), "reason": (e.payload or {}).get("reason"),
+         "by": e.actor_id, "at": str(e.created_at)}
+        for e in (db.query(models.WorkflowEvent).filter_by(case_id="users:" + user_id, action=USER_STATUS_ACTION)
+                  .order_by(models.WorkflowEvent.created_at.desc()).limit(50).all())]
+    AL = models.AuditLog
+    out["admin_actions"] = [   # 역할 변경·정지/해제 등 이 계정에 대한 관리 조치
+        {"action": a.action, "by": a.actor_id, "at": str(a.created_at)}
+        for a in (db.query(AL).filter(AL.resource_type == "user", AL.resource_id == user_id,
+                                      AL.action.like("admin.user.%"))
+                  .order_by(AL.created_at.desc()).limit(50).all())]
+    out["recent_audit"] = [
+        {"action": a.action, "resource_type": a.resource_type, "resource_id": a.resource_id,
+         "case_id": a.case_id, "at": str(a.created_at)}
+        for a in db.query(AL).filter(AL.actor_id == user_id).order_by(AL.created_at.desc()).limit(50).all()]
+    CA = models.CaseApplication
+    if u.role == "consultant":
+        orgs = _my_client_org_ids(db, user_id)
+        cids = _assigned_case_ids(db, user_id)
+        cq = db.query(CA).filter(or_(CA.org_id.in_(orgs) if orgs else False, CA.case_id.in_(cids) if cids else False))
+    elif u.role in _ENT_ROLES:
+        cq = db.query(CA).filter(CA.org_id == u.org_id)
+    else:
+        cids = _assigned_case_ids(db, user_id)
+        cq = db.query(CA).filter(CA.case_id.in_(cids)) if cids else None
+    rel = cq.order_by(CA.created_at.desc()).limit(50).all() if cq is not None else []
+    out["related_cases"] = [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status} for c in rel]
+    out["login"] = {"last_login_at": out["last_login_at"],
+                    "rate_limited": auth.rate_limited((u.username or "").lower())}
+    _audit(db, user, "user.view", "user", user_id, None, {"target": u.username}, commit=True)
+    return out
 
 
 @app.post("/admin/users")
@@ -2115,11 +2330,13 @@ def admin_patch_user(user_id: str, body: schemas.AdminUserPatchReq,
     if body.password:
         u.password_hash = auth.hash_pw(body.password)
         token_invalidate = True  # 비밀번호 변경 시 토큰 무효화 (A8)
+    contact_changed = _apply_contact(u, body.contact_email, body.contact_phone)
     # 토큰 버전 증가로 기존 토큰 무효화
     if token_invalidate:
         u.token_version = (u.token_version or 0) + 1
     _audit(db, user, "admin.user.patch", "user", user_id, None,
-           {"role": body.role, "password_changed": bool(body.password)}, commit=False)
+           {"role": body.role, "password_changed": bool(body.password),
+            "contact_changed": contact_changed}, commit=False)
     db.commit()
     return {"user_id": u.user_id, "username": u.username, "role": u.role}
 
@@ -2563,7 +2780,7 @@ def _verify_wf_chain(evs):
         body = _json.dumps({"case": e.case_id, "from": e.from_status, "to": e.to_status,
                             "action": e.action, "payload": e.payload or {}},
                            sort_keys=True, ensure_ascii=False)
-        if sm.chain_row_hash(prev, body) == e.row_hash:
+        if sm.chain_row_matches(prev, body, e.row_hash):
             verified += 1
         elif e.created_at is not None and e.created_at < epoch:
             legacy += 1
@@ -2614,7 +2831,7 @@ def _verify_audit_chain(rows, subset=False, known_hashes=None):
         prev = ch.get("prev", "")
         if known_hashes is not None and prev and prev not in known_hashes:
             deleted.append(r.id)   # 선행 로그가 삭제됨 — 부분집합에서도 실제 단절
-        self_ok = sm.chain_row_hash(prev, body) == ch.get("row")
+        self_ok = sm.chain_row_matches(prev, body, ch.get("row"))
         if not self_ok and r.created_at is not None and r.created_at < epoch:
             legacy += 1                     # 경계 이전 서명 — 현재 키로 재검증 불가, 위조 아님
             legacy_until = r.created_at
@@ -14832,12 +15049,30 @@ def _cert_canonical(cert):
                      ",".join(cert.scope or [])])
 
 
-def _sign_payload(payload: str):
+CERT_KEY_PREFIX = "k2:"   # GLHAC_CERT_SIGN_KEY 로 서명한 값의 구분자. 접두 없음 = 기존 GLHAC_SECRET
+
+
+def _cert_sign_key():
+    raw = (os.environ.get("GLHAC_CERT_SIGN_KEY") or "").strip()
+    return raw.encode("utf-8") if raw else None
+
+
+def _sign_payload(payload: str, stored=None):
+    """(payload_hash, 서명값). stored 가 있으면 그 서명값의 구분자가 가리키는 키로 재계산(검증용),
+    없으면 GLHAC_CERT_SIGN_KEY 가 설정된 경우 그 키(+'k2:'), 미설정이면 기존 HMAC(SECRET)."""
     import hmac as _h
     import hashlib as _hl
     ph = _hl.sha256(payload.encode()).hexdigest()
-    sig = _h.new(auth.SECRET, payload.encode(), _hl.sha256).hexdigest()
-    return ph, sig
+    if stored is not None:
+        use_cert = str(stored).startswith(CERT_KEY_PREFIX)
+    else:
+        use_cert = _cert_sign_key() is not None
+    if use_cert:
+        k = _cert_sign_key()
+        if not k:   # k2: 서명인데 키가 없다 — 검증 불가(불일치로 처리)
+            return ph, ""
+        return ph, CERT_KEY_PREFIX + _h.new(k, payload.encode(), _hl.sha256).hexdigest()
+    return ph, _h.new(auth.SECRET, payload.encode(), _hl.sha256).hexdigest()
 
 
 @app.post("/cases/{case_id}/certificate/sign")

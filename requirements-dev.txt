@@ -1,0 +1,5 @@
+# 테스트·CI 전용 — 운영 요구사항(requirements.txt)에 섞지 않는다.
+# 설치: pip install -r requirements.txt -r requirements-dev.txt
+pytest>=8.0
+pytest-cov>=5.0
+coverage>=7.0

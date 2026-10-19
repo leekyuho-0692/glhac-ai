@@ -1,6 +1,7 @@
 """Dual-Pathway 상태기계 + 가드 — 설계 24.2.6 / 24.11."""
 from datetime import date as _date
 import hashlib
+import os
 import json
 from datetime import datetime
 from .db import lock_chain_tail
@@ -446,14 +447,48 @@ def _last_hash(db, case_id):
     return ev.row_hash if ev else ""
 
 
+AUDIT_KEY_PREFIX = "k2:"   # 감사 전용 키(GLHAC_AUDIT_KEY)로 서명한 행의 구분자. 접두 없음 = 기존 GLHAC_SECRET
+
+
+def audit_key():
+    """감사체인 전용 HMAC 키(GLHAC_AUDIT_KEY) — 호출 시점에 읽는다. 미설정이면 None(기존 동작)."""
+    raw = (os.environ.get("GLHAC_AUDIT_KEY") or "").strip()
+    return raw.encode("utf-8") if raw else None
+
+
+def _hmac_hex(key, prev, body):
+    import hmac
+    return hmac.new(key, (prev + body).encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def chain_row_hash(prev, body):
-    """감사체인 행 해시 — HMAC(앱 SECRET) 키잉.
+    """감사체인 행 해시 — HMAC 키잉.
     키 없는 SHA-256은 DB 쓰기 권한만 있으면 전체 체인 재계산 위조 가능(tamper-evident).
-    HMAC 키잉으로 SECRET 없이는 유효 해시를 만들 수 없게 함(tamper-resistant).
+    HMAC 키잉으로 키 없이는 유효 해시를 만들 수 없게 함(tamper-resistant).
+    GLHAC_AUDIT_KEY 가 설정돼 있으면 그 키로 서명하고 결과 앞에 'k2:' 를 붙인다(로그인 키 GLHAC_SECRET 과
+    분리 — SECRET 을 회전해도 체인 검증 유지). 미설정이면 기존과 같이 HMAC(SECRET) 순수 hex.
     auth는 순환 임포트 회피 위해 지연 임포트."""
+    from . import auth
+    k = audit_key()
+    if k:
+        return AUDIT_KEY_PREFIX + _hmac_hex(k, prev, body)
+    return _hmac_hex(auth.SECRET, prev, body)
+
+
+def chain_row_matches(prev, body, stored):
+    """저장된 row 해시 검증 — 행별로 구분자가 가리키는 키로 재계산한다(접두 없음=SECRET, k2:=AUDIT_KEY).
+    k2: 행인데 AUDIT_KEY 가 없으면 검증할 수 없으므로 불일치(False)."""
     import hmac
     from . import auth
-    return hmac.new(auth.SECRET, (prev + body).encode("utf-8"), hashlib.sha256).hexdigest()
+    stored = stored or ""
+    if stored.startswith(AUDIT_KEY_PREFIX):
+        k = audit_key()
+        if not k:
+            return False
+        expect = AUDIT_KEY_PREFIX + _hmac_hex(k, prev, body)
+    else:
+        expect = _hmac_hex(auth.SECRET, prev, body)
+    return hmac.compare_digest(expect, stored)
 
 
 def record_event(db, case, frm, to, action, actor_type="system", actor_id=None, payload=None):
