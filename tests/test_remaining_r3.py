@@ -441,3 +441,34 @@ def test_r34c_상세_권한_원문연락처_감사로그_404():
             assert row.actor_role == "admin"
         finally:
             db.close()
+
+
+def test_r34_operator는_조회만_수정삭제는_admin_전용():
+    with TestClient(app) as c:
+        adm = _login(c, "admin", "admin")
+        _, uid, _ = _mk_user(c, adm, "auditor")
+        assert c.patch("/admin/users/" + uid, json={"contact_email": "t@x.test"}, headers=adm).status_code == 200
+        _, _, hop = _mk_user(c, adm, "operator")
+        _, _, hcons = _mk_user(c, adm, "consultant")
+        # 목록·상세 200 (연락처: 목록 마스킹, 상세 원문)
+        r = c.get("/admin/users", params={"page": 1, "size": 5}, headers=hop)
+        assert r.status_code == 200 and "items" in r.json()
+        r = c.get("/admin/users/" + uid, headers=hop)
+        assert r.status_code == 200 and r.json()["contact_email"] == "t@x.test"
+        # user.view 감사로그에 operator 열람이 남는다
+        db = SessionLocal()
+        try:
+            row = db.query(models.AuditLog).filter_by(action="user.view", resource_id=uid, actor_role="operator").first()
+            assert row is not None
+        finally:
+            db.close()
+        # 수정·정지·삭제는 operator 403 (그리고 실제로 안 바뀜)
+        assert c.patch("/admin/users/" + uid, json={"role": "admin"}, headers=hop).status_code == 403
+        assert c.patch("/admin/users/" + uid, json={"contact_email": "z@x.test"}, headers=hop).status_code == 403
+        assert c.post("/admin/users/%s/suspend" % uid, json={}, headers=hop).status_code == 403
+        assert c.delete("/admin/users/" + uid, headers=hop).status_code == 403
+        d = c.get("/admin/users/" + uid, headers=adm).json()
+        assert d["role"] == "auditor" and d["contact_email"] == "t@x.test" and d["status"] == "active"
+        # 그 밖의 역할은 목록·상세 모두 403
+        assert c.get("/admin/users", headers=hcons).status_code == 403
+        assert c.get("/admin/users/" + uid, headers=hcons).status_code == 403

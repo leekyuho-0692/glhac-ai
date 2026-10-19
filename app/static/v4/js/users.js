@@ -9,6 +9,7 @@ const US_ALL_ROLES = [['applicant','인증기업(신청자)'],['consultant','컨
   ['auditor','오디터'],['fatwa_liaison','샤리아 위원'],['operator','운영관리자'],['admin','시스템 관리자']];
 const US_STAFF_ROLES = [['consultant','컨설턴트'],['auditor','오디터(심사원)'],['fatwa_liaison','샤리아 위원'],['admin','시스템 관리자']];
 const US_isAdmin = () => (typeof CAN==='function') ? !!CAN('admin.user.manage') : AUTH.role==='admin';
+const US_canView = () => AUTH.role==='admin' || AUTH.role==='operator';   // 목록·상세 조회(서버: operator·admin)
 const US_opts = (list, cur) => list.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l} (${v})</option>`).join('');
 
 // ── 스태프 가입 화면: 신청 역할 선택 ──
@@ -60,28 +61,29 @@ async function US_load(){
 }
 const US_dt = (v) => v ? esc(String(v).slice(0,10)) : '-';
 function US_panel(){
-  const m = RS.admMembers; if(!m || m.forbidden || !US_isAdmin()) return '';
+  const m = RS.admMembers; if(!m || m.forbidden || !US_canView()) return '';
+  const ED = US_isAdmin();   // 생성·역할 변경·비밀번호 초기화·삭제는 admin 전용(PATCH/DELETE 서버 정책)
   if(RS.usKey !== US_key() && !RS._usLoading){ RS._usLoading = true; US_load(); }
   const d = RS.usList || {items:[], total:0, page:1, pages:1};
   const L = d.items || [];
   const sortTh = (k, label) => `<th><a href="javascript:void(0)" onclick="App.usSort('${k}')">${label}${(S.usSort||'username')===k ? ((S.usDir||'asc')==='desc' ? ' ▼' : ' ▲') : ''}</a></th>`;
   return `<section class="panel"><div class="panel-head"><h2>사용자 관리</h2>
-      <div class="row-act"><button class="btn btn-primary" onclick="App.usNew()">＋ 사용자 생성</button></div></div>
+      <div class="row-act">${ED?'<button class="btn btn-primary" onclick="App.usNew()">＋ 사용자 생성</button>':''}</div></div>
     <div class="row-act" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">
       <input class="in" style="max-width:220px" placeholder="아이디·표기명·회사명 검색" value="${esc(S.usQ||'')}" onchange="App.usSearch(this.value)">
       <select class="in" style="max-width:190px" onchange="App.usFilter('usRole',this.value)"><option value="">역할 전체</option>${US_opts(US_ALL_ROLES, S.usRole||'')}</select>
       <select class="in" style="max-width:130px" onchange="App.usFilter('usStatus',this.value)"><option value="">상태 전체</option><option value="active" ${S.usStatus==='active'?'selected':''}>정상</option><option value="suspended" ${S.usStatus==='suspended'?'selected':''}>정지됨</option></select>
       <input class="in" style="max-width:160px" placeholder="소속(org_id)" value="${esc(S.usOrg||'')}" onchange="App.usFilter('usOrg',this.value)"></div>
-    <div class="tbl-wrap"><table><thead><tr>${sortTh('username','아이디')}<th>표기명</th>${sortTh('role','역할')}<th>회사</th><th>상태</th>${sortTh('created_at','가입일')}${sortTh('last_login_at','최근 로그인')}<th>연락처</th><th style="min-width:230px">역할 변경</th><th></th></tr></thead><tbody>
+    <div class="tbl-wrap"><table><thead><tr>${sortTh('username','아이디')}<th>표기명</th>${sortTh('role','역할')}<th>회사</th><th>상태</th>${sortTh('created_at','가입일')}${sortTh('last_login_at','최근 로그인')}<th>연락처</th>${ED?'<th style="min-width:230px">역할 변경</th>':''}<th></th></tr></thead><tbody>
     ${L.map(u=>`<tr><td><a href="javascript:void(0)" onclick="App.usOpen('${jsq(u.user_id)}')"><b>${esc(u.username)}</b></a></td><td>${esc(u.display_name||'-')}</td>
       <td><span class="badge">${esc(ROLE_LABEL[u.role]||u.role)}</span></td><td class="muted">${esc(u.company_name||u.org_id||'-')}</td>
       <td><span class="badge ${u.status==='suspended'?'attn':''}">${u.status==='suspended'?'정지됨':'정상'}</span></td>
       <td class="mono muted">${US_dt(u.created_at)}</td><td class="mono muted">${US_dt(u.last_login_at)}</td>
       <td class="mono muted">${esc(u.contact_email||'')}${u.contact_email&&u.contact_phone?'<br>':''}${esc(u.contact_phone||'')}${!u.contact_email&&!u.contact_phone?'-':''}</td>
-      <td><select class="in" id="us-r-${esc(u.user_id)}">${US_opts(US_ALL_ROLES, u.role)}${US_ALL_ROLES.some(r=>r[0]===u.role)?'':`<option selected value="${esc(u.role)}">${esc(u.role)}</option>`}</select></td>
-      <td><div class="row-act"><button class="btn btn-sm" onclick="App.usOpen('${jsq(u.user_id)}')">상세</button><button class="btn btn-sm" onclick="App.usRole('${jsq(u.user_id)}')">역할 변경</button>
+      ${ED?`<td><select class="in" id="us-r-${esc(u.user_id)}">${US_opts(US_ALL_ROLES, u.role)}${US_ALL_ROLES.some(r=>r[0]===u.role)?'':`<option selected value="${esc(u.role)}">${esc(u.role)}</option>`}</select></td>`:''}
+      <td><div class="row-act"><button class="btn btn-sm" onclick="App.usOpen('${jsq(u.user_id)}')">상세</button>${ED?`<button class="btn btn-sm" onclick="App.usRole('${jsq(u.user_id)}')">역할 변경</button>
         <button class="btn btn-sm" onclick="App.usPwReset('${jsq(u.user_id)}','${jsq(u.username)}')">비밀번호 초기화</button>
-        ${u.username==='admin'?'':`<button class="btn btn-sm btn-ghost" onclick="App.usDel('${jsq(u.user_id)}','${jsq(u.username)}')">삭제</button>`}</div></td></tr>`).join('')||'<tr><td colspan="10" class="empty">사용자 없음</td></tr>'}
+        ${u.username==='admin'?'':`<button class="btn btn-sm btn-ghost" onclick="App.usDel('${jsq(u.user_id)}','${jsq(u.username)}')">삭제</button>`}`:''}</div></td></tr>`).join('')||'<tr><td colspan="10" class="empty">사용자 없음</td></tr>'}
     </tbody></table></div>
     <div class="row-act" style="justify-content:space-between;margin-top:8px"><span class="muted">${d.total||0}명 · ${d.page||1} / ${d.pages||1}</span>
       <span><button class="btn btn-sm" ${(d.page||1)<=1?'disabled':''} onclick="App.usPage(-1)">이전</button> <button class="btn btn-sm" ${(d.page||1)>=(d.pages||1)?'disabled':''} onclick="App.usPage(1)">다음</button></span></div></section>`;
@@ -235,7 +237,7 @@ async function US_loadDetail(){
 }
 VIEWS['adm-user-detail'] = () => {
   const back = `<p><button class="btn btn-sm" onclick="App.go('adm-members')">← 목록으로</button></p>`;
-  if(!US_isAdmin()) return back + '<section class="panel"><div class="note attn"><b>관리자 전용 화면</b></div></section>';
+  if(!US_canView()) return back + '<section class="panel"><div class="note attn"><b>관리자 전용 화면</b></div></section>';
   const d = RS.usDetail;
   if(!d || d.user_id !== S.usDetailId){
     if(!RS._usDetailLoading){ RS._usDetailLoading = true; US_loadDetail(); }
@@ -259,7 +261,7 @@ VIEWS['adm-user-detail'] = () => {
       ${kv('로그인 제한', d.login&&d.login.rate_limited ? '<span class="badge attn">제한 중</span>' : '없음')}
       ${Object.entries(d.summary||{}).map(([k,v])=>kv(esc(({invite_count:'초대코드',client_count:'담당 업체',assigned_case_count:'배정 케이스',case_count:'소속 케이스'})[k]||k), esc(v))).join('')}
     </tbody></table></div></section>
-  <section class="panel"><div class="panel-head"><h2>연락처 · 계정 관리</h2></div>
+  ${canCall('PATCH','/admin/users/{}') ? `  <section class="panel"><div class="panel-head"><h2>연락처 · 계정 관리</h2></div>
     <div class="field"><label for="ud-email">이메일</label><input class="in" id="ud-email" value="${esc(d.contact_email||'')}"></div>
     <div class="field"><label for="ud-phone">전화</label><input class="in" id="ud-phone" value="${esc(d.contact_phone||'')}"></div>
     <div class="inline-msg" id="ud-e"></div>
@@ -268,7 +270,7 @@ VIEWS['adm-user-detail'] = () => {
     <div class="row-act"><button class="btn" onclick="App.usDetailRole('${jsq(d.user_id)}')">역할 변경</button>
       ${d.status==='suspended'
         ? `<button class="btn" onclick="App.usUnsuspend('${jsq(d.user_id)}')">정지 해제</button>`
-        : `<button class="btn btn-ghost" onclick="App.usSuspend('${jsq(d.user_id)}','${jsq(d.username)}')">정지</button>`}</div></section>
+        : `<button class="btn btn-ghost" onclick="App.usSuspend('${jsq(d.user_id)}','${jsq(d.username)}')">정지</button>`}</div></section>` : `<section class="panel"><div class="panel-head"><h2>연락처</h2></div><div class="tbl-wrap"><table><tbody>${kv('이메일', esc(d.contact_email||'-'))}${kv('전화', esc(d.contact_phone||'-'))}</tbody></table></div><p class="muted" style="font-size:12.5px">조회 전용 — 수정은 시스템 관리자만 할 수 있습니다.</p></section>`}
   <section class="panel"><div class="panel-head"><h2>상태 이력</h2></div>
     <div class="tbl-wrap"><table><thead><tr><th>시각</th><th>상태</th><th>사유</th></tr></thead><tbody>
     ${(d.status_history||[]).map(h=>`<tr><td class="mono">${dt(h.at)}</td><td>${h.status==='suspended'?'정지됨':'정상'}</td><td>${esc(h.reason||'-')}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">이력 없음</td></tr>'}

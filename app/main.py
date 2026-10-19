@@ -2130,7 +2130,7 @@ _ALL_ROLES = ["applicant", "consultant", "penyelia_halal", "pendamping_pph",
 
 
 @app.get("/admin/users")
-def admin_list_users(user=Depends(auth.require_roles()), db: Session = Depends(get_db),
+def admin_list_users(user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db),
                      limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0),
                      q: str = Query(""), sort: str = Query("username"),
                      dir: str = Query("asc"), meta: int = Query(0),
@@ -2172,8 +2172,8 @@ def admin_list_users(user=Depends(auth.require_roles()), db: Session = Depends(g
 
 
 @app.get("/admin/users/{user_id}")
-def admin_user_detail(user_id: str, user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
-    """사용자 상세(운영자 화면) — 연락처 원문 포함이라 열람 자체를 감사로그(user.view)에 남긴다."""
+def admin_user_detail(user_id: str, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """사용자 상세(operator·admin 조회 전용 — 수정은 admin) — 연락처 원문 포함이라 열람 자체를 감사로그(user.view)에 남긴다."""
     u = db.get(models.User, user_id)
     if not u:
         raise HTTPException(404, {"code": "USER_NOT_FOUND"})
