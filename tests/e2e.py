@@ -62,8 +62,11 @@ other = httpx.post(f"{B}/cases", headers=H(adt), json={"company_name": "X", "org
 ok("ABAC: applicant→타org 403", httpx.get(f"{B}/cases/{other}", headers=H(at)).status_code == 403)
 
 print("=== C. 자기선언(SEHATI) 생애주기 ===")
-httpx.post(f"{B}/orgs/org_demo/penyelia", headers=H(ct), json={"name": "Budi", "training_cert": "PH-1"})
 sd = httpx.post(f"{B}/cases", headers=H(ct), json={"company_name": "SD Co", "is_msme": True, "org_id": "org_demo"}).json()["case_id"]
+# 업체별 조직 분리(10/04) 이후 컨설턴트가 만든 케이스는 그 업체의 조직에 있다 — 할랄감독자도 그 조직에 둔다
+# (예전엔 org_demo 에 등록해 자기선언 제출 가드 PENYELIA_HALAL_MISSING 에 걸렸다).
+sd_org = httpx.get(f"{B}/cases/{sd}", headers=H(ct)).json().get("org_id")
+httpx.post(f"{B}/orgs/{sd_org}/penyelia", headers=H(ct), json={"name": "Budi", "training_cert": "PH-1"})
 httpx.post(f"{B}/cases/{sd}/materials", headers=H(ct), json={"name": "citric acid"})  # halal
 ei = httpx.post(f"{B}/cases/{sd}/sihalal/identity/link", headers=H(ct), json={"external_email": "sd@x.com"}).json()
 httpx.post(f"{B}/sihalal/identity/{ei['external_identity_id']}/verify", headers=H(ct), json={"expected_identifier": "sd@x.com"})
@@ -113,6 +116,12 @@ ok("SD 인증서 발급(2인 승인)",
 
 print("=== D. 정규(Reguler) 생애주기 + 가드 ===")
 rg = httpx.post(f"{B}/cases", headers=H(ct), json={"company_name": "RG Co", "is_msme": False, "org_id": "org_demo"}).json()["case_id"]
+# 컨설턴트가 만든 케이스는 그 업체의 새 조직에 들어간다 — 계약 갑(A) 서명은 그 조직의 업체 계정이 한다.
+# (예전엔 org_demo 의 applicant1 이 남의 조직 계약에 서명했다 — 2026-10 감사에서 막은 타조직 서명 IDOR)
+rg_org = httpx.get(f"{B}/cases/{rg}", headers=H(ct)).json().get("org_id")
+_rg_acc = httpx.post(f"{B}/orgs/{rg_org}/accounts", headers=H(ct),
+                     json={"username": "rgclient" + os.urandom(3).hex()}).json()
+rt = login(_rg_acc["username"], _rg_acc["temp_password"])
 httpx.post(f"{B}/cases/{rg}/products", headers=H(ct), json={"name": "Sambal RG"})
 httpx.post(f"{B}/cases/{rg}/materials", headers=H(ct), json={"name": "gelatin"})  # critical
 ei2 = httpx.post(f"{B}/cases/{rg}/sihalal/identity/link", headers=H(ct), json={"external_email": "rg@x.com"}).json()
@@ -147,7 +156,7 @@ cn = httpx.post(f"{B}/cases/{rg}/contract/approve", headers=H(ot)).json()
 contract_id = cn.get("contract_id")
 httpx.post(f"{B}/cases/{rg}/contract/receive", headers=H(ct))
 httpx.post(f"{B}/cases/{rg}/contract/request-signature", headers=H(aut))
-httpx.post(f"{B}/contracts/{contract_id}/sign", headers=H(at), params={"party": "A", "name": "RG 대표"})
+httpx.post(f"{B}/contracts/{contract_id}/sign", headers=H(rt), params={"party": "A", "name": "RG 대표"})
 httpx.post(f"{B}/contracts/{contract_id}/sign", headers=H(ot), params={"party": "B", "name": "GL HAC"})
 cc = httpx.post(f"{B}/cases/{rg}/contract/confirm", headers=H(ot))
 ok("계약 큐 6단계 → confirmed", cc.status_code == 200 and cc.json().get("status") == "confirmed", cc.json())
@@ -157,13 +166,21 @@ ok("인보이스 기본상태 waiting_payment", inv.get("status") == "waiting_pa
 g1 = tr(ct, rg, "document_pre_audit_in_review")
 g1_codes = [b.get("code") for b in (g1.json().get("detail", {}).get("blockers") or [])] if g1.status_code == 409 else []
 ok("가드: 미결제 → 사전심사검토 409 UNPAID_INVOICE", g1.status_code == 409 and "UNPAID_INVOICE" in g1_codes, g1_codes)
-httpx.patch(f"{B}/invoices/{inv['invoice_id']}/pay", headers=H(ct))
+httpx.patch(f"{B}/invoices/{inv['invoice_id']}/pay", headers=H(ot))   # 결제 확정은 운영자(감사 K2 — 신청자·컨설턴트 자기결제 차단)
 g2 = tr(ct, rg, "document_pre_audit_in_review")
 ok("결제 후 사전심사검토 전이 OK", g2.status_code == 200)
-tr(ct, rg, "document_pre_audit_approved")
+tr(ot, rg, "document_pre_audit_approved")   # 모의심사 승인은 오디터·운영자(감사 K4 — 컨설턴트 자기승인 차단)
 httpx.post(f"{B}/cases/{rg}/lph-assignment", headers=H(ft), json={"lph_name": "LPH Sucofindo"})
 g3 = tr(ft, rg, "lph_assignment")   # lph_assignment 전이 = fatwa_liaison/operator
 ok("LPH 배정 전이 OK(fatwa_liaison)", g3.status_code == 200, g3.json() if g3.status_code != 200 else "")
+# 오디터는 배정받은 케이스만 연다 — 업체 조직의 케이스라 운영자가 먼저 배정한다(조직 분리 10/04 이후).
+# 같은 서버를 여러 시나리오가 쓰면 담당 한도(AUDITOR_OVERLOADED)에 걸릴 수 있어 e2e_srs_cycle 처럼 후보를 돈다.
+_aud_ids = {u.get("username"): u.get("user_id") for u in httpx.get(f"{B}/admin/users", headers=H(adt)).json()}
+for _cand in ("auditor1", "auditor2", "auditor3"):
+    if _aud_ids.get(_cand) and httpx.post(f"{B}/ops/cases/{rg}/assign-auditor", headers=H(ot),
+                                          json={"auditor_id": _aud_ids[_cand]}).status_code == 200:
+        aut = login(_cand, "pw")
+        break
 tr(aut, rg, "onsite_audit_scheduled")     # onsite 계열 = auditor
 tr(aut, rg, "onsite_audit_in_progress")
 fid = httpx.post(f"{B}/cases/{rg}/findings", headers=H(ct), json={"finding": "교차오염", "severity": "major"}).json()["finding_id"]

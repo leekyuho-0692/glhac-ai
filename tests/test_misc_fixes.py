@@ -94,7 +94,15 @@ def test_D02R_기업_열람_샤리아_비공개():
 
         r = c.get("/cases/%s/preassess-report.pdf" % cid, headers=applicant)
         assert r.status_code == 200, r.text
-        assert "application/pdf" in r.headers.get("content-type", ""), r.headers
+        # 엔드포인트는 LibreOffice(soffice)가 있으면 PDF, 없으면 같은 양식의 docx 로 대체한다(문서화된 폴백).
+        # CI 러너엔 soffice 가 없어 docx 가 온다 — 환경별 기대값을 정확히 본다.
+        import shutil
+        import os.path
+        # 앱(_docx_to_pdf_bytes)과 같은 판별 — PATH 의 soffice 또는 맥 기본 설치 경로.
+        if shutil.which("soffice") or os.path.exists("/Applications/LibreOffice.app/Contents/MacOS/soffice"):
+            assert "application/pdf" in r.headers.get("content-type", ""), r.headers
+        else:
+            assert "wordprocessingml" in r.headers.get("content-type", ""), r.headers
 
         r = c.get("/cases/%s/preassess-report.pdf" % cid, headers=fatwa)
         assert r.status_code == 403, r.text

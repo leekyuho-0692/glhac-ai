@@ -58,7 +58,13 @@ if isinstance(approve_resp.json(), dict):
 httpx.post(f"{B}/cases/{cid}/contract/receive", headers=HC)
 httpx.post(f"{B}/cases/{cid}/contract/request-signature", headers=HA)
 if contract_id:
-    httpx.post(f"{B}/contracts/{contract_id}/sign", params={"party": "A", "name": "S4 대표"}, headers=HC)
+    # 갑(A) 서명은 업체 계정만 — 컨설턴트는 서명 권한이 없다(CONSULTANT_CANNOT_SIGN). 컨설턴트가 만든 케이스는
+    # 그 업체의 조직에 있으니, 그 조직에 업체 계정을 발급해 서명한다.
+    _org = httpx.get(f"{B}/cases/{cid}", headers=HC).json().get("org_id")
+    _acc = httpx.post(f"{B}/orgs/{_org}/accounts", headers=HC, json={"username": "s4client" + os.urandom(3).hex()}).json()
+    HE = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
+          json={"username": _acc["username"], "password": _acc["temp_password"]}).json()["token"]}
+    httpx.post(f"{B}/contracts/{contract_id}/sign", params={"party": "A", "name": "S4 대표"}, headers=HE)
     httpx.post(f"{B}/contracts/{contract_id}/sign", params={"party": "B", "name": "GL HAC"}, headers=HA)
 httpx.post(f"{B}/cases/{cid}/contract/confirm", headers=HA)
 

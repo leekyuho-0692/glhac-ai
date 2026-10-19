@@ -23,6 +23,18 @@ def force_status(case_id, status):
     conn.close()
 
 
+def force_paid_invoice(case_id):
+    """발급 가드의 '확정 결제 1건 이상'(2026-10 감사 K4 — 인보이스 0건 발급 차단)을 미리 채운다.
+    이 시나리오가 보려는 것은 문서 가드라, 상태처럼 결제 조건도 충족시켜 두고 문서 가드만 남긴다."""
+    import uuid
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("INSERT INTO invoice (invoice_id, case_id, invoice_no, service_type, amount, ppn, total, status, created_at) "
+                 "VALUES (?, ?, ?, 'pre_audit', 100, 10, 110, 'paid', CURRENT_TIMESTAMP)",
+                 (uuid.uuid4().hex, case_id, "INV-S13PAID"))
+    conn.commit()
+    conn.close()
+
+
 HC = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
       json={"username": "consultant1", "password": "pw"}).json()["token"]}
 HA = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
@@ -170,6 +182,7 @@ ok("파트와 최종승인 → 200", r_fa.status_code == 200, r_fa.json() if r_f
 # 발급 가드는 상태(committee_verification)를 먼저 본다 — 2026-08-14 추가된 조건.
 # 여기서 보려는 것은 '문서 가드'이므로, 상태 조건은 충족시켜 놓고 문서 가드만 남긴다.
 force_status(CID, "committee_verification")
+force_paid_invoice(CID)
 
 # 발급 가드: rejected/rework 문서가 남아있으면 409 DOCUMENTS_NOT_APPROVED
 r_blocked = httpx.post(f"{B}/cases/{CID}/certificate/issue", headers=HA)

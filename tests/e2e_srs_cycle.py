@@ -1,5 +1,11 @@
 import os, sys, time, httpx
 from _target import base
+# 정식 흐름(SRS) 전 과정 시나리오 — 대상 서버가 GLHAC_FORMAL_FLOW=1 로 떠 있어야 한다(운영과 같은 조건).
+# 정식 흐름이 꺼진 서버에선 샤리아 대리 모드 등이 성립하지 않아 뒤 단계가 전부 실패하므로, 그 서버를
+# 대상으로 할 땐 GLHAC_E2E_FORMAL=1 을 함께 준다(CI 는 정식 흐름 서버를 따로 띄워 이 파일만 돌린다).
+if os.environ.get("GLHAC_E2E_FORMAL") != "1":
+    print("  ⏭ SKIP — 정식 흐름(GLHAC_FORMAL_FLOW=1) 서버 대상일 때만 실행(GLHAC_E2E_FORMAL=1)")
+    sys.exit(0)
 B = base(); P, F = [], []
 def ok(name, cond, extra=""):
     (P if cond else F).append(name); print(("  ✅ " if cond else "  ❌ ") + name + ((" — " + str(extra)[:300]) if extra else ""))
@@ -139,6 +145,10 @@ invs = listify(j)
 ok("회차 청구서 생성됨", len(invs) >= 1, len(invs))
 for inv in invs:
     iid = inv.get("invoice_id")
+    # 아직 청구 전(draft)인 회차는 먼저 청구(waiting_payment) — 운영 화면 '미리 청구'와 같은 순서.
+    # 청구서 상태는 전이표대로만 바뀐다(2026-10 감사 MA2: draft→paid 직행 금지).
+    if inv.get("status") == "draft":
+        step(f"invoice bill {iid}", httpx.patch(f"{B}/invoices/{iid}/status", headers=H(ot), json={"status": "waiting_payment", "reason": "미리 청구"}, timeout=60))
     step(f"invoice paid {iid}", httpx.patch(f"{B}/invoices/{iid}/status", headers=H(ot), json={"status": "paid", "reason": "입금 확인"}, timeout=60))
 
 print("=== 12. 서류 사전심사 전이 ===")

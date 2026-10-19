@@ -93,12 +93,13 @@ rv2 = httpx.post(f"{B}/cases/{cid2}/pendamping/verify", headers=HP,
 ok("검증 거부 성공", rv2.get("decision") == "rejected", rv2)
 ok("거부 시 switched_to_reguler=True", rv2.get("switched_to_reguler") is True, rv2.get("switched_to_reguler"))
 
-# 배정 없이 검증 시도 → 404
+# 배정 없이 검증 시도 → 거부. 같은 조직이면 404(PENDAMPING_NOT_ASSIGNED), 업체별 조직 분리(10/04) 이후
+# 컨설턴트가 만든 케이스는 업체 조직에 있어 케이스 접근 단계에서 403 — 둘 다 "배정 안 된 동반자는 검증 불가"다.
 cid3 = httpx.post(f"{B}/cases", headers=HC,
                   json={"company_name": "S5NoAssign", "org_id": "org_demo"}).json()["case_id"]
 rv3 = httpx.post(f"{B}/cases/{cid3}/pendamping/verify", headers=HP,
                  json={"decision": "approved"})
-ok("배정 없이 검증 → 404", rv3.status_code == 404, rv3.status_code)
+ok("배정 없이 검증 → 거부(403/404)", rv3.status_code in (403, 404), rv3.status_code)
 
 # ── 결과 ──────────────────────────────────────────────────
 print(f"\n{'='*50}")

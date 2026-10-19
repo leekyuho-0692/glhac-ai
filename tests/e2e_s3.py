@@ -74,7 +74,10 @@ print(f"\n=== S3-3 인증서 동결/언락 (case={cid[:8]}) ===")
 # 인증서는 현장심사(또는 자기선언 위원회확인)를 거친 케이스에만 나간다 — 2026-08-14 발급 가드.
 # 이 시나리오가 검증하려는 것은 동결/언락이므로, 자기선언 경로로 케이스를 정상 전진시켜 놓는다.
 #   (종전에는 onboarding 상태로 곧장 발급을 시도해 STATE_NOT_READY 로 막혔다.)
-httpx.post(f"{B}/orgs/org_demo/penyelia", headers=HC,
+# 할랄감독자는 케이스가 있는 업체 조직에 둔다(업체별 조직 분리 10/04 이후 — org_demo 에 두면 자기선언 제출 가드
+# PENYELIA_HALAL_MISSING 에 걸려 동반자 검증 단계에서 멈췄다).
+_case_org = httpx.get(f"{B}/cases/{cid}", headers=HC).json().get("org_id")
+httpx.post(f"{B}/orgs/{_case_org}/penyelia", headers=HC,
            json={"name": "Budi", "training_cert": "PH-1"})
 httpx.post(f"{B}/cases/{cid}/materials", headers=HC, json={"name": "citric acid"})
 _ei = httpx.post(f"{B}/cases/{cid}/sihalal/identity/link", headers=HC,
