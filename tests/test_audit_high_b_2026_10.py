@@ -22,7 +22,6 @@ def test_b1_notification_model_includes_skipped_status():
     db = SessionLocal()
     try:
         n = models.Notification(
-            case_id="test",
             event_type="test",
             title="Test",
             body="Test",

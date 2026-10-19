@@ -9,13 +9,16 @@ engine = create_engine(
     connect_args={"check_same_thread": False} if DB_URL.startswith("sqlite") else {},
 )
 
-# SQLite는 기본적으로 FK를 강제하지 않음 → PRAGMA로 활성화(§6.1).
-# create_all DB엔 FK가 없어 무효, Alembic 적용 DB에서만 실제 강제.
+# SQLite는 기본적으로 FK를 강제하지 않음 → 연결마다 PRAGMA로 활성화(§6.1).
+# 모델(app/models.py)에 ForeignKey 가 선언돼 있어 create_all 로 만든 DB 도 FK 가 있다.
+# 단 운영 DB 는 FK 없이 만들어진 테이블이라 scripts/fk_rebuild.py 로 재생성하기 전에는 PRAGMA 가 효과가 없다.
+# GLHAC_SQLITE_FK=0 이면 끈다(되돌리기용 · 기본 "1").
+_SQLITE_FK = os.environ.get("GLHAC_SQLITE_FK", "1").strip() != "0"
 if DB_URL.startswith("sqlite"):
     @event.listens_for(engine, "connect")
     def _sqlite_fk_pragma(dbapi_conn, _rec):  # noqa: ANN001
         cur = dbapi_conn.cursor()
-        cur.execute("PRAGMA foreign_keys=ON")
+        cur.execute("PRAGMA foreign_keys=ON" if _SQLITE_FK else "PRAGMA foreign_keys=OFF")
         # 동시성: WAL = 읽기-쓰기 비차단(다중 심사자 동시작업 시 'database is locked' 완화).
         # busy_timeout으로 순간 경합은 대기, synchronous=NORMAL은 WAL에서 안전·고성능 기본값.
         cur.execute("PRAGMA journal_mode=WAL")

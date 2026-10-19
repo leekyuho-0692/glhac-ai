@@ -1,7 +1,7 @@
 """SQLAlchemy 모델 — 설계서 v2 24.9(마이그레이션)/24.13(ontology)/Part 9 매핑."""
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Boolean, DateTime, Date, JSON, Text, Float, Integer
+from sqlalchemy import Column, String, ForeignKey, Boolean, DateTime, Date, JSON, Text, Float, Integer
 from .db import Base
 from .crypto import EncryptedType
 
@@ -54,6 +54,7 @@ class GeneratedDocument(Base):
     """생성 문서 버전관리 (Rizky #3·#4·#11) — SJPH Manual·Audit Report."""
     __tablename__ = "generated_document"
     gen_doc_id = Column(String, primary_key=True, default=uid)
+    # FK 아님: 기간 보고서(period_report)는 케이스가 아니라 'reports:<org_id>' 의사 키를 쓴다(docs/FK_도입_설계.md).
     case_id = Column(String, index=True)
     org_id = Column(String)
     doc_type = Column(String)   # sjph_manual | audit_report
@@ -69,7 +70,7 @@ class Notification(Base):
     __tablename__ = "notification"
     notification_id = Column(String, primary_key=True, default=uid)
     org_id = Column(String, index=True)
-    case_id = Column(String)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"))
     role = Column(String)          # 대상 역할(None=조직 전체)
     event_type = Column(String)    # document_requested|audit_scheduled|audit_closed|fatwa_approved|certificate_issued|expiry_soon
     channels = Column(JSON)        # ["inapp","sms","kakao","whatsapp"]
@@ -90,7 +91,7 @@ class ChangeImpact(Base):
     """인증서 변경영향 분석 이력 — 사후관리(설계 8.3)."""
     __tablename__ = "change_impact"
     change_impact_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False, index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False, index=True)
     change_type = Column(String, nullable=False)
     impact_score = Column(Float)
     risk_level = Column(String)
@@ -104,7 +105,7 @@ class ChangeImpact(Base):
 class Product(Base):
     __tablename__ = "product"
     product_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     org_id = Column(String, index=True)   # 회사 카탈로그화 준비 — Phase 1
     name = Column(String, nullable=False)
     category = Column(String)
@@ -119,15 +120,15 @@ class ProductMaterial(Base):
     """원재료-제품 매트릭스 (v1 상속) — 설계 9.1 product_material."""
     __tablename__ = "product_material"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
-    product_id = Column(String, nullable=False)
-    material_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(String, ForeignKey("product.product_id", ondelete="CASCADE"), nullable=False)
+    material_id = Column(String, ForeignKey("material.material_id", ondelete="CASCADE"), nullable=False)
 
 
 class Material(Base):
     __tablename__ = "material"
     material_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     name = Column(String, nullable=False)
     e_number = Column(String)
     # v1 상속 필드
@@ -169,7 +170,7 @@ class PenyeliaHalal(Base):
     __tablename__ = "penyelia_halal"
     penyelia_id = Column(String, primary_key=True, default=uid)
     org_id = Column(String, nullable=False)
-    user_id = Column(String)
+    user_id = Column(String, ForeignKey("app_user.user_id", ondelete="SET NULL"))
     name = Column(String, nullable=False)
     training_cert = Column(String)
     cert_expiry = Column(Date)
@@ -179,7 +180,7 @@ class PenyeliaHalal(Base):
 class PendampingAssignment(Base):
     __tablename__ = "pendamping_assignment"
     assignment_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     pendamping_id = Column(String, nullable=False)
     decision = Column(String)
     note = Column(Text)
@@ -191,7 +192,7 @@ class AuditFinding(Base):
     """심사 지적 (v1 상속) — 설계 9.1 audit_finding."""
     __tablename__ = "audit_finding"
     finding_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     area = Column(String)
     finding = Column(Text)
     severity = Column(String)   # major|minor|observation
@@ -205,7 +206,7 @@ class AuditFinding(Base):
 class LphAssignment(Base):
     __tablename__ = "lph_assignment"
     lph_assignment_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     lph_name = Column(String)
     auditor_ref = Column(String)
     source = Column(String, default="manual")
@@ -220,8 +221,8 @@ class CaseAuditor(Base):
     """
     __tablename__ = "case_auditors"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
-    user_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(String, ForeignKey("app_user.user_id", ondelete="CASCADE"), nullable=False)
     role = Column(String, nullable=False, default="co")   # main|co
     assigned_by = Column(String)
     assigned_at = Column(DateTime, default=datetime.utcnow)
@@ -231,7 +232,7 @@ class ExternalIdentity(Base):
     """SIHALAL 식별자 연동 — 설계 Part 23 / 24.5."""
     __tablename__ = "external_identity"
     external_identity_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"))
     org_id = Column(String, nullable=False)
     provider = Column(String, default="SIHALAL")
     external_username = Column(String)
@@ -264,7 +265,7 @@ class HalalCertificate(Base):
     """할랄 인증서 (v1 상속) — 발급/scope/갱신/변경영향."""
     __tablename__ = "halal_certificate"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="RESTRICT"), nullable=False)
     certificate_no = Column(String)
     scope = Column(JSON)         # 제품명 목록
     issue_date = Column(String)
@@ -282,7 +283,7 @@ class FatwaDecision(Base):
     """파트와/위원회 결정 (v1 상속) — 설계 9.1 fatwa_decision."""
     __tablename__ = "fatwa_decision"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="RESTRICT"), nullable=False)
     decision = Column(String, default="pending")   # pending|approved|rejected|conditional
     decision_no = Column(String)
     committee_note = Column(Text)
@@ -299,7 +300,7 @@ class Invoice(Base):
     """청구/인보이스 (v1 상속) — PPN 기본 10%(청구 설정 ppn_rate) + 전이게이트."""
     __tablename__ = "invoice"
     invoice_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="RESTRICT"), nullable=False)
     invoice_no = Column(String)
     service_type = Column(String)   # pre_audit|onsite
     amount = Column(Float)
@@ -315,7 +316,7 @@ class HpasEvaluation(Base):
     """SJPH/HPAS 5대 요소 평가 (v1 상속) — 설계 9.1 sjph_evidence/hpas."""
     __tablename__ = "hpas_evaluation"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     element = Column(String, nullable=False)   # commitment|materials|process|product|monitoring
     status = Column(String, default="not_started")  # ok|gap|not_started
     note = Column(Text)
@@ -333,7 +334,7 @@ class DocumentAsset(Base):
     """Document Intake AI 결과 — 설계 Part 5/9.2."""
     __tablename__ = "document_asset"
     document_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     filename = Column(String, nullable=False)
     filename_en = Column(String)   # 한글 파일명의 영문 표시명(결정적 용어사전) — 인니·영문 심사자용
     doc_type = Column(String)
@@ -348,8 +349,8 @@ class DocumentAsset(Base):
     translations = Column(JSON)   # {lang: 번역문} 온디맨드 캐시(예: {"id": "..."}) — 조회시점 번역
     content_b64 = Column(EncryptedType)    # 원본 파일 base64(암호화 저장) — 조회/다운로드용
     content_type = Column(String)  # MIME
-    material_id = Column(String)   # 원재료별 증빙 연결(nullable) — 설계 G1/C1
-    product_id = Column(String)    # 제품 사진 연결(nullable) — 설계 G2
+    material_id = Column(String, ForeignKey("material.material_id", ondelete="SET NULL"))   # 원재료별 증빙 연결(nullable) — 설계 G1/C1
+    product_id = Column(String, ForeignKey("product.product_id", ondelete="SET NULL"))    # 제품 사진 연결(nullable) — 설계 G2
     lat = Column(Float)            # 촬영 위치 위도 — 현장실사 사진 EXIF GPS/브라우저
     lng = Column(Float)            # 촬영 위치 경도
     geo_source = Column(String)    # exif|browser|manual — 위치 출처
@@ -368,10 +369,10 @@ class SjphEvidence(Base):
     """SJPH Integration 10증빙 (v1 상속) — 설계 P1-#7."""
     __tablename__ = "sjph_evidence"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     item_key = Column(String, nullable=False)
     filename = Column(String)
-    document_id = Column(String)
+    document_id = Column(String, ForeignKey("document_asset.document_id", ondelete="SET NULL"))
     uploaded_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -379,7 +380,7 @@ class OnsiteChecklist(Base):
     """현장 체크리스트 16항목 — S3-1 설계 §9.2."""
     __tablename__ = "onsite_checklist"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     item_key = Column(String, nullable=False)   # 16개 항목 키
     result = Column(String, default="not_checked")  # not_checked|comply|nonconformity
     note = Column(Text)
@@ -390,7 +391,7 @@ class AuditorPool(Base):
     """심사원 풀 배정 (3명) — S3-5 설계 §13."""
     __tablename__ = "auditor_pool"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     name = Column(String, nullable=False)
     cert_no = Column(String)
     role_in_team = Column(String, default="anggota")  # ketua|anggota
@@ -417,7 +418,7 @@ class Org(Base):
     # 담당 컨설턴트 — 영업으로 이 업체를 데려온 사람. 케이스별 배정과 성격이 다르다.
     # 오디터는 심사기관이 케이스마다 배정하지만, 컨설턴트는 업체가 들어올 때 이미
     # 관계가 있다. 그래서 케이스가 아니라 조직에 붙는다.
-    consultant_id = Column(String, index=True)
+    consultant_id = Column(String, ForeignKey("app_user.user_id", ondelete="SET NULL"), index=True)
     consultant_linked_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -426,7 +427,7 @@ class Discussion(Base):
     """역할별 토론/수정노트 (v1 상속) — 설계 11.x."""
     __tablename__ = "discussion"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     kind = Column(String, default="comment")   # add|repair|comment|resolved
     target = Column(String)
     text = Column(Text)
@@ -470,7 +471,7 @@ class Vehicle(Base):
     __tablename__ = "vehicle"
     vehicle_id = Column(String, primary_key=True, default=uid)
     org_id = Column(String, index=True, nullable=False)
-    case_id = Column(String, index=True)              # 등록 신청 케이스(선택)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="SET NULL"), index=True)              # 등록 신청 케이스(선택)
     plate_no = Column(String)                          # 번호판
     vehicle_type = Column(String)                      # truck|van|container|tanker|reefer
     transport_type = Column(String)                    # ambient|chilled|frozen|insulated (운반 형태)
@@ -493,15 +494,15 @@ class VehicleCleaning(Base):
     작성자 != 서명자(4-eyes) — 작성은 담당자, 서명은 penyelia_halal 역할만."""
     __tablename__ = "vehicle_cleaning"
     cleaning_id = Column(String, primary_key=True, default=uid)
-    vehicle_id = Column(String, index=True, nullable=False)
+    vehicle_id = Column(String, ForeignKey("vehicle.vehicle_id", ondelete="CASCADE"), index=True, nullable=False)
     org_id = Column(String, index=True)
     cleaned_at = Column(String)                        # 세척 일시(ISO)
     previous_cargo = Column(String)                    # 이 세척 직전 실었던 화물
     previous_cargo_halal = Column(Boolean)             # 그 화물이 할랄이었나(None=미상)
     method = Column(String, default="normal")          # sertu | normal
     sertu_steps = Column(Integer)                      # Sertu 절차 횟수(예: 7)
-    photo_doc_id = Column(String)                      # 첨부 사진(Document FK) — 보조증빙
-    penyelia_id = Column(String)                       # 서명한 페냘리아 할랄
+    photo_doc_id = Column(String, ForeignKey("document_asset.document_id", ondelete="SET NULL"))                      # 첨부 사진(Document FK) — 보조증빙
+    penyelia_id = Column(String, ForeignKey("penyelia_halal.penyelia_id", ondelete="RESTRICT"))                       # 서명한 페냘리아 할랄
     penyelia_sign = Column(Boolean, default=False)     # 서명(감독 확인) 완료 여부
     signed_at = Column(String)                         # 서명 시각(ISO)
     next_due = Column(String)                          # 다음 세척 예정일(주기 관리)
@@ -514,7 +515,7 @@ class AiExtraction(Base):
     """AI/OCR 결과 근거저장 (보강안 §7.2) — Human-in-the-loop 추적성."""
     __tablename__ = "ai_extraction"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), index=True)
     source = Column(String)          # ocr|label_judgment|biz_doc
     model_provider = Column(String)  # local|paddleocr 등
     model_name = Column(String)
@@ -532,7 +533,7 @@ class AuditPlan(Base):
     """LPH 현장심사 일정(§P2 LPH scheduling)."""
     __tablename__ = "audit_plan"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False, index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False, index=True)
     lph_name = Column(String)
     scheduled_date = Column(String)   # ISO date
     scope = Column(Text)
@@ -547,7 +548,7 @@ class FatwaVote(Base):
     """파트와 위원 투표(§6.2 fatwa_votes) — 위원별 1표, quorum 산정."""
     __tablename__ = "fatwa_vote"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False, index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="RESTRICT"), nullable=False, index=True)
     member = Column(String, nullable=False)
     vote = Column(String)             # approve|reject|abstain
     note = Column(String)
@@ -558,7 +559,7 @@ class Contract(Base):
     """할랄인증 계약서 (FORM 4.1-HCB-GL HAC) — 정적 법률조항 + 동적 병합필드."""
     __tablename__ = "contract"
     contract_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, index=True, nullable=False)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="RESTRICT"), index=True, nullable=False)
     org_id = Column(String)
     contract_no = Column(String)
     party_a = Column(String)            # 회사명
@@ -578,7 +579,7 @@ class Consultation(Base):
     __tablename__ = "consultation"
     id = Column(String, primary_key=True, default=uid)
     org_id = Column(String, index=True)
-    case_id = Column(String)            # nullable
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="SET NULL"))            # nullable
     channel = Column(String, default="inapp")   # inapp|phone|email|kakao|whatsapp
     subject = Column(String)
     message = Column(Text)
@@ -594,7 +595,8 @@ class CorrectiveAction(Base):
     """시정조치 CAR(§P2 CAR advanced) — finding별 제출→검토→종결 라이프사이클."""
     __tablename__ = "corrective_action"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False, index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False, index=True)
+    # FK 아님: 평가 판정에서 자동 생성한 CAR 은 audit_finding 이 아니라 'eval:<요소>' 의사 키를 쓴다.
     finding_id = Column(String, nullable=False, index=True)
     description = Column(Text)
     evidence = Column(Text)
@@ -615,7 +617,7 @@ class IntegrationEvent(Base):
     event_type = Column(String)
     external_id = Column(String)
     idempotency_key = Column(String, index=True)
-    case_id = Column(String, index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="SET NULL"), index=True)
     request_hash = Column(String)
     response_hash = Column(String)
     payload = Column(JSON)
@@ -629,7 +631,7 @@ class Signature(Base):
     """전자서명(§6.4) — 인증서/문서 무결성+발급자 서명(내부 HMAC MVP)."""
     __tablename__ = "signature"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="RESTRICT"), index=True)
     subject_type = Column(String)     # certificate|document
     subject_id = Column(String)
     signer = Column(String)
@@ -643,8 +645,8 @@ class Payment(Base):
     """결제 기록(§P2 billing/payment) — 인보이스 결제 확인."""
     __tablename__ = "payment"
     id = Column(String, primary_key=True, default=uid)
-    invoice_id = Column(String, index=True)
-    case_id = Column(String, index=True)
+    invoice_id = Column(String, ForeignKey("invoice.invoice_id", ondelete="RESTRICT"), index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="RESTRICT"), index=True)
     amount = Column(Float)
     currency = Column(String, default="KRW")  # MA1: KRW 통일(기록 시 케이스 계약 통화로 덮어씀)
     method = Column(String)           # bank_transfer|va|card|manual
@@ -681,7 +683,7 @@ class Deposit(Base):
     currency = Column(String, default="KRW")  # MA1: KRW 통일(기록 시 케이스 계약 통화로 덮어씀)
     ref_memo = Column(String)                 # 이체 메모(invoice_no/payment_ref 포함 가능)
     deposit_at = Column(DateTime, default=datetime.utcnow)
-    matched_invoice_id = Column(String, index=True)
+    matched_invoice_id = Column(String, ForeignKey("invoice.invoice_id", ondelete="SET NULL"), index=True)
     match_status = Column(String, default="unmatched")   # unmatched|candidate|matched|rejected
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -690,9 +692,9 @@ class PaymentMatchCandidate(Base):
     """입금↔인보이스 매칭 후보 (Payment P2 §8.5) — 규칙 스코어 + 관리자 승인."""
     __tablename__ = "payment_match_candidate"
     id = Column(String, primary_key=True, default=uid)
-    deposit_id = Column(String, index=True)
-    invoice_id = Column(String, index=True)
-    case_id = Column(String)
+    deposit_id = Column(String, ForeignKey("deposit.id", ondelete="CASCADE"), index=True)
+    invoice_id = Column(String, ForeignKey("invoice.invoice_id", ondelete="SET NULL"), index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="SET NULL"))
     score = Column(Float)
     reason = Column(JSON)
     risk_flags = Column(JSON)
@@ -706,8 +708,8 @@ class Refund(Base):
     """환불 요청·2단계 승인 (Payment P5) — maker(요청)≠checker(승인)."""
     __tablename__ = "refund"
     id = Column(String, primary_key=True, default=uid)
-    invoice_id = Column(String, index=True)
-    case_id = Column(String, index=True)
+    invoice_id = Column(String, ForeignKey("invoice.invoice_id", ondelete="RESTRICT"), index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="RESTRICT"), index=True)
     amount = Column(Float)
     reason = Column(Text)                 # 환불 사유
     status = Column(String, default="requested")   # requested|approved|rejected
@@ -736,7 +738,7 @@ class Feedback(Base):
 class FeedbackImage(Base):
     __tablename__ = "feedback_image"
     image_id = Column(String, primary_key=True, default=uid)
-    feedback_id = Column(String, nullable=False, index=True)
+    feedback_id = Column(String, ForeignKey("feedback.feedback_id", ondelete="CASCADE"), nullable=False, index=True)
     filename = Column(String)
     content_b64 = Column(EncryptedType)          # <10MB만 저장(암호화, 업로드 상한과 동일)
     content_type = Column(String)
@@ -746,7 +748,7 @@ class FeedbackImage(Base):
 class FeedbackComment(Base):
     __tablename__ = "feedback_comment"
     comment_id = Column(String, primary_key=True, default=uid)
-    feedback_id = Column(String, nullable=False, index=True)
+    feedback_id = Column(String, ForeignKey("feedback.feedback_id", ondelete="CASCADE"), nullable=False, index=True)
     author = Column(String, nullable=False)
     author_role = Column(String, nullable=False)
     body = Column(Text, nullable=False)
@@ -761,15 +763,15 @@ class MaterialMeasurement(Base):
     """
     __tablename__ = "material_measurement"
     measurement_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False, index=True)
-    material_id = Column(String, index=True)      # None = 케이스(제품) 단위 측정
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False, index=True)
+    material_id = Column(String, ForeignKey("material.material_id", ondelete="CASCADE"), index=True)      # None = 케이스(제품) 단위 측정
     param_key = Column(String, nullable=False)    # ethanol_pct | lead_ppm | ...
     value = Column(Float)
     unit = Column(String)
     method = Column(String)                       # 시험법(예: GC-MS, ICP-MS)
     lab_name = Column(String)
     tested_at = Column(String)                    # ISO date (성적서 시험일)
-    document_id = Column(String)                  # 근거 문서(CoA/성적서)
+    document_id = Column(String, ForeignKey("document_asset.document_id", ondelete="SET NULL"))                  # 근거 문서(CoA/성적서)
     verdict = Column(String)                      # pass | fail | unknown
     note = Column(Text)
     recorded_by = Column(String)
@@ -781,7 +783,7 @@ class SysMenu(Base):
     """메뉴 마스터 — parent_menu_id 재귀 트리(N뎁스 DB, 2뎁스 운영). 설계서 §3.1."""
     __tablename__ = "sys_menu"
     menu_id = Column(String, primary_key=True, default=uid)
-    parent_menu_id = Column(String, index=True)        # NULL = 1뎁스
+    parent_menu_id = Column(String, ForeignKey("sys_menu.menu_id", ondelete="CASCADE"), index=True)        # NULL = 1뎁스
     menu_code = Column(String, unique=True, index=True)  # AUDIT·MOCK_AUDIT (route 연결 키)
     menu_depth = Column(Integer, default=1)            # 파생 캐시값
     menu_type = Column(String, default="screen")       # screen | folder | link
@@ -800,7 +802,7 @@ class SysMenuI18n(Base):
     """메뉴명 다국어 — ko/id/en. 설계서 §3.2."""
     __tablename__ = "sys_menu_i18n"
     id = Column(String, primary_key=True, default=uid)
-    menu_id = Column(String, index=True, nullable=False)
+    menu_id = Column(String, ForeignKey("sys_menu.menu_id", ondelete="CASCADE"), index=True, nullable=False)
     language_code = Column(String, nullable=False)     # ko | id | en
     menu_name = Column(String)
     description = Column(String)
@@ -811,7 +813,7 @@ class SysRoleMenu(Base):
     __tablename__ = "sys_role_menu"
     id = Column(String, primary_key=True, default=uid)
     role_id = Column(String, index=True, nullable=False)  # ROLE_AUDITOR 등
-    menu_id = Column(String, nullable=False)
+    menu_id = Column(String, ForeignKey("sys_menu.menu_id", ondelete="CASCADE"), nullable=False)
     sort_order = Column(Integer, default=0)
     visible_yn = Column(Boolean, default=True)
 
@@ -820,8 +822,8 @@ class SysUserMenu(Base):
     """사용자별 메뉴 배정/예외 — 설계서 §3.4. override_type=ADD|REMOVE|ORDER."""
     __tablename__ = "sys_user_menu"
     id = Column(String, primary_key=True, default=uid)
-    user_id = Column(String, index=True, nullable=False)
-    menu_id = Column(String, nullable=False)
+    user_id = Column(String, ForeignKey("app_user.user_id", ondelete="CASCADE"), index=True, nullable=False)
+    menu_id = Column(String, ForeignKey("sys_menu.menu_id", ondelete="CASCADE"), nullable=False)
     sort_order = Column(Integer, default=0)
     visible_yn = Column(Boolean, default=True)
     override_type = Column(String)                     # ADD | REMOVE | ORDER
@@ -833,7 +835,7 @@ class SysOrgMenu(Base):
     __tablename__ = "sys_org_menu"
     id = Column(String, primary_key=True, default=uid)
     org_id = Column(String, index=True, nullable=False)
-    menu_id = Column(String, nullable=False)
+    menu_id = Column(String, ForeignKey("sys_menu.menu_id", ondelete="CASCADE"), nullable=False)
     sort_order = Column(Integer, default=0)
     visible_yn = Column(Boolean, default=True)
 
@@ -844,7 +846,7 @@ class SysMenuPermission(Base):
     id = Column(String, primary_key=True, default=uid)
     assignment_type = Column(String, nullable=False)   # ROLE | ORG | USER
     target_id = Column(String, index=True, nullable=False)
-    menu_id = Column(String, nullable=False)
+    menu_id = Column(String, ForeignKey("sys_menu.menu_id", ondelete="CASCADE"), nullable=False)
     can_view = Column(Boolean, default=True)
     can_create = Column(Boolean, default=False)
     can_update = Column(Boolean, default=False)
@@ -861,7 +863,7 @@ class ApprovalRequest(Base):
     __tablename__ = "approval_request"
     id = Column(String, primary_key=True, default=uid)
     action_type = Column(String, nullable=False, index=True)   # certificate.issue | certificate.revoke ...
-    case_id = Column(String, index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="RESTRICT"), index=True)
     org_id = Column(String, index=True)
     payload = Column(JSON, default=dict)          # 실행 파라미터(reason 등)
     reason = Column(String)                        # maker 요청 사유
@@ -886,7 +888,7 @@ class ConsultantInvite(Base):
     __tablename__ = "consultant_invite"
     invite_id = Column(String, primary_key=True, default=uid)
     code = Column(String, unique=True, index=True, nullable=False)
-    consultant_id = Column(String, index=True, nullable=False)
+    consultant_id = Column(String, ForeignKey("app_user.user_id", ondelete="CASCADE"), index=True, nullable=False)
     company_name = Column(String)      # 영업 대상 업체명(참고용) — 가입 시 업체가 정정 가능
     note = Column(Text)
     max_uses = Column(Integer, default=1)
@@ -930,7 +932,7 @@ class ConsultantProfile(Base):
     수수료율은 기본값을 두지 않는다. 계약마다 다를 수 있고, 시스템이 임의로 정한 숫자로
     돈이 나가면 안 된다. 운영자가 명시적으로 넣어야 실적이 금액으로 환산된다."""
     __tablename__ = "consultant_profile"
-    consultant_id = Column(String, primary_key=True)     # app_user.user_id
+    consultant_id = Column(String, ForeignKey("app_user.user_id", ondelete="CASCADE"), primary_key=True)     # app_user.user_id
     display_name = Column(String)          # 대외 표기명(개인 또는 법인)
     company_name = Column(String)          # 소속 컨설팅사(개인이면 비움)
     biz_reg_no = Column(EncryptedType)     # 사업자등록번호 — 세금계산서·정산
@@ -954,7 +956,7 @@ class ConsultantPayout(Base):
     않게). 반면 '지급했다'는 사실은 계산이 아니라 기록이라 남긴다."""
     __tablename__ = "consultant_payout"
     payout_id = Column(String, primary_key=True, default=uid)
-    consultant_id = Column(String, index=True, nullable=False)
+    consultant_id = Column(String, ForeignKey("app_user.user_id", ondelete="RESTRICT"), index=True, nullable=False)
     period_from = Column(String)      # ISO date — 정산 대상 기간
     period_to = Column(String)
     base_amount = Column(Float)       # 정산 근거 매출 합계
@@ -992,7 +994,7 @@ class BoardPost(Base):
     # QR 로 들어온 문의는 그 영업자 건으로 남긴다 — 수수료·성과 근거
     ref_code = Column(String, index=True)
     edited_at = Column(DateTime)          # 수정 시각(수정 이력은 감사로그)
-    consultant_id = Column(String, index=True)
+    consultant_id = Column(String, ForeignKey("app_user.user_id", ondelete="SET NULL"), index=True)
     status = Column(String, default="open")       # open | answered | closed
     ip_hash = Column(String)                      # 도배 차단용. 원문 IP 는 남기지 않는다
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -1003,14 +1005,14 @@ class BoardReply(Base):
     """게시글 답변 — 로그인한 직원만 쓴다."""
     __tablename__ = "board_reply"
     reply_id = Column(String, primary_key=True, default=uid)
-    post_id = Column(String, index=True, nullable=False)
+    post_id = Column(String, ForeignKey("board_post.post_id", ondelete="CASCADE"), index=True, nullable=False)
     # 글쓴이(익명)가 되물을 수도 있다 — 그때는 author_id 가 없다
     # 글쓴이 답글이면 빈 문자열. NULL 이 아니다 — 기존 테이블에 NOT NULL 이 걸려 있고
     # SQLite 는 컬럼 제약을 나중에 풀 수 없다. 판별은 author_role=='client' 로 한다.
     author_id = Column(String, nullable=False, default="")
     author_role = Column(String)                 # 직원 역할 또는 'client'
     author_name = Column(String)                 # 글쓴이 답글의 표시 이름
-    parent_reply_id = Column(String, index=True) # 대댓글 — 어느 답글에 달았는지
+    parent_reply_id = Column(String, ForeignKey("board_reply.reply_id", ondelete="CASCADE"), index=True) # 대댓글 — 어느 답글에 달았는지
     body = Column(Text, nullable=False)
     edited_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -1024,9 +1026,9 @@ class MaterialEvidenceLink(Base):
     N:M 으로 잇는 링크 테이블을 둔다."""
     __tablename__ = "material_evidence_links"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False, index=True)
-    document_id = Column(String, nullable=False, index=True)
-    material_id = Column(String, nullable=False, index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(String, ForeignKey("document_asset.document_id", ondelete="CASCADE"), nullable=False, index=True)
+    material_id = Column(String, ForeignKey("material.material_id", ondelete="CASCADE"), nullable=False, index=True)
     # DIRECT|INDIRECT|INFERRED — 문서가 이 원재료를 직접 지목했는가, 관계를 따라 이었는가,
     # 시스템이 추론했는가. INFERRED 는 자동 최종확정 금지(설계서 REQ-EVD-010).
     link_type = Column(String)
@@ -1051,8 +1053,8 @@ class CertificateScopeItem(Base):
     scope_type 을 구분한다."""
     __tablename__ = "certificate_scope_item"
     id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False, index=True)
-    document_id = Column(String, nullable=True, index=True)   # 이 scope 를 읽어낸 문서
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False, index=True)
+    document_id = Column(String, ForeignKey("document_asset.document_id", ondelete="SET NULL"), nullable=True, index=True)   # 이 scope 를 읽어낸 문서
     certificate_no = Column(String, nullable=False, index=True)
     # PRODUCT|INGREDIENT|FACTORY|COMPANY|PROCESS — 회사 단위 인증서(COMPANY)로
     # 개별 제품·원재료를 자동 승격해서는 안 된다(REQ-CERT-005).
@@ -1074,14 +1076,14 @@ class DocumentRequest(Base):
     요구했는지는 그대로 남아야 한다."""
     __tablename__ = "document_request"
     request_id = Column(String, primary_key=True, default=uid)
-    case_id = Column(String, nullable=False, index=True)
+    case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False, index=True)
     lang = Column(String)              # 고객이 받은 문구 그대로를 남긴다
     request_count = Column(Integer)     # 요청 건수(원재료×증빙)
     material_count = Column(Integer)    # 대상 원재료 수
     group_count = Column(Integer)       # 묶인 그룹 수
     codes = Column(JSON)                # 무엇을 요구했는지 한눈에 보기 위한 색인
     sheet = Column(JSON)                # 요청 시점 시트 스냅샷(그룹·사유·대상 원재료)
-    notification_id = Column(String, nullable=True)   # 이 요청으로 만든 알림
+    notification_id = Column(String, ForeignKey("notification.notification_id", ondelete="SET NULL"), nullable=True)   # 이 요청으로 만든 알림
     requested_by = Column(String)       # 요청한 사용자 uid
     requested_role = Column(String)     # 그때의 역할
     created_at = Column(DateTime, default=datetime.utcnow)

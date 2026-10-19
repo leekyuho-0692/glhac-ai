@@ -604,6 +604,10 @@ def _notif_setup(role, with_profile=True):
     try:
         org_id = "org_" + _uniq()
         cons_id = "cons_" + _uniq()
+        if with_profile is not None:   # FK: 담당 컨설턴트는 실제 사용자여야 한다(프로필만 없을 수 있다)
+            db.add(models.User(user_id=cons_id, username=cons_id, password_hash="x",
+                               role="consultant", org_id="org_demo"))
+            db.flush()
         db.add(models.Org(org_id=org_id, name="O", consultant_id=cons_id if with_profile is not None else None))
         if with_profile:
             db.add(models.ConsultantProfile(consultant_id=cons_id, phone="010-CONS-0000",
