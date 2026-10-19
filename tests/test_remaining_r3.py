@@ -206,3 +206,125 @@ def test_r32_CI용_고정출력은_lock_버전():
         name, _, ver = o.partition("==")
         assert ver == pins[_norm(name.split("[")[0])], o
     assert any(o.startswith("uvicorn[standard]==") for o in out)
+
+
+# ══ R3-3. 스태프 연락처 필드 + 알림 수신 ═════════════════════════════════
+from app import notify  # noqa: E402
+
+
+def _login(c, u, p):
+    r = c.post("/auth/login", json={"username": u, "password": p})
+    assert r.status_code == 200, r.text
+    return {"Authorization": "Bearer " + r.json()["token"]}
+
+
+def _mk_user(c, adm, role, org="org_demo"):
+    name = "r3%s_%s" % (role[:4], _uniq())
+    r = c.post("/admin/users", json={"username": name, "password": "halal-test-1", "role": role, "org_id": org},
+               headers=adm)
+    assert r.status_code == 200, r.text
+    return name, r.json()["user_id"], _login(c, name, "halal-test-1")
+
+
+def _capture(monkeypatch):
+    seen = []
+
+    def make(ch):
+        def fn(contacts, text, notification=None):
+            seen.append((ch, dict(contacts)))
+            if not contacts.get("phone" if ch == "sms" else "email"):
+                return {"channel": ch, "ok": False, "reason": "no_contact"}
+            return {"channel": ch, "ok": True}
+        return fn
+    monkeypatch.setitem(notify.PROVIDERS, "sms", make("sms"))
+    monkeypatch.setitem(notify.PROVIDERS, "email", make("email"))
+    return seen
+
+
+def _assigned_notif(auditor_uid, role="auditor"):
+    db = SessionLocal()
+    try:
+        case = _new_case(db)
+        if auditor_uid:
+            sm.record_event(db, case, None, "draft", "ops.auditor_assigned", "operator", "op",
+                            {"auditor_id": auditor_uid, "auditor_name": "x"})
+        n = models.Notification(case_id=case.case_id, org_id=case.org_id, role=role, event_type="t",
+                                channels=["sms", "email"], title="T", body="B", status="unsent")
+        db.add(n)
+        db.commit()
+        return n.notification_id
+    finally:
+        db.close()
+
+
+def _drain(nid):
+    db = SessionLocal()
+    try:
+        db.query(models.Notification).filter(models.Notification.notification_id != nid,
+                                             models.Notification.status == "unsent"
+                                             ).update({"status": "skipped"}, synchronize_session=False)
+        db.commit()
+        m.drain_notifications(db)
+        db.expire_all()
+        return db.get(models.Notification, nid)
+    finally:
+        db.close()
+
+
+def test_r33_오디터_연락처_있으면_그_주소로_없으면_no_contact(monkeypatch):
+    with TestClient(app) as c:
+        adm = _login(c, "admin", "admin")
+        _, uid_a, ha = _mk_user(c, adm, "auditor")
+        _, uid_b, hb = _mk_user(c, adm, "auditor")
+        r = c.patch("/me/contact", json={"contact_email": "aud-a@x.test", "contact_phone": "+62 812-3456-7890"}, headers=ha)
+        assert r.status_code == 200 and r.json()["contact_email"] == "aud-a@x.test"
+        seen = _capture(monkeypatch)
+        n = _drain(_assigned_notif(uid_a))
+        assert n.status == "sent", (n.status, n.last_error)
+        by = dict(seen)
+        assert by["email"]["email"] == "aud-a@x.test" and by["sms"]["phone"] == "+62 812-3456-7890"
+        # 연락처 없는 배정 오디터 → no_contact(업체로 새지 않음)
+        seen.clear()
+        n = _drain(_assigned_notif(uid_b))
+        assert n.status == "skipped" and "no_contact" in (n.last_error or "")
+        assert all(not cc.get("email") and not cc.get("phone") for _, cc in seen)
+        # 배정이 없으면 아무에게도 안 간다
+        seen.clear()
+        n = _drain(_assigned_notif(None))
+        assert n.status == "skipped" and all(not cc.get("email") for _, cc in seen)
+
+
+def test_r33_운영자_역할_알림은_해당_역할_연락처(monkeypatch):
+    with TestClient(app) as c:
+        adm = _login(c, "admin", "admin")
+        name, uid, h = _mk_user(c, adm, "fatwa_liaison")
+        assert c.patch("/admin/users/" + uid, json={"contact_email": "sha@x.test"}, headers=adm).status_code == 200
+        seen = _capture(monkeypatch)
+        n = _drain(_assigned_notif(None, role="fatwa_liaison"))
+        assert n.status == "sent", (n.status, n.last_error)
+        assert dict(seen)["email"]["email"] == "sha@x.test"
+
+
+def test_r33_연락처_수정_권한과_검증():
+    with TestClient(app) as c:
+        adm = _login(c, "admin", "admin")
+        _, uid_a, ha = _mk_user(c, adm, "auditor")
+        _, uid_b, hb = _mk_user(c, adm, "auditor")
+        assert c.patch("/me/contact", json={"contact_email": "a@x.test"}, headers=ha).status_code == 200
+        # b 가 /me/contact 로 바꿔도 b 자신만 바뀐다
+        assert c.patch("/me/contact", json={"contact_email": "b@x.test"}, headers=hb).status_code == 200
+        db = SessionLocal()
+        try:
+            assert db.get(models.User, uid_a).contact_email == "a@x.test"
+            assert db.get(models.User, uid_b).contact_email == "b@x.test"
+        finally:
+            db.close()
+        # 비운영자는 남의 연락처를 관리자 경로로도 못 바꾼다
+        assert c.patch("/admin/users/" + uid_a, json={"contact_email": "evil@x.test"}, headers=hb).status_code == 403
+        assert c.patch("/me/contact", json={"contact_email": "not-an-email"}, headers=ha).status_code == 422
+        assert c.patch("/me/contact", json={"contact_phone": "abc"}, headers=ha).status_code == 422
+        # 빈 문자열=삭제
+        r = c.patch("/me/contact", json={"contact_email": ""}, headers=ha)
+        assert r.status_code == 200 and r.json()["contact_email"] is None
+        # 인증 없이는 불가
+        assert c.patch("/me/contact", json={"contact_email": "x@x.test"}).status_code in (401, 403)

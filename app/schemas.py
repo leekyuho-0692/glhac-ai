@@ -749,9 +749,17 @@ class ChangePasswordReq(BaseModel):
     _pw = field_validator("new_password")(classmethod(lambda cls, v: _password(v)))
 
 
+class ContactReq(BaseModel):
+    """연락처 수정 — 생략(null)=변경 없음, 빈 문자열=삭제."""
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+
+
 class AdminUserPatchReq(BaseModel):
     role: Optional[str] = None
     password: Optional[str] = None
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
 
     @field_validator("password")
     @classmethod

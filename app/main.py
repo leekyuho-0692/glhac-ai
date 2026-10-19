@@ -908,7 +908,7 @@ def _notification_contacts(db, n):
     알림(보완 요청 통보 등)이 업체 담당자에게 SMS/이메일로 나가는 오배정이었다.
     업체 대상(role 비어 있음/applicant/client…)이면 케이스 연락처 + 업체의 수신동의를 쓴다.
     그 외 역할은 해당 담당자의 연락처만 쓰고, 찾지 못하면 빈 연락처({} → no_contact)로 두어
-    업체로 새지 않게 한다. 오디터는 연락처를 저장하는 필드가 없어 현재는 항상 no_contact 다.
+    업체로 새지 않게 한다. 직원 연락처는 User.contact_email/contact_phone(암호화)에서 읽는다.
     webhook 은 시스템 연동 주소(역할 무관)라 그대로 둔다."""
     webhook = os.environ.get("GLHAC_WEBHOOK_URL")
     c = db.get(models.CaseApplication, n.case_id) if n.case_id else None
@@ -927,9 +927,29 @@ def _notification_contacts(db, n):
         if prof is not None and (prof.status or "active") == "active":
             contacts.update({"phone": prof.phone, "email": prof.email})
             return contacts, True    # 담당자 본인 연락처 — 업체의 수신동의와 무관
-    # auditor 및 그 밖의 직원 역할: 연락처 필드 없음 → 업체로 보내지 않는다(no_contact).
+    # 오디터·샤리아·운영자 등 직원 역할: 배정된 사람(없으면 같은 역할 중 연락처가 있는 첫 활성 계정)의
+    # User 연락처를 쓴다. 연락처가 없으면 빈 채로 두어 no_contact — 업체로 보내지 않는다.
     # 수신동의는 업체 개념이라 여기선 게이트하지 않는다(동의 미달로 조용히 사라지지 않고 no_contact 로 남는다).
+    staff = _notify_staff_user(db, n)
+    if staff is not None:
+        contacts.update({"phone": staff.contact_phone, "email": staff.contact_email})
     return contacts, True
+
+
+def _notify_staff_user(db, n):
+    """직원 역할 알림의 수신자 User — 오디터는 케이스의 배정 오디터(_assigned_auditor_id 재사용),
+    그 외(fatwa_liaison·operator·admin)는 배정 개념이 없어 해당 역할 활성 계정 중 연락처가 있는 첫 사람(아이디순)."""
+    if n.role == "auditor":
+        uid = _assigned_auditor_id(db, n.case_id) if n.case_id else None
+        u = db.get(models.User, uid) if uid else None
+        if u is not None and u.role == "auditor" and not _user_suspended(db, u.user_id):
+            return u
+        return None
+    if n.role in ("fatwa_liaison", "operator", "admin"):
+        for u in db.query(models.User).filter_by(role=n.role).order_by(models.User.username).all():
+            if (u.contact_email or u.contact_phone) and not _user_suspended(db, u.user_id):
+                return u
+    return None
 
 
 def drain_notifications(db, batch=50, max_attempts=3):
@@ -1883,6 +1903,41 @@ def change_password(body: schemas.ChangePasswordReq, user=Depends(auth.get_curre
     return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username}
 
 
+_CONTACT_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_CONTACT_PHONE_RE = re.compile(r"^\+?[0-9][0-9\s\-().]{5,24}$")
+
+
+def _apply_contact(u, email, phone):
+    """User 연락처 반영 — None=변경 없음, ''=삭제. 형식이 틀리면 422. 바뀐 필드명 목록을 돌려준다(값은 로그에 남기지 않는다)."""
+    changed = []
+    if email is not None:
+        v = email.strip()
+        if v and (len(v) > 200 or not _CONTACT_EMAIL_RE.match(v)):
+            raise HTTPException(422, {"code": "BAD_CONTACT_EMAIL"})
+        u.contact_email = v or None
+        changed.append("contact_email")
+    if phone is not None:
+        v = phone.strip()
+        if v and not _CONTACT_PHONE_RE.match(v):
+            raise HTTPException(422, {"code": "BAD_CONTACT_PHONE"})
+        u.contact_phone = v or None
+        changed.append("contact_phone")
+    return changed
+
+
+@app.patch("/me/contact")
+def patch_my_contact(body: schemas.ContactReq, user=Depends(auth.get_current_user),
+                     db: Session = Depends(get_db)):
+    """본인 알림 연락처(이메일·전화) 수정 — 자기 계정만(경로에 대상 id 없음)."""
+    u = db.get(models.User, user["uid"])
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    changed = _apply_contact(u, body.contact_email, body.contact_phone)
+    _audit(db, user, "user.contact.update", "user", u.user_id, None, {"fields": changed}, commit=False)
+    db.commit()
+    return {"contact_email": u.contact_email, "contact_phone": u.contact_phone}
+
+
 # ── 스태프 가입 신청 + 관리자 승인 ────────────────────────────────────────
 # 컨설턴트·오디터·파트와·관리자는 자가가입이 곧 권한상승이라, 신청은 대기(pending)로
 # 받아두고 관리자가 승인해야 실제 User 가 만들어진다. 대기건은 users 에 없으므로
@@ -2068,11 +2123,13 @@ def admin_patch_user(user_id: str, body: schemas.AdminUserPatchReq,
     if body.password:
         u.password_hash = auth.hash_pw(body.password)
         token_invalidate = True  # 비밀번호 변경 시 토큰 무효화 (A8)
+    contact_changed = _apply_contact(u, body.contact_email, body.contact_phone)
     # 토큰 버전 증가로 기존 토큰 무효화
     if token_invalidate:
         u.token_version = (u.token_version or 0) + 1
     _audit(db, user, "admin.user.patch", "user", user_id, None,
-           {"role": body.role, "password_changed": bool(body.password)}, commit=False)
+           {"role": body.role, "password_changed": bool(body.password),
+            "contact_changed": contact_changed}, commit=False)
     db.commit()
     return {"user_id": u.user_id, "username": u.username, "role": u.role}
 

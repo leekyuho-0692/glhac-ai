@@ -445,6 +445,9 @@ class User(Base):
     org_id = Column(String, nullable=False)
     company_role = Column(String, default="client_admin")  # client_admin(기업업무 관리자)|client_staff(업무자) — Phase 1
     token_version = Column(Integer, default=0)  # 토큰 무효화 버전(auth.make_token 참조)
+    # 알림 수신용 연락처(스태프 — 오디터·샤리아·운영자). 개인정보라 암호화 저장. 비면 알림은 no_contact.
+    contact_email = Column(EncryptedType)
+    contact_phone = Column(EncryptedType)
 
 
 class Facility(Base):
