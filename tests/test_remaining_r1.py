@@ -426,3 +426,89 @@ def test_r12_pathway_confirm_also_warns_and_other_guards_still_block():
         assert "NOT_ON_POSITIVE_LIST" not in [g["code"] for g in sm.guard_pathway_selfdeclare(db, cur)]
     finally:
         db.close()
+
+
+# ================= R1-3. 2인 확인 strict 보강 =================
+REVIEW_BODY = {"sections": {"documents": {"ok": True, "note": ""}}, "verdict": "supplement", "note": "보완 필요"}
+
+
+def _co_case(company, co_username):
+    """공동 오디터가 배정된 케이스 + 그 오디터 계정."""
+    cid = _db_case(company, status="consultant_review")
+    uid = _mkuser(co_username, "auditor")
+    _db_add(models.CaseAuditor(case_id=cid, user_id=uid, role="co"))
+    return cid, uid
+
+
+def test_r13_non_strict_keeps_existing_behaviour(monkeypatch):
+    monkeypatch.delenv("GLHAC_TWO_PERSON", raising=False)
+    with TestClient(app) as c:
+        # 공동 오디터 없음 → operator 즉시 실행
+        cid = _db_case("PT 2p basic", status="consultant_review")
+        r = c.post("/cases/%s/preassess/review" % cid, headers=_op(c), json=REVIEW_BODY)
+        assert r.status_code == 200 and not r.json().get("pending"), r.text
+        assert len(_events(cid, "preassess.review")) == 1
+        # 공동 오디터 있어도 operator/admin 은 종전처럼 우회(비 strict)
+        cid2, _ = _co_case("PT 2p basic co", "r1_co_basic")
+        r = c.post("/cases/%s/preassess/review" % cid2, headers=_op(c), json=REVIEW_BODY)
+        assert r.status_code == 200 and not r.json().get("pending"), r.text
+        assert len(_events(cid2, "preassess.review")) == 1
+        # 메인 오디터의 요청은 공동 오디터 확인 대기 → 비 strict 에서 admin 은 확인자로 통과(종전)
+        cid3, _ = _co_case("PT 2p basic main", "r1_co_basic3")
+        r = c.post("/cases/%s/preassess/review" % cid3, headers=_tok(c, "auditor1"), json=REVIEW_BODY)
+        assert r.status_code == 200 and r.json()["pending"] is True, r.text
+        r2 = c.post("/approvals/%s/approve" % r.json()["approval_id"], headers=_adm(c), json={})
+        assert r2.status_code == 200, r2.text
+        assert len(_events(cid3, "preassess.review")) == 1
+
+
+def test_r13_strict_operator_alone_is_blocked_without_co_auditor(monkeypatch):
+    monkeypatch.setenv("GLHAC_TWO_PERSON", "strict")
+    with TestClient(app) as c:
+        cid = _db_case("PT 2p strict none", status="consultant_review")
+        for h in (_op(c), _adm(c)):
+            r = c.post("/cases/%s/preassess/review" % cid, headers=h, json=REVIEW_BODY)
+            assert r.status_code == 409 and _code(r) == "CO_AUDITOR_REQUIRED", r.text
+        assert _events(cid, "preassess.review") == []        # 실행되지 않았다
+
+
+def test_r13_strict_operator_goes_pending_and_only_co_auditor_confirms(monkeypatch):
+    monkeypatch.setenv("GLHAC_TWO_PERSON", "strict")
+    with TestClient(app) as c:
+        cid, _ = _co_case("PT 2p strict co", "r1_co_strict")
+        r = c.post("/cases/%s/preassess/review" % cid, headers=_op(c), json=REVIEW_BODY)
+        assert r.status_code == 200 and r.json()["pending"] is True, r.text
+        aid = r.json()["approval_id"]
+        assert _events(cid, "preassess.review") == []                  # 대기 — 아직 실행 안 됨
+        assert _db_get(models.ApprovalRequest, aid).requested_by
+        # 부정: 요청자 본인 확인 금지, strict 에서는 admin 도 확인자가 못 된다
+        r = c.post("/approvals/%s/approve" % aid, headers=_op(c), json={})
+        assert r.status_code == 403 and _code(r) == "SELF_APPROVAL_FORBIDDEN", r.text
+        r = c.post("/approvals/%s/approve" % aid, headers=_adm(c), json={})
+        assert r.status_code == 403 and _code(r) == "NOT_A_CHECKER", r.text
+        # 승인 목록에서도 admin 은 결정 불가로 보인다
+        lst = c.get("/approvals", headers=_adm(c)).json()
+        mine = next(x for x in (lst if isinstance(lst, list) else lst.get("items", [])) if x["approval_id"] == aid)
+        assert mine["can_decide"] is False
+        assert _events(cid, "preassess.review") == []
+        # 정상: 그 케이스의 공동 오디터가 확인하면 실행된다
+        r = c.post("/approvals/%s/approve" % aid, headers=_tok(c, "r1_co_strict", PW), json={})
+        assert r.status_code == 200, r.text
+        assert len(_events(cid, "preassess.review")) == 1
+
+
+def test_r13_strict_cert_approval_requires_different_person(monkeypatch):
+    monkeypatch.setenv("GLHAC_TWO_PERSON", "strict")
+    with TestClient(app) as c:
+        cid = _issued_case("PT 2p cert")
+        r = c.post("/cases/%s/certificate/revoke" % cid, headers=_op(c), json={"reason": "strict 확인"})
+        assert r.status_code == 200, r.text
+        aid = r.json()["approval_id"]
+        # 부정: 요청한 operator 본인은 승인 못 한다(철회 확인자 역할이 아니고, 본인이기도 하다)
+        r = c.post("/approvals/%s/approve" % aid, headers=_op(c), json={})
+        assert r.status_code == 403 and _code(r) == "SELF_APPROVAL_FORBIDDEN"
+        assert _status(cid) == "certificate_issued"
+        # 정상: 다른 사람(admin)이 승인하면 철회된다
+        r = c.post("/approvals/%s/approve" % aid, headers=_adm(c), json={})
+        assert r.status_code == 200, r.text
+        assert _status(cid) == "revoked"

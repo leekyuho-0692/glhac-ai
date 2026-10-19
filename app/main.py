@@ -13062,12 +13062,18 @@ def _case_co_auditor_uids(db, case_id):
     return {r.user_id for r in rows}
 
 
+def _two_person_strict():
+    """GLHAC_TWO_PERSON=strict — 켜는 조건·방법은 docs/운영_배포_가이드.md '2인 확인 strict'."""
+    return os.environ.get("GLHAC_TWO_PERSON", "") == "strict"
+
+
 def _two_person_gate(db, c, user, action_type, payload):
     cos = _case_co_auditor_uids(db, c.case_id)
-    strict = os.environ.get("GLHAC_TWO_PERSON", "") == "strict"
+    strict = _two_person_strict()
     if user["role"] == "auditor" and user["uid"] in cos:
         raise HTTPException(403, {"code": "NOT_MAIN_AUDITOR", "hint": "서브 오디터는 열람·확인만 할 수 있습니다."})
-    if user["role"] != "auditor":
+    # strict 에서는 operator/admin 도 우회하지 못한다(감사 지적) — 비 strict 는 종전처럼 즉시 실행.
+    if user["role"] != "auditor" and not (strict and user["role"] in ("operator", "admin")):
         return None
     if not cos:
         if strict:
@@ -13208,7 +13214,9 @@ def _check_checker(db, ar, user):
     if user["uid"] == ar.requested_by:
         raise HTTPException(403, {"code": "SELF_APPROVAL_FORBIDDEN"})
     checker = rule["checker"]
-    if user["role"] != "admin":
+    # strict: admin 이 co_auditor 확인자 자리를 늘 통과하지 못한다 — 그 케이스의 공동 오디터만 두 번째 확인자.
+    # (인증서 발급·철회는 maker≠checker 를 위 uid 비교가 이미 강제한다.)
+    if user["role"] != "admin" or (_two_person_strict() and checker == "co_auditor"):
         if checker == "co_auditor":
             if user["uid"] not in _case_co_auditor_uids(db, ar.case_id):
                 raise HTTPException(403, {"code": "NOT_A_CHECKER", "required": ["co_auditor"]})
@@ -13293,7 +13301,8 @@ def list_approvals(status: str = "pending", user=Depends(auth.get_current_user),
         rule = MAKER_CHECKER.get(ar.action_type, {})
         checker = rule.get("checker", set())
         if checker == "co_auditor":
-            is_checker = (user["role"] == "admin" or user["uid"] in co_map.get(ar.case_id, set()))
+            is_checker = ((user["role"] == "admin" and not _two_person_strict())
+                          or user["uid"] in co_map.get(ar.case_id, set()))
         else:
             is_checker = (user["role"] == "admin" or user["role"] in checker)
         can_decide = is_checker and user["uid"] != ar.requested_by and ar.status == "pending"
