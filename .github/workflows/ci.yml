@@ -69,11 +69,39 @@ jobs:
           GLHAC_E2E_SKIP_OLLAMA: '1'                             # 러너에 Ollama 가 없다
         run: bash tests/run_isolated.sh
 
+      # e2e_srs_cycle 은 정식 흐름(SRS) 전 과정이라 GLHAC_FORMAL_FLOW=1 서버가 필요하다(운영과 같은 조건).
+      # 위 서버는 정식 흐름이 꺼져 있어 거기선 SKIP 되고, 여기서 정식 흐름 서버를 따로 띄워 돌린다.
+      - name: 테스트 (정식 흐름 서버 · SRS 전 과정)
+        env:
+          GLHAC_FORMAL_FLOW: '1'
+          GLHAC_DB_URL: sqlite:///${{ runner.temp }}/ci_formal.db
+        run: |
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8897 \
+            > "${{ runner.temp }}/server_formal.log" 2>&1 &
+          SPID=$!
+          code=000
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8897/health || echo 000)
+            [ "$code" = "200" ] && break
+            sleep 1
+          done
+          if [ "$code" != "200" ]; then
+            echo "::error::정식 흐름 서버가 60초 안에 뜨지 않았습니다"; cat "${{ runner.temp }}/server_formal.log"; exit 1
+          fi
+          rc=0
+          GLHAC_E2E_BASE=http://127.0.0.1:8897 GLHAC_E2E_FORMAL=1 GLHAC_E2E_SKIP_OLLAMA=1 \
+            python tests/e2e_srs_cycle.py || rc=$?
+          kill "$SPID" 2>/dev/null || true
+          [ "$rc" = 0 ] || { echo "--- 정식 흐름 서버 로그(끝 80줄)"; tail -80 "${{ runner.temp }}/server_formal.log"; }
+          exit $rc
+
+      # 암호화 모드는 pytest 파일만 돈다 — e2e 대상 서버(8899)는 암호화가 꺼져 있고 DB 파일도 달라,
+      # DB 를 직접 쓰는 e2e 시나리오(e2e_s13 등)가 엉뚱한 파일을 고치게 된다.
       - name: 테스트 (암호화 모드)
         env:
           PYTHON: python
           GLHAC_COV: '1'
-          GLHAC_E2E_BASE: http://127.0.0.1:8899
+          GLHAC_E2E_BASE: ''
           GLHAC_DB_URL: sqlite:///${{ runner.temp }}/ci_encrypted.db
           GLHAC_E2E_SKIP_OLLAMA: '1'
           GLHAC_ENCRYPTION: '1'
