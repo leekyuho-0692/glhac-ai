@@ -36,25 +36,60 @@ App.usDoApprove = async function(id){
   const r = await apiFetch('/admin/staff-signups/'+id+'/approve', {method:'POST', body:JSON.stringify({role})});
   if(!r.ok) return toast(await apiErr(r, '승인에 실패했습니다.'));
   const d = await r.json().catch(()=>({}));
-  closeModal(); await loadAdmMembers(); render(); toast('가입을 승인했습니다. ('+esc(d.username||'')+' · '+esc(d.role||role||'')+')');
+  closeModal(); RS.usKey = null; await loadAdmMembers(); render(); toast('가입을 승인했습니다. ('+esc(d.username||'')+' · '+esc(d.role||role||'')+')');
 };
 
 // ── 사용자 관리 패널 ──
+/* 서버 검색·필터·정렬·페이지(GET /admin/users?page=&size=&q=&role=&status=&org_id=&sort=&dir=) — 연락처는 서버가 가려서 준다 */
+const US_SIZE = 20;
+function US_key(){ return JSON.stringify([S.usQ||'', S.usRole||'', S.usStatus||'', S.usOrg||'', S.usSort||'username', S.usDir||'asc', S.usPage||1]); }
+async function US_load(){
+  const key = US_key();
+  RS.usKey = key;
+  const qs = new URLSearchParams({page:String(S.usPage||1), size:String(US_SIZE), sort:S.usSort||'username', dir:S.usDir||'asc'});
+  if(S.usQ) qs.set('q', S.usQ);
+  if(S.usRole) qs.set('role', S.usRole);
+  if(S.usStatus) qs.set('status', S.usStatus);
+  if(S.usOrg) qs.set('org_id', S.usOrg);
+  try{
+    const r = await apiFetch('/admin/users?' + qs.toString());
+    RS.usList = r.ok ? await r.json() : {items:[], total:0, page:1, pages:1, error:true};
+  }catch(e){ RS.usList = {items:[], total:0, page:1, pages:1, error:true}; }
+  RS._usLoading = false;
+  render();
+}
+const US_dt = (v) => v ? esc(String(v).slice(0,10)) : '-';
 function US_panel(){
   const m = RS.admMembers; if(!m || m.forbidden || !US_isAdmin()) return '';
-  const q = (S.usQ||'').toLowerCase();
-  const L = (m.users||[]).filter(u=>!q || (u.username||'').toLowerCase().includes(q) || (u.role||'').includes(q) || (u.org_id||'').toLowerCase().includes(q));
+  if(RS.usKey !== US_key() && !RS._usLoading){ RS._usLoading = true; US_load(); }
+  const d = RS.usList || {items:[], total:0, page:1, pages:1};
+  const L = d.items || [];
+  const sortTh = (k, label) => `<th><a href="javascript:void(0)" onclick="App.usSort('${k}')">${label}${(S.usSort||'username')===k ? ((S.usDir||'asc')==='desc' ? ' ▼' : ' ▲') : ''}</a></th>`;
   return `<section class="panel"><div class="panel-head"><h2>사용자 관리</h2>
-      <div class="row-act"><input class="in" style="max-width:220px" placeholder="아이디·역할·org 검색" value="${esc(S.usQ||'')}" onchange="App.usSearch(this.value)"><button class="btn btn-primary" onclick="App.usNew()">＋ 사용자 생성</button></div></div>
-    <div class="tbl-wrap"><table><thead><tr><th style="min-width:170px">아이디</th><th>org</th><th style="min-width:230px">역할</th><th></th></tr></thead><tbody>
-    ${L.slice(0,100).map(u=>`<tr><td><b>${esc(u.username)}</b></td><td class="mono muted">${esc(u.org_id||'-')}</td>
+      <div class="row-act"><button class="btn btn-primary" onclick="App.usNew()">＋ 사용자 생성</button></div></div>
+    <div class="row-act" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <input class="in" style="max-width:220px" placeholder="아이디·표기명·회사명 검색" value="${esc(S.usQ||'')}" onchange="App.usSearch(this.value)">
+      <select class="in" style="max-width:190px" onchange="App.usFilter('usRole',this.value)"><option value="">역할 전체</option>${US_opts(US_ALL_ROLES, S.usRole||'')}</select>
+      <select class="in" style="max-width:130px" onchange="App.usFilter('usStatus',this.value)"><option value="">상태 전체</option><option value="active" ${S.usStatus==='active'?'selected':''}>정상</option><option value="suspended" ${S.usStatus==='suspended'?'selected':''}>정지됨</option></select>
+      <input class="in" style="max-width:160px" placeholder="소속(org_id)" value="${esc(S.usOrg||'')}" onchange="App.usFilter('usOrg',this.value)"></div>
+    <div class="tbl-wrap"><table><thead><tr>${sortTh('username','아이디')}<th>표기명</th>${sortTh('role','역할')}<th>회사</th><th>상태</th>${sortTh('created_at','가입일')}${sortTh('last_login_at','최근 로그인')}<th>연락처</th><th style="min-width:230px">역할 변경</th><th></th></tr></thead><tbody>
+    ${L.map(u=>`<tr><td><a href="javascript:void(0)" onclick="App.usOpen('${jsq(u.user_id)}')"><b>${esc(u.username)}</b></a></td><td>${esc(u.display_name||'-')}</td>
+      <td><span class="badge">${esc(ROLE_LABEL[u.role]||u.role)}</span></td><td class="muted">${esc(u.company_name||u.org_id||'-')}</td>
+      <td><span class="badge ${u.status==='suspended'?'attn':''}">${u.status==='suspended'?'정지됨':'정상'}</span></td>
+      <td class="mono muted">${US_dt(u.created_at)}</td><td class="mono muted">${US_dt(u.last_login_at)}</td>
+      <td class="mono muted">${esc(u.contact_email||'')}${u.contact_email&&u.contact_phone?'<br>':''}${esc(u.contact_phone||'')}${!u.contact_email&&!u.contact_phone?'-':''}</td>
       <td><select class="in" id="us-r-${esc(u.user_id)}">${US_opts(US_ALL_ROLES, u.role)}${US_ALL_ROLES.some(r=>r[0]===u.role)?'':`<option selected value="${esc(u.role)}">${esc(u.role)}</option>`}</select></td>
-      <td><div class="row-act"><button class="btn btn-sm" onclick="App.usRole('${jsq(u.user_id)}')">역할 변경</button>
+      <td><div class="row-act"><button class="btn btn-sm" onclick="App.usOpen('${jsq(u.user_id)}')">상세</button><button class="btn btn-sm" onclick="App.usRole('${jsq(u.user_id)}')">역할 변경</button>
         <button class="btn btn-sm" onclick="App.usPwReset('${jsq(u.user_id)}','${jsq(u.username)}')">비밀번호 초기화</button>
-        ${u.username==='admin'?'':`<button class="btn btn-sm btn-ghost" onclick="App.usDel('${jsq(u.user_id)}','${jsq(u.username)}')">삭제</button>`}</div></td></tr>`).join('')||'<tr><td colspan="4" class="empty">사용자 없음</td></tr>'}
-    </tbody></table></div>${L.length>100?`<p class="muted">상위 100명만 표시 — 검색으로 좁혀 주세요.</p>`:''}</section>`;
+        ${u.username==='admin'?'':`<button class="btn btn-sm btn-ghost" onclick="App.usDel('${jsq(u.user_id)}','${jsq(u.username)}')">삭제</button>`}</div></td></tr>`).join('')||'<tr><td colspan="10" class="empty">사용자 없음</td></tr>'}
+    </tbody></table></div>
+    <div class="row-act" style="justify-content:space-between;margin-top:8px"><span class="muted">${d.total||0}명 · ${d.page||1} / ${d.pages||1}</span>
+      <span><button class="btn btn-sm" ${(d.page||1)<=1?'disabled':''} onclick="App.usPage(-1)">이전</button> <button class="btn btn-sm" ${(d.page||1)>=(d.pages||1)?'disabled':''} onclick="App.usPage(1)">다음</button></span></div></section>`;
 }
-App.usSearch = function(v){ S.usQ = v; render(); };
+App.usSearch = function(v){ S.usQ = v; S.usPage = 1; render(); };
+App.usFilter = function(k, v){ S[k] = v; S.usPage = 1; render(); };
+App.usSort = function(k){ if((S.usSort||'username')===k) S.usDir = (S.usDir==='desc'?'asc':'desc'); else { S.usSort = k; S.usDir = 'asc'; } S.usPage = 1; render(); };
+App.usPage = function(d){ S.usPage = Math.max(1, (S.usPage||1) + d); render(); };
 App.usNew = function(){
   openModal('사용자 생성', `
     <div class="field"><label for="un-u">아이디<span class="req">필수</span></label><input class="in" id="un-u" autocomplete="off"></div>
@@ -72,13 +107,13 @@ App.usCreate = async function(){
   const r = await apiFetch('/admin/users', {method:'POST', body:JSON.stringify(body)});
   if(r.status===409) return err('이미 있는 아이디입니다.');
   if(!r.ok) return err(await apiErr(r, '사용자 생성에 실패했습니다.'));
-  closeModal(); await loadAdmMembers(); render(); toast('사용자를 생성했습니다. ('+esc(body.username)+' · '+body.role+')');
+  closeModal(); RS.usKey = null; await loadAdmMembers(); render(); toast('사용자를 생성했습니다. ('+esc(body.username)+' · '+body.role+')');
 };
 App.usRole = async function(uid){
   const role = (($('#us-r-'+uid)||{}).value)||'';
   const r = await apiFetch('/admin/users/'+uid, {method:'PATCH', body:JSON.stringify({role})});
   if(!r.ok) return toast(await apiErr(r, '역할 변경에 실패했습니다.'));
-  await loadAdmMembers(); render(); toast('역할을 변경했습니다. ('+role+')');
+  RS.usKey = null; await loadAdmMembers(); render(); toast('역할을 변경했습니다. ('+role+')');
 };
 App.usDel = function(uid, name){
   openModal('사용자 삭제', `<p><b>${esc(name)}</b> 계정을 삭제합니다. 되돌릴 수 없습니다(비활성화 기능 없음).</p>`,
@@ -87,7 +122,7 @@ App.usDel = function(uid, name){
 App.usDoDel = async function(uid){
   const r = await apiFetch('/admin/users/'+uid, {method:'DELETE'});
   if(!r.ok) return toast(await apiErr(r, '삭제에 실패했습니다.'));
-  closeModal(); await loadAdmMembers(); render(); toast('사용자를 삭제했습니다.');
+  closeModal(); RS.usKey = null; await loadAdmMembers(); render(); toast('사용자를 삭제했습니다.');
 };
 
 /* ── 비밀번호 초기화(관리자 → 각 계정) — 정책(8자 이상)을 지키는 임시 비밀번호를 만들어 한 번 보여 준다 ── */
@@ -180,3 +215,101 @@ function OA_panel(){
 }
 { const f = VIEWS['adm-members']; if(typeof f==='function') VIEWS['adm-members'] = () => f() + (OA_canIssue() ? OA_panel() : ''); }
 { const f = VIEWS['adm-assign']; if(typeof f==='function') VIEWS['adm-assign'] = () => f() + (AUTH.role === 'operator' ? OA_panel() : ''); }
+
+/* ── 운영자 사용자 상세(adm-user-detail) — GET /admin/users/{id}
+     연락처 원문을 보여 주므로 서버가 열람을 감사로그(user.view)에 남긴다. 화면에서 새로고침/렌더가 반복돼도
+     요청은 사용자당 1회(RS.usDetail 캐시)만 나간다. 수정은 기존 PATCH /admin/users/{id}·suspend·unsuspend 를 쓴다. ── */
+Object.assign(I18N.ko, {'nav.adm-user-detail':'사용자 상세'});
+if(I18N.en) Object.assign(I18N.en, {'nav.adm-user-detail':'User detail'});
+if(I18N.id) Object.assign(I18N.id, {'nav.adm-user-detail':'Detail pengguna'});
+RS.usDetail = RS.usDetail || null;
+App.usOpen = function(uid){ S.usDetailId = uid; RS.usDetail = null; App.go('adm-user-detail'); };
+async function US_loadDetail(){
+  const uid = S.usDetailId;
+  try{
+    const r = await apiFetch('/admin/users/' + encodeURIComponent(uid));
+    RS.usDetail = r.ok ? await r.json() : {error:true, status:r.status, user_id:uid};
+  }catch(e){ RS.usDetail = {error:true, user_id:uid}; }
+  RS._usDetailLoading = false;
+  render();
+}
+VIEWS['adm-user-detail'] = () => {
+  const back = `<p><button class="btn btn-sm" onclick="App.go('adm-members')">← 목록으로</button></p>`;
+  if(!US_isAdmin()) return back + '<section class="panel"><div class="note attn"><b>관리자 전용 화면</b></div></section>';
+  const d = RS.usDetail;
+  if(!d || d.user_id !== S.usDetailId){
+    if(!RS._usDetailLoading){ RS._usDetailLoading = true; US_loadDetail(); }
+    return back + '<section class="panel"><p class="empty">불러오는 중…</p></section>';
+  }
+  if(d.error) return back + '<section class="panel"><p class="empty">사용자를 불러오지 못했습니다.</p></section>';
+  const kv = (k, v) => `<tr><th style="width:150px;text-align:left">${k}</th><td>${v}</td></tr>`;
+  const dt = v => v ? esc(String(v).slice(0,16).replace('T',' ')) : '-';
+  const uid = esc(d.user_id);
+  return back + `
+  <section class="panel"><div class="panel-head"><h2>${esc(d.username)}</h2>
+      <span class="badge ${d.status==='suspended'?'attn':''}">${d.status==='suspended'?'정지됨':'정상'}</span></div>
+    <div class="tbl-wrap"><table><tbody>
+      ${kv('아이디', `<b>${esc(d.username)}</b> <span class="mono muted">${uid}</span>`)}
+      ${kv('표기명', esc(d.display_name||'-'))}
+      ${kv('역할', esc(ROLE_LABEL[d.role]||d.role))}
+      ${kv('소속', esc((d.org&&d.org.name)||d.org_id||'-') + ' <span class="mono muted">' + esc(d.org_id||'') + '</span>')}
+      ${ROLE_LABEL[d.role]==='인증기업' ? kv('회사 내 역할', esc(d.company_role||'-')) : ''}
+      ${kv('가입일', dt(d.created_at))}
+      ${kv('최근 로그인', dt(d.last_login_at))}
+      ${kv('로그인 제한', d.login&&d.login.rate_limited ? '<span class="badge attn">제한 중</span>' : '없음')}
+      ${Object.entries(d.summary||{}).map(([k,v])=>kv(esc(({invite_count:'초대코드',client_count:'담당 업체',assigned_case_count:'배정 케이스',case_count:'소속 케이스'})[k]||k), esc(v))).join('')}
+    </tbody></table></div></section>
+  <section class="panel"><div class="panel-head"><h2>연락처 · 계정 관리</h2></div>
+    <div class="field"><label for="ud-email">이메일</label><input class="in" id="ud-email" value="${esc(d.contact_email||'')}"></div>
+    <div class="field"><label for="ud-phone">전화</label><input class="in" id="ud-phone" value="${esc(d.contact_phone||'')}"></div>
+    <div class="inline-msg" id="ud-e"></div>
+    <div class="row-act"><button class="btn btn-primary" onclick="App.usSaveContact('${jsq(d.user_id)}')">연락처 저장</button></div>
+    <div class="field" style="margin-top:12px"><label for="ud-role">역할 변경</label><select class="in" id="ud-role">${US_opts(US_ALL_ROLES, d.role)}</select></div>
+    <div class="row-act"><button class="btn" onclick="App.usDetailRole('${jsq(d.user_id)}')">역할 변경</button>
+      ${d.status==='suspended'
+        ? `<button class="btn" onclick="App.usUnsuspend('${jsq(d.user_id)}')">정지 해제</button>`
+        : `<button class="btn btn-ghost" onclick="App.usSuspend('${jsq(d.user_id)}','${jsq(d.username)}')">정지</button>`}</div></section>
+  <section class="panel"><div class="panel-head"><h2>상태 이력</h2></div>
+    <div class="tbl-wrap"><table><thead><tr><th>시각</th><th>상태</th><th>사유</th></tr></thead><tbody>
+    ${(d.status_history||[]).map(h=>`<tr><td class="mono">${dt(h.at)}</td><td>${h.status==='suspended'?'정지됨':'정상'}</td><td>${esc(h.reason||'-')}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">이력 없음</td></tr>'}
+    </tbody></table></div>
+    <div class="tbl-wrap"><table><thead><tr><th>시각</th><th>관리 조치</th></tr></thead><tbody>
+    ${(d.admin_actions||[]).map(a=>`<tr><td class="mono">${dt(a.at)}</td><td class="mono">${esc(a.action)}</td></tr>`).join('')||'<tr><td colspan="2" class="empty">조치 없음</td></tr>'}
+    </tbody></table></div></section>
+  <section class="panel"><div class="panel-head"><h2>관련 케이스</h2><span class="badge">${(d.related_cases||[]).length}건</span></div>
+    <div class="tbl-wrap"><table><thead><tr><th>케이스</th><th>회사</th><th>상태</th></tr></thead><tbody>
+    ${(d.related_cases||[]).map(c=>`<tr><td class="mono">${esc(c.case_id)}</td><td>${esc(c.company_name||'-')}</td><td>${esc(c.status||'-')}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">케이스 없음</td></tr>'}
+    </tbody></table></div></section>
+  <section class="panel"><div class="panel-head"><h2>최근 감사로그</h2><span class="badge">${(d.recent_audit||[]).length}건</span></div>
+    <div class="tbl-wrap"><table><thead><tr><th>시각</th><th>행위</th><th>대상</th></tr></thead><tbody>
+    ${(d.recent_audit||[]).map(a=>`<tr><td class="mono">${dt(a.at)}</td><td class="mono">${esc(a.action)}</td><td class="mono muted">${esc(a.case_id||a.resource_id||'-')}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">기록 없음</td></tr>'}
+    </tbody></table></div></section>`;
+};
+App.usSaveContact = async function(uid){
+  const v = id => ((($('#'+id)||{}).value)||'').trim();
+  const r = await apiFetch('/admin/users/'+uid, {method:'PATCH', body:JSON.stringify({contact_email:v('ud-email'), contact_phone:v('ud-phone')})});
+  if(!r.ok){ const e=$('#ud-e'); if(e) e.textContent = await apiErr(r, '저장에 실패했습니다.'); return; }
+  RS.usDetail = null; RS.usKey = null; render(); toast('연락처를 저장했습니다.');
+};
+App.usDetailRole = async function(uid){
+  const role = (($('#ud-role')||{}).value)||'';
+  const r = await apiFetch('/admin/users/'+uid, {method:'PATCH', body:JSON.stringify({role})});
+  if(!r.ok) return toast(await apiErr(r, '역할 변경에 실패했습니다.'));
+  RS.usDetail = null; RS.usKey = null; render(); toast('역할을 변경했습니다. ('+role+')');
+};
+App.usSuspend = function(uid, name){
+  openModal('계정 정지', `<p><b>${esc(name)}</b> 계정을 정지합니다. 로그인이 막히고 기존 로그인은 즉시 해제됩니다.</p>
+    <div class="field"><label for="ud-reason">사유</label><textarea class="in" id="ud-reason"></textarea></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.usSuspendDo('${jsq(uid)}')">정지</button>`);
+};
+App.usSuspendDo = async function(uid){
+  const reason = (($('#ud-reason')||{}).value||'').trim();
+  const r = await apiFetch('/admin/users/'+uid+'/suspend', {method:'POST', body:JSON.stringify({reason})});
+  if(!r.ok) return toast(await apiErr(r, '정지에 실패했습니다.'));
+  closeModal(); RS.usDetail = null; RS.usKey = null; render(); toast('계정을 정지했습니다.');
+};
+App.usUnsuspend = async function(uid){
+  const r = await apiFetch('/admin/users/'+uid+'/unsuspend', {method:'POST'});
+  if(!r.ok) return toast(await apiErr(r, '정지 해제에 실패했습니다.'));
+  RS.usDetail = null; RS.usKey = null; render(); toast('정지를 해제했습니다.');
+};

@@ -70,6 +70,7 @@ const SERVER_ROLES_FOR = {
 };
 /* 화면(사이드바) 단위 — 표에 없으면 노출 */
 const VIEW_ROLES = {
+  'adm-user-detail': [],   // GET /admin/users/{id} — admin 전용
   'adm-members': [],   // GET /admin/users(main.py:1584)·/admin/staff-signups(1517) 모두 admin 전용
 };
 
