@@ -1542,7 +1542,8 @@ def login(body: schemas.LoginReq, request: Request, db: Session = Depends(get_db
         raise HTTPException(403, {"code": "USER_SUSPENDED"})
     if auth.needs_rehash(u.password_hash):   # 레거시 sha256 → pbkdf2 자동 승격
         u.password_hash = auth.hash_pw(body.password)
-        db.commit()
+    u.last_login_at = datetime.utcnow()
+    db.commit()
     return {**auth.make_tokens(u), "role": u.role, "org_id": u.org_id, "username": u.username}
 
 
@@ -1938,6 +1939,99 @@ def patch_my_contact(body: schemas.ContactReq, user=Depends(auth.get_current_use
     return {"contact_email": u.contact_email, "contact_phone": u.contact_phone}
 
 
+_PROFILE_NAME_ROLES = {"consultant", "auditor", "fatwa_liaison", "operator", "admin"}   # 표기명을 쓰는 역할(스태프)
+_ENT_ROLES = {"applicant", "penyelia_halal", "pendamping_pph", "client_admin", "client_staff"}
+
+
+def _mask_user_contact(v):
+    """목록용 가린 연락처 — 이메일은 아이디 앞 2자, 전화는 앞 4자만 남긴다."""
+    v = (v or "").strip()
+    if not v:
+        return None
+    if "@" in v:
+        local, _, dom = v.partition("@")
+        return local[:2] + "***@" + dom
+    return v[:4] + "***"
+
+
+def _user_status(db, u):
+    return "suspended" if _user_suspended(db, u.user_id) else "active"
+
+
+def _user_display_name(db, u):
+    if u.role == "consultant":
+        cp = db.get(models.ConsultantProfile, u.user_id)
+        if cp is not None and cp.display_name:
+            return cp.display_name
+    return u.display_name
+
+
+def _user_summary(db, u):
+    """역할별 요약 수치 — 컨설턴트: 초대코드·담당 업체 수, 스태프: 배정 케이스 수, 기업: 조직 케이스 수."""
+    if u.role == "consultant":
+        return {"invite_count": db.query(models.ConsultantInvite).filter_by(consultant_id=u.user_id, kind="consultant").count(),
+                "client_count": len(_my_client_org_ids(db, u.user_id))}
+    if u.role in ("auditor",):
+        return {"assigned_case_count": len(_assigned_case_ids(db, u.user_id))}
+    if u.role in _ENT_ROLES:
+        return {"case_count": db.query(models.CaseApplication).filter_by(org_id=u.org_id).count()}
+    return {}
+
+
+def _user_base(db, u, mask):
+    org = db.get(models.Org, u.org_id) if u.org_id else None
+    em, ph = u.contact_email, u.contact_phone
+    return {"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id,
+            "company_name": org.name if org else None, "company_role": u.company_role,
+            "display_name": _user_display_name(db, u),
+            "status": _user_status(db, u), "suspended": _user_suspended(db, u.user_id),
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+            "contact_email": _mask_user_contact(em) if mask else em,
+            "contact_phone": _mask_user_contact(ph) if mask else ph}
+
+
+@app.get("/me/profile")
+def get_my_profile(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """내 정보 — 토큰이 아니라 DB 의 본인 계정 상태(/auth/me 는 토큰 정보라 그대로 둔다)."""
+    u = db.get(models.User, user["uid"])
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    out = _user_base(db, u, mask=False)
+    out["summary"] = _user_summary(db, u)
+    if u.role in _ENT_ROLES:
+        org = db.get(models.Org, u.org_id)
+        cid = org.consultant_id if org else None
+        cp = db.get(models.ConsultantProfile, cid) if cid else None
+        cu = db.get(models.User, cid) if cid else None
+        out["consultant_name"] = (cp.display_name if cp and cp.display_name else (cu.username if cu else None))
+    out["can_edit_display_name"] = u.role in _PROFILE_NAME_ROLES
+    return out
+
+
+@app.patch("/me/profile")
+def patch_my_profile(body: schemas.ProfileReq, user=Depends(auth.get_current_user),
+                     db: Session = Depends(get_db)):
+    """내 정보 수정 — 본인 계정만(경로에 대상 id 없음), 허용 필드(연락처·표기명)만. 권한 필드는 422."""
+    u = db.get(models.User, user["uid"])
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    changed = _apply_contact(u, body.contact_email, body.contact_phone)
+    if body.display_name is not None:
+        if u.role not in _PROFILE_NAME_ROLES:
+            raise HTTPException(422, {"code": "DISPLAY_NAME_NOT_ALLOWED"})
+        name = body.display_name.strip()
+        u.display_name = name or None
+        cp = db.get(models.ConsultantProfile, u.user_id) if u.role == "consultant" else None
+        if cp is not None:
+            cp.display_name = name or None
+            cp.updated_at = datetime.utcnow()
+        changed.append("display_name")
+    _audit(db, user, "user.profile.update", "user", u.user_id, None, {"fields": changed}, commit=False)
+    db.commit()
+    return get_my_profile(user=user, db=db)
+
+
 # ── 스태프 가입 신청 + 관리자 승인 ────────────────────────────────────────
 # 컨설턴트·오디터·파트와·관리자는 자가가입이 곧 권한상승이라, 신청은 대기(pending)로
 # 받아두고 관리자가 승인해야 실제 User 가 만들어진다. 대기건은 users 에 없으므로
@@ -2039,19 +2133,85 @@ _ALL_ROLES = ["applicant", "consultant", "penyelia_halal", "pendamping_pph",
 def admin_list_users(user=Depends(auth.require_roles()), db: Session = Depends(get_db),
                      limit: int = Query(500, ge=1, le=1000), offset: int = Query(0, ge=0),
                      q: str = Query(""), sort: str = Query("username"),
-                     dir: str = Query("asc"), meta: int = Query(0)):
-    """DataList 표준(§8.2): 서버 검색·정렬·페이지네이션·meta(total)."""
-    M = models.User
-    Q = db.query(M)
+                     dir: str = Query("asc"), meta: int = Query(0),
+                     page: int = Query(0, ge=0), size: int = Query(20, ge=1, le=200),
+                     role: str = Query(""), status: str = Query(""), org_id: str = Query("")):
+    """DataList 표준(§8.2): 서버 검색·정렬·페이지네이션·meta(total).
+    page(1부터)를 주면 size 단위 서버 페이지네이션(meta 형식으로 응답). 검색 q 는 아이디·표기명·회사명·역할·org.
+    필터 role·status(active|suspended)·org_id. 연락처는 가린 값, 비밀번호 해시·토큰은 응답에 없다."""
+    M, O = models.User, models.Org
+    Q = db.query(M).outerjoin(O, O.org_id == M.org_id)
     if q:
         like = "%%%s%%" % q
-        Q = Q.filter(or_(M.username.ilike(like), M.role.ilike(like), M.org_id.ilike(like)))
+        Q = Q.filter(or_(M.username.ilike(like), M.role.ilike(like), M.org_id.ilike(like),
+                         M.display_name.ilike(like), O.name.ilike(like)))
+    if role:
+        Q = Q.filter(M.role == role)
+    if org_id:
+        Q = Q.filter(M.org_id == org_id)
+    if status in ("active", "suspended"):
+        latest = {}
+        for e in (db.query(models.WorkflowEvent).filter_by(action=USER_STATUS_ACTION)
+                  .order_by(models.WorkflowEvent.created_at.asc(), models.WorkflowEvent.event_id.asc()).all()):
+            latest[e.case_id[len("users:"):]] = (e.payload or {}).get("status")
+        susp = [k for k, v in latest.items() if v == "suspended"]
+        Q = Q.filter(M.user_id.in_(susp)) if status == "suspended" else (Q.filter(~M.user_id.in_(susp)) if susp else Q)
     total = Q.count()
-    col = {"username": M.username, "role": M.role, "org_id": M.org_id}.get(sort, M.username)
-    Q = Q.order_by(col.desc() if dir == "desc" else col.asc())
+    cols = {"username": M.username, "role": M.role, "org_id": M.org_id,
+            "created_at": M.created_at, "last_login_at": M.last_login_at}
+    col = cols.get(sort, M.username)
+    Q = Q.order_by(col.desc() if dir == "desc" else col.asc(), M.username.asc())
+    if page:
+        offset, limit = (page - 1) * size, size
     rows = Q.offset(offset).limit(limit).all()
-    items = [{"user_id": u.user_id, "username": u.username, "role": u.role, "org_id": u.org_id, "suspended": _user_suspended(db, u.user_id)} for u in rows]
+    items = [_user_base(db, u, mask=True) for u in rows]
+    if page:
+        return {"items": items, "total": total, "page": page, "size": size,
+                "pages": max(1, -(-total // size)), "limit": limit, "offset": offset}
     return {"items": items, "total": total, "limit": limit, "offset": offset} if meta else items
+
+
+@app.get("/admin/users/{user_id}")
+def admin_user_detail(user_id: str, user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    """사용자 상세(운영자 화면) — 연락처 원문 포함이라 열람 자체를 감사로그(user.view)에 남긴다."""
+    u = db.get(models.User, user_id)
+    if not u:
+        raise HTTPException(404, {"code": "USER_NOT_FOUND"})
+    out = _user_base(db, u, mask=False)
+    out["summary"] = _user_summary(db, u)
+    org = db.get(models.Org, u.org_id) if u.org_id else None
+    out["org"] = ({"org_id": org.org_id, "name": org.name, "consultant_id": org.consultant_id} if org else None)
+    out["status_history"] = [
+        {"status": (e.payload or {}).get("status"), "reason": (e.payload or {}).get("reason"),
+         "by": e.actor_id, "at": str(e.created_at)}
+        for e in (db.query(models.WorkflowEvent).filter_by(case_id="users:" + user_id, action=USER_STATUS_ACTION)
+                  .order_by(models.WorkflowEvent.created_at.desc()).limit(50).all())]
+    AL = models.AuditLog
+    out["admin_actions"] = [   # 역할 변경·정지/해제 등 이 계정에 대한 관리 조치
+        {"action": a.action, "by": a.actor_id, "at": str(a.created_at)}
+        for a in (db.query(AL).filter(AL.resource_type == "user", AL.resource_id == user_id,
+                                      AL.action.like("admin.user.%"))
+                  .order_by(AL.created_at.desc()).limit(50).all())]
+    out["recent_audit"] = [
+        {"action": a.action, "resource_type": a.resource_type, "resource_id": a.resource_id,
+         "case_id": a.case_id, "at": str(a.created_at)}
+        for a in db.query(AL).filter(AL.actor_id == user_id).order_by(AL.created_at.desc()).limit(50).all()]
+    CA = models.CaseApplication
+    if u.role == "consultant":
+        orgs = _my_client_org_ids(db, user_id)
+        cids = _assigned_case_ids(db, user_id)
+        cq = db.query(CA).filter(or_(CA.org_id.in_(orgs) if orgs else False, CA.case_id.in_(cids) if cids else False))
+    elif u.role in _ENT_ROLES:
+        cq = db.query(CA).filter(CA.org_id == u.org_id)
+    else:
+        cids = _assigned_case_ids(db, user_id)
+        cq = db.query(CA).filter(CA.case_id.in_(cids)) if cids else None
+    rel = cq.order_by(CA.created_at.desc()).limit(50).all() if cq is not None else []
+    out["related_cases"] = [{"case_id": c.case_id, "company_name": c.company_name, "status": c.status} for c in rel]
+    out["login"] = {"last_login_at": out["last_login_at"],
+                    "rate_limited": auth.rate_limited((u.username or "").lower())}
+    _audit(db, user, "user.view", "user", user_id, None, {"target": u.username}, commit=True)
+    return out
 
 
 @app.post("/admin/users")

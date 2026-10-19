@@ -328,3 +328,116 @@ def test_r33_연락처_수정_권한과_검증():
         assert r.status_code == 200 and r.json()["contact_email"] is None
         # 인증 없이는 불가
         assert c.patch("/me/contact", json={"contact_email": "x@x.test"}).status_code in (401, 403)
+
+
+# ══ R3-4. 내 정보 · 운영자 사용자 목록/상세 ═══════════════════════════════
+def test_r34a_내정보_조회_수정과_권한필드_거부():
+    with TestClient(app) as c:
+        adm = _login(c, "admin", "admin")
+        name, uid, h = _mk_user(c, adm, "auditor")
+        p = c.get("/me/profile", headers=h).json()
+        assert p["username"] == name and p["role"] == "auditor" and p["org_id"] == "org_demo"
+        assert p["status"] == "active" and p["created_at"] and "password_hash" not in p
+        assert "assigned_case_count" in p["summary"]
+        r = c.patch("/me/profile", json={"contact_email": "me@x.test", "contact_phone": "010-1234-5678",
+                                         "display_name": "표기명R3"}, headers=h)
+        assert r.status_code == 200, r.text
+        p = r.json()
+        assert p["contact_email"] == "me@x.test" and p["display_name"] == "표기명R3"
+        # 권한 필드는 422 이고 실제로 바뀌지 않는다
+        for bad in ({"role": "admin"}, {"org_id": "org_x"}, {"status": "active"}, {"username": "zz"}):
+            assert c.patch("/me/profile", json=bad, headers=h).status_code == 422, bad
+        p = c.get("/me/profile", headers=h).json()
+        assert p["role"] == "auditor" and p["org_id"] == "org_demo"
+        assert c.patch("/me/profile", json={"contact_email": "bad"}, headers=h).status_code == 422
+        # 기업 계정은 표기명 수정 불가, 담당 컨설턴트 표기 필드 존재
+        ename, _, eh = _mk_user(c, adm, "applicant")
+        assert c.patch("/me/profile", json={"display_name": "x"}, headers=eh).status_code == 422
+        pe = c.get("/me/profile", headers=eh).json()
+        assert "consultant_name" in pe and "case_count" in pe["summary"]
+        assert c.get("/me/profile").status_code in (401, 403)
+
+
+def test_r34a_남의_profile은_못_바꾼다():
+    with TestClient(app) as c:
+        adm = _login(c, "admin", "admin")
+        _, uid_a, ha = _mk_user(c, adm, "auditor")
+        _, uid_b, hb = _mk_user(c, adm, "auditor")
+        # 대상 id 를 받는 경로 자체가 없고, 본문에 user_id 를 넣어도 422
+        assert c.patch("/me/profile", json={"user_id": uid_a, "contact_email": "evil@x.test"}, headers=hb).status_code == 422
+        assert c.patch("/me/profile/" + uid_a, json={"contact_email": "e@x.test"}, headers=hb).status_code in (404, 405)
+        assert c.patch("/me/profile", json={"contact_email": "b@x.test"}, headers=hb).status_code == 200
+        assert c.get("/me/profile", headers=ha).json()["contact_email"] is None
+
+
+def test_r34b_목록_검색_필터_페이지_마스킹():
+    with TestClient(app) as c:
+        adm = _login(c, "admin", "admin")
+        tag = _uniq()
+        made = []
+        for i in range(5):
+            r = c.post("/admin/users", json={"username": "lst%s_%d" % (tag, i), "password": "halal-test-1",
+                                             "role": "auditor" if i < 3 else "consultant", "org_id": "org_demo"}, headers=adm)
+            made.append(r.json()["user_id"])
+        assert c.patch("/admin/users/" + made[0], json={"contact_email": "secretmail@x.test",
+                                                       "contact_phone": "+6281234567890"}, headers=adm).status_code == 200
+        assert c.post("/admin/users/%s/suspend" % made[1], json={"reason": "t"}, headers=adm).status_code == 200
+        j = c.get("/admin/users", params={"q": "lst" + tag, "page": 1, "size": 2, "sort": "username"}, headers=adm).json()
+        assert j["total"] == 5 and len(j["items"]) == 2 and j["pages"] == 3 and j["page"] == 1
+        j3 = c.get("/admin/users", params={"q": "lst" + tag, "page": 3, "size": 2}, headers=adm).json()
+        assert len(j3["items"]) == 1
+        j = c.get("/admin/users", params={"q": "lst" + tag, "role": "consultant", "page": 1}, headers=adm).json()
+        assert j["total"] == 2 and all(i["role"] == "consultant" for i in j["items"])
+        j = c.get("/admin/users", params={"q": "lst" + tag, "status": "suspended", "page": 1}, headers=adm).json()
+        assert [i["user_id"] for i in j["items"]] == [made[1]]
+        j = c.get("/admin/users", params={"q": "lst" + tag, "status": "active", "page": 1}, headers=adm).json()
+        assert made[1] not in [i["user_id"] for i in j["items"]] and j["total"] == 4
+        j = c.get("/admin/users", params={"q": "lst" + tag, "sort": "username", "dir": "desc", "page": 1}, headers=adm).json()
+        assert j["items"][0]["username"].endswith("_4")
+        row = c.get("/admin/users", params={"q": "lst%s_0" % tag, "page": 1}, headers=adm).json()["items"][0]
+        assert row["contact_email"] == "se***@x.test" and "secretmail" not in str(row)
+        assert row["contact_phone"] == "+628***" and "1234567890" not in str(row)
+        raw = c.get("/admin/users", params={"q": "lst" + tag, "page": 1}, headers=adm).text
+        assert "password" not in raw and "token" not in raw.lower()
+        # 비운영자는 목록 403
+        _, _, hb = _mk_user(c, adm, "auditor")
+        assert c.get("/admin/users", headers=hb).status_code == 403
+        # 기존 호출 형태(리스트 응답)는 그대로
+        assert isinstance(c.get("/admin/users", params={"q": "lst" + tag}, headers=adm).json(), list)
+
+
+def test_r34c_상세_권한_원문연락처_감사로그_404():
+    with TestClient(app) as c:
+        adm = _login(c, "admin", "admin")
+        name, uid, h = _mk_user(c, adm, "auditor")
+        assert c.patch("/admin/users/" + uid, json={"contact_email": "orig@x.test"}, headers=adm).status_code == 200
+        _, _, hother = _mk_user(c, adm, "consultant")
+        assert c.get("/admin/users/" + uid, headers=hother).status_code == 403
+        assert c.get("/admin/users/" + uid, headers=h).status_code == 403
+        assert c.post("/admin/users/%s/suspend" % uid, json={"reason": "점검"}, headers=adm).status_code == 200
+        assert c.get("/admin/users/no-such-uid", headers=adm).status_code == 404
+
+        def views():
+            db = SessionLocal()
+            try:
+                return db.query(models.AuditLog).filter_by(action="user.view", resource_id=uid).count()
+            finally:
+                db.close()
+        assert views() == 0
+        r = c.get("/admin/users/" + uid, headers=adm)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["contact_email"] == "orig@x.test" and d["status"] == "suspended"
+        assert d["status_history"][0]["status"] == "suspended" and d["status_history"][0]["reason"] == "점검"
+        assert any(a["action"] == "admin.user.suspend" for a in d["admin_actions"])
+        assert isinstance(d["recent_audit"], list) and isinstance(d["related_cases"], list)
+        assert "password" not in r.text and "token_version" not in r.text
+        assert views() == 1
+        # 열람 기록이 체인에 들어가 있다
+        db = SessionLocal()
+        try:
+            row = db.query(models.AuditLog).filter_by(action="user.view", resource_id=uid).first()
+            assert row.meta["_chain"]["row"]
+            assert row.actor_role == "admin"
+        finally:
+            db.close()

@@ -448,6 +448,9 @@ class User(Base):
     # 알림 수신용 연락처(스태프 — 오디터·샤리아·운영자). 개인정보라 암호화 저장. 비면 알림은 no_contact.
     contact_email = Column(EncryptedType)
     contact_phone = Column(EncryptedType)
+    display_name = Column(String)          # 스태프 표기명(선택)
+    created_at = Column(DateTime, default=datetime.utcnow)   # 가입일 — 도입 전 계정은 NULL(미상)
+    last_login_at = Column(DateTime)       # 마지막 로그인 성공 시각
 
 
 class Facility(Base):

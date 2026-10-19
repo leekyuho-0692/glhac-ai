@@ -12,7 +12,7 @@ DB 에 들어간 뒤 한참 지나 다른 화면에서 터지거나, 아예 안 
 import re
 from datetime import date as _date
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from . import domain_dict as _dd
 
@@ -753,6 +753,14 @@ class ContactReq(BaseModel):
     """연락처 수정 — 생략(null)=변경 없음, 빈 문자열=삭제."""
     contact_email: Optional[str] = None
     contact_phone: Optional[str] = None
+
+
+class ProfileReq(BaseModel):
+    """내 정보 수정 — 허용 필드만. role·org_id·status 같은 권한 필드가 오면 422(extra=forbid)."""
+    model_config = ConfigDict(extra="forbid")
+    contact_email: Optional[str] = None
+    contact_phone: Optional[str] = None
+    display_name: Optional[str] = Field(default=None, max_length=80)
 
 
 class AdminUserPatchReq(BaseModel):
