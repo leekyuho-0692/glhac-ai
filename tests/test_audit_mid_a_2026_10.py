@@ -92,7 +92,7 @@ def _code(r):
 def test_ma1_모델_기본통화는_KRW():
     """Payment/Deposit 기본 통화 KRW (수정 전 IDR)."""
     cid = _db_case()
-    p = _add(models.Payment(invoice_id="x", case_id=cid, amount=1.0, method="manual"))
+    p = _add(models.Payment(invoice_id=_invoice(cid), case_id=cid, amount=1.0, method="manual"))
     d = _add(models.Deposit(bank_name="B", amount=1.0))
     assert p.currency == "KRW" and d.currency == "KRW"
 
@@ -428,8 +428,9 @@ def test_ma5_원재료_삭제시_연결삭제_문서보존():
     cid = _db_case("MA5")
     m1 = _add(models.Material(case_id=cid, name="삭제대상")).material_id
     m2 = _add(models.Material(case_id=cid, name="유지")).material_id
-    _add(models.ProductMaterial(case_id=cid, product_id="p1", material_id=m1))
-    _add(models.ProductMaterial(case_id=cid, product_id="p1", material_id=m2))
+    p1 = _add(models.Product(case_id=cid, name="제품1")).product_id    # FK: 실제 제품이 있어야 연결을 만들 수 있다
+    _add(models.ProductMaterial(case_id=cid, product_id=p1, material_id=m1))
+    _add(models.ProductMaterial(case_id=cid, product_id=p1, material_id=m2))
     d1 = _add(models.DocumentAsset(case_id=cid, filename="a.pdf", material_id=m1)).document_id
     d2 = _add(models.DocumentAsset(case_id=cid, filename="b.pdf", material_id=m2)).document_id
     _add(models.MaterialEvidenceLink(case_id=cid, document_id=d1, material_id=m1))

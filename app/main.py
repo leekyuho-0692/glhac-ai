@@ -199,6 +199,20 @@ async def _validation_exc(request: Request, exc: RequestValidationError):
     }})
 
 
+@app.exception_handler(IntegrityError)
+async def _integrity_exc(request: Request, exc: IntegrityError):
+    """FK 위반 — 없는 id 를 참조해 만들려 했거나(자식 삽입), 이 행을 가리키는 기록이 남아 있는데
+    지우려 했다(RESTRICT). 서버 오류가 아니라 요청이 현재 데이터와 맞지 않는 것이므로 409 로 돌려준다.
+    유니크 등 다른 무결성 오류는 종전대로 처리한다(각 호출부가 잡지 못했다면 500)."""
+    if "FOREIGN KEY" in str(getattr(exc, "orig", exc)).upper():
+        rid = getattr(request.state, "request_id", "-")
+        log.warning("FK 위반 [rid=%s] %s %s: %s", rid, request.method, request.url.path, getattr(exc, "orig", exc))
+        return JSONResponse(status_code=409, content={"detail": {
+            "code": "FK_CONSTRAINT", "request_id": rid,
+            "message": "참조하는 대상이 없거나, 이 데이터를 참조하는 기록이 남아 있어 처리할 수 없습니다"}})
+    return await _unhandled_exc(request, exc)
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exc(request: Request, exc: Exception):
     """미처리 예외 — 스택 유출 없이 일반화된 500 반환, 서버에는 상세 로깅."""
@@ -2117,8 +2131,14 @@ def admin_delete_user(user_id: str, user=Depends(auth.require_roles()),
     if u:
         if u.username == "admin":
             raise HTTPException(400, {"code": "CANNOT_DELETE_ADMIN"})
-        db.delete(u)
-        db.commit()
+        try:
+            db.delete(u)
+            db.commit()
+        except IntegrityError:
+            # 정산(지급 기록)이 남은 컨설턴트 등 — 지급 기록은 지우지 않는다(RESTRICT). 사람이 먼저 정리할 일.
+            db.rollback()
+            raise HTTPException(409, {"code": "USER_HAS_RECORDS",
+                                      "message": "이 사용자를 참조하는 기록(예: 수수료 지급)이 남아 있어 삭제할 수 없습니다"})
     return {"deleted": user_id}
 
 
@@ -2329,6 +2349,15 @@ def _upload_sandbox_files():
     return sandbox, out
 
 
+def _fk_delete_order(pairs):
+    """[(테이블명, 모델)] 을 FK 의존 순서의 '자식 먼저' 로 정렬한다.
+
+    FK 가 켜진 뒤로는 이름순 삭제가 깨진다(인보이스를 결제보다 먼저 지우면 payment.invoice_id RESTRICT).
+    metadata.sorted_tables 는 부모→자식 순이므로 뒤집으면 자식 먼저가 된다."""
+    pos = {t.name: i for i, t in enumerate(Base.metadata.sorted_tables)}
+    return sorted(pairs, key=lambda p: -pos.get(p[0], -1))
+
+
 def _case_scoped_models():
     """case_id를 가진 모델 전부 — 단, AuditLog는 제외한다.
 
@@ -2343,7 +2372,7 @@ def _case_scoped_models():
             continue
         if "case_id" in t.columns and m is not models.AuditLog and m is not models.CaseApplication:
             out.append((t.name, m))
-    return sorted(out)
+    return _fk_delete_order(out)
 
 
 @app.post("/admin/cases/purge")
@@ -3056,7 +3085,7 @@ def _org_scoped_models():
         if ("org_id" in t.columns and m is not models.AuditLog
                 and m is not models.CaseApplication and m is not models.Org):
             out.append((t.name, m))
-    return sorted(out)
+    return _fk_delete_order(out)
 
 
 @app.patch("/admin/orgs/{org_id}")
@@ -6256,6 +6285,10 @@ def matrix_link(case_id: str, body: schemas.MatrixLinkReq,
                                                    material_id=body.material_id)
     existing = q.first()
     if body.linked and not existing:
+        # FK: 이 케이스의 실제 제품·원재료만 잇는다(없는 id 는 이전엔 고아 연결이 됐다)
+        if (db.query(models.Product).filter_by(product_id=body.product_id, case_id=case_id).count() == 0
+                or db.query(models.Material).filter_by(material_id=body.material_id, case_id=case_id).count() == 0):
+            raise HTTPException(404, {"code": "PRODUCT_OR_MATERIAL_NOT_FOUND"})
         db.add(models.ProductMaterial(case_id=case_id, product_id=body.product_id,
                                       material_id=body.material_id))
         try:
@@ -11130,6 +11163,8 @@ def create_consultation(body: dict = None, user=Depends(auth.get_current_user), 
     message = (b.get("message") or "").strip()
     if not message:
         raise HTTPException(400, {"code": "EMPTY_MESSAGE"})
+    if b.get("case_id") and not db.get(models.CaseApplication, b.get("case_id")):
+        raise HTTPException(404, {"code": "CASE_NOT_FOUND"})   # FK: 없는 케이스를 가리키는 상담 금지
     row = models.Consultation(org_id=user.get("org_id"), case_id=(b.get("case_id") or None),
                               channel=(b.get("channel") or "inapp"), subject=subject or "(제목없음)",
                               message=message, created_by=user["uid"])
@@ -20710,6 +20745,8 @@ def add_vehicle(org_id: str, body: schemas.VehicleReq,
     _assert_org_access(db, user, org_id)
     if not (body.plate_no or "").strip():
         raise HTTPException(422, {"code": "PLATE_REQUIRED", "message": "번호판을 입력해 주세요"})
+    if body.case_id and not db.get(models.CaseApplication, body.case_id):
+        raise HTTPException(404, {"code": "CASE_NOT_FOUND"})   # FK: 없는 케이스를 가리키는 차량 금지
     v = models.Vehicle(org_id=org_id, case_id=body.case_id,
                        plate_no=body.plate_no.strip(), vehicle_type=body.vehicle_type,
                        transport_type=body.transport_type, capacity=body.capacity,
