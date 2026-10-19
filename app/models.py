@@ -635,7 +635,7 @@ class Signature(Base):
     signer = Column(String)
     provider = Column(String, default="internal-hmac")
     payload_hash = Column(String)     # sha256 canonical content
-    signature_value = Column(String)  # HMAC(SECRET, payload)
+    signature_value = Column(String)  # HMAC(SECRET, payload) — GLHAC_CERT_SIGN_KEY 사용 시 "k2:" 접두
     signed_at = Column(DateTime, default=datetime.utcnow)
 
 

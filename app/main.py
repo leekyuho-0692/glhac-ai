@@ -1388,8 +1388,8 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
            .order_by(models.Signature.signed_at.desc()).first())
     sig_valid = False
     if sig:
-        _, expected = _sign_payload(_cert_canonical(cert))
-        sig_valid = (expected == sig.signature_value)
+        _, expected = _sign_payload(_cert_canonical(cert), stored=sig.signature_value or "")
+        sig_valid = bool(expected) and (expected == sig.signature_value)
     sig_status = _cert_signature_status(cert, sig, sig_valid)
     official = _official_bpjph_no(db, cert.case_id)
     _scheme = (c.scheme if c else None) or "product"
@@ -2501,7 +2501,7 @@ def _verify_wf_chain(evs):
         body = _json.dumps({"case": e.case_id, "from": e.from_status, "to": e.to_status,
                             "action": e.action, "payload": e.payload or {}},
                            sort_keys=True, ensure_ascii=False)
-        if sm.chain_row_hash(prev, body) == e.row_hash:
+        if sm.chain_row_matches(prev, body, e.row_hash):
             verified += 1
         elif e.created_at is not None and e.created_at < epoch:
             legacy += 1
@@ -2552,7 +2552,7 @@ def _verify_audit_chain(rows, subset=False, known_hashes=None):
         prev = ch.get("prev", "")
         if known_hashes is not None and prev and prev not in known_hashes:
             deleted.append(r.id)   # 선행 로그가 삭제됨 — 부분집합에서도 실제 단절
-        self_ok = sm.chain_row_hash(prev, body) == ch.get("row")
+        self_ok = sm.chain_row_matches(prev, body, ch.get("row"))
         if not self_ok and r.created_at is not None and r.created_at < epoch:
             legacy += 1                     # 경계 이전 서명 — 현재 키로 재검증 불가, 위조 아님
             legacy_until = r.created_at
@@ -14722,12 +14722,30 @@ def _cert_canonical(cert):
                      ",".join(cert.scope or [])])
 
 
-def _sign_payload(payload: str):
+CERT_KEY_PREFIX = "k2:"   # GLHAC_CERT_SIGN_KEY 로 서명한 값의 구분자. 접두 없음 = 기존 GLHAC_SECRET
+
+
+def _cert_sign_key():
+    raw = (os.environ.get("GLHAC_CERT_SIGN_KEY") or "").strip()
+    return raw.encode("utf-8") if raw else None
+
+
+def _sign_payload(payload: str, stored=None):
+    """(payload_hash, 서명값). stored 가 있으면 그 서명값의 구분자가 가리키는 키로 재계산(검증용),
+    없으면 GLHAC_CERT_SIGN_KEY 가 설정된 경우 그 키(+'k2:'), 미설정이면 기존 HMAC(SECRET)."""
     import hmac as _h
     import hashlib as _hl
     ph = _hl.sha256(payload.encode()).hexdigest()
-    sig = _h.new(auth.SECRET, payload.encode(), _hl.sha256).hexdigest()
-    return ph, sig
+    if stored is not None:
+        use_cert = str(stored).startswith(CERT_KEY_PREFIX)
+    else:
+        use_cert = _cert_sign_key() is not None
+    if use_cert:
+        k = _cert_sign_key()
+        if not k:   # k2: 서명인데 키가 없다 — 검증 불가(불일치로 처리)
+            return ph, ""
+        return ph, CERT_KEY_PREFIX + _h.new(k, payload.encode(), _hl.sha256).hexdigest()
+    return ph, _h.new(auth.SECRET, payload.encode(), _hl.sha256).hexdigest()
 
 
 @app.post("/cases/{case_id}/certificate/sign")
