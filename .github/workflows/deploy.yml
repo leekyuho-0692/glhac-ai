@@ -24,12 +24,38 @@ defaults:
   run:
     shell: bash
 
+# CI 통과 확인 단계가 Actions 실행 기록을 읽는다.
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: inputs.confirm == 'deploy'        # 실수로 눌러 배포되는 일을 막는다
+    # 실수로 눌러 배포되는 일을 막고, main 만 배포한다 — 10/17 옛 계보 브랜치(codex/…)가 CI 실패
+    # 상태로 이 워크플로를 통해 운영에 나가 깃과 운영이 갈라졌다.
+    if: inputs.confirm == 'deploy' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
+
+      - name: CI 통과 확인 (배포할 커밋 그대로)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 이 커밋에 대한 CI 실행 중 가장 최근 것이 '완료·성공'이어야 한다. 실행 중이면 끝난 뒤 다시 누른다.
+          read -r ci_status ci_conclusion < <(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+            --commit "$GITHUB_SHA" --limit 1 --json status,conclusion \
+            -q '.[0] | "\(.status // "none") \(.conclusion // "none")"')
+          echo "CI($GITHUB_SHA): status=${ci_status:-none} conclusion=${ci_conclusion:-none}"
+          if [ "${ci_status:-none}" = "none" ]; then
+            echo "::error::이 커밋의 CI 실행 기록이 없습니다 — main 에 푸시해 CI 를 돌린 뒤 배포하세요"; exit 1
+          fi
+          if [ "$ci_status" != "completed" ]; then
+            echo "::error::CI 가 아직 끝나지 않았습니다($ci_status) — 완료 후 다시 실행하세요"; exit 1
+          fi
+          if [ "$ci_conclusion" != "success" ]; then
+            echo "::error::CI 가 통과하지 않았습니다($ci_conclusion) — 깨진 코드는 배포하지 않습니다"; exit 1
+          fi
 
       - name: 시크릿 확인
         env:
