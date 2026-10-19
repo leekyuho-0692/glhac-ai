@@ -150,3 +150,59 @@ def test_r31_인증서_서명키_분리(monkeypatch):
             assert c.get("/verify/" + new_tok).json()["signature_status"] == "invalid"
     finally:
         db.close()
+
+
+# ══ R3-2. 의존성 고정(requirements.lock) ═════════════════════════════════
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _norm(n):
+    import re
+    return re.sub(r"[-_.]+", "-", n).lower()
+
+
+def _lock_pins():
+    import re
+    pins = {}
+    for ln in open(os.path.join(_ROOT, "requirements.lock"), encoding="utf-8"):
+        ln = ln.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        mm = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9._-]*)==(\S+)", ln)
+        assert mm, "lock 은 정확한 == 고정만 허용: " + ln
+        pins[_norm(mm.group(1))] = mm.group(2)
+    return pins
+
+
+def test_r32_lock이_requirements_전체를_포함():
+    import re
+    pins = _lock_pins()
+    assert len(pins) > 50
+    names = []
+    for ln in open(os.path.join(_ROOT, "requirements.txt"), encoding="utf-8"):
+        ln = re.sub(r"\s*#.*$", "", ln).strip()
+        if ln:
+            names.append(re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", ln).group(0))
+    assert names
+    missing = [n for n in names if _norm(n) not in pins]
+    assert not missing, missing
+
+
+def test_r32_테스트전용은_dev로_분리():
+    reqs = open(os.path.join(_ROOT, "requirements.txt"), encoding="utf-8").read().lower()
+    dev = open(os.path.join(_ROOT, "requirements-dev.txt"), encoding="utf-8").read().lower()
+    assert "pytest" not in reqs and "pytest" in dev
+
+
+def test_r32_CI용_고정출력은_lock_버전():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("pin_from_lock", os.path.join(_ROOT, "scripts", "pin_from_lock.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    out = mod.pin(skip=["paddle"])
+    pins = _lock_pins()
+    assert out and not any(o.lower().startswith("paddle") for o in out)
+    for o in out:
+        name, _, ver = o.partition("==")
+        assert ver == pins[_norm(name.split("[")[0])], o
+    assert any(o.startswith("uvicorn[standard]==") for o in out)
