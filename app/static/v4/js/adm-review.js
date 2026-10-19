@@ -1,17 +1,32 @@
 /* ===== 관리자 신청접수·운영도구 ===== */
-const ADMR_ERR = (r, d) => { const code = (d && d.detail && d.detail.code) || (d && d.code); const pfx = r.status===403 ? '이 작업은 권한이 없습니다' : '실패했습니다'; toast(code ? `${pfx} (${code})` : pfx); };
+const ADMR_ERR = (r, d) => { const detail=(d&&d.detail)||d||{}; const blockers=(detail.blockers||[]).map(b=>b.message||b.code).join(', '); toast((detail.message || (r.status===403?'이 작업은 권한이 없습니다':'처리에 실패했습니다'))+(blockers?' · '+blockers:'')); };
+const ADMR_busy = new Set();
 
 async function ADMR_postAction(path, body){
+  const caseId=path.startsWith('/cases/')?path.split('/')[2]:path.split('/')[3];
+  if(ADMR_busy.has(caseId)) return false;
+  ADMR_busy.add(caseId); render();
   try{
     const r = await apiFetch(path, {method:'POST', body:JSON.stringify(body||{})});
     let d = null; try{ d = await r.json(); }catch(e){}
     if(!r.ok){ ADMR_ERR(r, d); return false; }
+    const item=(RS.cases||[]).find(c=>c.case_id===caseId);
+    if(item){
+      item.intake_pending=false;
+      if(path.endsWith('/approve')) { item.company_decision='approved'; item.status=d.transitioned_to||item.status; }
+      if(path.endsWith('/reject')) { item.company_decision='rejected'; item.draft_state='returned'; }
+      if(path.endsWith('/return-application')) { item.draft_state='returned'; item.status='application_draft'; }
+    }
     return true;
   }catch(e){ toast('요청에 실패했습니다.'); return false; }
+  finally { ADMR_busy.delete(caseId); render(); }
 }
 
 async function ADMR_after(okMsg){
-  try{ await loadAdm(); }catch(e){}
+  let refreshed=false;
+  try{ refreshed=(await loadAdm())!==false; }catch(e){}
+  RS.admr = {};
+  if(!refreshed){ render(); toast(okMsg+' 목록을 새로고침하지 못했습니다. 다시 조회해 주세요.'); return; }
   render(); toast(okMsg);
 }
 
@@ -47,24 +62,48 @@ App.admrReturnDo = async function(caseId){
   }
 };
 
-const ADMR_intakeHtml = () => {
-  const list = (RS.cases||[]).filter(c => !c.done && c.step8===0);
-  if(!list.length) return '';
-  const rows = list.map(c => `<li class="row">
+const ADMR_pages = {pending:1, processed:1};
+const ADMR_pageSize = 10;
+App.admrPage = function(group, page){
+  if(!(group in ADMR_pages)) return;
+  ADMR_pages[group]=Math.max(1, Number(page)||1); render();
+};
+const ADMR_isPending = c => c.intake_pending === true;
+function ADMR_intakeSection(list, group, title){
+  const pages=Math.max(1,Math.ceil(list.length/ADMR_pageSize));
+  const page=ADMR_pages[group]=Math.min(ADMR_pages[group],pages);
+  const start=(page-1)*ADMR_pageSize;
+  const rows = list.slice(start,start+ADMR_pageSize).map(c => {
+    const pending=ADMR_isPending(c), busy=ADMR_busy.has(c.case_id);
+    const label=pending?'승인 대기':c.company_decision==='rejected'?'거절':c.draft_state==='returned'?'보완 요청':c.company_decision==='approved'?'승인 완료':'신청서 작성 중';
+    return `<li class="row">
     <div style="flex:1;min-width:0">
-      <div><strong>${esc(c.company_name)}</strong> <span class="badge attn">${esc(_s8label(c))}</span></div>
-      <div class="muted mono" style="font-size:11px">${esc(c.status||'')}</div>
+      <div><strong>${esc(c.company_name)}</strong> <span class="badge ${pending?'attn':'strong'}">${label}</span></div>
+      <div class="muted" style="font-size:12px">${esc(_s8label(c))}</div>
     </div>
     <div class="row-act">
-      ${canCall('POST','/ops/companies/{}/approve')?`<button class="btn btn-sm btn-primary" onclick="App.admrApprove('${c.case_id}')">승인</button>`:''}
-      ${canCall('POST','/ops/companies/{}/reject')?`<button class="btn btn-sm" onclick="App.admrReject('${c.case_id}')">거절</button>`:''}
-      <button class="btn btn-sm btn-ghost" onclick="App.admrReturn('${c.case_id}')">신청서 반려(보완 요청)</button>
+      ${pending&&canCall('POST','/ops/companies/{}/approve')?`<button class="btn btn-sm btn-primary" ${busy?'disabled':''} onclick="App.admrApprove('${c.case_id}')">${busy?'처리 중…':'승인'}</button>`:''}
+      ${pending&&canCall('POST','/ops/companies/{}/reject')?`<button class="btn btn-sm" ${busy?'disabled':''} onclick="App.admrReject('${c.case_id}')">거절</button>`:''}
+      ${!pending?`<button class="btn btn-sm" disabled>${label}</button>`:''}
+      ${c.draft_state!=='returned'&&c.company_decision!=='rejected'&&canCall('POST','/cases/{}/return-application')?`<button class="btn btn-sm btn-ghost" ${busy?'disabled':''} onclick="App.admrReturn('${c.case_id}')">신청서 반려(보완 요청)</button>`:''}
     </div>
-  </li>`).join('');
-  return `<section class="panel">
-    <div class="panel-head"><h2>신청 접수 처리</h2><span class="count">${list.length}건</span></div>
-    <ul class="rows">${rows}</ul>
+  </li>`; }).join('');
+  return `<section class="panel" aria-label="${title}">
+    <div class="panel-head"><h2>${title}</h2><span class="count">${list.length}건</span></div>
+    ${rows?`<ul class="rows">${rows}</ul>`:'<p class="empty">해당 업체가 없습니다.</p>'}
+    <nav class="row-act" aria-label="${title} 페이지" style="margin-top:16px">
+      <button class="btn btn-sm" ${page===1?'disabled':''} onclick="App.admrPage('${group}',${page-1})">이전</button>
+      <span aria-live="polite">${page} / ${pages} 페이지 · ${list.length?start+1:0}–${Math.min(start+ADMR_pageSize,list.length)} / ${list.length}건</span>
+      <button class="btn btn-sm" ${page===pages?'disabled':''} onclick="App.admrPage('${group}',${page+1})">다음</button>
+    </nav>
   </section>`;
+}
+const ADMR_intakeHtml = () => {
+  const list=(RS.cases||[]).filter(c=>!c.done&&c.step8===0);
+  const pending=list.filter(ADMR_isPending).sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||''))||a.case_id.localeCompare(b.case_id));
+  const processed=list.filter(c=>!ADMR_isPending(c));
+  return ADMR_intakeSection(pending,'pending','신청 접수 처리 · 승인 대기')+
+    ADMR_intakeSection(processed,'processed','접수 처리 완료 · 작성/보완 중');
 };
 { const f = VIEWS['adm-home']; VIEWS['adm-home'] = () => ADMR_intakeHtml() + (f ? f() : ''); }
 

@@ -153,17 +153,20 @@ function OPSC_panelClients() {
   if (d.error) return `<section class="panel">${head}<p class="empty">${OPSC_err(d)}</p></section>`;
   const items = d.items || [];
   if (!items.length) return `<section class="panel">${head}<p class="empty">등록된 업체가 없습니다.</p></section>`;
-  const shown = items.slice(0, 100);
+  const pages = Math.max(1, Math.ceil(items.length / 10));
+  const page = S.opscClientPage = Math.min(Math.max(1, S.opscClientPage || 1), pages);
+  const shown = items.slice((page - 1) * 10, page * 10);
   return `<section class="panel">${head}
     <div class="tbl-wrap"><table>
-      <thead><tr><th>업체</th><th class="num">케이스</th><th>담당 컨설턴트</th><th>연결일</th></tr></thead>
+      <thead><tr><th>업체</th><th class="num">케이스</th><th>담당 컨설턴트</th><th>연결일</th><th>배정</th></tr></thead>
       <tbody>${shown.map(o => `<tr>
         <td>${esc(o.name || "")}<div class="muted mono" style="font-size:11px">${esc(o.org_id || "")}</div></td>
         <td class="num">${esc(String(o.cases != null ? o.cases : 0))}</td>
         <td>${o.consultant_id ? esc(o.consultant_name || o.consultant_id) : '<span class="badge attn">미지정</span>'}</td>
         <td class="mono">${esc(String(o.linked_at || "").slice(0, 10))}</td>
+        <td><button class="btn btn-sm" onclick="App.opscAssign(${items.indexOf(o)})">${o.consultant_id ? '변경' : '컨설턴트 배정'}</button></td>
       </tr>`).join("")}</tbody></table></div>
-    ${items.length > 100 ? `<p class="muted" style="margin-top:8px">외 ${items.length - 100}건</p>` : ""}
+    <div class="row-act" style="margin-top:12px"><button class="btn btn-sm" ${page===1?'disabled':''} onclick="App.opscClientPage(${page-1})">이전</button><span>${page} / ${pages} 페이지 · ${items.length}개 업체</span><button class="btn btn-sm" ${page===pages?'disabled':''} onclick="App.opscClientPage(${page+1})">다음</button></div>
   </section>`;
 }
 
@@ -433,4 +436,36 @@ App.opscPayoutPaid = async function (pid) {
     render();
     toast("지급 완료로 처리했습니다.");
   } catch (e) { toast("지급 완료 처리에 실패했습니다."); }
+};
+
+App.opscClientPage = function(page) { S.opscClientPage = page; render(); };
+App.opscAssign = async function(index) {
+  const org = ((RS.opscClients || {}).items || [])[index];
+  if (!org) return;
+  await OPSC_loadConsultants();
+  if (!RS.opscCons || RS.opscCons.error) return toast('컨설턴트 목록을 불러오지 못했습니다.');
+  const candidates = (RS.opscCons.items || []).filter(c => c.status === 'active');
+  if (!candidates.length) return toast('배정 가능한 컨설턴트가 없습니다. 먼저 컨설턴트를 등록해 주세요.');
+  openModal('컨설턴트 배정 · ' + org.name,
+    `<p class="note">이 업체의 모든 케이스에 적용됩니다.</p><div class="field"><label for="opsc-assign-id">담당 컨설턴트</label><select class="in" id="opsc-assign-id"><option value="">선택하세요</option>${candidates.map(c => `<option value="${esc(c.consultant_id)}" ${c.consultant_id===org.consultant_id?'selected':''}>${esc(c.display_name || c.username)} (${esc(c.username)})</option>`).join('')}</select></div><div class="field"><label for="opsc-assign-reason">배정·변경 사유</label><input class="in" id="opsc-assign-reason"></div>`,
+    `<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" id="opsc-assign-save" onclick="App.opscAssignSave(${index})">배정 저장</button>`);
+};
+let OPSC_assignBusy = false;
+App.opscAssignSave = async function(index) {
+  if (OPSC_assignBusy) return;
+  const org = ((RS.opscClients || {}).items || [])[index];
+  const consultant_id = (($('#opsc-assign-id') || {}).value || '').trim();
+  if (!org || !consultant_id) return toast('컨설턴트를 선택하세요.');
+  const reason = (($('#opsc-assign-reason') || {}).value || '').trim();
+  const button = $('#opsc-assign-save');
+  OPSC_assignBusy = true; if(button) button.disabled = true;
+  try {
+    const r = await apiFetch('/admin/orgs/' + encodeURIComponent(org.org_id) + '/consultant', {method:'PUT', body:JSON.stringify({consultant_id, reason:reason || null})});
+    if (!r.ok) { const d = await OPSC_detail(r); return toast((d && d.message) || '컨설턴트 배정에 실패했습니다.'); }
+    App.closeModal();
+    RS.opscComm = {}; RS.admr = {};
+    await Promise.all([OPSC_loadClients(), OPSC_loadConsultants(), loadAdm()]);
+    render(); toast('컨설턴트를 배정했습니다.');
+  } catch(e) { toast('저장 또는 목록 갱신에 실패했습니다. 다시 조회해 주세요.'); }
+  finally { OPSC_assignBusy = false; if(button) button.disabled = false; }
 };

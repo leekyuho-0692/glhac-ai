@@ -689,6 +689,7 @@ class RegisterReq(BaseModel):
     _nibv = field_validator("nib")(classmethod(lambda cls, v: _nib(v)))
     _un = field_validator("username")(classmethod(lambda cls, v: _username(v)))
     company_name: Optional[str] = None
+    consultant_id: Optional[str] = None
     invite_code: Optional[str] = None   # 컨설턴트 초대 코드 — 유치 관계·수수료 근거
     # 회원가입 AI OCR 자동추출 프로필(Rizky #1) — 초기 케이스에 프리필
     nib: Optional[str] = None
