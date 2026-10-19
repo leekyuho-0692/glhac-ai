@@ -2812,6 +2812,8 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
                       # P2 신규(하위호환 — 필드 추가만)
                       "step8": s8["step"], "step8_label": s8["step_label"], "done": s8["done"],
                       "closed": s8["closed"],
+                      # R1-2: 자기선언 구간 케이스만 긍정목록 경고(막지 않는 경고)를 싣는다
+                      "warnings": (sm.selfdeclare_warnings(db, c) if c.status in sm.SELFDECLARE_STATES else []),
                       "hold": s8["hold"], "owner": s8["owner"],
                       "eligibility": s8.get("eligibility"), "formal": s8.get("formal"),
                       "consultant": cons_name.get(_cc) if _cc else None,
@@ -4907,7 +4909,10 @@ def fatwa_queue(user=Depends(auth.require_roles("fatwa_liaison", "operator")),
 def get_case(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     _audit(db, user, "case.read", "case", case_id, case_id)
-    return _case_dict(c)
+    d = _case_dict(c)
+    # R1-2: 자기선언 구간이면 긍정목록 경고를 그때그때 계산해 싣는다(막지 않는 경고)
+    d["warnings"] = sm.selfdeclare_warnings(db, c) if c.status in sm.SELFDECLARE_STATES else []
+    return d
 
 
 @app.get("/cases/{case_id}/timeline")
@@ -19360,8 +19365,9 @@ def pathway_confirm(case_id: str, body: schemas.PathwayConfirm,
     c.status = target
     sm.record_event(db, c, frm, target, "pathway.confirm", user["role"], user["uid"],
                     {"pathway": body.pathway, "override_reason": body.override_reason})
+    warnings = _selfdeclare_entry_warn(db, c, user) if target == "self_declare_eligible" else []
     db.commit()
-    return {"pathway": c.pathway, "next_state": target, "assessment": a}
+    return {"pathway": c.pathway, "next_state": target, "assessment": a, "warnings": warnings}
 
 
 # ── P0-3: 사전심사 오디터 회신 루프 — 스키마 무변경, WorkflowEvent(latest-wins)로 저장 ──
@@ -19652,6 +19658,16 @@ def resubmit_center(case_id: str, user=Depends(auth.get_current_user),
 
 
 # ---------- transition ----------
+def _selfdeclare_entry_warn(db, c, user):
+    """자기선언 진입(self_declare_eligible)에서 긍정목록 경고를 계산하고, 있으면 감사 이벤트
+    selfdeclare.positive_list_warning 을 1건 남긴다(R1-2). 진입을 막지는 않는다. 커밋은 호출자."""
+    w = sm.selfdeclare_warnings(db, c)
+    if w:
+        sm.record_event(db, c, c.status, c.status, "selfdeclare.positive_list_warning",
+                        user["role"], user["uid"], {"warnings": w})
+    return w
+
+
 def _auto_advance(db, c, to_state, user, action):
     """서브플로우 완료 훅 — 조건 충족 시 케이스 상태 자동 전진(전수검사 P2: '서브플로우는 끝나는데
     케이스가 안 넘어감' 7곳 해소). /transition과 동일 규칙(PROTECTED 제외·역할 게이트 admin 우회·
@@ -19669,6 +19685,8 @@ def _auto_advance(db, c, to_state, user, action):
         c.status = to_state
         obs.inc("glhac_state_transition_total", {"to": to_state})
         sm.record_event(db, c, frm, to_state, action, user["role"], user["uid"], {"auto": True})
+        if to_state == "self_declare_eligible":
+            _selfdeclare_entry_warn(db, c, user)
         return True
     except Exception as e:
         log.warning("auto_advance(%s→%s) 실패 무시: %s", getattr(c, "status", "?"), to_state, e)
@@ -19694,6 +19712,7 @@ def transition(case_id: str, body: schemas.TransitionReq,
     c.status = body.to_state
     obs.inc("glhac_state_transition_total", {"to": body.to_state})
     sm.record_event(db, c, frm, body.to_state, body.action or "transition", user["role"], user["uid"])
+    warnings = _selfdeclare_entry_warn(db, c, user) if body.to_state == "self_declare_eligible" else []
     # 상태 전이에 딸린 알림 — 문구는 카탈로그(NOTIFY_MSG)에서 읽는 사람 언어로 조립된다
     _NOTIFY_ON = {"audit_closed": "audit_closed",
                   "document_pre_audit_requested": "document_requested",
@@ -19703,7 +19722,9 @@ def transition(case_id: str, body: schemas.TransitionReq,
         _notify(db, c, ev, msg=(ev, {"company": c.company_name or ""}),
                 channels=["inapp", "sms"], role="applicant")
     db.commit()
-    return {"from": frm, "to": body.to_state, "case": _case_dict(c)}
+    _cd = _case_dict(c)
+    _cd["warnings"] = warnings
+    return {"from": frm, "to": body.to_state, "case": _cd, "warnings": warnings}
 
 
 # ---------- 케이스 종결 (R1-1) ----------

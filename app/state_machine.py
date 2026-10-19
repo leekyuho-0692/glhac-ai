@@ -382,6 +382,22 @@ def positive_listed(m):
     return (m.matched_uid is not None) and (m.screen_status == "halal")
 
 
+# 자기선언 경로에 들어와 있는 상태들 — 이 구간에서는 케이스 응답에 긍정목록 경고를 싣는다
+SELFDECLARE_STATES = {"self_declare_eligible", "sjph_lite_prepared", "pendamping_verification",
+                      "self_declaration_submitted", "committee_verification"}
+
+
+def selfdeclare_warnings(db, case):
+    """자기선언 긍정목록 경고(R1-2) — 막지 않고 알리기만 한다(사용자 결정: 경고만).
+    원재료가 0건이면 NO_MATERIALS, 긍정목록(positive_listed — assess_pathway 와 같은 판정) 밖 원재료가
+    있으면 NOT_ON_POSITIVE_LIST(+원재료명). 둘 다 아니면 빈 목록."""
+    mats = materials(db, case.case_id)
+    if not mats:
+        return [{"code": "NO_MATERIALS"}]
+    non = [m.name for m in mats if not positive_listed(m)]
+    return [{"code": "NOT_ON_POSITIVE_LIST", "materials": non}] if non else []
+
+
 def _non_positive_reason(m):
     return "unmatched" if m.matched_uid is None else "not_halal"
 

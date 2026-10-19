@@ -348,3 +348,81 @@ def test_r11_aggregations_classify_terminal_as_closed():
         # 다음 단계 후보에 종결 상태가 끼지 않는다
         wf = c.get("/cases/%s/workflow" % _db_case("PT wf", status="pathway_determination"), headers=h).json()
         assert not ({n["to"] for n in wf["next_states"]} & sm.TERMINAL_STATES)
+
+
+# ================= R1-2. 자기선언 긍정목록 경고(막지 않는다) =================
+def _sd_case(company, mats):
+    """경로 판정 단계 + 자기선언 가드(low·MSME·핵심원료 없음)를 통과하는 케이스. mats=[(이름, 긍정목록 여부)]"""
+    cid = _db_case(company, status="pathway_determination", risk_category="low", is_msme=True)
+    for name, listed in mats:
+        _db_add(models.Material(case_id=cid, name=name,
+                                matched_uid=("uid-" + name) if listed else None,
+                                screen_status="halal" if listed else None))
+    return cid
+
+
+def test_r12_selfdeclare_entry_warns_not_blocks_off_list_material():
+    with TestClient(app) as c:
+        h = _tok(c, "consultant1")
+        cid = _sd_case("PT sd off-list", [("양념소스X", False), ("정제수", True)])
+        r = c.post("/cases/%s/transition" % cid, headers=h, json={"to_state": "self_declare_eligible"})
+        assert r.status_code == 200, r.text            # 막지 않는다
+        body = r.json()
+        assert _status(cid) == "self_declare_eligible" and body["to"] == "self_declare_eligible"
+        w = body["warnings"]
+        assert w == [{"code": "NOT_ON_POSITIVE_LIST", "materials": ["양념소스X"]}]
+        assert body["case"]["warnings"] == w            # 케이스 응답에도 싣는다
+        evs = _events(cid, "selfdeclare.positive_list_warning")
+        assert len(evs) == 1 and evs[0].payload["warnings"] == w      # 감사 추적 1건
+        # 케이스 조회에도 경고가 남아 있다(자기선언 구간)
+        g = c.get("/cases/%s" % cid, headers=h).json()
+        assert g["warnings"] == w and g["status"] == "self_declare_eligible"
+
+
+def test_r12_selfdeclare_entry_no_materials_warns():
+    with TestClient(app) as c:
+        h = _tok(c, "consultant1")
+        cid = _sd_case("PT sd empty", [])
+        r = c.post("/cases/%s/transition" % cid, headers=h, json={"to_state": "self_declare_eligible"})
+        assert r.status_code == 200, r.text
+        assert r.json()["warnings"] == [{"code": "NO_MATERIALS"}]
+        assert len(_events(cid, "selfdeclare.positive_list_warning")) == 1
+
+
+def test_r12_selfdeclare_all_on_list_has_no_warning():
+    """대조: 전부 긍정목록이면 경고도 이벤트도 없다."""
+    with TestClient(app) as c:
+        h = _tok(c, "consultant1")
+        cid = _sd_case("PT sd clean", [("정제수", True), ("설탕", True)])
+        r = c.post("/cases/%s/transition" % cid, headers=h, json={"to_state": "self_declare_eligible"})
+        assert r.status_code == 200 and r.json()["warnings"] == []
+        assert _events(cid, "selfdeclare.positive_list_warning") == []
+        assert c.get("/cases/%s" % cid, headers=h).json()["warnings"] == []
+    # 열린 정규 경로 케이스는 경고를 싣지 않는다
+    with TestClient(app) as c:
+        cid2 = _db_case("PT reg", status="consultant_review")
+        assert c.get("/cases/%s" % cid2, headers=_tok(c, "consultant1")).json()["warnings"] == []
+
+
+def test_r12_pathway_confirm_also_warns_and_other_guards_still_block():
+    with TestClient(app) as c:
+        h = _tok(c, "consultant1")
+        cid = _sd_case("PT sd confirm", [("미등록첨가물", False)])
+        r = c.post("/cases/%s/pathway/confirm" % cid, headers=h, json={"pathway": "self_declare"})
+        assert r.status_code == 200, r.text
+        assert r.json()["warnings"][0]["code"] == "NOT_ON_POSITIVE_LIST"
+        assert len(_events(cid, "selfdeclare.positive_list_warning")) == 1
+        # 부정: 경고만 하는 것이지 다른 가드를 푼 게 아니다 — 금지 원재료는 여전히 409
+        bad = _db_case("PT sd haram", status="pathway_determination", risk_category="low", is_msme=True)
+        _db_add(models.Material(case_id=bad, name="돼지젤라틴", screen_status="haram"))
+        r = c.post("/cases/%s/transition" % bad, headers=h, json={"to_state": "self_declare_eligible"})
+        assert r.status_code == 409 and _code(r) == "TRANSITION_BLOCKED"
+        assert _status(bad) == "pathway_determination"
+        assert _events(bad, "selfdeclare.positive_list_warning") == []
+    # 가드 함수 자체에는 긍정목록 코드가 없다(차단 목록에 섞이지 않는다)
+    db = SessionLocal()
+    try:
+        cur = db.get(models.CaseApplication, cid)
+        assert "NOT_ON_POSITIVE_LIST" not in [g["code"] for g in sm.guard_pathway_selfdeclare(db, cur)]
+    finally:
+        db.close()

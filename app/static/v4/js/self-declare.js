@@ -35,6 +35,30 @@ function SDC_dl(res){
   }).join('');
   return `<dl class="dl">${rows}</dl>`;
 }
+/* R1-2: 긍정목록 경고 — 서버는 막지 않고 warnings 만 싣는다(NOT_ON_POSITIVE_LIST / NO_MATERIALS).
+   케이스 목록의 warnings(자기선언 구간)와 경로 판정 결과(assessment)에서 같은 모양으로 만든다. */
+function SDC_posWarnList(ws){
+  return (ws||[]).map(w=>{
+    if(w.code==='NO_MATERIALS') return '등록된 원재료가 없습니다.';
+    if(w.code==='NOT_ON_POSITIVE_LIST') return '긍정목록 밖 원재료: '+(w.materials||[]).join(', ');
+    return '';
+  }).filter(Boolean);
+}
+function SDC_assessWarnings(a){
+  if(!a) return [];
+  const mats = a.materials||[];
+  if(!mats.length) return [{code:'NO_MATERIALS'}];
+  const non = mats.filter(m=>!m.positive_listed).map(m=>m.name);
+  return non.length ? [{code:'NOT_ON_POSITIVE_LIST', materials:non}] : [];
+}
+function SDC_warnBlock(ws){
+  const lines = SDC_posWarnList(ws);
+  if(!lines.length) return '';
+  return `<div class="note attn"><b>긍정목록 경고</b>${lines.map(l=>`<p>${esc(l)}</p>`).join('')}<p class="muted">경고만 표시되며 진행은 막지 않습니다.</p></div>`;
+}
+function SDC_warnBadge(c){
+  return c && (c.warnings||[]).length ? '<span class="badge attn">긍정목록 확인 필요</span>' : '';
+}
 async function SDC_load(cid){
   try{
     const r = await apiFetch('/cases/'+cid+'/committee/status');
@@ -64,6 +88,8 @@ function SDC_blocks(cur){
       pathBlock += `<dl class="dl"><div><dt>위험등급</dt><dd class="mono">${esc(a.data.assessment.risk_category||'')}</dd></div><div><dt>핵심원료</dt><dd class="mono num">${esc(String(a.data.assessment.critical_ingredient_count))}</dd></div><div><dt>증빙완비</dt><dd class="mono">${a.data.assessment.evidence_complete?'예':'아니오'}</dd></div></dl>`;
     }
   }
+  { const cc = (RS.cases||[]).find(x=>x.case_id===cur);
+    pathBlock += SDC_warnBlock(a && a.data ? SDC_assessWarnings(a.data.assessment) : (cc?cc.warnings:[])); }
   if(!canConfirm) pathBlock += `<div class="muted" style="font-size:11px;margin-top:4px">경로 확정은 전담 컨설턴트가 합니다.</div>`;
   pathBlock += `</fieldset>`;
 
@@ -94,7 +120,7 @@ VIEWS['aud-selfdecl'] = () => {
   let cur = (S.selSdc && list.find(c=>c.case_id===S.selSdc)) ? S.selSdc : list[0].case_id;
   S.selSdc = cur;
   const nav = `<nav class="mlist" aria-label="목록"><div class="mh">업체 ${list.length}개사</div>${list.map(c=>
-    `<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.sdcSel('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')} · ${esc(c.pathway||'')}</span></button>`
+    `<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.sdcSel('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span>${SDC_warnBadge(c)}</span><span class="muted mono" style="font-size:11px">${esc(c.status||'')} · ${esc(c.pathway||'')}</span></button>`
   ).join('')}</nav>`;
   const c = list.find(x=>x.case_id===cur) || list[0];
 
@@ -137,7 +163,7 @@ App.sdcAssess = async function(cid){
 App.sdcConfirm = async function(cid, pathway){
   const res = await SDC_req('POST', `/cases/${cid}/pathway/confirm`, {pathway, override_reason:null});
   if(!res.ok) return SDC_err('경로 확정', res);
-  toast('경로 확정: '+pathway);
+  toast('경로 확정: '+pathway+(((res.data||{}).warnings||[]).length?' — 긍정목록 경고가 있습니다.':''));
   await SDC_reload();
   render();
 };
