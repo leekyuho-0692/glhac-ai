@@ -610,6 +610,12 @@ class PathwayConfirm(BaseModel):
     override_reason: Optional[str] = None
 
 
+class CaseCloseReq(BaseModel):
+    """케이스 종결(R1-1) — status: withdrawn|rejected|cancelled, reason 필수(사유 없는 종결 금지)."""
+    status: str
+    reason: str = ""
+
+
 class TransitionReq(BaseModel):
     to_state: str
     action: Optional[str] = "transition"

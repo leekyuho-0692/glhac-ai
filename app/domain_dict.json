@@ -5963,6 +5963,63 @@
     "status": "approved"
   },
   {
+    "id": "ENUM_WITHDRAWN",
+    "axis": "ENUM",
+    "labels": {
+      "ko": "신청 철회",
+      "en": "Withdrawn",
+      "id": "Ditarik"
+    },
+    "context": [
+      "UI"
+    ],
+    "actions": {
+      "enum_code": "withdrawn"
+    },
+    "source": [
+      "glhac"
+    ],
+    "status": "approved"
+  },
+  {
+    "id": "ENUM_REVOKED",
+    "axis": "ENUM",
+    "labels": {
+      "ko": "인증서 철회",
+      "en": "Revoked",
+      "id": "Sertifikat dicabut"
+    },
+    "context": [
+      "UI"
+    ],
+    "actions": {
+      "enum_code": "revoked"
+    },
+    "source": [
+      "glhac"
+    ],
+    "status": "approved"
+  },
+  {
+    "id": "ENUM_CANCELLED",
+    "axis": "ENUM",
+    "labels": {
+      "ko": "운영 취소",
+      "en": "Cancelled",
+      "id": "Dibatalkan"
+    },
+    "context": [
+      "UI"
+    ],
+    "actions": {
+      "enum_code": "cancelled"
+    },
+    "source": [
+      "glhac"
+    ],
+    "status": "approved"
+  },
+  {
     "id": "ENUM_REWORK",
     "axis": "ENUM",
     "labels": {

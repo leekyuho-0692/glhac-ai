@@ -527,6 +527,15 @@ def _assert_scope_open(c):
                                   "message": "범위가 동결된 케이스는 원재료를 변경할 수 없습니다"})
 
 
+def _assert_case_open(c):
+    """종결(withdrawn·rejected·revoked·cancelled) 케이스의 쓰기 차단 — _assert_scope_open 과 같은 자리에서 쓴다.
+    종결된 케이스에 원재료·문서·견적·청구서가 계속 쌓이면 끝난 건의 기록이 바뀐다. 읽기는 그대로 둔다.
+    재개는 새 케이스(갱신 흐름과 같은 방식)로 한다."""
+    if c.status in sm.TERMINAL_STATES:
+        raise HTTPException(409, {"code": "CASE_CLOSED", "status": c.status,
+                                  "message": "종결된 케이스는 변경할 수 없습니다"})
+
+
 def _audit_row_body(actor_id, action, resource_type, resource_id, case_id, created_at, meta_wo):
     """AuditLog 정규 본문(체인 해시 대상) — 쓰기(_audit)/검증(audit_log_verify)이 동일 직렬화 사용.
     meta의 _chain(체인 자체)은 제외한 나머지 본문에 대해 해시(자기참조 방지). 스키마 무변경(meta JSON)."""
@@ -613,6 +622,7 @@ def _case_dict(c):
             "status": c.status, "pathway": c.pathway, "risk_category": c.risk_category,
             "is_msme": c.is_msme, "sehati_eligible": c.sehati_eligible,
             "fatwa_status": c.fatwa_status, "scope_frozen": c.scope_frozen,
+            "closed": c.status in sm.TERMINAL_STATES,
             "nib": c.nib, "responsible_person": c.responsible_person,
             "halal_supervisor": c.halal_supervisor, "email": c.email, "phone": c.phone,
             "address": c.address, "factory_reg_no": c.factory_reg_no,
@@ -638,6 +648,27 @@ NOTIFY_MSG = {
         "ko": ("신청서 작성완료 제출", "{company} 신청서가 제출되었습니다. 경로판정(자기선언/정규) 확정 대기."),
         "en": ("Application submitted", "{company} has submitted its application. Awaiting pathway decision (self-declare / regular)."),
         "id": ("Permohonan telah dikirim", "{company} telah mengirimkan permohonan. Menunggu penetapan jalur (self-declare / reguler)."),
+    },
+    # R1-1 케이스 종결 — 사유별 4종(철회·불합격·인증서 철회·운영 취소)
+    "case.closed.withdrawn": {
+        "ko": ("신청 철회", "{company} — 신청이 철회되어 케이스가 종결되었습니다. 사유: {reason}"),
+        "en": ("Application withdrawn", "{company} — the application was withdrawn and the case is closed. Reason: {reason}"),
+        "id": ("Permohonan ditarik", "{company} — permohonan ditarik dan kasus ditutup. Alasan: {reason}"),
+    },
+    "case.closed.rejected": {
+        "ko": ("심사 불합격", "{company} — 심사 결과 인증이 불가하여 케이스가 종결되었습니다. 사유: {reason}"),
+        "en": ("Assessment failed", "{company} — certification cannot be granted and the case is closed. Reason: {reason}"),
+        "id": ("Penilaian tidak lulus", "{company} — Sertifikasi tidak dapat diberikan dan kasus ditutup. Alasan: {reason}"),
+    },
+    "case.closed.revoked": {
+        "ko": ("인증서 철회로 종결", "{company} — 인증서가 철회되어 케이스가 종결되었습니다. 사유: {reason}"),
+        "en": ("Closed by certificate revocation", "{company} — the certificate was revoked and the case is closed. Reason: {reason}"),
+        "id": ("Ditutup karena pencabutan sertifikat", "{company} — Sertifikat dicabut dan kasus ditutup. Alasan: {reason}"),
+    },
+    "case.closed.cancelled": {
+        "ko": ("운영 취소", "{company} — 운영 취소로 케이스가 종결되었습니다. 사유: {reason}"),
+        "en": ("Cancelled by operations", "{company} — the case was cancelled by operations and is closed. Reason: {reason}"),
+        "id": ("Dibatalkan oleh operasional", "{company} — kasus dibatalkan oleh operasional dan ditutup. Alasan: {reason}"),
     },
     "audit_closed": {
         "ko": ("심사 완료", "{company} — 현장심사가 종결되었습니다."),
@@ -1861,8 +1892,10 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
 
 
 @app.get("/auth/me")
-def me(user=Depends(auth.get_current_user)):
-    return user
+def me(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    # company_role(client_admin|client_staff) — 기업 홈의 '신청 철회' 버튼 노출 판단용(R1-1). 토큰 필드는 그대로.
+    u = db.get(models.User, user.get("uid"))
+    return {**user, "company_role": (u.company_role if u else None)}
 
 
 @app.post("/auth/change-password")
@@ -2761,7 +2794,7 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     items = []
     for c in rows:
         s8 = nav8.compute_step8(db, c)
-        nxt = sorted(sm.TRANSITIONS.get(c.status, set()))
+        nxt = sorted(sm.forward_states(c.status))
         next_state = nxt[0] if nxt else None
         a = assign.get(c.case_id) or {}
         _cc = org_cons.get(c.org_id)
@@ -2778,6 +2811,7 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
                       "auditor_id": a.get("auditor_id"), "auditor_name": a.get("auditor_name"),
                       # P2 신규(하위호환 — 필드 추가만)
                       "step8": s8["step"], "step8_label": s8["step_label"], "done": s8["done"],
+                      "closed": s8["closed"],
                       "hold": s8["hold"], "owner": s8["owner"],
                       "eligibility": s8.get("eligibility"), "formal": s8.get("formal"),
                       "consultant": cons_name.get(_cc) if _cc else None,
@@ -4960,7 +4994,7 @@ def list_materials(case_id: str, lang: str = Query("ko"),
 def add_product(case_id: str, body: schemas.ProductCreate,
                 user=Depends(auth.require_roles("applicant", "consultant")),
                 db: Session = Depends(get_db)):
-    _get_case(db, case_id, user)
+    _assert_case_open(_get_case(db, case_id, user))   # 종결 케이스 쓰기 차단(R1-1)
     # 같은 이름이 이미 있으면 **알려만 준다**. 막지 않는다.
     #
     # 같은 제품을 두 번 넣으면 인증 범위(scope)에 중복 인쇄되고 매트릭스도 두 줄이 되지만,
@@ -4986,7 +5020,9 @@ def add_product(case_id: str, body: schemas.ProductCreate,
 def add_material(case_id: str, body: schemas.MaterialCreate,
                  user=Depends(rbac.require_action("material.add")),
                  db: Session = Depends(get_db)):
-    _assert_scope_open(_get_case(db, case_id, user))   # 동결 후 원재료 변경 금지(감사 K5)
+    _c0 = _get_case(db, case_id, user)
+    _assert_case_open(_c0)   # 종결 케이스 쓰기 차단(R1-1)
+    _assert_scope_open(_c0)   # 동결 후 원재료 변경 금지(감사 K5)
     sk = True if body.source_known is None else bool(body.source_known)
     r = screening.screen_merged(body.name, body.e_number, body.source, body.cert_no,
                                 bool(body.evidence_provided), sk, body.note or "")
@@ -5008,7 +5044,9 @@ def delete_material(material_id: str,
                     db: Session = Depends(get_db)):
     m = db.get(models.Material, material_id)
     if m:
-        _assert_scope_open(_get_case(db, m.case_id, user))   # 동결 후 원재료 변경 금지(감사 K5)
+        _c0 = _get_case(db, m.case_id, user)
+        _assert_case_open(_c0)   # 종결 케이스 쓰기 차단(R1-1)
+        _assert_scope_open(_c0)   # 동결 후 원재료 변경 금지(감사 K5)
         # 원재료 삭제는 할랄 문서에서 성분을 빼는 행위다. 무엇을 어떤 판정 상태에서
         # 지웠는지 남겨야 나중에 되짚을 수 있다(삭제 전에 기록 — 행이 사라지면 못 남긴다).
         _audit(db, user, "material.delete", "material", material_id, m.case_id,
@@ -5038,7 +5076,9 @@ def patch_material(material_id: str, body: schemas.MaterialPatch,
     m = db.get(models.Material, material_id)
     if not m:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
-    _assert_scope_open(_get_case(db, m.case_id, user))   # 동결 후 원재료 변경 금지(감사 K5)
+    _c0 = _get_case(db, m.case_id, user)
+    _assert_case_open(_c0)   # 종결 케이스 쓰기 차단(R1-1)
+    _assert_scope_open(_c0)   # 동결 후 원재료 변경 금지(감사 K5)
     before = {"status": m.screen_status, "result": m.screen_result,
               "cert_no": m.cert_no, "manufacturer": m.manufacturer,
               "supplier": m.supplier, "mat_type": m.mat_type}
@@ -5079,6 +5119,7 @@ def rename_material(material_id: str, body: schemas.MaterialRenameReq,
     if not m:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
     c = _get_case(db, m.case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     _assert_scope_open(c)   # 동결 후 원재료 변경 금지(감사 K5)
     prev = m.name
     m.name = nm
@@ -5297,6 +5338,7 @@ def reuse_materials(case_id: str, body: dict = None,
                     db: Session = Depends(get_db)):
     """카탈로그에서 선택한 원재료를 현재 케이스로 복사 — 이미 있는 정규화명은 건너뜀(중복 방지)."""
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     _assert_scope_open(c)   # 동결 후 원재료 변경 금지(감사 K5)
     names = [str(n).strip() for n in ((body or {}).get("names") or []) if str(n).strip()]
     if not names:
@@ -5339,7 +5381,9 @@ def dedup_materials(case_id: str, user=Depends(auth.require_roles("applicant", "
                     db: Session = Depends(get_db)):
     """중복 원재료 정리 — 정규화 동일명(괄호·공백·원산지 차이) 그룹당 1개만 유지.
     증빙 보유 > CLEARED > 짧은 이름 우선 유지, 나머지 삭제. OCR 오탈자는 보수적으로 미병합."""
-    _assert_scope_open(_get_case(db, case_id, user))   # 동결 후 원재료 변경 금지(감사 K5)
+    _c0 = _get_case(db, case_id, user)
+    _assert_case_open(_c0)   # 종결 케이스 쓰기 차단(R1-1)
+    _assert_scope_open(_c0)   # 동결 후 원재료 변경 금지(감사 K5)
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
     ev = dict(db.query(models.DocumentAsset.material_id, func.count(models.DocumentAsset.document_id))
               .filter(models.DocumentAsset.case_id == case_id,
@@ -5559,6 +5603,7 @@ def add_material_evidence(case_id: str, material_id: str, body: schemas.Material
     """원재료 증빙 업로드 → evidence_provided=true → 자동 재스크리닝 (순환점 C1)."""
     from .intake import _ctype
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     m = db.get(models.Material, material_id)
     if not m or m.case_id != case_id:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
@@ -8126,6 +8171,7 @@ def gen_contract(case_id: str, body: dict = None, user=Depends(auth.get_current_
     if any(b.get(k) not in (None, "") for k in ("fee", "currency")) and user["role"] not in ("operator", "admin"):
         raise HTTPException(403, {"code": "FEE_OVERRIDE_FORBIDDEN", "message": "계약 금액 설정은 관리자만 가능합니다"})
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     # 서명이 들어갔거나 체결된 계약은 다시 만들지 않는다 — 재생성이 금액·상태를 덮어써
     # 서명된 계약 내용이 바뀌었다(감사 K3).
     ex = db.query(models.Contract).filter_by(case_id=case_id).first()
@@ -8146,6 +8192,7 @@ _CONTRACT_QUEUE_PREV = {"requested": "none", "sent": "requested", "received": "s
 def contract_request(case_id: str, user=Depends(auth.require_roles("applicant", "client", "consultant")), db: Session = Depends(get_db)):
     """① 계약 신청(클라이언트) — Contract(status=requested) 생성. 관리자 승인 큐로 이관."""
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     ct = db.query(models.Contract).filter_by(case_id=case_id).first()
     if not ct:
         ct = models.Contract(case_id=case_id, org_id=c.org_id, party_a=c.company_name,
@@ -10933,6 +10980,7 @@ def get_case_journey(case_id: str, user=Depends(auth.get_current_user), db=Depen
     return {"case_id": case_id, "status": st, "milestone": mi, "current": current_idx,
             "stages": result_stages,
             "step8": {"step": s8["step"], "label": s8["step_label"], "done": s8["done"],
+                      "closed": s8["closed"], "closed_status": s8["closed_status"],
                       "hold": s8["hold"], "owner": s8["owner"], "labels": nav8.STEP8_LABELS}}
 
 
@@ -11153,6 +11201,7 @@ def upload_case_document(case_id: str, body: dict = None,
     """범용 케이스 문서 업로드(모의심사 자료 등) — 클라이언트도 자기 케이스에 첨부."""
     from .intake import _ctype
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     b = body or {}
     fn = b.get("filename") or "document"
     b64 = b.get("file_b64")
@@ -14701,8 +14750,20 @@ def _do_revoke_certificate(db, c, user, reason=None):
     _notify(db, c, "certificate_revoked", "인증서 철회",
             "%s — 할랄 인증서가 철회되었습니다." % (c.company_name or ""),
             channels=["inapp", "sms"], role="applicant")
+    # R1-1: 케이스에 다른 유효(active/suspended) 인증서가 없으면 케이스도 revoked 로 종결.
+    # 이 철회를 승인하는 ApprovalRequest 는 호출한 쪽(approve)이 approved 로 마무리하므로 취소하지 않는다.
+    closed = None
+    db.flush()
+    _other = (db.query(models.HalalCertificate)
+              .filter(models.HalalCertificate.case_id == c.case_id,
+                      models.HalalCertificate.id != cert.id,
+                      models.HalalCertificate.status.in_(("active", "suspended"))).count())
+    if _other == 0 and sm.allowed(c.status, "revoked"):
+        closed = _close_case(db, c, user, "revoked", (reason or "").strip() or "인증서 철회",
+                             action="case.close.revoked", keep_approval_actions=("certificate.revoke",))
     db.commit()
-    return {"certificate_no": cert.certificate_no, "status": "withdrawn", "reason": (reason or "").strip() or None}
+    return {"certificate_no": cert.certificate_no, "status": "withdrawn", "reason": (reason or "").strip() or None,
+            "case_status": c.status, "case_closed": bool(closed)}
 
 
 @app.post("/cases/{case_id}/certificate/revoke")
@@ -15467,6 +15528,7 @@ def list_invoices(case_id: str, user=Depends(auth.get_current_user), db: Session
 def add_invoice(case_id: str, body: schemas.InvoiceReq,
                 user=Depends(auth.require_roles("consultant")), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     # 수정요청 001 · 계약 큐 P1 데이터 게이트 — 계약 최종 확인(confirmed) 후에만 청구서 생성.
     _ct = db.query(models.Contract).filter_by(case_id=case_id).first()
     if not _ct or _ct.status not in ("confirmed", "invoiced", "paid"):
@@ -16268,7 +16330,8 @@ def _build_period_report(db, user, granularity, d):
     cert_case = {ct.case_id for ct in certs if ct.issue_date and s.isoformat() <= ct.issue_date[:10] < eff_e.isoformat()}
     for c in cases:
         s8 = nav8.compute_step8(db, c)
-        steps[s8["step"]] += 1
+        if not s8["closed"]:          # R1-1: 종결 케이스는 '현재 진행' 단계 집계에서 뺀다
+            steps[s8["step"]] += 1
         sec = (c.profile_ext or {}).get("sector")
         if sec in sectors:
             if _in(c.created_at, s, eff_e):
@@ -16407,7 +16470,9 @@ def analytics_summary(user=Depends(auth.require_roles("operator")), db: Session 
             .filter(models.Invoice.case_id.in_(case_ids)).all() if case_ids else [])
     revenue_paid = round(sum(i.total or 0 for i in invs if i.status == "paid"), 2)
     revenue_outstanding = round(sum(i.total or 0 for i in invs if i.status not in sm.INVOICE_SETTLED), 2)
+    closed_n = sum(n for st_, n in by_status.items() if st_ in sm.TERMINAL_STATES)   # R1-1
     return {"cases_total": len(cases), "cases_by_status": by_status, "cases_by_pathway": by_pathway,
+            "cases_closed": closed_n, "cases_open": len(cases) - closed_n,
             "cases_by_month": by_month, "certificates_active": len([x for x in certs if x.status == "active"]),
             "certs_by_month": certs_by_month, "revenue_paid": revenue_paid,
             "revenue_outstanding": revenue_outstanding}
@@ -16538,9 +16603,13 @@ def dashboard_summary(user=Depends(auth.get_current_user), db: Session = Depends
     def _issued(s):
         return bool(s) and ("issued" in s or "certificate" in s)
 
+    def _closed(s):                      # R1-1: 종결 4종은 진행 중도 조치 필요도 아니다('rejected' 가 'reject' 부분일치로 조치 필요에 잡히던 것 방지)
+        return s in sm.TERMINAL_STATES
+
     def _action(s):
-        return bool(s) and any(k in s for k in ("corrective", "requested", "reject", "blocked"))
-    issued = sum(1 for c in cases if _issued(c.status))
+        return bool(s) and not _closed(s) and any(k in s for k in ("corrective", "requested", "reject", "blocked"))
+    issued = sum(1 for c in cases if _issued(c.status) and not _closed(c.status))
+    closed = sum(1 for c in cases if _closed(c.status))
     action = sum(1 for c in cases if not _issued(c.status) and _action(c.status))
     by_status = {}
     reg = {}
@@ -16569,8 +16638,8 @@ def dashboard_summary(user=Depends(auth.get_current_user), db: Session = Depends
     events = [{"case_id": e.case_id, "from": e.from_status, "to": e.to_status, "action": e.action,
                "actor": e.actor_type, "hash": (e.row_hash or "")[:10]}
               for e in eq.order_by(models.WorkflowEvent.created_at.desc()).limit(6).all()]
-    return {"kpi": {"total": len(cases), "issued": issued, "action": action,
-                    "in_progress": len(cases) - issued - action},
+    return {"kpi": {"total": len(cases), "issued": issued, "action": action, "closed": closed,
+                    "in_progress": len(cases) - issued - action - closed},
             "by_status": by_status, "regions": regions,
             "unassigned": len(cases) - sum(reg.values()),
             "worklist": worklist, "readiness": readiness, "events": events}
@@ -16589,7 +16658,7 @@ def get_workflow(case_id: str, user=Depends(auth.get_current_user), db: Session 
         out.append({"key": k, "label": ko, "status": st,
                     "states": [{"code": s, "label": _STATE_KO.get(s, s)} for s in ss]})
     nexts = []
-    for ns in sorted(sm.TRANSITIONS.get(cur, set())):
+    for ns in sorted(sm.forward_states(cur)):
         ok, bl = sm.can_transition(db, c, ns)
         nexts.append({"to": ns, "to_label": _STATE_KO.get(ns, ns), "allowed": ok, "blockers": bl})
     return {"state": cur, "state_label": _STATE_KO.get(cur, cur), "pathway": c.pathway,
@@ -16635,10 +16704,12 @@ def admin_workflow_monitor(lang: str = Query("ko"),
         phase_key = phases[cur_idx][0] if cur_idx is not None else "branch"
         phase_label = (_wfp.get(phases[cur_idx][0]) or phases[cur_idx][1]) \
             if cur_idx is not None else (_wfp.get("branch") or "경로 결정 대기")
+        if cur in sm.TERMINAL_STATES:    # R1-1: 종결 케이스는 '경로 결정 대기'가 아니라 종결 단계로
+            phase_key, phase_label = "closed", {"ko": "종결", "en": "Closed", "id": "Ditutup"}.get(lang, "종결")
         pipeline[phase_key] = pipeline.get(phase_key, 0) + 1
-        nxt = sorted(sm.TRANSITIONS.get(cur, set()))
+        nxt = sorted(sm.forward_states(cur))
         next_state = nxt[0] if nxt else None
-        blockers = [b.get("code") for b in sm.evaluate_blocking(db, c)]
+        blockers = [] if cur in sm.TERMINAL_STATES else [b.get("code") for b in sm.evaluate_blocking(db, c)]
         if blockers:
             blocked_total += 1
         rank = _rank.get(cur, -1)
@@ -16656,6 +16727,7 @@ def admin_workflow_monitor(lang: str = Query("ko"),
                 gate_sum[key][gv] += 1
         rows.append({"case_id": c.case_id, "company": c.company_name, "pathway": c.pathway,
                      "status": cur, "status_label": _st.get(cur, cur),
+                     "closed": cur in sm.TERMINAL_STATES,
                      "phase_key": phase_key, "phase_label": phase_label,
                      "owner": _STAGE_OWNER.get(cur, "ops"),
                      "next_state": next_state,
@@ -17125,6 +17197,7 @@ def issue_quote(case_id: str, body: dict = None, user=Depends(auth.require_roles
     다시 부르면 새 버전(변경 요청 반영)."""
     import json as _json
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     if nav8.formal_flow_on() and nav8.formal_state(db, case_id) != "accepted":
         raise HTTPException(409, {"code": "FORMAL_NOT_ACCEPTED"})
     settings = _billing_settings(db, user.get("org_id"))
@@ -19210,6 +19283,7 @@ def materials_from_label(case_id: str, body: schemas.LabelJudgmentReq,
                          user=Depends(auth.require_roles("applicant", "consultant")),
                          db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     _assert_scope_open(c)   # 동결 후 원재료 변경 금지(감사 K5)
     from .ocr_pipeline import judge_label
     res = judge_label(_sandboxed_path(body.image_path), body.locale or "ko-KR")
@@ -19223,6 +19297,7 @@ def materials_from_label_b64(case_id: str, body: schemas.LabelB64Req,
                              user=Depends(auth.require_roles("applicant", "consultant")),
                              db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     _assert_scope_open(c)   # 동결 후 원재료 변경 금지(감사 K5)
     import tempfile
     raw = base64.b64decode(_validate_upload(body.image_b64, body.filename or "label.png"))  # 검증(§9.3)
@@ -19604,6 +19679,7 @@ def _auto_advance(db, c, to_state, user, action):
 def transition(case_id: str, body: schemas.TransitionReq,
                user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스는 어디로도 나갈 수 없다(R1-1) — 재개는 새 케이스
     # P0-1: 승인·발급 상태는 raw 전이 금지(전용 엔드포인트만), 그 외는 역할 게이트
     if body.to_state in sm.PROTECTED_STATES:
         raise HTTPException(403, {"code": "USE_DEDICATED_ENDPOINT", "state": body.to_state})
@@ -19628,6 +19704,80 @@ def transition(case_id: str, body: schemas.TransitionReq,
                 channels=["inapp", "sms"], role="applicant")
     db.commit()
     return {"from": frm, "to": body.to_state, "case": _case_dict(c)}
+
+
+# ---------- 케이스 종결 (R1-1) ----------
+_OPEN_INVOICE_STATES = ("draft", "invoice_created", "waiting_payment")
+
+
+def _close_case(db, c, user, to_status, reason, action="case.close", keep_approval_actions=()):
+    """케이스를 종결 상태로 넣는다(커밋은 호출자). 한 트랜잭션 안에서:
+    ① WorkflowEvent(사유 포함) ② 미결 인보이스(draft/invoice_created/waiting_payment) → cancelled
+    ③ 진행 중 승인요청(pending) → cancelled(keep_approval_actions 의 액션은 호출자가 직접 마무리하므로 둔다)
+    ④ 신청자·컨설턴트 알림. 상태 전이 가능 여부는 호출자가 sm.allowed 로 먼저 검사한다."""
+    frm = c.status
+    reason = (reason or "").strip()
+    cancelled_inv = []
+    for inv in (db.query(models.Invoice)
+                .filter(models.Invoice.case_id == c.case_id,
+                        models.Invoice.status.in_(_OPEN_INVOICE_STATES)).all()):
+        inv.status = "cancelled"
+        cancelled_inv.append(inv.invoice_id)
+    cancelled_ar = []
+    now = datetime.utcnow()
+    for ar in (db.query(models.ApprovalRequest)
+               .filter_by(case_id=c.case_id, status="pending").all()):
+        if ar.action_type in keep_approval_actions:
+            continue
+        ar.status = "cancelled"
+        ar.decided_at = now
+        ar.decision_reason = "CASE_CLOSED:" + to_status
+        cancelled_ar.append(ar.id)
+    sm.record_event(db, c, frm, to_status, action, user["role"], user["uid"],
+                    {"status": to_status, "from": frm, "reason": reason,
+                     "cancelled_invoices": cancelled_inv, "cancelled_approvals": cancelled_ar})
+    c.status = to_status
+    obs.inc("glhac_state_transition_total", {"to": to_status})
+    for _r in ("applicant", "consultant"):
+        _notify(db, c, "case.closed", msg=("case.closed." + to_status,
+                                           {"company": c.company_name or c.case_id[:8], "reason": reason or "-"}),
+                channels=["inapp", "sms"], role=_r)
+    return {"from": frm, "to": to_status, "cancelled_invoices": len(cancelled_inv),
+            "cancelled_approvals": len(cancelled_ar)}
+
+
+@app.post("/cases/{case_id}/close")
+def close_case(case_id: str, body: schemas.CaseCloseReq,
+               user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """케이스 종결 — status: withdrawn(업체 철회)|rejected(불합격·인증 불가)|cancelled(운영 취소), 사유 필수.
+    운영자(operator/admin)는 3종 모두, 신청 업체의 client_admin 은 자기 조직 케이스를 withdrawn 으로만.
+    revoked 는 여기로 못 온다 — 인증서 철회가 완료될 때 자동으로 들어간다."""
+    c = _get_case(db, case_id, user)
+    to = (body.status or "").strip().lower()
+    reason = (body.reason or "").strip()
+    if to == "revoked":
+        raise HTTPException(409, {"code": "USE_CERT_REVOKE",
+                                  "message": "revoked 는 인증서 철회 처리로만 들어갑니다"})
+    if to not in sm.CLOSE_REASON_STATES:
+        raise HTTPException(422, {"code": "INVALID_CLOSE_STATUS", "allowed": sorted(sm.CLOSE_REASON_STATES)})
+    role = user["role"]
+    if role in ("operator", "admin"):
+        pass
+    elif role == "applicant" and to == "withdrawn" and c.org_id == user.get("org_id"):
+        u = db.get(models.User, user["uid"])
+        if not u or (u.company_role or "client_admin") != "client_admin":
+            raise HTTPException(403, {"code": "NOT_COMPANY_ADMIN",
+                                      "message": "신청 철회는 기업 관리자만 할 수 있습니다"})
+    else:
+        raise HTTPException(403, {"code": "NOT_AUTHORIZED_CLOSE", "status": to, "have": role})
+    if not reason:
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    _assert_case_open(c)
+    if not sm.allowed(c.status, to):
+        raise HTTPException(409, {"code": "INVALID_TRANSITION", "from": c.status, "to": to})
+    out = _close_case(db, c, user, to, reason)
+    db.commit()
+    return {"case_id": case_id, "status": to, "reason": reason, "case": _case_dict(c), **out}
 
 
 # ---------- penyelia ----------

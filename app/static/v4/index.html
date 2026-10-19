@@ -1170,7 +1170,7 @@ const AUDQ = {
   final: c => ['audit_closed','hpas_evaluation_ready','final_package_preparation'].includes(c.status),
 };
 const SHELL_EXT = { sideFoot: [] };
-const _s8label = c => (typeof c.step8==='number' ? S8_LABELS[c.step8] : null) || c.step8_label || '-';
+const _s8label = c => (c.closed && typeof CC_ST!=='undefined' && CC_ST[c.status]) || (typeof c.step8==='number' ? S8_LABELS[c.step8] : null) || c.step8_label || '-';
 const _myRole = rc => (rc.main_auditor && rc.main_auditor === AUTH.username) ? '메인' : '동반';
 
 VIEWS['aud-home'] = () => {
@@ -1790,7 +1790,7 @@ VIEWS['ent-home'] = () => {
   <section class="summary">
     <div><span class="k">신청 번호</span><span class="v mono">${esc(c.case_id.slice(0,8))}</span></div>
     <div><span class="k">현재 단계</span><span class="v">${esc(_s8label(c))}</span></div>
-    <div><span class="k">상태</span><span class="v">${c.hold?'<span class="badge attn">보완 필요</span>':(c.done?'<span class="badge strong">완료</span>':'<span class="badge">진행 중</span>')}</span></div>
+    <div><span class="k">상태</span><span class="v">${c.closed&&typeof CC_badge==='function'?CC_badge(c):(c.hold?'<span class="badge attn">보완 필요</span>':(c.done?'<span class="badge strong">완료</span>':'<span class="badge">진행 중</span>'))}</span></div>
     <div><span class="k">전담 컨설턴트</span><span class="v">${esc(c.consultant||'배정 대기')}</span></div>
   </section>
   <section class="panel"><div class="panel-head"><h2>${esc(c.company_name)} 인증 진행 현황</h2><span class="muted mono">${esc(c.status||'')}</span></div>
@@ -1908,7 +1908,7 @@ VIEWS['cons-home'] = () => {
   <section class="panel"><div class="panel-head"><h2>담당 기업 현황</h2><span class="muted">실데이터</span></div>
     ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:160px">기업</th><th>진행 단계</th><th style="min-width:160px">다음 할 일</th><th>상태</th></tr></thead><tbody>
     ${list.map(c=>`<tr><td><b>${esc(c.company_name)}</b></td><td><span class="badge">${esc(_s8label(c))}</span></td><td>${esc(c.next_action||'-')}</td>
-      <td>${c.hold?'<span class="badge attn">보완 필요</span>':(c.done?'<span class="badge strong">완료</span>':'<span class="muted mono">'+esc(c.status||'')+'</span>')}</td></tr>`).join('')}
+      <td>${c.closed&&typeof CC_badge==='function'?CC_badge(c):c.hold?'<span class="badge attn">보완 필요</span>':(c.done?'<span class="badge strong">완료</span>':'<span class="muted mono">'+esc(c.status||'')+'</span>')}</td></tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">담당 기업이 없습니다. [신규 인증기업] 메뉴에서 초대 링크를 만들어 보세요.</p>'}
   </section>
   ${(RS.todo||[]).length?`<section class="panel"><div class="panel-head"><h2>처리할 일</h2></div><ul class="rows">${RS.todo.map(x=>`<li class="row"><div><b>${esc(x.company_name)}</b><span class="muted">${esc(x.step8_label)} · ${esc(x.reason)}</span></div></li>`).join('')}</ul></section>`:''}`;
@@ -3274,6 +3274,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <script src="js/case-new.js"></script>
 <script src="js/invoice.js"></script>
 <script src="js/renew.js"></script>
+<script src="js/case-close.js"></script>
 <script src="js/users.js"></script>
 <script src="js/package-check.js"></script>
 <script src="js/two-person.js"></script>

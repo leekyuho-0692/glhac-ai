@@ -157,7 +157,10 @@ def compute_step8(db, c):
     st = c.status or "onboarding"
     step = _BASE_STEP.get(st, 0)
     owner = _OWNER.get(st, "ops")
-    done = st in _DONE_STATES
+    # R1-1: 종결 4종(withdrawn·rejected·revoked·cancelled)은 진행 중 업무가 아니다 — done 으로 취급해
+    # 할 일·미처리 건수·진행 중 집계에서 빠지고, closed 로 따로 표시한다. step 은 0 에 둔다(진행 단계 없음).
+    closed = st in sm.TERMINAL_STATES
+    done = st in _DONE_STATES or closed
     hold_flag = False
     el = fm = None
 
@@ -196,6 +199,9 @@ def compute_step8(db, c):
         if fd and fd.decision and fd.decision not in ("approved", "conditional"):
             hold = True
 
+    if closed:
+        hold, owner = False, "ops"
     return {"step": step, "step_label": STEP8_LABELS[step],
-            "done": done, "hold": hold, "owner": owner,
+            "done": done, "closed": closed, "closed_status": st if closed else None,
+            "hold": hold, "owner": owner,
             "eligibility": el, "formal": fm}

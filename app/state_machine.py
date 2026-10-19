@@ -46,13 +46,40 @@ TRANSITIONS = {
 }
 
 
+# ---- 케이스 종결(terminal) 상태 — R1-1 ----
+# 사유별로 나눈다: withdrawn=업체 철회·포기 / rejected=심사 불합격·인증 불가 판정 /
+# revoked=발급 인증서 철회 / cancelled=운영 취소(중복·오등록 등).
+# 종결 상태에서 나가는 전이는 없다 — 재개는 새 케이스(갱신 흐름이 새 케이스를 만드는 방식)로 한다.
+TERMINAL_STATES = {"withdrawn", "rejected", "revoked", "cancelled"}
+# 전용 종결 엔드포인트(POST /cases/{id}/close)로 갈 수 있는 사유(revoked 는 인증서 철회 처리가 자동으로 넣는다)
+CLOSE_REASON_STATES = {"withdrawn", "rejected", "cancelled"}
+# revoked 는 인증서가 발급된 이후 상태에서만
+REVOKE_ENTRY_STATES = {"certificate_issued", "post_certification_monitoring",
+                       "change_impact", "renewal_preparation"}
+for _frm in list(TRANSITIONS):
+    TRANSITIONS[_frm] = set(TRANSITIONS[_frm]) | CLOSE_REASON_STATES
+    if _frm in REVOKE_ENTRY_STATES:
+        TRANSITIONS[_frm].add("revoked")
+for _t in TERMINAL_STATES:
+    TRANSITIONS[_t] = set()      # 종결에서 나가는 전이 없음(명시)
+
+
+def is_terminal(status):
+    return status in TERMINAL_STATES
+
+
+def forward_states(frm):
+    """업무 진행상 '다음 단계' 후보 — 종결 상태로의 전이는 제외(종결은 전용 엔드포인트로만)."""
+    return TRANSITIONS.get(frm, set()) - TERMINAL_STATES
+
+
 def allowed(frm, to):
     return to in TRANSITIONS.get(frm, set())
 
 
 # ---- 전이 권한 (P0-1) — /transition 우회로 승인·발급 무력화 방지 ----
 # raw /transition으로 진입 금지(전용 엔드포인트만): 최종승인·발급
-PROTECTED_STATES = {"fatwa_approved", "certificate_issued"}
+PROTECTED_STATES = {"fatwa_approved", "certificate_issued"} | TERMINAL_STATES   # 종결은 POST /cases/{id}/close 로만
 # 진입(to_state)에 필요한 역할. admin은 항상 허용. 미정의 상태는 DEFAULT.
 TRANSITION_ROLES = {
     "committee_verification": {"operator"},                     # SEHATI ketetapan = 최종 결제자
