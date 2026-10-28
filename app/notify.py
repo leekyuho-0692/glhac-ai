@@ -195,6 +195,7 @@ def channel_status():
       - inapp    : 항상 connected(DB 저장)
       - sms/whatsapp : Twilio 크리덴셜 완비 시 connected, 아니면 unset
       - kakao    : 대행사 HTTP API 실구현(P3) — URL+KEY 완비 시 connected, 아니면 unset
+      - email    : SMTP 호스트 + 보내는 주소 완비 시 connected, 아니면 unset
     """
     e = os.environ.get
     twilio_core = bool(e("GLHAC_TWILIO_SID") and e("GLHAC_TWILIO_TOKEN"))
@@ -202,6 +203,8 @@ def channel_status():
     wa_ok = bool(twilio_core and e("GLHAC_TWILIO_WA_FROM"))
     wa_tpl = bool(e("GLHAC_TWILIO_WA_TEMPLATE_SID"))
     kakao_ok = bool(e("GLHAC_KAKAO_API_URL") and e("GLHAC_KAKAO_API_KEY"))
+    # _send_email 과 같은 조건: 호스트 + 보내는 주소(FROM 또는 USER)
+    email_ok = bool(e("GLHAC_SMTP_HOST") and (e("GLHAC_SMTP_FROM") or e("GLHAC_SMTP_USER")))
     return {
         "inapp": {"configured": True, "implemented": True, "status": "connected"},
         "sms": {"configured": sms_ok, "implemented": True,
@@ -212,6 +215,8 @@ def channel_status():
                                if wa_ok else "unset"},
         "kakao": {"configured": kakao_ok, "implemented": True,
                   "status": "connected" if kakao_ok else "unset"},
+        "email": {"configured": email_ok, "implemented": True,
+                  "status": "connected" if email_ok else "unset"},
     }
 
 

@@ -4661,7 +4661,7 @@ def scan_expiry(user=Depends(auth.require_roles()), db: Session = Depends(get_db
         _notify(db, c, "expiry_soon", "인증서 만료 임박 · %d일 전" % th,
                 "%s — 인증서 %s 만료 D-%d (만료 %s). 갱신하세요." % (
                     c.company_name or "", cert.certificate_no or "", days, cert.expiry_date),
-                channels=["inapp", "sms", "kakao", "whatsapp"], role="applicant")
+                channels=["inapp", "sms", "email", "kakao", "whatsapp"], role="applicant")
         created += 1
     db.commit()
     return {"created": created}
@@ -8942,7 +8942,7 @@ def committee_decide(case_id: str, body: schemas.CommitteeDecisionReq,
                         {"reason": reason or None})
         _notify(db, c, "committee_approved", "KFPH 승인",
                 "%s — 자기선언 KFPH(Komite Fatwa Produk Halal) 판정 승인. 인증서 발급이 가능합니다." % (c.company_name or ""),
-                channels=["inapp", "sms"], role="applicant")
+                channels=["inapp", "sms", "email"], role="applicant")
         db.commit()
         return {"case_id": case_id, "decision": "approved", "fatwa_status": "approved"}
     # reject
@@ -8951,7 +8951,7 @@ def committee_decide(case_id: str, body: schemas.CommitteeDecisionReq,
                     {"reason": reason})
     _notify(db, c, "committee_rejected", "KFPH 반려",
             "%s — 자기선언 KFPH(Komite Fatwa Produk Halal) 판정 반려: %s" % (c.company_name or "", reason),
-            channels=["inapp", "sms"], role="applicant")
+            channels=["inapp", "sms", "email"], role="applicant")
     db.commit()
     return {"case_id": case_id, "decision": "rejected", "reason": reason}
 
@@ -12898,7 +12898,7 @@ def add_lph(case_id: str, body: schemas.LphAssignReq,
     db.add(x)
     sm.record_event(db, c, c.status, c.status, "audit.lph.assign", user["role"], user["uid"],
                     {"lph": body.lph_name})
-    _notify(db, c, "audit_scheduled", channels=["inapp", "sms"], role="applicant",
+    _notify(db, c, "audit_scheduled", channels=["inapp", "sms", "email"], role="applicant",
             msg=("audit_scheduled.lph", {"company": c.company_name or "",
                                          "lph": body.lph_name}))
     db.commit()
@@ -12918,7 +12918,7 @@ def create_audit_plan(case_id: str, body: schemas.AuditPlanReq,
                     {"scheduled_date": body.scheduled_date})
     _notify(db, c, "audit_scheduled", "현장심사 일정",
             "%s — 현장심사가 %s 로 예정되었습니다." % (c.company_name or "", body.scheduled_date),
-            channels=["inapp", "sms"], role="applicant")
+            channels=["inapp", "sms", "email"], role="applicant")
     db.commit()
     return {"id": p.id, "scheduled_date": p.scheduled_date, "status": p.status}
 
@@ -12940,7 +12940,7 @@ def propose_audit_dates(plan_id: str, body: dict = None,
     sm.record_event(db, c, c.status, c.status, "audit.plan.propose", user["role"], user["uid"], {"dates": dates})
     _notify(db, c, "audit_scheduled", "현장심사 일정변경 제안",
             "%s — 현장심사 후보일 제안: %s (택1)" % (c.company_name or "", ", ".join(dates)),
-            channels=["inapp", "sms"], role="applicant")
+            channels=["inapp", "sms", "email"], role="applicant")
     db.commit()
     return {"id": p.id, "proposed": dates, "note": p.note, "status": p.status}
 
@@ -13080,7 +13080,7 @@ def onsite_schedule_confirm(case_id: str, body: dict = None,
     _notify(db, c, "audit_scheduled", "현장심사 일정 확정",
             "%s — 현장심사 방문일이 %s%s 로 확정되었습니다." % (
                 c.company_name or "", date, (" " + tm) if tm else ""),
-            channels=["inapp", "sms"], role="applicant")
+            channels=["inapp", "sms", "email"], role="applicant")
     db.commit()
     return _onsite_sched_state(db, case_id)
 
@@ -13872,7 +13872,7 @@ def _do_issue_certificate(db, c, user, reason=None):
         cert.frozen_product_ids = [p.product_id for p in db.query(models.Product).filter_by(case_id=case_id)]
         cert.frozen_material_ids = [m.material_id for m in db.query(models.Material).filter_by(case_id=case_id)]
     _notify(db, c, "certificate_issued",
-            channels=["inapp", "sms", "kakao", "whatsapp"], role="applicant",
+            channels=["inapp", "sms", "email", "kakao", "whatsapp"], role="applicant",
             msg=("certificate_issued", {"company": c.company_name or "",
                                         "cert_no": cert.certificate_no}))
     try:
@@ -14925,7 +14925,7 @@ def _cert_status_change(db, case_id, user, action, new_status, from_status, reas
                     {"certificate_no": cert.certificate_no, "reason": reason,
                      "from": from_status, "to": new_status})
     _notify(db, c, event, title, "%s — %s" % (c.company_name or "", body),
-            channels=["inapp", "sms"], role="applicant")
+            channels=["inapp", "sms", "email"], role="applicant")
     db.commit()
     # 상태 변경(정지·철회·재개)도 물류면 logistics-audit 로 push. action 에서 이벤트 파생.
     _sync_logistics_cert(db, c, cert, action)   # action = certificate.suspend|withdraw|reactivate
@@ -15022,7 +15022,7 @@ def _do_revoke_certificate(db, c, user, reason=None):
                     {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None})
     _notify(db, c, "certificate_revoked", "인증서 철회",
             "%s — 할랄 인증서가 철회되었습니다." % (c.company_name or ""),
-            channels=["inapp", "sms"], role="applicant")
+            channels=["inapp", "sms", "email"], role="applicant")
     # R1-1: 케이스에 다른 유효(active/suspended) 인증서가 없으면 케이스도 revoked 로 종결.
     # 이 철회를 승인하는 ApprovalRequest 는 호출한 쪽(approve)이 approved 로 마무리하므로 취소하지 않는다.
     closed = None
@@ -20006,7 +20006,7 @@ def transition(case_id: str, body: schemas.TransitionReq,
     if body.to_state in _NOTIFY_ON:
         ev = _NOTIFY_ON[body.to_state]
         _notify(db, c, ev, msg=(ev, {"company": c.company_name or ""}),
-                channels=["inapp", "sms"], role="applicant")
+                channels=["inapp", "sms", "email"], role="applicant")
     db.commit()
     _cd = _case_dict(c)
     _cd["warnings"] = warnings
@@ -20048,7 +20048,7 @@ def _close_case(db, c, user, to_status, reason, action="case.close", keep_approv
     for _r in ("applicant", "consultant"):
         _notify(db, c, "case.closed", msg=("case.closed." + to_status,
                                            {"company": c.company_name or c.case_id[:8], "reason": reason or "-"}),
-                channels=["inapp", "sms"], role=_r)
+                channels=["inapp", "sms", "email"], role=_r)
     return {"from": frm, "to": to_status, "cancelled_invoices": len(cancelled_inv),
             "cancelled_approvals": len(cancelled_ar)}
 
