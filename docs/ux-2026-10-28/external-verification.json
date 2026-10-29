@@ -1,0 +1,23 @@
+{
+  "health": {
+    "status": "ok",
+    "service": "glhac-ai",
+    "version": "0.2.0",
+    "build": "1973875 2026-10-28 17:18:30 KST + v4-ux-20261028T093542Z",
+    "db": true,
+    "demo": false
+  },
+  "/ui/v4/": {
+    "status": 200,
+    "bytes": 303374
+  },
+  "/ui/v4/js/ux-focus.js?v=20261023-ux3": {
+    "status": 200,
+    "bytes": 7690
+  },
+  "/ui/v4/js/ent-profile.js?v=20261023-ux3": {
+    "status": 200,
+    "bytes": 17080
+  },
+  "root_redirect": "https://glhac.co.kr/ui/v4/"
+}

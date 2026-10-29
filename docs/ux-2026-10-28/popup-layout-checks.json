@@ -1,0 +1,35 @@
+[
+  {
+    "bodyHeight": 448,
+    "bodyScroll": 1228,
+    "dialogBottom": 588,
+    "dialogTop": 12,
+    "fits": true,
+    "footerBottom": 587,
+    "height": 600,
+    "scrollable": true,
+    "width": 390
+  },
+  {
+    "bodyHeight": 238,
+    "bodyScroll": 1228,
+    "dialogBottom": 378,
+    "dialogTop": 12,
+    "fits": true,
+    "footerBottom": 377,
+    "height": 390,
+    "scrollable": true,
+    "width": 844
+  },
+  {
+    "bodyHeight": 328,
+    "bodyScroll": 1228,
+    "dialogBottom": 468,
+    "dialogTop": 12,
+    "fits": true,
+    "footerBottom": 467,
+    "height": 480,
+    "scrollable": true,
+    "width": 360
+  }
+]

@@ -270,14 +270,21 @@ td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabu
 .sms{font-size:12.5px;background:var(--sunken);padding:12px 14px;border-radius:var(--r);white-space:pre-wrap;color:var(--ink-2)}
 
 /* modal */
-.overlay{position:fixed;inset:0;z-index:50;background:color-mix(in srgb,#000 55%,transparent);overflow-y:auto;padding:32px 16px calc(32px + env(safe-area-inset-bottom,0px));display:flex}
-.dialog{margin:auto;width:100%;max-width:580px;background:var(--surface);border:1px solid var(--ink);border-radius:6px;display:flex;flex-direction:column}
-.dialog-head{position:sticky;top:0;background:var(--surface);display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);border-radius:6px 6px 0 0}
-.dialog-head h3{font-size:16px}
+.overlay{--dialog-gap:24px;position:fixed;inset:0;z-index:50;background:color-mix(in srgb,#000 55%,transparent);height:100vh;height:100dvh;overflow:hidden;padding:max(var(--dialog-gap),env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(var(--dialog-gap),env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;align-items:center;justify-content:center}
+.dialog{margin:auto;width:100%;max-width:580px;max-height:100%;min-height:0;min-width:0;background:var(--surface);border:1px solid var(--ink);border-radius:6px;display:flex;flex-direction:column}
+.dialog-head{flex:0 0 auto;background:var(--surface);display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);border-radius:6px 6px 0 0}
+.dialog-head h3{font-size:16px;min-width:0;overflow-wrap:anywhere}
 .x{border:1px solid var(--line-2);background:var(--surface);width:34px;height:34px;border-radius:var(--r);cursor:pointer;font-size:18px;line-height:1;flex:none}
-.dialog-body{padding:20px;font-size:13.5px;display:flex;flex-direction:column;gap:12px;color:var(--ink-2)}
+.dialog-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:20px;font-size:13.5px;display:flex;flex-direction:column;gap:12px;color:var(--ink-2)}
+.dialog-body>*{flex-shrink:0}
 .dialog-body ol{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px}
-.dialog-foot{padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.dialog-foot{flex:0 0 auto;padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+
+@media (max-width:600px),(max-height:600px){
+  .overlay{--dialog-gap:12px}
+  .dialog-head,.dialog-foot{padding:12px 16px}
+  .dialog-body{padding:16px}
+}
 
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);background:var(--ink);color:var(--on-ink);padding:11px 18px;border-radius:var(--r);font-size:13.5px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:60;max-width:calc(100% - 32px)}
 .toast.show{opacity:1;transform:translate(-50%,0)}
@@ -786,21 +793,21 @@ function renderShell(){
   const ent = S.role==='ent';
   let who, whoSub, meta;
   if(ent){ const rc = (RS.cases||[])[0]; who = (rc && rc.company_name) || AUTH.username || ''; whoSub = AUTH.username || ''; meta = who + (AUTH.username && who!==AUTH.username ? ' · ' + AUTH.username : ''); }
-  else { who = AUTH.username || ''; whoSub = t(roleByCode(S.role).label); meta = whoSub + (who ? ' · ' + who : ''); }
+  else { who = AUTH.username || ''; whoSub = (typeof UX_roleLabel==='function'?UX_roleLabel():t(roleByCode(S.role).label)); meta = whoSub + (who ? ' · ' + who : ''); }
   return `<div class="shell">
     <aside class="sidebar">
-      <div class="side-brand">${brand()}<div class="side-ws">${t(roleByCode(S.role).label)}</div></div>
+      <div class="side-brand">${brand()}<div class="side-ws">${(typeof UX_roleLabel==='function'?UX_roleLabel():t(roleByCode(S.role).label))}</div></div>
       <button type="button" class="menu-btn" aria-label="메뉴" aria-expanded="false" aria-controls="side-nav" onclick="App.menuToggle(this)">☰</button>
       <nav class="side-nav" id="side-nav" aria-label="주 메뉴">${NAV[S.role].map(v=>`${(NAV_GROUP[S.role]||{})[v]?`<div class="nav-grp">${(NAV_GROUP[S.role])[v]}</div>`:''}<button class="nav-item ${S.view===v?'on':''}" onclick="App.go('${v}')" ${S.view===v?'aria-current="page"':''}><span>${t('nav.'+v)}</span>${navCount(v)}</button>`).join('')}</nav>
       <div class="side-foot">
         ${SHELL_EXT.sideFoot.map(f=>f()).join('')}
-        <div class="side-user"><b>${esc(who)}</b><span>${esc(whoSub)}</span></div>
+        <div class="side-user"><b data-noi18n>${esc(who)}</b><span>${esc(whoSub)}</span></div>
         ${langSelect('lang-side')}
         <button class="btn btn-block" onclick="App.logout()">${t('logout')}</button>
       </div>
     </aside>
     <main class="main">
-      <header class="page-head"><div><div class="eyebrow">${t('sys')}</div><h1>${t('nav.'+S.view)}</h1></div><div class="head-meta">${esc(meta)}</div></header>
+      <header class="page-head"><div><div class="eyebrow">${t('sys')}</div><h1>${t('nav.'+S.view)}</h1></div><div class="head-meta" data-noi18n>${esc(meta)}</div></header>
       <div class="page">${VIEWS[S.view]()}</div>
     </main></div>`;
 }
@@ -1793,10 +1800,10 @@ VIEWS['ent-home'] = () => {
     <div><span class="k">상태</span><span class="v">${c.closed&&typeof CC_badge==='function'?CC_badge(c):(c.hold?'<span class="badge attn">보완 필요</span>':(c.done?'<span class="badge strong">완료</span>':'<span class="badge">진행 중</span>'))}</span></div>
     <div><span class="k">전담 컨설턴트</span><span class="v">${esc(c.consultant||'배정 대기')}</span></div>
   </section>
-  <section class="panel"><div class="panel-head"><h2>${esc(c.company_name)} 인증 진행 현황</h2><span class="muted mono">${esc(c.status||'')}</span></div>
+  <section class="panel"><div class="panel-head"><h2><span data-noi18n>${esc(c.company_name)}</span> 인증 진행 현황</h2><span class="muted mono">${esc(c.hold?'보완 필요':_s8label(c))}</span></div>
     ${_stepper8(typeof c.step8==='number'?c.step8:0, c.hold, c.done)}
     ${c.next_action?`<div class="note ${c.hold?'attn':''}"><b>${c.hold?'보완 필요':'다음 단계'}</b><p>${esc(c.next_action)}</p></div>`:''}
-    <dl class="dl"><div><dt>담당 심사원</dt><dd>${esc(c.main_auditor||'배정 전')}</dd></div><div><dt>인증 분야</dt><dd>${esc(c.scheme||'-')}</dd></div></dl>
+    <dl class="dl"><div><dt>담당 심사원</dt><dd>${esc(c.main_auditor||'배정 전')}</dd></div><div><dt>인증 분야</dt><dd>${esc(({product:'제품 인증',logistics:'물류 인증'})[c.scheme]||c.scheme||'-')}</dd></div></dl>
   </section>`;
 };
 
@@ -2224,6 +2231,7 @@ App.entAddProduct = async function(cid){
   const category=(($('#pr-cat')||{}).value||'').trim()||null;
   const r=await apiFetch('/cases/'+cid+'/products',{method:'POST',body:JSON.stringify({name,category})});
   if(!r.ok) return toast(await apiErr(r, '품목 추가에 실패했습니다.'));
+  if(typeof ENTP_PRODUCTS!=='undefined') ENTP_PRODUCTS.delete(ENTP_key(cid));
   await loadEntProd(cid); render(); toast('품목을 추가했습니다.');
 };
 App.entDelProduct = async function(cid, pid){
@@ -2234,6 +2242,9 @@ App.entDelProduct = async function(cid, pid){
 const BLOCK_KO = {NIB_MISSING:'사업자등록번호(NIB) 누락 — 사업자등록증을 문서함에 올리면 자동 입력됩니다',
   NO_PRODUCT:'인증 품목 미등록', COMPANY_NAME_MISSING:'기업명 누락', NO_JASA:'물류 서비스 범위 미선택'};
 App.entSubmitApp = async function(cid){
+  if(typeof ENTP_PRODUCTS!=='undefined' && Object.values(ENTP_PRODUCTS.get(ENTP_key(cid))||{}).some(Boolean)) return toast('입력 중인 품목을 먼저 추가해 주세요.');
+  if(RS.ENTF && RS.ENTF.org && RS.ENTF.org[cid] && RS.ENTF.org[cid]._draft) return toast('할랄 관리 조직의 변경 내용을 먼저 저장해 주세요.');
+  if(typeof ENTP_saveProfile==='function' && !await ENTP_saveProfile({quiet:true})) return;
   const r=await apiFetch('/cases/'+cid+'/submit-application',{method:'POST'});
   if(!r.ok){ const d=await r.json().catch(()=>({})); const det=d.detail||{};
     if(det.code==='TRANSITION_BLOCKED'){ const bs=(det.blockers||[]).map(b=>BLOCK_KO[b.code]||b.code);
@@ -3250,9 +3261,9 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <script src="js/feedback.js"></script>
 <script src="js/ops-pay.js"></script>
 <script src="js/ops-refund.js"></script>
-<script src="js/ent-profile.js"></script>
-<script src="js/ent-facilities.js"></script>
-<script src="js/ent-logistics.js"></script>
+<script src="js/ent-profile.js?v=20261023-ux3"></script>
+<script src="js/ent-facilities.js?v=20261023-ux3"></script>
+<script src="js/ent-logistics.js?v=20261023-ux3"></script>
 <script src="js/cons-sjph.js"></script>
 <script src="js/self-declare.js"></script>
 <script src="js/pen-workspace.js"></script>
@@ -3261,13 +3272,13 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <script src="js/pay-docs.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/sha-opinion.js"></script>
-<script src="js/ent-apply-more.js"></script>
-<script src="js/adm-review.js"></script>
+<script src="js/ent-apply-more.js?v=20261023-ux3"></script>
+<script src="js/adm-review.js?v=20261023-ux3"></script>
 <script src="js/adm-cert-more.js"></script>
 <script src="js/ops-tenant.js"></script>
 <script src="js/gen-docs-more.js"></script>
 <script src="js/i18n-dict.js"></script>
-<script src="js/i18n-dom.js"></script>
+<script src="js/i18n-dom.js?v=20261023-ux3"></script>
 <script src="js/handoff.js"></script>
 <script src="js/legacy-link.js"></script>
 <script src="js/flow-actions.js"></script>
@@ -3280,7 +3291,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <script src="js/two-person.js"></script>
 <script src="js/formal-app.js"></script>
 <script src="js/billing-adm.js"></script>
-<script src="js/billing-ent.js"></script>
+<script src="js/billing-ent.js?v=20261023-ux3"></script>
 <script src="js/sector.js"></script>
 <script src="js/sharia-quorum.js"></script>
 <script src="js/canonical.js"></script>
@@ -3293,7 +3304,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <script src="js/mat-tools.js"></script>
 <script src="js/sjph-builder.js"></script>
 <script src="js/audit-deploy.js"></script>
-<script src="js/case-insight.js"></script>
+<script src="js/case-insight.js?v=20261023-ux3"></script>
 <script src="js/mat-insight.js"></script>
 <script src="js/audit-chain.js"></script>
 <script src="js/case-tools.js"></script>
@@ -3302,5 +3313,6 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <!--MODULES-->
 <script src="js/mail.js"></script>
 <script src="js/signup-consultant.js"></script>
+<script src="js/ux-focus.js?v=20261023-ux3"></script>
 </body>
 </html>

@@ -46,7 +46,7 @@ function BLE_quotePanel(cid, d){
 
 function BLE_contractPanel(cid, d){
   const ct = d.contract;
-  if(!ct) return `<section class="panel"><div class="panel-head"><h2>계약서 서명 (갑: 인증기업)</h2></div><p class="empty">계약서 발송 대기</p></section>`;
+  if(!ct || ct.exists===false || !ct.contract_id) return `<section class="panel"><div class="panel-head"><h2>계약서 서명 (갑: 인증기업)</h2></div><p class="empty">계약서 발송 대기</p></section>`;
   const aOk = BLE_signedOk(ct,'A'), bOk = BLE_signedOk(ct,'B');
   const done = aOk && bOk;
   return `<section class="panel">
@@ -61,6 +61,7 @@ function BLE_contractPanel(cid, d){
 }
 
 function BLE_payPanel(cid, d){
+  if(!(d.invoices||[]).length) return '';
   const s = d.settings || {};
   const ba = s.bank_account || {};
   const inv = (d.invoices||[]).slice().sort((x,y)=>(Number(x.round)||0)-(Number(y.round)||0));

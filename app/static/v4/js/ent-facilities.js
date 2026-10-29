@@ -93,7 +93,8 @@ function ENTF_orgMembersTable(rows, editable) {
 function ENTF_orgPanel(cid) {
   RS.ENTF = RS.ENTF || {};
   RS.ENTF.org = RS.ENTF.org || {};
-  const d = RS.ENTF.org[cid];
+  const saved = RS.ENTF.org[cid];
+  const d = saved && saved._draft || saved;
   let body;
   if (d === undefined) {
     if (RS.ENTF._orgLoading !== cid) { RS.ENTF._orgLoading = cid; ENTF_loadOrg(cid).then(() => { RS.ENTF._orgLoading = null; render(); }); }
@@ -117,14 +118,26 @@ function ENTF_orgPanel(cid) {
           </tr>`).join('')
         }</tbody></table></div>` : '<p class="muted">Penyelia 정보가 없습니다.</p>'}
       </fieldset>
-      <fieldset><legend>부서 대표 (members)</legend>
+      <fieldset><legend>부서별 담당자</legend>
         ${ENTF_orgMembersTable(mem, true)}
-        <div style="margin-top:8px"><button class="btn btn-sm" onclick="App.entfOrgAddMember()">행 추가</button></div>
+        <div style="margin-top:8px"><button class="btn btn-sm" onclick="function ENTF_captureOrg(e){
+  const el=e.target, panel=el.closest && el.closest('[data-entf-org]');
+  if(!panel || !el.dataset.k) return;
+  const d=RS.ENTF.org[panel.dataset.entfOrg]; if(!d || d.error) return;
+  if(!d._draft) d._draft=JSON.parse(JSON.stringify(d));
+  const group=el.hasAttribute('data-org-member') ? 'members' : 'penyelia';
+  const index=Number(el.getAttribute(group==='members'?'data-org-member':'data-org-pq'));
+  if(d._draft[group] && d._draft[group][index]) d._draft[group][index][el.dataset.k]=el.type==='checkbox'?el.checked:el.value;
+}
+document.addEventListener('input',ENTF_captureOrg);
+document.addEventListener('change',ENTF_captureOrg);
+
+App.entfOrgAddMember()">행 추가</button></div>
       </fieldset>
       ${canCall('PUT','/cases/{}/halal-org')?`<div style="margin-top:10px"><button class="btn btn-primary" onclick="App.entfOrgSave('${jsq(cid)}')">저장</button></div>`:''}
     `;
   }
-  return `<section class="panel"><div class="panel-head"><h2>할랄 관리 조직</h2></div>${body}</section>`;
+  return `<section class="panel" data-entf-org="${esc(cid)}"><div class="panel-head"><h2>할랄 관리 조직</h2></div>${body}</section>`;
 }
 
 (function ENTF_wrap(){
@@ -259,11 +272,14 @@ App.entfOrgSave = async function(cid){
     quals[name] = quals[name] || { is_muslim: false, sk: false, training_cert: false };
     quals[name][k] = !!el.checked;
   });
+  const draftSnapshot=JSON.stringify(d._draft);
   const body = { members: memberList };
   if (Object.keys(quals).length) body.penyelia_quals = quals;
   const res = await ENTF_req('/cases/' + cid + '/halal-org', { method: 'PUT', body: JSON.stringify(body) }, null);
   if (res.error) { toast('저장에 실패했습니다.' + (res.code ? ' (' + res.code + ')' : '')); return; }
+  const pending=JSON.stringify(d._draft)!==draftSnapshot ? d._draft : null;
   RS.ENTF.org[cid] = res.data;
+  if(pending) RS.ENTF.org[cid]._draft=pending;
   render();
   toast('할랄 관리 조직을 저장했습니다.');
 };

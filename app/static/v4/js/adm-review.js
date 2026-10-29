@@ -85,7 +85,7 @@ function ADMR_intakeSection(list, group, title){
       ${pending&&canCall('POST','/ops/companies/{}/approve')?`<button class="btn btn-sm btn-primary" ${busy?'disabled':''} onclick="App.admrApprove('${c.case_id}')">${busy?'처리 중…':'승인'}</button>`:''}
       ${pending&&canCall('POST','/ops/companies/{}/reject')?`<button class="btn btn-sm" ${busy?'disabled':''} onclick="App.admrReject('${c.case_id}')">거절</button>`:''}
       ${!pending?`<button class="btn btn-sm" disabled>${label}</button>`:''}
-      ${c.draft_state!=='returned'&&c.company_decision!=='rejected'&&canCall('POST','/cases/{}/return-application')?`<button class="btn btn-sm btn-ghost" ${busy?'disabled':''} onclick="App.admrReturn('${c.case_id}')">신청서 반려(보완 요청)</button>`:''}
+      ${!['onboarding','application_draft'].includes(c.status)&&c.draft_state!=='returned'&&c.company_decision!=='rejected'&&canCall('POST','/cases/{}/return-application')?`<button class="btn btn-sm btn-ghost" ${busy?'disabled':''} onclick="App.admrReturn('${c.case_id}')">신청서 반려(보완 요청)</button>`:''}
     </div>
   </li>`; }).join('');
   return `<section class="panel" aria-label="${title}">
@@ -103,7 +103,7 @@ const ADMR_intakeHtml = () => {
   const pending=list.filter(ADMR_isPending).sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||''))||a.case_id.localeCompare(b.case_id));
   const processed=list.filter(c=>!ADMR_isPending(c));
   return ADMR_intakeSection(pending,'pending','신청 접수 처리 · 승인 대기')+
-    ADMR_intakeSection(processed,'processed','접수 처리 완료 · 작성/보완 중');
+    ADMR_intakeSection(processed,'processed','작성·보완 중 또는 접수 처리된 신청');
 };
 { const f = VIEWS['adm-home']; VIEWS['adm-home'] = () => ADMR_intakeHtml() + (f ? f() : ''); }
 

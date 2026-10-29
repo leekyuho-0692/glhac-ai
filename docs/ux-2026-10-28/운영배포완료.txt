@@ -1,0 +1,24 @@
+운영 배포 완료 — 2026-10-28
+운영 주소: https://glhac.co.kr/ui/v4/
+배포 ID: v4-ux-20261028T093542Z
+범위: 이전 v4 UX 수정 + 공통 팝업 하단 잘림 수정. 운영본의 별도 변경을 보존한 누적 패치.
+변경 파일: 12개 제품 파일 + app/VERSION, 합계 13개 해시 검증.
+
+검증 결과
+- 최신 운영 소스에 패치 충돌 없음.
+- 운영 소스+패치 기준 Python 4개, JavaScript 6개 테스트 통과.
+- 코드 백업 및 SQLite backup API로 DB 백업 완료, 백업 quick_check 정상.
+- 배정 시각 assigned_at 컬럼 적용 확인.
+- glhac-app active, /health status=ok, db=true, demo=false.
+- 외부 HTTPS /health에서 새 빌드 ID 확인.
+- /ui/v4/ 및 변경 JavaScript HTTP 200, JS 해시 확인.
+- 루트 /가 /ui/v4/로 이동함을 확인.
+- 운영 브라우저에서 공통 팝업을 읽기 전용으로 열어 390×600에서도 하단 버튼이 화면 안에 들어옴을 확인.
+- 운영 계정 생성, 계약/결제 실행 및 고객 데이터 입력은 하지 않음.
+
+서버 백업: /opt/glhac/backups/v4-ux-20261028T093542Z
+서버 배포 자료: /opt/glhac/deploy/v4-ux-20261028T093542Z
+결과 기록: 위 백업 경로의 result.json
+복구: 서비스를 중지하고 백업 app의 변경 파일을 복원한 뒤 신규 ux-focus.js를 제거하고 재시작한다. 추가된 nullable assigned_at 컬럼은 이전 코드와 호환된다. DB 복원은 이후 사용자 변경을 덮어쓸 수 있으므로 자동 실행하지 않는다.
+
+첫 시도는 서버 기본 Python의 경로 인자 호환 문제로 제품 파일 적용 전에 중단했고 기존 서비스를 다시 시작했다. 실제 서비스의 Python 3.11 가상환경으로 재시도하여 위 배포가 완료됐다.

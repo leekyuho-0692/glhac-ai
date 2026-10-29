@@ -44,24 +44,27 @@ function CIN_readiness(cid){
   const read = d.readiness;
   const band = d.band;
   let bandLabel, bandCls;
-  if(band === 'ok'){ bandLabel = '양호'; bandCls = 'strong'; }
+  if(band === 'ok' || band === 'ready'){ bandLabel = '양호'; bandCls = 'strong'; }
   else if(band === 'warn'){ bandLabel = '보통'; bandCls = ''; }
   else { bandLabel = '위험'; bandCls = 'attn'; }
 
   const bd = d.breakdown || {};
   const ct = d.counts || {};
 
+  const incomplete=d.evaluation_complete===false;
+  const value=k=>bd[k]==null ? '미평가' : esc(String(bd[k]));
   const inner = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
-      <span class="num mono" style="font-size:30px;font-weight:700">${esc(String(read))}점</span>
-      <span class="badge ${bandCls}">${esc(bandLabel)}</span>
+      <span class="num mono" style="font-size:30px;font-weight:700">${incomplete ? '평가 진행 중' : esc(String(read))+'점'}</span>
+      <span class="badge ${bandCls}">${incomplete ? '미평가 항목 있음' : esc(bandLabel)}</span>
     </div>
     <div class="summary">
-      <div><span class="k">서류</span><span class="v mono">${esc(String(bd.documents))}</span></div>
-      <div><span class="k">SJPH</span><span class="v mono">${esc(String(bd.sjph))}</span></div>
-      <div><span class="k">원재료</span><span class="v mono">${esc(String(bd.materials))}</span></div>
-      <div><span class="k">심사</span><span class="v mono">${esc(String(bd.audit))}</span></div>
+      <div><span class="k">서류</span><span class="v mono">${value('documents')}</span></div>
+      <div><span class="k">SJPH</span><span class="v mono">${value('sjph')}</span></div>
+      <div><span class="k">원재료</span><span class="v mono">${value('materials')}</span></div>
+      <div><span class="k">심사</span><span class="v mono">${value('audit')}</span></div>
     </div>
+    <p class="muted" style="font-size:12px">미평가는 미등록 또는 검토 미완료 상태입니다. 준비도는 인증 판정을 대신하지 않습니다.</p>
     <p class="muted" style="font-size:12px">고위험 원재료 ${esc(String(ct.critical_high))}건 · 증빙 필요 ${esc(String(ct.needs_evidence))}건 · 미해결 지적 ${esc(String(ct.open_findings))}건</p>`;
   return CIN_panel('인증 준비도', inner);
 }
@@ -189,7 +192,7 @@ App.cinLphAdd = async function(cid){
       };
     }
   };
-  wrap('ent-home', () => ((RS.cases || [])[0] || {}).case_id, cid => CIN_journey(cid) + CIN_readiness(cid));
+  wrap('ent-home', () => ((RS.cases || [])[0] || {}).case_id, cid => CIN_readiness(cid));
   wrap('cons-status', () => S.selCompany, cid => CIN_readiness(cid));
   wrap('aud-pre', () => S.selPre, cid => CIN_readiness(cid) + CIN_company(cid));
   wrap('aud-report', () => S.selOnsite, cid => CIN_lph(cid));

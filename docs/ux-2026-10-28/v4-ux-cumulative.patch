@@ -1,0 +1,855 @@
+diff --git a/app/main.py b/app/main.py
+index b61ef0b..8df7c79 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -507,10 +507,17 @@ def _assert_case_access(db, user, c):
+       케이스마다 배정하지만, 컨설턴트는 업체가 들어올 때 이미 관계가 있다. 배정을 기다리게
+       하면 자기가 데려온 고객을 못 본다.
+     · 오디터: 자기 조직 + 배정받은 케이스.
+-    · 동반자: 자기 조직 + 배정(PendampingAssignment)받은 케이스.
++    · 동반자: 현재 배정(PendampingAssignment)받은 케이스만.
+     · 그 외(신청기업·할랄감독자): 자기 조직만.
+     """
+     role = user.get("role")
++    if role == "pendamping_pph":
++        current = (db.query(models.PendampingAssignment).filter_by(case_id=c.case_id)
++                   .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(),
++                             models.PendampingAssignment.assignment_id.desc()).first())
++        if current and current.pendamping_id == str(user.get("uid")):
++            return
++        raise HTTPException(403, {"code": "ORG_FORBIDDEN", "hint": "현재 배정된 동반자만 볼 수 있습니다"})
+     if role in CERTIFIER_ROLES:
+         return
+     if c.org_id == user.get("org_id"):
+@@ -519,12 +526,6 @@ def _assert_case_access(db, user, c):
+         return
+     if role in ASSIGNED_ROLES and str(user.get("uid")) in _assigned_staff(db, c.case_id):
+         return
+-    # 동반자(Pendamping PPH)는 자기선언 케이스에 배정돼 검증하는 외부 인력이다. 업체별 조직 분리(10/04)
+-    # 이후 케이스는 업체 조직에 있어, '자기 조직만' 규칙으로는 배정(/pendamping/assign)을 받아도
+-    # 검증(/pendamping/verify)이 403 이었다 — 배정 레코드가 있는 그 케이스만 연다.
+-    if role == "pendamping_pph" and db.query(models.PendampingAssignment).filter_by(
+-            case_id=c.case_id, pendamping_id=str(user.get("uid"))).first():
+-        return
+     raise HTTPException(403, {"code": "ORG_FORBIDDEN", "case_org": c.org_id,
+                               "user_org": user.get("org_id"),
+                               "hint": "배정되지 않은 케이스입니다"})
+@@ -8899,7 +8900,7 @@ def committee_status(case_id: str, user=Depends(auth.get_current_user), db: Sess
+           .order_by(models.WorkflowEvent.created_at.desc()).first())
+     decision = (ev.action.split(".")[1] if ev else None)
+     pa = ((db.query(models.PendampingAssignment).filter_by(case_id=case_id)
+-           .order_by(models.PendampingAssignment.assignment_id.desc()).first())
++           .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
+           if c.pathway == "self_declare" else None)
+     sd_doc = (db.query(models.GeneratedDocument)
+               .filter_by(case_id=case_id, doc_type="self_declaration").first())
+@@ -15186,7 +15187,7 @@ def _build_selfdeclare_submission(db, case):
+               .filter_by(case_id=case.case_id, doc_type="self_declaration")
+               .order_by(models.GeneratedDocument.version.desc()).first())
+     pa = (db.query(models.PendampingAssignment).filter_by(case_id=case.case_id)
+-          .order_by(models.PendampingAssignment.assignment_id.desc()).first())
++          .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
+     kfph_ev = _kfph_approve_event(db, case.case_id)
+     return {
+         "scheme": "self_declare",
+@@ -16865,14 +16866,20 @@ def _calc_readiness(db, case_id):
+     mats = db.query(models.Material).filter_by(case_id=case_id).all()
+     high = sum(1 for m in mats if m.screen_result == "BLOCK")
+     med = sum(1 for m in mats if m.screen_result == "NEEDS_EVIDENCE")
+-    mat_score = max(0.0, 1 - high * 0.35 - med * 0.12)
++    materials_evaluated = bool(mats) and all(m.screen_result in {"PASS", "CLEARED", "BLOCK", "NEEDS_EVIDENCE"} for m in mats)
++    mat_score = max(0.0, 1 - high * 0.35 - med * 0.12) if materials_evaluated else None
+     open_f = db.query(models.AuditFinding).filter_by(case_id=case_id, status="open").count()
+-    audit_score = max(0.0, 1 - open_f * 0.2)
+-    score = round((doc_score * 0.35 + sjph_score * 0.30 + mat_score * 0.20 + audit_score * 0.15) * 100)
++    audit_evaluated = db.query(models.AuditPlan).filter_by(case_id=case_id, status="completed").first() is not None
++    audit_score = max(0.0, 1 - open_f * 0.2) if audit_evaluated else None
++    # 점수는 확인된 영역의 기여분만 합산. 미평가 영역은 breakdown=null로 구분한다.
++    score = round((doc_score * 0.35 + sjph_score * 0.30 + (mat_score or 0) * 0.20 + (audit_score or 0) * 0.15) * 100)
+     band = "ready" if score >= 80 else ("warn" if score >= 55 else "risk")
+     return {"readiness": score, "band": band,
++            "evaluation_complete": materials_evaluated and audit_evaluated,
++            "evaluated": {"materials": materials_evaluated, "audit": audit_evaluated},
+             "breakdown": {"documents": round(doc_score * 100), "sjph": round(sjph_score * 100),
+-                          "materials": round(mat_score * 100), "audit": round(audit_score * 100)},
++                          "materials": round(mat_score * 100) if mat_score is not None else None,
++                          "audit": round(audit_score * 100) if audit_score is not None else None},
+             "counts": {"critical_high": high, "needs_evidence": med, "open_findings": open_f}}
+ 
+ 
+@@ -20157,7 +20164,7 @@ def verify_pendamping(case_id: str, body: schemas.PendampingVerify,
+                       user=Depends(rbac.require_action("pendamping.verify")), db: Session = Depends(get_db)):
+     c = _get_case(db, case_id, user)
+     pa = (db.query(models.PendampingAssignment).filter_by(case_id=case_id)
+-          .order_by(models.PendampingAssignment.assignment_id.desc()).first())
++          .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
+     if not pa:
+         raise HTTPException(404, {"code": "NO_PENDAMPING_ASSIGNMENT"})
+     pa.decision = body.decision
+@@ -20182,24 +20189,25 @@ def verify_pendamping(case_id: str, body: schemas.PendampingVerify,
+ @app.get("/pendamping/assignments")
+ def pendamping_assignments(user=Depends(auth.require_roles("pendamping_pph", "operator", "admin")),
+                            db: Session = Depends(get_db)):
+-    """동반자(PPH) 전용 인박스 — pendamping_assignment(케이스별)에서 로그인 동반자 배정건 집약(스키마 무변경).
+-    pendamping_pph: 본인(uid) 배정건만 / operator·admin: 전체(모니터링). 케이스별 최신 배정 1건(assignment_id desc)."""
++    """동반자(PPH) 전용 인박스 — pendamping_assignment(케이스별)에서 로그인 동반자 배정건 집약.
++    pendamping_pph: 본인(uid) 배정건만 / operator·admin: 전체(모니터링). 케이스별 최신 배정 1건(assigned_at desc (기존 시각 없는 행은 assignment_id 순서 유지))."""
+     q = db.query(models.PendampingAssignment)
+-    if user["role"] == "pendamping_pph":
+-        q = q.filter(models.PendampingAssignment.pendamping_id == user["uid"])
+-    rows = q.order_by(models.PendampingAssignment.assignment_id.desc()).all()
++    rows = q.order_by(models.PendampingAssignment.assigned_at.desc().nullslast(),
++                      models.PendampingAssignment.assignment_id.desc()).all()
+     seen, items = set(), []
+     for pa in rows:
+         if pa.case_id in seen:
+             continue
+         seen.add(pa.case_id)
++        if user["role"] == "pendamping_pph" and pa.pendamping_id != user["uid"]:
++            continue
+         c = db.get(models.CaseApplication, pa.case_id)
+         if not c:
+             continue
+         try:
+-            auth.check_org(user, c)
++            _assert_case_access(db, user, c)
+         except HTTPException:
+-            continue   # org 격리 — 타 조직 배정건은 노출하지 않음
++            continue
+         items.append({
+             "case_id": c.case_id, "company_name": c.company_name,
+             "status": c.status, "pathway": c.pathway,
+@@ -20232,9 +20240,9 @@ def _self_declaration_guard(c):
+ 
+ 
+ def _pendamping_name(db, c):
+-    """최신 배정 동반자 이름(assignment_id desc, verify와 동일 정렬). 없으면 빈값."""
++    """최신 배정 동반자 이름(assigned_at desc (기존 시각 없는 행은 assignment_id 순서 유지), verify와 동일 정렬). 없으면 빈값."""
+     pa = (db.query(models.PendampingAssignment).filter_by(case_id=c.case_id)
+-          .order_by(models.PendampingAssignment.assignment_id.desc()).first())
++          .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
+     if not pa:
+         return ""
+     u = db.query(models.User).filter_by(user_id=pa.pendamping_id).first()
+diff --git a/app/models.py b/app/models.py
+index 4a3087a..a2fb45b 100644
+--- a/app/models.py
++++ b/app/models.py
+@@ -182,6 +182,7 @@ class PendampingAssignment(Base):
+     assignment_id = Column(String, primary_key=True, default=uid)
+     case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
+     pendamping_id = Column(String, nullable=False)
++    assigned_at = Column(DateTime, default=datetime.utcnow, index=True)
+     decision = Column(String)
+     note = Column(Text)
+     signature_ref = Column(String)
+diff --git a/app/static/v4/index.html b/app/static/v4/index.html
+index 7b4f3f5..4591c5e 100644
+--- a/app/static/v4/index.html
++++ b/app/static/v4/index.html
+@@ -270,14 +270,21 @@ td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabu
+ .sms{font-size:12.5px;background:var(--sunken);padding:12px 14px;border-radius:var(--r);white-space:pre-wrap;color:var(--ink-2)}
+ 
+ /* modal */
+-.overlay{position:fixed;inset:0;z-index:50;background:color-mix(in srgb,#000 55%,transparent);overflow-y:auto;padding:32px 16px calc(32px + env(safe-area-inset-bottom,0px));display:flex}
+-.dialog{margin:auto;width:100%;max-width:580px;background:var(--surface);border:1px solid var(--ink);border-radius:6px;display:flex;flex-direction:column}
+-.dialog-head{position:sticky;top:0;background:var(--surface);display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);border-radius:6px 6px 0 0}
+-.dialog-head h3{font-size:16px}
++.overlay{--dialog-gap:24px;position:fixed;inset:0;z-index:50;background:color-mix(in srgb,#000 55%,transparent);height:100vh;height:100dvh;overflow:hidden;padding:max(var(--dialog-gap),env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(var(--dialog-gap),env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;align-items:center;justify-content:center}
++.dialog{margin:auto;width:100%;max-width:580px;max-height:100%;min-height:0;min-width:0;background:var(--surface);border:1px solid var(--ink);border-radius:6px;display:flex;flex-direction:column}
++.dialog-head{flex:0 0 auto;background:var(--surface);display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line);border-radius:6px 6px 0 0}
++.dialog-head h3{font-size:16px;min-width:0;overflow-wrap:anywhere}
+ .x{border:1px solid var(--line-2);background:var(--surface);width:34px;height:34px;border-radius:var(--r);cursor:pointer;font-size:18px;line-height:1;flex:none}
+-.dialog-body{padding:20px;font-size:13.5px;display:flex;flex-direction:column;gap:12px;color:var(--ink-2)}
++.dialog-body{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:20px;font-size:13.5px;display:flex;flex-direction:column;gap:12px;color:var(--ink-2)}
++.dialog-body>*{flex-shrink:0}
+ .dialog-body ol{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:8px}
+-.dialog-foot{padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
++.dialog-foot{flex:0 0 auto;padding:14px 20px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
++
++@media (max-width:600px),(max-height:600px){
++  .overlay{--dialog-gap:12px}
++  .dialog-head,.dialog-foot{padding:12px 16px}
++  .dialog-body{padding:16px}
++}
+ 
+ .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);background:var(--ink);color:var(--on-ink);padding:11px 18px;border-radius:var(--r);font-size:13.5px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;z-index:60;max-width:calc(100% - 32px)}
+ .toast.show{opacity:1;transform:translate(-50%,0)}
+@@ -786,21 +793,21 @@ function renderShell(){
+   const ent = S.role==='ent';
+   let who, whoSub, meta;
+   if(ent){ const rc = (RS.cases||[])[0]; who = (rc && rc.company_name) || AUTH.username || ''; whoSub = AUTH.username || ''; meta = who + (AUTH.username && who!==AUTH.username ? ' · ' + AUTH.username : ''); }
+-  else { who = AUTH.username || ''; whoSub = t(roleByCode(S.role).label); meta = whoSub + (who ? ' · ' + who : ''); }
++  else { who = AUTH.username || ''; whoSub = (typeof UX_roleLabel==='function'?UX_roleLabel():t(roleByCode(S.role).label)); meta = whoSub + (who ? ' · ' + who : ''); }
+   return `<div class="shell">
+     <aside class="sidebar">
+-      <div class="side-brand">${brand()}<div class="side-ws">${t(roleByCode(S.role).label)}</div></div>
++      <div class="side-brand">${brand()}<div class="side-ws">${(typeof UX_roleLabel==='function'?UX_roleLabel():t(roleByCode(S.role).label))}</div></div>
+       <button type="button" class="menu-btn" aria-label="메뉴" aria-expanded="false" aria-controls="side-nav" onclick="App.menuToggle(this)">☰</button>
+       <nav class="side-nav" id="side-nav" aria-label="주 메뉴">${NAV[S.role].map(v=>`${(NAV_GROUP[S.role]||{})[v]?`<div class="nav-grp">${(NAV_GROUP[S.role])[v]}</div>`:''}<button class="nav-item ${S.view===v?'on':''}" onclick="App.go('${v}')" ${S.view===v?'aria-current="page"':''}><span>${t('nav.'+v)}</span>${navCount(v)}</button>`).join('')}</nav>
+       <div class="side-foot">
+         ${SHELL_EXT.sideFoot.map(f=>f()).join('')}
+-        <div class="side-user"><b>${esc(who)}</b><span>${esc(whoSub)}</span></div>
++        <div class="side-user"><b data-noi18n>${esc(who)}</b><span>${esc(whoSub)}</span></div>
+         ${langSelect('lang-side')}
+         <button class="btn btn-block" onclick="App.logout()">${t('logout')}</button>
+       </div>
+     </aside>
+     <main class="main">
+-      <header class="page-head"><div><div class="eyebrow">${t('sys')}</div><h1>${t('nav.'+S.view)}</h1></div><div class="head-meta">${esc(meta)}</div></header>
++      <header class="page-head"><div><div class="eyebrow">${t('sys')}</div><h1>${t('nav.'+S.view)}</h1></div><div class="head-meta" data-noi18n>${esc(meta)}</div></header>
+       <div class="page">${VIEWS[S.view]()}</div>
+     </main></div>`;
+ }
+@@ -1793,10 +1800,10 @@ VIEWS['ent-home'] = () => {
+     <div><span class="k">상태</span><span class="v">${c.closed&&typeof CC_badge==='function'?CC_badge(c):(c.hold?'<span class="badge attn">보완 필요</span>':(c.done?'<span class="badge strong">완료</span>':'<span class="badge">진행 중</span>'))}</span></div>
+     <div><span class="k">전담 컨설턴트</span><span class="v">${esc(c.consultant||'배정 대기')}</span></div>
+   </section>
+-  <section class="panel"><div class="panel-head"><h2>${esc(c.company_name)} 인증 진행 현황</h2><span class="muted mono">${esc(c.status||'')}</span></div>
++  <section class="panel"><div class="panel-head"><h2><span data-noi18n>${esc(c.company_name)}</span> 인증 진행 현황</h2><span class="muted mono">${esc(c.hold?'보완 필요':_s8label(c))}</span></div>
+     ${_stepper8(typeof c.step8==='number'?c.step8:0, c.hold, c.done)}
+     ${c.next_action?`<div class="note ${c.hold?'attn':''}"><b>${c.hold?'보완 필요':'다음 단계'}</b><p>${esc(c.next_action)}</p></div>`:''}
+-    <dl class="dl"><div><dt>담당 심사원</dt><dd>${esc(c.main_auditor||'배정 전')}</dd></div><div><dt>인증 분야</dt><dd>${esc(c.scheme||'-')}</dd></div></dl>
++    <dl class="dl"><div><dt>담당 심사원</dt><dd>${esc(c.main_auditor||'배정 전')}</dd></div><div><dt>인증 분야</dt><dd>${esc(({product:'제품 인증',logistics:'물류 인증'})[c.scheme]||c.scheme||'-')}</dd></div></dl>
+   </section>`;
+ };
+ 
+@@ -2224,6 +2231,7 @@ App.entAddProduct = async function(cid){
+   const category=(($('#pr-cat')||{}).value||'').trim()||null;
+   const r=await apiFetch('/cases/'+cid+'/products',{method:'POST',body:JSON.stringify({name,category})});
+   if(!r.ok) return toast(await apiErr(r, '품목 추가에 실패했습니다.'));
++  if(typeof ENTP_PRODUCTS!=='undefined') ENTP_PRODUCTS.delete(ENTP_key(cid));
+   await loadEntProd(cid); render(); toast('품목을 추가했습니다.');
+ };
+ App.entDelProduct = async function(cid, pid){
+@@ -2234,6 +2242,9 @@ App.entDelProduct = async function(cid, pid){
+ const BLOCK_KO = {NIB_MISSING:'사업자등록번호(NIB) 누락 — 사업자등록증을 문서함에 올리면 자동 입력됩니다',
+   NO_PRODUCT:'인증 품목 미등록', COMPANY_NAME_MISSING:'기업명 누락', NO_JASA:'물류 서비스 범위 미선택'};
+ App.entSubmitApp = async function(cid){
++  if(typeof ENTP_PRODUCTS!=='undefined' && Object.values(ENTP_PRODUCTS.get(ENTP_key(cid))||{}).some(Boolean)) return toast('입력 중인 품목을 먼저 추가해 주세요.');
++  if(RS.ENTF && RS.ENTF.org && RS.ENTF.org[cid] && RS.ENTF.org[cid]._draft) return toast('할랄 관리 조직의 변경 내용을 먼저 저장해 주세요.');
++  if(typeof ENTP_saveProfile==='function' && !await ENTP_saveProfile({quiet:true})) return;
+   const r=await apiFetch('/cases/'+cid+'/submit-application',{method:'POST'});
+   if(!r.ok){ const d=await r.json().catch(()=>({})); const det=d.detail||{};
+     if(det.code==='TRANSITION_BLOCKED'){ const bs=(det.blockers||[]).map(b=>BLOCK_KO[b.code]||b.code);
+@@ -3250,9 +3261,9 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
+ <script src="js/feedback.js"></script>
+ <script src="js/ops-pay.js"></script>
+ <script src="js/ops-refund.js"></script>
+-<script src="js/ent-profile.js"></script>
+-<script src="js/ent-facilities.js"></script>
+-<script src="js/ent-logistics.js"></script>
++<script src="js/ent-profile.js?v=20261023-ux3"></script>
++<script src="js/ent-facilities.js?v=20261023-ux3"></script>
++<script src="js/ent-logistics.js?v=20261023-ux3"></script>
+ <script src="js/cons-sjph.js"></script>
+ <script src="js/self-declare.js"></script>
+ <script src="js/pen-workspace.js"></script>
+@@ -3261,13 +3272,13 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
+ <script src="js/pay-docs.js"></script>
+ <script src="js/chat.js"></script>
+ <script src="js/sha-opinion.js"></script>
+-<script src="js/ent-apply-more.js"></script>
+-<script src="js/adm-review.js"></script>
++<script src="js/ent-apply-more.js?v=20261023-ux3"></script>
++<script src="js/adm-review.js?v=20261023-ux3"></script>
+ <script src="js/adm-cert-more.js"></script>
+ <script src="js/ops-tenant.js"></script>
+ <script src="js/gen-docs-more.js"></script>
+ <script src="js/i18n-dict.js"></script>
+-<script src="js/i18n-dom.js"></script>
++<script src="js/i18n-dom.js?v=20261023-ux3"></script>
+ <script src="js/handoff.js"></script>
+ <script src="js/legacy-link.js"></script>
+ <script src="js/flow-actions.js"></script>
+@@ -3280,7 +3291,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
+ <script src="js/two-person.js"></script>
+ <script src="js/formal-app.js"></script>
+ <script src="js/billing-adm.js"></script>
+-<script src="js/billing-ent.js"></script>
++<script src="js/billing-ent.js?v=20261023-ux3"></script>
+ <script src="js/sector.js"></script>
+ <script src="js/sharia-quorum.js"></script>
+ <script src="js/canonical.js"></script>
+@@ -3293,7 +3304,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
+ <script src="js/mat-tools.js"></script>
+ <script src="js/sjph-builder.js"></script>
+ <script src="js/audit-deploy.js"></script>
+-<script src="js/case-insight.js"></script>
++<script src="js/case-insight.js?v=20261023-ux3"></script>
+ <script src="js/mat-insight.js"></script>
+ <script src="js/audit-chain.js"></script>
+ <script src="js/case-tools.js"></script>
+@@ -3302,5 +3313,6 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
+ <!--MODULES-->
+ <script src="js/mail.js"></script>
+ <script src="js/signup-consultant.js"></script>
++<script src="js/ux-focus.js?v=20261023-ux3"></script>
+ </body>
+ </html>
+diff --git a/app/static/v4/js/adm-review.js b/app/static/v4/js/adm-review.js
+index f1f9ecb..9809e1e 100644
+--- a/app/static/v4/js/adm-review.js
++++ b/app/static/v4/js/adm-review.js
+@@ -85,7 +85,7 @@ function ADMR_intakeSection(list, group, title){
+       ${pending&&canCall('POST','/ops/companies/{}/approve')?`<button class="btn btn-sm btn-primary" ${busy?'disabled':''} onclick="App.admrApprove('${c.case_id}')">${busy?'처리 중…':'승인'}</button>`:''}
+       ${pending&&canCall('POST','/ops/companies/{}/reject')?`<button class="btn btn-sm" ${busy?'disabled':''} onclick="App.admrReject('${c.case_id}')">거절</button>`:''}
+       ${!pending?`<button class="btn btn-sm" disabled>${label}</button>`:''}
+-      ${c.draft_state!=='returned'&&c.company_decision!=='rejected'&&canCall('POST','/cases/{}/return-application')?`<button class="btn btn-sm btn-ghost" ${busy?'disabled':''} onclick="App.admrReturn('${c.case_id}')">신청서 반려(보완 요청)</button>`:''}
++      ${!['onboarding','application_draft'].includes(c.status)&&c.draft_state!=='returned'&&c.company_decision!=='rejected'&&canCall('POST','/cases/{}/return-application')?`<button class="btn btn-sm btn-ghost" ${busy?'disabled':''} onclick="App.admrReturn('${c.case_id}')">신청서 반려(보완 요청)</button>`:''}
+     </div>
+   </li>`; }).join('');
+   return `<section class="panel" aria-label="${title}">
+@@ -103,7 +103,7 @@ const ADMR_intakeHtml = () => {
+   const pending=list.filter(ADMR_isPending).sort((a,b)=>String(a.created_at||'').localeCompare(String(b.created_at||''))||a.case_id.localeCompare(b.case_id));
+   const processed=list.filter(c=>!ADMR_isPending(c));
+   return ADMR_intakeSection(pending,'pending','신청 접수 처리 · 승인 대기')+
+-    ADMR_intakeSection(processed,'processed','접수 처리 완료 · 작성/보완 중');
++    ADMR_intakeSection(processed,'processed','작성·보완 중 또는 접수 처리된 신청');
+ };
+ { const f = VIEWS['adm-home']; VIEWS['adm-home'] = () => ADMR_intakeHtml() + (f ? f() : ''); }
+ 
+diff --git a/app/static/v4/js/billing-ent.js b/app/static/v4/js/billing-ent.js
+index c50f0a2..027d544 100644
+--- a/app/static/v4/js/billing-ent.js
++++ b/app/static/v4/js/billing-ent.js
+@@ -46,7 +46,7 @@ function BLE_quotePanel(cid, d){
+ 
+ function BLE_contractPanel(cid, d){
+   const ct = d.contract;
+-  if(!ct) return `<section class="panel"><div class="panel-head"><h2>계약서 서명 (갑: 인증기업)</h2></div><p class="empty">계약서 발송 대기</p></section>`;
++  if(!ct || ct.exists===false || !ct.contract_id) return `<section class="panel"><div class="panel-head"><h2>계약서 서명 (갑: 인증기업)</h2></div><p class="empty">계약서 발송 대기</p></section>`;
+   const aOk = BLE_signedOk(ct,'A'), bOk = BLE_signedOk(ct,'B');
+   const done = aOk && bOk;
+   return `<section class="panel">
+@@ -61,6 +61,7 @@ function BLE_contractPanel(cid, d){
+ }
+ 
+ function BLE_payPanel(cid, d){
++  if(!(d.invoices||[]).length) return '';
+   const s = d.settings || {};
+   const ba = s.bank_account || {};
+   const inv = (d.invoices||[]).slice().sort((x,y)=>(Number(x.round)||0)-(Number(y.round)||0));
+diff --git a/app/static/v4/js/case-insight.js b/app/static/v4/js/case-insight.js
+index 8d957e7..9e207ad 100644
+--- a/app/static/v4/js/case-insight.js
++++ b/app/static/v4/js/case-insight.js
+@@ -44,24 +44,27 @@ function CIN_readiness(cid){
+   const read = d.readiness;
+   const band = d.band;
+   let bandLabel, bandCls;
+-  if(band === 'ok'){ bandLabel = '양호'; bandCls = 'strong'; }
++  if(band === 'ok' || band === 'ready'){ bandLabel = '양호'; bandCls = 'strong'; }
+   else if(band === 'warn'){ bandLabel = '보통'; bandCls = ''; }
+   else { bandLabel = '위험'; bandCls = 'attn'; }
+ 
+   const bd = d.breakdown || {};
+   const ct = d.counts || {};
+ 
++  const incomplete=d.evaluation_complete===false;
++  const value=k=>bd[k]==null ? '미평가' : esc(String(bd[k]));
+   const inner = `
+     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+-      <span class="num mono" style="font-size:30px;font-weight:700">${esc(String(read))}점</span>
+-      <span class="badge ${bandCls}">${esc(bandLabel)}</span>
++      <span class="num mono" style="font-size:30px;font-weight:700">${incomplete ? '평가 진행 중' : esc(String(read))+'점'}</span>
++      <span class="badge ${bandCls}">${incomplete ? '미평가 항목 있음' : esc(bandLabel)}</span>
+     </div>
+     <div class="summary">
+-      <div><span class="k">서류</span><span class="v mono">${esc(String(bd.documents))}</span></div>
+-      <div><span class="k">SJPH</span><span class="v mono">${esc(String(bd.sjph))}</span></div>
+-      <div><span class="k">원재료</span><span class="v mono">${esc(String(bd.materials))}</span></div>
+-      <div><span class="k">심사</span><span class="v mono">${esc(String(bd.audit))}</span></div>
++      <div><span class="k">서류</span><span class="v mono">${value('documents')}</span></div>
++      <div><span class="k">SJPH</span><span class="v mono">${value('sjph')}</span></div>
++      <div><span class="k">원재료</span><span class="v mono">${value('materials')}</span></div>
++      <div><span class="k">심사</span><span class="v mono">${value('audit')}</span></div>
+     </div>
++    <p class="muted" style="font-size:12px">미평가는 미등록 또는 검토 미완료 상태입니다. 준비도는 인증 판정을 대신하지 않습니다.</p>
+     <p class="muted" style="font-size:12px">고위험 원재료 ${esc(String(ct.critical_high))}건 · 증빙 필요 ${esc(String(ct.needs_evidence))}건 · 미해결 지적 ${esc(String(ct.open_findings))}건</p>`;
+   return CIN_panel('인증 준비도', inner);
+ }
+@@ -189,7 +192,7 @@ App.cinLphAdd = async function(cid){
+       };
+     }
+   };
+-  wrap('ent-home', () => ((RS.cases || [])[0] || {}).case_id, cid => CIN_journey(cid) + CIN_readiness(cid));
++  wrap('ent-home', () => ((RS.cases || [])[0] || {}).case_id, cid => CIN_readiness(cid));
+   wrap('cons-status', () => S.selCompany, cid => CIN_readiness(cid));
+   wrap('aud-pre', () => S.selPre, cid => CIN_readiness(cid) + CIN_company(cid));
+   wrap('aud-report', () => S.selOnsite, cid => CIN_lph(cid));
+diff --git a/app/static/v4/js/ent-apply-more.js b/app/static/v4/js/ent-apply-more.js
+index 9096c6c..ea8cc8e 100644
+--- a/app/static/v4/js/ent-apply-more.js
++++ b/app/static/v4/js/ent-apply-more.js
+@@ -5,7 +5,7 @@ const ENTA_CASE = () => (RS.cases && RS.cases[0] && RS.cases[0].case_id) || null
+ 
+ async function ENTA_loadChecklist(cid){
+   try{
+-    const r = await apiFetch(`/cases/${cid}/doc-checklist?lang=ko`);
++    const r = await apiFetch(`/cases/${cid}/doc-checklist?lang=${encodeURIComponent(ENTA_LANG())}`);
+     RS.entaCheck = r.ok ? (await r.json()) : {error:true, status:r.status};
+   }catch(e){ RS.entaCheck = {error:true}; }
+ }
+@@ -28,8 +28,9 @@ function ENTA_checklistPanel(){
+     return `<section class="panel"><div class="panel-head"><h2>필요 서류 현황</h2></div>
+       <p class="empty">${d.status===403?'이 화면을 볼 권한이 없습니다.':'불러오지 못했습니다.'}</p></section>`;
+   }
+-  const rows = Array.isArray(d) ? d : [];
+-  const req = rows.filter(r=>r.required);
++  const rows = Array.isArray(d) ? d : (Array.isArray(d.checklist) ? d.checklist : null);
++  if(!rows) return `<section class="panel"><h2>필요 서류 현황</h2><p class="empty">서류 정보를 확인하지 못했습니다. 다시 불러와 주세요.</p></section>`;
++  const req = rows.filter(r=>r.required && r.applicable !== false);
+   const reqOk = req.filter(r=>r.satisfied).length;
+   const missing = req.filter(r=>!r.satisfied);
+   const stTag = (r) => r.status==='ok' ? '<span class="badge strong">제출</span>'
+@@ -42,7 +43,7 @@ function ENTA_checklistPanel(){
+         <td>${esc(r.doc_type_ko||r.doc_type||'')}${r.source?`<div class="muted" style="font-size:11px">${esc(r.source)}</div>`:''}</td>
+         <td>${r.required?'<span class="tag req">필수</span>':'<span class="muted">선택</span>'}</td>
+         <td>${stTag(r)} <span class="muted mono">${r.file_count||0}</span>${r.cert_no_on_file?` <span class="count">${r.cert_no_on_file}</span>`:''}</td>
+-        <td class="muted" style="font-size:12px">${esc(r.na_reason||r.note||'')}</td>
++        <td class="muted" style="font-size:12px">${esc(r.na_reason||r.note||r.requirement||'')}</td>
+       </tr>`).join('')}</tbody></table></div>` : '<p class="empty">서류 정보가 없습니다.</p>';
+   return `<section class="panel"><div class="panel-head"><h2>필요 서류 현황</h2>
+       <span class="muted">필수 ${reqOk}/${req.length} 제출</span></div>
+@@ -59,9 +60,9 @@ function ENTA_applyPanel(){
+   const prog = (S.entaProg||'');
+   return `<section class="panel"><div class="panel-head"><h2>임시저장 · 일괄 업로드</h2></div>
+     <div class="inline" style="flex-wrap:wrap;gap:8px">
+-      ${canDraft?`<button class="btn" onclick="once(this, ()=>App.entaSaveDraft())">임시저장</button>`:''}
++      ${canDraft?`<button class="btn" onclick="once(this, ()=>App.entaSaveDraft())">기업 정보 임시저장</button>`:''}
+       ${canZip?`<button class="btn btn-primary" onclick="(($('#enta-zip')||{}).click||(()=>{}))()">ZIP 파일로 서류 일괄 올리기</button>`:''}
+-      <input type="file" id="enta-zip" accept=".zip" hidden onchange="App.entaZip(this.files[0])">
++      <input type="file" id="enta-zip" accept=".zip,.rar,.7z" hidden onchange="App.entaZip(this.files[0])">
+     </div>
+     <p class="muted" style="font-size:12px;margin-top:6px">ZIP·RAR·7z 를 압축 해제해 서류를 자동 분류·채웁니다. 처리 중에는 창을 닫지 마세요.</p>
+     ${prog?`<p class="note">${esc(prog)}</p>`:''}
+@@ -109,6 +110,7 @@ function ENTA_refundPanel(){
+ App.entaSaveDraft = async function(){
+   const cid = ENTA_CASE();
+   if(!cid) return toast('대상 업체가 없습니다.');
++  if(!await ENTP_saveProfile({quiet:true})) return;
+   try{
+     const r = await apiFetch(`/cases/${cid}/save-draft`, {method:'POST', body:JSON.stringify({})});
+     if(!r.ok){
+@@ -117,7 +119,7 @@ App.entaSaveDraft = async function(){
+       return toast('임시저장에 실패했습니다.'+(code?` (${code})`:''));
+     }
+     await loadEnt();
+-    render(); toast('임시저장했습니다.');
++    render(); toast('기업 정보를 임시저장했습니다. 품목·공장·조직은 각 등록 버튼으로 저장해 주세요.');
+   }catch(e){ toast('임시저장에 실패했습니다.'); }
+ };
+ 
+diff --git a/app/static/v4/js/ent-facilities.js b/app/static/v4/js/ent-facilities.js
+index 67eee75..9f21966 100644
+--- a/app/static/v4/js/ent-facilities.js
++++ b/app/static/v4/js/ent-facilities.js
+@@ -93,7 +93,8 @@ function ENTF_orgMembersTable(rows, editable) {
+ function ENTF_orgPanel(cid) {
+   RS.ENTF = RS.ENTF || {};
+   RS.ENTF.org = RS.ENTF.org || {};
+-  const d = RS.ENTF.org[cid];
++  const saved = RS.ENTF.org[cid];
++  const d = saved && saved._draft || saved;
+   let body;
+   if (d === undefined) {
+     if (RS.ENTF._orgLoading !== cid) { RS.ENTF._orgLoading = cid; ENTF_loadOrg(cid).then(() => { RS.ENTF._orgLoading = null; render(); }); }
+@@ -117,14 +118,26 @@ function ENTF_orgPanel(cid) {
+           </tr>`).join('')
+         }</tbody></table></div>` : '<p class="muted">Penyelia 정보가 없습니다.</p>'}
+       </fieldset>
+-      <fieldset><legend>부서 대표 (members)</legend>
++      <fieldset><legend>부서별 담당자</legend>
+         ${ENTF_orgMembersTable(mem, true)}
+-        <div style="margin-top:8px"><button class="btn btn-sm" onclick="App.entfOrgAddMember()">행 추가</button></div>
++        <div style="margin-top:8px"><button class="btn btn-sm" onclick="function ENTF_captureOrg(e){
++  const el=e.target, panel=el.closest && el.closest('[data-entf-org]');
++  if(!panel || !el.dataset.k) return;
++  const d=RS.ENTF.org[panel.dataset.entfOrg]; if(!d || d.error) return;
++  if(!d._draft) d._draft=JSON.parse(JSON.stringify(d));
++  const group=el.hasAttribute('data-org-member') ? 'members' : 'penyelia';
++  const index=Number(el.getAttribute(group==='members'?'data-org-member':'data-org-pq'));
++  if(d._draft[group] && d._draft[group][index]) d._draft[group][index][el.dataset.k]=el.type==='checkbox'?el.checked:el.value;
++}
++document.addEventListener('input',ENTF_captureOrg);
++document.addEventListener('change',ENTF_captureOrg);
++
++App.entfOrgAddMember()">행 추가</button></div>
+       </fieldset>
+       ${canCall('PUT','/cases/{}/halal-org')?`<div style="margin-top:10px"><button class="btn btn-primary" onclick="App.entfOrgSave('${jsq(cid)}')">저장</button></div>`:''}
+     `;
+   }
+-  return `<section class="panel"><div class="panel-head"><h2>할랄 관리 조직</h2></div>${body}</section>`;
++  return `<section class="panel" data-entf-org="${esc(cid)}"><div class="panel-head"><h2>할랄 관리 조직</h2></div>${body}</section>`;
+ }
+ 
+ (function ENTF_wrap(){
+@@ -259,11 +272,14 @@ App.entfOrgSave = async function(cid){
+     quals[name] = quals[name] || { is_muslim: false, sk: false, training_cert: false };
+     quals[name][k] = !!el.checked;
+   });
++  const draftSnapshot=JSON.stringify(d._draft);
+   const body = { members: memberList };
+   if (Object.keys(quals).length) body.penyelia_quals = quals;
+   const res = await ENTF_req('/cases/' + cid + '/halal-org', { method: 'PUT', body: JSON.stringify(body) }, null);
+   if (res.error) { toast('저장에 실패했습니다.' + (res.code ? ' (' + res.code + ')' : '')); return; }
++  const pending=JSON.stringify(d._draft)!==draftSnapshot ? d._draft : null;
+   RS.ENTF.org[cid] = res.data;
++  if(pending) RS.ENTF.org[cid]._draft=pending;
+   render();
+   toast('할랄 관리 조직을 저장했습니다.');
+ };
+diff --git a/app/static/v4/js/ent-logistics.js b/app/static/v4/js/ent-logistics.js
+index 428565a..00a9d32 100644
+--- a/app/static/v4/js/ent-logistics.js
++++ b/app/static/v4/js/ent-logistics.js
+@@ -276,5 +276,5 @@
+ 
+   /* ---------- 뷰 등록 ---------- */
+   const prev = VIEWS['ent-apply'];
+-  VIEWS['ent-apply'] = () => prev() + ENTL_view();
++  VIEWS['ent-apply'] = () => prev() + (((RS.cases||[])[0]||{}).scheme==='logistics' ? ENTL_view() : '');
+ })();
+diff --git a/app/static/v4/js/ent-profile.js b/app/static/v4/js/ent-profile.js
+index 2a3b709..532f6de 100644
+--- a/app/static/v4/js/ent-profile.js
++++ b/app/static/v4/js/ent-profile.js
+@@ -1,7 +1,34 @@
+ /* ===== BPJPH 제출 정보 (ent-apply 확장) ===== */
+ RS.entpCase = RS.entpCase || null;
+ RS.entpPen = RS.entpPen || null;
+-S.entpOpen = S.entpOpen || false;
++S.entpOpen = S.entpOpen !== false;
++// 이 탭에서만 보관. 계정/신청별로 분리하고 서버 저장 성공 전에는 지우지 않는다.
++const ENTP_DRAFTS = new Map();
++const ENTP_PRODUCTS = new Map();
++const ENTP_key = cid => [AUTH.org_id, AUTH.username, cid].join(':');
++const ENTP_cid = () => ((RS.cases || [])[0] || {}).case_id || '';
++function ENTP_draft(cid=ENTP_cid()) { return ENTP_DRAFTS.get(ENTP_key(cid)) || {}; }
++function ENTP_dirty(){ return [...ENTP_DRAFTS.values()].some(d=>Object.keys(d).length) || [...ENTP_PRODUCTS.values()].some(d=>Object.values(d).some(Boolean)) || Object.values((RS.ENTF||{}).org||{}).some(d=>d && d._draft); }
++document.addEventListener('input', e => {
++  const el=e.target;
++  if(S.view==='ent-apply' && ['pr-name','pr-cat'].includes(el.id)){
++    const key=ENTP_key(ENTP_cid()); ENTP_PRODUCTS.set(key,{...(ENTP_PRODUCTS.get(key)||{}),[el.id]:el.value}); return;
++  }
++  const panel=el.closest && el.closest('[data-entp-case]');
++  if(!panel || !el.id.startsWith('entp-f-')) return;
++  const cid=panel.dataset.entpCase, key=ENTP_key(cid), values={...ENTP_draft(cid)};
++  const field=el.id.slice(7), c=RS.entpCase || {};
++  const baseline=field in c ? c[field] : (c.profile_ext || {})[field];
++  if(el.value === String(baseline ?? '')) delete values[field]; else values[field]=el.value;
++  ENTP_DRAFTS.set(key,values);
++  const status=$('#entp-save-state');
++  if(status) status.textContent=Object.keys(values).length ? '저장하지 않은 변경 있음' : '저장된 기업 정보';
++});
++window.addEventListener('beforeunload', e => { if(ENTP_dirty()){ e.preventDefault(); e.returnValue=''; } });
++{ const logout=App.logout; App.logout=function(){
++  if(ENTP_dirty() && !confirm('저장하지 않은 신청 정보가 있습니다. 로그아웃하면 사라집니다. 로그아웃할까요?')) return;
++  ENTP_DRAFTS.clear(); ENTP_PRODUCTS.clear(); if(RS.ENTF) RS.ENTF.org={}; RS.entpCase=null; RS.entpPen=null; return logout.apply(this,arguments);
++}; }
+ 
+ const ENTP_PROFILE_FIELDS = [
+   ["company_name", "기업명", "text"],
+@@ -20,7 +47,7 @@ const ENTP_EXT_FIELDS = [
+   ["office_phone", "회사 전화", "text"],
+   ["business_type", "업종", "text"],
+   ["total_employee", "총 직원 수", "number"],
+-  ["employee_count", "직원 수", "number"],
++  ["employee_count", "직원 수(별도 제출 항목)", "number"],
+   ["annual_revenue", "연매출", "number"],
+   ["outlet_count", "매장 수", "number"],
+   ["establishment_date", "설립일", "date"],
+@@ -34,12 +61,14 @@ const ENTP_EXT_FIELDS = [
+ ];
+ 
+ async function ENTP_loadCase(cid){
++  let data;
+   try {
+-    const r = await apiFetch('/cases/' + encodeURIComponent(cid));
+-    if (!r.ok) { RS.entpCase = { error: true, status: r.status }; return; }
+-    RS.entpCase = await r.json();
+-  } catch (e) { RS.entpCase = { error: true }; }
++    const r=await apiFetch('/cases/'+encodeURIComponent(cid));
++    data=r.ok ? await r.json() : {case_id:cid,error:true,status:r.status};
++  } catch(e){ data={case_id:cid,error:true}; }
++  if(ENTP_cid()===cid) RS.entpCase=data;
+ }
++
+ async function ENTP_loadPen(orgId){
+   if (!orgId) { RS.entpPen = { error: true, status: 400 }; return; }
+   try {
+@@ -62,6 +91,8 @@ function ENTP_fieldHtml(f){
+ }
+ 
+ function ENTP_currentVal(k){
++  const draft=ENTP_draft();
++  if(Object.prototype.hasOwnProperty.call(draft,k)) return draft[k];
+   const c = RS.entpCase;
+   if (!c || c.error) return '';
+   if (k in c) return c[k];
+@@ -73,14 +104,16 @@ function ENTP_collectProfile(){
+   const out = {}; const ext = {};
+   const base = new Set(ENTP_PROFILE_FIELDS.map(f=>f[0]));
+   ENTP_PROFILE_FIELDS.forEach(([k])=>{
+-    const el = $('#entp-f-' + k); if (!el) return;
+-    const v = (el.value || '').trim();
++    const el = $('#entp-f-' + k), draft=ENTP_draft();
++    if(!el && !(k in draft)) return;
++    const v = String(k in draft ? draft[k] : el.value || '').trim();
+     const cur = RS.entpCase ? (RS.entpCase[k] == null ? '' : String(RS.entpCase[k])) : '';
+     if (v !== cur) out[k] = v === '' ? null : v;
+   });
+   ENTP_EXT_FIELDS.forEach(([k,,type])=>{
+-    const el = $('#entp-f-' + k); if (!el) return;
+-    const raw = (el.value || '').trim();
++    const el = $('#entp-f-' + k), draft=ENTP_draft();
++    if(!el && !(k in draft)) return;
++    const raw = String(k in draft ? draft[k] : el.value || '').trim();
+     const curPe = (RS.entpCase && RS.entpCase.profile_ext) || {};
+     const cur = curPe[k] == null ? '' : String(curPe[k]);
+     if (raw === cur) return;
+@@ -113,7 +146,7 @@ function ENTP_setMsg(html){
+ 
+ function ENTP_profileHtml(){
+   const c = RS.entpCase;
+-  if (!c) {
++  if (!c || c.case_id!==ENTP_cid()) {
+     if (RS._entpLoading !== 'case') {
+       RS._entpLoading = 'case';
+       const cid = (RS.cases && RS.cases[0] && RS.cases[0].case_id) || '';
+@@ -126,17 +159,17 @@ function ENTP_profileHtml(){
+   }
+   const rows = ENTP_PROFILE_FIELDS.map(ENTP_fieldHtml).join('');
+   const ext = ENTP_EXT_FIELDS.map(ENTP_fieldHtml).join('');
+-  return `<section class="panel">
+-    <div class="panel-head"><h2>기업 프로필(Form.1)</h2></div>
++  return `<section class="panel" data-entp-case="${esc(ENTP_cid())}">
++    <div class="panel-head"><h2>기업 기본 정보</h2><span id="entp-save-state" role="status">${Object.keys(ENTP_draft()).length ? '저장하지 않은 변경 있음' : '저장된 기업 정보'}</span></div>
+     <div class="inline" style="margin-bottom:10px">
+       ${canCall('POST','/cases/{}/profile/autofill')?`<button class="btn btn-sm" onclick="App.entpAutofill()">서류에서 자동 채우기</button>`:''}
+       ${canCall('PATCH','/cases/{}/profile')?`<button class="btn btn-sm btn-primary" onclick="App.entpSaveProfile()">프로필 저장</button>`:'<span class="muted">프로필 수정은 신청기업·컨설턴트 계정만 할 수 있습니다.</span>'}
+     </div>
+     <div id="entp-msg" class="inline-msg"></div>
+     <div class="grid-2">${rows}</div>
+-    <fieldset style="margin-top:14px"><legend>확장 정보 (profile_ext)</legend>
++    <details style="margin-top:14px"><summary>추가 기업 정보</summary>
+       <div class="grid-3">${ext}</div>
+-    </fieldset>
++    </details>
+   </section>`;
+ }
+ 
+@@ -177,7 +210,7 @@ function ENTP_penHtml(){
+ function ENTP_section(){
+   const open = !!S.entpOpen;
+   const head = `<div class="panel-head">
+-    <h2>BPJPH 제출 정보</h2>
++    <h2>기업 정보·담당자</h2>
+     <button class="btn btn-sm btn-ghost" onclick="App.entpToggle()">${open ? '접기' : '펼치기'}</button>
+   </div>`;
+   if (!open) return `<section class="panel">${head}<p class="muted">펼치면 기업 프로필과 할랄 감독자를 확인·수정할 수 있습니다.</p></section>`;
+@@ -198,30 +231,35 @@ App.entpToggle = function(){
+   render();
+ };
+ 
+-App.entpSaveProfile = async function(){
+-  const cid = (RS.cases && RS.cases[0] && RS.cases[0].case_id) || '';
+-  if (!cid) return toast('대상 케이스가 없습니다.');
+-  const body = ENTP_collectProfile();
+-  if (!Object.keys(body).length) { ENTP_setMsg('변경된 항목이 없습니다.'); return; }
+-  const btn = $('#entp-msg'); ENTP_setMsg('');
++async function ENTP_saveProfile({quiet=false}={}){
++  const cid=ENTP_cid();
++  if(!cid){ toast('대상 케이스가 없습니다.'); return false; }
++  if(!RS.entpCase || RS.entpCase.error || RS.entpCase.case_id !== cid) await ENTP_loadCase(cid);
++  if(ENTP_cid()!==cid) return false;
++  if(!RS.entpCase || RS.entpCase.error){ toast('기업 정보를 불러오지 못했습니다. 입력 내용은 유지됩니다.'); return false; }
++  const snapshot={...ENTP_draft(cid)}, key=ENTP_key(cid), body=ENTP_collectProfile();
++  if(!Object.keys(body).length){ if(!quiet) ENTP_setMsg('변경된 항목이 없습니다.'); return true; }
+   try {
+-    const r = await apiFetch('/cases/' + encodeURIComponent(cid) + '/profile',
+-      { method: 'PATCH', body: JSON.stringify(body) });
+-    if (!r.ok) {
+-      let d = null; try { d = await r.json(); } catch(e){}
+-      const det = d && d.detail;
+-      if (r.status === 403) { ENTP_setMsg('<div>권한이 없습니다.</div>'); return toast('프로필 저장에 실패했습니다. (권한 없음)'); }
+-      if (r.status === 422) { ENTP_setMsg(ENTP_errHtml(det) || '<div>입력값을 확인하세요.</div>'); return toast('프로필 저장에 실패했습니다. (입력 오류)'); }
+-      if (r.status === 409) { ENTP_setMsg(ENTP_errHtml(det)); return toast('프로필 저장에 실패했습니다. (' + ((det && det.code) || '충돌') + ')'); }
+-      ENTP_setMsg(ENTP_errHtml(det));
+-      return toast('프로필 저장에 실패했습니다.');
++    const r=await apiFetch('/cases/'+encodeURIComponent(cid)+'/profile', {method:'PATCH',body:JSON.stringify(body)});
++    if(!r.ok){
++      const d=await r.json().catch(()=>({}));
++      ENTP_setMsg(ENTP_errHtml(d.detail) || '입력값과 권한을 확인해 주세요.');
++      toast('기업 정보를 저장하지 못했습니다. 입력 내용은 유지됩니다.');
++      return false;
+     }
+-    RS.entpCase = null;
+-    await ENTP_loadCase(cid);
+-    render();
+-    toast('프로필을 저장했습니다.');
+-  } catch(e){ toast('프로필 저장에 실패했습니다.'); }
+-};
++    const remaining={...(ENTP_DRAFTS.get(key)||{})};
++    Object.keys(snapshot).forEach(k=>{ if(remaining[k]===snapshot[k]) delete remaining[k]; });
++    ENTP_DRAFTS.set(key,remaining);
++    if(ENTP_cid()===cid){
++      await ENTP_loadCase(cid);
++      const listed=(RS.cases||[]).find(c=>c.case_id===cid);
++      if(listed && RS.entpCase && !RS.entpCase.error) listed.company_name=RS.entpCase.company_name;
++      if(!quiet){ render(); toast('기업 정보를 저장했습니다.'); }
++    }
++    return true;
++  } catch(e){ toast('기업 정보를 저장하지 못했습니다. 입력 내용은 유지됩니다.'); return false; }
++}
++App.entpSaveProfile = () => ENTP_saveProfile();
+ 
+ App.entpAutofill = async function(){
+   const cid = (RS.cases && RS.cases[0] && RS.cases[0].case_id) || '';
+diff --git a/app/static/v4/js/i18n-dom.js b/app/static/v4/js/i18n-dom.js
+index 8cebf41..0dc3758 100644
+--- a/app/static/v4/js/i18n-dom.js
++++ b/app/static/v4/js/i18n-dom.js
+@@ -46,7 +46,7 @@ function I18D_replace(out, re, dict){
+   return res + out.slice(last);
+ }
+ 
+-function I18D_tr(text){
++function I18D_trUI(text){
+   if(typeof text !== 'string' || !text) return text;
+   if(!I18D_HANGUL.test(text)) return text;
+   const dict = I18D_dict();
+@@ -69,6 +69,35 @@ function I18D_tr(text){
+   return I18D_replace(out, re, dict);
+ }
+ 
++// API에서 온 식별 정보/자유 입력은 UI 사전 치환 대상이 아니다.
++const I18D_DATA = new Set();
++const I18D_DATA_KEYS = /^(company(_name(_ko|_en)?)?|case_company|suggested_company|doc_company|username|display_name|name|product_name|material_name|filename|responsible_person(_en)?|halal_supervisor|consultant|main_auditor|address|factory_address|note|text|subject|description|reason|holder)$/;
++let I18D_account='';
++function I18D_remember(value){
++  const account=[AUTH.org_id,AUTH.username].join(':');
++  if(account!==I18D_account){ I18D_DATA.clear(); I18D_account=account; }
++  const walk=obj=>{
++    if(!obj || typeof obj!=='object') return;
++    Object.entries(obj).forEach(([k,v])=>{
++      if(typeof v==='string' && I18D_DATA_KEYS.test(k) && v.trim() && I18D_HANGUL.test(v)) I18D_DATA.add(v);
++      else if(v && typeof v==='object') walk(v);
++    });
++  };
++  walk(value);
++}
++{ const fetchApi=apiFetch; apiFetch=async function(){
++  const r=await fetchApi.apply(this,arguments), json=r.json.bind(r);
++  r.json=async function(){ const data=await json(); I18D_remember(data); return data; };
++  return r;
++}; }
++function I18D_tr(text){
++  if(typeof text!=='string' || !I18D_HANGUL.test(text)) return text;
++  const protectedValues=[...I18D_DATA,AUTH.username||''].filter(v=>v && text.includes(v)).sort((a,b)=>b.length-a.length);
++  if(!protectedValues.length) return I18D_trUI(text);
++  const re=new RegExp('('+protectedValues.map(I18D_escRe).join('|')+')','g');
++  return text.split(re).map((part,i)=>i%2 ? part : I18D_trUI(part)).join('');
++}
++
+ function I18D_apply(root){
+   if(!root || S.lang === 'ko') return;
+   const dict = I18D_dict();
+diff --git a/app/static/v4/js/ux-focus.js b/app/static/v4/js/ux-focus.js
+new file mode 100644
+index 0000000..9b6cc38
+--- /dev/null
++++ b/app/static/v4/js/ux-focus.js
+@@ -0,0 +1,91 @@
++/* 현재 신청의 다음 작업. 서버의 단계/권한은 그대로 사용한다. */
++function UX_roleLabel(){
++  const special={penyelia_halal:{ko:'할랄 감독자',en:'Halal Supervisor',id:'Penyelia Halal'},operator:{ko:'운영 담당자',en:'Operations',id:'Operasional'}};
++  return special[AUTH.role] ? special[AUTH.role][S.lang] || special[AUTH.role].ko : t(roleByCode(S.role).label);
++}
++function UX_next(c){
++  if(c.closed) return ['종결된 신청입니다.','인증 문서함 확인','ent-flow'];
++  if(c.done) return ['인증 결과와 발급 문서를 확인하세요.','인증 문서함 확인','ent-flow'];
++  if(AUTH.role==='penyelia_halal') return ['기업의 제출 자료와 감독자 정보를 점검하세요.','담당 정보 확인','ent-apply'];
++  if(['onboarding','application_draft'].includes(c.status)) return ['기업 정보와 품목을 저장한 뒤 필요한 서류를 제출하세요.','신청서 이어 쓰기','ent-apply'];
++  if(c.hold) return ['요청된 보완 내용과 제출 자료를 확인하세요.','보완 요청 확인',c.step8>=3?'ent-prep':'ent-pre'];
++  if(c.step8===2) return ['견적과 계약서가 도착하면 내용을 확인하세요.','계약 진행 확인','ent-contract'];
++  if(c.step8===3 || c.step8===4) return ['심사 일정과 준비할 자료를 확인하세요.','심사 준비 확인','ent-prep'];
++  if(c.step8>=5) return ['담당자의 심의·발급 처리를 기다리고 있습니다.','진행 문서 확인','ent-flow'];
++  return ['사전심사 결과와 추가 요청을 확인하세요.','사전심사 결과 확인','ent-pre'];
++}
++{
++  const home=VIEWS['ent-home'];
++  VIEWS['ent-home']=()=>{
++    const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
++    if(!c) return home();
++    const [message,label,view]=UX_next(c);
++    return `<section class="panel" aria-label="현재 신청의 다음 작업"><div class="panel-head"><h2>지금 할 일</h2><span data-noi18n>${esc(c.company_name||'')}</span></div><p>${esc(message)}</p><div class="row-act" style="margin-top:14px"><button class="btn btn-primary" onclick="App.go('${view}')">${esc(label)}</button></div></section>`+home();
++  };
++}
++// 보조 기능은 필요할 때 펼친다. 기존 이벤트/버튼과 권한 판정은 보존한다.
++{
++  const draw=render;
++  render=function(){
++    draw();
++    if(!S.role) return;
++    const ws=document.querySelector('.side-ws'); if(ws) ws.textContent=UX_roleLabel();
++    if(AUTH.role==='operator'){
++      const sub=document.querySelector('.side-user span'); if(sub) sub.textContent=UX_roleLabel();
++    }
++    const page=document.querySelector('.main .page'); if(!page) return;
++    if(S.view==='ent-home'){
++      [...page.children].forEach(panel=>{
++        const h=panel.querySelector('h2');
++        if(!h || !['신청 철회','원재료 정리 도구'].includes(h.textContent.trim())) return;
++        const details=document.createElement('details'), summary=document.createElement('summary');
++        details.className='panel'; summary.textContent=h.textContent;
++        details.append(summary); panel.replaceWith(details); details.append(panel);
++        panel.style.margin='0'; panel.style.border='0';
++      });
++    }
++    if(S.view==='ent-apply'){
++      const product=ENTP_PRODUCTS.get(ENTP_key(ENTP_cid()))||{};
++      Object.entries(product).forEach(([id,value])=>{ const el=document.getElementById(id); if(el) el.value=value; });
++      const profile=[...page.children].find(p=>p.querySelector('[data-entp-case]'));
++      if(profile) page.prepend(profile);
++    }
++  };
++}
++
++// 계약/청구가 아직 없는 상태는 실제 금액이나 기한처럼 보이지 않게 안내한다.
++{ const contract=VIEWS['ent-contract']; VIEWS['ent-contract']=()=>{
++  const html=contract(), c=(RS.cases||[])[0], d=c && (RS.bleCt||{})[c.case_id];
++  if(d && d.contract && d.contract.exists===false && d.quote && !d.quote.quote && Array.isArray(d.invoices) && !d.invoices.length && d.notices && !(d.notices.items||[]).length){
++    return CN_bar(false,true)+`<section class="panel"><h2>계약 준비 대기</h2><p>사전심사와 정식 신청 접수 후 담당자가 견적·계약서를 발송합니다. 도착하면 이 화면에서 확인할 수 있습니다.</p><button class="btn" onclick="App.go('ent-pre')">사전심사 결과 확인</button></section>`;
++  }
++  return html;
++}; }
++
++// 새로 추가한 안내 문구의 번역. 사용자 데이터는 i18n-dom에서 별도로 보호한다.
++if(typeof I18N_DOM!=='undefined'){
++  const texts={
++    '기업 정보·담당자':['Company information · Contacts','Informasi perusahaan · Penanggung jawab'],
++    '기업 기본 정보':['Company information','Informasi perusahaan'],
++    '추가 기업 정보':['Additional company information','Informasi perusahaan tambahan'],
++    '저장된 기업 정보':['Company information saved','Informasi perusahaan tersimpan'],
++    '저장하지 않은 변경 있음':['Unsaved changes','Perubahan belum disimpan'],
++    '기업 정보 임시저장':['Save company draft','Simpan draf perusahaan'],
++    '기업 정보를 저장했습니다.':['Company information saved.','Informasi perusahaan tersimpan.'],
++    '기업 정보를 저장하지 못했습니다. 입력 내용은 유지됩니다.':['Could not save company information. Your changes are retained.','Informasi perusahaan belum tersimpan. Perubahan tetap dipertahankan.'],
++    '기업 정보를 임시저장했습니다. 품목·공장·조직은 각 등록 버튼으로 저장해 주세요.':['Company draft saved. Save products, facilities and team changes using their own buttons.','Draf perusahaan tersimpan. Simpan produk, fasilitas, dan tim dengan tombol masing-masing.'],
++    '평가 진행 중':['Assessment in progress','Penilaian berlangsung'],
++    '미평가':['Not assessed','Belum dinilai'],
++    '미평가 항목 있음':['Some areas not assessed','Ada bagian belum dinilai'],
++    '미평가는 미등록 또는 검토 미완료 상태입니다. 준비도는 인증 판정을 대신하지 않습니다.':['Not assessed means data or review is incomplete. Readiness does not replace a certification decision.','Belum dinilai berarti data atau peninjauan belum lengkap. Kesiapan tidak menggantikan keputusan sertifikasi.'],
++    '신청서 이어 쓰기':['Continue application','Lanjutkan permohonan'],
++    '기업 정보와 품목을 저장한 뒤 필요한 서류를 제출하세요.':['Save company information and products, then submit the required documents.','Simpan informasi perusahaan dan produk, lalu kirim dokumen yang diperlukan.'],
++    '계약 준비 대기':['Waiting for contract preparation','Menunggu persiapan kontrak'],
++    '사전심사와 정식 신청 접수 후 담당자가 견적·계약서를 발송합니다. 도착하면 이 화면에서 확인할 수 있습니다.':['After pre-assessment and formal intake, your contact will send the quote and contract. You can review them here.','Setelah pra-penilaian dan penerimaan permohonan resmi, petugas akan mengirim penawaran dan kontrak. Anda dapat meninjaunya di sini.'],
++    '부서별 담당자':['Department contacts','Penanggung jawab departemen'],
++    '입력 중인 품목을 먼저 추가해 주세요.':['Add the product you are editing first.','Tambahkan produk yang sedang diedit terlebih dahulu.'],
++    '할랄 관리 조직의 변경 내용을 먼저 저장해 주세요.':['Save your halal team changes first.','Simpan perubahan tim halal terlebih dahulu.']
++  };
++  for(const [ko,values] of Object.entries(texts)){ for(const [i,lang] of ['en','id'].entries()){ if(I18N_DOM[lang]) I18N_DOM[lang][ko]=values[i]; } }
++  if(typeof I18D_RE_CACHE!=='undefined'){ delete I18D_RE_CACHE.en; delete I18D_RE_CACHE.id; }
++}

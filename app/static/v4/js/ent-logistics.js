@@ -276,5 +276,5 @@
 
   /* ---------- 뷰 등록 ---------- */
   const prev = VIEWS['ent-apply'];
-  VIEWS['ent-apply'] = () => prev() + ENTL_view();
+  VIEWS['ent-apply'] = () => prev() + (((RS.cases||[])[0]||{}).scheme==='logistics' ? ENTL_view() : '');
 })();

@@ -46,7 +46,7 @@ function I18D_replace(out, re, dict){
   return res + out.slice(last);
 }
 
-function I18D_tr(text){
+function I18D_trUI(text){
   if(typeof text !== 'string' || !text) return text;
   if(!I18D_HANGUL.test(text)) return text;
   const dict = I18D_dict();
@@ -67,6 +67,35 @@ function I18D_tr(text){
   if(!re) return out;
 
   return I18D_replace(out, re, dict);
+}
+
+// API에서 온 식별 정보/자유 입력은 UI 사전 치환 대상이 아니다.
+const I18D_DATA = new Set();
+const I18D_DATA_KEYS = /^(company(_name(_ko|_en)?)?|case_company|suggested_company|doc_company|username|display_name|name|product_name|material_name|filename|responsible_person(_en)?|halal_supervisor|consultant|main_auditor|address|factory_address|note|text|subject|description|reason|holder)$/;
+let I18D_account='';
+function I18D_remember(value){
+  const account=[AUTH.org_id,AUTH.username].join(':');
+  if(account!==I18D_account){ I18D_DATA.clear(); I18D_account=account; }
+  const walk=obj=>{
+    if(!obj || typeof obj!=='object') return;
+    Object.entries(obj).forEach(([k,v])=>{
+      if(typeof v==='string' && I18D_DATA_KEYS.test(k) && v.trim() && I18D_HANGUL.test(v)) I18D_DATA.add(v);
+      else if(v && typeof v==='object') walk(v);
+    });
+  };
+  walk(value);
+}
+{ const fetchApi=apiFetch; apiFetch=async function(){
+  const r=await fetchApi.apply(this,arguments), json=r.json.bind(r);
+  r.json=async function(){ const data=await json(); I18D_remember(data); return data; };
+  return r;
+}; }
+function I18D_tr(text){
+  if(typeof text!=='string' || !I18D_HANGUL.test(text)) return text;
+  const protectedValues=[...I18D_DATA,AUTH.username||''].filter(v=>v && text.includes(v)).sort((a,b)=>b.length-a.length);
+  if(!protectedValues.length) return I18D_trUI(text);
+  const re=new RegExp('('+protectedValues.map(I18D_escRe).join('|')+')','g');
+  return text.split(re).map((part,i)=>i%2 ? part : I18D_trUI(part)).join('');
 }
 
 function I18D_apply(root){

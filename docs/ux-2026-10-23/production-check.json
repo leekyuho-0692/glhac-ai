@@ -1,0 +1,25 @@
+{
+  "legacy_data_preserved": true,
+  "assigned_at_migrated": true,
+  "production_specific_files_preserved": true,
+  "readiness": {
+    "readiness": 0,
+    "band": "risk",
+    "evaluation_complete": false,
+    "evaluated": {
+      "materials": false,
+      "audit": false
+    },
+    "breakdown": {
+      "documents": 0,
+      "sjph": 0,
+      "materials": null,
+      "audit": null
+    },
+    "counts": {
+      "critical_high": 0,
+      "needs_evidence": 0,
+      "open_findings": 0
+    }
+  }
+}

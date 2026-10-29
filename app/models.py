@@ -182,6 +182,7 @@ class PendampingAssignment(Base):
     assignment_id = Column(String, primary_key=True, default=uid)
     case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     pendamping_id = Column(String, nullable=False)
+    assigned_at = Column(DateTime, default=datetime.utcnow, index=True)
     decision = Column(String)
     note = Column(Text)
     signature_ref = Column(String)

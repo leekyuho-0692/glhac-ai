@@ -508,10 +508,17 @@ def _assert_case_access(db, user, c):
       케이스마다 배정하지만, 컨설턴트는 업체가 들어올 때 이미 관계가 있다. 배정을 기다리게
       하면 자기가 데려온 고객을 못 본다.
     · 오디터: 자기 조직 + 배정받은 케이스.
-    · 동반자: 자기 조직 + 배정(PendampingAssignment)받은 케이스.
+    · 동반자: 현재 배정(PendampingAssignment)받은 케이스만.
     · 그 외(신청기업·할랄감독자): 자기 조직만.
     """
     role = user.get("role")
+    if role == "pendamping_pph":
+        current = (db.query(models.PendampingAssignment).filter_by(case_id=c.case_id)
+                   .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(),
+                             models.PendampingAssignment.assignment_id.desc()).first())
+        if current and current.pendamping_id == str(user.get("uid")):
+            return
+        raise HTTPException(403, {"code": "ORG_FORBIDDEN", "hint": "현재 배정된 동반자만 볼 수 있습니다"})
     if role in CERTIFIER_ROLES:
         return
     if c.org_id == user.get("org_id"):
@@ -519,12 +526,6 @@ def _assert_case_access(db, user, c):
     if _is_my_client_org(db, user, c.org_id):
         return
     if role in ASSIGNED_ROLES and str(user.get("uid")) in _assigned_staff(db, c.case_id):
-        return
-    # 동반자(Pendamping PPH)는 자기선언 케이스에 배정돼 검증하는 외부 인력이다. 업체별 조직 분리(10/04)
-    # 이후 케이스는 업체 조직에 있어, '자기 조직만' 규칙으로는 배정(/pendamping/assign)을 받아도
-    # 검증(/pendamping/verify)이 403 이었다 — 배정 레코드가 있는 그 케이스만 연다.
-    if role == "pendamping_pph" and db.query(models.PendampingAssignment).filter_by(
-            case_id=c.case_id, pendamping_id=str(user.get("uid"))).first():
         return
     raise HTTPException(403, {"code": "ORG_FORBIDDEN", "case_org": c.org_id,
                               "user_org": user.get("org_id"),
@@ -8904,7 +8905,7 @@ def committee_status(case_id: str, user=Depends(auth.get_current_user), db: Sess
           .order_by(models.WorkflowEvent.created_at.desc()).first())
     decision = (ev.action.split(".")[1] if ev else None)
     pa = ((db.query(models.PendampingAssignment).filter_by(case_id=case_id)
-           .order_by(models.PendampingAssignment.assignment_id.desc()).first())
+           .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
           if c.pathway == "self_declare" else None)
     sd_doc = (db.query(models.GeneratedDocument)
               .filter_by(case_id=case_id, doc_type="self_declaration").first())
@@ -15191,7 +15192,7 @@ def _build_selfdeclare_submission(db, case):
               .filter_by(case_id=case.case_id, doc_type="self_declaration")
               .order_by(models.GeneratedDocument.version.desc()).first())
     pa = (db.query(models.PendampingAssignment).filter_by(case_id=case.case_id)
-          .order_by(models.PendampingAssignment.assignment_id.desc()).first())
+          .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
     kfph_ev = _kfph_approve_event(db, case.case_id)
     return {
         "scheme": "self_declare",
@@ -16870,14 +16871,20 @@ def _calc_readiness(db, case_id):
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
     high = sum(1 for m in mats if m.screen_result == "BLOCK")
     med = sum(1 for m in mats if m.screen_result == "NEEDS_EVIDENCE")
-    mat_score = max(0.0, 1 - high * 0.35 - med * 0.12)
+    materials_evaluated = bool(mats) and all(m.screen_result in {"PASS", "CLEARED", "BLOCK", "NEEDS_EVIDENCE"} for m in mats)
+    mat_score = max(0.0, 1 - high * 0.35 - med * 0.12) if materials_evaluated else None
     open_f = db.query(models.AuditFinding).filter_by(case_id=case_id, status="open").count()
-    audit_score = max(0.0, 1 - open_f * 0.2)
-    score = round((doc_score * 0.35 + sjph_score * 0.30 + mat_score * 0.20 + audit_score * 0.15) * 100)
+    audit_evaluated = db.query(models.AuditPlan).filter_by(case_id=case_id, status="completed").first() is not None
+    audit_score = max(0.0, 1 - open_f * 0.2) if audit_evaluated else None
+    # 점수는 확인된 영역의 기여분만 합산. 미평가 영역은 breakdown=null로 구분한다.
+    score = round((doc_score * 0.35 + sjph_score * 0.30 + (mat_score or 0) * 0.20 + (audit_score or 0) * 0.15) * 100)
     band = "ready" if score >= 80 else ("warn" if score >= 55 else "risk")
     return {"readiness": score, "band": band,
+            "evaluation_complete": materials_evaluated and audit_evaluated,
+            "evaluated": {"materials": materials_evaluated, "audit": audit_evaluated},
             "breakdown": {"documents": round(doc_score * 100), "sjph": round(sjph_score * 100),
-                          "materials": round(mat_score * 100), "audit": round(audit_score * 100)},
+                          "materials": round(mat_score * 100) if mat_score is not None else None,
+                          "audit": round(audit_score * 100) if audit_score is not None else None},
             "counts": {"critical_high": high, "needs_evidence": med, "open_findings": open_f}}
 
 
@@ -20162,7 +20169,7 @@ def verify_pendamping(case_id: str, body: schemas.PendampingVerify,
                       user=Depends(rbac.require_action("pendamping.verify")), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     pa = (db.query(models.PendampingAssignment).filter_by(case_id=case_id)
-          .order_by(models.PendampingAssignment.assignment_id.desc()).first())
+          .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
     if not pa:
         raise HTTPException(404, {"code": "NO_PENDAMPING_ASSIGNMENT"})
     pa.decision = body.decision
@@ -20187,24 +20194,25 @@ def verify_pendamping(case_id: str, body: schemas.PendampingVerify,
 @app.get("/pendamping/assignments")
 def pendamping_assignments(user=Depends(auth.require_roles("pendamping_pph", "operator", "admin")),
                            db: Session = Depends(get_db)):
-    """동반자(PPH) 전용 인박스 — pendamping_assignment(케이스별)에서 로그인 동반자 배정건 집약(스키마 무변경).
-    pendamping_pph: 본인(uid) 배정건만 / operator·admin: 전체(모니터링). 케이스별 최신 배정 1건(assignment_id desc)."""
+    """동반자(PPH) 전용 인박스 — pendamping_assignment(케이스별)에서 로그인 동반자 배정건 집약.
+    pendamping_pph: 본인(uid) 배정건만 / operator·admin: 전체(모니터링). 케이스별 최신 배정 1건(assigned_at desc (기존 시각 없는 행은 assignment_id 순서 유지))."""
     q = db.query(models.PendampingAssignment)
-    if user["role"] == "pendamping_pph":
-        q = q.filter(models.PendampingAssignment.pendamping_id == user["uid"])
-    rows = q.order_by(models.PendampingAssignment.assignment_id.desc()).all()
+    rows = q.order_by(models.PendampingAssignment.assigned_at.desc().nullslast(),
+                      models.PendampingAssignment.assignment_id.desc()).all()
     seen, items = set(), []
     for pa in rows:
         if pa.case_id in seen:
             continue
         seen.add(pa.case_id)
+        if user["role"] == "pendamping_pph" and pa.pendamping_id != user["uid"]:
+            continue
         c = db.get(models.CaseApplication, pa.case_id)
         if not c:
             continue
         try:
-            auth.check_org(user, c)
+            _assert_case_access(db, user, c)
         except HTTPException:
-            continue   # org 격리 — 타 조직 배정건은 노출하지 않음
+            continue
         items.append({
             "case_id": c.case_id, "company_name": c.company_name,
             "status": c.status, "pathway": c.pathway,
@@ -20237,9 +20245,9 @@ def _self_declaration_guard(c):
 
 
 def _pendamping_name(db, c):
-    """최신 배정 동반자 이름(assignment_id desc, verify와 동일 정렬). 없으면 빈값."""
+    """최신 배정 동반자 이름(assigned_at desc (기존 시각 없는 행은 assignment_id 순서 유지), verify와 동일 정렬). 없으면 빈값."""
     pa = (db.query(models.PendampingAssignment).filter_by(case_id=c.case_id)
-          .order_by(models.PendampingAssignment.assignment_id.desc()).first())
+          .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
     if not pa:
         return ""
     u = db.query(models.User).filter_by(user_id=pa.pendamping_id).first()

@@ -5,7 +5,7 @@ const ENTA_CASE = () => (RS.cases && RS.cases[0] && RS.cases[0].case_id) || null
 
 async function ENTA_loadChecklist(cid){
   try{
-    const r = await apiFetch(`/cases/${cid}/doc-checklist?lang=ko`);
+    const r = await apiFetch(`/cases/${cid}/doc-checklist?lang=${encodeURIComponent(ENTA_LANG())}`);
     RS.entaCheck = r.ok ? (await r.json()) : {error:true, status:r.status};
   }catch(e){ RS.entaCheck = {error:true}; }
 }
@@ -28,8 +28,9 @@ function ENTA_checklistPanel(){
     return `<section class="panel"><div class="panel-head"><h2>필요 서류 현황</h2></div>
       <p class="empty">${d.status===403?'이 화면을 볼 권한이 없습니다.':'불러오지 못했습니다.'}</p></section>`;
   }
-  const rows = Array.isArray(d) ? d : [];
-  const req = rows.filter(r=>r.required);
+  const rows = Array.isArray(d) ? d : (Array.isArray(d.checklist) ? d.checklist : null);
+  if(!rows) return `<section class="panel"><h2>필요 서류 현황</h2><p class="empty">서류 정보를 확인하지 못했습니다. 다시 불러와 주세요.</p></section>`;
+  const req = rows.filter(r=>r.required && r.applicable !== false);
   const reqOk = req.filter(r=>r.satisfied).length;
   const missing = req.filter(r=>!r.satisfied);
   const stTag = (r) => r.status==='ok' ? '<span class="badge strong">제출</span>'
@@ -42,7 +43,7 @@ function ENTA_checklistPanel(){
         <td>${esc(r.doc_type_ko||r.doc_type||'')}${r.source?`<div class="muted" style="font-size:11px">${esc(r.source)}</div>`:''}</td>
         <td>${r.required?'<span class="tag req">필수</span>':'<span class="muted">선택</span>'}</td>
         <td>${stTag(r)} <span class="muted mono">${r.file_count||0}</span>${r.cert_no_on_file?` <span class="count">${r.cert_no_on_file}</span>`:''}</td>
-        <td class="muted" style="font-size:12px">${esc(r.na_reason||r.note||'')}</td>
+        <td class="muted" style="font-size:12px">${esc(r.na_reason||r.note||r.requirement||'')}</td>
       </tr>`).join('')}</tbody></table></div>` : '<p class="empty">서류 정보가 없습니다.</p>';
   return `<section class="panel"><div class="panel-head"><h2>필요 서류 현황</h2>
       <span class="muted">필수 ${reqOk}/${req.length} 제출</span></div>
@@ -59,9 +60,9 @@ function ENTA_applyPanel(){
   const prog = (S.entaProg||'');
   return `<section class="panel"><div class="panel-head"><h2>임시저장 · 일괄 업로드</h2></div>
     <div class="inline" style="flex-wrap:wrap;gap:8px">
-      ${canDraft?`<button class="btn" onclick="once(this, ()=>App.entaSaveDraft())">임시저장</button>`:''}
+      ${canDraft?`<button class="btn" onclick="once(this, ()=>App.entaSaveDraft())">기업 정보 임시저장</button>`:''}
       ${canZip?`<button class="btn btn-primary" onclick="(($('#enta-zip')||{}).click||(()=>{}))()">ZIP 파일로 서류 일괄 올리기</button>`:''}
-      <input type="file" id="enta-zip" accept=".zip" hidden onchange="App.entaZip(this.files[0])">
+      <input type="file" id="enta-zip" accept=".zip,.rar,.7z" hidden onchange="App.entaZip(this.files[0])">
     </div>
     <p class="muted" style="font-size:12px;margin-top:6px">ZIP·RAR·7z 를 압축 해제해 서류를 자동 분류·채웁니다. 처리 중에는 창을 닫지 마세요.</p>
     ${prog?`<p class="note">${esc(prog)}</p>`:''}
@@ -109,6 +110,7 @@ function ENTA_refundPanel(){
 App.entaSaveDraft = async function(){
   const cid = ENTA_CASE();
   if(!cid) return toast('대상 업체가 없습니다.');
+  if(!await ENTP_saveProfile({quiet:true})) return;
   try{
     const r = await apiFetch(`/cases/${cid}/save-draft`, {method:'POST', body:JSON.stringify({})});
     if(!r.ok){
@@ -117,7 +119,7 @@ App.entaSaveDraft = async function(){
       return toast('임시저장에 실패했습니다.'+(code?` (${code})`:''));
     }
     await loadEnt();
-    render(); toast('임시저장했습니다.');
+    render(); toast('기업 정보를 임시저장했습니다. 품목·공장·조직은 각 등록 버튼으로 저장해 주세요.');
   }catch(e){ toast('임시저장에 실패했습니다.'); }
 };
 

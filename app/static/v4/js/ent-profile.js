@@ -1,7 +1,34 @@
 /* ===== BPJPH 제출 정보 (ent-apply 확장) ===== */
 RS.entpCase = RS.entpCase || null;
 RS.entpPen = RS.entpPen || null;
-S.entpOpen = S.entpOpen || false;
+S.entpOpen = S.entpOpen !== false;
+// 이 탭에서만 보관. 계정/신청별로 분리하고 서버 저장 성공 전에는 지우지 않는다.
+const ENTP_DRAFTS = new Map();
+const ENTP_PRODUCTS = new Map();
+const ENTP_key = cid => [AUTH.org_id, AUTH.username, cid].join(':');
+const ENTP_cid = () => ((RS.cases || [])[0] || {}).case_id || '';
+function ENTP_draft(cid=ENTP_cid()) { return ENTP_DRAFTS.get(ENTP_key(cid)) || {}; }
+function ENTP_dirty(){ return [...ENTP_DRAFTS.values()].some(d=>Object.keys(d).length) || [...ENTP_PRODUCTS.values()].some(d=>Object.values(d).some(Boolean)) || Object.values((RS.ENTF||{}).org||{}).some(d=>d && d._draft); }
+document.addEventListener('input', e => {
+  const el=e.target;
+  if(S.view==='ent-apply' && ['pr-name','pr-cat'].includes(el.id)){
+    const key=ENTP_key(ENTP_cid()); ENTP_PRODUCTS.set(key,{...(ENTP_PRODUCTS.get(key)||{}),[el.id]:el.value}); return;
+  }
+  const panel=el.closest && el.closest('[data-entp-case]');
+  if(!panel || !el.id.startsWith('entp-f-')) return;
+  const cid=panel.dataset.entpCase, key=ENTP_key(cid), values={...ENTP_draft(cid)};
+  const field=el.id.slice(7), c=RS.entpCase || {};
+  const baseline=field in c ? c[field] : (c.profile_ext || {})[field];
+  if(el.value === String(baseline ?? '')) delete values[field]; else values[field]=el.value;
+  ENTP_DRAFTS.set(key,values);
+  const status=$('#entp-save-state');
+  if(status) status.textContent=Object.keys(values).length ? '저장하지 않은 변경 있음' : '저장된 기업 정보';
+});
+window.addEventListener('beforeunload', e => { if(ENTP_dirty()){ e.preventDefault(); e.returnValue=''; } });
+{ const logout=App.logout; App.logout=function(){
+  if(ENTP_dirty() && !confirm('저장하지 않은 신청 정보가 있습니다. 로그아웃하면 사라집니다. 로그아웃할까요?')) return;
+  ENTP_DRAFTS.clear(); ENTP_PRODUCTS.clear(); if(RS.ENTF) RS.ENTF.org={}; RS.entpCase=null; RS.entpPen=null; return logout.apply(this,arguments);
+}; }
 
 const ENTP_PROFILE_FIELDS = [
   ["company_name", "기업명", "text"],
@@ -20,7 +47,7 @@ const ENTP_EXT_FIELDS = [
   ["office_phone", "회사 전화", "text"],
   ["business_type", "업종", "text"],
   ["total_employee", "총 직원 수", "number"],
-  ["employee_count", "직원 수", "number"],
+  ["employee_count", "직원 수(별도 제출 항목)", "number"],
   ["annual_revenue", "연매출", "number"],
   ["outlet_count", "매장 수", "number"],
   ["establishment_date", "설립일", "date"],
@@ -34,12 +61,14 @@ const ENTP_EXT_FIELDS = [
 ];
 
 async function ENTP_loadCase(cid){
+  let data;
   try {
-    const r = await apiFetch('/cases/' + encodeURIComponent(cid));
-    if (!r.ok) { RS.entpCase = { error: true, status: r.status }; return; }
-    RS.entpCase = await r.json();
-  } catch (e) { RS.entpCase = { error: true }; }
+    const r=await apiFetch('/cases/'+encodeURIComponent(cid));
+    data=r.ok ? await r.json() : {case_id:cid,error:true,status:r.status};
+  } catch(e){ data={case_id:cid,error:true}; }
+  if(ENTP_cid()===cid) RS.entpCase=data;
 }
+
 async function ENTP_loadPen(orgId){
   if (!orgId) { RS.entpPen = { error: true, status: 400 }; return; }
   try {
@@ -62,6 +91,8 @@ function ENTP_fieldHtml(f){
 }
 
 function ENTP_currentVal(k){
+  const draft=ENTP_draft();
+  if(Object.prototype.hasOwnProperty.call(draft,k)) return draft[k];
   const c = RS.entpCase;
   if (!c || c.error) return '';
   if (k in c) return c[k];
@@ -73,14 +104,16 @@ function ENTP_collectProfile(){
   const out = {}; const ext = {};
   const base = new Set(ENTP_PROFILE_FIELDS.map(f=>f[0]));
   ENTP_PROFILE_FIELDS.forEach(([k])=>{
-    const el = $('#entp-f-' + k); if (!el) return;
-    const v = (el.value || '').trim();
+    const el = $('#entp-f-' + k), draft=ENTP_draft();
+    if(!el && !(k in draft)) return;
+    const v = String(k in draft ? draft[k] : el.value || '').trim();
     const cur = RS.entpCase ? (RS.entpCase[k] == null ? '' : String(RS.entpCase[k])) : '';
     if (v !== cur) out[k] = v === '' ? null : v;
   });
   ENTP_EXT_FIELDS.forEach(([k,,type])=>{
-    const el = $('#entp-f-' + k); if (!el) return;
-    const raw = (el.value || '').trim();
+    const el = $('#entp-f-' + k), draft=ENTP_draft();
+    if(!el && !(k in draft)) return;
+    const raw = String(k in draft ? draft[k] : el.value || '').trim();
     const curPe = (RS.entpCase && RS.entpCase.profile_ext) || {};
     const cur = curPe[k] == null ? '' : String(curPe[k]);
     if (raw === cur) return;
@@ -113,7 +146,7 @@ function ENTP_setMsg(html){
 
 function ENTP_profileHtml(){
   const c = RS.entpCase;
-  if (!c) {
+  if (!c || c.case_id!==ENTP_cid()) {
     if (RS._entpLoading !== 'case') {
       RS._entpLoading = 'case';
       const cid = (RS.cases && RS.cases[0] && RS.cases[0].case_id) || '';
@@ -126,17 +159,17 @@ function ENTP_profileHtml(){
   }
   const rows = ENTP_PROFILE_FIELDS.map(ENTP_fieldHtml).join('');
   const ext = ENTP_EXT_FIELDS.map(ENTP_fieldHtml).join('');
-  return `<section class="panel">
-    <div class="panel-head"><h2>기업 프로필(Form.1)</h2></div>
+  return `<section class="panel" data-entp-case="${esc(ENTP_cid())}">
+    <div class="panel-head"><h2>기업 기본 정보</h2><span id="entp-save-state" role="status">${Object.keys(ENTP_draft()).length ? '저장하지 않은 변경 있음' : '저장된 기업 정보'}</span></div>
     <div class="inline" style="margin-bottom:10px">
       ${canCall('POST','/cases/{}/profile/autofill')?`<button class="btn btn-sm" onclick="App.entpAutofill()">서류에서 자동 채우기</button>`:''}
       ${canCall('PATCH','/cases/{}/profile')?`<button class="btn btn-sm btn-primary" onclick="App.entpSaveProfile()">프로필 저장</button>`:'<span class="muted">프로필 수정은 신청기업·컨설턴트 계정만 할 수 있습니다.</span>'}
     </div>
     <div id="entp-msg" class="inline-msg"></div>
     <div class="grid-2">${rows}</div>
-    <fieldset style="margin-top:14px"><legend>확장 정보 (profile_ext)</legend>
+    <details style="margin-top:14px"><summary>추가 기업 정보</summary>
       <div class="grid-3">${ext}</div>
-    </fieldset>
+    </details>
   </section>`;
 }
 
@@ -177,7 +210,7 @@ function ENTP_penHtml(){
 function ENTP_section(){
   const open = !!S.entpOpen;
   const head = `<div class="panel-head">
-    <h2>BPJPH 제출 정보</h2>
+    <h2>기업 정보·담당자</h2>
     <button class="btn btn-sm btn-ghost" onclick="App.entpToggle()">${open ? '접기' : '펼치기'}</button>
   </div>`;
   if (!open) return `<section class="panel">${head}<p class="muted">펼치면 기업 프로필과 할랄 감독자를 확인·수정할 수 있습니다.</p></section>`;
@@ -198,30 +231,35 @@ App.entpToggle = function(){
   render();
 };
 
-App.entpSaveProfile = async function(){
-  const cid = (RS.cases && RS.cases[0] && RS.cases[0].case_id) || '';
-  if (!cid) return toast('대상 케이스가 없습니다.');
-  const body = ENTP_collectProfile();
-  if (!Object.keys(body).length) { ENTP_setMsg('변경된 항목이 없습니다.'); return; }
-  const btn = $('#entp-msg'); ENTP_setMsg('');
+async function ENTP_saveProfile({quiet=false}={}){
+  const cid=ENTP_cid();
+  if(!cid){ toast('대상 케이스가 없습니다.'); return false; }
+  if(!RS.entpCase || RS.entpCase.error || RS.entpCase.case_id !== cid) await ENTP_loadCase(cid);
+  if(ENTP_cid()!==cid) return false;
+  if(!RS.entpCase || RS.entpCase.error){ toast('기업 정보를 불러오지 못했습니다. 입력 내용은 유지됩니다.'); return false; }
+  const snapshot={...ENTP_draft(cid)}, key=ENTP_key(cid), body=ENTP_collectProfile();
+  if(!Object.keys(body).length){ if(!quiet) ENTP_setMsg('변경된 항목이 없습니다.'); return true; }
   try {
-    const r = await apiFetch('/cases/' + encodeURIComponent(cid) + '/profile',
-      { method: 'PATCH', body: JSON.stringify(body) });
-    if (!r.ok) {
-      let d = null; try { d = await r.json(); } catch(e){}
-      const det = d && d.detail;
-      if (r.status === 403) { ENTP_setMsg('<div>권한이 없습니다.</div>'); return toast('프로필 저장에 실패했습니다. (권한 없음)'); }
-      if (r.status === 422) { ENTP_setMsg(ENTP_errHtml(det) || '<div>입력값을 확인하세요.</div>'); return toast('프로필 저장에 실패했습니다. (입력 오류)'); }
-      if (r.status === 409) { ENTP_setMsg(ENTP_errHtml(det)); return toast('프로필 저장에 실패했습니다. (' + ((det && det.code) || '충돌') + ')'); }
-      ENTP_setMsg(ENTP_errHtml(det));
-      return toast('프로필 저장에 실패했습니다.');
+    const r=await apiFetch('/cases/'+encodeURIComponent(cid)+'/profile', {method:'PATCH',body:JSON.stringify(body)});
+    if(!r.ok){
+      const d=await r.json().catch(()=>({}));
+      ENTP_setMsg(ENTP_errHtml(d.detail) || '입력값과 권한을 확인해 주세요.');
+      toast('기업 정보를 저장하지 못했습니다. 입력 내용은 유지됩니다.');
+      return false;
     }
-    RS.entpCase = null;
-    await ENTP_loadCase(cid);
-    render();
-    toast('프로필을 저장했습니다.');
-  } catch(e){ toast('프로필 저장에 실패했습니다.'); }
-};
+    const remaining={...(ENTP_DRAFTS.get(key)||{})};
+    Object.keys(snapshot).forEach(k=>{ if(remaining[k]===snapshot[k]) delete remaining[k]; });
+    ENTP_DRAFTS.set(key,remaining);
+    if(ENTP_cid()===cid){
+      await ENTP_loadCase(cid);
+      const listed=(RS.cases||[]).find(c=>c.case_id===cid);
+      if(listed && RS.entpCase && !RS.entpCase.error) listed.company_name=RS.entpCase.company_name;
+      if(!quiet){ render(); toast('기업 정보를 저장했습니다.'); }
+    }
+    return true;
+  } catch(e){ toast('기업 정보를 저장하지 못했습니다. 입력 내용은 유지됩니다.'); return false; }
+}
+App.entpSaveProfile = () => ENTP_saveProfile();
 
 App.entpAutofill = async function(){
   const cid = (RS.cases && RS.cases[0] && RS.cases[0].case_id) || '';
