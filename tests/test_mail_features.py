@@ -1,6 +1,6 @@
 """Mail recovery and QR sharing: isolated DB, no real messages are sent."""
 import os
-from urllib.parse import unquote
+import re
 
 os.environ.setdefault("GLHAC_DEV", "1")
 os.environ.setdefault("GLHAC_SECRET", "test-mail-" + "x" * 40)
@@ -55,22 +55,56 @@ def setup(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def token_from(sent):
-    return unquote(sent[-1][2].split("#reset=", 1)[1])
+def temp_from(sent):
+    return re.search(r"임시 비밀번호: (\S+)", sent[-1][2]).group(1)
 
 
-def test_reset_once_and_revokes_sessions(setup):
+def test_temp_password_mail_then_login_once(setup):
     c, sessions, uid, _, old, sent, *_ = setup
     assert c.post("/auth/password-reset/request", json={"email": "CLIENT@example.com"}).status_code == 200
-    token = token_from(sent)
-    assert "https://app.example.com/ui/v4/#reset=" in sent[0][2]
-    assert c.get("/me", headers=old).status_code == 200
-    body = {"token": token, "new_password": "After123!"}
-    assert c.post("/auth/password-reset/confirm", json=body).status_code == 200
-    assert c.post("/auth/password-reset/confirm", json=body).status_code == 400
-    assert c.get("/me", headers=old).status_code == 401
+    assert sent[0][0] == "CLIENT@example.com" and "아이디: client@example.com" in sent[0][2]
+    pw = temp_from(sent)
+    assert re.fullmatch(r"[A-Za-z2-9]{4}-[A-Za-z2-9]{4}-[A-Za-z2-9]{4}", pw)
     with sessions() as db:
-        assert auth.verify_pw("After123!", db.get(models.User, uid).password_hash)
+        u = db.get(models.User, uid)
+        # 요청만으로는 기존 비밀번호·세션이 그대로다(남이 요청해도 주인이 안 쫓겨남)
+        assert auth.verify_pw("Before123!", u.password_hash)
+        assert not mf.redeem_temp_password(db, u, "Wrong-Pass-1234")
+        assert mf.redeem_temp_password(db, u, pw)
+        db.commit()
+    assert c.get("/me", headers=old).status_code == 401           # 기존 세션 해제
+    with sessions() as db:
+        u = db.get(models.User, uid)
+        assert auth.verify_pw(pw, u.password_hash)                  # 임시 비번이 새 비번
+        assert not auth.verify_pw("Before123!", u.password_hash)
+        assert not mf.redeem_temp_password(db, u, pw)               # 한 번만 '임시'로 인정
+
+
+def test_temp_password_expires(setup, monkeypatch):
+    c, sessions, uid, _, _, sent, *_ = setup
+    c.post("/auth/password-reset/request", json={"email": "client@example.com"})
+    pw = temp_from(sent)
+    future = mf.time.time() + 2 * mf.TEMP_PW_WINDOW + 1
+    monkeypatch.setattr(mf.time, "time", lambda: future)
+    with sessions() as db:
+        assert not mf.redeem_temp_password(db, db.get(models.User, uid), pw)
+
+
+def test_contact_email_also_receives_temp_password(setup):
+    c, sessions, *_ , sent, _, _ = setup
+    with sessions() as db:
+        db.add(models.User(username="auditor01", password_hash=auth.hash_pw("Before123!"), role="auditor",
+                           org_id="org_demo", token_version=0, contact_email="Staff@Example.com"))
+        db.commit()
+    assert c.post("/auth/password-reset/request", json={"email": "staff@example.com"}).status_code == 200
+    assert len(sent) == 1 and "아이디: auditor01" in sent[0][2]
+
+
+def test_both_login_routes_accept_temp_password():
+    src = open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "app", "main.py"), encoding="utf-8").read()
+    for route in ('@app.post("/auth/login")', '@app.post("/auth/handoff/login")'):
+        body = src[src.index(route):][:1500]
+        assert "_mail_features.redeem_temp_password(db, u, body.password)" in body, route
 
 
 def test_unknown_email_same_response_and_rate_limit(setup):
@@ -82,17 +116,6 @@ def test_unknown_email_same_response_and_rate_limit(setup):
     for _ in range(2):
         assert c.post("/auth/password-reset/request", json={"email": "client@example.com"}).status_code == 200
     assert c.post("/auth/password-reset/request", json={"email": "client@example.com"}).status_code == 429
-
-
-def test_expired_tampered_and_weak_reset(setup, monkeypatch):
-    c, _, _, _, _, sent, *_ = setup
-    c.post("/auth/password-reset/request", json={"email": "client@example.com"})
-    token = token_from(sent)
-    assert c.post("/auth/password-reset/confirm", json={"token": token, "new_password": "short"}).status_code == 422
-    assert c.post("/auth/password-reset/confirm", json={"token": token + "x", "new_password": "After123!"}).status_code == 400
-    future = mf.time.time() + 1801
-    monkeypatch.setattr(mf.time, "time", lambda: future)
-    assert c.post("/auth/password-reset/confirm", json={"token": token, "new_password": "After123!"}).status_code == 400
 
 
 def test_qr_image_and_link_belong_to_sender(setup):

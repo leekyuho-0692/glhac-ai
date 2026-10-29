@@ -10,8 +10,8 @@
     const dialog = document.createElement('dialog');
     dialog.style.cssText = 'max-width:460px;width:90%;padding:28px;border:1px solid #ccc;border-radius:16px';
     dialog.innerHTML = `<form><h2>${token ? '새 비밀번호 설정' : '비밀번호 재설정'}</h2>
-      ${token ? '<label>새 비밀번호<input class="in" name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label><label>새 비밀번호 확인<input class="in" name="confirm" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>' : '<p>가입한 이메일로 30분 동안 유효한 재설정 링크를 보냅니다.</p><label>가입 이메일<input class="in" name="email" type="email" required maxlength="254" autocomplete="email"></label>'}
-      <p role="status" style="white-space:pre-wrap"></p><button class="btn btn-primary" type="submit">${token ? '비밀번호 변경' : '재설정 메일 받기'}</button>
+      ${token ? '<label>새 비밀번호<input class="in" name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label><label>새 비밀번호 확인<input class="in" name="confirm" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>' : '<p>가입 이메일(또는 등록된 연락 이메일)로 임시 비밀번호를 보냅니다. 1시간 안에 그 비밀번호로 로그인한 뒤 비밀번호를 바꿔 주세요. 요청만으로 기존 비밀번호가 바뀌지는 않습니다.</p><label>가입 이메일<input class="in" name="email" type="email" required maxlength="254" autocomplete="email"></label>'}
+      <p role="status" style="white-space:pre-wrap"></p><button class="btn btn-primary" type="submit">${token ? '비밀번호 변경' : '임시 비밀번호 받기'}</button>
       <button class="btn" type="button">닫기</button></form>`;
     document.body.appendChild(dialog);
     dialog.addEventListener('close', () => dialog.remove());

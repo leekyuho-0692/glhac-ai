@@ -30,6 +30,7 @@ from . import nav8
 from . import intake
 from . import observability as obs
 from . import domain_dict as _dd_mod
+from . import mail_features as _mail_features
 from .ontology_seed import seed
 
 import os as _os
@@ -1584,7 +1585,9 @@ def login(body: schemas.LoginReq, request: Request, db: Session = Depends(get_db
         raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS", "retry_after_sec": auth._IP_RL_WINDOW})
 
     u = db.query(models.User).filter_by(username=body.username).first()
-    if not u or not auth.verify_pw(body.password, u.password_hash):
+    # 메일로 받은 임시 비밀번호로도 로그인된다(그 순간 그 값이 새 비밀번호가 됨 — mail_features)
+    if not u or not (auth.verify_pw(body.password, u.password_hash)
+                     or _mail_features.redeem_temp_password(db, u, body.password)):
         auth.record_attempt(rl_key)
         auth.record_ip_attempt(ip)
         raise HTTPException(401, {"code": "BAD_CREDENTIALS"})
@@ -1631,12 +1634,14 @@ def handoff_login(body: schemas.LoginReq, db: Session = Depends(get_db)):
         raise HTTPException(429, {"code": "TOO_MANY_ATTEMPTS",
                                   "retry_after_sec": auth._RL_WINDOW})
     u = db.query(models.User).filter_by(username=body.username).first()
-    if not u or not auth.verify_pw(body.password, u.password_hash):
+    if not u or not (auth.verify_pw(body.password, u.password_hash)
+                     or _mail_features.redeem_temp_password(db, u, body.password)):
         auth.record_attempt(rl_key)
         raise HTTPException(401, {"code": "BAD_CREDENTIALS"})
     auth.clear_attempts(rl_key)
     if _user_suspended(db, u.user_id):
         raise HTTPException(403, {"code": "USER_SUSPENDED"})
+    db.commit()   # 임시 비밀번호로 들어왔으면 교체분 저장
     _handoff_sweep()
     code = secrets.token_urlsafe(24)
     _HANDOFF[code] = (time.time(), {**auth.make_tokens(u), "role": u.role,

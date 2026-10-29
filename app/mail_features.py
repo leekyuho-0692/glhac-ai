@@ -9,7 +9,6 @@ import re
 import secrets
 import threading
 import time
-from urllib.parse import quote
 
 from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
@@ -91,21 +90,68 @@ def read_reset_token(token):
         raise HTTPException(400, {"code": "INVALID_RESET_TOKEN", "message": "링크가 만료되었거나 이미 사용되었습니다."}) from None
 
 
+# ── 임시 비밀번호(메일 발송) ──────────────────────────────────────────────
+# 요청만으로는 기존 비밀번호를 바꾸지 않는다 — 남의 이메일만 알면 계정 주인을 계속 쫓아낼
+# 수 있기 때문이다. 임시 비밀번호는 (계정·토큰버전·현재 비번해시·발급 시간창)의 HMAC 으로
+# 만들어 따로 저장하지 않고, 그걸로 처음 로그인하는 순간 그 값이 새 비밀번호가 된다.
+# 비번해시가 바뀌면 같은 임시 비밀번호는 다시 안 맞으므로 한 번만 쓰인다.
+TEMP_PW_WINDOW = 3600          # 초. 현재·직전 창을 받아 최소 1시간, 최대 2시간 유효
+_TEMP_SETS = ("ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnopqrstuvwxyz", "23456789")
+
+
+def temp_password(user, window):
+    msg = "temp-pw:%s:%s:%s:%d" % (user.user_id, user.token_version or 0,
+                                   hashlib.sha256(user.password_hash.encode()).hexdigest(), window)
+    digest = hmac.new(auth.SECRET, msg.encode(), hashlib.sha256).digest()
+    # 대·소문자·숫자가 번갈아 들어가게(헷갈리는 0/O·1/l/I 제외), 4자씩 '-' 로 끊는다
+    chars = [_TEMP_SETS[i % 3][b % len(_TEMP_SETS[i % 3])] for i, b in enumerate(digest[:12])]
+    return "-".join("".join(chars[i:i + 4]) for i in range(0, 12, 4))
+
+
+def redeem_temp_password(db, user, password):
+    """로그인 비밀번호가 이 계정의 유효한 임시 비밀번호면 그 값으로 비밀번호를 바꾸고 True.
+    다른 기기의 기존 세션은 토큰버전을 올려 끊는다. 호출한 쪽이 commit 한다."""
+    if not user or not password or len(password) != 14:
+        return False
+    now = int(time.time()) // TEMP_PW_WINDOW
+    if not any(hmac.compare_digest(password, temp_password(user, w)) for w in (now, now - 1)):
+        return False
+    user.password_hash = auth.hash_pw(password)
+    user.token_version = (user.token_version or 0) + 1
+    return True
+
+
+def _reset_targets(db, email):
+    """아이디가 이 이메일인 계정 + 연락 이메일(contact_email)로 이 주소를 등록한 계정."""
+    low = email.lower()
+    found = {u.user_id: u for u in db.query(models.User).filter(func.lower(models.User.username) == low)}
+    # contact_email 은 암호화 컬럼이라 SQL 로 비교할 수 없다 — 등록된 것만 복호화해 대조
+    for u in db.query(models.User).filter(models.User.contact_email.isnot(None)):
+        if (u.contact_email or "").strip().lower() == low:
+            found.setdefault(u.user_id, u)
+    return list(found.values())[:5]
+
+
 def register_routes(app, invite_factory, qr_renderer, home_url):
     @app.post("/auth/password-reset/request")
     def request_reset(body: EmailRequest, request: Request, db=Depends(get_db)):
         rate_limit(("reset-ip", _client_ip(request)), 20)
         rate_limit(("reset-email", hashlib.sha256(body.email.lower().encode()).hexdigest()), 3)
         mail_delivery.settings()
-        user = db.query(models.User).filter(func.lower(models.User.username) == body.email.lower()).first()
-        if user:
-            base = os.getenv("GLHAC_APP_URL", "https://glhac.co.kr").rstrip("/")
-            url = base + "/ui/v4/#reset=" + quote(make_reset_token(user), safe="")
-            mail_delivery.send(body.email, "비밀번호 재설정",
-                "30분 안에 아래 링크에서 새 비밀번호를 설정해 주세요.\n" + url,
-                '<p>30분 안에 새 비밀번호를 설정해 주세요. 링크는 한 번만 사용할 수 있습니다.</p><p><a href="'
-                + html.escape(url, quote=True) + '">비밀번호 재설정</a></p><p>요청하지 않았다면 이 메일을 무시해 주세요.</p>')
-        return {"ok": True, "message": "등록된 이메일이면 재설정 링크를 발송했습니다. 메일함과 스팸함을 확인해 주세요."}
+        base = os.getenv("GLHAC_APP_URL", "https://glhac.co.kr").rstrip("/") + "/ui/v4/"
+        window = int(time.time()) // TEMP_PW_WINDOW
+        for user in _reset_targets(db, body.email):
+            pw = temp_password(user, window)
+            mail_delivery.send(body.email, "[GL-HAC] 임시 비밀번호 안내",
+                "아이디: %s\n임시 비밀번호: %s\n\n1시간 안에 %s 에서 이 임시 비밀번호로 로그인한 뒤, "
+                "'비밀번호 변경'에서 새 비밀번호로 바꿔 주세요.\n임시 비밀번호로 로그인하면 다른 기기의 로그인은 해제됩니다.\n"
+                "요청하지 않았다면 이 메일을 무시해 주세요. 기존 비밀번호는 그대로 쓸 수 있습니다." % (user.username, pw, base),
+                '<p>아이디: <b>%s</b><br>임시 비밀번호: <b style="font-family:monospace;font-size:1.2em">%s</b></p>'
+                '<p>1시간 안에 <a href="%s">GL-HAC</a> 에서 이 임시 비밀번호로 로그인한 뒤, '
+                "'비밀번호 변경'에서 새 비밀번호로 바꿔 주세요. 임시 비밀번호로 로그인하면 다른 기기의 로그인은 해제됩니다.</p>"
+                '<p>요청하지 않았다면 이 메일을 무시해 주세요. 기존 비밀번호는 그대로 쓸 수 있습니다.</p>'
+                % (html.escape(user.username), pw, html.escape(base, quote=True)))
+        return {"ok": True, "message": "등록된 이메일이면 임시 비밀번호를 발송했습니다. 메일함과 스팸함을 확인해 주세요."}
 
     @app.post("/auth/password-reset/confirm")
     def confirm_reset(body: ResetConfirm, request: Request, db=Depends(get_db)):
