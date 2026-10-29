@@ -56,6 +56,7 @@ const SERVER_ROLES_FOR = {
   'GET /admin/staff-signups':                    [],                                             // main.py:1517
   'GET /admin/orgs':                             [],                                             // main.py:1682
   'POST /admin/orgs':                            [],                                             // main.py:1706
+  'GET /admin/mail-log':                         [],                                             // main.py admin_mail_log(admin 전용)
   'GET /admin/audit-logs':                       [],                                             // main.py:1647
   'GET /admin/audit-log-verify':                 [],                                             // main.py:2010
   'GET /admin/compliance':                       [],                                             // main.py:13237

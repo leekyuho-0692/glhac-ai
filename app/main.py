@@ -31,6 +31,7 @@ from . import intake
 from . import observability as obs
 from . import domain_dict as _dd_mod
 from . import mail_features as _mail_features
+from . import mail_log as _mail_log
 from .ontology_seed import seed
 
 import os as _os
@@ -1039,6 +1040,13 @@ def drain_notifications(db, batch=50, max_attempts=3):
             results = _nt.dispatch(n, contacts=contacts, channels=eff)
         except Exception as e:  # noqa: BLE001
             results = [{"channel": "?", "ok": False, "reason": str(e)}]
+        # 메일 발송 기록(관리자 '메일 발송 기록') — 받는 주소가 있어 실제로 보낸/시도한 것만
+        if contacts.get("email"):
+            for r in results:
+                if r.get("channel") == "email" and r.get("reason") not in ("no_contact", "no_credentials"):
+                    _mail_log.add(db, "notification", contacts["email"],
+                                  "[GL-HAC] " + (n.title or "")[:120], _nt.message_text(n), r.get("ok"),
+                                  r.get("reason"), case_id=n.case_id, notification_id=n.notification_id)
         retryable = any((not r.get("ok")) and r.get("reason") not in _NOTIFY_NONRETRY
                         for r in results)
         n.attempts = (n.attempts or 0) + 1
@@ -4639,6 +4647,43 @@ def admin_notify_channels(user=Depends(auth.require_roles("operator"))):
     """
     from . import notify as _nt
     return {"channels": _nt.channel_status()}
+
+
+@app.get("/admin/mail-log")
+def admin_mail_log(kind: str = None, status: str = None, q: str = None, limit: int = 50, offset: int = 0,
+                   user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    """메일 발송 기록 목록(admin 전용) — 본문은 빼고, 상세는 /admin/mail-log/{id}.
+    받는 주소는 암호화 컬럼이라 SQL 로 못 찾는다 — 검색어(q)는 최근 5000건을 복호화해 대조."""
+    qry = db.query(models.MailLog)
+    if kind:
+        qry = qry.filter(models.MailLog.kind == kind)
+    if status:
+        qry = qry.filter(models.MailLog.status == status)
+    qry = qry.order_by(models.MailLog.created_at.desc(), models.MailLog.log_id.desc())
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    if q and q.strip():
+        needle = q.strip().lower()
+        hits = [m for m in qry.limit(5000).all()
+                if needle in (m.recipient or "").lower() or needle in (m.subject or "").lower()
+                or needle in (m.case_id or "").lower()]
+        total, rows = len(hits), hits[offset:offset + limit]
+    else:
+        total, rows = qry.count(), qry.offset(offset).limit(limit).all()
+    counts = dict(db.query(models.MailLog.status, func.count()).group_by(models.MailLog.status).all())
+    return {"items": [_mail_log.row(m) for m in rows], "total": total,
+            "counts": {"sent": counts.get("sent", 0), "failed": counts.get("failed", 0)},
+            "kinds": _mail_log.KIND_LABEL}
+
+
+@app.get("/admin/mail-log/{log_id}")
+def admin_mail_log_detail(log_id: str, user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
+    """메일 1건 내용 — 개인정보가 담긴 본문이라 열람을 감사로그에 남긴다."""
+    m = db.get(models.MailLog, log_id)
+    if not m:
+        raise HTTPException(404, {"code": "MAIL_LOG_NOT_FOUND"})
+    _audit(db, user, "mail_log.view", "mail_log", log_id, case_id=m.case_id)
+    return _mail_log.row(m, with_body=True)
 
 
 @app.post("/admin/scan-expiry")

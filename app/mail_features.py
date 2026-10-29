@@ -14,7 +14,7 @@ from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 
-from . import auth, mail_delivery, models, schemas
+from . import auth, mail_delivery, mail_log, models, schemas
 from .db import get_db
 
 
@@ -132,6 +132,19 @@ def _reset_targets(db, email):
     return list(found.values())[:5]
 
 
+def send_logged(db, kind, recipient, subject, text, markup, png=None, log_text=None, **refs):
+    """mail_delivery.send + 발송 기록(성공·실패 모두). log_text 가 있으면 본문 대신 그걸 저장."""
+    try:
+        mail_delivery.send(recipient, subject, text, markup, png)
+    except HTTPException as e:
+        mail_log.add(db, kind, recipient, "[GL-HAC] " + subject, log_text or text, False,
+                     getattr(e, "mail_error", None) or str(e.detail), **refs)
+        db.commit()
+        raise
+    mail_log.add(db, kind, recipient, "[GL-HAC] " + subject, log_text or text, True, **refs)
+    db.commit()
+
+
 def register_routes(app, invite_factory, qr_renderer, home_url):
     @app.post("/auth/password-reset/request")
     def request_reset(body: EmailRequest, request: Request, db=Depends(get_db)):
@@ -142,15 +155,17 @@ def register_routes(app, invite_factory, qr_renderer, home_url):
         window = int(time.time()) // TEMP_PW_WINDOW
         for user in _reset_targets(db, body.email):
             pw = temp_password(user, window)
-            mail_delivery.send(body.email, "[GL-HAC] 임시 비밀번호 안내",
-                "아이디: %s\n임시 비밀번호: %s\n\n1시간 안에 %s 에서 이 임시 비밀번호로 로그인한 뒤, "
-                "'비밀번호 변경'에서 새 비밀번호로 바꿔 주세요.\n임시 비밀번호로 로그인하면 다른 기기의 로그인은 해제됩니다.\n"
-                "요청하지 않았다면 이 메일을 무시해 주세요. 기존 비밀번호는 그대로 쓸 수 있습니다." % (user.username, pw, base),
+            text = ("아이디: %s\n임시 비밀번호: %s\n\n1시간 안에 %s 에서 이 임시 비밀번호로 로그인한 뒤, "
+                    "'비밀번호 변경'에서 새 비밀번호로 바꿔 주세요.\n임시 비밀번호로 로그인하면 다른 기기의 로그인은 해제됩니다.\n"
+                    "요청하지 않았다면 이 메일을 무시해 주세요. 기존 비밀번호는 그대로 쓸 수 있습니다.")
+            # 기록에는 임시 비밀번호를 가린다 — 관리자가 남의 계정으로 들어갈 수 있으면 안 된다
+            send_logged(db, "password_reset", body.email, "임시 비밀번호 안내", text % (user.username, pw, base),
                 '<p>아이디: <b>%s</b><br>임시 비밀번호: <b style="font-family:monospace;font-size:1.2em">%s</b></p>'
                 '<p>1시간 안에 <a href="%s">GL-HAC</a> 에서 이 임시 비밀번호로 로그인한 뒤, '
                 "'비밀번호 변경'에서 새 비밀번호로 바꿔 주세요. 임시 비밀번호로 로그인하면 다른 기기의 로그인은 해제됩니다.</p>"
                 '<p>요청하지 않았다면 이 메일을 무시해 주세요. 기존 비밀번호는 그대로 쓸 수 있습니다.</p>'
-                % (html.escape(user.username), pw, html.escape(base, quote=True)))
+                % (html.escape(user.username), pw, html.escape(base, quote=True)),
+                log_text=text % (user.username, "••••-••••-•••• (가림)", base), user_id=user.user_id)
         return {"ok": True, "message": "등록된 이메일이면 임시 비밀번호를 발송했습니다. 메일함과 스팸함을 확인해 주세요."}
 
     @app.post("/auth/password-reset/confirm")
@@ -185,8 +200,8 @@ def register_routes(app, invite_factory, qr_renderer, home_url):
         image = qr_renderer(url, "png").body
         name = user["username"]
         safe_url = html.escape(url, quote=True)
-        mail_delivery.send(body.email, "할랄 인증 상담 · 영업 QR 및 가입 링크",
+        send_logged(db, "consultant_qr", body.email, "할랄 인증 상담 · 영업 QR 및 가입 링크",
             "%s 컨설턴트가 보낸 할랄 인증 가입 안내입니다.\nQR 이미지와 아래 가입 링크를 이용해 주세요.\n%s" % (name, url),
             '<p>' + html.escape(name) + ' 컨설턴트의 할랄 인증 가입 안내입니다.</p><p><img src="cid:sales-qr" alt="컨설턴트 가입 QR" width="240"></p><p><a href="'
-            + safe_url + '">가입 페이지 열기</a></p><p>가입 링크 주소: <a href="' + safe_url + '">' + safe_url + '</a></p>', image)
+            + safe_url + '">가입 페이지 열기</a></p><p>가입 링크 주소: <a href="' + safe_url + '">' + safe_url + '</a></p>', image, actor_id=user["uid"])
         return {"ok": True}

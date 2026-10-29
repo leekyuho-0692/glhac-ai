@@ -341,12 +341,152 @@ function OPSA_renderCompliance(){
   </section>`;
 }
 
+// ── 메일 발송 기록(admin) ─────────────────────────────────
+// 알림·임시 비밀번호·영업 QR 메일이 누구에게 언제 나갔는지, 실패 사유, 내용(클릭).
+// 임시 비밀번호는 서버가 가려서 저장한다. 내용 열람은 감사로그에 남는다(mail_log.view).
+const OPSA_MAIL_PAGE = 50;
+RS.opsa.mailF = RS.opsa.mailF || {kind:'', status:'', q:'', offset:0};
+async function OPSA_loadMail(){
+  const f = RS.opsa.mailF;
+  const qs = new URLSearchParams({limit:OPSA_MAIL_PAGE, offset:f.offset});
+  if(f.kind) qs.set('kind', f.kind);
+  if(f.status) qs.set('status', f.status);
+  if(f.q) qs.set('q', f.q);
+  try{
+    const r = await apiFetch('/admin/mail-log?' + qs.toString());
+    RS.opsa.mail = r.ok ? (await r.json()) : {error:true, status:r.status};
+  }catch(e){ RS.opsa.mail = {error:true}; }
+}
+function OPSA_when(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  if(isNaN(d)) return iso;
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+/* EN/ID 화면 번역(i18n-dom 런타임 사전) — 이 스크립트가 사전보다 먼저 로드돼 첫 렌더 때 보탠다.
+   이미 있는 문구는 덮지 않는다(다른 화면 번역을 바꾸지 않게). */
+const OPSA_MAIL_I18N = {
+  '메일 발송 기록': ['Mail send log', 'Riwayat pengiriman email'],
+  '메일 발송 기록을 불러오지 못했습니다.': ['Could not load the mail send log.', 'Gagal memuat riwayat pengiriman email.'],
+  '메일 발송 기록이 없습니다.': ['No mail has been sent yet.', 'Belum ada email yang dikirim.'],
+  '알림·임시 비밀번호·영업 QR 메일의 발송 결과입니다. 행을 누르면 보낸 내용을 볼 수 있습니다(열람은 감사로그에 남습니다). 임시 비밀번호는 가려서 저장됩니다.':
+    ['Delivery results of notification, temporary password and sales QR mails. Click a row to see what was sent (viewing is recorded in the audit log). Temporary passwords are stored masked.',
+     'Hasil pengiriman email notifikasi, kata sandi sementara, dan QR penjualan. Klik baris untuk melihat isi yang dikirim (tercatat di log audit). Kata sandi sementara disimpan tersamar.'],
+  '받는 주소·제목·케이스 검색': ['Search recipient · subject · case', 'Cari penerima · subjek · kasus'],
+  '전체 종류': ['All types', 'Semua jenis'], '전체 상태': ['All statuses', 'Semua status'],
+  '조회 결과': ['Results', 'Hasil'], '보낸 시각': ['Sent at', 'Waktu kirim'], '받는 사람': ['Recipient', 'Penerima'],
+  '메일 내용': ['Mail content', 'Isi email'], '내용을 불러오지 못했습니다.': ['Could not load the content.', 'Gagal memuat isi.'],
+  '임시 비밀번호': ['Temporary password', 'Kata sandi sementara'], '영업 QR': ['Sales QR', 'QR penjualan'],
+  '발송됨': ['Sent', 'Terkirim'], '실패': ['Failed', 'Gagal'], '새로고침': ['Refresh', 'Muat ulang'],
+  '조회': ['Search', 'Cari'], '종류': ['Type', 'Jenis'], '제목': ['Subject', 'Subjek'], '결과': ['Result', 'Hasil'],
+  '이전': ['Previous', 'Sebelumnya'], '다음': ['Next', 'Berikutnya'], '닫기': ['Close', 'Tutup'], '케이스': ['Case', 'Kasus'],
+};
+function OPSA_mailI18n(){
+  if(OPSA_mailI18n.done || typeof I18N_DOM === 'undefined' || !I18N_DOM) return;
+  [['en', 0], ['id', 1]].forEach(([lang, i]) => {
+    const d = I18N_DOM[lang];
+    if(!d) return;
+    Object.keys(OPSA_MAIL_I18N).forEach(k => { if(!(k in d)) d[k] = OPSA_MAIL_I18N[k][i]; });
+  });
+  if(typeof I18D_RE_CACHE !== 'undefined') Object.keys(I18D_RE_CACHE).forEach(k => delete I18D_RE_CACHE[k]);
+  OPSA_mailI18n.done = true;
+}
+function OPSA_renderMail(){
+  OPSA_mailI18n();
+  const d = RS.opsa.mail, f = RS.opsa.mailF;
+  const head = '<div class="panel-head"><h2>메일 발송 기록</h2><button class="btn btn-sm" onclick="App.opsaMailReload()">새로고침</button></div>';
+  if(!d){
+    if(RS.opsa._loadingMail!==1){ RS.opsa._loadingMail=1; OPSA_loadMail().then(()=>{ RS.opsa._loadingMail=0; render(); }); }
+    return `<section class="panel">${head}<p class="empty">불러오는 중…</p></section>`;
+  }
+  if(d.error){
+    return `<section class="panel">${head}<p class="empty">${d.status===403?'이 기능은 권한이 없습니다(필요 역할: admin).':'메일 발송 기록을 불러오지 못했습니다.'}</p></section>`;
+  }
+  const kinds = d.kinds || {};
+  const opt = (v, label, cur) => `<option value="${esc(v)}"${v===cur?' selected':''}>${esc(label)}</option>`;
+  const filters = `<form class="chipbar" onsubmit="App.opsaMailFilter(event)" style="gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <select class="in" name="kind" style="width:auto">${opt('', '전체 종류', f.kind)}${Object.keys(kinds).map(k=>opt(k, kinds[k], f.kind)).join('')}</select>
+      <select class="in" name="status" style="width:auto">${opt('', '전체 상태', f.status)}${opt('sent','발송됨',f.status)}${opt('failed','실패',f.status)}</select>
+      <input class="in" name="q" value="${esc(f.q)}" placeholder="받는 주소·제목·케이스 검색" style="width:240px">
+      <button class="btn btn-sm btn-primary" type="submit">조회</button>
+    </form>`;
+  const c = d.counts || {};
+  const summ = `<div class="summary">
+      <div><span class="k">발송됨</span><span class="v mono">${c.sent||0}</span></div>
+      <div><span class="k">실패</span><span class="v mono">${c.failed||0}</span></div>
+      <div><span class="k">조회 결과</span><span class="v mono">${d.total||0}</span></div>
+    </div>`;
+  const items = d.items || [];
+  RS.opsa.mailIndex = {};
+  items.forEach(x => { RS.opsa.mailIndex[x.log_id] = x; });
+  const rows = items.length
+    ? items.map(x=>`<tr style="cursor:pointer" onclick="App.opsaMailOpen('${esc(x.log_id)}')" title="눌러서 내용 보기">
+        <td class="mono" style="white-space:nowrap">${esc(OPSA_when(x.created_at))}</td>
+        <td style="white-space:nowrap"><span class="tag">${esc(x.kind_label||x.kind||'')}</span></td>
+        <td class="mono">${esc(x.recipient||'')}</td>
+        <td>${esc(x.subject||'')}${x.case_id?`<div class="muted mono" style="font-size:11px">case ${esc(x.case_id)}</div>`:''}</td>
+        <td><span class="badge ${x.status==='sent'?'strong':'attn'}">${x.status==='sent'?'발송됨':'실패'}</span>${x.error?`<div class="muted" style="font-size:11px">${esc(x.error)}</div>`:''}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="empty">메일 발송 기록이 없습니다.</td></tr>';
+  const from = d.total ? f.offset + 1 : 0, to = f.offset + items.length;
+  const pager = `<div class="chipbar" style="justify-content:space-between;margin-top:8px">
+      <span class="muted">${from}–${to} / ${d.total||0}건</span>
+      <span><button class="btn btn-sm" ${f.offset<=0?'disabled':''} onclick="App.opsaMailPage(-1)">이전</button>
+      <button class="btn btn-sm" ${to>=(d.total||0)?'disabled':''} onclick="App.opsaMailPage(1)">다음</button></span>
+    </div>`;
+  return `<section class="panel">${head}
+    <p class="muted" style="margin-top:0">알림·임시 비밀번호·영업 QR 메일의 발송 결과입니다. 행을 누르면 보낸 내용을 볼 수 있습니다(열람은 감사로그에 남습니다). 임시 비밀번호는 가려서 저장됩니다.</p>
+    ${filters}${summ}
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>보낸 시각</th><th>종류</th><th>받는 사람</th><th>제목</th><th>결과</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>${pager}
+  </section>`;
+}
+App.opsaMailReload = function(){ RS.opsa.mail = undefined; render(); };
+App.opsaMailFilter = function(e){
+  e.preventDefault();
+  const el = e.currentTarget.elements;
+  RS.opsa.mailF = {kind:el.kind.value, status:el.status.value, q:el.q.value.trim(), offset:0};
+  App.opsaMailReload();
+};
+App.opsaMailPage = function(dir){
+  const f = RS.opsa.mailF;
+  f.offset = Math.max(0, f.offset + dir * OPSA_MAIL_PAGE);
+  App.opsaMailReload();
+};
+App.opsaMailOpen = async function(id){
+  const x = (RS.opsa.mailIndex||{})[id] || {};
+  openModal('메일 내용', '<p class="empty">불러오는 중…</p>', '<button class="btn" onclick="App.closeModal()">닫기</button>');
+  let m;
+  try{
+    const r = await apiFetch('/admin/mail-log/' + encodeURIComponent(id));
+    m = r.ok ? await r.json() : null;
+  }catch(_){ m = null; }
+  if(!m){
+    openModal('메일 내용', '<p class="empty">내용을 불러오지 못했습니다.</p>', '<button class="btn" onclick="App.closeModal()">닫기</button>');
+    return;
+  }
+  const body = `<div class="dl">
+      <div><dt>보낸 시각</dt><dd class="mono">${esc(OPSA_when(m.created_at))}</dd></div>
+      <div><dt>종류</dt><dd>${esc(m.kind_label||m.kind||'')}</dd></div>
+      <div><dt>받는 사람</dt><dd class="mono">${esc(m.recipient||'')}</dd></div>
+      <div><dt>제목</dt><dd>${esc(m.subject||'')}</dd></div>
+      <div><dt>결과</dt><dd>${m.status==='sent'?'<span class="badge strong">발송됨</span>':'<span class="badge attn">실패</span>'}${m.error?` <span class="muted">${esc(m.error)}</span>`:''}</dd></div>
+      ${m.case_id?`<div><dt>케이스</dt><dd class="mono">${esc(m.case_id)}</dd></div>`:''}
+    </div>
+    <pre style="white-space:pre-wrap;word-break:break-word;margin-top:12px;padding:12px;border:1px solid var(--line,#ddd);border-radius:8px;max-height:50vh;overflow:auto">${esc(m.body||'')}</pre>`;
+  openModal('메일 내용', body, '<button class="btn" onclick="App.closeModal()">닫기</button>', true);
+};
+
 // ── 탭 렌더러 ─────────────────────────────────────────────
 function OPSA_render(){
   return [
     canCall('GET','/admin/audit-logs') ? OPSA_renderLogs() : '',   // 감사 로그·체인 검증 admin 전용(main.py:1647·2010)
     OPSA_renderWf(),
     OPSA_renderNotifs(),
+    canCall('GET','/admin/mail-log') ? OPSA_renderMail() : '',   // 메일 발송 기록 admin 전용
     OPSA_renderCompliance(),
   ].join('');
 }

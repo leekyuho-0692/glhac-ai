@@ -224,11 +224,16 @@ PROVIDERS = {"sms": _send_sms, "kakao": _send_kakao, "whatsapp": _send_whatsapp,
              "email": _send_email, "webhook": _send_webhook}
 
 
+def message_text(notification):
+    """채널로 나가는 본문 — 제목 + ': ' + 내용(메일 발송 기록도 이 값을 저장)."""
+    return (notification.title or "") + (": " + notification.body if notification.body else "")
+
+
 def dispatch(notification, contacts=None, channels=None):
     """channels 순회 발송. contacts={phone,email,webhook}. inapp은 DB 저장으로 항상 성공."""
     contacts = contacts or {}
     results = []
-    text = (notification.title or "") + (": " + notification.body if notification.body else "")
+    text = message_text(notification)
     for ch in (channels if channels is not None else (notification.channels or ["inapp"])):
         if ch == "inapp":
             results.append({"channel": "inapp", "ok": True})

@@ -40,5 +40,7 @@ def send(recipient, subject, text, markup, png=None):
                 smtp.login(user, password)
             if smtp.send_message(message):
                 raise RuntimeError("Recipient rejected")
-    except Exception:
-        raise HTTPException(503, {"code": "EMAIL_SEND_FAILED", "message": "메일 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."}) from None
+    except Exception as e:
+        err = HTTPException(503, {"code": "EMAIL_SEND_FAILED", "message": "메일 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."})
+        err.mail_error = ("%s: %s" % (type(e).__name__, e))[:200]   # 발송 기록용 — 응답엔 안 나간다
+        raise err from None

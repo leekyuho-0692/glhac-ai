@@ -663,6 +663,24 @@ class Payment(Base):
     paid_at = Column(DateTime, default=datetime.utcnow)
 
 
+class MailLog(Base):
+    """메일 발송 기록 — 관리자가 누구에게·언제·무엇이 나갔는지와 실패 사유를 본다(app/mail_log.py).
+    받는 주소·본문은 개인정보라 암호화 컬럼. 임시 비밀번호는 가린 본문만 저장한다."""
+    __tablename__ = "mail_log"
+    log_id = Column(String, primary_key=True, default=uid)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    kind = Column(String, index=True)          # notification|password_reset|consultant_qr
+    recipient = Column(EncryptedType)
+    subject = Column(String)
+    body = Column(EncryptedType)               # 평문 본문(HTML 메일도 텍스트판을 저장)
+    status = Column(String, index=True)        # sent|failed
+    error = Column(String)                     # 실패 사유(서버 응답 요약)
+    case_id = Column(String, index=True)
+    notification_id = Column(String)
+    user_id = Column(String)                   # 관련 계정(임시 비밀번호 대상)
+    actor_id = Column(String)                  # 보낸 사람(영업 QR 의 컨설턴트)
+
+
 class AuditLog(Base):
     """접근/조회 감사로그(§2.4) — 워크플로 전이(workflow_event)와 별개.
     누가·언제·무엇을 조회/다운로드/변경했는지. 읽기까지 감사 대상."""
