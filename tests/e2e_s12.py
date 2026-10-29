@@ -114,8 +114,17 @@ ok("breakdown.materials", "materials" in bk, list(bk.keys()))
 ok("breakdown.audit", "audit" in bk, list(bk.keys()))
 ok("documents 0~100", 0 <= bk.get("documents", -1) <= 100, bk.get("documents"))
 ok("sjph 0~100", 0 <= bk.get("sjph", -1) <= 100, bk.get("sjph"))
-ok("materials 0~100", 0 <= bk.get("materials", -1) <= 100, bk.get("materials"))
-ok("audit 0~100", 0 <= bk.get("audit", -1) <= 100, bk.get("audit"))
+# 10/28 v4-ux: 아직 평가 안 된 영역(원재료 미판정·현장심사 미완료)은 0점이 아니라 null + evaluated=false
+ev = rd.get("evaluated", {})
+
+
+def _score_or_unevaluated(k):
+    v = bk.get(k)
+    return (v is None and ev.get(k) is False) or (v is not None and 0 <= v <= 100)
+
+
+ok("materials 0~100 또는 미평가 null", _score_or_unevaluated("materials"), (bk.get("materials"), ev))
+ok("audit 0~100 또는 미평가 null", _score_or_unevaluated("audit"), (bk.get("audit"), ev))
 
 cnt = rd.get("counts", {})
 ok("counts.critical_high ≥0", cnt.get("critical_high", -1) >= 0, cnt.get("critical_high"))
@@ -125,7 +134,9 @@ ok("counts.open_findings ≥0", cnt.get("open_findings", -1) >= 0, cnt.get("open
 # open findings 추가 후 audit score 하락 확인
 rd_before = rd.get("breakdown", {}).get("audit", 100)
 # findings 이미 추가됨 → audit score 하락 기대
-ok("open findings → audit score≤80", bk.get("audit", 100) <= 80, bk.get("audit"))
+ok("open findings → audit score≤80 (미평가면 null)",
+   (bk.get("audit") is None and ev.get("audit") is False) or (bk.get("audit") is not None and bk["audit"] <= 80),
+   bk.get("audit"))
 
 # 원재료 BLOCK 추가 후 materials score 하락 확인
 m1 = httpx.post(f"{B}/cases/{CID}/materials", headers=HC,
@@ -137,8 +148,9 @@ if "material_id" in m1:
     conn.commit()
     conn.close()
     rd2 = httpx.get(f"{B}/cases/{CID}/readiness", headers=HC).json()
-    ok("BLOCK 원재료 → materials score 하락", rd2.get("breakdown", {}).get("materials", 100) < 100,
-       rd2.get("breakdown", {}).get("materials"))
+    mat2, ev2 = rd2.get("breakdown", {}).get("materials"), rd2.get("evaluated", {})
+    ok("BLOCK 원재료 → materials score 하락 (미판정 원재료가 남으면 null)",
+       (mat2 is None and ev2.get("materials") is False) or (mat2 is not None and mat2 < 100), (mat2, ev2))
     ok("counts.critical_high≥1 반영", rd2.get("counts", {}).get("critical_high", 0) >= 1,
        rd2.get("counts", {}).get("critical_high"))
 

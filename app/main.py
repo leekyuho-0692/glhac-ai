@@ -514,7 +514,7 @@ def _assert_case_access(db, user, c):
     role = user.get("role")
     if role == "pendamping_pph":
         current = (db.query(models.PendampingAssignment).filter_by(case_id=c.case_id)
-                   .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(),
+                   .order_by(models.PendampingAssignment.assigned_at.desc(),
                              models.PendampingAssignment.assignment_id.desc()).first())
         if current and current.pendamping_id == str(user.get("uid")):
             return
@@ -8905,7 +8905,7 @@ def committee_status(case_id: str, user=Depends(auth.get_current_user), db: Sess
           .order_by(models.WorkflowEvent.created_at.desc()).first())
     decision = (ev.action.split(".")[1] if ev else None)
     pa = ((db.query(models.PendampingAssignment).filter_by(case_id=case_id)
-           .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
+           .order_by(models.PendampingAssignment.assigned_at.desc(), models.PendampingAssignment.assignment_id.desc()).first())
           if c.pathway == "self_declare" else None)
     sd_doc = (db.query(models.GeneratedDocument)
               .filter_by(case_id=case_id, doc_type="self_declaration").first())
@@ -14015,7 +14015,7 @@ def _halal_mark_no(cert):
 def _case_fatwa_no(db, case_id):
     """파트와 결정번호(No. Fatwa) — FatwaDecision.decision_no 조인(신규 저장 없음)."""
     fd = (db.query(models.FatwaDecision).filter_by(case_id=case_id)
-          .order_by(models.FatwaDecision.decided_at.desc().nullslast()).first())
+          .order_by(models.FatwaDecision.decided_at.desc()).first())
     if not fd:
         fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     return (fd.decision_no if fd else None) or None
@@ -15192,7 +15192,7 @@ def _build_selfdeclare_submission(db, case):
               .filter_by(case_id=case.case_id, doc_type="self_declaration")
               .order_by(models.GeneratedDocument.version.desc()).first())
     pa = (db.query(models.PendampingAssignment).filter_by(case_id=case.case_id)
-          .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
+          .order_by(models.PendampingAssignment.assigned_at.desc(), models.PendampingAssignment.assignment_id.desc()).first())
     kfph_ev = _kfph_approve_event(db, case.case_id)
     return {
         "scheme": "self_declare",
@@ -20169,7 +20169,7 @@ def verify_pendamping(case_id: str, body: schemas.PendampingVerify,
                       user=Depends(rbac.require_action("pendamping.verify")), db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
     pa = (db.query(models.PendampingAssignment).filter_by(case_id=case_id)
-          .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
+          .order_by(models.PendampingAssignment.assigned_at.desc(), models.PendampingAssignment.assignment_id.desc()).first())
     if not pa:
         raise HTTPException(404, {"code": "NO_PENDAMPING_ASSIGNMENT"})
     pa.decision = body.decision
@@ -20197,7 +20197,7 @@ def pendamping_assignments(user=Depends(auth.require_roles("pendamping_pph", "op
     """동반자(PPH) 전용 인박스 — pendamping_assignment(케이스별)에서 로그인 동반자 배정건 집약.
     pendamping_pph: 본인(uid) 배정건만 / operator·admin: 전체(모니터링). 케이스별 최신 배정 1건(assigned_at desc (기존 시각 없는 행은 assignment_id 순서 유지))."""
     q = db.query(models.PendampingAssignment)
-    rows = q.order_by(models.PendampingAssignment.assigned_at.desc().nullslast(),
+    rows = q.order_by(models.PendampingAssignment.assigned_at.desc(),
                       models.PendampingAssignment.assignment_id.desc()).all()
     seen, items = set(), []
     for pa in rows:
@@ -20247,7 +20247,7 @@ def _self_declaration_guard(c):
 def _pendamping_name(db, c):
     """최신 배정 동반자 이름(assigned_at desc (기존 시각 없는 행은 assignment_id 순서 유지), verify와 동일 정렬). 없으면 빈값."""
     pa = (db.query(models.PendampingAssignment).filter_by(case_id=c.case_id)
-          .order_by(models.PendampingAssignment.assigned_at.desc().nullslast(), models.PendampingAssignment.assignment_id.desc()).first())
+          .order_by(models.PendampingAssignment.assigned_at.desc(), models.PendampingAssignment.assignment_id.desc()).first())
     if not pa:
         return ""
     u = db.query(models.User).filter_by(user_id=pa.pendamping_id).first()

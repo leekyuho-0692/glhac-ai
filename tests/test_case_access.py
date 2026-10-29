@@ -7,12 +7,13 @@
 여기서 지키는 성질
   · 인증기관 역할(관리자·최고운영자·샤리아)은 조직을 넘어 본다 — 심사·판정이 업무다.
   · 오디터·컨설턴트는 자기 조직 + '배정받은' 케이스만. 배정 없이 남의 서류를 열면 안 된다.
-  · 신청기업·할랄감독자·동반자는 자기 조직만. 여기가 뚫리면 업체 정보가 새어나간다.
+  · 신청기업·할랄감독자는 자기 조직만, 동반자는 현재 배정된 케이스만. 여기가 뚫리면 업체 정보가 새어나간다.
 
 실행: <venv>/bin/python -m pytest tests/test_case_access.py -q
 """
 import os
 import sys
+from datetime import datetime
 
 import pytest
 
@@ -66,12 +67,29 @@ def test_certifier_roles_cross_org(tmp_path, role):
     assert _can(db, _user(role), "c_new")
 
 
-@pytest.mark.parametrize("role", ["applicant", "penyelia_halal", "pendamping_pph"])
+@pytest.mark.parametrize("role", ["applicant", "penyelia_halal"])
 def test_company_side_roles_stay_in_their_org(tmp_path, role):
     """업체 측 역할은 남의 회사 케이스를 절대 못 본다."""
     db = _db(tmp_path)
     assert _can(db, _user(role), "c_own")
     assert not _can(db, _user(role), "c_new")
+
+
+def test_pendamping_only_current_assignment(tmp_path):
+    """동반자는 외부 인력 — 조직이 아니라 '현재 배정'으로만 연다(10/28 v4-ux).
+    같은 조직 케이스도 배정 없으면 못 보고, 다른 동반자에게 재배정되면 닫힌다."""
+    db = _db(tmp_path)
+    u = _user("pendamping_pph", "p1")
+    assert not _can(db, u, "c_own") and not _can(db, u, "c_new")
+    db.add(models.PendampingAssignment(case_id="c_new", pendamping_id="p1",
+                                       assigned_at=datetime(2026, 10, 1)))
+    db.commit()
+    assert _can(db, u, "c_new")
+    db.add(models.PendampingAssignment(case_id="c_new", pendamping_id="p2",
+                                       assigned_at=datetime(2026, 10, 2)))
+    db.commit()
+    assert not _can(db, u, "c_new")
+    assert _can(db, _user("pendamping_pph", "p2"), "c_new")
 
 
 def test_auditor_needs_assignment(tmp_path):

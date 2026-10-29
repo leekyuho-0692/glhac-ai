@@ -63,6 +63,16 @@ def _kfph_approve(case_id):
         db.close()
 
 
+def _assign_pendamping(case_id, username):
+    db = SessionLocal()
+    try:
+        u = db.query(models.User).filter_by(username=username).first()
+        db.add(models.PendampingAssignment(case_id=case_id, pendamping_id=u.user_id))
+        db.commit()
+    finally:
+        db.close()
+
+
 def _add_active_cert(case_id, cert_no="HC-SIH-1"):
     db = SessionLocal()
     try:
@@ -82,6 +92,7 @@ def test_a_submit_not_configured_424_and_intent_event():
         _set_pathway(cid, "self_declare", nib="1234567890", address="Jl. Halal 1",
                      responsible_person="Budi")
         _kfph_approve(cid)
+        _assign_pendamping(cid, "pendamping1")   # 동반자는 현재 배정된 케이스만 연다(10/28)
 
         r = c.post(f"/cases/{cid}/sihalal/submit", headers=_h(pend))
         assert r.status_code == 424, r.text
