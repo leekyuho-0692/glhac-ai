@@ -51,7 +51,7 @@ async function US_load(){
   if(S.usQ) qs.set('q', S.usQ);
   if(S.usRole) qs.set('role', S.usRole);
   if(S.usStatus) qs.set('status', S.usStatus);
-  if(S.usOrg) qs.set('org_id', S.usOrg);
+  if(S.usOrg && !(S.usQ||'').trim()) qs.set('org_id', S.usOrg);
   try{
     const r = await apiFetch('/admin/users?' + qs.toString());
     RS.usList = r.ok ? await r.json() : {items:[], total:0, page:1, pages:1, error:true};
@@ -88,7 +88,7 @@ function US_panel(){
     <div class="row-act" style="justify-content:space-between;margin-top:8px"><span class="muted">${d.total||0}명 · ${d.page||1} / ${d.pages||1}</span>
       <span><button class="btn btn-sm" ${(d.page||1)<=1?'disabled':''} onclick="App.usPage(-1)">이전</button> <button class="btn btn-sm" ${(d.page||1)>=(d.pages||1)?'disabled':''} onclick="App.usPage(1)">다음</button></span></div></section>`;
 }
-App.usSearch = function(v){ S.usQ = v; S.usPage = 1; render(); };
+App.usSearch = function(v){ S.usQ = v.trim(); if(S.usQ) S.usOrg = ''; S.usPage = 1; render(); };
 App.usFilter = function(k, v){ S[k] = v; S.usPage = 1; render(); };
 App.usSort = function(k){ if((S.usSort||'username')===k) S.usDir = (S.usDir==='desc'?'asc':'desc'); else { S.usSort = k; S.usDir = 'asc'; } S.usPage = 1; render(); };
 App.usPage = function(d){ S.usPage = Math.max(1, (S.usPage||1) + d); render(); };

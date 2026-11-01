@@ -2031,7 +2031,13 @@ def _user_display_name(db, u):
         cp = db.get(models.ConsultantProfile, u.user_id)
         if cp is not None and cp.display_name:
             return cp.display_name
-    return u.display_name
+    if u.display_name:
+        return u.display_name
+    req = (db.query(models.StaffSignupRequest)
+           .filter_by(username=u.username, status="approved")
+           .order_by(models.StaffSignupRequest.created_at.desc(), models.StaffSignupRequest.request_id.desc())
+           .first())
+    return req.display_name if req else None
 
 
 def _user_summary(db, u):
@@ -2164,7 +2170,7 @@ def admin_approve_staff_signup(request_id: str, body: schemas.StaffSignupReviewR
     if db.query(models.User).filter_by(username=req.username).first():
         raise HTTPException(409, {"code": "DUPLICATE_ACCOUNT"})
     u = models.User(username=req.username, password_hash=req.password_hash,
-                    role=role, org_id="org_demo")
+                    role=role, org_id="org_demo", display_name=req.display_name)
     db.add(u)
     req.status = "approved"; req.reviewed_by = user["uid"]; req.reviewed_at = _dt.utcnow().isoformat()
     db.flush()
@@ -2206,17 +2212,31 @@ def admin_list_users(user=Depends(auth.require_roles("operator")), db: Session =
                      role: str = Query(""), status: str = Query(""), org_id: str = Query("")):
     """DataList 표준(§8.2): 서버 검색·정렬·페이지네이션·meta(total).
     page(1부터)를 주면 size 단위 서버 페이지네이션(meta 형식으로 응답). 검색 q 는 아이디·표기명·회사명·역할·org.
-    필터 role·status(active|suspended)·org_id. 연락처는 가린 값, 비밀번호 해시·토큰은 응답에 없다."""
+    필터 role·status(active|suspended)·org_id(q가 없을 때만 적용).
+    연락처는 가린 값, 비밀번호 해시·토큰은 응답에 없다."""
     M, O = models.User, models.Org
     Q = db.query(M).outerjoin(O, O.org_id == M.org_id)
+    q = q.strip()
     if q:
-        like = "%%%s%%" % q
-        Q = Q.filter(or_(M.username.ilike(like), M.role.ilike(like), M.org_id.ilike(like),
-                         M.display_name.ilike(like), O.name.ilike(like)))
+        like = "%" + q.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+        signup = models.StaffSignupRequest
+        named_signup = db.query(signup.request_id).filter(
+            signup.username == M.username, signup.status == "approved",
+            signup.display_name.ilike(like, escape="!"),
+        ).exists()
+        profile = models.ConsultantProfile
+        named_profile = db.query(profile.consultant_id).filter(
+            profile.consultant_id == M.user_id, M.role == "consultant",
+            profile.display_name.ilike(like, escape="!"),
+        ).exists()
+        Q = Q.filter(or_(M.username.ilike(like, escape="!"), M.role.ilike(like, escape="!"),
+                         M.org_id.ilike(like, escape="!"), M.display_name.ilike(like, escape="!"),
+                         O.name.ilike(like, escape="!"), named_signup, named_profile))
     if role:
         Q = Q.filter(M.role == role)
-    if org_id:
-        Q = Q.filter(M.org_id == org_id)
+    # 검색어가 있으면 소속에 관계없이 찾고, 소속 필터는 목록 조회에만 적용한다.
+    if org_id and not q:
+        Q = Q.filter(M.org_id == org_id.strip())
     if status in ("active", "suspended"):
         latest = {}
         for e in (db.query(models.WorkflowEvent).filter_by(action=USER_STATUS_ACTION)
