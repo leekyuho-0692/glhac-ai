@@ -89,9 +89,9 @@ jobs:
       - name: 의존성
         run: |
           python -m pip install --upgrade pip
-          sed 's/[[:space:]]*#.*$//' requirements.txt \
-            | grep -vE '^[[:space:]]*$' | grep -viE '^paddle' > /tmp/req.txt
-          pip install -r /tmp/req.txt "pytest>=8.0"
+          python scripts/pin_from_lock.py --skip paddle > /tmp/req.txt
+          pip install -r /tmp/req.txt
+          pip install -r requirements-dev.txt
 
       # 깨진 코드를 서버에 올리지 않는다
       - name: 관리자 목록·페이징 회귀 검사
@@ -102,7 +102,9 @@ jobs:
           GLHAC_DEV: '1'
           GLHAC_RATE_LIMIT_PER_MIN: '0'
           GLHAC_SECRET: 'ci-test-secret-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
-        run: python -m pytest -q
+          PYTHON: python
+          GLHAC_E2E_BASE: ''
+        run: bash tests/run_isolated.sh
 
       - name: SSH 키 준비
         run: |
