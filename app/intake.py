@@ -915,8 +915,13 @@ _CLASSIFY_SYS = (
 # 파일명이 명백한 경우(소개서·제안서·수입서류·품질인증 등)는 LLM 판단을 무시하고 규칙을 신뢰한다.
 _NAME_RULES = [
     # (정규식, doc_type, 사유) — 순서 중요(구체적인 것 먼저)
-    (r"신청서|신청\s*양식|제안서|견적|\b(?:application|proposal|quotation)\b|"
-     r"\b(?:permohonan|pengajuan|penawaran)\b|request[\s_]*form|certificate[\s_]*requirements",
+    (r"신청서|신청\s*양식|제안서|견적|\b(?:proposal|quotation)\b|"
+     r"\bapplication[\s_-]+(?:form\b|for[\s_-]+(?:halal[\s_-]+)?certificat(?:e|ion)\b)|"
+     r"\b(?:permohonan|pengajuan|penawaran)\b|"
+     r"request[\s_-]*form|certificate[\s_-]*requirements|"
+     r"requirements\s+for\s+(?:halal\s+)?certificat|document\s+requirements|"
+     r"\b(?:sample|draft)\s+(?:halal\s+)?certificate\b|"
+     r"\b(?:halal\s+)?certificate\s+(?:sample|draft)\b",
      "other", "신청·제안·견적 문서(발급된 인증서 아님)"),
     (r"halal.{0,25}training[\s_]*manual", "sjph_manual", "할랄 교육 매뉴얼"),
     (r"할랄\s*인증|halal[\s_]*cert|sertifikat[\s_]*halal|"
@@ -992,7 +997,7 @@ def refine_doctype_reason(name, llm_type, text=None):
     n = (name or "").lower()
     from .domain_dict import doc_type_of, evidence_key_of, lookup
     base = re.sub(r"\.[a-z0-9]{2,5}$", "", (name or "").strip())
-    # 인증서라는 파일명보다 신청·제안 문서의 제목이 우선한다.
+    # 신청 목적이 명시된 제목만 우선한다. 본문의 Application No/용도는 근거가 아니다.
     for candidate in [n, *_title_lines(text)]:
         if re.search(_NAME_RULES[0][0], candidate, re.I):
             return "other", _NAME_RULES[0][2]
@@ -1219,21 +1224,42 @@ def _quant_suffix(key, after):
     return re.sub(r"^\s*\.{2,}\s*", "", after)
 
 
-def _quant_result(key, line, match):
-    # 자유문장을 건너뛰지 않는다. 항목의 별칭·CAS·결과 라벨만 수치 앞에 올 수 있다.
+def _quant_absence_claim(line, match):
     before, after = line[:match.start()], line[match.end():]
-    if (re.search(r"(?:\b(?:free\s+from|bebas)|무)\s*[-:]?\s*$", before, re.I)
-            or re.match(r"\s*(?:[-‐‑–]?\s*free\b|bebas\b|무(?:첨가|함유)?(?![가-힣]))", after, re.I)):
+    return (re.search(r"(?:\b(?:free\s+from|bebas(?:\s+dari)?)|무)\s*[-:]?\s*$", before, re.I)
+            or re.match(r"\s*(?:[-‐‑–]?\s*free\b|bebas\b|무(?:첨가|함유)?(?![가-힣]))", after, re.I))
+
+
+def _quant_factor(key, unit):
+    unit = unit.replace("μ", "µ")
+    ppm = {"%": 10000.0, "ppm": 1.0, "mg/kg": 1.0, "ppb": .001, "µg/kg": .001, "ug/kg": .001}[unit]
+    return ppm / 10000 if key == "ethanol_pct" else ppm
+
+
+def _quant_review(key, raw, reason="unparsed_result"):
+    return None, {"qualifier": "unparsed", "unit": "%" if key == "ethanol_pct" else "ppm",
+                  "raw": raw, "reason": reason}
+
+
+def _quant_result(key, line, match, unit_hint=None, strict=False):
+    # 자유문장을 건너뛰지 않는다. 항목의 별칭·CAS·결과 라벨만 수치 앞에 올 수 있다.
+    if _quant_absence_claim(line, match):
         return None
-    after = _quant_suffix(key, after)
+    after = _quant_suffix(key, line[match.end():])
     result = _QUANT_RESULT.match(after)
     qualifier, value, unit = result.group("qual", "value", "unit")
-    if not qualifier and not (value and unit):
+    if not qualifier and not (value and (unit or unit_hint)):
         return None
-    unit = re.sub(r"\s", "", unit or ("%" if key == "ethanol_pct" else "ppm")).lower()
-    if (key == "ethanol_pct") != (unit == "%"):
+    if not unit and unit_hint and not qualifier and after[result.end():].strip(" \t)]"):
         return None
-    factor = 0.001 if unit in ("ppb", "µg/kg", "ug/kg") else 1.0
+    if strict and after[result.end():].strip(" \t)]"):
+        lod_label = r"(?:LO[DQ]\s*[:=(]?\s*)?" if qualifier and "LOD" in qualifier.upper() else r"LO[DQ]\s*[:=(]?\s*"
+        if not qualifier or not re.fullmatch(r"\s*[(\[]?\s*" + lod_label + _QUANT_NUMBER +
+                                            r"\s*(?:" + _QUANT_UNIT + r")?\s*[)\]]*\s*",
+                                            after[result.end():], re.I):
+            return None
+    unit = re.sub(r"\s", "", unit or unit_hint or ("%" if key == "ethanol_pct" else "ppm")).lower()
+    factor = _quant_factor(key, unit)
     number = float(value.replace(",", ".")) * factor if value else None
     meta = {"unit": "%" if key == "ethanol_pct" else "ppm", "source_unit": unit}
     if qualifier:
@@ -1241,15 +1267,13 @@ def _quant_result(key, line, match):
                              if qualifier in ("<", ">", "≤", "≥", "<=", ">=")
                              else "<" if qualifier.startswith("<") else "ND")
         tail = after[result.end():].lstrip(" \t\r\n([")
-        lod_prefix = r"(?:LOD\s*[:=(]?\s*)?" if "LOD" in qualifier.upper() else r"LOD\s*[:=(]?\s*"
+        lod_prefix = r"(?:LO[DQ]\s*[:=(]?\s*)?" if "LOD" in qualifier.upper() else r"LO[DQ]\s*[:=(]?\s*"
         lod = re.match(lod_prefix + "(" + _QUANT_NUMBER + r")\s*(" + _QUANT_UNIT + r")?", tail, re.I)
         if lod:
             lod_unit = re.sub(r"\s", "", lod.group(2) or unit).lower()
-            if (key == "ethanol_pct") == (lod_unit == "%"):
-                meta["lod"] = float(lod.group(1).replace(",", ".")) * (
-                    0.001 if lod_unit in ("ppb", "µg/kg", "ug/kg") else 1.0)
-                if not result.group("unit"):
-                    meta["source_unit"] = lod_unit
+            meta["lod"] = float(lod.group(1).replace(",", ".")) * _quant_factor(key, lod_unit)
+            if not result.group("unit"):
+                meta["source_unit"] = lod_unit
         elif number is not None and meta["qualifier"] in ("<", "≤", "ND"):
             meta["lod"] = number
         # 구간의 경계값을 보존한다. 검출한계가 없으면 대표값도 미확정이다.
@@ -1261,10 +1285,28 @@ def _quant_row_results(key, line, match):
     """머리글 없는 행: 명시된 규격 수치는 제외하고 연결된 결과를 모두 읽는다."""
     after = _quant_suffix(key, line[match.end():])
     line = line[:match.end()] + after
+    # 결과 라벨/ND가 있는 복수 셀은 각 관측을 따로 읽는다. 상한 부호는 규격 근거가 아니다.
+    parts = re.split(r"[|;\t]", after)
+    if len(parts) > 1 and (re.search(r"(?:" + _RESULT_HEADER + r")\s*[:=]?", after, re.I)
+                           or re.search(_QUANT_ND, after, re.I)):
+        results = []
+        for part in parts:
+            if not part.strip() or re.search(r"\b(?:" + _SPEC_HEADER + r"|max|maks|maximum)\b|이하", part, re.I):
+                continue
+            if re.match(r"\s*(?:≤|<=)", part) and not re.search(_RESULT_HEADER, part, re.I):
+                continue  # 기존 머리글 없는 규격|결과 표. 명시적 Result 상한에는 적용하지 않는다.
+            candidate = line[:match.end()] + ": " + part.strip().lstrip(":= ")
+            result = _quant_result(key, candidate, match)
+            if result:
+                results.append(result)
+            elif re.search(r"(?:" + _RESULT_HEADER + r")\b", part, re.I):
+                results.append(_quant_review(key, part))
+        return results
     tokens = list(_QUANT_TOKEN.finditer(after))
     if len(tokens) < 2:
         result = _quant_result(key, line, match)
-        return [result] if result else []
+        return [result] if result else ([_quant_review(key, after)]
+                                        if re.search(_RESULT_HEADER, after, re.I) else [])
     # 자유문장·다른 성분을 건너뛰어 그 수치를 현재 항목에 붙이지 않는다.
     prefix = after[:tokens[0].start()]
     allowed = re.sub(r"\b(?:" + _SPEC_HEADER + "|" + _RESULT_HEADER +
@@ -1299,7 +1341,9 @@ _PORK_TEST_MARKER = re.compile(
     r"identifikasi\s*spesies|유전자|종\s*판별", re.I)
 _PORK_NEGATIVE = r"\b(?:not[\s-]*detected|non[\s-]*detected|tidak\s+terdeteksi|negative|negatif|none|absent)\b|불\s*검출|음성|없음"
 _PORK_POSITIVE = r"\b(?:detected|positive|positif|terdeteksi)\b|검출|양성"
-_PORK_UNCLEAR = r"\b(?:inconclusive|invalid|equivocal|tidak\s+dapat\s+ditentukan)\b|판정\s*불가"
+_PORK_UNCLEAR = (r"\b(?:inconclusive|invalid|equivocal|pending|indeterminate|not\s+tested|"
+                 r"to\s+follow|menunggu|belum\s+(?:diuji|diperiksa)|tidak\s+dapat\s+ditentukan|"
+                 r"not\s+(?:negative|positive))\b|판정\s*(?:불가|보류)|시험\s*중|미실시|진행\s*중")
 _CONTROL = re.compile(r"\b(?:(?:negative|positive)\s+)?control\b|"
                       r"\bkontrol(?:\s+(?:negatif|positif))?\b|(?:음성|양성)\s*대조(?:군)?", re.I)
 _SAMPLE = re.compile(r"\b(?:result\s+of\s+(?:the\s+)?sample|sample|sampel)\b|시료|검체", re.I)
@@ -1308,6 +1352,7 @@ _SAMPLE_LINE = re.compile(r"^\s*(?:result\s+of\s+(?:the\s+)?sample\b|"
 _RESULT_LINE = re.compile(r"^[\s|:=]*(?:(?:result|hasil|결과|판정)\s*[:|=]?\s*)?"
                           r"(?:[<>≤≥]?\s*\d+(?:[.,]\d+)?\s*%?\s*)?(?:" +
                           _PORK_NEGATIVE + "|" + _PORK_POSITIVE + "|" + _PORK_UNCLEAR + ")", re.I)
+_RESULT_LABEL = re.compile(r"^[\s|:=]*(?:result|hasil|결과|판정)\s*(?:[:|=]|$)", re.I)
 
 
 def _pork_result_words(text):
@@ -1318,7 +1363,11 @@ def _pork_result_words(text):
 
 
 def _table_cells(line):
-    return re.split(r"\s*[|\t]\s*| {2,}", line.strip().strip("|"))
+    line = line.strip()
+    # Markdown 외곽선만 제거한다. XLSX의 마지막 빈 결과 열은 보존한다.
+    if line.startswith("|") and line.endswith("|"):
+        line = line[1:-1]
+    return re.split(r"\s*[|\t]\s*| {2,}", line)
 
 
 def _sample_column(line):
@@ -1331,14 +1380,27 @@ def _sample_column(line):
 
 
 def _pork_measurement(text):
+    # 같은 줄의 별도 DNA 시험도 독립 블록이다(대조군/시료 셀 구분은 유지).
+    text = re.sub(r"[;|]\s*(?=(?:porcine|pork|swine|pig|babi|돼지)\b[^;|\n]*(?:DNA|PCR))",
+                  "\n", text, flags=re.I)
     lines, values, found, ambiguous = text.splitlines(), set(), False, False
+    table_header = None
     for i, line in enumerate(lines):
+        if header := _sample_column(line):
+            table_header = header
+        elif len(_table_cells(line)) <= 1:
+            table_header = None
         if not (_PORK_MARKER.search(line) and (_PORK_TEST_MARKER.search(line) or
                 (i > 0 and _PORK_TEST_MARKER.search(lines[i - 1])))):
             continue
         found = True
+        # 문서 제목과 시료명은 시험 결과 블록이 아니다. 뒤의 실제 항목이 결과를 제공한다.
+        if (re.search(r"\b(?:test\s+)?report\s*$|시험\s*성적서\s*$", line, re.I)
+                and not _pork_result_words(line)
+                and any(_PORK_MARKER.search(row) and _PORK_TEST_MARKER.search(row) for row in lines[i + 1:])):
+            continue
         # 앞줄의 Sample|Control 머리글은 해당 시험 행의 열 위치로 연결한다.
-        header = _sample_column(lines[i - 1]) if i else None
+        header = table_header or (_sample_column(lines[i - 1]) if i else None)
         if header:
             column, width = header
             cells = _table_cells(line)
@@ -1353,7 +1415,8 @@ def _pork_measurement(text):
                 break
             if (_SAMPLE_LINE.search(following) or _CONTROL.search(following)
                     or _sample_column(following)
-                    or _RESULT_LINE.match(following) or re.fullmatch(r"[\s|:-]+", following)):
+                    or _RESULT_LINE.match(following) or _RESULT_LABEL.match(following)
+                    or re.fullmatch(r"[\s|:-]+", following)):
                 block.append(following)
             else:
                 break
@@ -1378,13 +1441,19 @@ def _pork_measurement(text):
                     controls = True
                     continue
                 if _SAMPLE_LINE.search(cell):
-                    explicit.update(_pork_result_words(cell))
-                elif (j == 0 and k == 0) or _RESULT_LINE.match(cell):
-                    implicit.update(_pork_result_words(cell))
+                    result = _pork_result_words(cell)
+                    explicit.update(result)
+                    missing_sample |= not bool(result)
+                elif (j == 0 and k == 0) or _RESULT_LINE.match(cell) or _RESULT_LABEL.match(cell):
+                    result = _pork_result_words(cell)
+                    implicit.update(result)
+                    wrapped_header = (j == 0 and re.fullmatch(_RESULT_HEADER, cell.strip(), re.I)
+                                      and not _pork_result_words(row))
+                    missing_sample |= bool(_RESULT_LABEL.match(cell)) and not result and not wrapped_header
         selected = explicit or (implicit if not controls else set())
         values.update(selected)
         # 표에 결과가 없거나 대조군과의 연결이 불분명하면 다른 행의 음성으로 덮지 않는다.
-        ambiguous |= (missing_sample or (controls and not explicit) or
+        ambiguous |= (not bool(selected) or missing_sample or (controls and not explicit) or
                       any(re.search(_PORK_UNCLEAR, row, re.I) for row in block))
     if not found:
         return {}
@@ -1403,38 +1472,58 @@ def extract_measurements(text, metadata=None):
     columns = None
     for index, line in enumerate(lines):
         cells = _table_cells(line)
+        header_suffix = r"(?:\s*\([^)]*\)|\s*\[[^]]*\]|\s*" + _QUANT_UNIT + r")?"
         result_columns = [i for i, cell in enumerate(cells)
-                          if re.fullmatch(r"(?:" + _RESULT_HEADER + r")(?:\s*\([^)]*\))?", cell, re.I)]
+                          if re.fullmatch(r"(?:" + _RESULT_HEADER + r")" + header_suffix, cell, re.I)]
         spec_columns = [i for i, cell in enumerate(cells)
-                        if re.fullmatch(r"(?:" + _SPEC_HEADER + r")(?:\s*\([^)]*\))?", cell, re.I)]
+                        if re.fullmatch(r"(?:" + _SPEC_HEADER + r")" + header_suffix, cell, re.I)]
         if len(cells) > 1 and (result_columns or spec_columns):
-            columns = (result_columns, len(cells))
+            units = {i: unit[0] for i in result_columns
+                     if (unit := re.search(_QUANT_UNIT, cells[i], re.I))}
+            unit_columns = [i for i, cell in enumerate(cells)
+                            if re.fullmatch(r"units?|satuan|단위", cell, re.I)]
+            columns = (result_columns, len(cells), units, unit_columns)
             continue
-        for key, pattern in _QUANT_PATTERNS.items():
-            for match in re.finditer(pattern, line, re.I):
-                if re.match(r"\s*[-‐‑–]?\s*(?:free\b|bebas\b|무(?:첨가|함유)?(?![가-힣]))",
-                            line[match.end():], re.I):
-                    continue
-                if columns and len(cells) == columns[1]:
-                    results = []
-                    for column in columns[0]:
-                        # 현재 항목의 결과 열만 읽는다. 규격 열의 수치는 근거가 아니다.
+        matches = sorted(((key, match) for key, pattern in _QUANT_PATTERNS.items()
+                          for match in re.finditer(pattern, line, re.I)), key=lambda item: item[1].start())
+        analytes = []
+        for key, match in matches:
+            if analytes and analytes[-1][0] == key:
+                previous = analytes[-1][1]
+                if (re.fullmatch(r"\s*\(\s*", line[previous.end():match.start()])
+                        and re.match(r"\s*\)", line[match.end():])):
+                    continue  # Pb/(Lead) 별칭은 같은 관측이다.
+            analytes.append((key, match))
+        for pos, (key, match) in enumerate(analytes):
+            if _quant_absence_claim(line, match):
+                continue
+            # 다음 항목/반복 항목 앞에서 자른다. ND와 상한도 서로를 덮지 않는다.
+            end = analytes[pos + 1][1].start() if pos + 1 < len(analytes) else len(line)
+            scoped = line[:end].rstrip(" ;|\t")
+            if columns and len(cells) == columns[1]:
+                results = []
+                for column in columns[0]:
+                    hints = [columns[2][column]] if column in columns[2] else []
+                    hints += [cells[i] for i in columns[3] if cells[i].strip()]
+                    hints = {re.sub(r"\s", "", hint).lower() for hint in hints}
+                    if len(hints) > 1 or any(not re.fullmatch(_QUANT_UNIT, hint, re.I) for hint in hints):
+                        result = _quant_review(key, cells[column], "ambiguous_unit")
+                    else:
                         candidate = line[:match.end()] + ": " + cells[column]
-                        result = _quant_result(key, candidate, match)
-                        if result:
-                            results.append(result)
-                elif columns and len(cells) > 1:
-                    # 열이 어긋난 표를 규격 첫 값으로 폴백하지 않는다.
-                    results = []
-                else:
-                    results = _quant_row_results(key, line, match)
-                    if not results and not _QUANT_TOKEN.search(line[match.end():]) and index + 1 < len(lines):
-                        result = _quant_result(key, line + "\n" + lines[index + 1], match)
-                        results = [result] if result else []
-                for value, meta in results:
-                    observations.setdefault(key, []).append({"value": value, **meta, "line": index + 1})
-                if results:
-                    break  # 같은 항목의 별칭 Pb/(Lead)를 중복 측정으로 세지 않는다.
+                        result = _quant_result(key, candidate, match, next(iter(hints), None), strict=True)
+                    value, meta = result or _quant_review(key, cells[column])
+                    results.append((value, {**meta, "column": column + 1, "raw": cells[column]}))
+            elif columns and (len(cells) > 1 or not _quant_suffix(key, line[match.end():]).strip(" :：=")):
+                # read_only XLSX는 맨 뒤 빈 셀을 생략할 수 있다. 항목명만 남은 행도 결과 누락이다.
+                results = [_quant_review(key, line, "misaligned_columns")] if columns[0] else []
+            else:
+                results = _quant_row_results(key, scoped, match)
+                if (not results and end == len(line) and not _QUANT_TOKEN.search(line[match.end():])
+                        and index + 1 < len(lines)):
+                    result = _quant_result(key, line + "\n" + lines[index + 1], match)
+                    results = [result] if result else []
+            for value, meta in results:
+                observations.setdefault(key, []).append({"value": value, **meta, "line": index + 1})
     for key, items in observations.items():
         representative = max(items, key=lambda item: item["value"] if item["value"] is not None else float("-inf"))
         out[key] = representative["value"]
@@ -1467,7 +1556,13 @@ def _deterministic_fields(doc_type, text):
     if doc_type in ("halal_certificate", "quality_cert"):
         labels = {
             "cert_no": r"(?:certificate\s*(?:no\.?|number)|cert\s*no\.?|"
-                       r"(?:nomor|no\.?)\s*(?:sertifikat(?:\s+halal)?)?|인증(?:서)?\s*번호)",
+                       r"(?:nomor|no\.?)\s*sertifikat(?:\s+halal)?|"
+                       r"sertifikat(?:\s+halal)?\s+(?:no\.?|nomor)(?![. \t]*sertifikat)|인증(?:서)?\s*번호)",
+            "cert_fallback": r"(?:^[ \t]*(?:nomor|no\.?)|"
+                             r"(?:halal\s+certificate|sertifikat\s+halal|surat\s+keterangan\s+halal)"
+                             r"\s+(?:nomor|no\.?))(?![. \t]*sertifikat)",
+            "other_number": r"(?:telephone|phone|telp?|fax|nib|registration|reg\.?|application|lot|batch|page)"
+                            r"(?:\s*(?:no\.?|number|nomor|reference))?",
             "issuer": r"(?:issuer|issued\s+by|issuing\s+(?:body|authority)|"
                       r"lembaga\s+penerbit|diterbitkan\s+oleh|발급\s*기관)",
             "expiry_date": r"(?:expiry(?:\s*date)?|expiration(?:\s*date)?|valid\s*(?:until|to)|"
@@ -1475,16 +1570,25 @@ def _deterministic_fields(doc_type, text):
         }
         labelled = list(re.finditer(r"(?<!\w)(?:" + "|".join(
             "(?P<" + key + ">" + label + ")" for key, label in labels.items()) +
-            r")[ \t:：#|.-]+", text, re.I))
+            r")[ \t:：#|.-]+", text, re.I | re.M))
+        cert_candidates = []
         for index, match in enumerate(labelled):
             key = match.lastgroup
             value = text[match.end():labelled[index + 1].start() if index + 1 < len(labelled) else len(text)]
             value = re.split(r"[\n|]", value)[0].strip()
             if value:
-                if key == "cert_no":
+                if key in ("cert_no", "cert_fallback"):
+                    # 전화 형식은 명시 라벨 뒤에 있어도 인증번호로 채택하지 않는다.
+                    phone = re.match(r"\+?\d[\d ()-]{6,}\d(?![\w/])", value)
+                    if phone:
+                        digits = re.sub(r"\D", "", phone[0])
+                        if (phone[0].startswith("+") or " " in phone[0] or "(" in phone[0]
+                                or (digits.startswith("0") and 8 <= len(digits) <= 13)
+                                or ("-" in phone[0] and len(digits) in (9, 10, 11))):
+                            continue
                     number = re.match(r"[A-Z0-9][A-Z0-9/_.-]*", value, re.I)
                     if number and any(c.isdigit() for c in number[0]):
-                        fields[key] = number[0]
+                        cert_candidates.append((key != "cert_no", index, number[0]))
                 elif key == "expiry_date":
                     dates = re.findall(r"\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b", value)
                     if dates:
@@ -1496,8 +1600,10 @@ def _deterministic_fields(doc_type, text):
                                 break
                             except ValueError:
                                 continue
-                else:
+                elif key == "issuer":
                     fields[key] = value
+        if cert_candidates:
+            fields["cert_no"] = min(cert_candidates)[2]
         if "issuer" not in fields and doc_type == "halal_certificate":
             issuer = re.search(r"\b(?:BPJPH|MUI|JAKIM|KMF|KHA)\b", text, re.I)
             if issuer:

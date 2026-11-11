@@ -1210,6 +1210,11 @@ PROBLEM_DOC_MSG = {
         "en": ("Automatic verification could not be completed.", "The reviewer will check it — no company action is required."),
         "id": ("Verifikasi otomatis tidak dapat diselesaikan.", "Petugas akan memeriksanya — perusahaan tidak perlu melakukan tindakan."),
     },
+    "VERIFY_WARN": {
+        "ko": ("서류 유형이나 주요 식별정보가 원문과 일치하는지 확인이 필요합니다({fields}).", "담당자가 확인합니다 — 업체 조치 불필요."),
+        "en": ("The document type or key identity details need to be checked against the source ({fields}).", "The reviewer will check it — no company action is required."),
+        "id": ("Jenis dokumen atau informasi identitas utama perlu diperiksa dengan sumber ({fields}).", "Petugas akan memeriksanya — perusahaan tidak perlu melakukan tindakan."),
+    },
     "ORIGINAL_NOT_STORED": {
         "ko": ("원본 파일이 저장되지 않았습니다.", "원본을 다운로드하거나 재처리할 수 없습니다.", "20MB 이하의 원본 파일로 다시 올려 주세요."),
         "en": ("The original file was not stored.", "It cannot be downloaded or reprocessed.", "Upload the original file again, no larger than 20 MB."),
@@ -1219,6 +1224,11 @@ PROBLEM_DOC_MSG = {
         "ko": ("이 문서의 돼지 DNA 검사 결과는 추가 확인이 필요합니다.", "현재 결과만으로는 돼지 유래 성분의 검출 여부를 확정할 수 없습니다.", "검출 여부와 시험법이 명확한 성적서를 올리거나 시험기관에 확인해 주세요."),
         "en": ("The pork DNA test result in this document needs further review.", "The current result cannot conclusively establish whether pork material was detected.", "Upload a report stating the detection result and test method clearly, or consult the laboratory."),
         "id": ("Hasil uji DNA babi dalam dokumen ini perlu ditinjau lebih lanjut.", "Hasil saat ini belum dapat memastikan apakah bahan asal babi terdeteksi.", "Unggah laporan yang menjelaskan hasil deteksi dan metode uji, atau konfirmasikan kepada laboratorium."),
+    },
+    "QUANT_REVIEW": {
+        "ko": ("이 문서의 정량 시험 결과는 추가 확인이 필요합니다.", "상한·검출한계·단위 또는 미확정 결과 때문에 기준 충족 여부를 확정할 수 없습니다.", "결과와 단위가 명확한 성적서를 올리거나 시험기관에 확인해 주세요."),
+        "en": ("The quantitative test results in this document need further review.", "Bounds, detection limits, units or unresolved results prevent a conclusive assessment against the limits.", "Upload a report with clear results and units, or consult the laboratory."),
+        "id": ("Hasil uji kuantitatif dalam dokumen ini perlu ditinjau lebih lanjut.", "Batas hasil, batas deteksi, satuan, atau hasil yang belum pasti menghalangi penilaian terhadap batas yang ditetapkan.", "Unggah laporan dengan hasil dan satuan yang jelas, atau konfirmasikan kepada laboratorium."),
     },
 }
 PROBLEM_DOC_COPY = {
@@ -1431,6 +1441,14 @@ def _problem_document_reasons(document, measurements=()):
     if verify.get("verdict") == "fail":
         details = ["%s: %s" % (x.get("field") or "?", x.get("issue") or x.get("code") or "?") for x in issues]
         reasons.append({"code": "VERIFY_FAILED", "params": {"fields": "; ".join(details) or verify.get("summary") or "?"}})
+    important = [x for x in issues if x.get("field") in (
+        "cert_no", "certificate_no", "nib", "business_reg_no", "factory_reg_no", "corporate_reg_no", "company_name")
+        and x.get("code") != "company_name_mismatch"]
+    # 이미 확인된 소유권 불일치는 기존 업체 보완 경로를 유지한다. AI 경고는 담당자가 먼저 검토한다.
+    if verify.get("verdict") != "fail" and (verify.get("doc_type_ok") is False or
+                                           (verify.get("verdict") == "warn" and important)):
+        keys = (["doc_type"] if verify.get("doc_type_ok") is False else []) + [x["field"] for x in important]
+        reasons.append({"code": "VERIFY_WARN", "params": {"fields": ", ".join(dict.fromkeys(keys))}})
     ownership = ["%s: %s" % (x.get("field") or "company_name", x.get("issue") or x["code"])
                  for x in issues if x.get("code") == "company_name_mismatch"]
     # H1~H3 실제 저장 키. 사람 확인으로 해결한 conflicts는 재요청하지 않는다.
@@ -1447,6 +1465,10 @@ def _problem_document_reasons(document, measurements=()):
     if any(x.document_id == document.document_id and x.param_key == "pork_dna"
            and x.verdict == "review" for x in measurements):
         reasons.append({"code": "PORK_DNA_UNCLEAR", "params": {}})
+    if any(x.document_id == document.document_id and x.param_key in QUANT_CRITERIA
+           and x.param_key != "pork_dna" and _measurement_verdict(x, document=document) == "review"
+           for x in measurements):
+        reasons.append({"code": "QUANT_REVIEW", "params": {}})
     return reasons
 
 
@@ -1527,7 +1549,7 @@ def _problem_documents_language(db, c, role):
 
 def _problem_documents_recipient(db, c, rows=None):
     auditor = _assigned_auditor_id(db, c.case_id)
-    if rows and all(r["code"] == "VERIFY_ERROR" for d in rows for r in d["reasons"]):
+    if rows and all(r["code"] in ("VERIFY_ERROR", "VERIFY_WARN") for d in rows for r in d["reasons"]):
         return ("auditor" if auditor else "operator"), auditor
     role = "applicant" if (c.email or "").strip() and c.notify_consent else ("auditor" if auditor else "operator")
     return role, auditor
@@ -1592,7 +1614,7 @@ def _queue_problem_documents(db, c, force, actor):
     if not force and last and (last.payload or {}).get("fp") == fp:
         return {"notified": False, "reason": "unchanged"}
     role, auditor = _problem_documents_recipient(db, c, rows)
-    staff_only = all(r["code"] == "VERIFY_ERROR" for d in rows for r in d["reasons"])
+    staff_only = all(r["code"] in ("VERIFY_ERROR", "VERIFY_WARN") for d in rows for r in d["reasons"])
     params = {"company": c.company_name or c.case_id, "case_id": c.case_id, "count": len(rows),
               "documents": rows, "fallback": role != "applicant" and not staff_only, "staff_only": staff_only,
               "url": os.environ.get("GLHAC_APP_URL", "https://glhac.co.kr").rstrip("/") + "/ui/v4/"}
@@ -6401,7 +6423,7 @@ def _quant_verdict(param_key, value, metadata=None):
 _QUANT_RANK = {"pass": 0, "review": 1, "fail": 2}
 
 
-def _measurement_verdict(row):
+def _measurement_verdict(row, document=None):
     """저장된 부적합·확인 대기를 보존하고, 수치도 현재 기준과 대조한다."""
     import json
     meta = {}
@@ -6413,10 +6435,13 @@ def _measurement_verdict(row):
             pass
         if not meta and row.document_id:
             # R2에서 이미 저장된 0·pass 행도 원문 메타로 다시 판정한다.
-            from sqlalchemy.orm import object_session
-            db = object_session(row)
-            doc = db.get(models.DocumentAsset, row.document_id) if db else None
-            if doc:
+            # 문제 서류 판정은 전달받은 문서만 사용하므로 별도 DB 조회가 없다.
+            doc = document
+            if doc is None:
+                from sqlalchemy.orm import object_session
+                db = object_session(row)
+                doc = db.get(models.DocumentAsset, row.document_id) if db else None
+            if doc and doc.document_id == row.document_id:
                 meta = (doc.fields or {}).get("measurements_meta", {}).get(row.param_key, {})
     value = row.value
     if meta.get("qualifier") == "<" and "lod" not in meta and value == 0:

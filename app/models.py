@@ -129,19 +129,23 @@ class ProductMaterial(Base):
 
 def normalize_material_name(name):
     """저장·중복 정리 공통 키. 괄호 안 성분/유래도 원재료의 식별 정보다."""
-    value = unicodedata.normalize("NFC", name or "").lower().replace("（", "(").replace("）", ")")
+    value = unicodedata.normalize("NFC", name or "").lower().translate(
+        str.maketrans("（）［］｛｝，；／", "()[]{},;/"))
     # 기존 바깥쪽 원산지 접미 정규화는 유지하되, 괄호 안은 지우지 않는다.
     # 닫히지 않은 괄호도 OCR에서 올 수 있으므로 내용은 그대로 보존한다.
-    parts = re.split(r"([()])", value)
+    parts = re.split(r"([()\[\]{}])", value)
     depth = 0
     for i, part in enumerate(parts):
-        if part == "(":
+        if part in ("(", "[", "{"):
             depth += 1
-        elif part == ")":
+        elif part in (")", "]", "}"):
             depth = max(0, depth - 1)
         else:
-            pattern = r"[\s\-_·,#]" if depth else r"[\s\-_·,#]|중국산|국내산|수입"
-            parts[i] = re.sub(pattern, "", part)
+            # 괄호 안 성분 구분자와 숫자 범위는 의미가 있다. 단어 사이 하이픈은 기존대로 접는다.
+            if depth:
+                parts[i] = re.sub(r"(?<!\d)-|-(?!\d)", "", re.sub(r"[\s_·#]", "", part))
+            else:
+                parts[i] = re.sub(r"[\s\-_·,#]|중국산|국내산|수입", "", part)
     return "".join(parts)
 
 

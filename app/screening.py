@@ -67,7 +67,7 @@ _CONFUSABLES = str.maketrans({
     "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-",
 })
 _E_NUMBER_RE = re.compile(r"(?<![a-z0-9])(?:e|ins)[-\s]?(\d{3,4}[a-z]?)(?![a-z0-9])", re.I)
-_SPELLED_WORD_RE = re.compile(r"(?<!\w)[a-z](?:[^\S\r\n]+[a-z])+(?!\w)")
+_SPELLED_WORD_RE = re.compile(r"(?<!\w)[a-z](?:[ \t.,:;!?/·-]+[a-z](?!\w))+(?!\w)")
 _HIGH1_LATIN = (
     "pork|pig|hog|swine|babi|porcine|lard|bacon|ham|gammon|prosciutto|pepperoni|"
     "pancetta|chorizo|blood|darah|carrion|bangkai|human|placenta|khamr|wine|beer|rum|"
@@ -142,14 +142,15 @@ def _negation_pattern():
     suffix = (r"[\s-]*free(?!\w)|"
               r"\s+(?:(?:is|are)\s+)?(?:not\s+(?:present|contained|included)|absent)(?!\w)|"
               r"(?:[이가은는을를])?\s*(?:무첨가|불포함|미함유|"
-              r"없(?:지\s*않(?:은|다|음)|음|는|다))(?!\w)")
+              r"함유하지\s*않(?:음|는|다)|없(?:지\s*않(?:은|다|음)|음|는|다))(?!\w)")
     return re.compile(
         r"(?<!\w)(?:(?P<narrow>non[\s-]*|[무無][\s-]*)(?P<narrow_risk>" + short + r")(?!\w)|"
         r"(?P<prefix>" + prefix + r")(?P<risks>" + listed + r")|"
         r"(?P<suffix_risk>" + long + r")(?P<suffix>" + suffix + r"))")
 
 
-_OUTER_NEGATION = re.compile(r"(?<!\w)(?:not|never|tidak|bukan)[\s-]+$")
+_OUTER_NEGATION = re.compile(r"(?<!\w)(?:not|never|tidak|bukan)[\s-]+"
+                             r"(?:(?:entirely|completely|fully)\s+)?$")
 
 
 def _without_negated_risks(key):
@@ -169,16 +170,20 @@ def _without_negated_risks(key):
 
 
 def _punctuation_key(key):
-    # 철자 위장 L.A.R.D는 합치되 문장/구/괄호 경계를 지워 부정이 번지지 않게 한다.
-    key = re.sub(r"(?<=\w)\.(?=\w)", "", key)
-    return re.sub(r"[^\w\s,;:!?().\[\]{}]|_", "", key)
+    # 철자 복원은 _name_keys에서 전체 구간에만 적용한다. 일반 문장 경계는 유지한다.
+    return re.sub(r"[^\w\s,;:!?().\[\]{}/·-]|_", "", key)
 
 
 def _name_keys(name):
     keys = set()
     folded = _fold_unicode(name)
-    # 최대 연속 구간 전체가 한 글자 토큰인 경우만 합친다. 일반 단어·줄 경계는 유지한다.
-    spelled = _SPELLED_WORD_RE.sub(lambda m: re.sub(r"\s", "", m.group()), folded)
+    # 전체 구간이 한 글자 토큰일 때만 후보를 만든다. ABC 같은 일반 목록은 위험어가 아니다.
+    # 줄 경계와 일반 문장 부호는 원본 후보에 남아 부정 문맥이 다른 문장에 번지지 않는다.
+    def restore(match):
+        word = re.sub(r"[^a-z]", "", match.group())
+        return word if len(word) >= 3 and (word in _HIGH1_LATIN or word in _HIGH2_WORDS
+                                         or word in _CACHE["by_alias"]) else match.group()
+    spelled = _SPELLED_WORD_RE.sub(restore, folded)
     for text in {folded, spelled}:
         for one in ("i", "l"):
             key = _norm_key(text, one)
