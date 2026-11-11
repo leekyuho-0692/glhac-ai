@@ -189,7 +189,7 @@ def test_existing_material_duplicates_merge_before_index(tmp_path, monkeypatch, 
         conn.execute(models.CaseApplication.__table__.insert().values(case_id="legacy", org_id="legacy"))
         conn.execute(text("INSERT INTO material (material_id,case_id,name,screen_result,note) VALUES "
                           "('a','legacy','Water','CLEARED','original note'),"
-                          "('b','legacy','WATER (국내산)','BLOCK','unsafe note')"))
+                          "('b','legacy','WATER','BLOCK','unsafe note')"))
     with Session(engine) as db:
         db.add(models.Product(product_id="p", case_id="legacy", name="Product"))
         db.add(models.DocumentAsset(document_id="d", case_id="legacy", filename="coa.pdf", material_id="a"))
@@ -229,7 +229,7 @@ def test_material_key_changes_with_rename_and_upsert_keeps_evidence(case):
         first.name = "White Sugar"
         db.commit()
         assert first.normalized_name == "whitesugar"
-        same, created = m._upsert_material(db, models.Material(case_id=cid, name="WHITE-SUGAR (국내산)"))
+        same, created = m._upsert_material(db, models.Material(case_id=cid, name="WHITE-SUGAR"))
         assert not created and same.material_id == first.material_id
         assert same.note == "human input" and same.evidence_provided
         db.commit()

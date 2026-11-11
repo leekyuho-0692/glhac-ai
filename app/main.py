@@ -348,19 +348,25 @@ def _ensure_material_uniqueness():
     if not insp.has_table("material"):
         return
     table = models.Material.__table__
-    if any(i["name"] == "uq_material_case_name" and i["unique"] for i in insp.get_indexes("material")):
-        # 모델로 만든 DB라도 기존 SQL 이관 도구가 키 없이 적재했으면 먼저 백필한다.
-        with engine.connect() as conn:
-            if conn.execute(select(table.c.material_id).where(table.c.normalized_name.is_(None)).limit(1)).first() is None:
-                return
+    has_index = any(i["name"] == "uq_material_case_name" and i["unique"]
+                    for i in insp.get_indexes("material"))
     pm = models.ProductMaterial.__table__
     with engine.begin() as conn:
         if engine.dialect.name == "sqlite":
             conn.exec_driver_sql("BEGIN IMMEDIATE")
         elif engine.dialect.name == "postgresql":
             conn.execute(text("LOCK TABLE material IN SHARE ROW EXCLUSIVE MODE"))
+        rows = conn.execute(select(table)).mappings().all()
+        # NULL 백필뿐 아니라 괄호를 버리던 구키/NFD 키도 현재 함수로 이관한다.
+        if has_index and all(row["normalized_name"] == models.normalize_material_name(row["name"])
+                             for row in rows):
+            return
+        # 구키가 다른 행의 새 키를 차지해도 갱신 순서에 따라 충돌하지 않게 한다.
+        # 잠금·병합·재키잉은 한 트랜잭션이며 유일 인덱스 자체는 유지한다.
+        if has_index:
+            conn.execute(update(table).values(normalized_name=None))
         groups = {}
-        for row in conn.execute(select(table)).mappings():
+        for row in rows:
             groups.setdefault((row["case_id"], models.normalize_material_name(row["name"])), []).append(dict(row))
         remap = {}
         for (case_id, key), rows in groups.items():
@@ -5989,7 +5995,7 @@ def rename_material(material_id: str, body: schemas.MaterialRenameReq,
 
 
 def _norm_material(name):
-    """원재료명 정규화 — 공백·괄호주석·구두점·국가/원산지 접미 제거해 중복 판정 키."""
+    """NFC·표기 정규화 키. 괄호 안 성분/유래는 보존한다."""
     return models.normalize_material_name(name)
 
 
@@ -6347,7 +6353,7 @@ def reuse_materials(case_id: str, body: dict = None,
 @app.post("/cases/{case_id}/materials/dedup")
 def dedup_materials(case_id: str, user=Depends(auth.require_roles("applicant", "consultant")),
                     db: Session = Depends(get_db)):
-    """중복 원재료 정리 — 정규화 동일명(괄호·공백·원산지 차이) 그룹당 1개만 유지.
+    """중복 원재료 정리 — 괄호 내용까지 정규화한 동일명 그룹당 1개만 유지.
     증빙 보유 > CLEARED > 짧은 이름 우선 유지, 나머지 삭제. OCR 오탈자는 보수적으로 미병합."""
     _c0 = _get_case(db, case_id, user)
     _assert_case_open(_c0)   # 종결 케이스 쓰기 차단(R1-1)
