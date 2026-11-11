@@ -21,6 +21,7 @@ os.environ.setdefault("GLHAC_ZIP_LOOKUP", "0")
 os.environ.setdefault("GLHAC_NOTIFY_WORKER", "0")
 from app import intake, models, screening, cert_verify
 from app import main as m
+from test_final_e2_rules import seed_reviewed_issue_prerequisites, seed_paid_receipt
 
 OK = {"verdict": "ok", "doc_type_ok": True, "field_issues": []}
 
@@ -322,7 +323,10 @@ def ready_case(cid, material_name="Sugar", mid=None):
         db.add_all([product, material])
         db.flush()
         db.add(models.ProductMaterial(case_id=cid, product_id=product.product_id, material_id=material.material_id))
-        db.add(models.Invoice(case_id=cid, service_type="pre_audit", amount=1, ppn=0, total=1, status="paid"))
+        invoice = models.Invoice(case_id=cid, service_type="pre_audit", amount=1, ppn=0, total=1, status="paid")
+        db.add(invoice)
+        seed_paid_receipt(db, invoice)
+        seed_reviewed_issue_prerequisites(db, case)
         m.sm.freeze_scope(db, case)
         db.commit()
         return material.material_id
@@ -379,6 +383,8 @@ def test_r503_hazard_issue_guard(client, headers, name):
     response = client.post(f"/cases/{cid}/certificate/issue", headers=headers["operator"], json={})
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "HARAM_MATERIAL"
+    with m.SessionLocal() as db:
+        assert not db.query(models.HalalCertificate).filter_by(case_id=cid).count()
 
 
 @pytest.mark.parametrize("marker", ["DRAFT - NOT ISSUED", "VOID", "SPECIMEN", "CONTOH", "견본", "무효", "취소"])

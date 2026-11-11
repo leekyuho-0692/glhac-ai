@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from app import ai_local, main as m, models, state_machine as sm
 from app.db import SessionLocal
+from test_final_e2_rules import seed_reviewed_issue_prerequisites
 
 REPEATS = range(20)
 TERMINAL = ("withdrawn", "rejected", "cancelled", "revoked")
@@ -76,7 +77,7 @@ def case(ready=False):
         db.flush()
         if ready:
             p = models.Product(case_id=c.case_id, name="Reviewed sugar product")
-            mat = models.Material(case_id=c.case_id, name="sugar", screen_status="halal", screen_result="CLEARED")
+            mat = models.Material(case_id=c.case_id, name="sugar")
             db.add_all([p, mat])
             db.flush()
             db.add(models.ProductMaterial(case_id=c.case_id, product_id=p.product_id, material_id=mat.material_id))
@@ -85,6 +86,7 @@ def case(ready=False):
             db.flush()
             db.add(models.Payment(case_id=c.case_id, invoice_id=inv.invoice_id, amount=100,
                                   currency="KRW", status="confirmed", method="manual"))
+            seed_reviewed_issue_prerequisites(db, c)
             sm.freeze_scope(db, c)
         db.commit()
         return c.case_id
