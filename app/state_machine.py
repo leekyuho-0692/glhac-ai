@@ -144,6 +144,9 @@ REVIEWER_ROLES = {"consultant", "auditor", "fatwa_liaison", "operator", "admin"}
 
 def lock_scope(db, case):
     """추출 대기 중 동결된 경우도 최신 잠금을 확인한다. 커밋까지 쓰기와 동결을 직렬화."""
+    # 발급/종결과 같은 순서로 잡는다. scope → wf 역순이면 PostgreSQL에서
+    # 원재료 저장과 인증서 발급이 서로의 잠금을 기다릴 수 있다.
+    lock_chain_tail(db, "wf:" + case.case_id)
     lock_chain_tail(db, "scope:" + case.case_id)
     db.refresh(case, ["scope_frozen"])
 

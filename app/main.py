@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from starlette.concurrency import run_in_threadpool
 
 logging.basicConfig(
     level=os.environ.get("GLHAC_LOG_LEVEL", "INFO"),
@@ -45,40 +46,138 @@ CLOSED_CASE_WRITE_EXCEPTIONS = {
 }
 
 
-def _case_write_guard(request: Request, db: Session = Depends(get_db)):
-    """모든 case_id 쓰기와 자원 ID를 통한 간접 쓰기가 공유하는 종결 가드."""
-    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
-        return
+_CASE_WRITE_PARENTS = {
+    "finding_id": models.AuditFinding, "car_id": models.CorrectiveAction,
+    "approval_id": models.ApprovalRequest, "document_id": models.DocumentAsset,
+    "gen_doc_id": models.GeneratedDocument, "contract_id": models.Contract,
+    "invoice_id": models.Invoice, "material_id": models.Material,
+    "product_id": models.Product, "ext_id": models.AiExtraction,
+    "eid": models.ExternalIdentity, "measurement_id": models.MaterialMeasurement,
+    "plan_id": models.AuditPlan, "cid": models.Consultation,
+    "refund_id": models.Refund, "candidate_id": models.PaymentMatchCandidate,
+    "event_id": models.IntegrationEvent, "vehicle_id": models.Vehicle,
+    "cleaning_id": models.VehicleCleaning, "facility_id": models.Facility,
+}
+_CASE_BODY_WRITE_ROUTES = {
+    "/consultations", "/integration/sihalal/event", "/orgs/{org_id}/vehicles",
+    "/vehicles/{vehicle_id}",
+}
+
+
+def _lock_case(db, case_id):
+    """종결·인증서·비동기 반영의 공통 순서: wf 잠금 → 최신 케이스 행 잠금.
+
+    SQLite는 BEGIN IMMEDIATE, PostgreSQL은 트랜잭션 advisory lock과 FOR UPDATE.
+    identity map의 오래된 객체를 그대로 사용하지 않는다. 변경 전에만 호출한다.
+    """
+    try:
+        lock_chain_tail(db, "wf:" + case_id)
+        return db.get(models.CaseApplication, case_id, populate_existing=True, with_for_update=True)
+    except OperationalError as exc:
+        db.rollback()
+        if "locked" in str(exc).lower() or getattr(exc.orig, "pgcode", None) in ("40P01", "40001", "55P03"):
+            raise HTTPException(409, {"code": "CONCURRENT_REQUEST"}) from exc
+        raise
+
+
+def _guard_case_mutation(db, case_id, *, allow_closed=False):
+    c = _lock_case(db, case_id)
+    if c is not None:
+        if not allow_closed:
+            _assert_case_open(c)
+            db.info.setdefault("case_write_ids", set()).add(case_id)
+    return c
+
+
+def _recheck_case_writes(db, *args):
+    """flush/commit 직전에도 DB 상태를 검사한다. dirty 객체를 refresh하지 않는다.
+
+    중간 commit/rollback으로 최초 가드의 잠금이 풀린 핸들러도 새 트랜잭션에서
+    다시 검사한다. 현재 트랜잭션에서 _close_case가 승인한 종결만 예외다.
+    """
+    for case_id in sorted(db.info.get("case_write_ids", ())):
+        lock_chain_tail(db, "wf:" + case_id)
+        status = (db.query(models.CaseApplication.status).filter_by(case_id=case_id)
+                  .with_for_update().scalar())
+        if status in sm.TERMINAL_STATES and case_id not in db.info.get("case_closures", ()):
+            raise HTTPException(409, {"code": "CASE_CLOSED", "status": status,
+                                      "message": "종결된 케이스는 변경할 수 없습니다"})
+
+
+event.listen(Session, "before_flush", _recheck_case_writes)
+event.listen(Session, "before_commit", _recheck_case_writes)
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _recheck_bulk_case_writes(state):
+    if state.is_update or state.is_delete:
+        _recheck_case_writes(state.session)
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _clear_case_closures(db, transaction):
+    if transaction.parent is None:
+        db.info.pop("case_closures", None)
+
+
+def _case_write_guard_sync(request, db, body):
     params = request.path_params
     case_id = params.get("case_id")
+    case_ids = {case_id} if case_id else set()
     resource = None
     if not case_id:
-        parents = {"finding_id": models.AuditFinding, "car_id": models.CorrectiveAction,
-                   "approval_id": models.ApprovalRequest, "document_id": models.DocumentAsset,
-                   "gen_doc_id": models.GeneratedDocument, "contract_id": models.Contract,
-                   "invoice_id": models.Invoice, "material_id": models.Material,
-                   "product_id": models.Product, "ext_id": models.AiExtraction,
-                   "eid": models.ExternalIdentity}
-        for key, model in parents.items():
+        for key, model in _CASE_WRITE_PARENTS.items():
             if params.get(key):
                 resource = db.get(model, params[key])
-                case_id = getattr(resource, "case_id", None)
+                parent = resource
+                if isinstance(parent, models.VehicleCleaning):
+                    parent = db.get(models.Vehicle, parent.vehicle_id)
+                if isinstance(parent, (models.Refund, models.PaymentMatchCandidate)) and not parent.case_id:
+                    parent = db.get(models.Invoice, parent.invoice_id)
+                if getattr(parent, "case_id", None):
+                    case_ids.add(parent.case_id)
+                if isinstance(parent, models.Facility):
+                    # 시설은 org 자원이지만 선택/발급된 케이스의 기록이기도 하다.
+                    for c in db.query(models.CaseApplication).filter_by(org_id=parent.org_id):
+                        if parent.facility_id in (c.facility_ids or []):
+                            case_ids.add(c.case_id)
+                    for cert in db.query(models.HalalCertificate).filter(models.HalalCertificate.frozen_facility_ids.isnot(None)):
+                        if parent.facility_id in (cert.frozen_facility_ids or []):
+                            case_ids.add(cert.case_id)
                 break
-    if not case_id:
-        return
-    c = db.get(models.CaseApplication, case_id)
-    if c is None:  # 404·역할 검사는 해당 엔드포인트의 계약을 유지한다.
+    if isinstance(body, dict) and isinstance(body.get("case_id"), str) and body["case_id"]:
+        case_ids.add(body["case_id"])
+    if not case_ids:
         return
     user = auth.get_current_user(request.headers.get("authorization"), db)
-    _assert_case_access(db, user, c)
     path = request.scope["route"].path
-    if (request.method, path) in CLOSED_CASE_WRITE_EXCEPTIONS:
+    allow_closed = ((request.method, path) in CLOSED_CASE_WRITE_EXCEPTIONS or
+                    (isinstance(resource, models.ApprovalRequest)
+                     and resource.action_type == "certificate.revoke"
+                     and path in {"/approvals/{approval_id}/approve", "/approvals/{approval_id}/reject"}))
+    for cid in sorted(case_ids):
+        c = db.get(models.CaseApplication, cid)
+        if c is None:  # 404·역할 검사는 해당 엔드포인트의 계약을 유지한다.
+            continue
+        _assert_case_access(db, user, c)
+        if not allow_closed:
+            _assert_case_open(c)
+            # OCR/LLM 대기에는 쓰기 잠금을 잡지 않는다. 첫 저장부터 커밋까지
+            # _recheck_case_writes가 종결과 직렬화하며 최신 DB 상태를 검사한다.
+            db.info.setdefault("case_write_ids", set()).add(cid)
+
+
+async def _case_write_guard(request: Request, db: Session = Depends(get_db)):
+    """경로/본문의 부모를 찾고, DB 대기는 이벤트 루프 밖에서 수행한다."""
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
         return
-    if (isinstance(resource, models.ApprovalRequest)
-            and resource.action_type == "certificate.revoke"
-            and path in {"/approvals/{approval_id}/approve", "/approvals/{approval_id}/reject"}):
-        return  # 철회 요청의 2인 확인도 동일 예외; 재개·발급은 예외 아님.
-    _assert_case_open(c)
+    body = None
+    if request.scope["route"].path in _CASE_BODY_WRITE_ROUTES:
+        try:
+            body = await request.json()
+        except ValueError:
+            pass  # 잘못된 본문은 FastAPI/핸들러의 기존 오류 계약을 따른다.
+    await run_in_threadpool(_case_write_guard_sync, request, db, body)
 
 
 import os as _os
@@ -967,6 +1066,7 @@ def _audit(db, user, action, resource_type=None, resource_id=None, case_id=None,
     """접근/조회 감사로그 기록(§2.4). commit=False면 상위 트랜잭션에 합류.
     법적효력 P3a — 각 로그에 HMAC 체인(meta._chain={prev,row})을 얹어 tamper-evident화(스키마 무변경).
     체인은 WorkflowEvent record_event와 동일한 chain_row_hash(HMAC(SECRET)) 헬퍼를 재사용한다."""
+    _recheck_case_writes(db)  # 케이스 잠금 → 전역 감사 체인 잠금 순서를 유지한다.
     # MA4: 전역 체인 — 꼬리 조회 전에 DB 쓰기 락(커밋까지 유지)을 잡아 다른 세션(요청)과 직렬화.
     # (flush 까지만 쥐는 프로세스 Lock 으로는 미커밋 꼬리를 못 봐 prev 가 갈라진다 — db.lock_chain_tail 참조)
     lock_chain_tail(db, "audit:global")
@@ -2212,7 +2312,8 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
             raise HTTPException(404, {"code": "PRODUCT_NOT_IN_SCOPE", "valid": False})
         product_scope = _product_cert_meta(db, cert, p)
     identity = _certificate_identity(db, cert)
-    valid = cert.status == "active"
+    case_status = db.query(models.CaseApplication.status).filter_by(case_id=cert.case_id).scalar()
+    valid = cert.status == "active" and case_status is not None and case_status not in sm.TERMINAL_STATES
     try:
         if valid and date.fromisoformat(cert.expiry_date) < date.today():
             valid = False
@@ -5579,7 +5680,8 @@ def scan_expiry(user=Depends(auth.require_roles()), db: Session = Depends(get_db
     from datetime import date as _date
     today = _date.today()
     created = 0
-    for cert in db.query(models.HalalCertificate).filter_by(status="active").all():
+    for cert in (db.query(models.HalalCertificate).filter_by(status="active")
+                 .order_by(models.HalalCertificate.case_id).all()):
         try:
             days = (_date.fromisoformat(cert.expiry_date) - today).days
         except Exception:  # noqa: BLE001
@@ -5587,9 +5689,10 @@ def scan_expiry(user=Depends(auth.require_roles()), db: Session = Depends(get_db
         th = next((t for t in (30, 60, 90) if days <= t), None)
         if th is None or days < 0:
             continue
-        c = db.get(models.CaseApplication, cert.case_id)
-        if not c:
+        c = _lock_case(db, cert.case_id)
+        if not c or sm.is_terminal(c.status):
             continue
+        db.info.setdefault("case_write_ids", set()).add(c.case_id)
         dup = (db.query(models.Notification)
                .filter(models.Notification.case_id == cert.case_id,
                        models.Notification.event_type == "expiry_soon",
@@ -7782,7 +7885,12 @@ def _verify_doc(db, d, c):
         log.exception("문서 검증 응답 처리 실패 %s", doc_id)
         res = intake.normalise_verification(None)
     # LLM 대기 중 사람의 저장·확인이 끝났을 수 있다. 최신 값과 출처를 다시 읽는다.
-    c = db.get(models.CaseApplication, case_id, populate_existing=True, with_for_update=True)
+    c = _lock_case(db, case_id)
+    if c is None or sm.is_terminal(c.status):
+        # 검증 결과/자동 반영 이력도 종결 기록이다. LLM 대기 중 종결되면 모두 보존.
+        db.rollback()
+        return
+    _guard_case_mutation(db, case_id)
     d = db.get(models.DocumentAsset, doc_id, populate_existing=True, with_for_update=True)
     if d is None:
         db.rollback()
@@ -15316,7 +15424,7 @@ def _do_send_fatwa(db, c, actor, body):
 
 def _create_approval(db, action_type, c, user, reason):
     """maker의 승인요청 생성(pending). 동일 케이스·액션의 중복 pending 방지."""
-    _payment_lock(db)
+    c = _guard_case_mutation(db, c.case_id, allow_closed=action_type == "certificate.revoke")
     dup = db.query(models.ApprovalRequest).filter_by(
         action_type=action_type, case_id=c.case_id, status="pending").first()
     if dup:
@@ -15404,9 +15512,9 @@ def _exec_approved(db, ar, user):
     reason = (ar.payload or {}).get("reason")
     if ar.action_type == "certificate.issue":
         _issue_guards(db, c, ar.case_id)   # 발급 재검증(요청 후 상태 변동 대비)
-        return _do_issue_certificate(db, c, user, reason)
+        return _do_issue_certificate(db, c, user, reason, commit=False)
     if ar.action_type == "certificate.revoke":
-        return _do_revoke_certificate(db, c, user, reason)
+        return _do_revoke_certificate(db, c, user, reason, commit=False)
     raise HTTPException(400, {"code": "UNKNOWN_ACTION", "action": ar.action_type})
 
 
@@ -15462,22 +15570,53 @@ def list_approvals(status: str = "pending", user=Depends(auth.get_current_user),
     return out
 
 
+def _claim_approval(db, approval_id, user, decision, reason=None):
+    """케이스 → 요청 행 순서로 잠그고 pending 결정권을 조건부 UPDATE로 단독 확보."""
+    ar = db.get(models.ApprovalRequest, approval_id)
+    if not ar:
+        raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
+    if ar.case_id:
+        _guard_case_mutation(db, ar.case_id, allow_closed=ar.action_type == "certificate.revoke")
+    else:
+        lock_chain_tail(db, "approval:" + approval_id)
+    ar = db.get(models.ApprovalRequest, approval_id, populate_existing=True, with_for_update=True)
+    if ar.status != "pending":
+        raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
+    if decision == "cancelled":
+        if user["role"] != "admin" and ar.requested_by != user["uid"]:
+            raise HTTPException(403, {"code": "NOT_REQUESTER"})
+    else:
+        _check_checker(db, ar, user)
+    reason = (reason or "").strip() or None
+    if decision == "rejected" and ar.action_type in TWO_PERSON_ACTIONS and not reason:
+        raise HTTPException(422, {"code": "OPINION_REQUIRED"})
+    changed = (db.query(models.ApprovalRequest).filter_by(id=approval_id, status="pending")
+               .update({"status": decision, "decided_by": user["uid"],
+                        "decider_role": user["role"], "decider_name": user.get("username"),
+                        "decided_at": datetime.utcnow(), "decision_reason": reason},
+                       synchronize_session=False))
+    if changed != 1:
+        raise HTTPException(409, {"code": "ALREADY_DECIDED"})
+    db.refresh(ar)
+    return ar
+
+
 @app.post("/approvals/{approval_id}/approve")
 def approve_request(approval_id: str, body: schemas.ApprovalDecisionReq = schemas.ApprovalDecisionReq(),
                     user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """승인(checker) — 자격 검증(역할+self-approval 금지) 후 실제 액션 실행."""
-    ar = db.get(models.ApprovalRequest, approval_id)
-    if not ar:
-        raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
-    if ar.status != "pending":
-        raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
-    _check_checker(db, ar, user)
-    result = _exec_approved(db, ar, user)   # 액션 본체 실행(내부 commit)
-    ar.status = "approved"
-    ar.decided_by = user["uid"]; ar.decider_role = user["role"]; ar.decider_name = user.get("username")
-    ar.decided_at = datetime.utcnow(); ar.result = result
-    ar.decision_reason = (body.reason or "").strip() or None
-    db.commit()
+    ar = _claim_approval(db, approval_id, user, "approved", body.reason)
+    try:
+        result = _exec_approved(db, ar, user)
+        ar.result = result
+        db.commit()   # 인증서·케이스·승인 결정·감사 기록을 한 번에 확정
+    except Exception:
+        db.rollback()
+        raise
+    if ar.action_type == "certificate.issue":
+        c = db.get(models.CaseApplication, ar.case_id)
+        cert = _own_cert(db, ar.case_id)
+        _sync_logistics_cert(db, c, cert, "certificate.issued")
     return {"approval_id": ar.id, "status": "approved", "result": result}
 
 
@@ -15485,18 +15624,7 @@ def approve_request(approval_id: str, body: schemas.ApprovalDecisionReq = schema
 def reject_request(approval_id: str, body: schemas.ApprovalDecisionReq = schemas.ApprovalDecisionReq(),
                    user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """거절(checker) — 자격 검증 후 요청 기각(실행 안 됨)."""
-    ar = db.get(models.ApprovalRequest, approval_id)
-    if not ar:
-        raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
-    if ar.status != "pending":
-        raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
-    _check_checker(db, ar, user)
-    if ar.action_type in TWO_PERSON_ACTIONS and not (body.reason or "").strip():
-        raise HTTPException(422, {"code": "OPINION_REQUIRED"})
-    ar.status = "rejected"
-    ar.decided_by = user["uid"]; ar.decider_role = user["role"]; ar.decider_name = user.get("username")
-    ar.decided_at = datetime.utcnow()
-    ar.decision_reason = (body.reason or "").strip() or None
+    ar = _claim_approval(db, approval_id, user, "rejected", body.reason)
     c = db.get(models.CaseApplication, ar.case_id) if ar.case_id else None
     if c:
         two_person = ar.action_type in TWO_PERSON_ACTIONS
@@ -15516,15 +15644,7 @@ def reject_request(approval_id: str, body: schemas.ApprovalDecisionReq = schemas
 def cancel_request(approval_id: str,
                    user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """요청자 본인 또는 admin — pending 요청 취소."""
-    ar = db.get(models.ApprovalRequest, approval_id)
-    if not ar:
-        raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
-    if ar.status != "pending":
-        raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": ar.status})
-    if user["role"] != "admin" and ar.requested_by != user["uid"]:
-        raise HTTPException(403, {"code": "NOT_REQUESTER"})
-    ar.status = "cancelled"
-    ar.decided_at = datetime.utcnow()
+    ar = _claim_approval(db, approval_id, user, "cancelled")
     c = db.get(models.CaseApplication, ar.case_id) if ar.case_id else None
     if c:
         sm.record_event(db, c, c.status, c.status, ar.action_type + ".cancelled",
@@ -15546,6 +15666,8 @@ def _issue_guards(db, c, case_id):
     (실측: consultant_review 상태에서 발급됨), 발급 함수의 상태 전이는 조용히 건너뛰어져
     '인증서는 있는데 진행 단계는 심사 중'인 케이스가 남았다. 인증기관 제품에서 이건
     서류상 앞뒤가 안 맞는 상태다."""
+    c = _guard_case_mutation(db, case_id)
+    _assert_no_live_certificate(db, case_id)
     sm.lock_scope(db, c)
     ready = _issue_ready_states()
     if c.status not in ready and c.status != "certificate_issued":
@@ -15708,13 +15830,10 @@ def _next_logistics_cert_no(db):
     return "%s%05d" % (prefix, n + 1)
 
 
-def _do_issue_certificate(db, c, user, reason=None):
+def _do_issue_certificate(db, c, user, reason=None, *, commit=True):
     """실제 인증서 발급 실행(가드 통과 후). user=실행자(2인승인 시 승인자). 설계서 §6·§S3-3."""
+    c, cert = _mutate_certificate(db, c.case_id, "issue", reason)
     case_id = c.case_id
-    ex = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
-    if ex:
-        return {"certificate_no": ex.certificate_no, "issue_date": ex.issue_date,
-                "expiry_date": ex.expiry_date, "scope": ex.scope, "existing": True}
     today = date.today()
     try:
         expiry = date(today.year + 4, today.month, today.day)
@@ -15726,17 +15845,18 @@ def _do_issue_certificate(db, c, user, reason=None):
         scope = list(c.logistics_scope or [])
     else:
         scope = [p.name for p in db.query(models.Product).filter_by(case_id=case_id)]
-    cert = models.HalalCertificate(case_id=case_id, scope=scope, issue_date=str(today),
-                                   expiry_date=str(expiry))
-    db.add(cert)
-    db.flush()
+    cert.scope, cert.issue_date, cert.expiry_date = scope, str(today), str(expiry)
     cert.certificate_no = _next_logistics_cert_no(db) if is_logi else ("HC-" + cert.id[:8].upper())
     import secrets as _secrets
     cert.qr_token = _secrets.token_urlsafe(24)   # §6.4 공개 검증 토큰
     # 상태 전이 — certificate_issued는 보호상태(raw transition 금지). 이 전용 함수가 소유.
     frm = c.status
     if "certificate_issued" in sm.TRANSITIONS.get(c.status, set()):
-        c.status = "certificate_issued"
+        changed = (db.query(models.CaseApplication).filter_by(case_id=case_id, status=frm)
+                   .update({"status": "certificate_issued"}, synchronize_session=False))
+        if changed != 1:
+            raise HTTPException(409, {"code": "CONCURRENT_REQUEST"})
+        db.refresh(c, ["status"])
     # SRS CRT-02: 인증서 발급 시점 회차(stage=certificate, draft)를 청구·입금 고지
     for _e in db.query(models.WorkflowEvent).filter_by(case_id=c.case_id, action="invoice.installment").all():
         if (_e.payload or {}).get("stage") == "certificate":
@@ -15758,17 +15878,11 @@ def _do_issue_certificate(db, c, user, reason=None):
             channels=["inapp", "sms", "email", "kakao", "whatsapp"], role="applicant",
             msg=("certificate_issued", {"company": c.company_name or "",
                                         "cert_no": cert.certificate_no}))
-    try:
+    if commit:
         db.commit()
-    except IntegrityError:   # 동시 발급 경합 — 부분 유니크가 이중 활성 인증서 차단
-        db.rollback()
-        ex = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
-        if ex:
-            return {"certificate_no": ex.certificate_no, "issue_date": ex.issue_date,
-                    "expiry_date": ex.expiry_date, "scope": ex.scope, "existing": True}
-        raise
     obs.inc("glhac_certificate_issued_total")
-    _sync_logistics_cert(db, c, cert, "certificate.issued")   # 물류면 logistics-audit 로 push
+    if commit:
+        _sync_logistics_cert(db, c, cert, "certificate.issued")
     return {"certificate_no": cert.certificate_no, "issue_date": str(today),
             "expiry_date": str(expiry), "scope": cert.scope,
             "scheme": c.scheme or "product",
@@ -15785,10 +15899,6 @@ def issue_certificate(case_id: str, body: schemas.IssueReq = schemas.IssueReq(),
     """인증서 발급 요청(maker=operator) — 2인 승인(§4.3). 가드 프리체크 후 승인요청 생성.
     실제 발급은 승인자(sharia)가 /approvals/{id}/approve 로 실행."""
     c = _get_case(db, case_id, user)
-    ex = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
-    if ex:   # 이미 발급됨 — 승인 불필요, 그대로 반환(하위호환)
-        return {"certificate_no": ex.certificate_no, "issue_date": ex.issue_date,
-                "expiry_date": ex.expiry_date, "scope": ex.scope, "existing": True}
     _issue_guards(db, c, case_id)   # 발급 가능 상태인지 사전 검증(부적합 시 즉시 409)
     return _create_approval(db, "certificate.issue", c, user, (body.reason or "").strip())
 
@@ -16809,19 +16919,97 @@ def invoice_quotation_pdf(invoice_id: str, user=Depends(auth.get_current_user),
 
 
 # ---------- 인증서 lifecycle: 정지/철회/재개 (§5.1·§5.2) ----------
+def _assert_no_live_certificate(db, case_id):
+    cert = (db.query(models.HalalCertificate).filter(
+        models.HalalCertificate.case_id == case_id,
+        models.HalalCertificate.status.in_(("active", "suspended")))
+        .with_for_update().first())
+    if cert:
+        raise HTTPException(409, {"code": "CERT_ALREADY_EXISTS", "status": cert.status,
+                                  "certificate_no": cert.certificate_no})
+
+
+def _reactivation_guards(db, c, cert, reason):
+    """정지 사유 해소 의견 + 현재 미해결 근거를 함께 검토한다."""
+    if sm.open_major_nc(db, c.case_id):
+        raise HTTPException(409, {"code": "UNRESOLVED_MAJOR_NC"})
+    unresolved = db.query(models.CorrectiveAction).filter(
+        models.CorrectiveAction.case_id == c.case_id,
+        or_(models.CorrectiveAction.status.is_(None),
+            models.CorrectiveAction.status.notin_(("accepted", "closed")))).count()
+    if unresolved:
+        raise HTTPException(409, {"code": "UNRESOLVED_CAR", "unresolved": unresolved})
+    if db.query(models.ApprovalRequest).filter_by(
+            case_id=c.case_id, action_type="certificate.revoke", status="pending").first():
+        raise HTTPException(409, {"code": "REVOCATION_PENDING"})
+    _assert_measurements_pass(db, c.case_id)
+    if db.query(models.DocumentAsset).filter(
+            models.DocumentAsset.case_id == c.case_id,
+            models.DocumentAsset.review_status.in_(("rejected", "rework"))).count():
+        raise HTTPException(409, {"code": "DOCUMENTS_NOT_APPROVED"})
+    suspension = (db.query(models.WorkflowEvent).filter_by(case_id=c.case_id, action="certificate.suspend")
+                  .order_by(models.WorkflowEvent.created_at.desc()).first())
+    if (not suspension or (suspension.payload or {}).get("certificate_no") != cert.certificate_no
+            or not (reason or "").strip()
+            or reason.strip() == (suspension.payload or {}).get("reason")):
+        raise HTTPException(409, {"code": "SUSPENSION_REVIEW_REQUIRED",
+                                  "message": "최신 정지 사유의 해소를 검토한 의견이 필요합니다"})
+    return suspension
+
+
+def _mutate_certificate(db, case_id, action, reason=None):
+    """발급·정지·재개·철회의 유일한 상태 변경부. 커밋은 호출자가 소유한다."""
+    c = _guard_case_mutation(db, case_id, allow_closed=action == "revoke")
+    if c is None:
+        raise HTTPException(404, {"code": "CASE_NOT_FOUND"})
+    expected_case = c.status
+    # 행이 없는 최초 발급도 케이스 행을 조건부 확보해 직렬화한다.
+    changed = (db.query(models.CaseApplication).filter_by(case_id=case_id, status=expected_case)
+               .update({"status": expected_case}, synchronize_session=False))
+    if changed != 1:
+        raise HTTPException(409, {"code": "CONCURRENT_REQUEST"})
+    if action == "issue":
+        _assert_no_live_certificate(db, case_id)
+        cert = models.HalalCertificate(case_id=case_id, status="active")
+        db.add(cert)
+        db.flush()
+        return c, cert
+    if action == "revoke":
+        cert = _revoke_guards(db, case_id)
+    else:
+        cert = _own_cert(db, case_id)
+        if not cert:
+            raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
+    cert = db.get(models.HalalCertificate, cert.id, populate_existing=True, with_for_update=True)
+    expected, target = {"suspend": ("active", "suspended"),
+                        "reactivate": ("suspended", "active"),
+                        "revoke": (cert.status, "withdrawn")}[action]
+    if cert.status != expected:
+        raise HTTPException(409, {"code": "BAD_CERT_STATE", "have": cert.status, "need": expected})
+    if action == "reactivate":
+        _reactivation_guards(db, c, cert, reason)
+    changed = (db.query(models.HalalCertificate).filter_by(id=cert.id, status=expected)
+               .update({"status": target}, synchronize_session=False))
+    if changed != 1:
+        raise HTTPException(409, {"code": "BAD_CERT_STATE"})
+    db.refresh(cert)
+    return c, cert
+
+
 def _cert_status_change(db, case_id, user, action, new_status, from_status, reason,
                         event, title, body):
     """정지/철회/재개 공통 — from_status 인증서만 대상, 사유·통지·감사."""
-    c = _get_case(db, case_id, user)
-    cert = _own_cert(db, case_id)
-    if not cert:
-        raise HTTPException(404, {"code": "CERT_NOT_FOUND"})
-    if cert.status != from_status:
-        raise HTTPException(409, {"code": "BAD_CERT_STATE", "have": cert.status, "need": from_status})
-    cert.status = new_status
+    _get_case(db, case_id, user)
+    c, cert = _mutate_certificate(db, case_id, action.split(".")[-1], reason)
+    payload = {"certificate_no": cert.certificate_no, "reason": reason,
+               "from": from_status, "to": new_status}
+    if action == "certificate.reactivate":
+        suspension = nav8.latest_event(db, case_id, "certificate.suspend")
+        payload.update({"resolved_suspension": suspension.event_id,
+                        "suspension_reason": (suspension.payload or {}).get("reason"),
+                        "resolution_reviewed_by": user["uid"]})
     sm.record_event(db, c, c.status, c.status, action, user["role"], user["uid"],
-                    {"certificate_no": cert.certificate_no, "reason": reason,
-                     "from": from_status, "to": new_status})
+                    payload)
     _notify(db, c, event, title, "%s — %s" % (c.company_name or "", body),
             channels=["inapp", "sms", "email"], role="applicant")
     db.commit()
@@ -16912,12 +17100,9 @@ def _revoke_guards(db, case_id):
     return cert
 
 
-def _do_revoke_certificate(db, c, user, reason=None):
+def _do_revoke_certificate(db, c, user, reason=None, *, commit=True):
     """실제 인증서 철회 실행(가드 통과 후). user=실행자(2인승인 시 승인자=admin). 되돌릴 수 없음·통지."""
-    lock_chain_tail(db, "wf:" + c.case_id)
-    db.refresh(c)
-    cert = _revoke_guards(db, c.case_id)
-    cert.status = "withdrawn"
+    c, cert = _mutate_certificate(db, c.case_id, "revoke", reason)
     sm.record_event(db, c, c.status, c.status, "certificate.revoke", user["role"], user["uid"],
                     {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None})
     _notify(db, c, "certificate_revoked", "인증서 철회",
@@ -16935,7 +17120,8 @@ def _do_revoke_certificate(db, c, user, reason=None):
         closed = _close_case(db, c, user, "revoked", (reason or "").strip() or "인증서 철회",
                              action="case.close.revoked", keep_approval_actions=("certificate.revoke",))
     _cancel_pending_renewals(db, c, user, reason or "부모 인증서 철회")
-    db.commit()
+    if commit:
+        db.commit()
     return {"certificate_no": cert.certificate_no, "status": "withdrawn", "reason": (reason or "").strip() or None,
             "case_status": c.status, "case_closed": bool(closed)}
 
@@ -17972,8 +18158,8 @@ def _transition_invoice(db, inv, target, *, user=None, amount=None, currency=Non
                         method="manual", reference=None, source_key=None, confirmed=False,
                         confirm_pending=False, refund=False):
     """금액·통화·전이를 한 곳에서 검증하고 원장과 상태를 함께 변경한다. 커밋은 호출자 책임."""
-    case = db.get(models.CaseApplication, inv.case_id)
-    _assert_case_open(case)
+    # 웹훅/입금 매칭처럼 경로에 case_id가 없는 통로도 저장 단계 가드에 참여한다.
+    case = _guard_case_mutation(db, inv.case_id)
     expected = _invoice_currency(db, inv)
     if currency is not None and str(currency).upper() != expected:
         raise HTTPException(409, {"code": "CURRENCY_MISMATCH", "expected": expected})
@@ -18469,9 +18655,18 @@ def add_deposit(body: DepositInput, request: Request, user=Depends(auth.require_
                          ref_memo=body.ref_memo, source_key=op.key)
     db.add(dep)
     db.flush()
+    cands = _match_deposit(db, dep)
+    # 본문에도 case_id가 없는 자동 후보 경로: 종결 기록에는 후보도 추가하지 않는다.
+    # 결제 → 케이스(정렬) → 감사 체인 순서로 잠가 Postgres의 역순 대기를 피한다.
+    open_ids = set()
+    for cid in sorted({candidate["invoice"].case_id for candidate in cands}):
+        c = _lock_case(db, cid)
+        if c is not None and not sm.is_terminal(c.status):
+            open_ids.add(cid)
+            db.info.setdefault("case_write_ids", set()).add(cid)
+    cands = [candidate for candidate in cands if candidate["invoice"].case_id in open_ids]
     _audit(db, user, "payment.deposit.create", "deposit", dep.id, None,
            {"amount": body.amount, "bank": body.bank_name}, commit=False)
-    cands = _match_deposit(db, dep)
     verdict = _judge_match(cands)
     res = {"deposit_id": dep.id, "verdict": verdict, "candidates": len(cands)}
     if verdict == "COMMIT":
@@ -22178,8 +22373,9 @@ def _close_case(db, c, user, to_status, reason, action="case.close", keep_approv
     ① WorkflowEvent(사유 포함) ② 미결 인보이스(draft/invoice_created/waiting_payment) → cancelled
     ③ 진행 중 승인요청(pending) → cancelled(keep_approval_actions 의 액션은 호출자가 직접 마무리하므로 둔다)
     ④ 신청자·컨설턴트 알림. 상태 전이 가능 여부는 호출자가 sm.allowed 로 먼저 검사한다."""
-    lock_chain_tail(db, "wf:" + c.case_id)
-    db.refresh(c)
+    c = _guard_case_mutation(db, c.case_id)
+    if not sm.allowed(c.status, to_status):
+        raise HTTPException(409, {"code": "INVALID_TRANSITION", "from": c.status, "to": to_status})
     frm = c.status
     reason = (reason or "").strip()
     cancelled_inv = []
@@ -22201,7 +22397,12 @@ def _close_case(db, c, user, to_status, reason, action="case.close", keep_approv
     sm.record_event(db, c, frm, to_status, action, user["role"], user["uid"],
                     {"status": to_status, "from": frm, "reason": reason,
                      "cancelled_invoices": cancelled_inv, "cancelled_approvals": cancelled_ar})
-    c.status = to_status
+    changed = (db.query(models.CaseApplication).filter_by(case_id=c.case_id, status=frm)
+               .update({"status": to_status}, synchronize_session=False))
+    if changed != 1:
+        raise HTTPException(409, {"code": "CONCURRENT_REQUEST"})
+    db.info.setdefault("case_closures", set()).add(c.case_id)
+    db.refresh(c, ["status"])
     _cancel_pending_renewals(db, c, user, reason)
     obs.inc("glhac_state_transition_total", {"to": to_status})
     for _r in ("applicant", "consultant"):
