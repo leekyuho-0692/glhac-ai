@@ -892,13 +892,13 @@ _NAME_RULES = [
 
 # 서류 제목으로 볼 만한 줄 — 표지·시트명·머리글. 본문 아무 데나 찾으면 원재료표 안의
 # 한 단어에 걸려 유형이 뒤집힌다. 앞부분의 짧은 줄만 본다.
-_TITLE_MAX_LINES = 12
+_TITLE_MAX_LINES = 3
 _TITLE_MAX_LEN = 90
 _SHEET_MARK_RE = re.compile(r"^\[시트/제품명:\s*(.+?)\]\s*$")
 
 
 def _title_lines(text):
-    """문서가 스스로 밝힌 제목 후보. 시트명 마커는 전부, 본문은 앞쪽 짧은 줄만."""
+    """첫 세 비어 있지 않은 줄만 제목 후보로 본다(번호 라벨은 제외)."""
     if not text:
         return []
     out, plain = [], 0
@@ -906,13 +906,14 @@ def _title_lines(text):
         ln = ln.strip()
         if not ln:
             continue
+        if plain >= _TITLE_MAX_LINES:
+            break
+        plain += 1
         m = _SHEET_MARK_RE.match(ln)
         if m:
-            out.append(m.group(1).strip())
+            ln = m.group(1).strip()
+        if re.fullmatch(r"NIB\s*[:：#-]?\s*\d[\d\s.\-–—]*", ln, re.I):
             continue
-        if plain >= _TITLE_MAX_LINES:
-            continue
-        plain += 1
         if len(ln) <= _TITLE_MAX_LEN:
             out.append(ln)
     return out
@@ -945,6 +946,8 @@ def refine_doctype_reason(name, llm_type, text=None):
         ev = evidence_key_of(base)
         return dt, "도메인사전 %s%s" % (key, ("·증빙 " + ev) if ev else "")
     for title in _title_lines(text):
+        if re.fullmatch(r"(?:material\s+)?safety\s+data\s+sheet(?:\s*\(MSDS\))?", title, re.I):
+            return "coa_msds", "제목줄 '%s' → MSDS" % title[:40]
         dt = doc_type_of(title)
         if dt:
             key = lookup(title, axis="DOC")
@@ -1294,8 +1297,8 @@ def _classify_text(name, text):
 _FIELD_SPEC = {
     "nib_business_license": ("회사명, NIB(사업자등록번호), 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 회사 전화번호, 사업의 종류/업태, 개업일(YYYY-MM-DD), 법인등록번호",
                              '{"company_name":null,"nib":null,"address":null,"city":null,"province":null,"country":null,"zip":null,"phone":null,"business_type":null,"establishment_date":null,"corporate_reg_no":null}'),
-    "factory_registration": ("공장등록번호, 공장 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 공장 전화번호(Tel), 총 직원 수(숫자)",
-                             '{"factory_reg_no":null,"factory_address":null,"factory_city":null,"factory_province":null,"factory_country":null,"factory_zip":null,"factory_phone":null,"employee_count":null}'),
+    "factory_registration": ("등록된 회사명, 사업자번호(있으면), 공장등록번호, 공장 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 공장 전화번호(Tel), 총 직원 수(숫자)",
+                             '{"company_name":null,"nib":null,"factory_reg_no":null,"factory_address":null,"factory_city":null,"factory_province":null,"factory_country":null,"factory_zip":null,"factory_phone":null,"employee_count":null}'),
     "halal_certificate": ("인증번호, 발급기관, 만료일, 대상(제품/원재료)",
                           '{"cert_no":null,"issuer":null,"expiry_date":null,"scope":null}'),
     "quality_cert": ("인증종류(HACCP/ISO/GMP/FSSC), 인증번호, 만료일",
@@ -1334,6 +1337,18 @@ _VERIFY_SYS = (
     "detected_type 은 다음 중 하나 또는 null: " + ", ".join(DOC_TYPES))
 
 
+def autofill_value_in_text(field, value, text):
+    """식별값의 원문 근거. 번호 표기 차이는 허용하되 부분 번호는 승인하지 않는다."""
+    value, text = str(value or ""), str(text or "")
+    if field == "nib":
+        digits = re.sub(r"\D", "", value)
+        numbers = re.findall(r"\d+(?:[\s.\-‐‑‒–—―－−]+\d+)*", text)
+        return bool(digits and any(re.sub(r"\D", "", n) == digits for n in numbers))
+    norm = lambda s: re.sub(r"[\W_]+", "", s, flags=re.UNICODE).casefold()
+    key = norm(value)
+    return bool(key and key in norm(text))
+
+
 def verify_extraction(doc_type, filename, text, fields, case_company=None):
     """추출 결과를 원문과 대조한 판정만 돌려준다 — 저장·반영은 호출자가 한다.
 
@@ -1351,6 +1366,10 @@ def verify_extraction(doc_type, filename, text, fields, case_company=None):
                 "factory_zip", "establishment_date", "issue_date", "expiry_date", "signed_date"}
     for k, v in shown.items():
         if k in _derived:
+            continue
+        if k in ("nib", "factory_reg_no"):
+            if v and not autofill_value_in_text(k, v, text):
+                issues.append({"field": k, "issue": "원문에 없는 값"})
             continue
         values = v if isinstance(v, list) else [v]
         if any(isinstance(value, str) and len(value.strip()) >= 3 and
@@ -1596,10 +1615,14 @@ def intake_zip_iter(data, limit=200):
              "ocr_lines": _lines or None,
              "doc_type_ko": DOC_KO.get(cl["doc_type"], cl["doc_type"]),
              "confidence": cl.get("confidence", 0.0), "fields": fields,
-             "text_len": len(text), "excerpt": text[:300], "text_full": text,
+             "text_len": len(text), "excerpt": text[:300], "text_full": text or "",
              "content_b64": base64.b64encode(raw).decode() if len(raw) <= UPLOAD_MAX_BYTES else None,
              "llm_error": cl.get("llm_error"),
              "content_type": _ctype(name)}
+        if cl.get("field_sources"):
+            d["fields"]["_sources"] = cl["field_sources"]
+        if cl.get("llm_error"):
+            d["fields"]["_llm_error"] = cl["llm_error"]
         docs.append(d)
         yield ("progress", {"done": i, "total": total, "file": d["filename"],
                             "doc_type_ko": d["doc_type_ko"]})

@@ -247,7 +247,8 @@ def test_사업자번호를_숫자로_대조하고_일치하거나_비었을_때
         c.nib = current
         db.commit()
     fake_llm["nib"] = extracted
-    res = _upload(client, case, "사업자등록증.pdf")
+    res = _upload(client, case, "사업자등록증.pdf",
+                  f"NOMOR INDUK BERUSAHA (NIB)\nNIB: {extracted}\n{PLAIN_TEXT}")
     assert res["doc_type"] == "nib_business_license" and res["mismatch"] is None
     saved = client.get(f"/cases/{cid}", headers=h).json()
     if skip:
@@ -567,7 +568,8 @@ def test_케이스_사업자번호가_비어도_사용자_입력은_보존한다
         c.company_name, c.address, c.nib = company, address, None
         db.commit()
     fake_llm["nib"] = "597-19-01669"
-    res = _upload(client, case, "사업자등록증.pdf")
+    res = _upload(client, case, "사업자등록증.pdf",
+                  f"NOMOR INDUK BERUSAHA (NIB)\nNIB: {fake_llm['nib']}\n{PLAIN_TEXT}")
     saved = client.get(f"/cases/{cid}", headers=h).json()
     assert saved["nib"] == res["applied"]["nib"] == "597-19-01669"
     assert saved["company_name"] == (fake_llm["company_name"] if company == "My Company" else company)
@@ -598,10 +600,16 @@ def test_재처리_집계는_기존_사업자번호를_다른_번호로_덮지_�
     try:
         c = models.CaseApplication(case_id="nibguard01", org_id="org_demo", company_name="신청업체", nib="597-19-01669")
         db.add(c); db.flush()
-        ap = m._apply_agg_to_case(db, c, {"nib": "123-45-67890", "products": [], "materials": [], "pending": []})
+        doc = models.DocumentAsset(case_id=c.case_id, filename="사업자등록증.pdf", doc_type="nib_business_license",
+                                   fields={"company_name": "신청업체", "nib": "123-45-67890"},
+                                   text_full="사업자등록증\n업체: 신청업체\n사업자번호: 123 45 67890")
+        db.add(doc); db.flush()
+        ap = m._apply_agg_to_case(db, c, {"nib": "123-45-67890", "products": [], "materials": [], "pending": []},
+                                documents=[doc])
         assert c.nib == "597-19-01669" and ap.get("nib_conflict") is True and not ap.get("nib_set")
         c.nib = None
-        ap = m._apply_agg_to_case(db, c, {"nib": "123-45-67890", "products": [], "materials": [], "pending": []})
+        ap = m._apply_agg_to_case(db, c, {"nib": "123-45-67890", "products": [], "materials": [], "pending": []},
+                                documents=[doc])
         assert c.nib == "123-45-67890" and ap.get("nib_set") is True
     finally:
         db.rollback(); db.close()

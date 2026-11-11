@@ -22,7 +22,7 @@ logging.basicConfig(
 log = logging.getLogger("glhac")
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 from sqlalchemy.orm.attributes import flag_modified
 from .db import Base, engine, get_db, SessionLocal, lock_chain_tail
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
@@ -2025,7 +2025,8 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
             c.phone = _profile["pic_phone"]
         db.add(c)
         db.flush()
-        sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id)
+        sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id,
+                        {"nib": body.nib})   # 이후 AI 반영값과 구분되는 가입 당시 대조 기준
     db.commit()
     _ref = None
     if inv and (getattr(inv, "kind", "consultant") or "consultant") == "client":
@@ -6338,59 +6339,342 @@ def reclassify_document(document_id: str, body: schemas.DocTypeReq,
     return {"document_id": document_id, "doc_type": d.doc_type}
 
 
-def _apply_profile_extras(c, agg, force=False):
-    """추출된 주소·책임자·공장등록번호를 케이스 프로필에 반영. 기본은 빈값만, force=True면 덮어씀.
-    반환: 채운 필드명 리스트."""
-    filled = []
-    addr = _clean_ocr_address(agg.get("address"))   # NIB(사업자등록증) 주소 → 회사 주소(OCR 교정)
-    if addr and (force or not c.address):
-        c.address = addr; filled.append("address")
-    faddr = _clean_ocr_address(agg.get("factory_address"))   # 공장등록증 주소 → 공장 주소(OCR 교정)
-    if faddr and (force or not c.factory_address):
-        c.factory_address = faddr; filled.append("factory_address")
-    if agg.get("responsible_person") and (force or not c.responsible_person):
-        c.responsible_person = agg["responsible_person"]; filled.append("responsible_person")
-    if agg.get("factory_reg_no") and (force or not c.factory_reg_no):
-        c.factory_reg_no = agg["factory_reg_no"]; filled.append("factory_reg_no")
-    # 회사 주소 도시/국가/우편 + 전화·사업유형·직원수 → profile_ext(스키마 무변경). 공장쪽은 facility에 별도 반영.
+def _autofill_key(value, field=""):
+    return re.sub(r"\D" if field == "nib" else r"[\W_]+", "", str(value or "")).casefold()
+
+
+def _autofill_references(db, c):
+    """업로드와 독립적인 조직 프로필·가입 케이스의 번호만 대조 기준으로 쓴다."""
+    org = db.get(models.Org, c.org_id)
+    refs = []
+    if org and (org.profile_ext or {}).get("nib"):
+        refs.append({"value": org.profile_ext["nib"], "source": "org_profile"})
+    registrations = (db.query(models.CaseApplication, models.WorkflowEvent)
+                     .join(models.WorkflowEvent, models.WorkflowEvent.case_id == models.CaseApplication.case_id)
+                     .filter(models.CaseApplication.org_id == c.org_id,
+                             models.WorkflowEvent.action == "case.create.register").all())
+    for registered, event in registrations:
+        payload = event.payload or {}
+        value = payload.get("nib")
+        # 구 가입 이벤트에는 스냅샷이 없다. 현재 값이 AI 추출값인 경우 가입값으로 오인하지 않는다.
+        if "nib" not in payload and _autofill_current_source(db, registered, "nib", registered.nib)["source"] != "ai_unconfirmed":
+            value = registered.nib
+        if value:
+            refs.append({"value": value, "source": "registration",
+                         "case_id": registered.case_id})
+    return refs
+
+
+def _autofill_current_source(db, c, field, value, exclude_document_id=None):
+    """기존 자동 반영도 출처를 보여 준다. 구버전 문서는 추출값으로 되짚는다."""
+    source = {"source": "profile"}
+    for d in (db.query(models.DocumentAsset.document_id, models.DocumentAsset.filename,
+                       models.DocumentAsset.fields, models.DocumentAsset.review_status)
+              .filter_by(case_id=c.case_id).order_by(models.DocumentAsset.created_at.desc())):
+        if d.document_id == exclude_document_id:
+            continue
+        f = d.fields or {}
+        for change in (f.get("_autofill") or {}).get("changes", {}).values():
+            if (change.get("field") == field and change.get("status") == "confirmed"
+                    and _autofill_key(change.get("selected", change.get("value")), field) == _autofill_key(value, field)):
+                return {"source": "human_confirmed", "document_id": d.document_id, "filename": d.filename}
+        for conflict in (f.get("_autofill") or {}).get("conflicts", []):
+            if (conflict.get("field") == field and conflict.get("status") == "confirmed"
+                    and _autofill_key(conflict.get("selected"), field) == _autofill_key(value, field)):
+                return {"source": "human_confirmed", "document_id": d.document_id, "filename": d.filename}
+        if value and source["source"] == "profile" and _autofill_key(f.get(field), field) == _autofill_key(value, field):
+            source = {"source": "ai_unconfirmed" if d.review_status != "approved" else "reviewed_document",
+                      "document_id": d.document_id, "filename": d.filename}
+    return source
+
+
+def _apply_owned_autofill(db, c, doc):
+    """문서 단위 원문·소유권·검증 게이트. 단건/ZIP/재처리는 이 규칙만 쓴다.
+
+    사업자번호가 일치하는 등록증은 회사명·번호·주소의 정본이며, 그 외에는 빈 칸만 채운다.
+    보류·충돌은 문서 JSON에 출처와 두 후보를 보관한다.
+    집계된 회사 필드는 출처를 잃으므로 이 함수의 입력으로 사용하지 않는다.
+    """
+    if doc.doc_type not in intake._APPLICANT_DOCS:
+        return {}
+    f, text = dict(doc.fields or {}), doc.text_full or ""
+    is_nib = doc.doc_type == "nib_business_license"
+    candidates = ({k: f.get(k) for k in ("company_name", "nib", "address", "responsible_person")}
+                  if is_nib else {k: f.get(k) for k in ("factory_reg_no", "factory_address")})
+    if not is_nib and not candidates.get("factory_address"):
+        candidates["factory_address"] = f.get("address")
+    profile_keys = (("city", "city"), ("country", "country"), ("zip", "zip"),
+                    ("office_phone", "phone"), ("business_type", "business_type"),
+                    ("establishment_date", "establishment_date"), ("corporate_reg_no", "corporate_reg_no"),
+                    ("company_name_ko", "company_name_ko"), ("company_name_en", "company_name_en"),
+                    ("responsible_person_en", "responsible_person_en"),
+                    ("total_employee", "employee_count")) if is_nib else (("total_employee", "employee_count"),)
+    profile = {k: f.get(src) for k, src in profile_keys}
+    if is_nib:
+        for key in ("company_name", "responsible_person"):
+            if f.get(key):
+                suffix = "_ko" if re.search(r"[가-힣]", str(f[key])) else "_en"
+                if key + suffix in dict(profile_keys):
+                    profile.setdefault(key + suffix, None)
+                    profile[key + suffix] = profile[key + suffix] or f[key]
+    candidates = {k: v for k, v in candidates.items() if v not in (None, "")}
+    profile = {k: v for k, v in profile.items() if v not in (None, "")}
+    if not candidates and not profile:
+        return {"skipped": "no_nib"} if is_nib else {}
+
+    # 요청 경로에서는 원문 규칙만 쓴다. LLM 검증은 커밋 뒤 verify_enqueue에서 수행한다.
+    confirmed_type, _ = intake.refine_doctype_reason("", None, text)
+    nib, current_nib = _autofill_key(f.get("nib"), "nib"), _autofill_key(c.nib, "nib")
+    refs = _autofill_references(db, c)
+    different_ref = next((r for r in refs if _autofill_key(r["value"], "nib") != nib), None) if nib else None
+    names = [c.company_name] + [(c.profile_ext or {}).get(k) for k in ("company_name_ko", "company_name_en")]
+    org = db.get(models.Org, c.org_id)
+    if _is_co_placeholder(c.company_name) and org:
+        names += [org.name, (org.profile_ext or {}).get("company_name_en")]
+    names = [n for n in names if not _is_co_placeholder(n)]
+    company = f.get("company_name") or f.get("company_name_ko") or f.get("company_name_en")
+    company_matches = bool(company and any(_autofill_key(company) == _autofill_key(n) for n in names))
+    number_matches = bool(nib and any(_autofill_key(r["value"], "nib") == nib for r in refs))
+    if not number_matches and nib and current_nib == nib:
+        number_matches = (is_nib or
+                          _autofill_current_source(db, c, "nib", c.nib, doc.document_id)["source"] != "ai_unconfirmed")
+    reason = None
+    if is_nib and not nib:
+        reason = "no_nib"
+    elif nib and (different_ref or (current_nib and current_nib != nib)):
+        reason = "nib_conflict"
+    elif nib and (len(nib) not in schemas.NIB_DIGIT_LENGTHS
+                  or not intake.autofill_value_in_text("nib", f["nib"], text)):
+        reason = "value_not_in_text"
+    elif confirmed_type != doc.doc_type:
+        reason = "unconfirmed_document_type"
+    elif not is_nib and company and names and not company_matches:
+        reason = "company_conflict"
+    elif not is_nib and not (company_matches and intake.autofill_value_in_text("company_name", company, text)
+                            or number_matches):
+        reason = "ownership_unconfirmed"
+
+    if is_nib and not reason and not number_matches and company and names and not company_matches:
+        # 가입 상호와 정식 상호의 차이는 번호 채움을 막지 않고 확인 경고로 남긴다.
+        verify = dict(f.get("_verify") or {})
+        issues = list(verify.get("field_issues") or [])
+        if not any(issue.get("code") == "company_name_mismatch" for issue in issues):
+            issues.append({"field": "company_name", "code": "company_name_mismatch",
+                           "issue": f"신청 업체명({c.company_name})과 등록증 상호({company})가 다릅니다 — 소유권 확인 필요"})
+        f["_verify"] = {**verify, "field_issues": issues,
+                        "verdict": "fail" if verify.get("verdict") == "fail" else "warn",
+                        "summary": verify.get("summary") or "신청 업체명과 등록증 상호 불일치", "source": "rule"}
+
+    applied, conflicts = {}, []
     pe = dict(c.profile_ext or {})
-    for _k in ("city", "country", "zip"):
-        if agg.get(_k) and (force or not pe.get(_k)):
-            pe[_k] = agg[_k]; filled.append(_k)
-    # 화면 필드 키(office_phone/business_type/total_employee)에 매핑
-    _extra = (("office_phone", agg.get("phone")),   # 회사 전화만(공장 전화는 facility.phone에 별도 저장)
-              ("business_type", agg.get("business_type")),
-              ("total_employee", agg.get("employee_count")),
-              ("establishment_date", agg.get("establishment_date")),
-              ("corporate_reg_no", agg.get("corporate_reg_no")),
-              ("company_name_ko", agg.get("company_name_ko")),
-              ("company_name_en", agg.get("company_name_en")),
-              ("responsible_person_en", agg.get("responsible_person_en")))
-    for _k, _v in _extra:
-        if _v not in (None, "") and (force or not pe.get(_k)):
-            pe[_k] = _v; filled.append(_k)
+    previous = dict(f.get("_autofill") or {})
+    changes = {k: dict(v) for k, v in previous.get("changes", {}).items()}
+    def evidence(field, value, source):
+        if intake.autofill_value_in_text(field, value, source):
+            return True
+        # 주소에서 규칙으로 도출한 국가·우편번호는 그 주소 자체가 원문에 있을 때만 인정한다.
+        if field in ("country", "zip", "factory_country", "factory_zip"):
+            addr = f.get("factory_address" if field.startswith("factory_") else "address")
+            if addr and intake.autofill_value_in_text("address", addr, source):
+                country, zipcode = intake._infer_country_zip(addr)
+                inferred = zipcode if field.endswith("zip") else country
+                return bool(inferred and _autofill_key(value) == _autofill_key(inferred))
+        return False
+
+    def fill(obj, field, value, *, scope="case", source_field=None, facility_id=None):
+        current = obj.get(field) if isinstance(obj, dict) else getattr(obj, field)
+        src = source_field or field
+        key = (scope + "." if scope != "case" else "") + field
+        authoritative = is_nib and number_matches and scope == "case" and field in ("nib", "company_name", "address")
+        if current == value or (not authoritative and _autofill_key(current, src) == _autofill_key(value, src)):
+            return
+        blocked = reason
+        if not blocked and changes.get(key, {}).get("status") == "reverted":
+            blocked = "verify_failed"   # 실패로 회수된 후보는 사람이 확인해야 다시 반영한다.
+        if (not blocked and not authoritative and current not in (None, "")
+                and not (field == "company_name" and _is_co_placeholder(current))):
+            blocked = "value_conflict"
+        if not blocked and not evidence(src, value, text):
+            blocked = "value_not_in_text"
+        if blocked:
+            conflict = {"field": field, "scope": scope, "current": current, "proposed": value,
+                        "reason": blocked, "status": "pending", "document_id": doc.document_id,
+                        "filename": doc.filename,
+                        "current_source": _autofill_current_source(db, c, src, current, doc.document_id)}
+            if scope == "facility":
+                conflict["facility_id"] = obj.facility_id
+            elif scope == "facility_profile":
+                conflict["facility_id"] = facility_id
+            if different_ref:
+                conflict["reference"] = different_ref
+            conflicts.append(conflict)
+            return
+        changes[key] = {"field": field, "scope": scope, "before": current, "value": value,
+                        "present": field in obj if isinstance(obj, dict) else True, "status": "applied"}
+        if is_nib:
+            changes[key]["source"] = "ai_unconfirmed"
+        if scope in ("facility", "facility_profile"):
+            changes[key]["facility_id"] = facility_id or obj.facility_id
+        if isinstance(obj, dict):
+            obj[field] = value
+        else:
+            setattr(obj, field, value)
+        applied[key] = value
+
+    # 번호와 주소가 다른 공장이라면 일부 빈 필드도 섞지 않는다.
+    if not is_nib and not reason:
+        if any(getattr(c, k) and _autofill_key(getattr(c, k)) != _autofill_key(v)
+               for k, v in candidates.items()):
+            reason = "factory_conflict"
+    for k, v in candidates.items():
+        fill(c, k, v)
+    for k, v in profile.items():
+        fill(pe, k, v, scope="profile", source_field=dict(profile_keys)[k])
     if pe != (c.profile_ext or {}):
         c.profile_ext = pe
-        try:
-            from sqlalchemy.orm.attributes import flag_modified
-            flag_modified(c, "profile_ext")   # JSON 컬럼 in-place 변경 감지
-        except Exception:
-            pass
-    return filled
+
+    # 신청 업체와 일치하는 공장만 조직 자산으로 등록한다. OEM 등은 사람이 선택한다.
+    if not is_nib and reason in (None, "factory_conflict") and candidates and company_matches:
+        facilities = db.query(models.Facility).filter_by(org_id=c.org_id).all()
+        same_company = [v for v in facilities if _autofill_key(v.name) in {_autofill_key(n) for n in names}]
+        linked = [v for v in same_company if v.facility_id in (c.facility_ids or [])]
+        matched = [v for v in same_company if
+                   (v.reg_no and _autofill_key(v.reg_no) == _autofill_key(candidates.get("factory_reg_no"))) or
+                   (v.address and _autofill_key(v.address) == _autofill_key(candidates.get("factory_address")))]
+        choices = matched or linked or same_company
+        fac = choices[0] if len(choices) == 1 else None
+        supported = {k: v for k, v in candidates.items() if evidence(k, v, text)}
+        if not choices and supported and not reason:
+            fac = models.Facility(org_id=c.org_id, name=c.company_name)
+            db.add(fac)
+            db.flush()
+        if fac:
+            for key, src in (("reg_no", "factory_reg_no"), ("address", "factory_address"),
+                             ("city", "factory_city"), ("country", "factory_country"), ("zip", "factory_zip")):
+                value = candidates.get(src) or f.get(src)
+                if value not in (None, ""):
+                    fill(fac, key, value, scope="facility", source_field=src)
+            phone = f.get("factory_phone") or f.get("phone")
+            if phone:
+                fp = dict(fac.profile_ext or {})
+                fill(fp, "phone", phone, scope="facility_profile", source_field="factory_phone", facility_id=fac.facility_id)
+                fac.profile_ext = fp
+            if not reason and not any(x["scope"].startswith("facility") for x in conflicts):
+                if fac.facility_id not in (c.facility_ids or []):
+                    changes["facility"] = {"scope": "facility_link", "field": "facility_ids",
+                                           "facility_id": fac.facility_id, "value": fac.facility_id,
+                                           "status": "applied"}
+                c.facility_ids = list(dict.fromkeys(list(c.facility_ids or []) + [fac.facility_id]))
+                applied["facility"] = fac.facility_id
+    confirmed = [x for x in previous.get("conflicts", []) if x.get("status") == "confirmed"]
+    f["_autofill"] = {**previous, "applied": {**(previous.get("applied") or {}), **applied},
+                      "changes": changes, "conflicts": confirmed + conflicts}
+    doc.fields = f
+    if reason:
+        applied["skipped"] = reason
+    if conflicts:
+        applied["conflicts"] = conflicts
+    return applied
 
 
-def _apply_agg_to_case(db, c, agg):
-    """추출 필드(회사/NIB/주소/책임자/제품/원재료)를 케이스에 반영 — DocumentAsset 생성은 하지 않음(재처리용)."""
+def _protect_autofill(db, keys, user_id, *, case_id=None, facility_id=None):
+    """같은 값을 다시 저장한 경우도 사람의 확인이다. 원본 문서 JSON에 보호 표시를 남긴다."""
+    docs = db.query(models.DocumentAsset).options(
+        load_only(models.DocumentAsset.document_id, models.DocumentAsset.fields))
+    if facility_id:
+        fac = db.get(models.Facility, facility_id)
+        docs = docs.join(models.CaseApplication).filter(models.CaseApplication.org_id == fac.org_id)
+        obj = fac
+    else:
+        docs = docs.filter(models.DocumentAsset.case_id == case_id)
+        obj = db.get(models.CaseApplication, case_id)
+    for doc in docs:
+        fields = dict(doc.fields or {})
+        meta = dict(fields.get("_autofill") or {})
+        changes = {k: dict(v) for k, v in meta.get("changes", {}).items()}
+        touched = False
+        for key, change in changes.items():
+            if key in keys and (not facility_id or change.get("facility_id") == facility_id):
+                if change["scope"] == "facility_link":
+                    selected = change["value"]
+                elif change["scope"] in ("profile", "facility_profile"):
+                    selected = (obj.profile_ext or {}).get(change["field"])
+                else:
+                    selected = getattr(obj, change["field"])
+                change.update(status="confirmed", confirmed_by=user_id, selected=selected)
+                touched = True
+        if touched:
+            fields["_autofill"] = {**meta, "changes": changes}
+            doc.fields = fields
+
+
+def _revert_failed_autofill(db, c, doc):
+    """이 문서가 쓴 뒤 사람 손을 거치지 않은 값만 복구하고 확인 대기로 보낸다."""
+    fields = dict(doc.fields or {})
+    meta = dict(fields.get("_autofill") or {})
+    changes = {k: dict(v) for k, v in meta.get("changes", {}).items()}
+    conflicts = list(meta.get("conflicts") or [])
+    facilities = {}
+    for change in changes.values():
+        if change.get("status") != "applied":
+            continue
+        field, scope, value = change["field"], change["scope"], change["value"]
+        if scope == "facility_link":
+            c.facility_ids = [fid for fid in (c.facility_ids or []) if fid != value]
+            change["status"] = "reverted"
+            continue
+        obj = c
+        if scope in ("facility", "facility_profile"):
+            fid = change.get("facility_id")
+            if fid not in facilities:
+                facilities[fid] = db.get(models.Facility, fid, populate_existing=True, with_for_update=True)
+            obj = facilities[fid]
+            if obj is None or obj.org_id != c.org_id:
+                continue
+        is_profile = scope in ("profile", "facility_profile")
+        current = (obj.profile_ext or {}).get(field) if is_profile else getattr(obj, field)
+        if current != value:
+            change["status"] = "superseded"
+            continue
+        before = change.get("before")
+        if is_profile:
+            profile = dict(obj.profile_ext or {})
+            if change.get("present"):
+                profile[field] = before
+            else:
+                profile.pop(field, None)
+            obj.profile_ext = profile
+        else:
+            setattr(obj, field, before)
+        conflict = {"field": field, "scope": scope, "current": before, "proposed": value,
+                    "reason": "verify_failed", "status": "pending", "document_id": doc.document_id,
+                    "filename": doc.filename, "current_source": {"source": "profile"}}
+        if scope in ("facility", "facility_profile"):
+            conflict["facility_id"] = obj.facility_id
+        conflicts.append(conflict)
+        change["status"] = "reverted"
+    if changes:
+        fields["_autofill"] = {**meta, "changes": changes, "conflicts": conflicts}
+        doc.fields = fields
+
+
+def _apply_agg_to_case(db, c, agg, documents=()):
+    """목록 집계만 직접 반영한다. 업체·공장은 원문 문서별 소유권 게이트를 통과해야 한다."""
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0,
                "profile": [], "pending": len(agg.get("pending") or [])}
-    if agg.get("company_name") and _co_replaceable(db, c):
-        c.company_name = agg["company_name"]; applied["company_set"] = True
-    # 업체 번호는 비어 있을 때만 채운다 — 다른 회사(제조사 등) 등록증 재처리가 신청 업체 번호를 바꾸면 안 된다.
-    if agg.get("nib") and not (c.nib or "").strip():
-        c.nib = agg["nib"]; applied["nib_set"] = True
-    elif agg.get("nib") and re.sub(r"\D", "", str(c.nib)) != re.sub(r"\D", "", str(agg["nib"])):
-        applied["nib_conflict"] = True
-    applied["profile"] += _apply_profile_extras(c, agg)
+    if not documents and agg.get("nib") and c.nib and _autofill_key(agg["nib"], "nib") != _autofill_key(c.nib, "nib"):
+        applied["nib_conflict"] = True   # 구 집계 호출도 충돌은 알리되 원문 없이 값을 쓰지 않는다
+    for doc in documents:
+        own = _apply_owned_autofill(db, c, doc)
+        applied["company_set"] |= "company_name" in own
+        applied["nib_set"] |= "nib" in own
+        applied["profile"] += [k for k in own if k not in ("company_name", "nib", "conflicts", "skipped", "facility")]
+        if own.get("conflicts"):
+            applied.setdefault("conflicts", []).extend(own["conflicts"])
+        if own.get("skipped") == "nib_conflict":
+            applied["nib_conflict"] = True
+        if own.get("facility"):
+            applied["facility"] = own["facility"]
     have_p = {_norm_material(p.name) for p in db.query(models.Product).filter_by(case_id=c.case_id)}
     _mat_norms = {_norm_material(m) for m in (agg.get("materials") or []) if m}
     for pn in agg.get("products", []):
@@ -6518,20 +6802,35 @@ _verify_lock = threading.Lock()
 
 
 def _verify_doc(db, d, c):
-    """원문·추출값을 대조한 판정을 문서에 남긴다 — 업체 정보는 바꾸지 않는다."""
+    """비동기 판정을 저장하고 실패한 문서의 미확인 자동 반영만 되돌린다."""
     doc_id, doc_type, filename = d.document_id, d.doc_type, d.filename
+    case_id = c.case_id
     text, fields, company = d.text_full or "", dict(d.fields or {}), c.company_name
     # 읽기 트랜잭션을 끝내고 모델을 기다린다. 300자 발췌는 전문 대신 쓸 수 없다.
     db.rollback()
     res = intake.verify_extraction(doc_type, filename, text, fields, company)
-    # 검증 중 재추출·사람의 수정이 있었을 수 있으므로 최신 필드에 판정만 병합한다.
+    # LLM 대기 중 사람의 저장·확인이 끝났을 수 있다. 최신 값과 출처를 다시 읽는다.
+    c = db.get(models.CaseApplication, case_id, populate_existing=True, with_for_update=True)
     d = db.get(models.DocumentAsset, doc_id, populate_existing=True, with_for_update=True)
     if d is None:
         db.rollback()
         return
     fl = dict(d.fields or {})
+    # 업로드 때 기록한 상호 경고는 비동기 검증이 ok여도 지우지 않는다.
+    name_issues = [issue for issue in (fl.get("_verify") or {}).get("field_issues", [])
+                   if isinstance(issue, dict) and issue.get("code") == "company_name_mismatch"]
+    if name_issues:
+        issues = list(res.get("field_issues") or [])
+        issues.extend(issue for issue in name_issues if issue not in issues)
+        res = {**res, "field_issues": issues,
+               "verdict": "warn" if res.get("verdict") in ("ok", "unknown") else res.get("verdict")}
     fl["_verify"] = {**res, "at": datetime.utcnow().isoformat(timespec="seconds")}
     d.fields = fl   # JSON 변경 감지를 위해 새 dict 를 대입한다
+    unchanged = (d.doc_type == doc_type and (d.text_full or "") == text and
+                 {k: v for k, v in fl.items() if not k.startswith("_")} ==
+                 {k: v for k, v in fields.items() if not k.startswith("_")})
+    if c is not None and unchanged and res.get("verdict") == "fail":
+        _revert_failed_autofill(db, c, d)
     db.commit()
 
 
@@ -6630,12 +6929,14 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     # 없는 서류'와 구분되지 않아, 사람이 다시 돌려야 한다는 걸 알 방법이 없다.
     if r.get("llm_error"):
         fl["_llm_error"] = r["llm_error"]
+    if (d.fields or {}).get("_autofill"):
+        fl["_autofill"] = d.fields["_autofill"]   # 재추출도 기존 자동 반영·사람 확인 출처를 보존한다.
     d.fields = fl
     d.text_excerpt = (text or "")[:300]
     d.text_full = text or ""
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
     applied = (_apply_agg_to_case(db, c, aggregate_fields([{"doc_type": d.doc_type,
-                                                            "fields": d.fields}]))
+                                                            "fields": d.fields}]), documents=[d])
                if apply else {"skipped": True})
     if apply:
         count = _apply_document_measurements(db, c, d)
@@ -6695,6 +6996,85 @@ def _pending_extractions(db, case_id):
     return out
 
 
+def _pending_autofill(db, case_id):
+    """제품·원재료의 전량 반영과 분리된, 명시적 선택이 필요한 업체·공장 후보."""
+    out = []
+    for d in (db.query(models.DocumentAsset.document_id, models.DocumentAsset.filename,
+                       models.DocumentAsset.doc_type, models.DocumentAsset.fields).filter_by(case_id=case_id)):
+        if d.doc_type not in intake._APPLICANT_DOCS:
+            continue
+        for i, conflict in enumerate(((d.fields or {}).get("_autofill") or {}).get("conflicts", [])):
+            if conflict.get("status") == "pending":
+                out.append({**conflict, "conflict_id": "%s:%d" % (d.document_id, i),
+                            "document_id": d.document_id, "filename": d.filename})
+    return out
+
+
+def _confirm_autofill(db, c, choices, user):
+    """확인 대기 API에서 두 후보 중 하나를 선택한다. 오래된 선택·조직 밖 시설은 거부."""
+    if not isinstance(choices, list) or not all(isinstance(x, dict) for x in choices):
+        raise HTTPException(422, {"code": "INVALID_AUTOFILL_SELECTION"})
+    if choices and user["role"] not in ("applicant", "consultant"):
+        raise HTTPException(403, {"code": "AUTOFILL_PROFILE_FORBIDDEN"})
+    pending = {x["conflict_id"]: x for x in _pending_autofill(db, c.case_id)}
+    changed, targets = [], set()
+    allowed = {"case": {"company_name", "nib", "address", "responsible_person", "factory_reg_no", "factory_address"},
+               "profile": {"city", "country", "zip", "office_phone", "business_type", "establishment_date",
+                           "corporate_reg_no", "company_name_ko", "company_name_en", "responsible_person_en", "total_employee"},
+               "facility": {"reg_no", "address", "city", "country", "zip"}, "facility_profile": {"phone"}}
+    for choice in choices:
+        if not isinstance(choice.get("conflict_id"), str):
+            raise HTTPException(422, {"code": "INVALID_AUTOFILL_SELECTION"})
+        conflict = pending.get(choice.get("conflict_id"))
+        if not conflict or "value" not in choice or choice["value"] not in (conflict["current"], conflict["proposed"]):
+            raise HTTPException(422, {"code": "INVALID_AUTOFILL_SELECTION"})
+        field, scope = conflict["field"], conflict["scope"]
+        target = (scope, conflict.get("facility_id"), field)
+        if field not in allowed.get(scope, set()) or target in targets:
+            raise HTTPException(422, {"code": "INVALID_AUTOFILL_SELECTION"})
+        targets.add(target)
+        obj = c
+        if scope in ("facility", "facility_profile"):
+            obj = db.get(models.Facility, conflict.get("facility_id"))
+            if obj is None or obj.org_id != c.org_id:
+                raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
+        current = (obj.profile_ext or {}).get(field) if scope in ("profile", "facility_profile") else getattr(obj, field)
+        if current != conflict["current"]:
+            raise HTTPException(409, {"code": "AUTOFILL_CONFLICT_STALE"})
+        value = choice["value"]
+        if scope == "case" and field == "nib":
+            # 수동 프로필 저장과 동일한 형식 검사를 거친다.
+            try:
+                value = schemas.CaseProfileReq(nib=value).nib
+            except ValueError:
+                raise HTTPException(422, {"code": "INVALID_AUTOFILL_SELECTION"})
+            if value:
+                for other in db.query(models.CaseApplication).filter(
+                        models.CaseApplication.nib.isnot(None), models.CaseApplication.case_id != c.case_id):
+                    if (_autofill_key(other.nib, "nib") == _autofill_key(value, "nib")
+                            and (other.org_id != c.org_id or _autofill_key(other.company_name) != _autofill_key(c.company_name))):
+                        raise HTTPException(409, {"code": "NIB_ALREADY_USED"})
+        if scope in ("profile", "facility_profile"):
+            obj.profile_ext = {**(obj.profile_ext or {}), field: value}
+        else:
+            setattr(obj, field, value)
+        d = db.get(models.DocumentAsset, conflict["document_id"])
+        fields = dict(d.fields or {})
+        meta = dict(fields["_autofill"])
+        records = [dict(x) for x in meta["conflicts"]]
+        index = int(choice["conflict_id"].rsplit(":", 1)[1])
+        records[index].update(status="confirmed", selected=value, confirmed_by=user["uid"])
+        meta["conflicts"] = records
+        fields["_autofill"] = meta
+        d.fields = fields
+        key = (scope + "." if scope != "case" else "") + field
+        _protect_autofill(db, {key, "facility"} if scope.startswith("facility") else {key}, user["uid"],
+                          case_id=c.case_id, facility_id=conflict.get("facility_id"))
+        changed.append({"conflict_id": choice["conflict_id"], "field": field, "scope": scope,
+                        "before": current, "value": value})
+    return changed
+
+
 def _failed_analyses(db, case_id):
     """AI 호출이 실패해 분석이 비어 있는 서류 — 재처리가 필요하다는 표시.
 
@@ -6721,8 +7101,10 @@ def list_pending_extractions(case_id: str, user=Depends(auth.get_current_user),
     심사 대상이 달라져, 사람이 한 번 보고 넣기로 했다."""
     _get_case(db, case_id, user)
     items = _pending_extractions(db, case_id)
+    conflicts = _pending_autofill(db, case_id)
     failed = _failed_analyses(db, case_id)
     return {"count": len(items), "items": items,
+            "conflict_count": len(conflicts), "conflicts": conflicts,
             "failed_count": len(failed), "failed": failed,
             "note": "AI 추출값입니다 — 원본 서류와 대조한 뒤 반영하세요."}
 
@@ -6739,6 +7121,7 @@ def apply_pending_extractions(case_id: str, body: dict = None,
     _assert_case_open(c)
     _assert_scope_open(c)
     b = body or {}
+    choices = _confirm_autofill(db, c, b.get("autofill_choices", []), user)
     values, renames, dismiss = b.get("values") or [], b.get("renames") or {}, b.get("dismiss") or []
     if (not isinstance(values, list) or not all(isinstance(v, str) for v in values)
             or not isinstance(dismiss, list) or not all(isinstance(v, str) for v in dismiss)
@@ -6747,7 +7130,7 @@ def apply_pending_extractions(case_id: str, body: dict = None,
         raise HTTPException(422, {"code": "INVALID_PENDING_SELECTION", "message": "values·renames·dismiss 입력을 확인해 주세요"})
     want = set(values)
     # 이름 수정·제외만 보낸 요청의 빈 values를 전량 등록으로 해석하지 않는다.
-    apply_all = not want and "renames" not in b and "dismiss" not in b
+    apply_all = not want and "renames" not in b and "dismiss" not in b and "autofill_choices" not in b
     items = [x for x in _pending_extractions(db, case_id)
              if apply_all or x["value"] in want or x["value"] in renames or x["value"] in dismiss]
     agg = {bucket: [renames.get(x["value"], x["value"]).strip() for x in items
@@ -6761,9 +7144,9 @@ def apply_pending_extractions(case_id: str, body: dict = None,
     c.profile_ext = pe
     _audit(db, user, "extraction.apply", "case", case_id, case_id,
            {"products": agg["products"][:50], "materials": agg["materials"][:50],
-            "renames": renames, "dismiss": dismiss, "source": "llm_confirmed"}, commit=False)
+            "renames": renames, "dismiss": dismiss, "autofill_choices": choices, "source": "llm_confirmed"}, commit=False)
     db.commit()
-    return {"applied": applied, "count": len(items)}
+    return {"applied": applied, "count": len(items), "autofill_confirmed": choices}
 
 
 @app.post("/documents/{document_id}/reprocess")
@@ -7091,8 +7474,7 @@ def _apply_intake_autofill(db, c, res):
            .filter_by(case_id=c.case_id).all())
     _seen_h = {d.file_hash: d for d in _ex if d.file_hash}
     _seen_n = {d.filename: d for d in _ex if not d.file_hash and d.filename}
-    documents = []
-    dup_skipped = 0
+    dup_skipped, saved = 0, []
     for d in res["classified"]:
         _h = _sha256_b64(d.get("content_b64"))
         _nm = d["filename"]
@@ -7104,107 +7486,34 @@ def _apply_intake_autofill(db, c, res):
                 doc.fields = {**(doc.fields or {}), "measurements": d["fields"]["measurements"]}
             if d.get("text_full"):
                 doc.text_full = d["text_full"]
-            if doc not in documents:
-                documents.append(doc)
+            if doc not in saved:
+                saved.append(doc)
             continue
         doc = models.DocumentAsset(case_id=c.case_id, filename=_nm, filename_en=_fn_en(_nm), doc_type=d["doc_type"],
                                    confidence=float(d.get("confidence") or 0), fields=d.get("fields"),
-                                   text_excerpt=d.get("excerpt"), text_full=d.get("text_full"),
+                                   text_excerpt=d.get("excerpt"), text_full=d.get("text_full") or "",
                                    ocr_lines=d.get("ocr_lines"), content_b64=d.get("content_b64"),
                                    content_type=d.get("content_type"), file_hash=_h)
         db.add(doc)
-        documents.append(doc)
+        saved.append(doc)
         if _h:
             _seen_h[_h] = doc
         else:
             _seen_n[_nm] = doc
+    db.flush()
+    # 회사·공장 정보는 원문이 있는 개별 문서로만 반영한다. 무출처 집계는 목록에만 사용한다.
     agg = res.get("extracted", {})
-    applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": [],
-               "dup_skipped": dup_skipped}
-    if agg.get("company_name") and _co_replaceable(db, c):
-        c.company_name = agg["company_name"]
-        applied["company_set"] = True
-    if agg.get("nib") and not (c.nib or "").strip():
-        c.nib = agg["nib"]   # 비어 있을 때만 — 다른 회사 등록증이 신청 업체 번호를 덮지 않게
-        applied["nib_set"] = True
-    applied["profile"] += _apply_profile_extras(c, agg)
-    # 주소 최종 재정리(OCR 글리치 — 경로 무관 보장)
-    if c.address:
-        c.address = _clean_ocr_address(c.address)
-    if c.factory_address:
-        c.factory_address = _clean_ocr_address(c.factory_address)
-    have_p = {_norm_material(p.name) for p in db.query(models.Product).filter_by(case_id=c.case_id)}
-    _mat_norms = {_norm_material(m) for m in (agg.get("materials") or []) if m}  # 원재료명과 겹치는 제품 오추출 제외
-    for pn in agg.get("products", []):
-        pk = _norm_material(pn)
-        if pn and pk and pk not in have_p and pk not in _mat_norms:
-            db.add(models.Product(case_id=c.case_id, name=pn))
-            applied["products"] += 1
-            have_p.add(pk)
-    have_m = {_norm_material(m.name) for m in db.query(models.Material).filter_by(case_id=c.case_id)}
-    for mn in agg.get("materials", []):
-        nk = _norm_material(mn)
-        if mn and nk and nk not in have_m:
-            enum = screening.extract_e_number(mn)
-            sc = screening.screen_merged(mn, enum, None, None, False, True, "")
-            db.add(models.Material(case_id=c.case_id, name=mn, e_number=enum, screen_result=sc["result"],
-                                   screen_status=sc["status"], screen_severity=sc["severity"],
-                                   matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk"),
-                                   cert=sc.get("v1_cert")))
-            applied["materials"] += 1
-            have_m.add(nk)
-    # 공장등록증 파싱 → Facility 자동 생성/갱신(오피스 자산) + 이 신청 대상 연결
-    if agg.get("factory_address") or agg.get("factory_reg_no"):
-        _reg = agg.get("factory_reg_no")
-        _fac = None
-        if _reg:
-            _fac = db.query(models.Facility).filter_by(org_id=c.org_id, reg_no=_reg).first()
-        if not _fac and agg.get("factory_address"):
-            _fac = db.query(models.Facility).filter_by(org_id=c.org_id,
-                                                       address=agg["factory_address"]).first()
-        # reg·주소 매칭 실패 시 같은 회사명 공장 재사용(주소 표기 변동에 의한 중복 생성 방지)
-        if not _fac:
-            _nm = agg.get("company_name") or c.company_name
-            if _nm:
-                _fac = db.query(models.Facility).filter_by(org_id=c.org_id, name=_nm).first()
-        # 이름·주소 단서가 있을 때만 생성(빈 공장 생성 방지)
-        if not _fac and (agg.get("factory_address") or agg.get("company_name") or c.company_name):
-            _fac = models.Facility(org_id=c.org_id,
-                                   name=agg.get("company_name") or c.company_name or "공장")
-            db.add(_fac)
-        if _fac:
-            if agg.get("factory_address"):
-                _fac.address = agg["factory_address"]
-            if agg.get("factory_city"):
-                _fac.city = agg["factory_city"]
-            if agg.get("factory_country"):
-                _fac.country = agg["factory_country"]
-            if agg.get("factory_zip"):
-                _fac.zip = agg["factory_zip"]
-            if _reg:
-                _fac.reg_no = _reg
-            if agg.get("factory_phone"):   # 공장 전화 → facility.profile_ext(스키마 무변경)
-                _fpe = dict(_fac.profile_ext or {})
-                _fpe["phone"] = agg["factory_phone"]
-                _fac.profile_ext = _fpe
-                try:
-                    from sqlalchemy.orm.attributes import flag_modified
-                    flag_modified(_fac, "profile_ext")
-                except Exception:
-                    pass
-            db.flush()
-            _fids = list(c.facility_ids or [])
-            if _fac.facility_id not in _fids:
-                _fids.append(_fac.facility_id)
-                c.facility_ids = _fids
-            applied["facility"] = _fac.facility_id
+    applied = _apply_agg_to_case(db, c, {k: agg.get(k, []) for k in ("products", "materials", "pending")},
+                                 documents=saved)
+    applied["dup_skipped"] = dup_skipped
+    res["_verify_ids"] = [d.document_id for d in saved]
     # 제품·원재료 자동 연결(매트릭스) — 아코디언에 원재료가 붙도록
     applied["links"] = _auto_link_pm(db, c.case_id)
     # 문서 타입별 개별 프로세서 — 공정흐름도/할랄인증서/SJPH매뉴얼을 각 엔티티로 매핑
     for _d in res.get("classified", []):
         _process_doc(db, c, _d, applied)
     # 출처 문서별 누적. 다른 CoA와 수동 입력의 fail을 뒤의 pass로 덮지 않는다.
-    _mcount = sum(_apply_document_measurements(db, c, doc) for doc in documents)
+    _mcount = sum(_apply_document_measurements(db, c, doc) for doc in saved)
     if _mcount:
         applied["measurements"] = _mcount
     # 사전심사 업로드 → 신청서 임시저장 진입(작성 이어하기 대상)
@@ -7252,6 +7561,8 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
                     {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
     _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
     db.commit()
+    for document_id in res.pop("_verify_ids", []):
+        verify_enqueue(document_id)
     return res
 
 
@@ -7307,6 +7618,8 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
                         {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
         _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
         db.commit()
+        for document_id in res.pop("_verify_ids", []):
+            verify_enqueue(document_id)
         yield ev({"type": "result", **res})
 
     return StreamingResponse(gen(), media_type="text/event-stream",
@@ -7497,6 +7810,8 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
             org_row.name = c.company_name
         if c.address:
             org_row.address = c.address
+    _protect_autofill(db, set(_sent) | {"profile." + k for k in (body.profile_ext or {})},
+                      user["uid"], case_id=case_id)
     db.commit()
     return _case_dict(c)
 
@@ -7510,6 +7825,7 @@ def select_facilities(case_id: str, body: schemas.FacilitySelectReq,
     # 소속 오피스(org)의 공장만 허용 — 다른 회사가 쓰는 공장은 선택 대상이 아니다
     valid = {f.facility_id for f in _facilities_for_case(db, c)}
     c.facility_ids = [fid for fid in (body.facility_ids or []) if fid in valid]
+    _protect_autofill(db, {"facility"}, user["uid"], case_id=case_id)
     db.commit()
     return {"facility_ids": c.facility_ids}
 
@@ -7591,7 +7907,7 @@ def autofill_profile(case_id: str, force: bool = False,
                      user=Depends(auth.require_roles("applicant", "consultant")),
                      db: Session = Depends(get_db)):
     """신청기업 서류(사업자·공장등록증) 재추출 → 회사명·NIB·주소·책임자·공장등록번호 프로필 자동채움.
-    force=True면 기존값 덮어씀(잘못 시드된 값 교정용). 공급사 서류는 제외."""
+    force도 소유권·충돌 게이트를 우회하지 않는다. 번호가 일치하는 등록증 외의 충돌은 확인 대기에서 선택한다."""
     from .intake import parse_file, classify, aggregate_fields
     c = _get_case(db, case_id, user)
     docs = (db.query(models.DocumentAsset).filter_by(case_id=case_id)
@@ -7606,7 +7922,10 @@ def autofill_profile(case_id: str, force: bool = False,
                 text = parse_file(d.filename, base64.b64decode(d.content_b64.split(",")[-1]))
                 r = classify(d.filename, text)
                 if r.get("fields"):
-                    fields = r["fields"]; d.fields = fields
+                    fields = dict(r["fields"])
+                    if (d.fields or {}).get("_autofill"):
+                        fields["_autofill"] = d.fields["_autofill"]
+                    d.fields = fields
                     d.doc_type = r.get("doc_type", d.doc_type)
                     d.text_excerpt = (text or "")[:300]
                     d.text_full = text or ""
@@ -7616,11 +7935,9 @@ def autofill_profile(case_id: str, force: bool = False,
         classified.append({"fields": fields, "doc_type": d.doc_type})
     agg = aggregate_fields(classified)
     applied = []
-    if agg.get("company_name") and (force or _is_co_placeholder(c.company_name)):
-        c.company_name = agg["company_name"]; applied.append("company_name")
-    if agg.get("nib") and (force or not c.nib):
-        c.nib = agg["nib"]; applied.append("nib")
-    applied += _apply_profile_extras(c, agg, force=force)
+    for d in docs:
+        own = _apply_owned_autofill(db, c, d)
+        applied.extend(k for k in own if k not in ("conflicts", "skipped"))
     _audit(db, user, "profile.autofill", "case", case_id, case_id,
            {"applied": applied, "force": force})
     db.commit()
@@ -7814,30 +8131,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     if r.get("llm_error"):
         f["_llm_error"] = r["llm_error"]
     applied = {}
-    if eff_type == "nib_business_license":
-        # 공급사 상호·주소가 신청 업체를 덮지 않게 사업자번호부터 대조한다.
-        nib = re.sub(r"\D", "", str(f.get("nib") or ""))
-        current_nib = re.sub(r"\D", "", str(c.nib or ""))
-        if not nib:
-            applied["skipped"] = "no_nib"
-        elif current_nib and current_nib != nib:
-            applied["skipped"] = "nib_conflict"
-        else:
-            for k, col in (("company_name", "company_name"), ("nib", "nib"), ("address", "address")):
-                if f.get(k):
-                    if not current_nib:
-                        if k == "company_name" and not _co_replaceable(db, c):
-                            continue
-                        if k == "address" and (c.address or "").strip():
-                            continue
-                    setattr(c, col, f[k])
-                    applied[col] = f[k]
-    elif eff_type == "factory_registration":
-        for k in ("factory_reg_no", "factory_address"):
-            if f.get(k):
-                setattr(c, k, f[k])
-                applied[k] = f[k]
-    elif eff_type in intake._MATERIAL_SRC | intake._PRODUCT_SRC:
+    if eff_type in intake._MATERIAL_SRC | intake._PRODUCT_SRC:
         # 제품 목록 문서와 구조 파서 목록은 즉시 반영하고, 나머지는 확인 절차를 거친다.
         agg = intake.aggregate_fields([{"doc_type": eff_type, "fields": f}])
         added = _apply_agg_to_case(db, c, {"materials": agg["materials"], "products": agg["products"]})
@@ -7855,6 +8149,13 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                content_b64=_b64 if len(_b64) < 4_000_000 else None,
                                content_type=_ctype(body.filename))
     db.add(doc)
+    db.flush()
+    own = _apply_owned_autofill(db, c, doc)
+    # 확장 프로필의 변경 이력은 문서에 보관하고, 등록증 응답은 회사 필드 반영값을 반환한다.
+    applied.update({k: v for k, v in own.items()
+                    if eff_type != "nib_business_license" or not k.startswith("profile.")})
+    conflicts = applied.pop("conflicts", [])
+    f = dict(doc.fields or {})
     count = _apply_document_measurements(db, c, doc)
     if count:
         applied["measurements"] = count
@@ -7871,7 +8172,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     db.commit()
     verify_enqueue(doc.document_id)
     return {"doc_type": eff_type, "extracted": f, "applied": applied,
-            "confidence": r.get("confidence", 0), "mismatch": mismatch}
+            "confidence": r.get("confidence", 0), "mismatch": mismatch, "conflicts": conflicts}
 
 
 @app.get("/cases/{case_id}/documents")
@@ -7923,6 +8224,13 @@ def review_document(document_id: str, body: schemas.DocReviewReq,
         raise HTTPException(404, {"code": "DOC_NOT_FOUND"})
     c = _get_case(db, d.case_id, user)
     d.review_status = body.review_status
+    if body.review_status == "approved" and (d.fields or {}).get("_autofill"):
+        fields = dict(d.fields)
+        meta = dict(fields["_autofill"])
+        meta["changes"] = {k: {**v, "status": "confirmed", "confirmed_by": user["uid"]}
+                           for k, v in meta.get("changes", {}).items()}
+        fields["_autofill"] = meta
+        d.fields = fields
     sm.record_event(db, c, c.status, c.status, "documents.review", user["role"], user["uid"],
                     {"document_id": document_id, "review_status": body.review_status})
     db.commit()
@@ -11556,6 +11864,10 @@ def update_factory(facility_id, body: dict = None, user=Depends(auth.get_current
     if isinstance(b.get("profile_ext"), dict):
         pe.update(b["profile_ext"])
     f.profile_ext = pe
+    profile_keys = set(b) | set(b["profile_ext"] if isinstance(b.get("profile_ext"), dict) else {})
+    _protect_autofill(db, {"facility"} | {"facility." + k for k in b} |
+                      {"facility_profile." + k for k in profile_keys},
+                      user["uid"], facility_id=facility_id)
     db.commit()
     return _fac_dict(f)
 
@@ -21441,6 +21753,9 @@ def update_facility(facility_id: str, body: schemas.FacilityUpdateReq,
             setattr(f, k, v)
     if body.profile_ext is not None:
         f.profile_ext = {**(f.profile_ext or {}), **body.profile_ext}
+    _protect_autofill(db, {"facility"} | {"facility." + k for k in body.model_fields_set} |
+                      {"facility_profile." + k for k in (body.profile_ext or {})},
+                      user["uid"], facility_id=facility_id)
     db.commit()
     return {"facility_id": f.facility_id, "name": f.name}
 
