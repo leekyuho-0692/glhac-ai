@@ -49,12 +49,19 @@ def test_대리모드_의견_서명_확정_D19():
             assert r.status_code == 200, r.text
             tally = r.json()
             assert tally.get("proxy") is True
-            assert tally.get("members") == 1
-            assert tally.get("quorum_need") == 1
-            assert tally.get("progress") == "1/1"
-            assert tally.get("result") == "passed"
+            assert tally.get("members") == 3
+            assert tally.get("quorum_need") == 3
+            assert tally.get("progress") == "1/3"
+            assert tally.get("result") == "pending"
             r = c.post(f"/cases/{cid}/fatwa/sign", headers=auditor, json={"member": "auditor", "image": "data:image/png;base64,iVBORw0KGgo=", "name": "auditor1"})
             assert r.status_code == 200, r.text
+            # 현장심사에 참여하지 않은 별도 계정 2인의 의견·서명을 더 모은다.
+            for username in ("auditor2", "auditor3"):
+                reviewer = _tok(c, username, "pw")
+                assert c.post(f"/cases/{cid}/fatwa/vote", headers=reviewer,
+                              json={"member": "auditor", "vote": "approve"}).status_code == 200
+                assert c.post(f"/cases/{cid}/fatwa/sign", headers=reviewer,
+                              json={"member": "auditor", "image": "data:image/png;base64,iVBORw0KGgo="}).status_code == 200
             r = c.post(f"/cases/{cid}/fatwa/confirm", headers=auditor)
             assert r.status_code == 200, r.text
             body = r.json()
@@ -85,6 +92,12 @@ def test_대리모드_키검증_선행조건():
             assert r.json()["detail"]["code"] == "VOTES_INCOMPLETE"
             r = c.post(f"/cases/{cid}/fatwa/vote", headers=auditor, json={"member": "auditor", "vote": "conditional", "note": "cons"})
             assert r.status_code == 200, r.text
+            assert r.json().get("result") == "pending"
+            for username in ("auditor2", "auditor3"):
+                reviewer = _tok(c, username, "pw")
+                r = c.post(f"/cases/{cid}/fatwa/vote", headers=reviewer,
+                           json={"member": "auditor", "vote": "approve"})
+                assert r.status_code == 200, r.text
             assert r.json().get("result") == "conditional"
             r = c.post(f"/cases/{cid}/fatwa/confirm", headers=auditor)
             assert r.status_code == 409, r.text

@@ -20,7 +20,7 @@ logging.basicConfig(
     level=os.environ.get("GLHAC_LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 log = logging.getLogger("glhac")
-from sqlalchemy import func, or_
+from sqlalchemy import event, func, inspect, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, load_only
 from sqlalchemy.orm.attributes import flag_modified
@@ -36,10 +36,55 @@ from . import mail_features as _mail_features
 from . import mail_log as _mail_log
 from .ontology_seed import seed
 
+# 종결 케이스의 예외는 메서드·라우트 단위로만 허용한다. 정지/재개는 종결이
+# 아닌 발급 케이스에서만 가능하며, 철회는 이미 종결된 신청의 인증서도 무효화한다.
+CLOSED_CASE_WRITE_EXCEPTIONS = {
+    ("POST", "/cases/{case_id}/fatwa/document"): "결정문 조회(조회 감사로그만 기록)",
+    ("POST", "/cases/{case_id}/certificate/revoke"): "남아 있는 인증서의 철회 요청",
+}
+
+
+def _case_write_guard(request: Request, db: Session = Depends(get_db)):
+    """모든 case_id 쓰기와 자원 ID를 통한 간접 쓰기가 공유하는 종결 가드."""
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return
+    params = request.path_params
+    case_id = params.get("case_id")
+    resource = None
+    if not case_id:
+        parents = {"finding_id": models.AuditFinding, "car_id": models.CorrectiveAction,
+                   "approval_id": models.ApprovalRequest, "document_id": models.DocumentAsset,
+                   "gen_doc_id": models.GeneratedDocument, "contract_id": models.Contract,
+                   "invoice_id": models.Invoice, "material_id": models.Material,
+                   "product_id": models.Product, "ext_id": models.AiExtraction,
+                   "eid": models.ExternalIdentity}
+        for key, model in parents.items():
+            if params.get(key):
+                resource = db.get(model, params[key])
+                case_id = getattr(resource, "case_id", None)
+                break
+    if not case_id:
+        return
+    c = db.get(models.CaseApplication, case_id)
+    if c is None:  # 404·역할 검사는 해당 엔드포인트의 계약을 유지한다.
+        return
+    user = auth.get_current_user(request.headers.get("authorization"), db)
+    _assert_case_access(db, user, c)
+    path = request.scope["route"].path
+    if (request.method, path) in CLOSED_CASE_WRITE_EXCEPTIONS:
+        return
+    if (isinstance(resource, models.ApprovalRequest)
+            and resource.action_type == "certificate.revoke"
+            and path in {"/approvals/{approval_id}/approve", "/approvals/{approval_id}/reject"}):
+        return  # 철회 요청의 2인 확인도 동일 예외; 재개·발급은 예외 아님.
+    _assert_case_open(c)
+
+
 import os as _os
 # 운영 노출 차단: 개발 모드가 아니면 docs 비활성화 (A7)
 _docs_enabled = _os.environ.get("GLHAC_DEV") == "1" or _os.environ.get("GLHAC_API_DOCS") == "1"
 app = FastAPI(
+    dependencies=[Depends(_case_write_guard)],
     title="GL-HAC AI Dual-Pathway API",
     version="0.2.0",
     docs_url="/docs" if _docs_enabled else None,
@@ -640,6 +685,56 @@ def _assert_case_open(c):
     if c.status in sm.TERMINAL_STATES:
         raise HTTPException(409, {"code": "CASE_CLOSED", "status": c.status,
                                   "message": "종결된 케이스는 변경할 수 없습니다"})
+
+
+_CASE_IDENTITY_FIELDS = {"company_name", "nib", "responsible_person", "address",
+                         "factory_reg_no", "factory_address"}
+_PROFILE_IDENTITY_FIELDS = {"company_name_ko", "company_name_en", "corporate_reg_no"}
+
+
+def _assert_unique_case_identity(db, c):
+    """회사명만 바꿔도 최종 회사명·번호 쌍으로 검사한다(수동·OCR·확인대기 공통)."""
+    key = schemas.normalize_nib(c.nib) if c.nib else None
+    if not key:
+        return
+    candidates = list(db.query(models.CaseApplication).filter(models.CaseApplication.nib.isnot(None)))
+    candidates += [x for x in db.new if isinstance(x, models.CaseApplication)]
+    for other in candidates:
+        if other is c or (c.case_id and other.case_id == c.case_id):
+            continue
+        if schemas.normalize_nib(other.nib or "") != key:
+            continue
+        same_company = (other.org_id, (other.company_name or "").strip()) == (c.org_id, (c.company_name or "").strip())
+        # 갱신은 원 인증서를 보존하면서 변경을 심사받는 별도 신청이다. 같은 업체의
+        # 갱신 계보 안에서만 상호 정정을 허용한다(다른 업체의 번호는 여전히 충돌).
+        related = (other.org_id == c.org_id and c.case_id and other.case_id
+                   and _renewal_root(db, c.case_id) == _renewal_root(db, other.case_id))
+        if not (same_company or related):
+            raise HTTPException(409, {"code": "NIB_ALREADY_USED", "used_by": other.company_name})
+
+
+@event.listens_for(SessionLocal, "before_flush")
+def _guard_case_identity_writes(db, flush_context, instances):
+    """저장 경계에서 검사하여 프로필·등록·자동채움·후보 선택의 우회를 막는다."""
+    for c in list(db.new) + list(db.dirty):
+        if not isinstance(c, models.CaseApplication):
+            continue
+        state = inspect(c)
+        changed = any(state.attrs[k].history.has_changes() for k in _CASE_IDENTITY_FIELDS)
+        history = state.attrs.profile_ext.history
+        if history.has_changes():
+            before = history.deleted[0] if history.deleted else {}
+            changed |= any((before or {}).get(k) != (c.profile_ext or {}).get(k)
+                           for k in _PROFILE_IDENTITY_FIELDS)
+        if not changed:
+            continue
+        lock_chain_tail(db, "case-identity")
+        if state.persistent:
+            _assert_case_open(c)
+            if _own_cert(db, c.case_id):
+                raise HTTPException(409, {"code": "IDENTITY_CHANGE_REQUIRES_RENEWAL",
+                                          "request_url": f"/cases/{c.case_id}/renew/request"})
+        _assert_unique_case_identity(db, c)
 
 
 def _audit_row_body(actor_id, action, resource_type, resource_id, case_id, created_at, meta_wo):
@@ -1893,7 +1988,7 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
         if not p:
             raise HTTPException(404, {"code": "PRODUCT_NOT_IN_SCOPE", "valid": False})
         product_scope = _product_cert_meta(db, cert, p)
-    c = db.get(models.CaseApplication, cert.case_id)
+    identity = _certificate_identity(db, cert)
     valid = cert.status == "active"
     try:
         if valid and date.fromisoformat(cert.expiry_date) < date.today():
@@ -1908,9 +2003,10 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
         sig_valid = bool(expected) and (expected == sig.signature_value)
     sig_status = _cert_signature_status(cert, sig, sig_valid)
     official = _official_bpjph_no(db, cert.case_id)
-    _scheme = (c.scheme if c else None) or "product"
+    _scheme = identity.get("scheme")
     out = {"valid": valid, "certificate_no": cert.certificate_no,
-           "company_name": (c.company_name if c else None),
+           "company_name": identity.get("company_name"),
+           "identity_snapshot_available": bool(identity),
            "scheme": _scheme,
            "status": cert.status, "issue_date": cert.issue_date,
            "expiry_date": cert.expiry_date, "scope": cert.scope,
@@ -1928,6 +2024,17 @@ def verify_certificate(qr_token: str, db: Session = Depends(get_db)):
                     "product_name": product_scope["product_name"],
                     "scope": [product_scope["product_name"]]})
     return out
+
+
+def _certificate_identity(db, cert):
+    """발급 이벤트의 신원만 공개한다. 구버전 미기록분은 현재 신원으로 대체하지 않는다."""
+    events = (db.query(models.WorkflowEvent).filter_by(case_id=cert.case_id, action="certificate.issue")
+              .order_by(models.WorkflowEvent.created_at.asc()).all())
+    for ev in events:
+        payload = ev.payload or {}
+        if payload.get("certificate_no") == cert.certificate_no:
+            return payload.get("identity_snapshot") or {}
+    return {}
 
 
 @app.get("/rbac/actions")
@@ -7569,12 +7676,7 @@ def _confirm_autofill(db, c, choices, user):
                 value = schemas.CaseProfileReq(nib=value).nib
             except ValueError:
                 raise HTTPException(422, {"code": "INVALID_AUTOFILL_SELECTION"})
-            if value:
-                for other in db.query(models.CaseApplication).filter(
-                        models.CaseApplication.nib.isnot(None), models.CaseApplication.case_id != c.case_id):
-                    if (_autofill_key(other.nib, "nib") == _autofill_key(value, "nib")
-                            and (other.org_id != c.org_id or _autofill_key(other.company_name) != _autofill_key(c.company_name))):
-                        raise HTTPException(409, {"code": "NIB_ALREADY_USED"})
+            # 중복·발급 후 동결 검사는 _guard_case_identity_writes가 모든 저장 경로에 적용한다.
         if scope in ("profile", "facility_profile"):
             obj.profile_ext = {**(obj.profile_ext or {}), field: value}
         else:
@@ -8234,30 +8336,7 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
                    user=Depends(auth.require_roles("applicant", "consultant")),
                    db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
-    # 같은 사업자번호를 **다른 업체**가 쓰고 있으면 둘 중 하나는 잘못 적은 것이다.
-    # 같은 업체의 여러 케이스(신규·갱신)는 정상이므로 막지 않는다.
-    #
-    # 판단 기준을 org 로만 두면 안 된다 — 실측: 라이브에서 바이오로제트·질경이·천우건설
-    # 세 회사가 같은 번호(207-81-34847)를 쓰고 있는데 셋 다 org_demo 라 org 기준으로는
-    # 안 걸린다(데모·운영 초기에는 여러 업체가 한 org 에 모인다). 회사명까지 본다.
-    if body.nib:
-        # 비교는 **정규화끼리** 한다. 기존 행에는 en-dash 가 그대로 남아 있어(실측 3건)
-        # SQL 동등비교로는 같은 번호가 안 잡힌다 — 바로 이 검사가 막으려던 그 상황이다.
-        _name = (body.company_name or c.company_name or "").strip()
-        _key = schemas.normalize_nib(body.nib)
-        _cands = [x for x in db.query(models.CaseApplication).filter(
-            models.CaseApplication.nib.isnot(None),
-            models.CaseApplication.case_id != case_id).all()
-            if schemas.normalize_nib(x.nib) == _key]
-        for other in _cands:
-            same_company = (other.org_id == c.org_id
-                            and (other.company_name or "").strip() == _name)
-            if not same_company:
-                raise HTTPException(409, {
-                    "code": "NIB_ALREADY_USED", "nib": body.nib,
-                    "used_by": other.company_name,
-                    "message": "다른 업체(%s)가 사용 중인 사업자 식별번호입니다."
-                               % (other.company_name or "-")})
+    _assert_case_open(c)
     # 비운 칸은 '지운 것'으로 본다.
     #
     # 종전에는 값이 None 이면 그냥 건너뛰어, 한 번 잘못 들어간 값을 화면에서 지울 방법이
@@ -10134,6 +10213,53 @@ def _fatwa_proxy(db, org_id):
 FATWA_PROXY_KEY = "auditor"
 
 
+def _assert_fatwa_mutable(db, c, *, final=False):
+    """샤리아 결정·투표·서명의 공통 상태/발급 동결 검사."""
+    lock_chain_tail(db, "wf:" + c.case_id)
+    db.refresh(c)
+    _assert_case_open(c)
+    if _own_cert(db, c.case_id):
+        raise HTTPException(409, {"code": "FATWA_DECISION_FROZEN"})
+    allowed = {"fatwa_review", "fatwa_approved"} if final else {"fatwa_review"}
+    if c.status not in allowed:
+        raise HTTPException(409, {"code": "FATWA_INVALID_STATE", "status": c.status,
+                                  "allowed": sorted(allowed)})
+
+
+def _fatwa_conflicted_ids(db, c):
+    """현재/과거 현장심사 참여자는 대리 심의자가 될 수 없다."""
+    ids = {row.user_id for row in db.query(models.CaseAuditor).filter_by(case_id=c.case_id)}
+    refs = {row.auditor_ref for row in db.query(models.LphAssignment).filter_by(case_id=c.case_id)}
+    refs.update(row.auditor for row in db.query(models.AuditFinding).filter_by(case_id=c.case_id))
+    refs.discard(None)
+    if refs:
+        ids.update(u.user_id for u in db.query(models.User).filter(
+            or_(models.User.user_id.in_(refs), models.User.username.in_(refs))))
+    for ev in db.query(models.WorkflowEvent).filter_by(case_id=c.case_id):
+        if ev.action == "ops.auditor_assigned":
+            ids.add((ev.payload or {}).get("auditor_id"))
+        if (ev.action or "").startswith(("onsite.", "onsite_", "audit_report.", "audit.finding.", "car.review")):
+            ids.add(ev.actor_id)
+    return ids - {None}
+
+
+def _fatwa_proxy_member(db, c, user, member=None):
+    if user["uid"] in _fatwa_conflicted_ids(db, c):
+        raise HTTPException(403, {"code": "FATWA_AUDITOR_CONFLICT"})
+    if user["role"] != "auditor":
+        raise HTTPException(403, {"code": "PROXY_AUDITOR_REQUIRED"})
+    key = FATWA_PROXY_KEY + ":" + user["uid"]
+    if member is not None and member not in (FATWA_PROXY_KEY, key):
+        raise HTTPException(422, {"code": "NOT_COMMITTEE_MEMBER", "allowed": [FATWA_PROXY_KEY, key]})
+    return key
+
+
+def _fatwa_proxy_keys(db, c):
+    conflicts = _fatwa_conflicted_ids(db, c)
+    return {FATWA_PROXY_KEY + ":" + u.user_id for u in db.query(models.User).filter_by(role="auditor")
+            if u.user_id not in conflicts}
+
+
 def _fatwa_member_keys(db, org_id):
     """위원회 3인의 서명/투표 키 — 'chair' + 'member:<이름>' (기존 fatwa.sign 의 member 키 규약과 호환: chair 는 'chairman' 포함)."""
     return [("chairman" if m.get("role") == "chair" else (m.get("role", "member") + ":" + m.get("name", "")))
@@ -10154,20 +10280,28 @@ def _fatwa_quorum_ok(db, case_id):
                       models.WorkflowEvent.action == "fatwa.sign")
               .order_by(models.WorkflowEvent.created_at.asc()).all())
     signers = {}   # member key -> signed(bool), latest-wins per member
+    c0 = db.get(models.CaseApplication, case_id)
+    proxy = bool(c0 and _fatwa_proxy(db, c0.org_id))
+    proxy_keys = _fatwa_proxy_keys(db, c0) if proxy else set()
     for e in events:
         p = e.payload or {}
         mk = p.get("member")
         if not mk:
             continue
+        if proxy and (mk not in proxy_keys or mk != FATWA_PROXY_KEY + ":" + str(e.actor_id)):
+            continue
         img = p.get("image")
         signers[mk] = isinstance(img, str) and img.startswith("data:image/")
     valid = [mk for mk, ok in signers.items() if ok]
     has_chairman = any("chairman" in str(mk).lower() for mk in valid)
-    c0 = db.get(models.CaseApplication, case_id)
-    if _fatwa_proxy(db, c0.org_id if c0 else None):
-        ok = len(valid) >= 1
-        return ok, ([] if ok else ["AUDITOR_SIGN_REQUIRED"]), {"chairman_signed": False, "signer_count": len(valid), "signers": valid, "proxy": True}
+    if proxy:
+        need = _audit_settings(db, c0.org_id)["quorum"]
+        ok = len(valid) >= need
+        return ok, ([] if ok else ["PROXY_SIGNATURES_INCOMPLETE"]), {"chairman_signed": False,
+            "signer_count": len(valid), "signers": valid, "quorum": need, "proxy": True}
     if _fatwa_srs(db):
+        valid = [key for key in valid if key in _fatwa_member_keys(db, c0.org_id if c0 else None)]
+        has_chairman = "chairman" in valid
         missing = []
         if not has_chairman:
             missing.append("NO_CHAIRMAN")
@@ -13788,6 +13922,13 @@ def update_finding(finding_id: str, body: schemas.FindingStatusReq,
     if not f:
         raise HTTPException(404, {"code": "FINDING_NOT_FOUND"})
     c = _get_case(db, f.case_id, user)
+    _assert_case_open(c)
+    if body.status not in {"open", "closed"}:
+        raise HTTPException(422, {"code": "BAD_FINDING_STATUS", "allowed": ["open", "closed"]})
+    if body.status != f.status:
+        if (f.status, body.status) != ("open", "closed"):
+            raise HTTPException(409, {"code": "INVALID_FINDING_TRANSITION"})
+        _assert_finding_closure(db, f)
     f.status = body.status
     sm.record_event(db, c, c.status, c.status, "audit.finding.close", user["role"], user["uid"],
                     {"finding_id": finding_id, "status": body.status})
@@ -14053,8 +14194,13 @@ def fatwa_sign(case_id: str, body: dict = None,
         raise HTTPException(413, {"code": "IMAGE_TOO_LARGE"})
     name = (b.get("name") or "").strip() or None
     c = _get_case(db, case_id, user)
+    _assert_fatwa_mutable(db, c)
     if user["role"] == "auditor" and not _fatwa_proxy(db, c.org_id):
         raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
+    if _fatwa_proxy(db, c.org_id):
+        member = _fatwa_proxy_member(db, c, user, member)
+    elif _fatwa_srs(db) and member not in _fatwa_member_keys(db, c.org_id):
+        raise HTTPException(422, {"code": "NOT_COMMITTEE_MEMBER"})
     sm.record_event(db, c, c.status, c.status, "fatwa.sign", user["role"], user["uid"],
                     {"member": member, "image": image, "name": name})
     # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op). 내부 서명 이벤트는 위에서 그대로 병행.
@@ -14433,6 +14579,21 @@ def onsite_schedule_accept_proposed(case_id: str, body: dict = None,
 
 
 # ---------- CAR 시정조치 라이프사이클 (§P2 CAR advanced) ----------
+def _assert_finding_closure(db, finding, reviewed_car=None):
+    """중대 부적합은 조치 증빙과 독립 오디터의 검증을 거쳐야 종결된다."""
+    if finding.severity not in {"major", "critical"}:
+        return
+    cars = ([reviewed_car] if reviewed_car else
+            db.query(models.CorrectiveAction).filter_by(finding_id=finding.finding_id).all())
+    for car in cars:
+        reviewer = db.get(models.User, car.reviewer) if car.reviewer else None
+        if (car.case_id == finding.case_id and car.status in {"accepted", "closed"}
+                and (car.description or "").strip() and (car.evidence or "").strip()
+                and reviewer and reviewer.role == "auditor" and car.reviewer != car.submitted_by):
+            return
+    raise HTTPException(409, {"code": "MAJOR_NC_REQUIRES_AUDITOR_VERIFICATION"})
+
+
 @app.post("/findings/{finding_id}/car")
 def submit_car(finding_id: str, body: schemas.CarSubmitReq,
                user=Depends(auth.require_roles("applicant", "consultant", "penyelia_halal")),
@@ -14441,6 +14602,11 @@ def submit_car(finding_id: str, body: schemas.CarSubmitReq,
     if not f:
         raise HTTPException(404, {"code": "FINDING_NOT_FOUND"})
     c = _get_case(db, f.case_id, user)
+    _assert_case_open(c)
+    if f.status != "open":
+        raise HTTPException(409, {"code": "FINDING_ALREADY_CLOSED"})
+    if not body.description.strip():
+        raise HTTPException(422, {"code": "CAR_DESCRIPTION_REQUIRED"})
     car = models.CorrectiveAction(case_id=f.case_id, finding_id=finding_id, description=body.description,
                                   evidence=body.evidence, due_date=body.due_date,
                                   submitted_by=user["uid"], status="submitted")
@@ -14471,14 +14637,23 @@ def review_car(car_id: str, body: schemas.CarReviewReq,
     if not car:
         raise HTTPException(404, {"code": "CAR_NOT_FOUND"})
     c = _get_case(db, car.case_id, user)
+    _assert_case_open(c)
     if body.status not in ("accepted", "rejected", "closed"):
         raise HTTPException(400, {"code": "BAD_STATUS"})
+    transitions = {"submitted": {"accepted", "rejected", "closed"}, "accepted": {"closed"},
+                   "rejected": set(), "closed": set()}
+    if body.status != car.status and body.status not in transitions.get(car.status, set()):
+        raise HTTPException(409, {"code": "INVALID_CAR_TRANSITION"})
+    f = db.get(models.AuditFinding, car.finding_id)
+    if f and f.severity in {"major", "critical"} and body.status in {"accepted", "closed"}:
+        if user["role"] != "auditor" or user["uid"] == car.submitted_by:
+            raise HTTPException(403, {"code": "INDEPENDENT_AUDITOR_REQUIRED"})
     car.status = body.status
     car.reviewer = user["uid"]
     car.reviewer_note = body.note
     if body.status in ("accepted", "closed"):   # 시정조치 수용 → finding 종결
-        f = db.get(models.AuditFinding, car.finding_id)
         if f:
+            _assert_finding_closure(db, f, reviewed_car=car)
             f.status = "closed"
     sm.record_event(db, c, c.status, c.status, "car.review", user["role"], user["uid"],
                     {"car_id": car_id, "status": body.status})
@@ -14489,18 +14664,38 @@ def review_car(car_id: str, body: schemas.CarReviewReq,
 # ---------- Fatwa 위원회 투표 (§6.2 fatwa_votes) ----------
 def _fatwa_tally(db, case_id, detail=False):
     if _fatwa_srs(db):
-        votes = db.query(models.FatwaVote).filter_by(case_id=case_id).all()
+        votes = (db.query(models.FatwaVote).filter_by(case_id=case_id)
+                 .order_by(models.FatwaVote.created_at.asc(), models.FatwaVote.id.asc()).all())
         c = db.get(models.CaseApplication, case_id)
         keys = _fatwa_member_keys(db, c.org_id if c else None)
         if _fatwa_proxy(db, c.org_id if c else None):
-            votes = [v for v in votes if v.member == FATWA_PROXY_KEY]
-            v0 = votes[-1] if votes else None
-            result = {"approve": "passed", "conditional": "conditional", "reject": "rejected"}.get(v0.vote if v0 else None, "pending")
+            keys = _fatwa_proxy_keys(db, c)
+            voters = {}
+            for ev in (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="fatwa.vote")
+                       .order_by(models.WorkflowEvent.created_at.asc(), models.WorkflowEvent.event_id.asc())):
+                voters[(ev.payload or {}).get("member")] = ev.actor_id
+            votes = list({v.member: v for v in votes if v.member in keys
+                          and v.member == FATWA_PROXY_KEY + ":" + str(voters.get(v.member))}.values())
+            count = _audit_settings(db, c.org_id)["quorum"]
+            approve = sum(v.vote == "approve" for v in votes)
+            cond = sum(v.vote == "conditional" for v in votes)
+            reject = sum(v.vote == "reject" for v in votes)
+            need = len(votes) if _audit_settings(db, c.org_id)["decision_rule"] == "unanimous" else len(votes) // 2 + 1
+            quorum = len(votes) >= count
+            result = "pending"
+            if quorum and reject >= need:
+                result = "rejected"
+            elif quorum and approve + cond >= need:
+                result = "conditional" if cond else "passed"
             ok_sig, _miss, sctx = _fatwa_quorum_ok(db, case_id)
-            out = {"votes_cast": len(votes), "members": 1, "approve": int(bool(v0 and v0.vote == "approve")), "conditional": int(bool(v0 and v0.vote == "conditional")),
-                   "reject": int(bool(v0 and v0.vote == "reject")), "abstain": 0, "quorum_met": bool(v0), "quorum_need": 1, "result": result,
-                   "signatures": sctx.get("signer_count", 0), "signatures_ok": ok_sig, "progress": "%d/1" % (1 if v0 else 0),
-                   "round": _fatwa_round(db, case_id), "member_keys": [FATWA_PROXY_KEY], "voted_keys": [FATWA_PROXY_KEY] if v0 else [], "proxy": True}
+            signed = set(sctx.get("signers", []))
+            out = {"votes_cast": len(votes), "members": count, "approve": approve, "conditional": cond,
+                   "reject": reject, "abstain": 0, "quorum_met": quorum, "quorum_need": count, "result": result,
+                   "signatures": sctx.get("signer_count", 0),
+                   "signatures_ok": ok_sig and all(v.member in signed for v in votes),
+                   "progress": "%d/%d" % (len(votes), count),
+                   "round": _fatwa_round(db, case_id), "member_keys": sorted(keys),
+                   "voted_keys": [v.member for v in votes], "proxy": True}
             if detail:
                 out["ballots"] = [{"member": v.member, "vote": v.vote, "note": v.note} for v in votes]
             return out
@@ -14548,25 +14743,29 @@ def fatwa_vote(case_id: str, body: schemas.FatwaVoteReq,
                user=Depends(auth.require_roles("fatwa_liaison", "auditor", "operator")),
                db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    _assert_fatwa_mutable(db, c)
     if user["role"] in ("auditor", "operator") and not _fatwa_proxy(db, c.org_id):
         raise HTTPException(403, {"code": "NOT_AUTHORIZED", "hint": "샤리아 위원회가 등록된 상태에서는 위원만 의견을 낼 수 있습니다."})
     if body.vote not in FATWA_VOTES:
         raise HTTPException(400, {"code": "BAD_VOTE"})
+    member = body.member
+    if _fatwa_proxy(db, c.org_id):
+        member = _fatwa_proxy_member(db, c, user, member)
     if _fatwa_srs(db):
-        keys = [FATWA_PROXY_KEY] if _fatwa_proxy(db, c.org_id) else _fatwa_member_keys(db, c.org_id)
-        if body.member not in keys:
+        keys = _fatwa_proxy_keys(db, c) if _fatwa_proxy(db, c.org_id) else _fatwa_member_keys(db, c.org_id)
+        if member not in keys:
             raise HTTPException(422, {"code": "NOT_COMMITTEE_MEMBER", "allowed": keys})
         if body.vote == "abstain":
             raise HTTPException(422, {"code": "OPINION_REQUIRED", "hint": "적합·조건부 적합·부적합 중 하나"})
         if body.vote in ("conditional", "reject") and not (body.note or "").strip():
             raise HTTPException(422, {"code": "REASON_REQUIRED"})
-    v = db.query(models.FatwaVote).filter_by(case_id=case_id, member=body.member).first()
+    v = db.query(models.FatwaVote).filter_by(case_id=case_id, member=member).first()
     if v:
         v.vote, v.note = body.vote, body.note
     else:
-        db.add(models.FatwaVote(case_id=case_id, member=body.member, vote=body.vote, note=body.note))
+        db.add(models.FatwaVote(case_id=case_id, member=member, vote=body.vote, note=body.note))
     sm.record_event(db, c, c.status, c.status, "fatwa.vote", user["role"], user["uid"],
-                    {"member": body.member, "vote": body.vote, "note": body.note})
+                    {"member": member, "vote": body.vote, "note": body.note})
     db.commit()
     return _fatwa_tally(db, case_id)
 
@@ -15174,7 +15373,8 @@ def _do_issue_certificate(db, c, user, reason=None):
             _inv = db.get(models.Invoice, (_e.payload or {}).get("invoice_id"))
             if _inv and _inv.status == "draft":
                 _send_notice(db, c, "payment_due", user, invoice=_inv, auto=True)
-    _issue_payload = {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None}
+    _issue_payload = {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None,
+                      "identity_snapshot": {"company_name": c.company_name, "scheme": c.scheme or "product"}}
     _issue_payload.update(_tsa_meta(cert.certificate_no or str(cert.id)))   # P3d: TSA configured 시만 병기(미설정 불변)
     sm.record_event(db, c, frm, c.status, "certificate.issue", "system", user["uid"], _issue_payload)
     # S3-3: freeze snapshot — 발급 시점 동결. 물류는 jasa·시설, 제품은 제품·원재료.
@@ -15229,10 +15429,14 @@ def renew_request(case_id: str, body: schemas.RenewRequestReq = schemas.RenewReq
                   db: Session = Depends(get_db)):
     """문서 P0: 갱신 신청(신청↔승인 분리) — 신청자/컨설턴트가 갱신 의사를 등록. 실제 파생은 operator 승인."""
     src = _get_case(db, case_id, user)
-    if src.status != "certificate_issued":
+    _assert_case_open(src)
+    lock_chain_tail(db, "wf:" + case_id)
+    db.refresh(src)
+    if src.status not in sm.REVOKE_ENTRY_STATES:
         raise HTTPException(400, {"code": "NOT_ISSUED", "detail": "인증서 발급 케이스만 갱신 신청 가능합니다."})
-    sm.record_event(db, src, src.status, src.status, "case.renew_requested", user["role"], user["uid"],
-                    {"reason": (body.reason or "").strip() or None})
+    if not nav8.latest_event(db, case_id, "case.renew_requested"):
+        sm.record_event(db, src, src.status, src.status, "case.renew_requested", user["role"], user["uid"],
+                        {"reason": (body.reason or "").strip() or None})
     db.commit()
     return {"case_id": case_id, "renewal_requested": True,
             "message": "갱신 신청이 접수되었습니다. 운영자 승인 후 갱신 케이스가 생성됩니다."}
@@ -15245,14 +15449,24 @@ def renew_case(case_id: str, user=Depends(rbac.require_action("certificate.renew
     P3: 원 케이스는 renewal_preparation으로 전진(사후관리 체인 경유) — 고아 상태였던
     renewal_preparation에 비즈니스 트리거 부여. 갱신은 사후관리·변경영향 상태에서도 허용."""
     src = _get_case(db, case_id, user)
+    lock_chain_tail(db, "wf:" + case_id)
+    db.refresh(src)
+    _assert_case_open(src)
     if src.status not in ("certificate_issued", "post_certification_monitoring",
                           "change_impact", "renewal_preparation"):   # renewal_preparation=재갱신(반복 호출 호환)
         raise HTTPException(400, {"code": "NOT_ISSUED", "detail": "인증서 발급(또는 사후관리) 케이스만 갱신 가능합니다."})
+    for child in _renewal_children(db, case_id):
+        if not sm.is_terminal(child.status):
+            return {"new_case_id": child.case_id, "parent_case_id": case_id,
+                    "parent_status": src.status, "existing": True,
+                    "products_copied": db.query(models.Product).filter_by(case_id=child.case_id).count(),
+                    "materials_copied": db.query(models.Material).filter_by(case_id=child.case_id).count()}
     import uuid
     new_id = uuid.uuid4().hex
     new_c = models.CaseApplication(
         case_id=new_id, org_id=src.org_id,
-        company_name="Renewal: " + (src.company_name or ""),
+        company_name=src.company_name, nib=src.nib,
+        scheme=src.scheme, logistics_scope=src.logistics_scope,
         is_msme=src.is_msme,
         status="onboarding", pathway="undetermined", scope_frozen=False,
     )
@@ -15270,7 +15484,7 @@ def renew_case(case_id: str, user=Depends(rbac.require_action("certificate.renew
             screening.apply_screen(nm)  # P1: 갱신 케이스 원료 재스크리닝(clean 오인 방지)
         except Exception:  # noqa: BLE001
             pass
-    db.commit()
+    db.flush()
     sm.record_event(db, new_c, None, "onboarding", "case.renew", user["role"], user["uid"],
                     {"parent_case_id": case_id})
     # P3: 원 케이스를 renewal_preparation까지 전진 — certificate_issued면 사후관리 경유
@@ -16329,6 +16543,8 @@ def _revoke_guards(db, case_id):
 
 def _do_revoke_certificate(db, c, user, reason=None):
     """실제 인증서 철회 실행(가드 통과 후). user=실행자(2인승인 시 승인자=admin). 되돌릴 수 없음·통지."""
+    lock_chain_tail(db, "wf:" + c.case_id)
+    db.refresh(c)
     cert = _revoke_guards(db, c.case_id)
     cert.status = "withdrawn"
     sm.record_event(db, c, c.status, c.status, "certificate.revoke", user["role"], user["uid"],
@@ -16347,6 +16563,7 @@ def _do_revoke_certificate(db, c, user, reason=None):
     if _other == 0 and sm.allowed(c.status, "revoked"):
         closed = _close_case(db, c, user, "revoked", (reason or "").strip() or "인증서 철회",
                              action="case.close.revoked", keep_approval_actions=("certificate.revoke",))
+    _cancel_pending_renewals(db, c, user, reason or "부모 인증서 철회")
     db.commit()
     return {"certificate_no": cert.certificate_no, "status": "withdrawn", "reason": (reason or "").strip() or None,
             "case_status": c.status, "case_closed": bool(closed)}
@@ -16881,6 +17098,7 @@ def fatwa_final_approve(case_id: str, user=Depends(rbac.require_action("fatwa.ap
                         db: Session = Depends(get_db)):
     """2단계 승인 — 최고운영자(최종 결제자) 최종승인. 샤리아 가승인(provisional) 선행 필요."""
     c = _get_case(db, case_id, user)
+    _assert_fatwa_mutable(db, c, final=True)
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
     if not fd or fd.decision != "approved":
         raise HTTPException(409, {"code": "NO_PROVISIONAL_APPROVAL"})
@@ -16888,6 +17106,10 @@ def fatwa_final_approve(case_id: str, user=Depends(rbac.require_action("fatwa.ap
         return {"ok": True, "already_final": True, "fatwa_status": "approved"}
     if c.fatwa_status != "provisional":
         raise HTTPException(409, {"code": "NOT_PROVISIONAL", "have": c.fatwa_status})
+    if _fatwa_srs(db):
+        tally = _fatwa_tally(db, case_id)
+        if not (tally.get("quorum_met") and tally.get("signatures_ok") and tally.get("result") == "passed"):
+            raise HTTPException(409, {"code": "FATWA_QUORUM_NOT_MET"})
     fd.final_approved_at = datetime.utcnow()
     fd.final_approver = user["uid"]
     c.fatwa_status = "approved"
@@ -16908,7 +17130,10 @@ def fatwa_confirm(case_id: str, body: dict = None, user=Depends(auth.require_rol
     """SHA-04 위원장 확정 — 3인 의견·3인 서명이 모두 모이면 위원장이 결과를 확정하고 D-19 의결서를 발행한다."""
     import json as _json
     c = _get_case(db, case_id, user)
+    _assert_fatwa_mutable(db, c)
     proxy = _fatwa_proxy(db, c.org_id)
+    if proxy and user["role"] == "auditor":
+        _fatwa_proxy_member(db, c, user)
     if user["role"] in ("auditor", "operator") and not proxy:
         raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
     t = _fatwa_tally(db, case_id, detail=True)
@@ -16986,6 +17211,9 @@ def patch_fatwa(case_id: str, body: schemas.FatwaReq,
                 user=Depends(rbac.require_action("fatwa.propose")),  # SoD: 가승인=샤리아 전용(최종승인은 operator)
                 db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    _assert_fatwa_mutable(db, c)
+    if body.decision not in {"pending", "approved", "conditional", "rejected"}:
+        raise HTTPException(422, {"code": "BAD_FATWA_DECISION"})
     if _fatwa_srs(db) and (body.decision in ("approved", "rejected", "conditional")):
         raise HTTPException(409, {"code": "USE_CHAIR_CONFIRM", "hint": "SRS 모드에서는 위원장 확정(/fatwa/confirm)으로만 결정합니다."})
     fd = db.query(models.FatwaDecision).filter_by(case_id=case_id).first()
@@ -21334,7 +21562,7 @@ def transition(case_id: str, body: schemas.TransitionReq,
     c = _get_case(db, case_id, user)
     _assert_case_open(c)   # 종결 케이스는 어디로도 나갈 수 없다(R1-1) — 재개는 새 케이스
     # P0-1: 승인·발급 상태는 raw 전이 금지(전용 엔드포인트만), 그 외는 역할 게이트
-    if body.to_state in sm.PROTECTED_STATES:
+    if body.to_state in sm.PROTECTED_STATES | sm.DEDICATED_REVIEW_STATES:
         raise HTTPException(403, {"code": "USE_DEDICATED_ENDPOINT", "state": body.to_state})
     if user["role"] != "admin" and user["role"] not in sm.transition_roles(body.to_state):
         raise HTTPException(403, {"code": "NOT_AUTHORIZED_TRANSITION",
@@ -21366,11 +21594,39 @@ def transition(case_id: str, body: schemas.TransitionReq,
 _OPEN_INVOICE_STATES = ("draft", "invoice_created", "waiting_payment")
 
 
+def _renewal_children(db, parent_id):
+    events = (db.query(models.WorkflowEvent).filter_by(action="case.renew")
+              .order_by(models.WorkflowEvent.created_at.desc()).all())
+    ids = dict.fromkeys(ev.case_id for ev in events if (ev.payload or {}).get("parent_case_id") == parent_id)
+    return [c for cid in ids if (c := db.get(models.CaseApplication, cid)) is not None]
+
+
+def _renewal_root(db, case_id):
+    seen = set()
+    while case_id not in seen:
+        seen.add(case_id)
+        ev = nav8.latest_event(db, case_id, "case.renew")
+        parent = (ev.payload or {}).get("parent_case_id") if ev else None
+        if not parent:
+            return case_id
+        case_id = parent
+    return case_id
+
+
+def _cancel_pending_renewals(db, c, user, reason):
+    for child in _renewal_children(db, c.case_id):
+        if not sm.is_terminal(child.status) and not _own_cert(db, child.case_id):
+            _close_case(db, child, user, "cancelled", "부모 케이스 종결: " + reason,
+                        action="case.renew.cancelled")
+
+
 def _close_case(db, c, user, to_status, reason, action="case.close", keep_approval_actions=()):
     """케이스를 종결 상태로 넣는다(커밋은 호출자). 한 트랜잭션 안에서:
     ① WorkflowEvent(사유 포함) ② 미결 인보이스(draft/invoice_created/waiting_payment) → cancelled
     ③ 진행 중 승인요청(pending) → cancelled(keep_approval_actions 의 액션은 호출자가 직접 마무리하므로 둔다)
     ④ 신청자·컨설턴트 알림. 상태 전이 가능 여부는 호출자가 sm.allowed 로 먼저 검사한다."""
+    lock_chain_tail(db, "wf:" + c.case_id)
+    db.refresh(c)
     frm = c.status
     reason = (reason or "").strip()
     cancelled_inv = []
@@ -21393,6 +21649,7 @@ def _close_case(db, c, user, to_status, reason, action="case.close", keep_approv
                     {"status": to_status, "from": frm, "reason": reason,
                      "cancelled_invoices": cancelled_inv, "cancelled_approvals": cancelled_ar})
     c.status = to_status
+    _cancel_pending_renewals(db, c, user, reason)
     obs.inc("glhac_state_transition_total", {"to": to_status})
     for _r in ("applicant", "consultant"):
         _notify(db, c, "case.closed", msg=("case.closed." + to_status,
