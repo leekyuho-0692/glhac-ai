@@ -157,7 +157,8 @@
     "aliases": {
       "ko": [
         "카민",
-        "코치닐"
+        "코치닐",
+        "코치닐추출색소"
       ],
       "en": [
         "carmine",
@@ -5339,18 +5340,30 @@
         "minuman beralkohol",
         "alkohol",
         "arak",
-        "minuman keras"
+        "minuman keras",
+        "angciu",
+        "ang ciu",
+        "tuak",
+        "brem"
       ],
       "ko": [
         "주류",
-        "음용알코올"
+        "음용알코올",
+        "맛술",
+        "미림",
+        "청주",
+        "주정"
       ],
       "en": [
         "wine",
         "beer",
         "rum",
         "alcohol beverage",
-        "ethanol beverage"
+        "ethanol beverage",
+        "rhum",
+        "mirin",
+        "sake",
+        "champagne"
       ]
     },
     "required_evidence": [
@@ -5665,7 +5678,9 @@
       ],
       "ko": [
         "돼지기름",
-        "라드"
+        "라드",
+        "돼지지방",
+        "돈지"
       ],
       "en": [
         "lard"
@@ -8028,7 +8043,10 @@
         "swine",
         "pig meat",
         "bacon",
-        "ham (pork)"
+        "ham (pork)",
+        "pig",
+        "hog",
+        "hog casing"
       ]
     },
     "required_evidence": [
