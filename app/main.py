@@ -3523,23 +3523,20 @@ def list_cases(user=Depends(auth.get_current_user), db: Session = Depends(get_db
     기존 default 500·no-total은 500건 초과 조직에서 조용히 누락됐음."""
     # 목록도 상세와 같은 규칙을 쓴다 — 목록에 안 보이는데 상세만 열리면 쓸모가 없고,
     # 목록에 보이는데 상세가 403 이면 더 나쁘다.
-    q = db.query(models.CaseApplication)
-    if user["role"] not in CERTIFIER_ROLES:
-        own = models.CaseApplication.org_id == user["org_id"]
-        if user["role"] in ASSIGNED_ROLES:
-            ids = _assigned_case_ids(db, user["uid"])
-            # 영업으로 데려온 업체의 케이스도 내 목록에 있어야 한다.
-            _mine = _my_client_org_ids(db, user["uid"])
-            if _mine:
-                ids = set(ids) | {c.case_id for c in db.query(models.CaseApplication)
-                                  .filter(models.CaseApplication.org_id.in_(_mine)).all()}
-            q = q.filter(or_(own, models.CaseApplication.case_id.in_(ids))
-                         if ids else own)
-        else:
-            q = q.filter(own)
-    total = q.count()
-    rows = (q.order_by(models.CaseApplication.created_at.desc(), models.CaseApplication.case_id.desc())
-            .offset(offset).limit(limit).all())
+    visible = []
+    for c in (db.query(models.CaseApplication)
+              .order_by(models.CaseApplication.created_at.desc(),
+                        models.CaseApplication.case_id.desc()).all()):
+        try:
+            _assert_case_access(db, user, c)  # 상세 접근 규칙이 정본(동반자는 현재 배정만)
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+            continue
+        visible.append(c)
+    # 권한 필터를 페이징 전에 적용해야 빈 페이지·접근 불가 건수 노출을 막는다.
+    total = len(visible)
+    rows = visible[offset:offset + limit]
     # SRS COM-08: 분야·상태·업체명/번호 검색 (python 측 — profile_ext JSON 은 DB 필터 불가)
     if sector or status or search:
         _s = (search or "").strip().lower()
