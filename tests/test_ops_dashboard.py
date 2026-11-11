@@ -231,7 +231,7 @@ def test_real_auditor_is_listed_and_demo_accounts_are_marked():
     with TestClient(app) as client:
         rows = client.get('/ops/auditors', headers=_h(_tok(client, 'admin', 'admin'))).json()['auditors']
         assert next(x for x in rows if x['username'] == 'auditor1')['is_demo'] is True
-        assert next(x for x in rows if x['username'] == 'test')['is_demo'] is True
+        assert next(x for x in rows if x['username'] == 'test')['is_demo'] is False
         actual = next(x for x in rows if x['username'] == 'real-auditor@example.com')
         assert actual['is_demo'] is False and actual['display_name'] == 'real-auditor@example.com'
 

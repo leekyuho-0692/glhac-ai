@@ -61,7 +61,7 @@ function ENTA_applyPanel(){
   return `<section class="panel"><div class="panel-head"><h2>임시저장 · 일괄 업로드</h2></div>
     <div class="inline" style="flex-wrap:wrap;gap:8px">
       ${canDraft?`<button class="btn" onclick="once(this, ()=>App.entaSaveDraft())">기업 정보 임시저장</button>`:''}
-      ${canZip?`<button class="btn btn-primary" onclick="(($('#enta-zip')||{}).click||(()=>{}))()">ZIP 파일로 서류 일괄 올리기</button>`:''}
+      ${canZip?`<button class="btn btn-primary" onclick="const z=$('#enta-zip'); if(z) z.click()">ZIP 파일로 서류 일괄 올리기</button>`:''}
       <input type="file" id="enta-zip" accept=".zip,.rar,.7z" hidden onchange="App.entaZip(this.files[0])">
     </div>
     <p class="muted" style="font-size:12px;margin-top:6px">ZIP·RAR·7z 를 압축 해제해 서류를 자동 분류·채웁니다. 처리 중에는 창을 닫지 마세요.</p>

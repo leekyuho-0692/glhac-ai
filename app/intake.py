@@ -1153,14 +1153,82 @@ _FIELD_SPEC = {
                     '{"has_commitment":false,"has_materials":false,"has_process":false,'
                     '"has_product":false,"has_monitoring":false}'),
     "product_label": ("성분 목록", '{"ingredients":[]}'),
+    # 원료 성적서(CoA)·MSDS — 범용 분류기로 넘기면 매뉴얼용 필드가 채워졌다(2026-11-11 실측).
+    # product_names 는 완제품명만: 원료 자체의 성적서면 비운다(원료가 제품으로 등록되던 문제).
+    "coa_msds": ("원료 성적서(CoA)·물질안전보건자료(MSDS): 이 문서가 다루는 원료명과 구성 성분명(material_names), "
+                 "완제품명(원료 자체의 문서면 빈 목록), 제조사, 로트번호, 발행일(YYYY-MM-DD)",
+                 '{"material_names":[],"product_names":[],"manufacturer":null,"lot_no":null,"issue_date":null}'),
 }
+
+
+# 추출 결과 교차검증 — 업로드 경로는 '사용자가 고른 칸'을 믿고 그 칸의 필드만 뽑는다.
+# 칸을 잘못 고르면 모델은 시킨 대로 엉뚱한 값을 뽑아 온다(2026-11-11: MSDS 6건이 사업자등록증
+# 칸으로 들어가 공급사 회사명·주소가 업체 정보를 덮음). 원문과 추출값을 함께 보여 다시 묻는다.
+_VERIFY_SYS = (
+    "당신은 할랄 인증 신청 서류의 접수 검수자입니다. 업로드된 문서 원문과, 시스템이 이 문서에서 "
+    "추출해 등록한 값을 비교하세요. (1) 원문이 '선택된 서류 종류'가 맞는가 (2) 추출값 하나하나가 "
+    "원문에 실제로 있는 값인가(지어낸 값이 아닌가) (3) 신청 업체 정보(회사명·사업자번호·주소)에 "
+    "공급사·제조사 등 다른 회사 정보가 들어가지 않았는가. 확실하지 않으면 warn 으로 답하세요. "
+    '반드시 JSON 으로만: {"doc_type_ok":true,"detected_type":null,'
+    '"field_issues":[{"field":"","issue":""}],"verdict":"ok|warn|fail","summary":"한 문장"}. '
+    "detected_type 은 다음 중 하나 또는 null: " + ", ".join(DOC_TYPES))
+
+
+def verify_extraction(doc_type, filename, text, fields, case_company=None):
+    """추출 결과를 원문과 대조한 판정만 돌려준다 — 저장·반영은 호출자가 한다.
+
+    verdict: ok | warn | fail | unknown(전문 없음·호출 실패·AI 없음)."""
+    import json as _json
+    shown = {k: v for k, v in (fields or {}).items() if not str(k).startswith("_")}
+    if not (text or "").strip():
+        return {"verdict": "unknown", "summary": "전문 없음 — 재처리 필요",
+                "doc_type_ok": None, "detected_type": None, "field_issues": [], "source": "rule"}
+    # 원문에 없는 값은 모델의 판단과 무관하게 먼저 표시한다. 예약 키는 추출값이 아니다.
+    norm_text = re.sub(r"\s+", "", text).casefold()
+    issues = []
+    # 정규화·추론되는 값(날짜 YYYY-MM-DD, 주소에서 보정한 도시·국가 등)은 원문 문자열과 달라도 정상이다.
+    _derived = {"city", "province", "country", "zip", "factory_city", "factory_province", "factory_country",
+                "factory_zip", "establishment_date", "issue_date", "expiry_date", "signed_date"}
+    for k, v in shown.items():
+        if k in _derived:
+            continue
+        values = v if isinstance(v, list) else [v]
+        if any(isinstance(value, str) and len(value.strip()) >= 3 and
+               re.sub(r"\s+", "", value).casefold() not in norm_text for value in values):
+            issues.append({"field": k, "issue": "원문에 없는 값"})
+    user = ("선택된 서류 종류: %s\n파일명: %s\n신청 업체명: %s\n추출값(JSON): %s\n원문:\n%s"
+            % (doc_type, filename, case_company or "-",
+               _json.dumps(shown, ensure_ascii=False)[:1500], text[:8000]))
+    r = ai_local.llm_json(_VERIFY_SYS, user)
+    fail = _llm_failure(r)
+    if fail or not isinstance(r, dict) or r.get("error") or r.get("verdict") not in ("ok", "warn", "fail"):
+        return {"verdict": "warn" if issues else "unknown",
+                "summary": "원문에 없는 추출값 — AI 검증을 하지 못함" if issues else "AI 검증을 하지 못함",
+                "doc_type_ok": None, "detected_type": None, "field_issues": issues,
+                "source": "rule" if issues else "llm", **fail}
+    dt = r.get("detected_type")
+    for issue in [i for i in (r.get("field_issues") or []) if isinstance(i, dict)][:10]:
+        if issue not in issues:
+            issues.append(issue)
+    verdict = "warn" if issues and r["verdict"] == "ok" else r["verdict"]
+    return {"verdict": verdict, "summary": str(r.get("summary") or "")[:300],
+            "doc_type_ok": r.get("doc_type_ok"),
+            "detected_type": dt if dt in DOC_TYPES else None,
+            "field_issues": issues, "source": "llm"}
 
 
 def parse_typed(doc_type, filename, data):
     """업로드 칸(문구)에 맞는 doc_type으로 해당 필드만 파싱."""
     text = parse_file(filename, data)
+    return parse_typed_text(doc_type, filename, text)
+
+
+def parse_typed_text(doc_type, filename, text):
+    """확보한 본문에서 해당 유형의 필드만 추출 — 칸 교정 때 파일·OCR을 다시 읽지 않는다."""
+    text = text or ""
     if not text.strip():
-        return {"doc_type": doc_type, "fields": {}, "confidence": 0.0, "empty": True, "text_len": 0}
+        return {"doc_type": doc_type, "fields": {}, "confidence": 0.0, "empty": True, "text_len": 0,
+                "text": text or ""}
     # 근본: 전성분표 구조 마커가 있으면 구조 파서 결과를 신뢰(LLM 목록추출 우회).
     ing = _parse_ingredient_markers(text)
     if ing is not None:
@@ -1171,11 +1239,12 @@ def parse_typed(doc_type, filename, data):
         if mats:
             fields["material_names"] = mats
         return {"doc_type": "material_list", "fields": fields, "confidence": 0.95,
-                "text_len": len(text), "excerpt": text[:300]}
+                "text_len": len(text), "excerpt": text[:300], "text": text}
     spec = _FIELD_SPEC.get(doc_type)
     if not spec:
         cl = classify(filename, text)
         cl["text_len"] = len(text)
+        cl["text"] = text
         return cl
     desc, fmt = spec
     lf = _LIST_FIELDS.get(doc_type)
@@ -1193,7 +1262,7 @@ def parse_typed(doc_type, filename, data):
     _enrich_address(fields)   # 도시/국가/우편 보정
     out = {"doc_type": doc_type, "fields": fields,
            "confidence": 0.0 if fail else 0.85,
-           "text_len": len(text), "excerpt": text[:300]}
+           "text_len": len(text), "excerpt": text[:300], "text": text}
     out.update(fail)
     return out
 

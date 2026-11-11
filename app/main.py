@@ -253,7 +253,9 @@ def _validate_upload(file_b64, filename, max_bytes=_UPLOAD_MAX_BYTES):
         raise HTTPException(413, {"code": "UPLOAD_TOO_LARGE", "max_bytes": max_bytes})
     ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
     if ext and ext not in _UPLOAD_EXT_ALLOW:
-        raise HTTPException(415, {"code": "UNSUPPORTED_TYPE", "ext": ext})
+        code = "UNSUPPORTED_TYPE"
+        log.warning("업로드 거절 %s: %s (ext=%s)", code, filename, ext)
+        raise HTTPException(415, {"code": code, "ext": ext})
     head = raw[:8]
     if head.startswith(b"%PDF"):
         kind = "pdf"
@@ -272,7 +274,9 @@ def _validate_upload(file_b64, filename, max_bytes=_UPLOAD_MAX_BYTES):
     # 이미지/PDF는 확장자와 실제 내용 일치 강제(위장 차단)
     expect = {"pdf": "pdf", "png": "png", "jpg": "jpg", "jpeg": "jpg", "gif": "gif", "webp": "webp"}
     if ext in expect and kind is not None and kind != expect[ext]:
-        raise HTTPException(415, {"code": "CONTENT_MISMATCH", "ext": ext, "sniffed": kind})
+        code = "CONTENT_MISMATCH"
+        log.warning("업로드 거절 %s: %s (ext=%s)", code, filename, ext)
+        raise HTTPException(415, {"code": code, "ext": ext, "sniffed": kind})
     return b64
 
 
@@ -412,6 +416,7 @@ def _startup():
     finally:
         db.close()
     _autoparse_start()
+    _verify_start()
     if os.environ.get("GLHAC_NOTIFY_WORKER") == "1":
         import threading
         threading.Thread(target=_notify_worker_loop, daemon=True).start()
@@ -1727,6 +1732,12 @@ def _parse_biz_doc(text):
     NIB는 13자리 숫자, 한국 사업자번호는 000-00-00000 로 서로 형태가 달라 섞이지 않는다."""
     import re
     t = text or ""
+    def spaced(label):
+        return r"\s*".join(re.escape(ch) for ch in label if not ch.isspace())
+
+    # 한 줄로 합쳐진 OCR에서도 안내문 속 상호·대표자·주소를 항목으로 읽지 않는다.
+    t = re.sub(r"※.*?(?=※|접\s*수\s*번\s*호|" + spaced("Receipt") + r"|$)",
+               " ", t, flags=re.I | re.S)
     out = {}
     # ── 인도네시아 양식 ────────────────────────────────────────────────
     m = re.search(r"Nomor\s+Induk\s+Berusaha\s*[:：]?\s*(\d[\d\s-]{10,20})", t, re.I)
@@ -1749,26 +1760,50 @@ def _parse_biz_doc(text):
     m = re.search(r"\d{3}-\d{2}-\d{5}", t)                       # 사업자등록번호
     if m and not out.get("nib"):
         out["nib"] = m.group(0)
-    for label, key in [("상호", "company_name"), ("법인명", "company_name"),
-                       ("공장명", "factory_name"), ("대표자", "responsible_person"),
-                       ("성명", "responsible_person")]:
-        mm = re.search(label + r"[)\s:：·]*([^\n]{1,40})", t)
-        if mm and not out.get(key):
-            out[key] = mm.group(1).strip(" :：·|")
-    mm = re.search(r"(사업장\s*소재지|소재지|사업장|주소)[)\s:：·]*([^\n]{2,80})", t)
-    if mm and not out.get("address"):
-        out["address"] = mm.group(2).strip(" :：·|")
-    mm = re.search(r"(공장\s*소재지|공장\s*주소)[)\s:：·]*([^\n]{2,80})", t)
-    if mm and not out.get("factory_address"):
-        out["factory_address"] = mm.group(2).strip(" :：·|")
-    mm = re.search(r"(업태|업종|종목)[)\s:：·]*([^\n]{1,40})", t)
-    if mm and not out.get("business_type"):
-        out["business_type"] = mm.group(2).strip(" :：·|")
+    # 항목명은 글자 사이 공백을 허용하고, 값은 다음 한글·영문 라벨 앞에서 끊는다.
+    labels = {
+        "company_name": r"상\s*호(?:\s*\(\s*법\s*인\s*명\s*\))?|법\s*인\s*명",
+        "factory_name": spaced("공장명"),
+        "responsible_person": (r"성\s*명(?:\s*\(?\s*대\s*표\s*자\s*\)?)?|"
+                               r"대\s*표\s*자(?:\s*\(\s*성\s*명\s*\))?"),
+        "factory_address": r"공\s*장\s*(?:소\s*재\s*지|주\s*소)",
+        "address": r"사\s*업\s*장\s*(?:소\s*재\s*지|주\s*소)|소\s*재\s*지|주\s*소|사\s*업\s*장",
+        "business_type": r"업\s*태|업\s*종|종\s*목",
+        "company_name_en": spaced("Name of Business"),
+        "address_en": spaced("Business Address"),
+    }
+    stops = [spaced(label) for label in (
+        "사업자등록번호", "사업자등록일", "사업자록일", "법인등록번호", "주민", "개업일")]
+    other_stops = [spaced(label) for label in (
+        "Name of", "Business", "Taxpayer", "Resident", "Type of", "Date of",
+        "위와 같이", "접수번호", "Receipt")]
+    # 긴 종료 라벨(법인등록번호 등)을 먼저 보아 짧은 항목명과 섞이지 않게 한다.
+    pattern = "|".join(["(?P<stop>%s)" % "|".join(stops)] +
+                       ["(?P<%s>%s)" % (key, pat) for key, pat in labels.items()] +
+                       ["(?:%s)" % "|".join(other_stops)])
+    # '도매업 종목'의 끝 글자부터 '업종'으로 붙여 읽지 않는다.
+    matches = list(re.finditer(r"(?<![가-힣A-Za-z0-9])(?:" + pattern + ")", t, re.I))
+    for i, mm in enumerate(matches):
+        key = mm.lastgroup
+        if key not in labels or out.get(key):
+            continue
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(t)
+        value = t[mm.end():end].strip(" :：·|\r\n\t")
+        if len(value) < 2 or re.search(r"효력|실체적|증명합니다|임의기재|※|\[|\]", value):
+            continue
+        if key == "company_name_en":
+            # 영문 상호 뒤 괄호 안 사업자번호는 회사명에 포함하지 않는다.
+            value = re.sub(r"\s*\(\s*\d{3}\s*[-–—]\s*\d{2}\s*[-–—]\s*\d{5}\s*\)\s*$", "", value)
+            if not re.fullmatch(r"[A-Z0-9&.,\-\s]{5,}", value):
+                continue
+        if key == "address_en" and (not re.search(r"[A-Za-z]", value) or re.search(r"[가-힣]", value)):
+            continue
+        out[key] = value
     return out
 
 
 @app.post("/auth/ocr-extract")
-def auth_ocr_extract(body: schemas.OCRExtractReq):
+def auth_ocr_extract(body: schemas.OCRExtractReq, request: Request):
     """회원가입 전 등록증 자동추출(공개) — 이미지·PDF 모두 수용.
 
     예전에는 무엇이 오든 .png 로 저장해 OCR을 돌렸다. 화면은 PDF도 받는데
@@ -1776,6 +1811,8 @@ def auth_ocr_extract(body: schemas.OCRExtractReq):
     화면에는 그게 'OCR 엔진 미설치'로 표시돼 원인을 감췄다(실측: 사업자등록증 PDF).
     이제 intake.parse_file 에 맡긴다 — PDF는 본문 텍스트로, 스캔본·이미지는 OCR로 읽는다."""
     import base64
+    import json
+    wanted = ("company_name", "nib", "responsible_person", "address", "company_name_en")
     # 공개 엔드포인트 — 크기 상한 강제(DoS 방지). 포맷은 파서가 가린다.
     raw = base64.b64decode(_validate_upload(body.image_b64, None))
     from .intake import parse_file
@@ -1783,12 +1820,38 @@ def auth_ocr_extract(body: schemas.OCRExtractReq):
     try:
         text = parse_file(name, raw) or ""
     except Exception as e:  # noqa: BLE001
-        return {"ocr_available": False, "fields": {},
+        return {"ocr_available": False, "fields": {}, "missing": list(wanted), "filled": [],
                 "error": "%s: %s" % (type(e).__name__, str(e)[:160])}
     if not text.strip():
-        return {"ocr_available": False, "fields": {},
+        return {"ocr_available": False, "fields": {}, "missing": list(wanted), "filled": [],
                 "error": "문서에서 읽어낼 글자가 없습니다 (빈 파일이거나 해상도가 너무 낮습니다)"}
-    return {"ocr_available": True, "fields": _parse_biz_doc(text),
+    fields = _parse_biz_doc(text)
+    missing = [k for k in wanted if k != "nib" and not fields.get(k)]
+    # 공개 엔드포인트라 AI 보충 호출은 IP당 분당 제한을 공유한다(비용·남용 방지). 초과면 규칙 결과만 준다.
+    _ip = _extract_real_ip(request)
+    _llm_ok = not auth.check_username_rate_limited(_ip)
+    if missing and _llm_ok:
+        auth.record_username_check(_ip)
+    if missing and _llm_ok and ai_local.provider() != "none":
+        system = ("사업자등록증 원문에서 요청한 필드만 JSON으로 추출하세요. "
+                  "원문에 없는 값은 null로 두세요. 안내문은 값이 아닙니다. "
+                  "요청 필드: " + json.dumps({k: None for k in missing}, ensure_ascii=False))
+        extra = ai_local.llm_json(system, text)
+        # 모델은 빈 항목만 보충하며, 원문에 실제 있는 문자열만 받아들인다.
+        norm_text = re.sub(r"\s+", "", text).casefold()
+        for key in missing:
+            value = extra.get(key) if isinstance(extra, dict) else None
+            if not isinstance(value, str):
+                continue
+            value = value.strip()
+            if len(value) < 2 or re.search(r"효력|실체적|증명합니다|임의기재|※|\[|\]", value):
+                continue
+            if key == "company_name_en" and not re.fullmatch(r"[A-Z0-9&.,\-\s]{5,}", value):
+                continue
+            if re.sub(r"\s+", "", value).casefold() in norm_text:
+                fields[key] = value
+    return {"ocr_available": True, "fields": fields,
+            "missing": [k for k in wanted if not fields.get(k)], "filled": list(fields),
             "source": "pdf_text" if name.endswith(".pdf") else "ocr",
             "raw": text[:1500]}
 
@@ -6294,6 +6357,92 @@ def autoparse_status(user=Depends(auth.get_current_user)):
             **{k: v for k, v in _autoparse_state.items()}}
 
 
+# ── 추출 결과 AI 검증 큐 ───────────────────────────────────────────────
+# 파싱 큐와 분리해 검증을 기다리는 동안 다른 문서의 추출이 밀리지 않게 한다.
+_DOC_VERIFY = os.environ.get("GLHAC_DOC_VERIFY", "1") == "1"
+_verify_q = None
+_verify_state = {"queued": 0, "done": 0, "failed": 0}
+_verify_inflight = set()   # 대기·처리 중인 문서 중복 투입 방지
+_verify_lock = threading.Lock()
+
+
+def _verify_doc(db, d, c):
+    """원문·추출값을 대조한 판정을 문서에 남긴다 — 업체 정보는 바꾸지 않는다."""
+    doc_id, doc_type, filename = d.document_id, d.doc_type, d.filename
+    text, fields, company = d.text_full or "", dict(d.fields or {}), c.company_name
+    # 읽기 트랜잭션을 끝내고 모델을 기다린다. 300자 발췌는 전문 대신 쓸 수 없다.
+    db.rollback()
+    res = intake.verify_extraction(doc_type, filename, text, fields, company)
+    # 검증 중 재추출·사람의 수정이 있었을 수 있으므로 최신 필드에 판정만 병합한다.
+    d = db.get(models.DocumentAsset, doc_id, populate_existing=True, with_for_update=True)
+    if d is None:
+        db.rollback()
+        return
+    fl = dict(d.fields or {})
+    fl["_verify"] = {**res, "at": datetime.utcnow().isoformat(timespec="seconds")}
+    d.fields = fl   # JSON 변경 감지를 위해 새 dict 를 대입한다
+    db.commit()
+
+
+def _verify_worker():
+    while True:
+        doc_id = _verify_q.get()
+        db = SessionLocal()
+        try:
+            d = db.get(models.DocumentAsset, doc_id)
+            if d is not None:
+                c = db.get(models.CaseApplication, d.case_id)
+                if c is not None:
+                    _verify_doc(db, d, c)
+                    _verify_state["done"] += 1
+        except Exception as e:  # noqa: BLE001
+            db.rollback()
+            _verify_state["failed"] += 1
+            log.warning("문서 AI 검증 실패 %s: %s", doc_id, e)
+        finally:
+            db.close()
+            with _verify_lock:
+                _verify_inflight.discard(doc_id)
+            _verify_q.task_done()
+
+
+def verify_enqueue(document_id) -> bool:
+    """검증은 비동기로 진행한다. 비활성·중복·큐 포화 시 False 를 반환한다."""
+    import queue
+    if not _DOC_VERIFY or _verify_q is None:
+        return False
+    with _verify_lock:
+        if document_id in _verify_inflight:
+            return False
+        _verify_inflight.add(document_id)
+        try:
+            _verify_q.put_nowait(document_id)
+        except queue.Full:
+            _verify_inflight.discard(document_id)
+            log.warning("문서 AI 검증 큐 가득 참 — 문서 %s 재검증 필요", document_id)
+            return False
+        _verify_state["queued"] += 1
+    return True
+
+
+def _verify_start():
+    global _verify_q
+    import queue
+    with _verify_lock:
+        if not _DOC_VERIFY or _verify_q is not None:
+            return
+        _verify_q = queue.Queue(maxsize=500)
+        threading.Thread(target=_verify_worker, daemon=True).start()
+
+
+@app.get("/system/doc-verify")
+def doc_verify_status(user=Depends(auth.get_current_user)):
+    """AI 검증 큐 상태 — 대기·투입·완료·실패 건수를 확인한다."""
+    return {"enabled": _DOC_VERIFY,
+            "pending": _verify_q.qsize() if _verify_q else 0,
+            **{k: v for k, v in _verify_state.items()}}
+
+
 def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id="auto",
                    keep_doc_type=False):
     """문서 1건 재추출·재분류 — 사람이 누른 재처리와 자동 큐가 같은 코드를 쓴다.
@@ -6321,6 +6470,7 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
         fl["_llm_error"] = r["llm_error"]
     d.fields = fl
     d.text_excerpt = (text or "")[:300]
+    d.text_full = text or ""
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
     applied = (_apply_agg_to_case(db, c, aggregate_fields([{"doc_type": d.doc_type,
                                                             "fields": d.fields}]))
@@ -6334,9 +6484,11 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     if not db.query(models.DocumentAsset).filter(models.DocumentAsset.case_id == c.case_id,
                                                  models.DocumentAsset.confidence.is_(None)).count():
         _notify_package_gaps(db, c)
+    result = {"document_id": d.document_id, "doc_type": d.doc_type,
+              "confidence": d.confidence, "text_len": len(text or ""), "applied": applied}
     db.commit()
-    return {"document_id": d.document_id, "doc_type": d.doc_type,
-            "confidence": d.confidence, "text_len": len(text or ""), "applied": applied}
+    verify_enqueue(result["document_id"])   # 모든 재처리 경로는 저장이 끝난 뒤 한 번 검증한다
+    return result
 
 
 def _pending_extractions(db, case_id):
@@ -7023,6 +7175,21 @@ def reprocess_pending(case_id: str, user=Depends(auth.require_roles("consultant"
     return {"found": len(ids), "queued": queued, "autoparse": _AUTOPARSE}
 
 
+@app.post("/cases/{case_id}/documents/verify")
+def verify_documents(case_id: str, user=Depends(auth.require_roles("consultant", "operator", "auditor")),
+                     db: Session = Depends(get_db)):
+    """원본이 있는 케이스 서류를 모두 AI 검증 큐에 넣는다."""
+    c = _get_case(db, case_id, user)
+    _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
+    ids = [d.document_id for d in db.query(models.DocumentAsset).with_entities(
+        models.DocumentAsset.document_id).filter(
+            models.DocumentAsset.case_id == c.case_id, models.DocumentAsset.content_b64.isnot(None)).all()]
+    queued = sum(1 for i in ids if verify_enqueue(i))
+    _audit(db, user, "documents.verify", "case", c.case_id, c.case_id, {"queued": queued, "found": len(ids)})
+    db.commit()
+    return {"found": len(ids), "queued": queued}
+
+
 @app.patch("/cases/{case_id}/profile")
 def update_profile(case_id: str, body: schemas.CaseProfileReq,
                    user=Depends(auth.require_roles("applicant", "consultant")),
@@ -7244,7 +7411,7 @@ def autofill_profile(case_id: str, force: bool = False,
     docs = (db.query(models.DocumentAsset).filter_by(case_id=case_id)
             .filter(models.DocumentAsset.doc_type.in_(
                 ["nib_business_license", "factory_registration"])).all())
-    classified = []
+    classified, reprocessed = [], []
     for d in docs:
         fields = d.fields or {}
         # 구 추출본에 주소가 없으면 원본 재추출·재분류로 보강
@@ -7256,6 +7423,8 @@ def autofill_profile(case_id: str, force: bool = False,
                     fields = r["fields"]; d.fields = fields
                     d.doc_type = r.get("doc_type", d.doc_type)
                     d.text_excerpt = (text or "")[:300]
+                    d.text_full = text or ""
+                    reprocessed.append(d.document_id)
             except Exception:  # noqa: BLE001
                 pass
         classified.append({"fields": fields, "doc_type": d.doc_type})
@@ -7269,6 +7438,8 @@ def autofill_profile(case_id: str, force: bool = False,
     _audit(db, user, "profile.autofill", "case", case_id, case_id,
            {"applied": applied, "force": force})
     db.commit()
+    for document_id in reprocessed:
+        verify_enqueue(document_id)   # 신청기업 서류 보강도 커밋된 추출값을 검증한다
     return {"applied": applied,
             "extracted": {k: agg.get(k) for k in ("company_name", "nib", "address",
                                                   "responsible_person", "factory_reg_no")}}
@@ -7434,24 +7605,45 @@ def _normalize_phone(p):
 def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                   user=Depends(auth.require_roles("applicant", "consultant")),
                   db: Session = Depends(get_db)):
-    """개별 파일 업로드 → 칸(doc_type)에 맞게 파싱 → 해당 필드 자동채움."""
+    """개별 파일 업로드 → 문서 종류 교차검증 → 해당 필드 자동채움."""
     c = _get_case(db, case_id, user)
     raw = base64.b64decode(_validate_upload(body.file_b64, body.filename))   # 크기·타입 검증(§9.3)
-    from .intake import parse_typed
+    from .intake import parse_typed, parse_typed_text
     r = parse_typed(body.doc_type, body.filename, raw)
+    text = r.pop("text", "") or ""
+    det, why = intake.refine_doctype_reason(body.filename, None, text)
+    eff_type, mismatch = body.doc_type, None
+    if det not in (None, "other") and det != body.doc_type and det in intake.DOC_TYPES:
+        mismatch = {"selected": body.doc_type, "detected": det, "reason": why}
+        eff_type = det
+        r = parse_typed_text(det, body.filename, text)
+        text = r.pop("text", "") or ""
     f = r.get("fields") or {}
     applied = {}
-    if body.doc_type == "nib_business_license":
-        for k, col in (("company_name", "company_name"), ("nib", "nib"), ("address", "address")):
-            if f.get(k):
-                setattr(c, col, f[k])
-                applied[col] = f[k]
-    elif body.doc_type == "factory_registration":
+    if eff_type == "nib_business_license":
+        # 공급사 상호·주소가 신청 업체를 덮지 않게 사업자번호부터 대조한다.
+        nib = re.sub(r"\D", "", str(f.get("nib") or ""))
+        current_nib = re.sub(r"\D", "", str(c.nib or ""))
+        if not nib:
+            applied["skipped"] = "no_nib"
+        elif current_nib and current_nib != nib:
+            applied["skipped"] = "nib_conflict"
+        else:
+            for k, col in (("company_name", "company_name"), ("nib", "nib"), ("address", "address")):
+                if f.get(k):
+                    if not current_nib:
+                        if k == "company_name" and not _co_replaceable(db, c):
+                            continue
+                        if k == "address" and (c.address or "").strip():
+                            continue
+                    setattr(c, col, f[k])
+                    applied[col] = f[k]
+    elif eff_type == "factory_registration":
         for k in ("factory_reg_no", "factory_address"):
             if f.get(k):
                 setattr(c, k, f[k])
                 applied[k] = f[k]
-    elif body.doc_type in ("material_list", "product_label", "coa_msds", "quality_cert", "supplier_declaration"):  # ② 성분표(coa_msds)·품질/공급자선언도 원재료 스크리닝 연결
+    elif eff_type in ("material_list", "product_label", "coa_msds", "quality_cert", "supplier_declaration"):  # ② 성분표(coa_msds)·품질/공급자선언도 원재료 스크리닝 연결
         names = f.get("material_names") or f.get("ingredients") or []
         have = {m.name for m in db.query(models.Material).filter_by(case_id=case_id)}
         for mn in names:
@@ -7463,7 +7655,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
         applied["materials_added"] = len(names)
         # ③ 제품 자동등록 — 성분표(coa_msds)·제품라벨에 제품명이 있으면 제품도 생성한다.
         #    문서 업로드만으로 NO_PRODUCT(제품 미등록) 게이트가 풀리게 한다.
-        if body.doc_type in ("coa_msds", "product_label"):
+        if eff_type in ("coa_msds", "product_label"):
             pnames = f.get("product_names") or []
             have_p = {p.name for p in db.query(models.Product).filter_by(case_id=case_id)}
             addp = 0
@@ -7471,7 +7663,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                 if pn and pn not in have_p:
                     db.add(models.Product(case_id=case_id, name=pn)); addp += 1
             applied["products_added"] = addp
-    elif body.doc_type == "product_list":
+    elif eff_type == "product_list":
         names = f.get("product_names") or []
         have = {p.name for p in db.query(models.Product).filter_by(case_id=case_id)}
         for pn in names:
@@ -7480,25 +7672,27 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
         applied["products_added"] = len(names)
     from .intake import _ctype
     _b64 = _validate_upload(body.file_b64, body.filename)
-    db.add(models.DocumentAsset(case_id=case_id, filename=body.filename,
-                                filename_en=_fn_en(body.filename), doc_type=body.doc_type,
-                                confidence=float(r.get("confidence") or 0), fields=f,
-                                text_excerpt=r.get("excerpt"),
-                                content_b64=_b64 if len(_b64) < 4_000_000 else None,
-                                content_type=_ctype(body.filename)))
+    doc = models.DocumentAsset(case_id=case_id, filename=body.filename,
+                               filename_en=_fn_en(body.filename), doc_type=eff_type,
+                               confidence=float(r.get("confidence") or 0), fields=f,
+                               text_excerpt=r.get("excerpt"), text_full=text,
+                               content_b64=_b64 if len(_b64) < 4_000_000 else None,
+                               content_type=_ctype(body.filename))
+    db.add(doc)
     # ① 검수로그 — 파싱 추출 근거를 ai_extraction 에 기록(§7.2/§7.4). label_judgment 만이 아니라
     #    문서 필드추출도 검수/감사에 남긴다. reviewer_status=unreviewed 로 시작.
     if f:
-        _save_ai_extraction(db, case_id, "parse_file:" + body.doc_type, f,
+        _save_ai_extraction(db, case_id, "parse_file:" + eff_type, f,
                             confidence=r.get("confidence"),
                             evidence=(r.get("excerpt") or ""),
                             model_name="parse_typed", model_version="v3")
     sm.record_event(db, c, c.status, c.status, "documents.parse_file", "ai", user["uid"],
-                    {"doc_type": body.doc_type, "applied": applied})
+                    {"doc_type": eff_type, "applied": applied})
     _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
     db.commit()
-    return {"doc_type": body.doc_type, "extracted": f, "applied": applied,
-            "confidence": r.get("confidence", 0)}
+    verify_enqueue(doc.document_id)
+    return {"doc_type": eff_type, "extracted": f, "applied": applied,
+            "confidence": r.get("confidence", 0), "mismatch": mismatch}
 
 
 @app.get("/cases/{case_id}/documents")
@@ -7510,6 +7704,7 @@ def list_documents(case_id: str, lang: str = Query("ko"),
     return [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
              "doc_type_ko": DOC_KO.get(d.doc_type, d.doc_type),
              "confidence": d.confidence, "fields": d.fields, "excerpt": d.text_excerpt,
+             "verify": (d.fields or {}).get("_verify"),
              "review_status": d.review_status, "has_file": bool(d.content_b64),
              "created_at": d.created_at.isoformat() if d.created_at else None,
              "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source,
@@ -17206,7 +17401,8 @@ def _ops_latest_assignment(db, case_ids):
 
 
 def _is_demo_auditor(user):
-    return user.org_id == "org_demo" and user.username in (set(auth.DEFAULT_AUDITOR_PROFILES) | {"test"})
+    # 샘플은 시드 계정(auditor1~3)만 — 'test' 같은 이름으로 실제 계정을 숨기지 않는다(2026-11-11 운영: 오디터 2명 중 1명만 보임)
+    return user.org_id == "org_demo" and user.username in set(auth.DEFAULT_AUDITOR_PROFILES)
 
 
 def _ops_auditor_users(db, user):
@@ -19371,6 +19567,7 @@ def add_sjph_evidence(case_id: str, body: schemas.SjphEvidenceReq,
         c = db.get(models.CaseApplication, case_id)
         sm.record_event(db, c, c.status, c.status, "prep.item", user["role"], user["uid"], {"item_key": body.item_key, "status": "pending_review", "note": ""})
     db.commit()
+    autoparse_enqueue(doc.document_id, keep_doc_type=True)
     return {"item_key": body.item_key, "ok": True}
 
 

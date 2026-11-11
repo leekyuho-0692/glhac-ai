@@ -742,10 +742,10 @@ function entSignup(){
       </div></fieldset>
     <fieldset class="fieldset"><legend><span class="eyebrow">03</span>담당자 2 · 관리책임자</legend>
       <div class="grid-2">
-        <div class="field"><label for="m2-name">성명<span class="req">필수</span></label><input class="in" id="m2-name" required></div>
-        <div class="field"><label for="m2-title">직위<span class="req">필수</span></label><input class="in" id="m2-title" required placeholder="생산본부 부장"></div>
-        <div class="field"><label for="m2-phone">연락처<span class="req">필수</span></label><input class="in" id="m2-phone" type="tel" required></div>
-        <div class="field"><label for="m2-email">이메일<span class="req">필수</span></label><input class="in" id="m2-email" type="email" required></div>
+        <div class="field"><label for="m2-name">성명<span class="muted">선택</span></label><input class="in" id="m2-name"></div>
+        <div class="field"><label for="m2-title">직위<span class="muted">선택</span></label><input class="in" id="m2-title" placeholder="생산본부 부장"></div>
+        <div class="field"><label for="m2-phone">연락처<span class="muted">선택</span></label><input class="in" id="m2-phone" type="tel"></div>
+        <div class="field"><label for="m2-email">이메일<span class="muted">선택</span></label><input class="in" id="m2-email" type="email"></div>
       </div></fieldset>
     <fieldset class="fieldset"><legend><span class="eyebrow">04</span>계정 정보</legend>
       <div class="grid-3">
@@ -1117,11 +1117,15 @@ const App = {
       const r = await fetch(API_BASE+'/auth/ocr-extract', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({image_b64:b64, doc_type:'business_registration'})});
       if(!r.ok){ msg.textContent = r.status===413 ? '파일이 너무 큽니다. 용량을 줄여 다시 올려 주세요.' : '자동 판독에 실패했습니다. 직접 입력해 주세요.'; return; }
       const d = await r.json(); const fl = d.fields || {};
+      const map = [['es-name','company_name','기업명'],['es-biz','nib','사업자등록번호'],['es-ceo','responsible_person','대표자'],['es-addr','address','주소'],['es-name-en','company_name_en','기업명(영문)']];
+      map.forEach(([id,key])=>{ const el = $('#'+id); if(!el) return; el.value = fl[key] || ''; if(fl[key]) markAuto(el); else el.classList.remove('auto'); });
+      $('#es-name-en').placeholder = fl.company_name_en ? 'GANADA FOOD Co., Ltd.' : '영문 없음(직접 입력)';
       if(!d.ocr_available){ msg.textContent = '자동 판독에 실패했습니다. 직접 입력해 주세요.' + (d.error ? ' (' + d.error + ')' : ''); return; }
-      const map = [['es-name','company_name','기업명'],['es-biz','nib','사업자등록번호'],['es-ceo','responsible_person','대표자'],['es-addr','address','주소']];
-      const filled = [];
-      map.forEach(([id,key,label])=>{ const el = $('#'+id); const v = fl[key]; if(el && v){ el.value = v; markAuto(el); filled.push(label); } });
+      const labels = Object.fromEntries(map.map(([,key,label])=>[key,label]));
+      const filled = (d.filled || []).filter(k=>labels[k] && fl[k]).map(k=>labels[k]);
+      const missing = (d.missing || []).filter(k=>labels[k]).map(k=>labels[k]);
       msg.textContent = filled.length ? '✓ ' + filled.join(', ') + '을(를) 채웠습니다. 내용을 확인해 주세요.' : '문서에서 기업 정보를 찾지 못했습니다. 직접 입력해 주세요.';
+      if(missing.length) msg.textContent += ' 읽지 못한 항목: ' + missing.join(', ') + ' — 직접 입력해 주세요.';
     }catch(e){ msg.textContent = '서버에 연결할 수 없습니다. 직접 입력해 주세요.'; }
   },
 
@@ -1960,6 +1964,15 @@ const DOC_TYPES = [['nib_business_license','사업자등록증'],['factory_regis
   ['coa_msds','성분분석표(CoA/MSDS)'],['material_list','원료 목록'],['product_label','제품 라벨'],
   ['product_list','제품 목록'],['quality_cert','품질 인증서'],['supplier_declaration','공급자 선언서'],
   ['halal_certificate','할랄 인증서'],['consent','동의서']];
+function _docTypeForCase(cid){
+  // 마지막 선택은 같은 케이스에서만 유지한다.
+  if(S.docTypeCase!==cid){ S.docTypeCase=cid; S.docType=''; }
+  return S.docType || 'nib_business_license';
+}
+function _docVerifyBadge(d){
+  const v=d.verify||{}, labels={ok:'일치',warn:'확인 필요',fail:'불일치'};
+  return `<span class="badge ${v.verdict==='ok'?'strong':(['warn','fail'].includes(v.verdict)?'attn':'')}" title="${esc(v.summary||'')}">${labels[v.verdict]||'-'}</span>`;
+}
 async function loadEntDocs(cid){
   try{ const r=await apiFetch('/cases/'+cid+'/documents'); RS.entDocs[cid]=r.ok?await r.json():[]; }
   catch(e){ RS.entDocs[cid]=[]; }
@@ -1969,6 +1982,7 @@ VIEWS['ent-docs'] = () => {
   const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
   if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
   const cid=c.case_id, docs=(RS.entDocs||{})[cid];
+  const dt=_docTypeForCase(cid);
   if(!docs){ if(RS._entDocsLoading!==cid){ RS._entDocsLoading=cid; loadEntDocs(cid).then(()=>{RS._entDocsLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
   const q=(S.docQ||'').toLowerCase();
   const list=docs.filter(d=>!q||(d.filename||'').toLowerCase().includes(q)||(d.doc_type_ko||'').toLowerCase().includes(q)).slice().reverse();
@@ -1982,15 +1996,16 @@ VIEWS['ent-docs'] = () => {
   </section>
   <section class="panel"><div class="panel-head"><h2>서류 올리기</h2><span class="muted">업로드 시 종류에 맞게 자동 파싱·스크리닝됩니다</span></div>
     <div class="inline" style="flex-wrap:wrap">
-      <select class="in" id="doc-type" style="flex:1 1 200px">${DOC_TYPES.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
+      <select class="in" id="doc-type" style="flex:1 1 200px" onchange="S.docType=this.value;S.docTypeCase='${cid}'">${DOC_TYPES.map(([v,l])=>`<option value="${v}" ${dt===v?'selected':''}>${l}</option>`).join('')}</select>
       <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" style="flex:2 1 240px">
       ${canCall('POST','/cases/{}/parse-file')?`<button class="btn btn-primary" onclick="App.docUpload('${cid}')">업로드</button>`:'<span class="muted">서류 업로드는 신청기업·컨설턴트 계정만 할 수 있습니다.</span>'}
     </div>
   </section>
-  <section class="panel"><div class="panel-head"><h2>서류함</h2><input class="in" style="max-width:260px" placeholder="파일명·종류 검색" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
-    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th>등록</th><th></th></tr></thead><tbody>
+  <section class="panel"><div class="panel-head"><h2>서류함</h2>${canCall('POST','/cases/{}/documents/verify')?`<button class="btn btn-ghost" onclick="App.docVerify('${cid}')">AI 재검증</button>`:''}<input class="in" style="max-width:260px" placeholder="파일명·종류 검색" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
+    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th>AI 검증</th><th>등록</th><th></th></tr></thead><tbody>
     ${list.map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td>
       <td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
+      <td>${_docVerifyBadge(d)}</td>
       <td class="mono">${esc((d.created_at||'').slice(0,10))}</td>
       <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${jsq((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">보관된 서류가 없습니다. 위에서 올려 주세요.</p>'}
@@ -1998,7 +2013,8 @@ VIEWS['ent-docs'] = () => {
 };
 App.docSearch = function(v){ S.docQ=v; render(); };
 App.docUpload = function(cid){
-  const dt=($('#doc-type')||{}).value||'nib_business_license';
+  const dt=_docTypeForCase(cid);
+  S.docType=dt;   // 업로드 뒤 render() 가 돌아도 마지막으로 고른 칸을 유지한다
   const inp=$('#doc-file'); if(!inp||!inp.files||!inp.files[0]) return toast('파일을 선택해 주세요.');
   const f=inp.files[0]; toast('업로드 중…');
   const rd=new FileReader();
@@ -2007,9 +2023,24 @@ App.docUpload = function(cid){
     if(!r.ok){ const d=await r.json().catch(()=>({})); return toast('업로드 실패'+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
     const res=await r.json(); const ap=res.applied||{};
     delete RS.entDocs[cid]; await loadEntDocs(cid); await loadEnt(); render();
-    toast('서류를 올렸습니다.'+(ap.materials_added?(' 원재료 '+ap.materials_added+'건 연결'):'')+(ap.products_added?(' 제품 '+ap.products_added+'건'):''));
+    let msg='서류를 올렸습니다.'+(ap.materials_added?(' 원재료 '+ap.materials_added+'건 연결'):'')+(ap.products_added?(' 제품 '+ap.products_added+'건'):'');
+    if(res.mismatch){
+      const label=v=>(DOC_TYPES.find(([k])=>k===v)||[v,v])[1];
+      const selected=label(res.mismatch.selected), detected=label(res.mismatch.detected);
+      msg+=` 칸 확인: '${selected}'로 올렸지만 문서 내용은 '${detected}'라서 '${detected}'로 저장했습니다.`;
+    }
+    if(ap.skipped==='no_nib'||ap.skipped==='nib_conflict') msg+=' 업체 정보는 바꾸지 않았습니다(사업자번호 '+(ap.skipped==='no_nib'?'없음':'불일치')+').';
+    toast(msg);   // 토스트는 하나이므로 경고가 완료 알림에 가려지지 않게 함께 표시한다
   };
   rd.readAsDataURL(f);
+};
+App.docVerify = async function(cid){
+  try{ const r=await apiFetch('/cases/'+cid+'/documents/verify',{method:'POST'});
+    if(!r.ok) return toast(await apiErr(r, '검증을 시작하지 못했습니다.'));
+    const res=await r.json();
+    if(res.queued===0) return toast('검증할 서류가 없거나 검증 기능이 꺼져 있습니다.');
+    toast('검증을 시작했습니다('+res.queued+'건).');
+  }catch(e){ toast('검증을 시작하지 못했습니다.'); }
 };
 App.docDownload = async function(docId, name){
   try{ const r=await apiFetch('/documents/'+docId+'/file'); if(!r.ok) return toast(await apiErr(r, '파일을 열 수 없습니다.'));
@@ -2133,19 +2164,21 @@ App.consReqContract = async function(cid){
 
 /* ===== P4 슬라이스10: 컨설턴트 문서 관리(cons-docs) 실데이터 (담당 기업별 문서함) ===== */
 function _docVaultBody(cid, docs){
+  const dt=_docTypeForCase(cid);
   const q=(S.docQ||'').toLowerCase();
   const list=docs.filter(d=>!q||(d.filename||'').toLowerCase().includes(q)||(d.doc_type_ko||'').toLowerCase().includes(q)).slice().reverse();
   const RVW={approved:'승인', rejected:'반려', rework:'보완', pending:'검토 대기'};
   return `
   <section class="panel"><div class="panel-head"><h2>서류 올리기</h2><span class="muted">기업 대신 서류를 올릴 수 있습니다</span></div>
     <div class="inline" style="flex-wrap:wrap">
-      <select class="in" id="doc-type" style="flex:1 1 200px">${DOC_TYPES.map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
+      <select class="in" id="doc-type" style="flex:1 1 200px" onchange="S.docType=this.value;S.docTypeCase='${cid}'">${DOC_TYPES.map(([v,l])=>`<option value="${v}" ${dt===v?'selected':''}>${l}</option>`).join('')}</select>
       <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" style="flex:2 1 240px">
       ${canCall('POST','/cases/{}/parse-file')?`<button class="btn btn-primary" onclick="App.docUpload('${cid}')">업로드</button>`:''}</div></section>
-  <section class="panel"><div class="panel-head"><h2>서류함 ${docs.length}건</h2><input class="in" style="max-width:240px" placeholder="파일명·종류 검색" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
-    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th>등록</th><th></th></tr></thead><tbody>
+  <section class="panel"><div class="panel-head"><h2>서류함 ${docs.length}건</h2>${canCall('POST','/cases/{}/documents/verify')?`<button class="btn btn-ghost" onclick="App.docVerify('${cid}')">AI 재검증</button>`:''}<input class="in" style="max-width:240px" placeholder="파일명·종류 검색" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
+    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th>AI 검증</th><th>등록</th><th></th></tr></thead><tbody>
     ${list.map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td>
       <td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
+      <td>${_docVerifyBadge(d)}</td>
       <td class="mono">${esc((d.created_at||'').slice(0,10))}</td>
       <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${jsq((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
     </tbody></table></div>`:'<p class="empty">보관된 서류가 없습니다.</p>'}</section>`;
@@ -2154,13 +2187,14 @@ VIEWS['cons-docs'] = () => {
   const list=RS.cases||[];
   if(!list.length) return `<section class="panel"><p class="empty">담당 기업이 없습니다.</p></section>`;
   let cur=(S.selDocCo&&list.find(c=>c.case_id===S.selDocCo))?S.selDocCo:list[0].case_id; S.selDocCo=cur;
+  _docTypeForCase(cur);
   const nav=`<nav class="mlist" aria-label="문서 대상 기업"><div class="mh">담당 기업 ${list.length}개사</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selDocCo('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
   const docs=(RS.entDocs||{})[cur]; let body;
   if(!docs){ if(RS._entDocsLoading!==cur){ RS._entDocsLoading=cur; loadEntDocs(cur).then(()=>{RS._entDocsLoading=null; render();}); } body='<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
   else body=`<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${_docVaultBody(cur,docs)}</div>`;
   return `<div class="md">${nav}${body}</div>`;
 };
-App.selDocCo = async function(id){ S.selDocCo=id; S.docQ=''; if(!(RS.entDocs||{})[id]) await loadEntDocs(id); render(); };
+App.selDocCo = async function(id){ S.selDocCo=id; S.docQ=''; _docTypeForCase(id); if(!(RS.entDocs||{})[id]) await loadEntDocs(id); render(); };
 
 
 /* ===== P4 슬라이스11: 기업↔컨설턴트 상담(ent-consultant) 실데이터 ===== */

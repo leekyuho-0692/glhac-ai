@@ -31,6 +31,7 @@ const SERVER_ROLES_FOR = {
   'DELETE /materials/{}':                        'material.delete',                              // main.py:4318
   'PATCH /materials/{}/rename':                  ['applicant','consultant'],                     // main.py:4377
   'POST /documents/{}/reprocess':                ['consultant','operator'],                      // main.py:5318
+  'POST /cases/{}/documents/verify':            ['consultant','operator','auditor'],            // 문서 AI 재검증
   'PATCH /documents/{}/reclassify':              ['applicant','consultant','operator'],          // main.py:5039
   'POST /cases/{}/pending-extractions/apply':    'material.add',                                 // main.py:5295
   'PATCH /documents/{}/review':                  'document.review',                              // main.py:6357
