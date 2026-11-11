@@ -25,7 +25,8 @@ async function AUDD_loadPend(cid){
 }
 
 function AUDD_docTable(cid, rows, mode){
-  if(!rows.length) return '<section class="panel"><p class="empty">제출 서류가 없습니다.</p></section>';
+  const problems = typeof PDN_panel === 'function' ? PDN_panel(cid) : '';
+  if(!rows.length) return problems + '<section class="panel"><p class="empty">제출 서류가 없습니다.</p></section>';
   const body = rows.map(d => {
     const kind = esc(d.doc_type_ko || d.doc_type || '');
     const st = AUDD_DOC_STATUS[d.review_status || 'pending'] || esc(d.review_status || '');
@@ -49,7 +50,7 @@ function AUDD_docTable(cid, rows, mode){
       <td>${kind}</td><td><span class="badge ${d.review_status==='approved'?'strong':d.review_status==='rejected'?'attn':''}">${st}</span></td>
       <td>${act}</td></tr>`;
   }).join('');
-  return `<div class="tbl-wrap"><table><thead><tr><th>파일</th><th>종류</th><th>검토 상태</th><th>동작</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  return problems + `<div class="tbl-wrap"><table><thead><tr><th>파일</th><th>종류</th><th>검토 상태</th><th>동작</th></tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
 function AUDD_aiqPanel(cid){

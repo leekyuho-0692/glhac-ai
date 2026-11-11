@@ -225,7 +225,10 @@ PROVIDERS = {"sms": _send_sms, "kakao": _send_kakao, "whatsapp": _send_whatsapp,
 
 
 def message_text(notification):
-    """채널로 나가는 본문 — 제목 + ': ' + 내용(메일 발송 기록도 이 값을 저장)."""
+    """채널로 나가는 본문 — 메일 발송 기록도 이 값을 저장한다."""
+    # 문제 서류 메일은 담당자 전달 사유가 본문 첫 줄에 오도록 한다(제목은 메일 Subject).
+    if getattr(notification, "event_type", None) == "problem.documents":
+        return notification.body or ""
     return (notification.title or "") + (": " + notification.body if notification.body else "")
 
 

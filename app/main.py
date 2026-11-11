@@ -372,6 +372,7 @@ def _notify_worker_loop(interval=30):
         try:
             db = SessionLocal()
             try:
+                queue_problem_document_notifications(db)
                 drain_notifications(db)
             finally:
                 db.close()
@@ -802,6 +803,82 @@ NOTIFY_MSG = {
         "en": ("Pre-assessment resubmitted", None),
         "id": ("Pra-penilaian dikirim ulang", None),
     },
+    "problem.documents": {
+        "ko": ("[{company}] 문제 서류 {count}건", None),
+        "en": ("[{company}] {count} document(s) need attention", None),
+        "id": ("[{company}] {count} dokumen perlu diperbaiki", None),
+    },
+    "problem.documents.informed": {
+        "ko": ("문제 서류 안내", "{company} — 업체에 문제 서류 {count}건 안내함."),
+        "en": ("Document issues reported", "{company} — the company was notified about {count} document(s) with issues."),
+        "id": ("Masalah dokumen diberitahukan", "{company} — perusahaan telah diberi tahu tentang {count} dokumen bermasalah."),
+    },
+}
+
+
+# 각 사유는 문제 / 영향 / 조치의 세 문장. 원문 필드명·검증 메모는 번역하지 않는다.
+PROBLEM_DOC_MSG = {
+    "OCR_FAILED": {
+        "ko": ("스캔 이미지를 글자로 읽지 못했습니다.", "흐리거나 기울어진 스캔, 손글씨는 판독이 어렵습니다.", "300dpi 이상으로 똑바로 스캔하거나 원본 PDF를 올려 주세요."),
+        "en": ("The scanned image could not be read as text.", "Blurred, tilted or handwritten scans are difficult to read.", "Upload a straight scan at 300 dpi or higher, or the original PDF."),
+        "id": ("Gambar hasil pindai tidak dapat dibaca sebagai teks.", "Pindaian buram, miring, atau tulisan tangan sulit dibaca.", "Unggah pindaian lurus minimal 300 dpi atau PDF asli."),
+    },
+    "ENCRYPTED": {
+        "ko": ("암호가 걸린 PDF입니다.", "시스템이 내용을 읽을 수 없어 심사에 쓸 수 없습니다.", "암호를 해제한 파일로 다시 올려 주세요."),
+        "en": ("The PDF is password protected.", "The system cannot read its contents for assessment.", "Remove the password and upload the file again."),
+        "id": ("PDF dilindungi kata sandi.", "Sistem tidak dapat membaca isinya untuk penilaian.", "Hapus kata sandi lalu unggah ulang berkas."),
+    },
+    "CORRUPT": {
+        "ko": ("파일이 손상되어 열 수 없습니다.", "내용을 확인할 수 없어 심사 근거로 쓸 수 없습니다.", "원본에서 새로 저장한 파일이 정상적으로 열리는지 확인하고 다시 올려 주세요."),
+        "en": ("The file is damaged and cannot be opened.", "Its contents cannot be checked as assessment evidence.", "Save a new copy from the original, check that it opens, and upload it again."),
+        "id": ("Berkas rusak dan tidak dapat dibuka.", "Isinya tidak dapat diperiksa sebagai bukti penilaian.", "Simpan salinan baru dari berkas asli, pastikan dapat dibuka, lalu unggah ulang."),
+    },
+    "EMPTY_TEXT": {
+        "ko": ("원본 파일은 있지만 읽어 낸 본문이 없습니다.", "문서 내용을 자동으로 확인할 수 없습니다.", "빈 문서인지 확인하고 글자가 선명한 원본이나 스캔을 다시 올려 주세요."),
+        "en": ("The original file is present, but no text was extracted.", "The document contents cannot be checked automatically.", "Check for blank pages and upload a clear original or scan again."),
+        "id": ("Berkas asli tersedia, tetapi tidak ada teks yang terbaca.", "Isi dokumen tidak dapat diperiksa secara otomatis.", "Periksa halaman kosong dan unggah ulang dokumen asli atau pindaian yang jelas."),
+    },
+    "LOW_CONFIDENCE": {
+        "ko": ("문서 판독 결과의 신뢰도가 낮습니다.", "서류 종류나 추출한 값을 정확히 판단하기 어렵습니다.", "서류 종류를 확인하고 선명한 원본을 다시 올리거나 담당자에게 확인을 요청해 주세요."),
+        "en": ("The document reading has low confidence.", "The document type or extracted values may be unreliable.", "Check the document type and upload a clear original, or ask the reviewer to check it."),
+        "id": ("Tingkat keyakinan pembacaan dokumen rendah.", "Jenis dokumen atau nilai yang diambil mungkin tidak akurat.", "Periksa jenis dokumen dan unggah dokumen asli yang jelas, atau minta petugas memeriksanya."),
+    },
+    "TRUNCATED": {
+        "ko": ("문서가 길어 앞 {limits}까지만 읽었습니다.", "뒤쪽 내용은 자동 분석에서 빠졌습니다.", "필요한 부분만 나눠서 올려 주세요."),
+        "en": ("The long document was read only up to {limits}.", "The remaining contents were omitted from automatic analysis.", "Split the required sections into smaller files and upload them."),
+        "id": ("Dokumen panjang hanya dibaca sampai {limits}.", "Bagian selanjutnya tidak tercakup dalam analisis otomatis.", "Pisahkan bagian yang diperlukan menjadi berkas lebih kecil lalu unggah."),
+    },
+    "VERIFY_FAILED": {
+        "ko": ("자동 추출한 값이 원문과 맞지 않습니다({fields}).", "잘못된 값이 신청서에 들어갈 수 있습니다.", "서류가 맞는지 확인하고 다시 올리거나 담당자에게 알려 주세요."),
+        "en": ("Automatically extracted values do not match the source ({fields}).", "Incorrect values could enter the application.", "Check the document and upload it again, or inform the reviewer."),
+        "id": ("Nilai yang diambil otomatis tidak sesuai dengan sumber ({fields}).", "Nilai yang salah dapat masuk ke permohonan.", "Periksa dokumen dan unggah ulang atau beri tahu petugas."),
+    },
+    "OWNERSHIP_MISMATCH": {
+        "ko": ("서류의 업체명이나 사업자번호 등 소유권 정보에 확인이 필요합니다({fields}).", "다른 업체나 공장의 정보가 신청서에 반영될 수 있습니다.", "신청 업체의 서류인지 확인하고 올바른 파일을 올리거나 소유 관계를 담당자에게 설명해 주세요."),
+        "en": ("Document ownership details, such as the company name or registration number, need checking ({fields}).", "Information from another company or factory could enter the application.", "Check that the document belongs to the applicant, upload the correct file, or explain the ownership to the reviewer."),
+        "id": ("Informasi kepemilikan dokumen, seperti nama perusahaan atau nomor registrasi, perlu diperiksa ({fields}).", "Informasi perusahaan atau pabrik lain dapat masuk ke permohonan.", "Pastikan dokumen milik pemohon, unggah berkas yang benar, atau jelaskan kepemilikannya kepada petugas."),
+    },
+    "AI_ERROR": {
+        "ko": ("문서 자동 분석 중 오류가 발생했습니다.", "신청에 필요한 정보가 모두 추출되었다고 볼 수 없습니다.", "담당자에게 재분석을 요청하거나 필요한 정보를 직접 확인해 주세요."),
+        "en": ("An error occurred during automatic document analysis.", "The required application information may not have been fully extracted.", "Ask the reviewer to retry the analysis or check the required information manually."),
+        "id": ("Terjadi kesalahan saat analisis dokumen otomatis.", "Informasi yang diperlukan untuk permohonan mungkin belum diambil seluruhnya.", "Minta petugas mengulangi analisis atau periksa informasi yang diperlukan secara manual."),
+    },
+    "PORK_DNA_UNCLEAR": {
+        "ko": ("이 문서의 돼지 DNA 검사 결과는 추가 확인이 필요합니다.", "현재 결과만으로는 돼지 유래 성분의 검출 여부를 확정할 수 없습니다.", "검출 여부와 시험법이 명확한 성적서를 올리거나 시험기관에 확인해 주세요."),
+        "en": ("The pork DNA test result in this document needs further review.", "The current result cannot conclusively establish whether pork material was detected.", "Upload a report stating the detection result and test method clearly, or consult the laboratory."),
+        "id": ("Hasil uji DNA babi dalam dokumen ini perlu ditinjau lebih lanjut.", "Hasil saat ini belum dapat memastikan apakah bahan asal babi terdeteksi.", "Unggah laporan yang menjelaskan hasil deteksi dan metode uji, atau konfirmasikan kepada laboratorium."),
+    },
+}
+PROBLEM_DOC_COPY = {
+    "ko": {"fallback": "업체 연락 메일이 없어 담당자에게 보냅니다 — 업체에 보완을 요청해 주세요.",
+           "uploaded": "올린 시각", "link": "케이스 {case_id}의 서류함에서 문제를 확인하고 보완한 파일을 다시 올려 주세요: {url}",
+           "pages": "쪽", "chars": "자", "chunks": "개 구간", "unknown": "확인 필요"},
+    "en": {"fallback": "Sent to the reviewer because company contact email is unavailable — please request corrections from the company.",
+           "uploaded": "Uploaded at", "link": "Check the issues and upload corrected files in the document vault for case {case_id}: {url}",
+           "pages": " pages", "chars": " characters", "chunks": " chunks", "unknown": "needs checking"},
+    "id": {"fallback": "Dikirim kepada petugas karena email kontak perusahaan tidak tersedia — mohon minta perusahaan melengkapi dokumen.",
+           "uploaded": "Waktu unggah", "link": "Periksa masalah dan unggah berkas yang diperbaiki di penyimpanan dokumen kasus {case_id}: {url}",
+           "pages": " halaman", "chars": " karakter", "chunks": " bagian", "unknown": "perlu diperiksa"},
 }
 
 
@@ -821,7 +898,9 @@ def notify_text(n, lang="ko"):
     except (KeyError, IndexError, ValueError):
         title = n.title
     body = n.body
-    if tmpl[1]:
+    if (pl or {}).get("key") == "problem.documents":
+        body = _problem_documents_body(params, lang)
+    elif tmpl[1]:
         try:
             body = tmpl[1].format(**params)
         except (KeyError, IndexError, ValueError):
@@ -859,9 +938,7 @@ def _notify(db, case, event_type, title=None, body="", channels=None, role=None,
 
 
 # ── 인증 패키지 점검 — 업체·제품·성분(원재료)·공장은 한 묶음이다. 하나라도 빠지면 심사가 성립하지 않는다.
-# 서류를 올릴 때마다 점검해, 서류에서 찾지 못한 항목이나 판독 불가 서류(손글씨 등)가 있으면
-# 배정 오디터(없으면 운영자)에게 통보한다. 실측: 아미라 밀크는 손글씨 기록물 등 9건이 신뢰도 0 이었는데
-# 아무에게도 통보되지 않았다(2026-09-23).
+# 누락 항목은 패키지 갭으로, 파일의 판독·검증 문제는 problem.documents로 모아서 통보한다.
 PKG_UNREADABLE_CONF = 0.5
 PKG_GAP_EVENT = "package.gap.notified"
 _PKG_LABEL = {"company": "업체 정보", "product": "제품", "material": "성분(원재료)", "factory": "공장",
@@ -940,38 +1017,255 @@ def _assigned_auditor_id(db, case_id):
 
 
 def _notify_package_gaps(db, c, force=False):
-    """빠진 항목·판독 불가 서류가 있으면 통보. 같은 내용은 반복 통보하지 않는다(force: 새 담당자)."""
+    """빠진 항목·미판독 대기만 통보. 판독 실패는 문제 서류 통보로 일원화한다."""
     chk = _package_check(db, c)
-    if chk["complete"]:
+    unreadable_ids = {u["document_id"] for u in chk["unreadable"]}
+    unprocessed = [u for u in chk["unprocessed"] if u["document_id"] not in unreadable_ids and not u.get("error")]
+    if not chk["gaps"] and not unprocessed:
         return chk
     # 미판독은 건수가 아니라 '있음' 만 지문에 넣는다 — 재처리가 한 건씩 끝날 때마다 재통보하지 않게
-    fp = ("|".join(sorted(chk["gaps"])) + "#" + ",".join(sorted(u["document_id"] for u in chk["unreadable"]))
-          + ("#U" if chk["unprocessed"] else ""))
+    fp = "|".join(sorted(chk["gaps"])) + ("#U" if unprocessed else "")
     auditor = _assigned_auditor_id(db, c.case_id)
     last = (db.query(models.WorkflowEvent).filter_by(case_id=c.case_id, action=PKG_GAP_EVENT)
             .order_by(models.WorkflowEvent.created_at.desc()).first())
     if not force and last and (last.payload or {}).get("fp") == fp and (last.payload or {}).get("auditor_id") == auditor:
         return chk
     parts = ["%s 누락" % _PKG_LABEL.get(g, g) for g in chk["gaps"]]
-    if chk["unreadable"]:
-        parts.append("판독 실패 서류 %d건(손글씨·저품질 등)" % len(chk["unreadable"]))
-    if chk["unprocessed"]:
-        parts.append("미판독 서류 %d건(판독 전 — 재처리 필요)" % len(chk["unprocessed"]))
-    names = ", ".join(u["filename"] for u in chk["unreadable"][:5])
+    if unprocessed:
+        parts.append("미판독 서류 %d건(판독 전 — 재처리 필요)" % len(unprocessed))
     title = "[%s] 인증 패키지 확인 필요 — %s" % (c.company_name or c.case_id[:8], " · ".join(parts))
     body = ("업체·제품·성분·공장은 한 묶음입니다. 올라온 서류에서 찾지 못했거나 판독되지 않은 항목이 있어 "
-            "수기 확인·입력이 필요합니다." + (" 판독 실패: " + names if names else ""))
+            "수기 확인·입력이 필요합니다.")
     role = "auditor" if auditor else "operator"
     n = _notify(db, c, "package.gap", title=title, body=body, role=role)
-    n.payload = {"gaps": chk["gaps"], "unreadable": [u["document_id"] for u in chk["unreadable"]],
-                 "unprocessed": len(chk["unprocessed"]), "auditor_id": auditor}
+    n.payload = {"gaps": chk["gaps"], "unprocessed": len(unprocessed), "auditor_id": auditor}
     # 업체·담당 컨설턴트도 무엇이 빠졌는지 알아야 채운다
     _notify(db, c, "package.gap", title=title, body=body, role="consultant")
     _notify(db, c, "package.gap", title=title, body=body, role="applicant")
     sm.record_event(db, c, c.status, c.status, PKG_GAP_EVENT, "system", None,
-                    {"fp": fp, "auditor_id": auditor, "gaps": chk["gaps"], "unreadable": len(chk["unreadable"]),
-                     "unprocessed": len(chk["unprocessed"])})
+                    {"fp": fp, "auditor_id": auditor, "gaps": chk["gaps"],
+                     "unprocessed": len(unprocessed)})
     return chk
+
+
+PROBLEM_DOC_EVENT = "problem.documents.notified"
+PROBLEM_DOC_STATE_EVENT = "problem.documents.observed"
+_problem_doc_notify_lock = threading.Lock()
+
+
+def _problem_document_reasons(document, measurements=()):
+    """순수 판정: 저장된 문서·출처 측정값 → 사유 목록. DB/LLM/시간 조회나 입력 변경 없음."""
+    fields = document.fields or {}
+    reasons = []
+    error = fields.get("_ocr_error")
+    primary = {"TIMEOUT": "OCR_FAILED", "ERROR": "OCR_FAILED",
+               "ENCRYPTED": "ENCRYPTED", "CORRUPT": "CORRUPT"}.get(error)
+    text = document.text_full if document.text_full is not None else document.text_excerpt
+    if not primary and document.content_b64 and not (text or "").strip():
+        primary = "EMPTY_TEXT"
+    if not primary and document.confidence is not None and document.confidence < PKG_UNREADABLE_CONF:
+        primary = "LOW_CONFIDENCE"
+    if primary:
+        reasons.append({"code": primary, "params": {}})
+    if "_truncated" in fields:
+        markers = fields.get("_truncations") or [fields["_truncated"]]
+        reasons.append({"code": "TRUNCATED", "params": {"limits": [dict(x) for x in markers if isinstance(x, dict)]}})
+    verify = fields.get("_verify") or {}
+    issues = [x for x in (verify.get("field_issues") or []) if isinstance(x, dict)]
+    if verify.get("verdict") == "fail":
+        details = ["%s: %s" % (x.get("field") or "?", x.get("issue") or x.get("code") or "?") for x in issues]
+        reasons.append({"code": "VERIFY_FAILED", "params": {"fields": "; ".join(details) or verify.get("summary") or "?"}})
+    ownership = ["%s: %s" % (x.get("field") or "company_name", x.get("issue") or x["code"])
+                 for x in issues if x.get("code") == "company_name_mismatch"]
+    # H1~H3 실제 저장 키. 사람 확인으로 해결한 conflicts는 재요청하지 않는다.
+    ownership += ["%s: %s" % (x.get("field") or "?", x["reason"])
+                  for x in ((fields.get("_autofill") or {}).get("conflicts") or [])
+                  if isinstance(x, dict) and x.get("status", "pending") == "pending" and
+                  x.get("reason") in ("nib_conflict", "company_conflict", "ownership_unconfirmed", "factory_conflict")]
+    if ownership:
+        reasons.append({"code": "OWNERSHIP_MISMATCH", "params": {"fields": "; ".join(ownership)}})
+    if "_llm_error" in fields:
+        reasons.append({"code": "AI_ERROR", "params": {}})
+    if any(x.document_id == document.document_id and x.verdict == "review" for x in measurements):
+        reasons.append({"code": "PORK_DNA_UNCLEAR", "params": {}})
+    return reasons
+
+
+def _problem_document_explanation(reason, lang="ko"):
+    lang = lang if lang in PROBLEM_DOC_COPY else "ko"
+    copy = PROBLEM_DOC_COPY[lang]
+    params = dict(reason.get("params") or {})
+    if reason["code"] == "TRUNCATED":
+        params["limits"] = ", ".join(str(x.get("limit", "?")) + copy.get(x.get("kind"), "")
+                                    for x in params.get("limits", [])) or copy["unknown"]
+    return " ".join(s.format(**params) for s in PROBLEM_DOC_MSG[reason["code"]][lang])
+
+
+def _problem_documents_body(params, lang):
+    copy = PROBLEM_DOC_COPY[lang]
+    lines = [copy["fallback"]] if params.get("fallback") else []
+    lines.append(NOTIFY_MSG["problem.documents"][lang][0].format(**params))
+    for d in params.get("documents", []):
+        lines.append("\n%s — %s: %s" % (d["filename"], copy["uploaded"], d["uploaded_at"]))
+        lines.extend("- " + _problem_document_explanation(r, lang) for r in d["reasons"])
+    lines.append("\n" + copy["link"].format(**params))
+    return "\n".join(lines)
+
+
+def _problem_documents_now():
+    return datetime.utcnow()
+
+
+def _problem_documents_latest(db, case_id, action):
+    return (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action=action)
+            .order_by(models.WorkflowEvent.created_at.desc(), models.WorkflowEvent.event_id.desc()).first())
+
+
+def _problem_documents_rows(db, c):
+    docs = (db.query(models.DocumentAsset).filter_by(case_id=c.case_id)
+            .order_by(models.DocumentAsset.created_at, models.DocumentAsset.document_id).all())
+    measurements = db.query(models.MaterialMeasurement).filter_by(case_id=c.case_id, verdict="review").all()
+    rows = []
+    for d in docs:
+        reasons = _problem_document_reasons(d, measurements)
+        if reasons:
+            rows.append({"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
+                         "uploaded_at": d.created_at.isoformat() + "Z" if d.created_at else "-", "reasons": reasons})
+    return docs, rows
+
+
+def _problem_documents_busy(docs):
+    ids = {d.document_id for d in docs}
+    # inflight는 큐 대기와 실행 중을 모두 포함한다(큐 qsize만 보면 실행 중 문서를 놓친다).
+    with _autoparse_lock:
+        parsing = bool(ids & _autoparse_inflight)
+    with _verify_lock:
+        verifying = bool(ids & _verify_inflight)
+    return parsing or verifying
+
+
+def _problem_documents_language(db, c, role):
+    if role == "applicant":
+        profiles = [c.profile_ext or {}]
+        org_id = c.org_id
+    else:
+        staff = _notify_staff_user(db, models.Notification(case_id=c.case_id, role=role))
+        profiles, org_id = [], staff.org_id if staff else None
+    org = db.get(models.Org, org_id) if org_id else None
+    if org:
+        profiles += [org.profile_ext or {}, (_tenant(org).get("branding") or {})]
+    for profile in profiles:
+        for key in ("lang", "language", "locale"):
+            lang = str(profile.get(key) or "").lower().replace("_", "-").split("-")[0]
+            if lang in PROBLEM_DOC_COPY:
+                return lang
+    return "ko"   # notify_text의 기본 언어
+
+
+def _problem_documents_recipient(db, c):
+    auditor = _assigned_auditor_id(db, c.case_id)
+    role = "applicant" if (c.email or "").strip() and c.notify_consent else ("auditor" if auditor else "operator")
+    return role, auditor
+
+
+def _problem_documents_result(db, c, lang="ko"):
+    _, rows = _problem_documents_rows(db, c)
+    for row in rows:
+        row["reasons"] = [{**r, "explanation": _problem_document_explanation(r, lang)} for r in row["reasons"]]
+    last = _problem_documents_latest(db, c.case_id, PROBLEM_DOC_EVENT)
+    return {"case_id": c.case_id, "count": len(rows), "documents": rows,
+            "closed": c.status in sm.TERMINAL_STATES,
+            "last_notified_at": (last.payload or {}).get("notified_at") if last else None,
+            "last_recipient_type": (last.payload or {}).get("recipient_type") if last else None,
+            "recipient_type": _problem_documents_recipient(db, c)[0]}
+
+
+def _notify_problem_documents(db, c, force=False, actor=None):
+    """한 트랜잭션으로 큐·지문 저장. 수동 재안내는 중복/지연만 우회하며 처리 중에는 보내지 않는다."""
+    with _problem_doc_notify_lock:
+        try:
+            # 다중 요청도 같은 케이스의 마지막 지문을 읽고 기록하도록 기존 감사체인 DB 락 재사용.
+            from .db import lock_chain_tail
+            lock_chain_tail(db, "wf:" + c.case_id)
+            db.refresh(c)
+            result = _queue_problem_documents(db, c, force, actor)
+            db.commit()
+            return result
+        except Exception:
+            db.rollback()
+            raise
+
+
+def _queue_problem_documents(db, c, force, actor):
+    if c.status in sm.TERMINAL_STATES:
+        return {"notified": False, "reason": "closed"}
+    docs, rows = _problem_documents_rows(db, c)
+    if not rows:
+        return {"notified": False, "reason": "no_problems"}
+    import hashlib
+    import json
+    digest = lambda value: hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+    fp = digest([c.case_id, sorted((d["document_id"], sorted(r["code"] for r in d["reasons"])) for d in rows)])
+    busy = _problem_documents_busy(docs)
+    now = _problem_documents_now()
+    # 정상 서류의 새 업로드도 조용한 기간을 다시 시작한다. 검증 결과/본문 변경도 반영한다.
+    reprocessed = _problem_documents_latest(db, c.case_id, "documents.reprocess")
+    state = digest([busy, reprocessed.event_id if reprocessed else None,
+                   [(d.document_id, d.created_at, d.doc_type, d.confidence, d.fields,
+                            len(d.text_full or d.text_excerpt or "")) for d in docs], rows])
+    observed = _problem_documents_latest(db, c.case_id, PROBLEM_DOC_STATE_EVENT)
+    if not observed or (observed.payload or {}).get("state") != state:
+        observed = sm.record_event(db, c, c.status, c.status, PROBLEM_DOC_STATE_EVENT, "system", None,
+                                   {"state": state, "ready_since": now.isoformat(), "busy": busy})
+    if busy:
+        return {"notified": False, "reason": "processing"}
+    delay = max(0, float(os.environ.get("GLHAC_PROBLEM_DOC_NOTIFY_DELAY_S", "300")))
+    ready_since = datetime.fromisoformat(observed.payload["ready_since"])
+    if not force and (now - ready_since).total_seconds() < delay:
+        return {"notified": False, "reason": "waiting"}
+    last = _problem_documents_latest(db, c.case_id, PROBLEM_DOC_EVENT)
+    if not force and last and (last.payload or {}).get("fp") == fp:
+        return {"notified": False, "reason": "unchanged"}
+    role, auditor = _problem_documents_recipient(db, c)
+    params = {"company": c.company_name or c.case_id, "case_id": c.case_id, "count": len(rows),
+              "documents": rows, "fallback": role != "applicant",
+              "url": os.environ.get("GLHAC_APP_URL", "https://glhac.co.kr").rstrip("/") + "/ui/v4/"}
+    n = _notify(db, c, "problem.documents", channels=["inapp", "email"], role=role,
+                msg=("problem.documents", params))
+    lang = _problem_documents_language(db, c, role)
+    n.title, n.body = notify_text(n, lang)
+    n.payload = {**n.payload, "auditor_id": auditor if role == "auditor" else None, "lang": lang}
+    if role == "applicant" and auditor:
+        staff_note = _notify(db, c, "problem.documents.informed", channels=["inapp"], role="auditor",
+                             msg=("problem.documents.informed", {"company": params["company"], "count": len(rows)}))
+        staff_note.payload = {**staff_note.payload, "auditor_id": auditor}
+    sm.record_event(db, c, c.status, c.status, PROBLEM_DOC_EVENT,
+                    (actor or {}).get("role", "system"), (actor or {}).get("uid"),
+                    {"fp": fp, "count": len(rows), "recipient_type": role, "auditor_id": auditor,
+                     "notified_at": now.isoformat() + "Z", "forced": force})
+    return {"notified": True, "reason": "queued"}
+
+
+def queue_problem_document_notifications(db):
+    """기존 알림 워커의 주기 작업. 업로드 요청에서는 메일을 만들지 않는다."""
+    cases = (db.query(models.CaseApplication).filter(~models.CaseApplication.status.in_(sm.TERMINAL_STATES))
+             .filter(models.CaseApplication.case_id.in_(db.query(models.DocumentAsset.case_id))).all())
+    return sum(_notify_problem_documents(db, c)["notified"] for c in cases)
+
+
+@app.get("/cases/{case_id}/problem-documents")
+def problem_documents(case_id: str, lang: str = Query("ko"), user=Depends(auth.get_current_user),
+                      db: Session = Depends(get_db)):
+    return _problem_documents_result(db, _get_case(db, case_id, user), lang)
+
+
+@app.post("/cases/{case_id}/problem-documents/notify")
+def notify_problem_documents(case_id: str, lang: str = Query("ko"),
+                             user=Depends(auth.require_roles("operator", "auditor", "consultant")),
+                             db: Session = Depends(get_db)):
+    c = _get_case(db, case_id, user)
+    result = _notify_problem_documents(db, c, force=True, actor=user)
+    return {**_problem_documents_result(db, c, lang), **result}
 
 
 _NOTIFY_NONRETRY = ("no_credentials", "no_contact", "not_implemented")
@@ -1056,6 +1350,12 @@ def drain_notifications(db, batch=50, max_attempts=3):
     stats = {"processed": 0, "sent": 0, "retried": 0, "failed": 0, "skipped": 0}
     for n in claimed:
         stats["processed"] += 1
+        if n.event_type == "problem.documents":
+            case = db.get(models.CaseApplication, n.case_id)
+            if case is None or case.status in sm.TERMINAL_STATES:
+                n.status, n.last_error = "skipped", "case_closed"
+                stats["skipped"] += 1
+                continue
         contacts, consent = _notification_contacts(db, n)
         # 수신동의 게이트 — 사용자 대상 채널(sms/whatsapp/email/kakao)은 동의 시에만.
         # inapp·webhook(시스템 연동)은 항상 발송.
