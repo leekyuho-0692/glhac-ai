@@ -1242,6 +1242,7 @@ def parse_typed_text(doc_type, filename, text):
         if mats:
             fields["material_names"] = mats
         return {"doc_type": "material_list", "fields": fields, "confidence": 0.95,
+                "field_sources": {"material_names": "structural", "product_names": "structural"},
                 "text_len": len(text), "excerpt": text[:300], "text": text}
     spec = _FIELD_SPEC.get(doc_type)
     if not spec:
@@ -1262,8 +1263,12 @@ def parse_typed_text(doc_type, filename, text):
         # 실패 응답({'error': ...})을 그대로 필드로 쓰면 error 라는 이름의 값이 저장되고
         # confidence 0.85 까지 붙는다 — 못 뽑았는데 잘 뽑은 것처럼 기록된다.
         fields = {} if fail or not isinstance(r, dict) else r
+    # 라벨의 ingredients도 확인 대기 목록에서 사용하는 원재료 키로 통일한다.
+    if fields.get("ingredients") and not fields.get("material_names"):
+        fields["material_names"] = fields["ingredients"]
     _enrich_address(fields)   # 도시/국가/우편 보정
     out = {"doc_type": doc_type, "fields": fields,
+           "field_sources": {k: "llm" for k in ("material_names", "product_names") if fields.get(k)},
            "confidence": 0.0 if fail else 0.85,
            "text_len": len(text), "excerpt": text[:300], "text": text}
     out.update(fail)
@@ -1273,16 +1278,16 @@ def parse_typed_text(doc_type, filename, text):
 _APPLICANT_DOCS = ("nib_business_license", "factory_registration")
 # 제품/원재료명을 신뢰할 카탈로그 문서 유형(기록·타목록의 오염 방지)
 # material_list(전성분표)도 시트명 기반 완제품 추출 대상이므로 포함
-_PRODUCT_SRC = {"product_list", "sjph_manual", "material_list"}
-_MATERIAL_SRC = {"material_list", "coa_msds", "product_label"}
+_PRODUCT_SRC = {"product_list", "sjph_manual", "material_list", "coa_msds", "product_label"}
+_MATERIAL_SRC = {"material_list", "coa_msds", "product_label", "quality_cert", "supplier_declaration"}
 
 
 def aggregate_fields(docs):
     """분류 문서들의 추출 필드를 신청서용으로 집계.
     회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외).
 
-    같은 서류 묶음이면 LLM 공급자(없음·로컬·원격)와 무관하게 같은 결과를 낸다.
-    구조 파서가 원재료·제품 목록을 낸 경우 그 필드는 결정적 값만 받는다."""
+    제품 목록 문서의 제품명과 구조 파서의 목록은 즉시 반영한다.
+    그 밖의 LLM 제품·원재료명은 원본 대조를 위해 확인 대기로 남긴다."""
     agg = {"company_name": None, "company_name_ko": None, "company_name_en": None,
            "nib": None, "address": None, "factory_address": None,
            "city": None, "province": None, "country": None, "zip": None,
@@ -1297,14 +1302,6 @@ def aggregate_fields(docs):
     _pk = set()   # 제품 중복 판정 키(대소문자 무시)
     _mk = set()   # 원재료 중복 판정 키
     _pend_pk, _pend_mk = set(), set()
-    # 결정적 목록이 있으면 그 필드는 LLM 을 받지 않는다(공급자 무관 재현성).
-    _struct_only = {"products": False, "materials": False}
-    for _d in docs:
-        _s = (_d.get("field_sources") or {})
-        if _s.get("product_names") == "structural":
-            _struct_only["products"] = True
-        if _s.get("material_names") == "structural":
-            _struct_only["materials"] = True
     for d in docs:
         f = d.get("fields") or {}
         applicant = d.get("doc_type") in _APPLICANT_DOCS or d.get("doc_type") is None
@@ -1361,23 +1358,17 @@ def aggregate_fields(docs):
                 agg["corporate_reg_no"] = f["corporate_reg_no"]
         # 제품/원재료명은 해당 카탈로그 문서에서만 수집(기록·타목록의 오염 방지).
         _dt = d.get("doc_type")
-        # 결정적(구조 파서) 목록이 하나라도 있으면 그 필드는 결정적 값만 받는다.
-        # LLM 목록은 공급자(없음·로컬·원격)마다 달라서, 섞으면 같은 서류로 배포마다
-        # 다른 원재료가 잡힌다 — 심사 결과가 배포에 따라 갈리면 안 된다.
-        # (실측: GPT 는 제품×원재료 매트릭스에서 원재료 21건을 뽑았고 로컬·없음은 0건이었다.)
         # 출처는 분류 결과(field_sources) 또는 문서에 저장된 fields._sources 에서 온다.
         _src = (d.get("field_sources") or (f.get("_sources") if isinstance(f, dict) else None) or {})
 
         def _take(key, bucket, seenset, srcset):
-            """구조 파서 값만 자동 반영. LLM 단독 값은 '확인 대기'로 돌린다.
-
-            LLM 출력은 공급자(없음·로컬·원격)마다, 같은 모델에서도 실행마다 다르다.
-            그대로 신청서에 넣으면 배포에 따라 심사 대상이 달라진다 — 사람이 한 번
-            보고 넣기로 했다(결정: 재현성 > 자동화 편의)."""
+            """구조 파서 값과 제품 목록 문서의 제품명은 즉시 반영하고 나머지는 확인한다."""
             vals = [v for v in (f.get(key) or []) if v and _norm_key(v)]
             if not vals:
                 return
-            if _src.get(key) == "structural":
+            if (_src.get(key) == "structural"
+                    or (_dt == "product_list" and key == "product_names"
+                        and _src.get(key) != "structural_reject")):
                 for v in vals:
                     if _norm_key(v) not in seenset:
                         seenset.add(_norm_key(v)); bucket.append(v)

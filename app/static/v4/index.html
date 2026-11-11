@@ -909,6 +909,7 @@ if(I18N.en) Object.assign(I18N.en,{'nav.ent-flow':'Certification Documents','nav
    ACTIONS
    ========================================================= */
 function render(){
+  if(S.entaBulk && typeof ENTA_bulkActive==='function') ENTA_bulkActive(S.entaBulk);
   document.documentElement.lang = S.lang;
   $('#app').innerHTML = S.role ? renderShell() : renderLogin();
   const log = $('#chat-log'); if(log) log.scrollTop = log.scrollHeight;
@@ -1029,7 +1030,7 @@ const App = {
     finally{ if(btn) btn.disabled=false; }
   },
   logout(){ if(AUTH.access){ fetch(API_BASE+'/auth/logout',{method:'POST',headers:{'Authorization':'Bearer '+AUTH.access}}).catch(()=>{}); } authClear(); S.role=null; S.userId=null; S.auth='login'; closeModal(); render(); window.scrollTo(0,0); toast('로그아웃되었습니다.'); },
-  async go(v){ S.view=v; if(S.role==='pen'){ if(typeof loadPen==='function') await loadPen(); } else if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } else if(S.role==='cons'){ await loadCons(); } else if(S.role==='sha'){ await loadSha(); } else if(S.role==='adm'){ await loadAdm(); } render(); window.scrollTo(0,0); },
+  async go(v){ S.view=v; if(S.entaBulk && typeof ENTA_bulkActive==='function') ENTA_bulkActive(S.entaBulk); if(S.role==='pen'){ if(typeof loadPen==='function') await loadPen(); } else if(S.role==='aud'){ await loadAud(); } else if(S.role==='ent'){ await loadEnt(); } else if(S.role==='cons'){ await loadCons(); } else if(S.role==='sha'){ await loadSha(); } else if(S.role==='adm'){ await loadAdm(); } render(); window.scrollTo(0,0); },
   terms(k){ openModal(TERMS[k].title, TERMS[k].body); },
 
   /* signup */
@@ -1039,16 +1040,38 @@ const App = {
     e.preventDefault();
     const val = id => { const el=$('#'+id); return el ? el.value.trim() : ''; };
     if(val('es-pw')!==val('es-pw2')) return toast('비밀번호가 일치하지 않습니다. 다시 입력해 주세요.');
+    if(!/^[0-9]{3}-[0-9]{2}-[0-9]{5}$/.test(val('es-biz'))) return toast('사업자등록번호는 000-00-00000 형식(숫자 10자리)으로 입력해 주세요.');
     const email = val('es-id').toLowerCase();
     const btn = e.target.querySelector('button[type=submit]'); if(btn) btn.disabled=true;
     try{
-      const body = { username: email, password: val('es-pw'), company_name: val('es-name'),
-                     responsible_person: val('es-ceo'), address: val('es-addr') };
+      const body = { username: email, password: val('es-pw') };
+      [['company_name','es-name'],['responsible_person','es-ceo'],['address','es-addr'],
+       ['nib','es-biz'],['company_name_en','es-name-en']].forEach(([key,id])=>{ if(val(id)) body[key]=val(id); });
+      // 분야 선택 화면의 기존 라벨↔코드 표를 그대로 사용한다.
+      const sector = typeof SC_SECTORS==='undefined' ? null : SC_SECTORS.find(([,label])=>label===val('es-cat'));
+      if(sector) body.sectors = [sector[0]];
+      const contacts = {};
+      [['pic','m1'],['cp','m2']].forEach(([key,prefix])=>{
+        const contact = {};
+        ['name','title','phone','email'].forEach(k=>{ if(val(prefix+'-'+k)) contact[k]=val(prefix+'-'+k); });
+        if(Object.keys(contact).length) contacts[key]=contact;
+      });
+      if(Object.keys(contacts).length) body.contacts=contacts;
       if(!S.urlRef && S.signupConsultant) body.consultant_id = S.signupConsultant.consultant_id;
       if(S.urlRef) body.invite_code = S.urlRef;   // 컨설턴트 초대(?ref=) 귀속
       const r = await fetch(API_BASE+'/auth/register', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
       if(r.status===409) return toast('이미 가입된 계정입니다. 로그인해 주세요.');
-      if(r.status===422) return toast(await apiErr(r, '입력값을 확인해 주세요.'));
+      if(r.status===422){
+        const d=await r.json().catch(()=>({}));
+        const fields={username:'대표 이메일(ID)',password:'비밀번호',nib:'사업자등록번호',company_name:'기업명(국문)',company_name_en:'기업명(영문)',
+          contacts:'담당자',pic:'담당자 1',cp:'담당자 2',name:'성명',title:'직위',phone:'연락처',email:'이메일',consultant_id:'담당 컨설턴트',invite_code:'초대 코드'};
+        const detail=d.detail||{}, issues=Array.isArray(detail)?detail:(detail.errors||[detail]);
+        const errors=issues.map(it=>{
+          const field=(it.loc||(it.field||'').split('.')).filter(k=>k&&k!=='body'&&k!=='contacts').map(k=>fields[k]||k).join(' · ');
+          return (field?field+': ':'')+(it.msg||it.message||'입력값을 확인해 주세요.');
+        });
+        return toast(errors.join('\n'));
+      }
       if(!r.ok) return toast(await apiErr(r, '가입 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.'));
       const d = await r.json();
       /* register 가 토큰을 반환 → 즉시 로그인 */
@@ -2022,8 +2045,11 @@ App.docUpload = function(cid){
     const r=await apiFetch('/cases/'+cid+'/parse-file',{method:'POST',body:JSON.stringify({doc_type:dt,filename:f.name,file_b64:b64})});
     if(!r.ok){ const d=await r.json().catch(()=>({})); return toast('업로드 실패'+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
     const res=await r.json(); const ap=res.applied||{};
-    delete RS.entDocs[cid]; await loadEntDocs(cid); await loadEnt(); render();
+    delete RS.entDocs[cid]; await loadEntDocs(cid); await loadEnt();
+    if(typeof PKG_load==='function') await PKG_load(cid);
+    render();
     let msg='서류를 올렸습니다.'+(ap.materials_added?(' 원재료 '+ap.materials_added+'건 연결'):'')+(ap.products_added?(' 제품 '+ap.products_added+'건'):'');
+    if(ap.materials_pending) msg+=' 원재료 '+ap.materials_pending+'건이 확인 대기에 있습니다(원재료 등록 창에서 확인).';
     if(res.mismatch){
       const label=v=>(DOC_TYPES.find(([k])=>k===v)||[v,v])[1];
       const selected=label(res.mismatch.selected), detected=label(res.mismatch.detected);

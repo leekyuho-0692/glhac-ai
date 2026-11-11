@@ -12,6 +12,7 @@ const SERVER_ROLES_FOR = {
   'POST /invoices/{}/refund/request':            ['operator'],                                   // main.py:13869
   'POST /cleanings/{}/sign':                     ['penyelia_halal'],                             // main.py:17761
   'POST /cases/{}/parse-file':                   ['applicant','consultant'],                     // main.py:6248
+  'POST /cases/{}/documents':                    ['applicant','consultant'],                     // 서버는 전체 로그인 허용, 일괄 업로드 화면은 업체·컨설턴트
   'POST /cases/{}/products':                     ['applicant','consultant'],                     // main.py:4272
   'DELETE /cases/{}/products/{}':                ['applicant','consultant','operator'],          // main.py:4775
   'POST /cases/{}/submit-application':           ['applicant','consultant'],                     // main.py:6173

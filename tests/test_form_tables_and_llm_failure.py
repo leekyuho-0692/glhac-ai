@@ -191,6 +191,10 @@ def test_pending_list_drops_values_already_in_the_case(monkeypatch):
     doc = _Doc({"material_names": ["설탕", "정제수"]})     # 구조 출처 표시 없음 → LLM 취급
 
     class _DB:
+        def get(self, model, case_id):
+            assert model is m.models.CaseApplication
+            return model(case_id=case_id, profile_ext={})
+
         def query(self, model):
             if model is m.models.DocumentAsset:
                 return _Q([doc])

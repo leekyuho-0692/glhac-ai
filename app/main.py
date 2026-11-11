@@ -1982,12 +1982,26 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     # 새 회사(관리자)만 초기 케이스 프리필(Rizky #1) — 기존 회사 직원은 기존 케이스 활용
     if not existing and (company_name or body.nib):
         _reg_scheme, _reg_scope = intake.sector_defaults(_reg_sectors[0]) if _reg_sectors else ("product", None)
+        # 가입 폼도 기존 업체 프로필과 같은 키를 쓴다. 선택 담당자의 빈 값은 남기지 않는다.
+        _profile = {"sector": _reg_sectors[0], "sectors": _reg_sectors} if _reg_sectors else {}
+        if (body.company_name_en or "").strip():
+            _profile["company_name_en"] = body.company_name_en.strip()
+        for prefix in ("pic", "cp"):
+            contact = getattr(body.contacts, prefix, None)
+            if contact is None:
+                continue
+            for key, value in contact.model_dump(exclude_none=True).items():
+                _profile[prefix + "_" + key] = value
         c = models.CaseApplication(org_id=org, company_name=company_name or "My Company",
                                    nib=body.nib, responsible_person=body.responsible_person,
                                    address=body.address, factory_address=body.factory_address,
                                    scheme=_reg_scheme, logistics_scope=_reg_scope,
-                                   profile_ext=(({"sector": _reg_sectors[0], "sectors": _reg_sectors}) if _reg_sectors else None),
+                                   profile_ext=_profile or None,
                                    is_msme=True)
+        if not c.email and _profile.get("pic_email"):
+            c.email = _profile["pic_email"]
+        if not c.phone and _profile.get("pic_phone"):
+            c.phone = _profile["pic_phone"]
         db.add(c)
         db.flush()
         sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id)
@@ -5415,6 +5429,12 @@ def add_material(case_id: str, body: schemas.MaterialCreate,
     _c0 = _get_case(db, case_id, user)
     _assert_case_open(_c0)   # 종결 케이스 쓰기 차단(R1-1)
     _assert_scope_open(_c0)   # 동결 후 원재료 변경 금지(감사 K5)
+    key = _norm_material(body.name)
+    dup = next((m for m in db.query(models.Material).with_entities(
+        models.Material.material_id, models.Material.name).filter_by(case_id=case_id)
+                if _norm_material(m.name) == key), None)
+    if dup:
+        raise HTTPException(409, {"code": "DUPLICATE_MATERIAL", "material_id": dup.material_id})
     sk = True if body.source_known is None else bool(body.source_known)
     r = screening.screen_merged(body.name, body.e_number, body.source, body.cert_no,
                                 bool(body.evidence_provided), sk, body.note or "")
@@ -5426,6 +5446,9 @@ def add_material(case_id: str, body: schemas.MaterialCreate,
                         source_known=sk, screen_result=r["result"], screen_status=r["status"],
                         screen_severity=r["severity"], matched_uid=r.get("matched_uid"))
     db.add(m)
+    db.flush()
+    _audit(db, user, "material.add", "material", m.material_id, case_id,
+           {"name": m.name, "supplier": m.supplier, "origin": m.origin}, commit=False)
     db.commit()
     return {"material_id": m.material_id, "screen": r}
 
@@ -6464,7 +6487,11 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     if d.doc_type in intake._FIELD_SPEC:
         typed = intake.parse_typed_text(d.doc_type, d.filename, text)
         if typed.get("fields"):
-            r = {**r, "fields": typed["fields"]}
+            # 구조 파서의 '목록 아님' 판정은 후속 LLM 추출로 풀리지 않는다.
+            sources = dict(typed.get("field_sources") or {})
+            sources.update({k: v for k, v in (r.get("field_sources") or {}).items()
+                            if v == "structural_reject"})
+            r = {**r, "fields": typed["fields"], "field_sources": sources}
         if typed.get("llm_error"):
             r["llm_error"] = typed["llm_error"]
     fl = dict(r.get("fields") or {})
@@ -6511,7 +6538,9 @@ def _pending_extractions(db, case_id):
 
     같은 값인지 판단은 반영 쪽(_apply_agg_to_case)과 같은 정규화(_norm_material)를 쓴다 —
     기준이 다르면 반영했는데도 안 사라지는 항목이 생긴다."""
-    from .intake import _MATERIAL_SRC, _PRODUCT_SRC, aggregate_fields
+    from .intake import aggregate_fields
+    c = db.get(models.CaseApplication, case_id)
+    handled = set((c.profile_ext or {}).get("pending_handled") or []) if c else set()
     docs = [{"doc_type": d.doc_type, "fields": d.fields or {},
              "document_id": d.document_id, "filename": d.filename}
             for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
@@ -6525,7 +6554,8 @@ def _pending_extractions(db, case_id):
     out = []
     for it in (agg.get("pending") or []):
         _have = have_p if it["kind"] == "product_names" else have_m
-        if _norm_material(it["value"]) in _have:
+        key = _norm_material(it["value"])
+        if key in _have or key in handled:
             continue
         src = next((x for x in docs
                     if it["value"] in ((x["fields"].get(it["kind"]) or []))), None)
@@ -6569,21 +6599,37 @@ def list_pending_extractions(case_id: str, user=Depends(auth.get_current_user),
 def apply_pending_extractions(case_id: str, body: dict = None,
                               user=Depends(rbac.require_action("material.add")),
                               db: Session = Depends(get_db)):
-    """확인한 항목만 케이스에 반영. body.values 미지정이면 전량 반영.
+    """확인한 항목을 등록·이름 수정·제외한다. 기존 values 생략/빈 목록의 전량 반영은 유지한다.
 
     누가 무엇을 넣었는지 남긴다 — AI 가 뽑은 값을 사람이 승인한 것이므로
     나중에 '이 원재료가 어디서 왔나'를 되짚을 수 있어야 한다."""
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)
+    _assert_scope_open(c)
     b = body or {}
-    want = set(b.get("values") or [])
+    values, renames, dismiss = b.get("values") or [], b.get("renames") or {}, b.get("dismiss") or []
+    if (not isinstance(values, list) or not all(isinstance(v, str) for v in values)
+            or not isinstance(dismiss, list) or not all(isinstance(v, str) for v in dismiss)
+            or not isinstance(renames, dict)
+            or not all(isinstance(v, str) and v.strip() and _norm_material(v) for v in renames.values())):
+        raise HTTPException(422, {"code": "INVALID_PENDING_SELECTION", "message": "values·renames·dismiss 입력을 확인해 주세요"})
+    want = set(values)
+    # 이름 수정·제외만 보낸 요청의 빈 values를 전량 등록으로 해석하지 않는다.
+    apply_all = not want and "renames" not in b and "dismiss" not in b
     items = [x for x in _pending_extractions(db, case_id)
-             if not want or x["value"] in want]
-    agg = {"products": [x["value"] for x in items if x["kind"] == "product_names"],
-           "materials": [x["value"] for x in items if x["kind"] == "material_names"]}
+             if apply_all or x["value"] in want or x["value"] in renames or x["value"] in dismiss]
+    agg = {bucket: [renames.get(x["value"], x["value"]).strip() for x in items
+                    if x["kind"] == kind and x["value"] not in dismiss]
+           for bucket, kind in (("products", "product_names"), ("materials", "material_names"))}
     applied = _apply_agg_to_case(db, c, agg)
+    pe = dict(c.profile_ext or {})
+    # 원래 추출값을 기억해야 이름을 고치거나 등록하지 않은 항목도 다시 나타나지 않는다.
+    pe["pending_handled"] = list(dict.fromkeys(
+        (pe.get("pending_handled") or []) + [_norm_material(x["value"]) for x in items]))[-2000:]
+    c.profile_ext = pe
     _audit(db, user, "extraction.apply", "case", case_id, case_id,
            {"products": agg["products"][:50], "materials": agg["materials"][:50],
-            "source": "llm_confirmed"}, commit=False)
+            "renames": renames, "dismiss": dismiss, "source": "llm_confirmed"}, commit=False)
     db.commit()
     return {"applied": applied, "count": len(items)}
 
@@ -7174,12 +7220,15 @@ def package_check_request(case_id: str, body: dict = None,
 @app.post("/cases/{case_id}/documents/reprocess-pending")
 def reprocess_pending(case_id: str, user=Depends(auth.require_roles("consultant", "operator", "auditor")),
                       db: Session = Depends(get_db)):
-    """판독 전(confidence 없음) 서류를 자동 파싱 큐에 넣는다 — 끝나면 패키지 점검이 한 번 돈다."""
+    """판독 전·AI 분석 실패 서류를 자동 파싱 큐에 넣는다 — 끝나면 패키지 점검이 한 번 돈다."""
     c = _get_case(db, case_id, user)
-    ids = [d.document_id for d in db.query(models.DocumentAsset).filter(
-        models.DocumentAsset.case_id == c.case_id, models.DocumentAsset.confidence.is_(None)).all()
-        if d.content_b64]
-    queued = sum(1 for i in ids if autoparse_enqueue(i))
+    ids = [d.document_id for d in db.query(models.DocumentAsset).with_entities(
+        models.DocumentAsset.document_id).filter(
+            models.DocumentAsset.case_id == c.case_id,
+            models.DocumentAsset.content_b64.isnot(None), models.DocumentAsset.content_b64 != "",
+            or_(models.DocumentAsset.confidence.is_(None),
+                models.DocumentAsset.fields["_llm_error"].as_string() != "")).all()]
+    queued = sum(1 for i in ids if autoparse_enqueue(i, keep_doc_type=True))
     _audit(db, user, "documents.reprocess_pending", "case", c.case_id, c.case_id, {"queued": queued, "found": len(ids)})
     db.commit()
     return {"found": len(ids), "queued": queued, "autoparse": _AUTOPARSE}
@@ -7617,6 +7666,8 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                   db: Session = Depends(get_db)):
     """개별 파일 업로드 → 문서 종류 교차검증 → 해당 필드 자동채움."""
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)
+    _assert_scope_open(c)
     raw = base64.b64decode(_validate_upload(body.file_b64, body.filename))   # 크기·타입 검증(§9.3)
     from .intake import parse_typed, parse_typed_text
     r = parse_typed(body.doc_type, body.filename, raw)
@@ -7628,7 +7679,13 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
         eff_type = det
         r = parse_typed_text(det, body.filename, text)
         text = r.pop("text", "") or ""
-    f = r.get("fields") or {}
+    f = dict(r.get("fields") or {})
+    # 재처리와 동일한 출처를 문서에 보관해야 LLM 목록이 확인 대기에 나타난다.
+    sources = r.get("field_sources") or {}
+    if sources:
+        f["_sources"] = sources
+    if r.get("llm_error"):
+        f["_llm_error"] = r["llm_error"]
     applied = {}
     if eff_type == "nib_business_license":
         # 공급사 상호·주소가 신청 업체를 덮지 않게 사업자번호부터 대조한다.
@@ -7653,33 +7710,15 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
             if f.get(k):
                 setattr(c, k, f[k])
                 applied[k] = f[k]
-    elif eff_type in ("material_list", "product_label", "coa_msds", "quality_cert", "supplier_declaration"):  # ② 성분표(coa_msds)·품질/공급자선언도 원재료 스크리닝 연결
-        names = f.get("material_names") or f.get("ingredients") or []
-        have = {m.name for m in db.query(models.Material).filter_by(case_id=case_id)}
-        for mn in names:
-            if mn and mn not in have:
-                sc = screening.screen_merged(mn, None, None, None, False, True, "")
-                db.add(models.Material(case_id=case_id, name=mn, screen_result=sc["result"],
-                                       screen_status=sc["status"], screen_severity=sc["severity"],
-                                       matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk")))
-        applied["materials_added"] = len(names)
-        # ③ 제품 자동등록 — 성분표(coa_msds)·제품라벨에 제품명이 있으면 제품도 생성한다.
-        #    문서 업로드만으로 NO_PRODUCT(제품 미등록) 게이트가 풀리게 한다.
-        if eff_type in ("coa_msds", "product_label"):
-            pnames = f.get("product_names") or []
-            have_p = {p.name for p in db.query(models.Product).filter_by(case_id=case_id)}
-            addp = 0
-            for pn in pnames:
-                if pn and pn not in have_p:
-                    db.add(models.Product(case_id=case_id, name=pn)); addp += 1
-            applied["products_added"] = addp
-    elif eff_type == "product_list":
-        names = f.get("product_names") or []
-        have = {p.name for p in db.query(models.Product).filter_by(case_id=case_id)}
-        for pn in names:
-            if pn and pn not in have:
-                db.add(models.Product(case_id=case_id, name=pn))
-        applied["products_added"] = len(names)
+    elif eff_type in intake._MATERIAL_SRC | intake._PRODUCT_SRC:
+        # 제품 목록 문서와 구조 파서 목록은 즉시 반영하고, 나머지는 확인 절차를 거친다.
+        agg = intake.aggregate_fields([{"doc_type": eff_type, "fields": f}])
+        added = _apply_agg_to_case(db, c, {"materials": agg["materials"], "products": agg["products"]})
+        for bucket, kind, allowed in (("materials", "material_names", intake._MATERIAL_SRC),
+                                      ("products", "product_names", intake._PRODUCT_SRC)):
+            if eff_type in allowed:
+                applied[bucket + "_added"] = added[bucket]
+                applied[bucket + "_pending"] = sum(x["kind"] == kind for x in agg["pending"])
     from .intake import _ctype
     _b64 = _validate_upload(body.file_b64, body.filename)
     doc = models.DocumentAsset(case_id=case_id, filename=body.filename,

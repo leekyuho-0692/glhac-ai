@@ -37,18 +37,7 @@ App.cnCreate = async function(){
 };
 
 /* ---------- B. 기업 가입 폼 분야 프리필·저장 ---------- */
-const SC_origSubmitEnt = App.submitEnt;
-App.submitEnt = async function(e){
-  const cat = $('#es-cat');
-  if(cat){ const f = SC_SECTORS.find(s=>s[1]===cat.value); S.scSignupSector = f ? f[0] : ''; }
-  const r = await SC_origSubmitEnt.apply(this, arguments);
-  if(S.role && (RS.cases||[])[0] && S.scSignupSector){
-    const cid = RS.cases[0].case_id;
-    try{ await apiFetch('/cases/'+cid+'/sector', {method:'POST', body:JSON.stringify({sector:S.scSignupSector, sectors:[S.scSignupSector]})}); }catch(e){}
-    render();
-  }
-  return r;
-};
+// 가입 요청의 sectors로 처음부터 저장한다(index.html submitEnt). 가입 후 별도 저장 요청은 불필요하다.
 if(S.urlRef){
   apiFetch('/invites/'+encodeURIComponent(S.urlRef)+'/check').then(r=> r.ok ? r.json() : null).then(j=>{
     if(j && j.valid && j.sectors && j.sectors[0]){ S.scInviteSector = j.sectors[0]; render(); }

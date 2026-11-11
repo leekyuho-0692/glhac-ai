@@ -688,6 +688,24 @@ class RefreshReq(BaseModel):
     refresh_token: str
 
 
+class RegisterContact(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=100)
+    title: Optional[str] = Field(default=None, max_length=100)
+    phone: Optional[str] = Field(default=None, max_length=40, pattern=r"^[0-9+()\-\s.]{6,40}$")
+    email: Optional[str] = Field(default=None, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+    @field_validator("name", "title", "phone", "email", mode="before")
+    @classmethod
+    def _optional_text(cls, value):
+        # 선택 담당자의 빈 칸은 미입력으로 취급하고, 입력한 값은 형식·길이를 검증한다.
+        return (value.strip() or None) if isinstance(value, str) else value
+
+
+class RegisterContacts(BaseModel):
+    pic: Optional[RegisterContact] = None
+    cp: Optional[RegisterContact] = None
+
+
 class RegisterReq(BaseModel):
     username: str
     password: str
@@ -695,6 +713,8 @@ class RegisterReq(BaseModel):
     _nibv = field_validator("nib")(classmethod(lambda cls, v: _nib(v)))
     _un = field_validator("username")(classmethod(lambda cls, v: _username(v)))
     company_name: Optional[str] = None
+    company_name_en: Optional[str] = Field(default=None, max_length=200)
+    contacts: Optional[RegisterContacts] = None
     consultant_id: Optional[str] = None
     invite_code: Optional[str] = None   # 컨설턴트 초대 코드 — 유치 관계·수수료 근거
     # 회원가입 AI OCR 자동추출 프로필(Rizky #1) — 초기 케이스에 프리필

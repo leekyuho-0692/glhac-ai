@@ -6,12 +6,14 @@ import queue
 import sys
 import time
 from datetime import datetime
+from io import BytesIO
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("GLHAC_DB_URL", "sqlite:///./glhac_doc_intake_integrity_test.db")
 
 import fitz                                # noqa: E402
 import pytest                              # noqa: E402
+from openpyxl import Workbook              # noqa: E402
 from fastapi.testclient import TestClient   # noqa: E402
 
 import app.main as m                        # noqa: E402
@@ -44,6 +46,8 @@ def _drain():
 
 @pytest.fixture(autouse=True)
 def fake_llm(monkeypatch):
+    # 각 테스트의 쓰기 예산을 격리한다 — 많은 업로드 회귀 사례가 서로 429를 유발하지 않게 한다.
+    monkeypatch.setattr(m, "_RL_WRITE_HITS", {})
     fields = {"company_name": "BIO-FD&C Co., Ltd.", "address": "Hwasun"}
 
     def fake(system, user, **kw):
@@ -102,7 +106,8 @@ def test_MSDS는_올바른_칸으로_저장하고_업체를_보존한다(client,
     assert res["mismatch"]["detected"] == res["doc_type"] == "coa_msds"
     assert res["mismatch"]["reason"]
     assert res["extracted"]["material_names"] == ["Oligopeptide-1"]
-    assert res["applied"]["materials_added"] == 1
+    assert res["applied"]["materials_added"] == 0
+    assert res["applied"]["materials_pending"] == 1
     _drain()
     with m.SessionLocal() as db:
         c = db.get(models.CaseApplication, cid)
@@ -116,7 +121,103 @@ def test_MSDS는_올바른_칸으로_저장하고_업체를_보존한다(client,
         assert ext.source == "parse_file:coa_msds"
         event = db.query(models.WorkflowEvent).filter_by(case_id=cid, action="documents.parse_file").one()
         assert event.payload["doc_type"] == "coa_msds"
-        assert db.query(models.Material).filter_by(case_id=cid, name="Oligopeptide-1").count() == 1
+        assert db.query(models.Material).filter_by(case_id=cid, name="Oligopeptide-1").count() == 0
+
+
+@pytest.mark.parametrize("doc_type,field,value,model,bucket", [
+    ("material_list", "material_names", "Water", models.Material, "materials"),
+    ("coa_msds", "material_names", "Oligopeptide-1", models.Material, "materials"),
+    ("product_label", "ingredients", "Sugar", models.Material, "materials"),
+    ("coa_msds", "product_names", "Face Cream", models.Product, "products"),
+    ("product_label", "product_names", "Face Cream", models.Product, "products"),
+])
+def test_LLM_목록은_확인_대기에_나타나고_선택_반영_후에만_등록된다(
+        client, case, monkeypatch, doc_type, field, value, model, bucket):
+    h, cid = case
+    monkeypatch.setattr(intake.ai_local, "llm_json", lambda *a, **kw: {field: [value]})
+    r = client.post(f"/cases/{cid}/parse-file", headers=h,
+                    json={"doc_type": doc_type, "filename": "scan001.pdf", "file_b64": _pdf()})
+    assert r.status_code == 200, r.text
+    assert r.json()["applied"][bucket + "_added"] == 0
+    assert r.json()["applied"][bucket + "_pending"] == 1
+    _drain()
+    kind = "material_names" if bucket == "materials" else "product_names"
+    with m.SessionLocal() as db:
+        assert db.query(model).filter_by(case_id=cid).count() == 0
+        d = db.query(models.DocumentAsset).filter_by(case_id=cid).one()
+        assert d.fields["_sources"][kind] == "llm"
+    pending = client.get(f"/cases/{cid}/pending-extractions", headers=h).json()["items"]
+    assert [(it["kind"], it["value"], it["filename"]) for it in pending] == [(kind, value, "scan001.pdf")]
+    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=h, json={"values": [value]})
+    assert r.status_code == 200, r.text
+    assert r.json()["applied"][bucket] == 1
+    with m.SessionLocal() as db:
+        assert db.query(model).filter_by(case_id=cid).one().name == value
+    assert client.get(f"/cases/{cid}/pending-extractions", headers=h).json()["items"] == []
+    # 같은 선택을 재시도해도 중복 원료·제품을 만들지 않는다.
+    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=h, json={"values": [value]})
+    assert r.json()["applied"][bucket] == 0
+
+
+def test_전성분표_xlsx_구조_파서_값은_즉시_등록한다(client, case, monkeypatch):
+    h, cid = case
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["구조 파서 제품"])
+    ws.append(["원료명", "함량"])
+    ws.append(["Water", "80%"])
+    ws.append(["Sugar", "20%"])
+    buf = BytesIO()
+    wb.save(buf)
+    wb.close()
+    # 구조 파서는 이 LLM 목록을 읽거나 섞지 않는다.
+    monkeypatch.setattr(intake.ai_local, "llm_json", lambda *a, **kw: {"material_names": ["없는 원료"]})
+    body = {"doc_type": "material_list", "filename": "전성분표.xlsx",
+            "file_b64": base64.b64encode(buf.getvalue()).decode()}
+    r = client.post(f"/cases/{cid}/parse-file", headers=h, json=body)
+    assert r.status_code == 200, r.text
+    applied = r.json()["applied"]
+    assert applied["materials_added"] == 2 and applied["materials_pending"] == 0
+    assert applied["products_added"] == 1 and applied["products_pending"] == 0
+    _drain()
+    with m.SessionLocal() as db:
+        assert {v.name for v in db.query(models.Material).filter_by(case_id=cid)} == {"Water", "Sugar"}
+        assert db.query(models.Product).filter_by(case_id=cid).one().name == "구조 파서 제품"
+        assert db.query(models.DocumentAsset).filter_by(case_id=cid).one().fields["_sources"] == {
+            "material_names": "structural", "product_names": "structural"}
+    assert client.get(f"/cases/{cid}/pending-extractions", headers=h).json()["items"] == []
+    r = client.post(f"/cases/{cid}/parse-file", headers=h, json=body)
+    assert r.json()["applied"]["materials_added"] == 0
+    assert r.json()["applied"]["products_added"] == 0
+
+
+def test_parse_file_AI실패는_실패목록과_재처리에_포함한다(client, case, monkeypatch):
+    h, cid = case
+    monkeypatch.setattr(intake.ai_local, "llm_json", lambda *a, **kw: {"error": "TIMEOUT"})
+    r = client.post(f"/cases/{cid}/parse-file", headers=h,
+                    json={"doc_type": "material_list", "filename": "scan001.pdf", "file_b64": _pdf()})
+    assert r.status_code == 200, r.text
+    _drain()
+    failed = client.get(f"/cases/{cid}/pending-extractions", headers=h).json()["failed"]
+    assert len(failed) == 1 and failed[0]["error"] == "TIMEOUT"
+    queued = []
+    monkeypatch.setattr(m, "autoparse_enqueue", lambda did, keep_doc_type=False: queued.append((did, keep_doc_type)) or True)
+    r = client.post(f"/cases/{cid}/documents/reprocess-pending", headers=_tok(client, "operator1"))
+    assert r.status_code == 200, r.text
+    assert r.json()["queued"] == 1 and queued == [(failed[0]["document_id"], True)]
+
+
+def test_수정한_원재료_직접_등록도_감사_로그에_남는다(client, case):
+    h, cid = case
+    r = client.post(f"/cases/{cid}/materials", headers=h,
+                    json={"name": "수정한 원재료", "supplier": "공급사", "origin": "대한민국"})
+    assert r.status_code == 200, r.text
+    with m.SessionLocal() as db:
+        row = db.query(models.AuditLog).filter_by(case_id=cid, action="material.add").one()
+        assert row.resource_id == r.json()["material_id"]
+        assert row.actor_role == "applicant"
+        assert row.meta["name"] == "수정한 원재료"
+        assert row.meta["supplier"] == "공급사" and row.meta["origin"] == "대한민국"
 
 
 @pytest.mark.parametrize("nib", [None, "---"])
@@ -536,3 +637,165 @@ def test_재검증_대상_조회는_본문_없이_ID만_읽는다(client, case, 
         assert "document_id" in columns
         assert "content_b64" not in columns and "text_full" not in columns
         assert "content_b64 is not null" in sql
+
+
+@pytest.mark.parametrize("kind,model,bucket", [
+    ("material_names", models.Material, "materials"), ("product_names", models.Product, "products"),
+])
+def test_이름수정_제외는_재조회와_같은값_재추출에도_대기로_돌아오지_않는다(client, case, kind, model, bucket):
+    h, cid = case
+    with m.SessionLocal() as db:
+        c = db.get(models.CaseApplication, cid)
+        c.profile_ext = {"sector": "food", "pending_handled": ["old%d" % i for i in range(2000)]}
+        db.add(models.DocumentAsset(case_id=cid, filename="확인.pdf", doc_type="coa_msds",
+                                   fields={kind: ["Raw Water", "Discard Me", "Keep Me", "Not Selected"],
+                                           "_sources": {kind: "llm"}}))
+        db.commit()
+    body = {"values": ["Keep Me"], "renames": {"Raw Water": "확인한 이름"}, "dismiss": ["Discard Me"]}
+    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=h, json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["count"] == 3 and r.json()["applied"][bucket] == 2
+    with m.SessionLocal() as db:
+        assert {x.name for x in db.query(model).filter_by(case_id=cid)} == {"확인한 이름", "Keep Me"}
+        pe = db.get(models.CaseApplication, cid).profile_ext
+        assert pe["sector"] == "food" and len(pe["pending_handled"]) == 2000
+        assert set(pe["pending_handled"]) >= {"rawwater", "discardme", "keepme"}
+        audit = db.query(models.AuditLog).filter_by(case_id=cid, action="extraction.apply").one()
+        assert audit.meta["renames"] == body["renames"] and audit.meta["dismiss"] == body["dismiss"]
+        db.add(models.DocumentAsset(case_id=cid, filename="재추출.pdf", doc_type="coa_msds",
+                                   fields={kind: ["RAW   WATER", "discardme"], "_sources": {kind: "llm"}}))
+        db.commit()
+    for _ in range(2):
+        pending = client.get(f"/cases/{cid}/pending-extractions", headers=h).json()["items"]
+        assert [x["value"] for x in pending] == ["Not Selected"]
+    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=h, json=body)
+    assert r.json()["count"] == r.json()["applied"][bucket] == 0
+
+
+@pytest.mark.parametrize("body,expected", [
+    ({"values": [], "renames": {"Old Name": "정 제 수"}, "dismiss": []}, {"Not Selected"}),
+    ({"dismiss": ["Old Name"]}, {"Not Selected"}),
+    ({"values": [], "renames": {}, "dismiss": []}, {"Old Name", "Not Selected"}),
+])
+def test_수정과_제외는_미선택값을_등록하지_않고_수정이름의_중복도_막는다(client, case, body, expected):
+    h, cid = case
+    with m.SessionLocal() as db:
+        db.add(models.Material(case_id=cid, name="정제수"))
+        db.add(models.DocumentAsset(case_id=cid, filename="확인.pdf", doc_type="material_list",
+                                   fields={"material_names": ["Old Name", "Not Selected"]}))
+        db.commit()
+    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=h, json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["applied"]["materials"] == 0
+    with m.SessionLocal() as db:
+        assert [x.name for x in db.query(models.Material).filter_by(case_id=cid)] == ["정제수"]
+    pending = {x["value"] for x in client.get(f"/cases/{cid}/pending-extractions", headers=h).json()["items"]}
+    assert pending == expected
+
+
+@pytest.mark.parametrize("body", [None, {}, {"values": []}])
+def test_기존_values_생략과_빈목록의_전량반영을_유지한다(client, case, body):
+    h, cid = case
+    with m.SessionLocal() as db:
+        db.add(models.DocumentAsset(case_id=cid, filename="확인.pdf", doc_type="material_list",
+                                   fields={"material_names": ["Water", "Salt"]}))
+        db.commit()
+    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=h, json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["applied"]["materials"] == 2
+
+
+def test_원재료는_공백_대소문자_정규화_중복시_기존ID와_409(client, case):
+    h, cid = case
+    r = client.post(f"/cases/{cid}/materials", headers=h, json={"name": "Raw Water"})
+    assert r.status_code == 200, r.text
+    mid = r.json()["material_id"]
+    r = client.post(f"/cases/{cid}/materials", headers=h, json={"name": "rawWATER (국내산)"})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == {"code": "DUPLICATE_MATERIAL", "material_id": mid}
+    with m.SessionLocal() as db:
+        assert db.query(models.Material).filter_by(case_id=cid).count() == 1
+    # 중복 제한은 같은 케이스 안에서만 적용한다.
+    other = client.post("/cases", headers=h, json={"company_name": "다른 신청서"}).json()["case_id"]
+    assert client.post(f"/cases/{other}/materials", headers=h, json={"name": "Raw Water"}).status_code == 200
+
+
+@pytest.mark.parametrize("status,frozen,code", [
+    ("withdrawn", False, "CASE_CLOSED"), ("rejected", False, "CASE_CLOSED"),
+    ("revoked", False, "CASE_CLOSED"), ("cancelled", False, "CASE_CLOSED"),
+    ("onboarding", True, "SCOPE_FROZEN"),
+])
+def test_잠긴_케이스는_확인대기_반영과_파일파싱을_거부한다(client, case, monkeypatch, status, frozen, code):
+    h, cid = case
+    with m.SessionLocal() as db:
+        c = db.get(models.CaseApplication, cid)
+        c.status, c.scope_frozen = status, frozen
+        db.add(models.DocumentAsset(case_id=cid, filename="확인.pdf", doc_type="material_list",
+                                   fields={"material_names": ["Water"]}))
+        db.commit()
+    monkeypatch.setattr(intake, "parse_typed", lambda *a: pytest.fail("잠긴 케이스의 파일을 파싱했다"))
+    for path, body in (("pending-extractions/apply", {"values": ["Water"]}),
+                       ("parse-file", {"doc_type": "material_list", "filename": "확인.pdf", "file_b64": _pdf()})):
+        r = client.post(f"/cases/{cid}/{path}", headers=h, json=body)
+        assert r.status_code == 409 and r.json()["detail"]["code"] == code, r.text
+    with m.SessionLocal() as db:
+        assert db.query(models.Material).filter_by(case_id=cid).count() == 0
+        assert db.query(models.DocumentAsset).filter_by(case_id=cid).count() == 1
+        assert not (db.get(models.CaseApplication, cid).profile_ext or {}).get("pending_handled")
+
+
+@pytest.mark.parametrize("route", ["parse-file", "documents"])
+def test_제품목록은_구조파서가_없어도_업로드로_제품을_즉시_등록한다(client, case, monkeypatch, route):
+    h, cid = case
+    with m.SessionLocal() as db:
+        assert "NO_PRODUCT" in {g["code"] for g in m.sm.guard_intake_complete(db, db.get(models.CaseApplication, cid))}
+    monkeypatch.setattr(intake.ai_local, "llm_json", lambda *a, **kw: {"product_names": ["Face Cream"]})
+    r = client.post(f"/cases/{cid}/{route}", headers=h,
+                    json={"doc_type": "product_list", "filename": "제품목록.pdf", "file_b64": _pdf()})
+    assert r.status_code == 200, r.text
+    _drain()
+    if route == "parse-file":
+        assert r.json()["applied"]["products_added"] == 1 and r.json()["applied"]["products_pending"] == 0
+    with m.SessionLocal() as db:
+        assert db.query(models.Product).filter_by(case_id=cid).one().name == "Face Cream"
+        d = db.query(models.DocumentAsset).filter_by(case_id=cid).one()
+        assert d.doc_type == "product_list" and d.fields["_sources"]["product_names"] == "llm"
+        assert "NO_PRODUCT" not in {g["code"] for g in m.sm.guard_intake_complete(db, db.get(models.CaseApplication, cid))}
+    assert client.get(f"/cases/{cid}/pending-extractions", headers=h).json()["items"] == []
+    assert client.get(f"/cases/{cid}/package-check", headers=h).json()["items"]["product"]["ok"] is True
+
+
+def test_재처리_대상은_SQL로_ID만_조회하고_지정유형을_보존한다(client, case, monkeypatch):
+    from sqlalchemy import event
+    _, cid = case
+    with m.SessionLocal() as db:
+        docs = [models.DocumentAsset(case_id=cid, filename="scan.pdf", doc_type="product_label",
+                                    content_b64=raw, confidence=conf, fields=fields, text_full=PLAIN_TEXT)
+                for raw, conf, fields in [("raw", None, {}), ("raw", 0, {"_llm_error": "TIMEOUT"}),
+                                          ("raw", 0.8, {}), ("", None, {}), (None, None, {}),
+                                          ("raw", 0.8, {"_llm_error": ""}), ("raw", 0.8, {"_llm_error": None})]]
+        db.add_all(docs)
+        db.commit()
+        expected = {d.document_id for d in docs[:2]}
+    queued, queries = [], []
+    monkeypatch.setattr(m, "autoparse_enqueue", lambda did, keep_doc_type=False: queued.append((did, keep_doc_type)) or True)
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        sql = " ".join(statement.lower().split())
+        if sql.startswith("select") and "from document_asset" in sql:
+            queries.append(sql)
+
+    event.listen(m.engine, "before_cursor_execute", capture)
+    try:
+        r = client.post(f"/cases/{cid}/documents/reprocess-pending", headers=_tok(client, "operator1"))
+    finally:
+        event.remove(m.engine, "before_cursor_execute", capture)
+    assert r.status_code == 200, r.text
+    assert r.json()["found"] == r.json()["queued"] == 2
+    assert {did for did, keep in queued} == expected and all(keep for did, keep in queued)
+    assert queries
+    for sql in queries:
+        columns = sql.split(" from ", 1)[0]
+        assert "document_id" in columns
+        assert all(key not in columns for key in ("content_b64", "text_full", "text_excerpt", "fields"))
+        assert "confidence is null" in sql and "json_extract" in sql and "content_b64 is not null" in sql
