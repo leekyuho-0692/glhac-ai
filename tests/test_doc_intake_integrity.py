@@ -247,8 +247,12 @@ def test_사업자번호를_숫자로_대조하고_일치하거나_비었을_때
         c.nib = current
         db.commit()
     fake_llm["nib"] = extracted
+    if current is None:
+        # 첫 번호의 빈칸 반영은 같은 업체의 등록증으로 검증한다.
+        fake_llm["company_name"] = "PT Integrity"
+    text = PLAIN_TEXT.replace("BIO-FD&C Co., Ltd.", fake_llm["company_name"])
     res = _upload(client, case, "사업자등록증.pdf",
-                  f"NOMOR INDUK BERUSAHA (NIB)\nNIB: {extracted}\n{PLAIN_TEXT}")
+                  f"NOMOR INDUK BERUSAHA (NIB)\nNIB: {extracted}\n{text}")
     assert res["doc_type"] == "nib_business_license" and res["mismatch"] is None
     saved = client.get(f"/cases/{cid}", headers=h).json()
     if skip:
@@ -560,7 +564,8 @@ def test_원문에_없는_값은_규칙과_GPT_지적을_합쳐_최소_warn이�
 
 
 @pytest.mark.parametrize("company,address", [("직접 입력한 회사", "직접 입력한 주소"),
-                                            ("직접 입력한 회사", ""), ("My Company", "")])
+                                            ("직접 입력한 회사", ""), ("My Company", ""),
+                                            ("PT bio fd&c Tbk", "")])
 def test_케이스_사업자번호가_비어도_사용자_입력은_보존한다(client, case, fake_llm, company, address):
     h, cid = case
     with m.SessionLocal() as db:
@@ -571,9 +576,20 @@ def test_케이스_사업자번호가_비어도_사용자_입력은_보존한다
     res = _upload(client, case, "사업자등록증.pdf",
                   f"NOMOR INDUK BERUSAHA (NIB)\nNIB: {fake_llm['nib']}\n{PLAIN_TEXT}")
     saved = client.get(f"/cases/{cid}", headers=h).json()
-    assert saved["nib"] == res["applied"]["nib"] == "597-19-01669"
-    assert saved["company_name"] == (fake_llm["company_name"] if company == "My Company" else company)
-    assert saved["address"] == (address or fake_llm["address"])
+    assert saved["company_name"] == company
+    if company == "PT bio fd&c Tbk":
+        assert saved["nib"] == res["applied"]["nib"] == "597-19-01669"
+        assert saved["address"] == fake_llm["address"]
+    else:
+        assert saved["nib"] is None and "nib" not in res["applied"]
+        assert saved["address"] == address
+        pending = client.get(f"/cases/{cid}/pending-extractions", headers=h).json()["conflicts"]
+        # 기존 선택 API는 필드별 후보를 반환한다. 이 등록증의 NIB 후보는 한 건이다.
+        candidates = [x for x in pending if x["field"] == "nib"]
+        assert len(candidates) == 1 and candidates[0]["proposed"] == "597-19-01669"
+        assert candidates[0]["filename"] == "사업자등록증.pdf"
+        problems = client.get(f"/cases/{cid}/problem-documents", headers=h).json()
+        assert "OWNERSHIP_MISMATCH" in {r["code"] for d in problems["documents"] for r in d["reasons"]}
 
 
 @pytest.mark.parametrize("status", sorted(m.sm.TERMINAL_STATES))

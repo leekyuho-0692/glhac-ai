@@ -441,7 +441,7 @@ def test_잘못된_충돌_선택_입력은_서버오류가_아닌_검증오류�
 
 @pytest.mark.parametrize("route", ["single", "zip", "stream"])
 @pytest.mark.parametrize("company,address", [(OWNER, "Seoul"), (OWNER, None), ("My Company", None), ("", None)])
-def test_번호가_비면_상호차이는_경고하고_빈칸_반영값만_검증실패로_되돌린다(
+def test_번호가_비면_같은_업체의_빈칸_반영값만_검증실패로_되돌린다(
         client, case, ai, monkeypatch, route, company, address):
     queued, enqueue = [], m.verify_enqueue
     monkeypatch.setattr(m, "verify_enqueue", lambda did: queued.append(did) or True)
@@ -449,11 +449,12 @@ def test_번호가_비면_상호차이는_경고하고_빈칸_반영값만_검�
         c = db.get(models.CaseApplication, case[1])
         c.company_name, c.address = company, address
         db.commit()
-    result = _upload(client, case, ai, {"company_name": SUPPLIER, "nib": NIB, "address": ADDRESS},
-                     _nib_text(company=SUPPLIER), route=route)
+    # 빈 업체명·기본 업체명은 가입 조직명 OWNER와 대조한다.
+    result = _upload(client, case, ai, {"company_name": OWNER, "nib": NIB, "address": ADDRESS},
+                     _nib_text(), route=route)
     expected = {"nib": NIB}
     if company in ("", "My Company"):
-        expected["company_name"] = SUPPLIER
+        expected["company_name"] = OWNER
     if not address:
         expected["address"] = ADDRESS
     if route == "single":
@@ -462,20 +463,18 @@ def test_번호가_비면_상호차이는_경고하고_빈칸_반영값만_검�
         c = db.get(models.CaseApplication, case[1])
         assert (c.company_name, c.nib, c.address) == (expected.get("company_name", company), NIB, address or ADDRESS)
         fields = db.get(models.DocumentAsset, queued[0]).fields
-        assert fields["_verify"]["verdict"] == "warn"
-        assert any(i["field"] == "company_name" and i["code"] == "company_name_mismatch"
-                   for i in fields["_verify"]["field_issues"])
+        assert "_verify" not in fields
         changes = fields["_autofill"]["changes"]
         assert all(changes[k]["status"] == "applied" and changes[k]["source"] == "ai_unconfirmed" for k in expected)
         assert m._autofill_current_source(db, c, "nib", c.nib)["source"] == "ai_unconfirmed"
     assert not any(x["reason"] == "company_conflict" for x in _conflicts(client, case))
-    # LLM이 ok여도 상호 경고는 보존하고, 후속 fail은 이 문서가 쓴 값만 복원한다.
+    # 정상 검증 뒤의 후속 fail도 이 문서가 빈칸에 쓴 값만 복원한다.
     assert enqueue(queued[0])
     _drain()
     with m.SessionLocal() as db:
         verify = db.get(models.DocumentAsset, queued[0]).fields["_verify"]
-        assert verify["verdict"] == "warn"
-        assert sum(i.get("code") == "company_name_mismatch" for i in verify["field_issues"]) == 1
+        assert verify["verdict"] == "ok"
+        assert not any(i.get("code") == "company_name_mismatch" for i in verify["field_issues"])
     ai["verdict"] = "fail"
     assert enqueue(queued[0])
     _drain()
@@ -485,6 +484,44 @@ def test_번호가_비면_상호차이는_경고하고_빈칸_반영값만_검�
         assert db.get(models.DocumentAsset, queued[0]).fields["_verify"]["verdict"] == "fail"
     assert {x["field"] for x in _conflicts(client, case)
             if x["scope"] == "case" and x["reason"] == "verify_failed"} == set(expected)
+
+
+@pytest.mark.parametrize("route", ["single", "zip", "stream"])
+@pytest.mark.parametrize("company,address", [(OWNER, "Seoul"), (OWNER, None), ("My Company", None), ("", None)])
+def test_번호가_비면_다른_업체_등록증은_검증결과와_무관하게_후보로_보관한다(
+        client, case, ai, monkeypatch, route, company, address):
+    queued, enqueue = [], m.verify_enqueue
+    monkeypatch.setattr(m, "verify_enqueue", lambda did: queued.append(did) or True)
+    with m.SessionLocal() as db:
+        c = db.get(models.CaseApplication, case[1])
+        c.company_name, c.address = company, address
+        db.commit()
+    result = _upload(client, case, ai, {"company_name": SUPPLIER, "nib": NIB, "address": ADDRESS},
+                     _nib_text(company=SUPPLIER), route=route)
+    if route == "single":
+        assert result["applied"] == {"skipped": "company_conflict"}
+    assert len(queued) == 1
+    pending = _conflicts(client, case)
+    nibs = [x for x in pending if x["scope"] == "case" and x["field"] == "nib"]
+    assert len(nibs) == 1
+    assert (nibs[0]["current"], nibs[0]["proposed"], nibs[0]["reason"]) == (None, NIB, "company_conflict")
+    assert {x["document_id"] for x in pending} == {queued[0]}
+    # 검증 ok도 소유권 충돌을 승인하지 않으며, fail도 미반영 후보를 중복 생성하지 않는다.
+    for verdict in (None, "ok", "fail"):
+        if verdict is not None:
+            ai["verdict"] = verdict
+            assert enqueue(queued[0])
+            _drain()
+        with m.SessionLocal() as db:
+            c = db.get(models.CaseApplication, case[1])
+            assert (c.company_name, c.nib, c.address) == (company, None, address)
+            fields = db.get(models.DocumentAsset, queued[0]).fields
+            assert not fields["_autofill"]["changes"]
+            if verdict is not None:
+                assert fields["_verify"]["verdict"] == verdict
+        assert _conflicts(client, case) == pending
+        problems = client.get(f"/cases/{case[1]}/problem-documents", headers=case[0]).json()
+        assert "OWNERSHIP_MISMATCH" in {r["code"] for d in problems["documents"] for r in d["reasons"]}
 
 
 @pytest.mark.parametrize("route", ["single", "zip"])
