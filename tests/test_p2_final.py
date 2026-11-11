@@ -57,9 +57,9 @@ def _mk_case(org_id="org_demo", company="PT DiffCo", status="document_pre_audit_
 
 
 def _upload(c, tok, cid, filename, doc_type, content):
-    # 확장자 없는 파일명 → 매직바이트 검증 우회(임의 base64 허용)
+    # 비교 대상은 평문 픽스처다. 내용과 일치하는 .txt를 사용한다.
     r = c.post("/cases/%s/documents" % cid,
-               json={"filename": filename, "file_b64": _b64(content), "doc_type": doc_type},
+               json={"filename": filename + ".txt", "file_b64": _b64(content), "doc_type": doc_type},
                headers=_h(tok))
     assert r.status_code == 200, r.text
     return r.json()["document_id"]
@@ -114,9 +114,9 @@ def test_a_prev_new_split_and_diff():
         assert cnt["resubmitted"] == 0 and cnt["unchanged"] == 1 and cnt["changed"] == 2, cnt
         # prev/new 최신본 파일명 확인(latest-wins)
         new_types = {d["doc_type"]: d["filename"] for d in cmp["new_docs"]}
-        assert new_types.get("sjph_manual") == "manual_v2", new_types
+        assert new_types.get("sjph_manual") == "manual_v2.txt", new_types
         prev_types = {d["doc_type"]: d["filename"] for d in cmp["prev_docs"]}
-        assert prev_types.get("sjph_manual") == "manual_v1", prev_types
+        assert prev_types.get("sjph_manual") == "manual_v1.txt", prev_types
 
 
 def test_b_no_boundary_no_compare():

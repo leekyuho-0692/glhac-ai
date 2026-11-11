@@ -101,6 +101,65 @@ async def _observability_mw(request: Request, call_next):
 _RL_WRITE_WINDOW = 60
 _RL_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _RL_WRITE_HITS = {}   # actor_key -> [timestamps] (인메모리·단일프로세스)
+_RL_PUBLIC_PATHS = {"/auth/register", "/auth/ocr-extract"}
+
+# JSON 파싱/스키마 검증보다 먼저 실제 수신 바이트를 제한한다. OCR은 20MiB 원본의
+# base64 팽창과 JSON/data-URL 여유를 허용하고, 일반 공개 인증 요청은 64KiB로 제한한다.
+_PUBLIC_BODY_MAX_BYTES = 64 * 1024
+_PUBLIC_UPLOAD_BODY_MAX_BYTES = (intake.UPLOAD_MAX_BYTES + 2) // 3 * 4 + 64 * 1024
+
+
+class _PublicBodyLimitMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "").rstrip("/")
+        if (scope["type"] != "http" or scope.get("method") not in _RL_WRITE_METHODS
+                or not path.startswith("/auth/")):
+            return await self.app(scope, receive, send)
+        limit = _PUBLIC_UPLOAD_BODY_MAX_BYTES if path == "/auth/ocr-extract" else _PUBLIC_BODY_MAX_BYTES
+
+        async def reject():
+            await JSONResponse(status_code=413, content={"detail": {
+                "code": "REQUEST_TOO_LARGE", "max_bytes": limit}})(scope, receive, send)
+
+        # 헤더는 빠른 거절에만 사용한다. 누락/축소한 Content-Length와 chunked도 아래에서 센다.
+        for key, value in scope.get("headers", []):
+            if key.lower() == b"content-length":
+                try:
+                    if int(value) > limit:
+                        return await reject()
+                except ValueError:
+                    pass
+        chunks, size = [], 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunk = message.get("body", b"")
+            size += len(chunk)
+            if size > limit:
+                return await reject()
+            if chunk:
+                chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+        body = b"".join(chunks)
+        chunks.clear()
+        delivered = False
+
+        async def bounded_receive():
+            nonlocal delivered
+            if not delivered:
+                delivered = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
+
+        await self.app(scope, bounded_receive, send)
+
+
+app.add_middleware(_PublicBodyLimitMiddleware)
 
 
 def _rl_write_max() -> int:
@@ -126,13 +185,23 @@ def _rl_actor_key(request: Request) -> str:
 
 @app.middleware("http")
 async def _rate_limit_write_mw(request: Request, call_next):
-    """P4b — write 요청 per-actor 분당 레이트리밋. 로그인(/auth/*)은 전용 제한(auth._LOGIN_ATTEMPTS)
-    으로 별도 관리하므로 여기서는 제외(중복 방지). GET/HEAD/OPTIONS는 미적용."""
+    """가입·OCR은 공유 IP 예산, 일반 쓰기는 액터 예산. 로그인 전용 제한과 독립이다."""
     _max = _rl_write_max()   # 요청 시점 env 재조회(캐싱 제거)
+    path = request.url.path.rstrip("/")
+    public = path in _RL_PUBLIC_PATHS
+    if public and _max > 0:
+        try:
+            _max = int(os.environ.get("GLHAC_PUBLIC_RATE_LIMIT_PER_MIN", str(_max)))
+        except ValueError:
+            pass
+    # GLHAC_RATE_LIMIT_PER_MIN=0은 공개 한도의 설정 여부와 무관하게 모두 끈다.
     if (_max > 0 and request.method in _RL_WRITE_METHODS
-            and not request.url.path.startswith("/auth/")):
+            and (public or not path.startswith("/auth/"))):
         now = time.time()
-        key = _rl_actor_key(request)
+        # 신뢰 프록시의 IP 해석은 ASGI 서버 설정에 맡긴다. 클라이언트가 보낸 XFF나
+        # 서로 다른 Bearer 토큰으로 공개 엔드포인트의 IP 한도를 우회할 수 없어야 한다.
+        key = ("public:ip:" + (request.client.host if request.client else "unknown")
+               if public else _rl_actor_key(request))
         arr = [t for t in _RL_WRITE_HITS.get(key, []) if now - t < _RL_WRITE_WINDOW]
         if len(arr) >= _max:
             _RL_WRITE_HITS[key] = arr
@@ -242,44 +311,109 @@ _UPLOAD_EXT_ALLOW = {"pdf", "png", "jpg", "jpeg", "webp", "gif",
                      "mp4", "mov", "webm", "m4v"}   # 모의감사 생산공정 영상(§P0-5 클라이언트 뷰)
 
 
+def _upload_kind(raw):
+    """확장자와 독립된 시그니처 식별. RIFF(WAV/AVI)는 WEBP로 오인하지 않는다."""
+    if raw.startswith(b"%PDF-"):
+        return "pdf"
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if raw.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "webp"
+    if raw.startswith(b"PK\x03\x04"):
+        return "zip"
+    if raw.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return "ole"
+    if raw.startswith(b"\x1a\x45\xdf\xa3") and b"webm" in raw[:4096]:
+        return "webm"
+    if len(raw) >= 16 and raw[4:8] == b"ftyp" and 16 <= int.from_bytes(raw[:4], "big") <= len(raw):
+        return "isobmff"
+    return None
+
+
+def _valid_ooxml(raw, ext):
+    """ZIP 표식만으로 Office 문서를 신뢰하지 않는다. 타입 선언·본문 XML을 함께 확인한다."""
+    import zipfile
+    import zlib
+    from xml.etree import ElementTree as ET
+    part, content_type = {
+        "docx": ("word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
+        "xlsx": ("xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"),
+    }[ext]
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            infos = archive.infolist()
+            names = [info.filename for info in infos]
+            if (len(infos) > 4096 or len(set(names)) != len(names)
+                    or sum(info.file_size for info in infos) > 5 * _UPLOAD_MAX_BYTES):
+                return False
+            types = archive.getinfo("[Content_Types].xml")
+            main = archive.getinfo(part)
+            if types.file_size > 1024 * 1024:
+                return False
+            root = ET.fromstring(archive.read(types))
+            ns = "{http://schemas.openxmlformats.org/package/2006/content-types}"
+            if root.tag != ns + "Types" or not any(
+                    node.get("PartName") == "/" + part and node.get("ContentType") == content_type
+                    for node in root.findall(ns + "Override")):
+                return False
+            # 큰 본문은 여기서 팽창시키지 않는다. 기존 intake의 ZIP/BOMB 가드가
+            # 읽기 전에 막고 판독 실패 근거를 보존한다(시그니처가 있는 파일과 미식별 파일 구분).
+            if main.file_size <= _UPLOAD_MAX_BYTES:
+                ET.fromstring(archive.read(main))
+            return True
+    except (ValueError, KeyError, OSError, RuntimeError, zipfile.BadZipFile, zlib.error, ET.ParseError):
+        return False
+
+
+def _validate_upload_type(raw, filename):
+    """개별 업로드와 압축 내부 파일이 공유하는 확장자·내용 가드."""
+    ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
+    if ext and ext not in _UPLOAD_EXT_ALLOW:
+        code = "UNSUPPORTED_TYPE"
+        log.warning("업로드 거절 %s: %s (ext=%s)", code, filename, ext)
+        raise HTTPException(415, {"code": code, "ext": ext})
+    kind = _upload_kind(raw)
+    expect = {"pdf": "pdf", "png": "png", "jpg": "jpg", "jpeg": "jpg", "gif": "gif", "webp": "webp",
+              "docx": "zip", "xlsx": "zip", "doc": "ole", "xls": "ole", "hwp": "ole",
+              "mp4": "isobmff", "mov": "isobmff", "m4v": "isobmff", "webm": "webm"}
+    valid = kind == expect[ext] if ext in expect else kind is None
+    if ext in {"docx", "xlsx"} and valid:
+        valid = _valid_ooxml(raw, ext)
+    if not ext:
+        # 파일명이 없는 공개 OCR 요청도 식별 가능한 PDF/이미지만 허용한다.
+        valid = kind in {"pdf", "png", "jpg", "gif", "webp"}
+    if not valid:
+        code = "CONTENT_MISMATCH"
+        log.warning("업로드 거절 %s: %s (ext=%s)", code, filename, ext)
+        raise HTTPException(415, {"code": code, "ext": ext, "sniffed": kind})
+
+
 def _validate_upload(file_b64, filename, max_bytes=_UPLOAD_MAX_BYTES):
     """base64 업로드 검증 후 정제된 b64 문자열 반환. 위반 시 400/413/415."""
-    b64 = (file_b64 or "").split(",")[-1]
+    if not isinstance(file_b64, str) or (filename is not None and not isinstance(filename, str)):
+        raise HTTPException(400, {"code": "BAD_UPLOAD"})
+    b64 = file_b64.split(",")[-1]
     try:
-        raw = base64.b64decode(b64)
+        raw = base64.b64decode(b64, validate=True)
     except Exception:  # noqa: BLE001
         raise HTTPException(400, {"code": "BAD_UPLOAD"})
     if not raw:
         raise HTTPException(400, {"code": "EMPTY_UPLOAD"})
     if len(raw) > max_bytes:
         raise HTTPException(413, {"code": "UPLOAD_TOO_LARGE", "max_bytes": max_bytes})
-    ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
-    if ext and ext not in _UPLOAD_EXT_ALLOW:
-        code = "UNSUPPORTED_TYPE"
-        log.warning("업로드 거절 %s: %s (ext=%s)", code, filename, ext)
-        raise HTTPException(415, {"code": code, "ext": ext})
-    head = raw[:8]
-    if head.startswith(b"%PDF"):
-        kind = "pdf"
-    elif head.startswith(b"\x89PNG"):
-        kind = "png"
-    elif head.startswith(b"\xff\xd8\xff"):
-        kind = "jpg"
-    elif head.startswith(b"GIF8"):
-        kind = "gif"
-    elif head[:4] == b"RIFF":
-        kind = "webp"
-    elif head.startswith(b"PK\x03\x04"):
-        kind = "zip"   # xlsx/docx
-    else:
-        kind = None
-    # 이미지/PDF는 확장자와 실제 내용 일치 강제(위장 차단)
-    expect = {"pdf": "pdf", "png": "png", "jpg": "jpg", "jpeg": "jpg", "gif": "gif", "webp": "webp"}
-    if ext in expect and kind is not None and kind != expect[ext]:
-        code = "CONTENT_MISMATCH"
-        log.warning("업로드 거절 %s: %s (ext=%s)", code, filename, ext)
-        raise HTTPException(415, {"code": code, "ext": ext, "sniffed": kind})
+    _validate_upload_type(raw, filename)
     return b64
+
+
+def _validate_archive_upload(raw):
+    # 파싱/자동채움 및 스트림 응답 시작 전에 전수 확인한다. 압축 자체의 개수·해제 크기
+    # 상한은 기존 extract_zip 가드를 사용한다. 실패하면 첫 정상 파일도 저장되지 않는다.
+    for filename, content in intake.extract_zip(raw):
+        _validate_upload_type(content, filename)
 
 
 def _is_duplicate_column_error(e):
@@ -5808,11 +5942,53 @@ def _mat_type_label(raw, lang="ko"):
     return str(raw)
 
 
+def _material_certificate_input(db, case_id, cert_no, declared_cert_no=None, material_id=None):
+    """번호의 형식이 아니라 같은 케이스의 검토 완료 인증서 참조를 검증한다.
+
+    기존 클라이언트의 cert_no 자유 입력은 버리지 않고 declared_cert_no로 격리한다.
+    선언 번호는 스크리닝에 넘기지 않으므로 CERT_VERIFY=off도 입력 신뢰를 우회하지 못한다.
+    """
+    from . import cert_verify
+    candidate = (cert_no or "").strip()
+    declared = (declared_cert_no or "").strip() or None
+    if candidate:
+        docs = db.query(models.DocumentAsset).filter_by(
+            case_id=case_id, doc_type="halal_certificate", review_status="approved")
+        docs = docs.filter(or_(models.DocumentAsset.material_id.is_(None),
+                               models.DocumentAsset.material_id == material_id))
+        for d in docs:
+            doc = {"document_id": d.document_id, "doc_type": d.doc_type,
+                   "fields": d.fields or {}, "text": d.text_excerpt or ""}
+            verification = cert_verify.verify(candidate, [doc])
+            if cert_verify.promotes(verification):
+                return verification["normalized"], declared, [doc]
+        if declared and declared != candidate:
+            raise HTTPException(422, {"code": "CONFLICTING_CERTIFICATE_INPUT",
+                                      "message": "미검증 번호는 declared_cert_no 하나로 입력하세요"})
+        declared = candidate
+    return None, declared, []
+
+
+def _material_certificate_declarations(db, case_id):
+    # 모델/마이그레이션 범위 밖: 기존 append-only WorkflowEvent에 별도 필드로 영속 보관.
+    # 케이스별 한 번 조회하므로 원재료 목록에서 N+1 쿼리를 만들지 않는다.
+    events = (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="material.certificate")
+              .order_by(models.WorkflowEvent.created_at).all())
+    return {(e.payload or {}).get("material_id"): (e.payload or {}).get("declared_cert_no") for e in events}
+
+
+def _record_material_certificate(db, case, user, material_id, cert_no, declared, docs):
+    sm.record_event(db, case, case.status, case.status, "material.certificate", user["role"], user["uid"],
+                    {"material_id": material_id, "cert_no": cert_no, "declared_cert_no": declared,
+                     "document_id": docs[0]["document_id"] if docs else None})
+
+
 @app.get("/cases/{case_id}/materials")
 def list_materials(case_id: str, lang: str = Query("ko"),
                    user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
     rows = db.query(models.Material).filter_by(case_id=case_id).all()
+    declarations = _material_certificate_declarations(db, case_id)
     ev = {}
     for d in (db.query(models.DocumentAsset)
               .filter(models.DocumentAsset.case_id == case_id,
@@ -5831,6 +6007,7 @@ def list_materials(case_id: str, lang: str = Query("ko"),
              "mat_type_label": _mat_type_label(m.mat_type, lang),
              "origin": m.origin,
              "cert": m.cert, "cert_no": m.cert_no, "v1_risk": m.v1_risk, "note": m.note,
+             "declared_cert_no": declarations.get(m.material_id),
              "result": m.screen_result, "status": m.screen_status, "severity": m.screen_severity,
              "matched_uid": m.matched_uid,
              "evidence_count": len(ev.get(m.material_id) or []),
@@ -5877,23 +6054,27 @@ def add_material(case_id: str, body: schemas.MaterialCreate,
                 if _norm_material(m.name) == key), None)
     if dup:
         raise HTTPException(409, {"code": "DUPLICATE_MATERIAL", "material_id": dup.material_id})
+    cert_no, declared, cert_docs = _material_certificate_input(
+        db, case_id, body.cert_no, body.declared_cert_no)
     sk = True if body.source_known is None else bool(body.source_known)
-    r = screening.screen_merged(body.name, body.e_number, body.source, body.cert_no,
-                                bool(body.evidence_provided), sk, body.note or "")
+    r = screening.screen_merged(body.name, body.e_number, body.source, cert_no,
+                                bool(body.evidence_provided), sk, body.note or "", docs=cert_docs)
     m = models.Material(case_id=case_id, name=body.name, e_number=body.e_number,
                         mat_type=body.mat_type, source=body.source, supplier=body.supplier,
                         manufacturer=body.manufacturer, origin=body.origin,
-                        cert=r.get("v1_cert"), cert_no=body.cert_no, note=body.note,
+                        cert=r.get("v1_cert"), cert_no=cert_no, note=body.note,
                         v1_risk=r.get("v1_risk"), evidence_provided=bool(body.evidence_provided),
                         source_known=sk, screen_result=r["result"], screen_status=r["status"],
                         screen_severity=r["severity"], matched_uid=r.get("matched_uid"))
     m, created = _upsert_material(db, m)
     if not created:
         raise HTTPException(409, {"code": "DUPLICATE_MATERIAL", "material_id": m.material_id})
+    if cert_no or declared:
+        _record_material_certificate(db, _c0, user, m.material_id, cert_no, declared, cert_docs)
     _audit(db, user, "material.add", "material", m.material_id, case_id,
            {"name": m.name, "supplier": m.supplier, "origin": m.origin}, commit=False)
     db.commit()
-    return {"material_id": m.material_id, "screen": r}
+    return {"material_id": m.material_id, "screen": r, "cert_no": cert_no, "declared_cert_no": declared}
 
 
 @app.delete("/materials/{material_id}")
@@ -5928,9 +6109,8 @@ def patch_material(material_id: str, body: schemas.MaterialPatch,
                    db: Session = Depends(get_db)):
     """원재료 속성 수정(제조사·유형·인증번호 등) → 즉시 재판정.
 
-    할랄 인증서 번호를 넣으면 의심(mushbooh)이 할랄로 올라간다. 무엇을 근거로 올렸는지
-    감사기록에 남긴다 — 번호만 적힌 것과 증빙으로 해소된 것은 다르고, 오디터는 그 번호를
-    발급기관 목록과 대조해야 한다."""
+    검토 완료 인증서와 대조한 번호만 cert_no에 저장한다. 자유 입력은 declared_cert_no에
+    보존하며 판정을 승격하지 않는다. 변경·참조 문서는 같은 트랜잭션의 이력에 남긴다."""
     m = db.get(models.Material, material_id)
     if not m:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
@@ -5940,18 +6120,34 @@ def patch_material(material_id: str, body: schemas.MaterialPatch,
     before = {"status": m.screen_status, "result": m.screen_result,
               "cert_no": m.cert_no, "manufacturer": m.manufacturer,
               "supplier": m.supplier, "mat_type": m.mat_type}
+    old_declared = _material_certificate_declarations(db, m.case_id).get(material_id)
+    requested_cert = body.cert_no if body.cert_no is not None else m.cert_no
+    requested_declared = body.declared_cert_no if body.declared_cert_no is not None else old_declared
+    # 구 화면에서 번호를 수정/삭제하면 이전 신고 번호도 교체한다.
+    if body.cert_no is not None and body.declared_cert_no is None:
+        requested_declared = None
+    cert_no, declared, cert_docs = _material_certificate_input(
+        db, m.case_id, requested_cert, requested_declared, material_id)
     changed = {}
-    for f in ("mat_type", "source", "supplier", "manufacturer", "origin", "cert", "cert_no", "note"):
+    if m.cert_no != cert_no:
+        m.cert_no = cert_no
+        changed["cert_no"] = cert_no
+    if old_declared != declared:
+        changed["declared_cert_no"] = declared
+    if changed:
+        _record_material_certificate(db, _c0, user, material_id, cert_no, declared, cert_docs)
+    for f in ("mat_type", "source", "supplier", "manufacturer", "origin", "cert", "note"):
         v = getattr(body, f, None)
         if v is not None and (v or "") != (getattr(m, f) or ""):
             setattr(m, f, v or None)
             changed[f] = v
     if not changed:
-        return {"material_id": material_id, "changed": {}, "screen": None}
+        return {"material_id": material_id, "changed": {}, "screen": None,
+                "cert_no": cert_no, "declared_cert_no": declared}
     r = screening.screen_merged(m.name, m.e_number, m.source, m.cert_no,
                                 bool(m.evidence_provided),
                                 True if m.source_known is None else bool(m.source_known),
-                                m.note or "")
+                                m.note or "", docs=cert_docs)
     m.cert = r.get("v1_cert")
     m.v1_risk = r.get("v1_risk")
     m.screen_result, m.screen_status = r["result"], r["status"]
@@ -5962,7 +6158,8 @@ def patch_material(material_id: str, body: schemas.MaterialPatch,
             "decision_by": r.get("decision_by"),
             "cert_promoted": bool(r.get("cert_promoted"))}, commit=False)
     db.commit()
-    return {"material_id": material_id, "changed": changed, "screen": r}
+    return {"material_id": material_id, "changed": changed, "screen": r,
+            "cert_no": cert_no, "declared_cert_no": declared}
 
 
 @app.patch("/materials/{material_id}/rename")
@@ -8092,6 +8289,7 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     # ZIP 파일 검증
     from .intake import intake_zip, ArchiveError
     try:
+        _validate_archive_upload(raw)
         res = intake_zip(raw)
     except ArchiveError as e:
         raise HTTPException(400, {"code": "BAD_ARCHIVE",
@@ -8126,6 +8324,12 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
     if archive_kind(raw) is None:
         raise HTTPException(422, {"code": "NOT_AN_ARCHIVE",
                                   "message": "압축 파일이 아닙니다 (ZIP·RAR·7z 만 지원합니다)"})
+    try:
+        _validate_archive_upload(raw)
+    except ArchiveError:
+        # 압축 자체 오류는 아래 생성기의 기존 error 이벤트 계약을 유지한다.
+        # 파일 시그니처 오류(HTTPException)는 여기서 415로 반환한다.
+        pass
 
     def gen():
         """진행상황은 파일이 끝나는 즉시 흘려보낸다.

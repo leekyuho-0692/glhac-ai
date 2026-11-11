@@ -23,8 +23,10 @@ def _tok(u, p):
 
 def _docx_b64():
     buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("[Content_Types].xml", "<x/>")
+    from docx import Document
+    document = Document()
+    document.add_paragraph("Local form template")
+    document.save(buf)
     return base64.b64encode(buf.getvalue()).decode()
 
 
@@ -120,8 +122,8 @@ def test_양식_검증_권한():
 
     bad = base64.b64encode(b"not a zip").decode()
     r = c.post("/admin/forms/factory_audit", headers=operator1, json={"filename": "x.docx", "file_b64": bad, "note": ""})
-    assert r.status_code == 422, r.text
-    assert r.json()["detail"]["code"] == "NOT_A_DOCX"
+    assert r.status_code == 415, r.text
+    assert r.json()["detail"]["code"] == "CONTENT_MISMATCH"
 
     r = c.post("/admin/forms/factory_audit", headers=applicant1, json={"filename": "x.docx", "file_b64": _docx_b64(), "note": ""})
     assert r.status_code == 403, r.text

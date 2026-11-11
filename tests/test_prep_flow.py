@@ -33,7 +33,14 @@ def _set_status(cid, status):
         db.close()
 
 
-B64 = base64.b64encode(b"hello").decode()
+def _pdf_b64():
+    import fitz
+    with fitz.open() as document:
+        document.new_page().insert_text((50, 50), "Local preparation evidence")
+        return base64.b64encode(document.tobytes()).decode()
+
+
+B64 = _pdf_b64()
 ITEMS = ["org_chart", "halal_supervisor", "training", "sjph_manual", "halal_policy", "production_flow", "facility_layout", "material_evidence", "cleaning", "purchase_log", "label", "traceability", "internal_audit"]
 def test_카탈로그_13종_물류제외(c=None):
     c = c or TestClient(app)

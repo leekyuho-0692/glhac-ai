@@ -11,7 +11,7 @@ DB 에 들어간 뒤 한참 지나 다른 화면에서 터지거나, 아예 안 
 """
 import re
 from datetime import date as _date
-from typing import Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from . import domain_dict as _dd
@@ -269,7 +269,8 @@ class MaterialCreate(BaseModel):
     supplier: Optional[str] = None
     manufacturer: Optional[str] = None  # 제조사(Produsen)
     origin: Optional[str] = None
-    cert_no: Optional[str] = None
+    cert_no: Optional[str] = Field(default=None, max_length=200)
+    declared_cert_no: Optional[str] = Field(default=None, max_length=200)
     note: Optional[str] = None
     evidence_provided: Optional[bool] = False
     source_known: Optional[bool] = True
@@ -298,7 +299,8 @@ class MaterialPatch(BaseModel):
     manufacturer: Optional[str] = None
     origin: Optional[str] = None
     cert: Optional[str] = None
-    cert_no: Optional[str] = None
+    cert_no: Optional[str] = Field(default=None, max_length=200)
+    declared_cert_no: Optional[str] = Field(default=None, max_length=200)
     note: Optional[str] = None
 
     @field_validator("mat_type")
@@ -707,8 +709,8 @@ class RegisterContacts(BaseModel):
 
 
 class RegisterReq(BaseModel):
-    username: str
-    password: str
+    username: str = Field(max_length=80)
+    password: str = Field(max_length=256)
     company_email: str = Field(max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     email_consent: bool
 
@@ -720,18 +722,18 @@ class RegisterReq(BaseModel):
     _pw = field_validator("password")(classmethod(lambda cls, v: _password(v)))
     _nibv = field_validator("nib")(classmethod(lambda cls, v: _nib(v)))
     _un = field_validator("username")(classmethod(lambda cls, v: _username(v)))
-    company_name: Optional[str] = None
+    company_name: Optional[str] = Field(default=None, max_length=200)
     company_name_en: Optional[str] = Field(default=None, max_length=200)
     contacts: Optional[RegisterContacts] = None
-    consultant_id: Optional[str] = None
-    invite_code: Optional[str] = None   # 컨설턴트 초대 코드 — 유치 관계·수수료 근거
+    consultant_id: Optional[str] = Field(default=None, max_length=64)
+    invite_code: Optional[str] = Field(default=None, max_length=64)   # 컨설턴트 초대 코드
     # 회원가입 AI OCR 자동추출 프로필(Rizky #1) — 초기 케이스에 프리필
-    nib: Optional[str] = None
-    responsible_person: Optional[str] = None
-    address: Optional[str] = None
-    factory_address: Optional[str] = None
-    business_type: Optional[str] = None
-    sectors: Optional[List[str]] = None   # SRS MEM-01 분야 5종(첫 항목이 주 분야)
+    nib: Optional[str] = Field(default=None, max_length=40)
+    responsible_person: Optional[str] = Field(default=None, max_length=100)
+    address: Optional[str] = Field(default=None, max_length=2000)
+    factory_address: Optional[str] = Field(default=None, max_length=2000)
+    business_type: Optional[str] = Field(default=None, max_length=100)
+    sectors: Optional[List[Annotated[str, Field(max_length=64)]]] = Field(default=None, max_length=5)
 
 
 class StaffSignupReq(BaseModel):
@@ -756,7 +758,7 @@ class ClientInviteReq(BaseModel):
 
 class OCRExtractReq(BaseModel):
     image_b64: str
-    doc_type: Optional[str] = "business_registration"  # business_registration|factory_registration
+    doc_type: Optional[str] = Field(default="business_registration", max_length=64)
 
 
 class AdminUserReq(BaseModel):

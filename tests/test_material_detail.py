@@ -32,6 +32,25 @@ def _case(c, h):
     return c.post("/cases", json={"company_name": "PT Bahan Uji"}, headers=h).json()["case_id"]
 
 
+def _pdf_bytes():
+    import fitz
+    with fitz.open() as document:
+        document.new_page().insert_text((50, 50), "Local certificate evidence")
+        return document.tobytes()
+
+
+def _approved_certificate(cid, mid, number):
+    """판정 갱신/감사 테스트의 전제: 같은 케이스에서 검토 완료된 인증서 참조."""
+    import base64
+    from app import models
+    with m.SessionLocal() as db:
+        db.add(models.DocumentAsset(case_id=cid, material_id=mid, filename="approved.pdf",
+               doc_type="halal_certificate", review_status="approved",
+               fields={"cert_no": number, "expiry_date": "2099-01-01"},
+               content_b64=base64.b64encode(_pdf_bytes()).decode()))
+        db.commit()
+
+
 # ── 6) 수돗물은 할랄이다 ──────────────────────────────────────────────────
 def test_인니어_수돗물_표기가_물로_매칭된다():
     """'Air PAM'은 수도사업자(PAM/PDAM) 물 — 흔한 표기인데 사전에 없어 의심으로 빠졌다."""
@@ -158,9 +177,10 @@ def test_목록이_증빙_문서를_개수뿐_아니라_목록으로_준다():
                      headers=h).json()["material_id"]
         row = c.get(f"/cases/{cid}/materials", headers=h).json()[0]
         assert row["evidence_count"] == 0 and row["evidence"] == []
+        import base64
         c.post(f"/cases/{cid}/materials/{mid}/evidence",
                json={"evidence_type": "halal_certificate", "filename": "cert.pdf",
-                     "file_b64": "aGVsbG8="}, headers=h)
+                     "file_b64": base64.b64encode(_pdf_bytes()).decode()}, headers=h)
         row = c.get(f"/cases/{cid}/materials", headers=h).json()[0]
         assert row["evidence_count"] == 1
         assert row["evidence"][0]["filename"] == "cert.pdf"
@@ -169,14 +189,15 @@ def test_목록이_증빙_문서를_개수뿐_아니라_목록으로_준다():
 
 # ── 4) 수정 통로 ─────────────────────────────────────────────────────────
 def test_인증번호를_나중에_넣어도_판정이_갱신된다(monkeypatch):
-    # 번호만으로 승격하는 옛 동작은 명시적 off 에서만 — 기본은 strict(감사 K7)
-    monkeypatch.setenv("GLHAC_CERT_VERIFY", "off")
+    # 판정 갱신은 검토된 참조로 확인한다. 자유 입력 승격은 새 s1 회귀 검사에서 거절한다.
+    monkeypatch.setenv("GLHAC_CERT_VERIFY", "strict")
     with TestClient(app) as c:
         h = _tok(c)
         cid = _case(c, h)
         mid = c.post(f"/cases/{cid}/materials", json={"name": "Bahan Tidak Dikenal"},
                      headers=h).json()["material_id"]
         assert c.get(f"/cases/{cid}/materials", headers=h).json()[0]["status"] == "mushbooh"
+        _approved_certificate(cid, mid, "ID00410000001")
         r = c.patch(f"/materials/{mid}", json={"cert_no": "ID00410000001"}, headers=h)
         assert r.status_code == 200, r.text
         assert r.json()["screen"]["cert_promoted"] is True
@@ -186,15 +207,17 @@ def test_인증번호를_나중에_넣어도_판정이_갱신된다(monkeypatch)
 
 def test_인증번호로_올린_사실이_감사기록에_남는다(monkeypatch):
     """번호만 적힌 것과 증빙으로 해소된 것은 다르다 — 오디터가 되짚을 수 있어야 한다."""
-    # 번호만으로 승격하는 옛 동작은 명시적 off 에서만 — 기본은 strict(감사 K7)
-    monkeypatch.setenv("GLHAC_CERT_VERIFY", "off")
+    # 실제로 확인된 인증서로 승격했을 때의 감사 이력을 검증한다.
+    monkeypatch.setenv("GLHAC_CERT_VERIFY", "strict")
     import app.models as models
     with TestClient(app) as c:
         h = _tok(c)
         cid = _case(c, h)
         mid = c.post(f"/cases/{cid}/materials", json={"name": "Bahan Tidak Dikenal 2"},
                      headers=h).json()["material_id"]
-        c.patch(f"/materials/{mid}", json={"cert_no": "ID77"}, headers=h)
+        number = "ID00410000500391022"
+        _approved_certificate(cid, mid, number)
+        c.patch(f"/materials/{mid}", json={"cert_no": number}, headers=h)
         db = m.SessionLocal()
         try:
             logs = [a for a in db.query(models.AuditLog).all() if a.action == "material.update"]
@@ -239,15 +262,17 @@ def test_오디터도_증빙_파일을_받을_수_있다():
         cid = _case(c, h)
         mid = c.post(f"/cases/{cid}/materials", json={"name": "Pewarna"},
                      headers=h).json()["material_id"]
+        import base64
+        raw = _pdf_bytes()
         c.post(f"/cases/{cid}/materials/{mid}/evidence",
                json={"evidence_type": "halal_certificate", "filename": "c.pdf",
-                     "file_b64": "aGVsbG8="}, headers=h)
+                     "file_b64": base64.b64encode(raw).decode()}, headers=h)
         did = c.get(f"/cases/{cid}/materials", headers=h).json()[0]["evidence"][0]["document_id"]
         aud = _tok(c, "auditor1", "pw")
         assert c.get(f"/cases/{cid}/materials", headers=aud).status_code == 200
         r = c.get(f"/documents/{did}/file", headers=aud)
         assert r.status_code == 200, r.status_code
-        assert r.content == b"hello"          # 미리보기·다운로드가 같은 이 파일을 쓴다
+        assert r.content == raw          # 미리보기·다운로드가 같은 이 파일을 쓴다
 
 
 def test_파일이_없는_증빙은_그렇다고_알린다():

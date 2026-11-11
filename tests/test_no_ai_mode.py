@@ -164,6 +164,13 @@ def test_공급사_인증번호가_있어도_체크리스트가_열린다():
         cid = c.post("/cases", json={"company_name": "PT Cert"}, headers=h).json()["case_id"]
         mid = c.post(f"/cases/{cid}/materials", json={"name": "Gelatin"},
                      headers=h).json()["material_id"]
+        # 체크리스트의 다국어 건수 표시가 목적이다. 인증번호는 검토 완료된 참조로 준비한다.
+        from app import models
+        with m.SessionLocal() as db:
+            db.add(models.DocumentAsset(case_id=cid, material_id=mid, filename="supplier.pdf",
+                   doc_type="halal_certificate", review_status="approved",
+                   fields={"cert_no": "ID00410000001", "expiry_date": "2099-01-01"}))
+            db.commit()
         c.patch(f"/materials/{mid}", json={"cert_no": "ID00410000001"}, headers=h)
         for lang in ("ko", "en", "id"):
             r = c.get(f"/cases/{cid}/doc-checklist?lang={lang}", headers=h)

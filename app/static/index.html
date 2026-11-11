@@ -820,6 +820,42 @@ function regCheckInvite(){
 
 /* ---- helpers ---- */
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+/* 사용자 데이터 출력 이벤트: HTML 속성에서 JSON 데이터로만 읽고 JS로 평가하지 않는다.
+   capture 위임은 표의 stopPropagation 셀 안에서도 동작하며, 기존 버튼의 이벤트는 존중한다. */
+function safeClick(action,...args){return `data-safe-click="${esc(action)}" data-safe-args="${esc(JSON.stringify(args))}"`;}
+const SAFE_CLICK_ACTIONS=Object.freeze({
+  applyDocCompany:(...args)=>applyDocCompany(...args),
+  approveStaff:(...args)=>approveStaff(...args),
+  askQ:(...args)=>askQ(...args),
+  clientInviteQrView:(...args)=>clientInviteQrView(...args),
+  copyLink:(...args)=>copyLink(...args),
+  csCopy:(...args)=>csCopy(...args),
+  docViewer:(...args)=>docViewer(...args),
+  editMaterial:(...args)=>editMaterial(...args),
+  editProductDesc:(...args)=>editProductDesc(...args),
+  facDel:(...args)=>facDel(...args),
+  matEvidenceList:(...args)=>matEvidenceList(...args),
+  matToggle:(...args)=>matToggle(...args),
+  ocAccept:(...args)=>ocAccept(...args),
+  opsRegionSel:(...args)=>opsRegionSel(...args),
+  pdfPreview:(...args)=>pdfPreview(...args),
+  rejectStaff:(...args)=>rejectStaff(...args),
+  renameMaterial:(...args)=>renameMaterial(...args),
+  resetUserPw:(...args)=>resetUserPw(...args),
+  serverPdf:(...args)=>serverPdf(...args),
+  shareQr:(...args)=>shareQr(...args),
+});
+document.addEventListener('click',event=>{
+  const target=event.target.closest?.('[data-safe-click],[onclick]');
+  if(!target?.dataset.safeClick || !Object.prototype.hasOwnProperty.call(SAFE_CLICK_ACTIONS,target.dataset.safeClick))return;
+  let args;
+  try{args=JSON.parse(target.dataset.safeArgs);}catch(_){return;}
+  if(!Array.isArray(args))return;
+  event.preventDefault();
+  event.stopPropagation();
+  SAFE_CLICK_ACTIONS[target.dataset.safeClick](...args);
+},true);
+/* end safe data events */
 function tag(t,txt){return `<span class="tag t-${t}">${esc(txt)}</span>`;}
 /* 백엔드 영어 데이터값 → 한글 라벨(한영 병행). 한국어 모드에서 영어만 뜨던 문제 해소 */
 const KO_LABEL={
@@ -5267,7 +5303,7 @@ function facListHtml(facs,org,canApp,selected,caseId){
     </label>
     <div style="display:flex;gap:4px;flex:none">
       ${canApp?`<button class="btn" style="padding:2px 8px" onclick="facEdit('${f.facility_id}','${esc(org)}','${caseId||""}')">${T('편집')}</button>`:''}
-      ${canApp?`<button class="btn" style="padding:2px 8px" onclick="facDel('${f.facility_id}','${esc((f.name||"").replace(/'/g,""))}','${esc(org)}','${caseId||""}')">삭제</button>`:''}
+      ${canApp?`<button class="btn" style="padding:2px 8px" ${safeClick('facDel',f.facility_id,f.name||'',org,caseId||'')}>삭제</button>`:''}
     </div>
   </div>`).join("");
 }
@@ -5490,7 +5526,7 @@ async function toggleProdAcc(id,pid,h){
       <div class="small" style="font-weight:600;margin-bottom:4px">${T('현장심사 보고서용')} <span class="en">· for the site-audit report</span></div>
       <div class="small" style="margin-bottom:5px"><span class="muted">${T('제품 설명')}: </span>${d.description?esc(d.description):`<span style="color:var(--warn)">${T('미작성')}</span>`}</div>
       <div class="btnrow">
-        ${canEdit?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="editProductDesc('${id}','${pid}',${JSON.stringify(d.description||'').replace(/"/g,'&quot;')})">${T('✎ 설명 작성')}</button>
+        ${canEdit?`<button class="btn" style="padding:3px 8px;font-size:11px" ${safeClick('editProductDesc',id,pid,d.description||'')}>${T('✎ 설명 작성')}</button>
         <button class="btn" style="padding:3px 8px;font-size:11px" onclick="uploadProductPhoto('${id}','${pid}')">${T('📷 제품 사진 올리기')}</button>`:''}
         <button class="btn" style="padding:3px 8px;font-size:11px" onclick="viewProductPhotos('${id}','${pid}')">${T('👁 사진 보기')}</button>
       </div></div>`;
@@ -5943,7 +5979,7 @@ SCREEN.workflow=async()=>{
           <div class="small muted">append-only 해시체인으로 감사 이벤트의 위·변조를 탐지합니다.</div>`:'<div class="banner" style="margin-bottom:12px">· 감사체인 검증 정보 없음 · verify unavailable</div><div class="small muted">감사 이벤트 검증 응답을 불러오지 못했습니다.</div>'}
         ${alverify?alChainBanner(alverify):''}
         ${tsa&&tsa.tsa?`<div class="small muted" style="margin-top:6px">🕘 ${T('신뢰 타임스탬프')} · ${tsa.tsa.configured?('<span style="color:var(--ok,#15803d)">'+T('TSA 연동됨 · 신뢰 타임스탬프 적용')+'</span>'):('<span style="color:#b45309">⚠ '+T('TSA 미연동 — 내부 시각만 사용')+'</span>')}</div>`:''}
-        ${(ROLE==='ops'||ROLE==='admin')?`<div class="btnrow" style="margin-top:12px"><button class="btn" onclick="serverPdf('/cases/${id}/evidence-bundle.zip','evidence-bundle_${esc(id)}.zip')">${T('📦 증거 번들 다운로드')}</button></div>
+        ${(ROLE==='ops'||ROLE==='admin')?`<div class="btnrow" style="margin-top:12px"><button class="btn" ${safeClick('serverPdf',`/cases/${id}/evidence-bundle.zip`,`evidence-bundle_${id}.zip`)}>${T('📦 증거 번들 다운로드')}</button></div>
           <div class="small muted" style="margin-top:4px">${T('장기 법적 증거보존용 아카이브 (전이·감사로그·문서목록·체인검증 리포트)')}</div>`:''}
       </div></div>
   </div>`;
@@ -6250,7 +6286,7 @@ SCREEN.preassess=async()=>{
           <div id="facDet_${f.facility_id}" class="muted small">${T('상세 정보 불러오는 중…')}</div>
           ${(f.source_docs||[]).length?`<div class="muted small" style="margin-top:8px">${T('원본 문서')}: ${(f.source_docs||[]).map(d=>`<span class="chip" style="cursor:pointer" onclick="docViewer('${esc(d.document_id||d)}')">📄 ${esc(d.filename||d.document_id||d)}</span>`).join(' ')}</div>`:''}
           <div class="btnrow" style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">
-            <button class="btn xs" onclick="serverPdf('/cases/${id}/facilities/${f.facility_id}/docs/factory-profile.pdf','factory_${esc(f.facility_id.slice(0,6))}.pdf')">⬇ ${T('공장 프로필 PDF 다운로드')}</button></div>
+            <button class="btn xs" ${safeClick('serverPdf',`/cases/${id}/facilities/${f.facility_id}/docs/factory-profile.pdf`,`factory_${f.facility_id.slice(0,6)}.pdf`)}>⬇ ${T('공장 프로필 PDF 다운로드')}</button></div>
         </div></details>`).join(''):`<div class="muted small">${_facEmpty}</div>`}
       </div></div>`;
     /* 제출 서류 — 원문 뷰어 링크 */
@@ -6639,7 +6675,7 @@ SCREEN.application=async()=>{
           <div class="btnrow" style="margin-top:4px"><button class="btn" style="padding:3px 8px;font-size:11px" onclick="sihalalLookup(v('apCompany'))">🔎 ${T('SIHALAL 등록조회')}</button></div>
           <div id="sihalalOut" class="small" style="margin-top:4px"></div></div>
         <div class="field"><label>기업명(영문) · Company (EN)</label><input class="v" id="peCompanyEn" value="${esc(pe.company_name_en||"")}"></div>
-        ${(coChk&&coChk.mismatch&&coChk.suggested_company)?`<div class="banner bad" style="margin:-4px 0 10px"><b>⚠ ${T('기업명 불일치')}</b><br>${T('사업자등록증')}: <b>${esc(coChk.suggested_company)}</b> · ${T('유사도')} ${Math.round((coChk.best_similarity||0)*100)}%<br><button class="btn" style="margin-top:6px;padding:3px 8px;font-size:11px" onclick="applyDocCompany('${id}',${JSON.stringify(coChk.suggested_company).replace(/"/g,'&quot;')},${JSON.stringify(c.company_name||'').replace(/"/g,'&quot;')})">📄 ${T('문서 기업명으로 변경')}</button></div>`:''}
+        ${(coChk&&coChk.mismatch&&coChk.suggested_company)?`<div class="banner bad" style="margin:-4px 0 10px"><b>⚠ ${T('기업명 불일치')}</b><br>${T('사업자등록증')}: <b>${esc(coChk.suggested_company)}</b> · ${T('유사도')} ${Math.round((coChk.best_similarity||0)*100)}%<br><button class="btn" style="margin-top:6px;padding:3px 8px;font-size:11px" ${safeClick('applyDocCompany',id,coChk.suggested_company,c.company_name||'')}>📄 ${T('문서 기업명으로 변경')}</button></div>`:''}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="field"><label>${T('NIB · 사업자등록번호')}</label><input class="v" id="apNib" value="${esc(c.nib||"")}"></div>
           <div class="field"><label>세금 ID · Tax ID</label><input class="v" id="peTaxId" value="${esc(pe.tax_id||"")}"></div></div>
@@ -6880,15 +6916,15 @@ SCREEN.materials=async()=>{
   const mpg=pageSlice("materials",mats,12);
   const rows=mpg.items.length?mpg.items.map(m=>{
     const cl=scol(m.status||m.result); const op=MAT_OPEN.has(m.material_id);   // 상태색: halal 초록 · mushbooh 노랑 · haram 빨강
-    return `<tr class="clickable" onclick="matToggle('${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})"><td><b>${esc(m.name)}</b>${m.e_number?` <span class="chip">${esc(m.e_number)}</span>`:""} <span class="muted small" id="matArrow_${m.material_id}">${op?'▲':'▼'}</span></td>
+    return `<tr class="clickable" ${safeClick('matToggle',m.material_id,m.name)}><td><b>${esc(m.name)}</b>${m.e_number?` <span class="chip">${esc(m.e_number)}</span>`:""} <span class="muted small" id="matArrow_${m.material_id}">${op?'▲':'▼'}</span></td>
       <td class="small" style="white-space:nowrap">${m.mat_type_label?esc(m.mat_type_label):'<span class="muted">-</span>'}</td>
       <td class="small" style="min-width:140px"${m.manufacturer_is_supplier?` title="${T('제조사 칸이 비어 공급사를 표시')}"`:''}>${m.manufacturer?esc(m.manufacturer):'<span class="muted">-</span>'}</td>
       <td style="white-space:nowrap">${bTag(cl,m.status||m.result)}${m.cert_no?`<span class="chip" style="margin-left:4px;font-size:10px" title="${T('인증번호')}: ${esc(m.cert_no)} — ${T('인증번호로 할랄 처리 — 오디터 대조 필요')}">${T('인증번호')}</span>`:''}</td>
       <td style="white-space:nowrap">${m.severity?bTag(rcol(m.severity),m.severity):'<span class="muted">-</span>'}</td>
-      <td class="small" style="white-space:nowrap" onclick="event.stopPropagation()">${(m.evidence||[]).length?`<button class="btn" style="padding:2px 7px;font-size:11px" onclick="matEvidenceList('${id}','${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})">✓ ${m.evidence.length}</button>`:'<span class="muted">'+T('없음')+'</span>'}</td>
+      <td class="small" style="white-space:nowrap" onclick="event.stopPropagation()">${(m.evidence||[]).length?`<button class="btn" style="padding:2px 7px;font-size:11px" ${safeClick('matEvidenceList',id,m.material_id,m.name)}>✓ ${m.evidence.length}</button>`:'<span class="muted">'+T('없음')+'</span>'}</td>
       <td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()">${canMatWrite?`
-        <button class="btn" style="padding:3px 7px;font-size:11px" onclick="renameMaterial('${m.material_id}',${JSON.stringify(m.name).replace(/"/g,'&quot;')})" title="${T('OCR 오독 교정')}">✎</button>
-        <button class="btn" style="padding:3px 7px;font-size:11px" onclick='editMaterial("${m.material_id}",${JSON.stringify({manufacturer:m.manufacturer||"",mat_type_code:m.mat_type_code||"",cert_no:m.cert_no||""}).replace(/'/g,"&#39;")})' title="${T('제조사·유형·인증번호')}">ℹ</button>
+        <button class="btn" style="padding:3px 7px;font-size:11px" ${safeClick('renameMaterial',m.material_id,m.name)} title="${T('OCR 오독 교정')}">✎</button>
+        <button class="btn" style="padding:3px 7px;font-size:11px" ${safeClick('editMaterial',m.material_id,{manufacturer:m.manufacturer||"",mat_type_code:m.mat_type_code||"",cert_no:m.cert_no||m.declared_cert_no||""})} title="${T('제조사·유형·인증번호')}">ℹ</button>
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="attachEvidence('${id}','${m.material_id}')">증빙</button>
         <button class="btn" style="padding:3px 7px;font-size:11px" onclick="rescreen('${m.material_id}')">재스크</button>
         <button class="btn bad" style="padding:3px 7px;font-size:11px" onclick="delMaterial('${m.material_id}')">✕</button>`:''}</td></tr><tr id="matRow_${m.material_id}" style="display:${op?'':'none'}"><td colspan="7" style="background:var(--bg);padding:0 12px 12px"><div id="matDet_${m.material_id}" class="small muted">${T('불러오는 중…')}</div></td></tr>`;}).join("")
@@ -6959,7 +6995,7 @@ async function matEvidenceList(cid,mid,name){
       <td class="small" style="white-space:nowrap">${esc(LBL('doc',d.evidence_type,LBL('evidence',d.evidence_type,d.evidence_type||'—')))}</td>
       <td style="white-space:nowrap">${bTag(d.review_status==='approved'?'ok':d.review_status==='rejected'?'bad':'mute',d.review_status||'pending')}</td>
       <td style="text-align:right;white-space:nowrap">
-        ${d.has_file?`<button class="btn" style="padding:3px 8px;font-size:11px" onclick="docViewer('${d.document_id}',${JSON.stringify(d.filename||'').replace(/"/g,'&quot;')})">${T('👁 미리보기')}</button>
+        ${d.has_file?`<button class="btn" style="padding:3px 8px;font-size:11px" ${safeClick('docViewer',d.document_id,d.filename||'')}>${T('👁 미리보기')}</button>
                       <button class="btn" style="padding:3px 8px;font-size:11px" onclick="viewDoc('${d.document_id}')">${T('⬇ 다운로드')}</button>`
                     :`<span class="muted small">${T('파일 없음')}</span>`}</td></tr>`).join('')}</tbody></table></div>`;
   showGuide(T('증빙 문서')+' · '+name, html, 920);
@@ -7724,12 +7760,12 @@ SCREEN.vault=async()=>{
   // ② 생성 문서(GeneratedDocument) — PDF 다운로드
   const genBody=gens.length?`<table><tbody>${gens.map(g=>`<tr>
       <td>📑 <b>${esc(LBL('vault_doc',g.doc_type,VAULT_GD_LABEL))}</b> <span class="muted small">v${esc(g.version)} · ${bTag(statusColor(g.status),g.status)}</span></td>
-      <td style="text-align:right;white-space:nowrap"><button class="btn xs" onclick="serverPdf('/gen-docs/${esc(g.gen_doc_id)}/pdf','${esc(LBL('vault_doc',g.doc_type,VAULT_GD_LABEL))}_v${esc(g.version)}.pdf')">⤓ PDF</button></td></tr>`).join('')}</tbody></table>`:empty(T('항목 없음'));
+      <td style="text-align:right;white-space:nowrap"><button class="btn xs" ${safeClick('serverPdf',`/gen-docs/${g.gen_doc_id}/pdf`,`${LBL('vault_doc',g.doc_type,VAULT_GD_LABEL)}_v${g.version}.pdf`)}>⤓ PDF</button></td></tr>`).join('')}</tbody></table>`:empty(T('항목 없음'));
   const genCard=show('gen')?`<div class="card"><h3>📑 ${T('생성 문서')} <span class="en">· Generated</span><span class="r">${gens.length}</span></h3><div class="body tight">${genBody}</div></div>`:'';
   // ③ 인증서 PDF
   const certBody=nCert?`<div class="li"><div class="ic t-ok">🏅</div><div class="tx"><b>${esc(cert.certificate_no||T('할랄 인증서'))}</b>
       <div class="muted small">${esc(cert.issue_date||'')}${cert.expiry_date?` ~ ${esc(cert.expiry_date)}`:''} · ${bTag(statusColor(cert.status),cert.status||'')}</div></div>
-      <button class="btn xs" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(cert.certificate_no||'')}.pdf')">⤓ ${T('다운로드')}</button></div>`:empty(T('발급된 인증서가 없습니다.'));
+      <button class="btn xs" ${safeClick('serverPdf',`/cases/${id}/certificate/pdf`,`certificate_${cert.certificate_no||''}.pdf`)}>⤓ ${T('다운로드')}</button></div>`:empty(T('발급된 인증서가 없습니다.'));
   const certCard=show('cert')?`<div class="card"><h3>🏅 ${T('인증서')} <span class="en">· Certificate</span><span class="r">${nCert}</span></h3><div class="body tight">${certBody}</div></div>`:'';
   // ④ 원재료 증빙(재사용 참조 — 케이스 간 할랄 데이터 재활용)
   const scol=s=>({halal:'ok',haram:'bad',mushbooh:'warn',pass:'ok'}[String(s||'').toLowerCase()]||'mute');
@@ -8557,7 +8593,7 @@ SCREEN.onsiteCalendar=async()=>{
       <div class="body">
         <div class="banner info" style="margin-bottom:10px">${T('오디터가 아래 후보일을 제안했습니다. 방문 가능한 날짜를 하나 선택해 확정을 요청하세요.')}</div>
         <div class="btnrow" style="flex-wrap:wrap;gap:8px">
-          ${(data.auditor_dates||[]).map(d=>`<button class="btn ok" onclick="ocAccept('${esc(d)}')">📅 ${esc(d)} · ${T('이 날짜로 확정 요청')}</button>`).join("")}
+          ${(data.auditor_dates||[]).map(d=>`<button class="btn ok" ${safeClick('ocAccept',d)}>📅 ${esc(d)} · ${T('이 날짜로 확정 요청')}</button>`).join("")}
         </div>
       </div></div>`:"";
   return `
@@ -8966,10 +9002,10 @@ SCREEN.mockAudit=async()=>{
             const img=isImg(d.filename)||isImg(d.content_type);
             if(vid)return `<div style="width:190px"><video id="mevv_${d.document_id}" data-mevsrc="${d.document_id}" controls preload="metadata" style="width:190px;height:118px;border-radius:8px;background:#000;border:1px solid var(--line)"></video>
               <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🎬 ${esc(d.filename||'')}</div>${evMetaBadge(d)}</div>`;
-            if(img)return `<div style="width:118px"><div data-mevimg="${d.document_id}" onclick="docViewer('${d.document_id}','${esc(d.filename||'')}')" title="${T('클릭하여 원본 보기')}"
+            if(img)return `<div style="width:118px"><div data-mevimg="${d.document_id}" ${safeClick('docViewer',d.document_id,d.filename||'')} title="${T('클릭하여 원본 보기')}"
               style="width:118px;height:88px;border-radius:8px;border:1px solid var(--line);background:var(--accent-soft);background-size:cover;background-position:center;cursor:pointer"></div>
               <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.filename||'')}</div>${evMetaBadge(d)}</div>`;
-            return `<div style="width:118px"><div onclick="docViewer('${d.document_id}','${esc(d.filename||'')}')" style="width:118px;height:88px;border-radius:8px;border:1px solid var(--line);display:grid;place-items:center;font-size:26px;cursor:pointer">📄</div>
+            return `<div style="width:118px"><div ${safeClick('docViewer',d.document_id,d.filename||'')} style="width:118px;height:88px;border-radius:8px;border:1px solid var(--line);display:grid;place-items:center;font-size:26px;cursor:pointer">📄</div>
               <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.filename||'')}</div></div>`;}).join('')}
           ${ev.length>8?`<div style="display:grid;place-items:center;width:118px;height:88px;border:1px dashed var(--line2);border-radius:8px;cursor:pointer" onclick="mockViewSection('${CURCASE}','${s.section}')">+${ev.length-8}</div>`:''}
         </div>`
@@ -9094,7 +9130,7 @@ async function onsiteReviewerView(id){
     return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">${list.slice(0,6).map(d=>{
       if(isVid(d.filename))return `<div style="width:190px"><video data-mevsrc="${d.document_id}" controls preload="metadata" style="width:190px;height:118px;border-radius:8px;background:#000;border:1px solid var(--line)"></video>
         <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">🎬 ${esc(d.filename||'')}</div>${evMetaBadge(d)}</div>`;
-      if(isImg(d.filename))return `<div style="width:118px"><div data-mevimg="${d.document_id}" onclick="docViewer('${d.document_id}',${JSON.stringify(d.filename||'').replace(/"/g,'&quot;')})" title="${T('클릭하여 미리보기')}"
+      if(isImg(d.filename))return `<div style="width:118px"><div data-mevimg="${d.document_id}" ${safeClick('docViewer',d.document_id,d.filename||'')} title="${T('클릭하여 미리보기')}"
         style="width:118px;height:88px;border-radius:8px;border:1px solid var(--line);background:var(--accent-soft);background-size:cover;background-position:center;cursor:pointer"></div>
         <div class="muted small" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.filename||'')}</div>${evMetaBadge(d)}</div>`;
       return `<div style="width:118px"><div onclick="docViewer('${d.document_id}')" style="width:118px;height:88px;border:1px solid var(--line);border-radius:8px;display:grid;place-items:center;font-size:24px;cursor:pointer">📄</div>
@@ -9208,7 +9244,7 @@ async function onsiteAuditView(id,editable){
     const cComp=it.result==='comply'?'checked':'';const cNon=it.result==='nonconformity'?'checked':'';
     const list=evByItem[it.item_key]||[];const cnt=list.length;
     const thumbs=list.slice(0,4).map(d=>{const did=esc(d.document_id);const isVid=/\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(d.filename||'');
-      return `<div title="${esc(d.filename||'')} — ${T('클릭하여 미리보기')}" onclick="docViewer('${did}',${JSON.stringify(d.filename||'').replace(/"/g,'&quot;')})" ${isVid?'':`data-onsdoc="${did}"`} style="width:64px;height:64px;border-radius:8px;border:1px solid var(--line);background:var(--accent-soft);background-size:cover;background-position:center;cursor:pointer;display:grid;place-items:center;font-size:20px">${isVid?'🎬':''}</div>`;}).join('');
+      return `<div title="${esc(d.filename||'')} — ${T('클릭하여 미리보기')}" ${safeClick('docViewer',did,d.filename||'')} ${isVid?'':`data-onsdoc="${did}"`} style="width:64px;height:64px;border-radius:8px;border:1px solid var(--line);background:var(--accent-soft);background-size:cover;background-position:center;cursor:pointer;display:grid;place-items:center;font-size:20px">${isVid?'🎬':''}</div>`;}).join('');
     const cntBadge=cnt>=2?`<span class="tag t-ok">${cnt}${T('개 첨부')}</span>`:`<span class="tag t-warn">${cnt}${T('개 첨부')} · ${T('최소 2매')}</span>`;
     return `<tr>
         <td style="text-align:center;vertical-align:top;padding:10px 6px">${n}</td>
@@ -10141,14 +10177,14 @@ SCREEN.invoice=async()=>{
       ${(canMark&&sel.status!=='paid')?`<div class="btnrow"><button class="btn pri" onclick="recordPayment('${sel.invoice_id}')">💳 결제 기록 · Record payment</button><button class="btn ok" onclick="payInvoice('${sel.invoice_id}')">${T('간이 결제표시')}</button></div>`:''}
       <div style="font-weight:600;font-size:12.5px;margin:12px 0 4px">📑 ${T('문서 미리보기·다운로드')} <span class="en">· Documents</span></div>
       <div class="btnrow" style="gap:6px;flex-wrap:wrap">
-        <button class="btn" onclick="pdfPreview('/invoices/${sel.invoice_id}/quotation.pdf','${T('견적서')} · ${esc(sel.invoice_no||'')}','quotation_${esc(sel.invoice_no||'')}.pdf')">👁 ${T('견적서')} · Penawaran</button>
-        <button class="btn pri" onclick="pdfPreview('/invoices/${sel.invoice_id}/receipt','${T('결제 영수증')} · ${esc(sel.invoice_no||'')}','receipt_${esc(sel.invoice_no||'')}.pdf')">👁 ${T('영수증 미리보기')} · Receipt</button>
-        <button class="btn" onclick="pdfPreview('/invoices/${sel.invoice_id}/tax-invoice','${T('세금계산서')} · ${esc(sel.invoice_no||'')}','faktur_${esc(sel.invoice_no||'')}.pdf')">👁 ${T('세금계산서')} · Faktur</button>
+        <button class="btn" ${safeClick('pdfPreview',`/invoices/${sel.invoice_id}/quotation.pdf`,`${T('견적서')} · ${sel.invoice_no||''}`,`quotation_${sel.invoice_no||''}.pdf`)}>👁 ${T('견적서')} · Penawaran</button>
+        <button class="btn pri" ${safeClick('pdfPreview',`/invoices/${sel.invoice_id}/receipt`,`${T('결제 영수증')} · ${sel.invoice_no||''}`,`receipt_${sel.invoice_no||''}.pdf`)}>👁 ${T('영수증 미리보기')} · Receipt</button>
+        <button class="btn" ${safeClick('pdfPreview',`/invoices/${sel.invoice_id}/tax-invoice`,`${T('세금계산서')} · ${sel.invoice_no||''}`,`faktur_${sel.invoice_no||''}.pdf`)}>👁 ${T('세금계산서')} · Faktur</button>
       </div>
       <div class="btnrow" style="gap:6px;flex-wrap:wrap;margin-top:5px">
-        <button class="btn ghost" onclick="serverPdf('/invoices/${sel.invoice_id}/quotation.pdf','quotation_${esc(sel.invoice_no||'')}.pdf')">⬇ ${T('견적서')}</button>
-        <button class="btn ghost" onclick="serverPdf('/invoices/${sel.invoice_id}/receipt','receipt_${esc(sel.invoice_no||'')}.pdf')">⬇ ${T('영수증')}</button>
-        <button class="btn ghost" onclick="serverPdf('/invoices/${sel.invoice_id}/tax-invoice','faktur_${esc(sel.invoice_no||'')}.pdf')">⬇ ${T('세금계산서')}</button>
+        <button class="btn ghost" ${safeClick('serverPdf',`/invoices/${sel.invoice_id}/quotation.pdf`,`quotation_${sel.invoice_no||''}.pdf`)}>⬇ ${T('견적서')}</button>
+        <button class="btn ghost" ${safeClick('serverPdf',`/invoices/${sel.invoice_id}/receipt`,`receipt_${sel.invoice_no||''}.pdf`)}>⬇ ${T('영수증')}</button>
+        <button class="btn ghost" ${safeClick('serverPdf',`/invoices/${sel.invoice_id}/tax-invoice`,`faktur_${sel.invoice_no||''}.pdf`)}>⬇ ${T('세금계산서')}</button>
       </div>`
     :'<div class="muted small">청구서를 선택하세요.</div>';
   const st2=inv.reduce((a,i)=>{const t=(i.total==null?i.amount:i.total)||0;a.total+=t;if(i.status==='paid')a.paid+=t;else a.unpaid+=t;return a;},{total:0,paid:0,unpaid:0});
@@ -10416,8 +10452,8 @@ async function inqQR(){
         <div class="muted small">${esc(info.url)}<br>${T('누적 사용')} ${info.used_count}${T('회')}</div>
         <div class="btnrow" style="flex-wrap:wrap;gap:8px">
           <a class="btn pri" download="glhac-qr-${esc(info.code)}.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
-          <button class="btn" onclick="shareQr('${url}','${esc(info.code)}','${esc(info.url)}')">📤 ${T('공유')}</button>
-          <button class="btn" onclick="copyLink('${esc(info.url)}')">🔗 ${T('링크 복사')}</button>
+          <button class="btn" ${safeClick('shareQr',`${url}`,`${info.code}`,`${info.url}`)}>📤 ${T('공유')}</button>
+          <button class="btn" ${safeClick('copyLink',`${info.url}`)}>🔗 ${T('링크 복사')}</button>
         </div>
         <form onsubmit="GLHACMail.sendQrMail(event)" style="margin-top:12px">
           <label>받는 고객 이메일 <input type="email" required maxlength="254" autocomplete="email"></label>
@@ -10658,7 +10694,7 @@ SCREEN.opsDashboard=async()=>{
     ${kpi(noCon.count||0,T('컨설턴트 미지정'),(noCon.with_cases?'bad':(noCon.count?'warn':'ink3')))}</div>`;
   /* ① 지역별 현황 — 집계표 + 클릭 드릴다운 */
   const regions=rg.regions||[]; const maxr=Math.max(1,...regions.map(r=>r.count));
-  const regBars=regions.length?regions.map(r=>`<div class="sb clickable" onclick="opsRegionSel('${esc(r.province)}')" title="${esc(r.province)} · ${T('클릭→케이스 목록')}" style="cursor:pointer${OPS_REGION===r.province?';font-weight:800':''}">
+  const regBars=regions.length?regions.map(r=>`<div class="sb clickable" ${safeClick('opsRegionSel',r.province)} title="${esc(r.province)} · ${T('클릭→케이스 목록')}" style="cursor:pointer${OPS_REGION===r.province?';font-weight:800':''}">
       <span>${esc(r.province)}${OPS_REGION===r.province?' ◀':''}</span><div class="bar"><i style="width:${Math.round(r.count/maxr*100)}%"></i></div><b>${r.count}</b></div>`).join(""):`<div class="muted small">${T('케이스 없음')}</div>`;
   const selReg=regions.find(r=>r.province===OPS_REGION);
   const drill=selReg?`<div class="body tight" style="border-top:1px solid var(--line);margin-top:10px"><table>
@@ -11324,7 +11360,7 @@ async function fatwaDecisionView(id,editable){
       <div style="width:44px;height:44px;border-radius:10px;background:var(--accent-soft);display:grid;place-items:center;font-size:22px">📄</div>
       <div style="flex:1"><div style="font-weight:700">${title} <span class="tag t-info">PDF</span></div>
         <div class="muted small" style="margin-top:2px">${T('업로드일')}: ${doc?esc(String(doc.created_at).slice(0,16).replace('T',' ')):'—'}${doc?' · v'+esc(doc.version):''}</div></div>
-      <button class="btn" onclick="serverPdf('${pdfUrl}','${fname}')">⬇ ${T('다운로드')}</button>
+      <button class="btn" ${safeClick('serverPdf',`${pdfUrl}`,`${fname}`)}>⬇ ${T('다운로드')}</button>
     </div></div>`;
   const prodRows=(prods||[]).map((p,i)=>`<tr>
       <td style="text-align:center;padding:9px 6px">${i+1}</td>
@@ -11515,7 +11551,7 @@ function productCertCard(id,pc){
     <td>${tag(p.status==='active'?'ok':'mute',p.status||'—')}</td>
     <td class="muted small">${esc(p.expiry_date||'—')}</td>
     <td style="white-space:nowrap">
-      <button class="btn" style="padding:2px 8px;font-size:11px" onclick="serverPdf('/cases/${id}/certificate/products/${p.product_id}.pdf','cert_${esc(p.certificate_no)}.pdf')">📄 PDF</button>
+      <button class="btn" style="padding:2px 8px;font-size:11px" ${safeClick('serverPdf',`/cases/${id}/certificate/products/${p.product_id}.pdf`,`cert_${p.certificate_no}.pdf`)}>📄 PDF</button>
       ${p.qr_token?`<button class="btn" style="padding:2px 8px;font-size:11px" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${esc(p.qr_token)}'),'_blank')">🔗 ${T('검증')}</button>`:`<span class="muted small" title="${T('구 발급분 — 공개 검증 토큰 없음')}">${T('검증 불가')}</span>`}
     </td></tr>`).join('');
   return `<div class="card" style="margin-top:16px"><h3>📦 ${T('제품별 개별 인증서')} <span class="en">· Per-product certificates</span><span class="r">${pc.count}${T('건')}</span></h3>
@@ -11551,7 +11587,7 @@ SCREEN.certificate=async()=>{
     <div class="card"><h3>${T('할랄 인증서')} <span class="en">· Certificate</span><span class="r">${c.issued?'발급됨':'미발급'}</span></h3>
       <div class="body">${certCard}
         <div class="banner info" style="margin-top:10px;font-size:12px;line-height:1.5">ℹ️ ${T('본 문서는 준비/내부 산출물이며, 공식 할랄 인증 발급은 BPJPH/SIHALAL 절차로 확정됩니다.')}</div>
-        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" onclick="serverPdf('/cases/${id}/certificate/pdf','certificate_${esc(c.certificate_no||"")}.pdf')">${T('📄 인증서 PDF 다운로드')}</button><button class="btn" onclick="serverPdf('/cases/${id}/certificate/bundle.zip','halal_bundle_${esc(c.certificate_no||"")}.zip')">${T('⤓ 전체 ZIP')}</button>${(ROLE==='ops'||ROLE==='admin')?`<button class="btn" onclick="serverPdf('/cases/${id}/evidence-bundle.zip','evidence-bundle_${esc(id)}.zip')">${T('📦 증거 번들 다운로드')}</button>`:''}<button class="btn" onclick="printCert('${id}')">${T('🖨 인쇄')}</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
+        ${c.issued?`<div class="btnrow" style="margin-top:12px"><button class="btn pri" ${safeClick('serverPdf',`/cases/${id}/certificate/pdf`,`certificate_${c.certificate_no||""}.pdf`)}>${T('📄 인증서 PDF 다운로드')}</button><button class="btn" ${safeClick('serverPdf',`/cases/${id}/certificate/bundle.zip`,`halal_bundle_${c.certificate_no||""}.zip`)}>${T('⤓ 전체 ZIP')}</button>${(ROLE==='ops'||ROLE==='admin')?`<button class="btn" ${safeClick('serverPdf',`/cases/${id}/evidence-bundle.zip`,`evidence-bundle_${id}.zip`)}>${T('📦 증거 번들 다운로드')}</button>`:''}<button class="btn" onclick="printCert('${id}')">${T('🖨 인쇄')}</button>${c.qr_token?`<button class="btn" onclick="window.open('/ui/verify.html?token='+encodeURIComponent('${c.qr_token}'),'_blank')">🔗 공개검증 · Verify</button>`:''}${CAN("certificate.issue")&&!c.signed?`<button class="btn gold" onclick="signCert('${id}')">✍ 전자서명 · Sign</button>`:''}</div>`:''}
         ${c.issued&&c.signed?`<div class="banner ok" style="margin-top:10px">✍ 전자서명 완료 · Signed${c.signature&&c.signature.signed_at?" · "+esc(String(c.signature.signed_at).slice(0,16)):""} <span class="muted small">(${esc((c.signature&&c.signature.provider)||"internal-hmac")})</span><div class="muted small" style="margin-top:4px">${T('내부 무결성 서명(공인 전자서명 아님)')}</div>${psreSigNote()}</div>`:''}
         ${c.issued&&c.status&&c.status!=='active'?`<div class="banner ${c.status==='withdrawn'?'bad':'warn'}" style="margin-top:10px">${c.status==='withdrawn'?'⛔ 철회됨 · Withdrawn':'⏸ 정지됨 · Suspended'}</div>`:''}
         ${c.issued&&CAN("certificate.suspend")?`<div class="btnrow" style="margin-top:10px">
@@ -11641,7 +11677,7 @@ SCREEN.assistant=async()=>{
   const id=CURCASE;let health={};try{health=await API("/ai/context/health");}catch(_){}
   const log=CHAT.map(m=>m.role==="u"
     ?`<div class="msg u">${esc(m.text)}</div>`
-    :`<div class="msg a"${m.status&&m.status!=="ok"?' style="border-left:3px solid var(--bad);padding-left:10px"':''}>${(m.status&&m.status!=="ok")?`<b>⚠ ${T(m.status==="failed"?'AI 호출 실패':(m.status==="unavailable"?'AI 미연결':'답변 없음'))}</b><br>`:""}${esc(m.text)}${m.retryable?`<br><button class="btn xs" style="margin-top:6px" onclick="askQ('${CURCASE}','${esc(m.q||"")}')">${T('다시 물어보기')}</button>`:""}${m.cite?`<cite>${esc(m.cite)}</cite>`:""}</div>`).join("")
+    :`<div class="msg a"${m.status&&m.status!=="ok"?' style="border-left:3px solid var(--bad);padding-left:10px"':''}>${(m.status&&m.status!=="ok")?`<b>⚠ ${T(m.status==="failed"?'AI 호출 실패':(m.status==="unavailable"?'AI 미연결':'답변 없음'))}</b><br>`:""}${esc(m.text)}${m.retryable?`<br><button class="btn xs" style="margin-top:6px" ${safeClick('askQ',CURCASE,m.q||'')}>${T('다시 물어보기')}</button>`:""}${m.cite?`<cite>${esc(m.cite)}</cite>`:""}</div>`).join("")
     ||'<div class="msg a">이 케이스에 대해 질문하세요. 원재료·문서·절차 근거를 인용해 답합니다.</div>';
   return `
   <div class="grid side-r">
@@ -11886,7 +11922,7 @@ SCREEN.consultantSales=async()=>{
       <td class="muted small">${esc((i.expires_at||'').slice(0,10))}</td>
       <td>${i.revoked?tag('bad',T('회수됨')):(i.usable?tag('ok',T('사용 가능')):tag('mute',T('만료·소진')))}</td>
       <td style="text-align:right;white-space:nowrap">
-        <button class="btn xs" onclick="csCopy('${esc(i.code)}')">📋 ${T('복사')}</button>
+        <button class="btn xs" ${safeClick('csCopy',`${i.code}`)}>📋 ${T('복사')}</button>
         ${i.usable?`<button class="btn xs ghost" onclick="csRevoke('${esc(i.invite_id)}')">${T('회수')}</button>`:''}</td></tr>`).join('')
     || `<tr><td colspan="7" class="muted" style="text-align:center;padding:14px">${T('발급한 코드가 없습니다')}</td></tr>`;
   const clientRows=(me.clients||[]).map(c=>`<tr>
@@ -12240,8 +12276,8 @@ SCREEN.system=async()=>{
       <td><b>${esc(r.username)}</b>${r.display_name?' <span class="muted small">'+esc(r.display_name)+'</span>':''}${r.note?'<div class="muted small">'+esc(r.note)+'</div>':''}</td>
       <td>${bTag('info',T(_stRole[r.requested_role]||r.requested_role))}</td>
       <td style="white-space:nowrap;text-align:right">
-        <button class="btn pri" style="padding:3px 8px;font-size:12px" onclick="approveStaff('${r.request_id}','${esc(r.username)}')">${T('승인')}</button>
-        <button class="btn bad" style="padding:3px 8px;font-size:12px" onclick="rejectStaff('${r.request_id}','${esc(r.username)}')">${T('거부')}</button></td></tr>`).join("")
+        <button class="btn pri" style="padding:3px 8px;font-size:12px" ${safeClick('approveStaff',r.request_id,r.username)}>${T('승인')}</button>
+        <button class="btn bad" style="padding:3px 8px;font-size:12px" ${safeClick('rejectStaff',r.request_id,r.username)}>${T('거부')}</button></td></tr>`).join("")
     ||`<tr><td colspan="3" class="muted small">${T('가입 대기 없음')}</td></tr>`;
   const _slUrl=(staffLink&&staffLink.url)||"";
   const staffCard=`<div class="card"><h3>🛡 ${T('스태프 가입 승인')} <span class="en">· Staff sign-ups</span>
@@ -12251,7 +12287,7 @@ SCREEN.system=async()=>{
         <div class="muted small" style="margin-bottom:5px">🔗 ${T('스태프 가입 링크 — 스태프 후보에게만 전달하세요(로그인 화면엔 없음).')}</div>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <code style="flex:1;min-width:140px;font-size:12px;word-break:break-all">${esc(_slUrl)}</code>
-          <button class="btn xs" onclick="copyLink('${esc(_slUrl)}')">🔗 ${T('링크 복사')}</button>
+          <button class="btn xs" ${safeClick('copyLink',`${_slUrl}`)}>🔗 ${T('링크 복사')}</button>
           <button class="btn xs" onclick="staffLinkQrView()">📱 QR</button></div>
         <div id="staffLinkQrBox" style="margin-top:8px"></div>
       </div>
@@ -12263,8 +12299,8 @@ SCREEN.system=async()=>{
       <td class="muted small">${i.used_count}${i.max_uses>=1000000000?'':'/'+i.max_uses}</td>
       <td>${i.revoked?tag('bad',T('회수됨')):(i.usable?tag('ok',T('사용 가능')):tag('mute',T('만료·소진')))}</td>
       <td style="text-align:right;white-space:nowrap">
-        <button class="btn xs" onclick="clientInviteQrView('${i.invite_id}','${esc(i.code)}','${esc(i.url)}')">📱 QR</button>
-        <button class="btn xs" onclick="copyLink('${esc(i.url)}')">🔗</button>
+        <button class="btn xs" ${safeClick('clientInviteQrView',`${i.invite_id}`,`${i.code}`,`${i.url}`)}>📱 QR</button>
+        <button class="btn xs" ${safeClick('copyLink',`${i.url}`)}>🔗</button>
         ${(i.usable&&!i.is_primary)?`<button class="btn xs ghost" onclick="revokeClientInvite('${i.invite_id}')">${T('회수')}</button>`:''}</td></tr>`).join("")
     ||`<tr><td colspan="5" class="muted small" style="text-align:center;padding:12px">${T('발급한 코드가 없습니다')}</td></tr>`;
   const clientInviteCard=`<div class="card"><h3>🎫 ${T('클라이언트 초대 QR')} <span class="en">· Client invites</span>
@@ -12278,7 +12314,7 @@ SCREEN.system=async()=>{
   const uRows=upg.items.map(u=>`<tr><td><b>${esc(u.username)}</b></td>
       <td><select class="v" style="font-size:12px;padding:3px 6px;width:auto" onchange="patchUserRole('${u.user_id}',this.value)">${roleOpts(u.role)}</select></td>
       <td class="muted small">${esc(u.org_id||"")}</td>
-      <td style="text-align:right;white-space:nowrap"><button class="btn" style="padding:3px 8px;font-size:12px" title="비밀번호 초기화" onclick="resetUserPw('${u.user_id}','${esc(u.username)}')">🔑</button> <button class="btn bad" style="padding:3px 8px;font-size:12px" onclick="delUser('${u.user_id}')">✕</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
+      <td style="text-align:right;white-space:nowrap"><button class="btn" style="padding:3px 8px;font-size:12px" title="비밀번호 초기화" ${safeClick('resetUserPw',u.user_id,u.username)}>🔑</button> <button class="btn bad" style="padding:3px 8px;font-size:12px" onclick="delUser('${u.user_id}')">✕</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
   const oRows=(orgs||[]).map(o=>`<tr><td><b>${esc(o.name||o.org_id)}</b></td><td class="muted small">${esc(o.org_id)}</td><td>${o.case_count==null?(o.cases==null?"—":o.cases):o.case_count}</td><td style="white-space:nowrap"><button class="btn" style="padding:2px 8px;font-size:11px" onclick="tenantPanel('${esc(o.org_id)}')">🌐 ${T('도메인·브랜딩')}</button></td></tr>`).join("")||'<tr><td colspan="4" class="muted">없음</td></tr>';
   let logiSync={counts:{},items:[]};try{logiSync=await API("/admin/logistics-sync");}catch(_){}
   const lsc=logiSync.counts||{};
@@ -12397,8 +12433,8 @@ async function clientInviteQrView(iid,code,refUrl){
         <div class="muted small" style="margin:6px 0">${esc(refUrl)}</div>
         <div class="btnrow" style="flex-wrap:wrap;gap:8px">
           <a class="btn pri" download="glhac-client-qr-${esc(code)}.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
-          <button class="btn" onclick="shareQr('${url}','${esc(code)}','${esc(refUrl)}')">📤 ${T('공유')}</button>
-          <button class="btn" onclick="copyLink('${esc(refUrl)}')">🔗 ${T('링크 복사')}</button>
+          <button class="btn" ${safeClick('shareQr',`${url}`,`${code}`,`${refUrl}`)}>📤 ${T('공유')}</button>
+          <button class="btn" ${safeClick('copyLink',`${refUrl}`)}>🔗 ${T('링크 복사')}</button>
         </div></div></div>`;
     localizeUI();
   }catch(e){box.innerHTML=errCard(e);box.dataset.iid="";}
@@ -12436,7 +12472,7 @@ async function staffLinkQrView(){
       <img src="${url}" alt="QR" style="width:130px;height:130px;background:#fff;padding:8px;border-radius:10px;border:1px solid var(--line)">
       <div class="btnrow" style="flex-wrap:wrap;gap:8px">
         <a class="btn pri" download="glhac-staff-signup-qr.png" href="${url}">⬇ ${T('QR 내려받기')}</a>
-        <button class="btn" onclick="shareQr('${url}','staff','${esc(info.url)}')">📤 ${T('공유')}</button>
+        <button class="btn" ${safeClick('shareQr',`${url}`,`staff`,`${info.url}`)}>📤 ${T('공유')}</button>
       </div></div>`;
     localizeUI();
   }catch(e){box.innerHTML=errCard(e);}
