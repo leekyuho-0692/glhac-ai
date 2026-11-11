@@ -139,9 +139,9 @@ def test_purge_removes_uploaded_content_and_reclaims_file():
         h = _h(c)
         keep = _mkcase(c, h, "파일보존")
         drop = _mkcase(c, h, "파일폐기")
-        blob = base64.b64encode(b"%PDF-1.4 " + b"x" * 300000).decode()   # 300KB 더미
+        blob = base64.b64encode(b"x" * 300000).decode()   # 300KB 더미
         r = c.post("/cases/%s/documents" % drop, headers=h,
-                   json={"filename": "spec.pdf", "file_b64": blob, "doc_type": "other"})
+                   json={"filename": "spec.txt", "file_b64": blob, "doc_type": "other"})
         assert r.status_code in (200, 201), r.text
 
         db = SessionLocal()

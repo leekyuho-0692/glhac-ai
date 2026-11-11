@@ -38,16 +38,20 @@ def client(no_llm):
 
 
 def _ocr(client, monkeypatch, text):
+    import fitz
+    with fitz.open() as document:
+        document.new_page()
+        pdf_bytes = document.tobytes()
     calls = []
 
     def parse(filename, raw):
         calls.append(filename)
-        assert raw == b"%PDF-1.4\n"
+        assert raw == pdf_bytes
         return text
 
     monkeypatch.setattr(intake, "parse_file", parse)
     r = client.post("/auth/ocr-extract", json={
-        "image_b64": base64.b64encode(b"%PDF-1.4\n").decode(), "doc_type": "business_registration"})
+        "image_b64": base64.b64encode(pdf_bytes).decode(), "doc_type": "business_registration"})
     assert r.status_code == 200, r.text
     assert calls == ["upload.pdf"]
     return r.json()

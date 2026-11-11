@@ -183,23 +183,72 @@ def frozen_scope(db, case):
     return (row.payload or {}).get("snapshot") if row else None
 
 
-def approved_material_evidence(db, material):
-    """제출 플래그·자동 판정은 승인이 아니다. 현 원료와 일치하는 검토자 승인만 인정."""
-    from .models import DocumentAsset, MaterialEvidenceLink
+def approved_material_evidence(db, material, today=None):
+    """발급 요청/승인 공통: 현 원료·최신 문서·현재 유효기간으로 승인 증빙을 재검증."""
+    from .models import DocumentAsset, MaterialEvidenceLink, CertificateScopeItem, normalize_material_name
+    from .cert_verify import _expiry_of, normalize
+    from .intake import certificate_invalid_marker
+    import re
+    import unicodedata
+    today = today or _date.today()
     linked = [v.document_id for v in db.query(MaterialEvidenceLink).filter_by(
         case_id=material.case_id, material_id=material.material_id)]
-    docs = db.query(DocumentAsset).filter(
-        DocumentAsset.case_id == material.case_id, DocumentAsset.review_status == "approved",
-        (DocumentAsset.material_id == material.material_id) | DocumentAsset.document_id.in_(linked)).all()
+    all_docs = db.query(DocumentAsset).filter_by(case_id=material.case_id).all()
+    docs = [d for d in all_docs if d.material_id == material.material_id or d.document_id in linked]
     if not docs:
         return False
-    approved = {d.document_id for d in docs if d.content_b64 and
-                (d.fields or {}).get("_counts_as_evidence") is not False}
+    events = db.query(WorkflowEvent).filter(
+        WorkflowEvent.case_id == material.case_id,
+        WorkflowEvent.action.in_(("documents.review", "documents.reprocess"))).order_by(
+            WorkflowEvent.created_at.desc(), WorkflowEvent.event_id.desc()).all()
+    latest_reviews, reprocessed = {}, {}
+    for ev in events:
+        did = (ev.payload or {}).get("document_id")
+        target = latest_reviews if ev.action == "documents.review" else reprocessed
+        target.setdefault(did, ev)
+    def filename(d):
+        return unicodedata.normalize("NFC", d.filename or "").casefold()
+    def same_version_family(left, right):
+        return filename(left) == filename(right) or (left.doc_type == right.doc_type and
+            (left.fields or {}).get("cert_no") and
+            normalize(left.fields["cert_no"]) == normalize((right.fields or {}).get("cert_no")))
     identity = material_identity(material)
-    for ev in db.query(WorkflowEvent).filter_by(case_id=material.case_id, action="documents.review"):
+    for d in docs:
+        fields = d.fields or {}
+        if (d.review_status != "approved" or not d.content_b64 or fields.get("_counts_as_evidence") is False
+                or fields.get("_ocr_error") or fields.get("_cert_not_valid")
+                or certificate_invalid_marker(d.filename, d.text_full or d.text_excerpt)):
+            continue
+        expiry = _expiry_of({"fields": fields})
+        # 인증서는 만료일이 읽혀야 한다. 날짜를 갖는 다른 증빙도 같은 현재시점 검사를 적용한다.
+        if ((d.doc_type == "halal_certificate" or fields.get("expiry_date")) and expiry is None
+                or expiry is not None and expiry < today):
+            continue
+        if any(other.document_id != d.document_id and same_version_family(d, other)
+               and other.created_at >= d.created_at for other in all_docs):
+            continue
+        scope_matches = True
+        for names in (fields.get("material_names"), fields.get("scope")):
+            if isinstance(names, str):
+                names = re.split(r"[,;|\n]", names)
+            if names and (not isinstance(names, list) or normalize_material_name(material.name) not in
+                          {normalize_material_name(n) for n in names if isinstance(n, str)}):
+                scope_matches = False
+        if not scope_matches:
+            continue
+        scopes = db.query(CertificateScopeItem).filter_by(case_id=material.case_id, document_id=d.document_id).all()
+        if scopes and not any(s.scope_type == "INGREDIENT" and
+                              normalize_material_name(s.scope_value) == normalize_material_name(material.name)
+                              for s in scopes):
+            continue
+        ev = latest_reviews.get(d.document_id)
+        if ev is None:
+            continue
+        changed = reprocessed.get(d.document_id)
+        if changed and changed.created_at >= ev.created_at:
+            continue
         payload = ev.payload or {}
-        if (ev.actor_type in REVIEWER_ROLES and payload.get("document_id") in approved
-                and payload.get("review_status") == "approved"
+        if (ev.actor_type in REVIEWER_ROLES and payload.get("review_status") == "approved"
                 and identity in payload.get("material_scope", [])):
             return True
     return False

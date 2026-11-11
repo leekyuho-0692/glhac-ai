@@ -17,8 +17,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app, _reconcile_ocr_langs  # noqa: E402
 from app import ai_local  # noqa: E402
 
-_PNG_1x1 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAA"
-            "AAAEAAH2FzhVAAAAAElFTkSuQmCC")
+_PNG_1x1 = ('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==')
 
 
 def test_ocr_lang_selection_by_script():

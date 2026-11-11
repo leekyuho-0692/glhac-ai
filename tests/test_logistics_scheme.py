@@ -217,9 +217,9 @@ def test_서류제출후에는_종류가_잠긴다():
         h = _tok(cl)
         cid = cl.post("/cases", json={"company_name": "잠금후"}, headers=h).json()["case_id"]
         # 문서 하나 업로드 → scheme 잠김
-        b64 = base64.b64encode(b"%PDF-1.4 test").decode()
+        b64 = base64.b64encode(b"Scheme lock evidence").decode()
         up = cl.post("/cases/%s/documents" % cid,
-                     json={"filename": "x.pdf", "file_b64": b64, "doc_type": "other"}, headers=h)
+                     json={"filename": "x.txt", "file_b64": b64, "doc_type": "other"}, headers=h)
         assert up.status_code == 200, up.text
         # 이제 종류 변경은 409
         r = cl.patch("/cases/%s/profile" % cid,

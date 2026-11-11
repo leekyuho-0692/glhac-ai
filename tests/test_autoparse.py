@@ -97,13 +97,16 @@ def test_손상_PDF는_CORRUPT로_기록한다():
     with TestClient(app) as c:
         h = _tok(c)
         cid = c.post("/cases", json={"company_name": "PT Corrupt"}, headers=h).json()["case_id"]
-        response = c.post(f"/cases/{cid}/documents",
-                          json={"filename": "Halal_Policy.pdf", "file_b64": "JVBERi0xLjQK"},
-                          headers=h)
-        assert response.status_code == 200, response.text
+        # C17 rejects new damaged uploads. Exercise a legacy stored original.
+        with m.SessionLocal() as db:
+            d = models.DocumentAsset(case_id=cid, filename="Halal_Policy.pdf", content_b64="JVBERi0xLjQK")
+            db.add(d)
+            db.commit()
+            did = d.document_id
+        assert m.autoparse_enqueue(did)
         assert _drain()
         with m.SessionLocal() as db:
-            d = db.get(models.DocumentAsset, response.json()["document_id"])
+            d = db.get(models.DocumentAsset, did)
             assert d.fields["_ocr_error"] == "CORRUPT"
             assert d.confidence == 0.0
 

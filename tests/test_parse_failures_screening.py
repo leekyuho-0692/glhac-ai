@@ -121,7 +121,7 @@ def test_empty_documents_never_satisfy_checklist_and_failures_can_retry(case, mo
     client, headers, cid = case
     ocr_result = {"ok": False, "error": "TIMEOUT"} if failed else {"ok": True, "lines": []}
     monkeypatch.setattr(intake.ai_local, "ocr_image", lambda *a, **kw: ocr_result)
-    filename, data = "사업자등록증.png", b"\x89PNG\r\n\x1a\nplaceholder"
+    filename, data = "사업자등록증.png", base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==')
     if entry == "parse":
         # 잘못 선택한 유형을 파일명으로 교정할 때도 빈 문자열의 실패 메타데이터를 보존한다.
         result = _upload(case, filename, data, "factory_registration")
@@ -164,8 +164,18 @@ def test_empty_documents_never_satisfy_checklist_and_failures_can_retry(case, mo
 
 @pytest.mark.parametrize("reason", ["ENCRYPTED", "CORRUPT"])
 def test_pdf_failure_reason_survives_upload(case, reason):
-    data = _pdf(encrypted=True) if reason == "ENCRYPTED" else b"%PDF-1.4 broken"
-    result = _upload(case, "사업자등록증.pdf", data, "nib_business_license")
+    if reason == "ENCRYPTED":
+        result = _upload(case, "사업자등록증.pdf", _pdf(encrypted=True), "nib_business_license")
+    else:
+        # Legacy damaged originals remain quarantined when reprocessed.
+        client, headers, cid = case
+        with m.SessionLocal() as db:
+            doc = models.DocumentAsset(case_id=cid, filename="사업자등록증.pdf", doc_type="nib_business_license",
+                                       content_b64=_b64(b"%PDF-1.4 broken"))
+            db.add(doc)
+            db.commit()
+            result = {"extracted": m._reprocess_doc(db, doc, db.get(models.CaseApplication, cid),
+                                                    keep_doc_type=True)["fields"]}
     assert result["extracted"]["_ocr_error"] == reason
     client, headers, cid = case
     assert client.get(f"/cases/{cid}/pending-extractions", headers=headers).json()["failed"][0]["error"] == reason
@@ -173,7 +183,7 @@ def test_pdf_failure_reason_survives_upload(case, reason):
 
 def test_successful_reprocessing_clears_previous_ocr_failure(case, monkeypatch):
     monkeypatch.setattr(intake.ai_local, "ocr_image", lambda *a, **kw: {"ok": False, "error": "TIMEOUT"})
-    _upload(case, "사업자등록증.png", b"\x89PNG\r\n\x1a\nplaceholder", "nib_business_license")
+    _upload(case, "사업자등록증.png", base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=='), "nib_business_license")
     client, headers, cid = case
     did = client.get(f"/cases/{cid}/documents", headers=headers).json()[0]["document_id"]
     monkeypatch.setattr(intake.ai_local, "ocr_image", lambda *a, **kw: {

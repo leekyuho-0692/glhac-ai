@@ -408,12 +408,59 @@ def _valid_ooxml(raw, ext):
                     node.get("PartName") == "/" + part and node.get("ContentType") == content_type
                     for node in root.findall(ns + "Override")):
                 return False
-            # 큰 본문은 여기서 팽창시키지 않는다. 기존 intake의 ZIP/BOMB 가드가
-            # 읽기 전에 막고 판독 실패 근거를 보존한다(시그니처가 있는 파일과 미식별 파일 구분).
-            if main.file_size <= _UPLOAD_MAX_BYTES:
-                ET.fromstring(archive.read(main))
-            return True
+            namespace, tag, child = {
+                "docx": ("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "document", "body"),
+                "xlsx": ("http://schemas.openxmlformats.org/spreadsheetml/2006/main", "workbook", "sheets"),
+            }[ext]
+            if main.file_size > _UPLOAD_MAX_BYTES:
+                # 큰 압축 본문은 기존 intake의 BOMB 격리로 보낸다. 헤더만 제한적으로
+                # 읽어 Office 루트/주 파트를 검증하고 본문 전체는 팽창시키지 않는다.
+                parser = ET.XMLPullParser(events=("start",))
+                with archive.open(main) as stream:
+                    parser.feed(stream.read(65536))
+                tags = [node.tag for _, node in parser.read_events()]
+                return bool(tags and tags[0] == "{" + namespace + "}" + tag
+                            and "{" + namespace + "}" + child in tags)
+            body = ET.fromstring(archive.read(main))
+            return body.tag == "{" + namespace + "}" + tag and body.find("{" + namespace + "}" + child) is not None
     except (ValueError, KeyError, OSError, RuntimeError, zipfile.BadZipFile, zlib.error, ET.ParseError):
+        return False
+
+
+def _valid_upload_structure(raw, kind):
+    """원본 저장 전 공통 구조 가드. 판독 단계의 CORRUPT 문서는 계속 격리한다."""
+    from PIL import Image
+    try:
+        if kind == "pdf":
+            import fitz
+            with fitz.open(stream=raw, filetype="pdf") as document:
+                return document.page_count > 0
+        if kind in {"png", "jpg", "gif", "webp"}:
+            with Image.open(io.BytesIO(raw)) as picture:
+                if picture.format != {"png": "PNG", "jpg": "JPEG", "gif": "GIF", "webp": "WEBP"}[kind]:
+                    return False
+                if min(picture.size) <= 0:
+                    return False
+            if kind == "png":
+                # IHDR/IDAT/IEND와 청크 경계. 픽셀 디코딩/OCR 비용을 업로드에 얹지 않는다.
+                offset, chunks = 8, []
+                while offset + 12 <= len(raw):
+                    length = int.from_bytes(raw[offset:offset + 4], "big")
+                    tag = raw[offset + 4:offset + 8]
+                    if offset + 12 + length > len(raw):
+                        return False
+                    chunks.append(tag)
+                    if len(chunks) == 1 and (tag != b"IHDR" or length != 13):
+                        return False
+                    offset += 12 + length
+                    if tag == b"IEND":
+                        return length == 0 and b"IDAT" in chunks and offset == len(raw)
+                return False
+            if kind == "jpg":
+                # Pillow는 SOF/SOS를 읽어 크기를 정한다. 종료 마커도 있어야 한다.
+                return raw.rstrip().endswith(b"\xff\xd9")
+        return True
+    except (ValueError, OSError, RuntimeError, SyntaxError, Image.DecompressionBombError):
         return False
 
 
@@ -434,6 +481,8 @@ def _validate_upload_type(raw, filename):
     if not ext:
         # 파일명이 없는 공개 OCR 요청도 식별 가능한 PDF/이미지만 허용한다.
         valid = kind in {"pdf", "png", "jpg", "gif", "webp"}
+    if valid:
+        valid = _valid_upload_structure(raw, kind)
     if not valid:
         code = "CONTENT_MISMATCH"
         log.warning("업로드 거절 %s: %s (ext=%s)", code, filename, ext)
@@ -1191,6 +1240,16 @@ NOTIFY_MSG = {
 
 # 각 사유는 문제 / 영향 / 조치의 세 문장. 원문 필드명·검증 메모는 번역하지 않는다.
 PROBLEM_DOC_MSG = {
+    "CERT_NOT_VALID": {
+        "ko": ("인증서에 미발급·견본·무효 또는 취소 표지가 있습니다.", "유효한 인증 증빙으로 인정할 수 없습니다.", "정식 발급된 유효한 인증서를 다시 올려 주세요."),
+        "en": ("The certificate is marked as draft, specimen, void or cancelled.", "It cannot be accepted as valid certification evidence.", "Upload a formally issued, valid certificate."),
+        "id": ("Sertifikat ditandai sebagai draf, contoh, tidak berlaku, atau dibatalkan.", "Dokumen tidak dapat diterima sebagai bukti sertifikasi yang sah.", "Unggah sertifikat sah yang telah diterbitkan secara resmi."),
+    },
+    "QUANT_FAIL": {
+        "ko": ("시험 결과가 허용 기준에 부적합합니다.", "인증 발급을 진행할 수 없으며 업체 조치가 필요합니다.", "부적합 원인을 시정하고 재시험 성적서와 조치 내역을 제출해 주세요."),
+        "en": ("The test result fails the acceptance criteria.", "Certificate issuance is blocked and company action is required.", "Correct the cause and submit a retest report with corrective actions."),
+        "id": ("Hasil pengujian tidak memenuhi kriteria penerimaan.", "Penerbitan sertifikat diblokir dan perusahaan perlu melakukan tindakan.", "Perbaiki penyebabnya dan kirim laporan uji ulang beserta tindakan korektif."),
+    },
     "BOMB": {
         "ko": ("문서 내부 압축이 안전 처리 한도를 초과했습니다.", "본문을 열거나 저장하지 않았습니다.", "불필요한 내용을 줄여 원본 프로그램에서 새 파일로 저장한 뒤 다시 올려 주세요."),
         "en": ("The document's internal archive exceeds safe processing limits.", "Its body was neither opened nor stored.", "Reduce unnecessary contents, save a new copy in the original application, and upload it again."),
@@ -1472,7 +1531,9 @@ def _problem_document_reasons(document, measurements=()):
         reasons.append({"code": primary, "params": {}})
     if fields.get("_missing_fields"):
         reasons.append({"code": "FIELDS_MISSING", "params": {"fields": ", ".join(fields["_missing_fields"])}})
-    if "_truncated" in fields:
+    if fields.get("_cert_not_valid") or intake.certificate_invalid_marker(getattr(document, "filename", ""), text):
+        reasons.append({"code": "CERT_NOT_VALID", "params": {}})
+    if fields.get("_truncated"):
         markers = fields.get("_truncations") or [fields["_truncated"]]
         reasons.append({"code": "TRUNCATED", "params": {"limits": [dict(x) for x in markers if isinstance(x, dict)]}})
     verify = fields.get("_verify") or {}
@@ -1483,7 +1544,8 @@ def _problem_document_reasons(document, measurements=()):
         details = ["%s: %s" % (x.get("field") or "?", x.get("issue") or x.get("code") or "?") for x in issues]
         reasons.append({"code": "VERIFY_FAILED", "params": {"fields": "; ".join(details) or verify.get("summary") or "?"}})
     important = [x for x in issues if x.get("field") in (
-        "cert_no", "certificate_no", "nib", "business_reg_no", "factory_reg_no", "corporate_reg_no", "company_name")
+        "cert_no", "certificate_no", "nib", "business_reg_no", "factory_reg_no", "corporate_reg_no", "company_name",
+        "expiry_date", "issuer", "material_names", "ingredients", "scope")
         and x.get("code") != "company_name_mismatch"]
     # 이미 확인된 소유권 불일치는 기존 업체 보완 경로를 유지한다. AI 경고는 담당자가 먼저 검토한다.
     if verify.get("verdict") != "fail" and (verify.get("doc_type_ok") is False or
@@ -1499,7 +1561,7 @@ def _problem_document_reasons(document, measurements=()):
                   x.get("reason") in ("nib_conflict", "company_conflict", "ownership_unconfirmed", "factory_conflict")]
     if ownership:
         reasons.append({"code": "OWNERSHIP_MISMATCH", "params": {"fields": "; ".join(ownership)}})
-    if "_llm_error" in fields:
+    if fields.get("_llm_error"):
         reasons.append({"code": "AI_ERROR", "params": {}})
     if fields.get("_original_not_stored"):
         reasons.append({"code": "ORIGINAL_NOT_STORED", "params": {}})
@@ -1510,6 +1572,9 @@ def _problem_document_reasons(document, measurements=()):
            and x.param_key != "pork_dna" and _measurement_verdict(x, document=document) == "review"
            for x in measurements):
         reasons.append({"code": "QUANT_REVIEW", "params": {}})
+    if any(x.document_id == document.document_id and x.param_key in QUANT_CRITERIA
+           and _measurement_verdict(x, document=document) == "fail" for x in measurements):
+        reasons.append({"code": "QUANT_FAIL", "params": {}})
     return reasons
 
 
@@ -1550,7 +1615,7 @@ def _problem_documents_latest(db, case_id, action):
 def _problem_documents_rows(db, c):
     docs = (db.query(models.DocumentAsset).filter_by(case_id=c.case_id)
             .order_by(models.DocumentAsset.created_at, models.DocumentAsset.document_id).all())
-    measurements = db.query(models.MaterialMeasurement).filter_by(case_id=c.case_id, verdict="review").all()
+    measurements = db.query(models.MaterialMeasurement).filter_by(case_id=c.case_id).all()
     rows = []
     for d in docs:
         reasons = _problem_document_reasons(d, measurements)

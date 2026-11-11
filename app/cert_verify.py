@@ -27,7 +27,6 @@ _PATTERNS = [
      "발급기관 약어 + 구분자 + 번호"),
 ]
 
-_NUM_IN_TEXT = re.compile(r"[A-Z]{2,6}[-.]?\d{6,20}|ID\d{17}", re.IGNORECASE)
 _DIGITS_ONLY = re.compile(r"\d{1,20}")
 
 
@@ -62,19 +61,27 @@ def _is_halal_cert(doc):
 
 def _doc_numbers(docs):
     """할랄 인증서 문서에서 후보 번호를 모아 (정규화 번호, 문서) 쌍으로 돌려준다."""
+    from .intake import _deterministic_fields, certificate_invalid_marker
     pairs, seen = [], set()
     for doc in docs or []:
         if not isinstance(doc, dict) or not _is_halal_cert(doc):
             continue
         candidates = []
         fields = doc.get("fields") or {}
+        if not isinstance(fields, dict):
+            continue
+        text = doc.get("text") or doc.get("text_full") or doc.get("text_excerpt") or ""
+        if (fields.get("_cert_not_valid") or fields.get("_ocr_error")
+                or certificate_invalid_marker(doc.get("filename"), text)):
+            continue
+        labelled = _deterministic_fields("halal_certificate", str(text), explicit_only=True).get("cert_no")
         if isinstance(fields, dict):
             value = fields.get("cert_no")
             if value is not None and str(value).strip():
-                candidates.append(value)
-        text = doc.get("text")
-        if text:
-            candidates.extend(_NUM_IN_TEXT.findall(str(text)))
+                if not labelled or normalize(value) == normalize(labelled):
+                    candidates.append(value)
+            elif labelled:
+                candidates.append(labelled)
         for candidate in candidates:
             n = normalize(candidate)
             if n and n not in seen:
