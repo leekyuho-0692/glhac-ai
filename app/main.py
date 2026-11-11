@@ -818,6 +818,11 @@ NOTIFY_MSG = {
 
 # 각 사유는 문제 / 영향 / 조치의 세 문장. 원문 필드명·검증 메모는 번역하지 않는다.
 PROBLEM_DOC_MSG = {
+    "BOMB": {
+        "ko": ("문서 내부 압축이 안전 처리 한도를 초과했습니다.", "본문을 열거나 저장하지 않았습니다.", "불필요한 내용을 줄여 원본 프로그램에서 새 파일로 저장한 뒤 다시 올려 주세요."),
+        "en": ("The document's internal archive exceeds safe processing limits.", "Its body was neither opened nor stored.", "Reduce unnecessary contents, save a new copy in the original application, and upload it again."),
+        "id": ("Arsip internal dokumen melampaui batas pemrosesan aman.", "Isi dokumen tidak dibuka atau disimpan.", "Kurangi isi yang tidak diperlukan, simpan salinan baru di aplikasi asal, lalu unggah ulang."),
+    },
     "OCR_FAILED": {
         "ko": ("스캔 이미지를 글자로 읽지 못했습니다.", "흐리거나 기울어진 스캔, 손글씨는 판독이 어렵습니다.", "300dpi 이상으로 똑바로 스캔하거나 원본 PDF를 올려 주세요."),
         "en": ("The scanned image could not be read as text.", "Blurred, tilted or handwritten scans are difficult to read.", "Upload a straight scan at 300 dpi or higher, or the original PDF."),
@@ -872,13 +877,13 @@ PROBLEM_DOC_MSG = {
 PROBLEM_DOC_COPY = {
     "ko": {"fallback": "업체 연락 메일이 없어 담당자에게 보냅니다 — 업체에 보완을 요청해 주세요.",
            "uploaded": "올린 시각", "link": "케이스 {case_id}의 서류함에서 문제를 확인하고 보완한 파일을 다시 올려 주세요: {url}",
-           "pages": "쪽", "chars": "자", "chunks": "개 구간", "unknown": "확인 필요"},
+           "pages": "쪽", "chars": "자", "llm_input": "자(AI 입력)", "chunks": "개 구간", "unknown": "확인 필요"},
     "en": {"fallback": "Sent to the reviewer because company contact email is unavailable — please request corrections from the company.",
            "uploaded": "Uploaded at", "link": "Check the issues and upload corrected files in the document vault for case {case_id}: {url}",
-           "pages": " pages", "chars": " characters", "chunks": " chunks", "unknown": "needs checking"},
+           "pages": " pages", "chars": " characters", "llm_input": " characters (AI input)", "chunks": " chunks", "unknown": "needs checking"},
     "id": {"fallback": "Dikirim kepada petugas karena email kontak perusahaan tidak tersedia — mohon minta perusahaan melengkapi dokumen.",
            "uploaded": "Waktu unggah", "link": "Periksa masalah dan unggah berkas yang diperbaiki di penyimpanan dokumen kasus {case_id}: {url}",
-           "pages": " halaman", "chars": " karakter", "chunks": " bagian", "unknown": "perlu diperiksa"},
+           "pages": " halaman", "chars": " karakter", "llm_input": " karakter (masukan AI)", "chunks": " bagian", "unknown": "perlu diperiksa"},
 }
 
 
@@ -1059,7 +1064,7 @@ def _problem_document_reasons(document, measurements=()):
     reasons = []
     error = fields.get("_ocr_error")
     primary = {"TIMEOUT": "OCR_FAILED", "ERROR": "OCR_FAILED",
-               "ENCRYPTED": "ENCRYPTED", "CORRUPT": "CORRUPT"}.get(error)
+               "ENCRYPTED": "ENCRYPTED", "CORRUPT": "CORRUPT", "BOMB": "BOMB"}.get(error)
     text = document.text_full if document.text_full is not None else document.text_excerpt
     if not primary and document.content_b64 and not (text or "").strip():
         primary = "EMPTY_TEXT"
@@ -6458,6 +6463,7 @@ def add_material_evidence(case_id: str, material_id: str, body: schemas.Material
     m = db.get(models.Material, material_id)
     if not m or m.case_id != case_id:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
+    body.filename = intake._nfc(body.filename)
     b64 = _validate_upload(body.file_b64, body.filename)
     gps = _exif_gps(b64)
     db.add(models.DocumentAsset(case_id=case_id, filename=body.filename,
@@ -6561,6 +6567,7 @@ def add_product_photo(case_id: str, product_id: str, body: schemas.ProductPhotoR
     p = db.get(models.Product, product_id)
     if not p or p.case_id != case_id:
         raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
+    body.filename = intake._nfc(body.filename)
     b64 = _validate_upload(body.file_b64, body.filename)
     gps = _exif_gps(b64)
     db.add(models.DocumentAsset(case_id=case_id, filename=body.filename,
@@ -7211,6 +7218,7 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
 
     keep_doc_type=True 면 유형은 그대로 두고 본문·필드만 갱신한다(사용자 지정 존중)."""
     from .intake import aggregate_fields, classify, parse_file
+    d.filename = intake._nfc(d.filename)
     data = base64.b64decode(d.content_b64.split(",")[-1])
     text = parse_file(d.filename, data, dpi=dpi)
     r = classify(d.filename, text)
@@ -8423,6 +8431,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     c = _get_case(db, case_id, user)
     _assert_case_open(c)
     _assert_scope_open(c)
+    body.filename = intake._nfc(body.filename)
     raw = base64.b64decode(_validate_upload(body.file_b64, body.filename))   # 크기·타입 검증(§9.3)
     from .intake import parse_typed, parse_typed_text
     r = parse_typed(body.doc_type, body.filename, raw)
@@ -12536,7 +12545,7 @@ def upload_case_document(case_id: str, body: dict = None,
     c = _get_case(db, case_id, user)
     _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     b = body or {}
-    fn = b.get("filename") or "document"
+    fn = intake._nfc(b.get("filename") or "document")
     b64 = b.get("file_b64")
     if not b64:
         raise HTTPException(400, {"code": "NO_FILE"})
@@ -20121,7 +20130,7 @@ def _autofile_evidence(db, case_id, d, user=None):
     if db.query(models.SjphEvidence).filter_by(case_id=case_id, item_key=key).first():
         return None
     db.add(models.SjphEvidence(case_id=case_id, item_key=key,
-                               filename=d.filename, document_id=d.document_id))
+                               filename=intake._nfc(d.filename), document_id=d.document_id))
     if user:
         _audit(db, user, "sjph.evidence.autofile", "document", d.document_id,
                meta={"item_key": key, "matched_by": how, "filename": d.filename})
@@ -20376,6 +20385,7 @@ def add_sjph_evidence(case_id: str, body: schemas.SjphEvidenceReq,
     _get_case(db, case_id, user)
     if body.item_key not in ({k for k, _ in SJPH_EVIDENCE_ITEMS} | PREP_KEYS):
         raise HTTPException(422, {"code": "BAD_ITEM_KEY"})
+    body.filename = intake._nfc(body.filename)
     b64 = _validate_upload(body.file_b64, body.filename)
     doc = models.DocumentAsset(case_id=case_id, filename=body.filename,
                                 filename_en=_fn_en(body.filename), doc_type="sjph_evidence",
@@ -21601,6 +21611,7 @@ def add_feedback_image(feedback_id: str, body: schemas.FeedbackImageReq,
     """이미지 첨부 — 본인 또는 admin. base64 <4MB."""
     from .intake import _ctype
     _fb_guard(db, feedback_id, user)
+    body.filename = intake._nfc(body.filename)
     b64 = (body.file_b64 or "").split(",")[-1]
     img = models.FeedbackImage(feedback_id=feedback_id, filename=body.filename or "feedback.png",
                                content_b64=b64 if len(b64) < 4_000_000 else None,

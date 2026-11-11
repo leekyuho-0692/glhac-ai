@@ -5,7 +5,10 @@ import os
 import re
 import unicodedata
 import logging
+import math
 import zipfile
+import zlib
+from xml.etree.ElementTree import ParseError
 from . import ai_local
 
 log = logging.getLogger(__name__)
@@ -15,6 +18,7 @@ log = logging.getLogger(__name__)
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 PDF_MAX_PAGES = 40          # PDF OCR/LLM 최대 처리 쪽수(native text 사전 스캔은 전체)
 PDF_MAX_TEXT_CHARS = 200000  # PDF 추출 텍스트 상한(20만 자)
+OFFICE_MAX_TEXT_CHARS = PDF_MAX_TEXT_CHARS
 ZIP_MAX_ENTRIES = 200   # 압축 묶음 1건에서 처리할 최대 파일 수
 ZIP_MAX_UNCOMPRESSED = int(os.environ.get("GLHAC_ZIP_MAX_UNCOMPRESSED", "200000000"))  # 기본 200MB
 ZIP_MAX_SINGLE_FILE = int(os.environ.get("GLHAC_ZIP_MAX_SINGLE_FILE", ZIP_MAX_UNCOMPRESSED))  # 단일 파일도 동일
@@ -279,6 +283,24 @@ class ArchiveError(Exception):
     """압축을 열 수 없음 — 호출부가 사용자에게 사유를 그대로 보여준다."""
 
 
+def _check_zip_limits(infos, max_entries=None):
+    """중앙 디렉터리만 읽어 검사한다. Office도 XML을 해제하기 전에 같은 상한을 쓴다."""
+    if max_entries is not None and len(infos) > max_entries:
+        raise ArchiveError("압축 엔트리 수가 너무 많습니다")
+    total = 0
+    for zi in infos:
+        if zi.is_dir():
+            continue
+        if zi.file_size > ZIP_MAX_SINGLE_FILE:
+            raise ArchiveError(f"파일이 너무 큽니다 ({zi.filename}: {zi.file_size} bytes > {ZIP_MAX_SINGLE_FILE})")
+        total += zi.file_size
+        if total > ZIP_MAX_UNCOMPRESSED:
+            raise ArchiveError(f"압축 해제 후 크기가 너무 큽니다 (총 {total} bytes > {ZIP_MAX_UNCOMPRESSED})")
+        ratio = zi.file_size / max(1, zi.compress_size)
+        if ratio > ZIP_MAX_COMPRESSION_RATIO:
+            raise ArchiveError(f"압축폭탄 의심 ({zi.filename}: 압축비 {ratio:.1f} > {ZIP_MAX_COMPRESSION_RATIO})")
+
+
 # 형식은 확장자가 아니라 매직바이트로 가린다. 이름만 .zip 으로 바꿔 보내는 경우가 있다.
 _MAGIC = [(b"PK\x03\x04", "zip"), (b"PK\x05\x06", "zip"), (b"PK\x07\x08", "zip"),
           (b"Rar!\x1a\x07", "rar"), (b"7z\xbc\xaf\x27\x1c", "7z")]
@@ -365,22 +387,7 @@ def extract_zip(data):
         raise ArchiveError("ZIP 파일이 손상되었습니다: %s" % e) from e
     with z:
         # 압축폭탄 방어: 전체 해제 크기 및 엔트리별 검증
-        total_uncompressed = 0
-        for zi in z.infolist():
-            if zi.is_dir():
-                continue
-            # 엔트리 크기 검증
-            if zi.file_size > ZIP_MAX_SINGLE_FILE:
-                raise ArchiveError(f"파일이 너무 큽니다 ({zi.filename}: {zi.file_size} bytes > {ZIP_MAX_SINGLE_FILE})")
-            total_uncompressed += zi.file_size
-            # 전체 크기 검증
-            if total_uncompressed > ZIP_MAX_UNCOMPRESSED:
-                raise ArchiveError(f"압축 해제 후 크기가 너무 큽니다 (총 {total_uncompressed} bytes > {ZIP_MAX_UNCOMPRESSED})")
-            # 압축비 검증 (압축폭탄)
-            if zi.compress_size > 0:
-                ratio = zi.file_size / zi.compress_size
-                if ratio > ZIP_MAX_COMPRESSION_RATIO:
-                    raise ArchiveError(f"압축폭탄 의심 ({zi.filename}: 압축비 {ratio:.1f} > {ZIP_MAX_COMPRESSION_RATIO})")
+        _check_zip_limits(z.infolist())
 
         # 실제 파일 추출 — 최대 ZIP_MAX_ENTRIES 개, 초과분은 skipped 로 센다
         infos = z.infolist()
@@ -463,6 +470,11 @@ def _record_truncation(fields, kind, limit, total):
         markers = list(fields.get("_truncations", [fields["_truncated"]]))
         if marker not in markers:
             markers.append(marker)
+        # 본문/목록 자체의 누락이 우선이다. 일반 필드 입력창 표시는 함께 보존한다.
+        if fields["_truncated"]["kind"] == "llm_input" and kind != "llm_input":
+            fields["_truncated"] = marker
+            markers.remove(marker)
+            markers.insert(0, marker)
         fields["_truncations"] = markers
 
 
@@ -718,6 +730,52 @@ def _xlsx_ingredient_table(wb):
     return products, materials
 
 
+def _bounded_office_text(parts, limit):
+    fields, out, used, total = {}, [], 0, 0
+    for part in parts:
+        part = ("\n" if total else "") + part
+        total += len(part)
+        remaining = max(0, limit - used)
+        if remaining:
+            out.append(part[:remaining])
+            used += len(out[-1])
+        if len(part) > remaining:
+            _scan_tail(fields, part)
+    if total > limit:
+        _record_truncation(fields, "chars", limit, total)
+    return _ParsedText("".join(out), fields)
+
+
+def _docx_parts(document):
+    for paragraph in document.paragraphs:
+        if paragraph.text.strip():
+            yield paragraph.text
+    for table in document.tables:
+        for row in table.rows:
+            # 빈 셀도 보존해야 Sample|Control 헤더와 결과 열이 어긋나지 않는다.
+            yield " | ".join(" ".join(p.text for p in cell.paragraphs).strip()
+                             for cell in row.cells)
+
+
+def _xlsx_parts(wb, matrix_note):
+    if matrix_note:
+        yield matrix_note
+    for ws in wb.worksheets:
+        title = (ws.title or "").strip()
+        if title and title.lower() not in ("sheet", "sheet1", "sheet2", "sheet3", "시트1"):
+            yield "[시트/제품명: %s]" % title
+        for row in ws.iter_rows(values_only=True):
+            if any(c is not None for c in row):
+                yield " | ".join(str(c) if c is not None else "" for c in row)
+
+
+def _office_corrupt(exc):
+    # 런타임/의존성 오류는 OCR 오류와 별개로 ERROR를 유지한다. 패키지/XML 손상만 CORRUPT.
+    return (isinstance(exc, (zipfile.BadZipFile, ParseError, zlib.error,
+                             KeyError, ValueError, EOFError, OSError))
+            or (type(exc).__module__ == "lxml.etree" and type(exc).__name__ == "XMLSyntaxError"))
+
+
 def parse_file(name, data, dpi=None, ocr_sink=None):
     """확장자별 텍스트 추출 — OS 독립. 이미지/스캔PDF=OCR, PDF=fitz, docx/xlsx/txt.
     dpi 지정 시 스캔 렌더 해상도 오버라이드(고해상도 재처리용, 기본 _OCR_DPI).
@@ -729,6 +787,12 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
     _dpi = int(dpi) if dpi else _OCR_DPI
     _dpi = max(72, min(600, _dpi))   # 안전 범위
     try:
+        if ext in ("docx", "xlsx"):
+            with zipfile.ZipFile(io.BytesIO(data)) as package:
+                try:
+                    _check_zip_limits(package.infolist(), ZIP_MAX_ENTRIES)
+                except ArchiveError:
+                    return _ParsedText("", {"_ocr_error": "BOMB"})
         if ext in _IMG:
             return _ocr_bytes(data, ext, ocr_sink)
         if ext == "pdf":
@@ -765,68 +829,29 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
         if ext == "docx":
             import docx
             d = docx.Document(io.BytesIO(data))
-            out = []
-            # 단락과 표를 순서대로 추출
-            for pp in d.paragraphs:
-                if pp.text.strip():
-                    out.append(pp.text)
-            # 표 셀 텍스트도 행 단위로 추출
-            for table in d.tables:
-                for row in table.rows:
-                    cells = []
-                    for cell in row.cells:
-                        cell_text = " ".join(p.text for p in cell.paragraphs).strip()
-                        if cell_text:
-                            cells.append(cell_text)
-                    if cells:
-                        out.append(" | ".join(cells))
-            return "\n".join(out)
+            return _bounded_office_text(_docx_parts(d), OFFICE_MAX_TEXT_CHARS)
         if ext == "xlsx":
             import openpyxl
             wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-            # 근본 해결: 전성분표 구조면 표를 구조 인식으로 파싱해 명시적 마커로 넘긴다(LLM 우회).
-            ing = _xlsx_ingredient_table(wb)
-            if ing == "matrix":
-                # 제품×원재료 매트릭스 — 목록 문서가 아니다. 그 사실을 본문에 남겨
-                # LLM 이 이 표에서 목록을 지어내도 집계가 받지 않게 한다.
-                ing = None
-                matrix_note = MATRIX_MARK
-            else:
-                matrix_note = ""
-            if ing:
+            try:
+                # 신뢰할 수 없는 dimension 속성으로 거대한 빈 셀 범위를 생성하지 않는다.
+                for ws in wb.worksheets:
+                    ws.reset_dimensions()
+                ing = _xlsx_ingredient_table(wb)
+                matrix_note = MATRIX_MARK if ing == "matrix" else ""
+                if ing and not matrix_note:
+                    prods, mats = ing
+                    parts = (["[전성분표]"] + ["[제품/시트: %s]" % p for p in prods]
+                             + ["[원재료목록]"] + mats)
+                    return _bounded_office_text(parts, min(60000, OFFICE_MAX_TEXT_CHARS))
+                return _bounded_office_text(_xlsx_parts(wb, matrix_note),
+                                            min(20000, OFFICE_MAX_TEXT_CHARS))
+            finally:
                 wb.close()
-                prods, mats = ing
-                out = ["[전성분표]"]
-                for p in prods:
-                    out.append("[제품/시트: %s]" % p)
-                out.append("[원재료목록]")
-                out.extend(mats)
-                full = "\n".join(out)
-                fields = {}
-                if len(full) > 60000:
-                    _record_truncation(fields, "chars", 60000, len(full))
-                    _scan_tail(fields, full)  # 경계에서 성분명이 잘려도 탐지한다.
-                return _ParsedText(full[:60000], fields)
-            # 일반 xlsx(전성분표 아님): 기존 flatten
-            out = [matrix_note] if matrix_note else []
-            for ws in wb.worksheets:
-                title = (ws.title or "").strip()
-                if title and title.lower() not in ("sheet", "sheet1", "sheet2", "sheet3", "시트1"):
-                    out.append("[시트/제품명: %s]" % title)
-                for row in ws.iter_rows(values_only=True):
-                    cells = [str(c) for c in row if c is not None]
-                    if cells:
-                        out.append(" ".join(cells))
-            wb.close()
-            full = "\n".join(out)
-            fields = {}
-            if len(full) > 20000:
-                _record_truncation(fields, "chars", 20000, len(full))
-                _scan_tail(fields, full)
-            return _ParsedText(full[:20000], fields)
     except Exception as e:  # noqa: BLE001
         log.warning("파일 파싱 실패 %s: %s", name, e)
-        return _ParsedText("", {"_ocr_error": "CORRUPT" if ext == "pdf" else "ERROR"})
+        corrupt = ext == "pdf" or (ext in ("docx", "xlsx") and _office_corrupt(e))
+        return _ParsedText("", {"_ocr_error": "CORRUPT" if corrupt else "ERROR"})
     return ""
 
 
@@ -868,6 +893,9 @@ _CLASSIFY_SYS = (
 # 파일명이 명백한 경우(소개서·제안서·수입서류·품질인증 등)는 LLM 판단을 무시하고 규칙을 신뢰한다.
 _NAME_RULES = [
     # (정규식, doc_type, 사유) — 순서 중요(구체적인 것 먼저)
+    (r"할랄\s*인증|halal[\s_]*cert|sertifikat[\s_]*halal|"
+     r"surat[\s_]*keterangan[\s_]*halal|(?<![a-z])skh(?![a-z])",
+     "halal_certificate", "명시적 할랄 인증서(첨부 품질인증·사업자번호보다 우선)"),
     (r"bahan\s*vs\s*produk|produk\s*matriks|matriks\s*produk|product.{0,3}matri|matri.{0,3}produk",
      "product_list", "제품×원재료 매트릭스(제품 카탈로그 — 제품명 컬럼이 정본 제품 목록)"),
     (r"\bcatatan\b|기록부|생산\s*일지|작업\s*일지|monitoring\s*record|rekaman",
@@ -876,16 +904,20 @@ _NAME_RULES = [
      r"halal[\s_]*policy|kebijakan[\s_]*halal|할랄\s*정책|"
      r"internal[\s_]*audit|audit[\s_]*internal|내부\s*심사|"
      r"halal[\s_]*team|tim[\s_]*halal|할랄\s*팀|"
-     r"halal[\s_]*manual|manual[\s_]*halal|\bsjph\b",
+     r"halal[\s_]*manual|manual[\s_]*halal|할랄\s*매뉴얼|\bsjph\b",
      "sjph_manual", "SJPH 구성문서(할랄정책·할랄팀·내부심사·경영검토·매뉴얼 — 사업자/공급사 아님)"),
     (r"제조\s*공정\s*도|공정\s*흐름|process\s*flow|flow\s*chart", "process_flow", "공정도"),
     (r"fssc|haccp|\biso\b|\bgmp\b|22000|식품안전|유기취급|organic|kosher", "quality_cert", "품질/식품안전 인증(HACCP·FSSC·ISO·GMP — 할랄 아님)"),
     (r"소개서|회사\s*소개|company\s*profile|제안서|proposal|접수\s*양식|고객\s*접수|데이터\s*양식|intake\s*form|application\s*form", "other", "소개서·제안서·양식(등록증 아님)"),
     (r"원산지|수입\s*서류|country\s*of\s*origin|\bcoo\b|certificate\s*of\s*origin|negara\s*asal|surat\s*keterangan\s*asal", "origin_certificate", "원산지증명서(유래 증빙 정본 — 공급사 선언서와 구분)"),
     (r"선언서|declaration|확인서|설명서|pernyataan", "supplier_declaration", "공급사 선언서·확인서"),
-    (r"성적서|시험\s*성적|\bcoa\b|\bmsds\b|성분\s*명세|성분\s*분석|분석\s*성적", "coa_msds", "성적서·성분명세"),
+    (r"성적서|시험\s*성적|(?<![a-z])(?:coa|msds)(?![a-z])|성분\s*명세|성분\s*분석|분석\s*성적|"
+     r"lembar\s*data\s*keselamatan\s*bahan", "coa_msds", "성적서·성분명세"),
+    (r"원재료\s*목록|komposisi\s*bahan", "material_list", "원재료 목록"),
+    (r"제품\s*목록", "product_list", "제품 목록"),
+    (r"product[\s_]*label", "other", "제품 라벨(첨부 서류)"),
     (r"사업자\s*등록|사업자등록증|business\s*(registration|license)|\bnib\b|법인\s*등기|등록증명원", "nib_business_license", "사업자등록"),
-    (r"공장\s*등록|공장등록증|factory\s*registration|manufactur.*licen", "factory_registration", "공장등록"),
+    (r"공장\s*등록|공장등록증|factory\s*registration|manufactur.*licen|izin\s*usaha\s*industri", "factory_registration", "공장등록"),
     (r"할랄\s*인증|halal\s*cert", "halal_certificate", "할랄 인증"),
 ]
 
@@ -946,6 +978,9 @@ def refine_doctype_reason(name, llm_type, text=None):
         ev = evidence_key_of(base)
         return dt, "도메인사전 %s%s" % (key, ("·증빙 " + ev) if ev else "")
     for title in _title_lines(text):
+        for pat, dt, why in _NAME_RULES:
+            if re.search(pat, title, re.I):
+                return dt, "제목줄 '%s' → %s" % (title[:40], why)
         if re.fullmatch(r"(?:material\s+)?safety\s+data\s+sheet(?:\s*\(MSDS\))?", title, re.I):
             return "coa_msds", "제목줄 '%s' → MSDS" % title[:40]
         dt = doc_type_of(title)
@@ -992,7 +1027,7 @@ def _chunk_text(text, size=4500):
     return chunks or [text]
 
 
-def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000, fields=None):
+def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000, fields=None, status=None):
     """상한 내 청크의 목록 합집합. 미처리 구간과 사전 위험 탐지는 fields에 남긴다."""
     sys = ('문서에서 %s 목록을 빠짐없이 추출하세요. 표·번호목록의 모든 행을 포함하고 '
            '헤더/합계/빈칸은 제외. 반드시 JSON으로만: {"names":[]}' % label)
@@ -1004,10 +1039,14 @@ def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000, field
         _scan_tail(fields, "\n".join(chunks[max_chunks:]))
     for index, ch in enumerate(chunks[:max_chunks]):
         r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, ch))
+        if isinstance(r, dict) and r.get("error") == "LLM_UNAVAILABLE":
+            if status is not None:
+                status["unavailable"] = True
+            break
         failure = _llm_failure(r)
         if failure:
             fields["_llm_error"] = failure["llm_error"]
-        names = (r.get("names") if isinstance(r, dict) else None) or []
+        names = _normalise_names(r.get("names") if isinstance(r, dict) and not r.get("error") else None)
         for position, nm in enumerate(names):
             if not isinstance(nm, str):
                 continue
@@ -1028,7 +1067,7 @@ def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000, field
 
 def _infer_country_zip(addr):
     """주소 문자열에서 국가/우편번호 추론(LLM이 분리 못했을 때 보정)."""
-    if not addr:
+    if not isinstance(addr, str) or not addr:
         return None, None
     zipc = None
     m = re.search(r'\b(\d{5})\b', addr)
@@ -1114,12 +1153,59 @@ def _parse_ingredient_markers(text):
 
 # 시험성적서(CoA/MSDS) 정량 측정값 추출 — 정규식(결정적). param_key는 main.QUANT_CRITERIA와 일치.
 _QUANT_PATTERNS = {
-    "ethanol_pct":  r"(?:ethanol|알코올|에탄올|alcohol)[^\d%]{0,25}?([\d.]+)\s*%",
-    "lead_ppm":     r"(?:lead|\bPb\b|납)[^\d]{0,25}?([\d.]+)\s*(?:ppm|mg/kg)",
-    "cadmium_ppm":  r"(?:cadmium|\bCd\b|카드뮴)[^\d]{0,25}?([\d.]+)\s*(?:ppm|mg/kg)",
-    "mercury_ppm":  r"(?:mercury|\bHg\b|수은)[^\d]{0,25}?([\d.]+)\s*(?:ppm|mg/kg)",
-    "arsenic_ppm":  r"(?:arsenic|\bAs\b|비소)[^\d]{0,25}?([\d.]+)\s*(?:ppm|mg/kg)",
+    "ethanol_pct":  r"\b(?:ethanol|etanol|alcohol|alkohol)\b|알코올|에탄올",
+    "lead_ppm":     r"\b(?:lead|timbal|Pb)\b|납",
+    "cadmium_ppm":  r"\b(?:cadmium|kadmium|Cd)\b|카드뮴",
+    "mercury_ppm":  r"\b(?:mercury|merkuri|Hg)\b|수은",
+    "arsenic_ppm":  r"\b(?:arsenic|arsen|As)\b|비소",
 }
+_QUANT_NUMBER = r"(?:\d+(?:[.,]\d+)?|[.,]\d+)"
+_QUANT_UNIT = r"(?:%|ppm\b|ppb\b|mg\s*/\s*kg\b|µg\s*/\s*kg\b|ug\s*/\s*kg\b)"
+_QUANT_ND = r"(?:ND\b|not[ -]*detected\b|non[ -]*detected\b|tidak\s+terdeteksi\b|불검출)"
+_QUANT_RESULT = re.compile(
+    r"^[\s:：=|()\[\]]*(?:(?:content|result|hasil|kadar|함량|결과)\s*[:=|]?\s*)?"
+    r"(?P<qual>" + _QUANT_ND + r"|<\s*LOD\b|<)?\s*"
+    r"(?P<value>" + _QUANT_NUMBER + r")?\s*(?P<unit>" + _QUANT_UNIT + r")?", re.I)
+
+
+def _quant_result(key, line, match):
+    # 자유문장을 건너뛰지 않는다. 항목의 별칭·CAS·결과 라벨만 수치 앞에 올 수 있다.
+    before, after = line[:match.start()], line[match.end():]
+    if (re.search(r"(?:\b(?:free\s+from|bebas)|무)\s*[-:]?\s*$", before, re.I)
+            or re.match(r"\s*(?:[-‐‑–]?\s*free\b|bebas\b|무(?:첨가|함유)?(?![가-힣]))", after, re.I)):
+        return None
+    alias = _QUANT_PATTERNS[key]
+    after = re.sub(r"^\s*\(\s*(?:" + alias + r")\s*\)", "", after, flags=re.I)
+    after = re.sub(r"^\s*\(?\s*(?:CAS\s*(?:No\.?|number)?\s*[:#]?\s*)?"
+                   r"\d{2,7}-\d{2}-\d\s*\)?", "", after, flags=re.I)
+    result = _QUANT_RESULT.match(after)
+    qualifier, value, unit = result.group("qual", "value", "unit")
+    if not qualifier and not (value and unit):
+        return None
+    unit = re.sub(r"\s", "", unit or ("%" if key == "ethanol_pct" else "ppm")).lower()
+    if (key == "ethanol_pct") != (unit == "%"):
+        return None
+    factor = 0.001 if unit in ("ppb", "µg/kg", "ug/kg") else 1.0
+    number = float(value.replace(",", ".")) * factor if value else None
+    meta = {"unit": "%" if key == "ethanol_pct" else "ppm", "source_unit": unit}
+    if qualifier:
+        meta["qualifier"] = "<" if qualifier.startswith("<") else "ND"
+        tail = after[result.end():].lstrip(" \t\r\n([")
+        lod_prefix = r"(?:LOD\s*[:=(]?\s*)?" if "LOD" in qualifier.upper() else r"LOD\s*[:=(]?\s*"
+        lod = re.match(lod_prefix + "(" + _QUANT_NUMBER + r")\s*(" + _QUANT_UNIT + r")?", tail, re.I)
+        if lod:
+            lod_unit = re.sub(r"\s", "", lod.group(2) or unit).lower()
+            if (key == "ethanol_pct") == (lod_unit == "%"):
+                meta["lod"] = float(lod.group(1).replace(",", ".")) * (
+                    0.001 if lod_unit in ("ppb", "µg/kg", "ug/kg") else 1.0)
+                if not result.group("unit"):
+                    meta["source_unit"] = lod_unit
+        elif number is not None:
+            meta["lod"] = number
+        return 0.0, meta
+    return number, meta
+
+
 _MEASUREMENT_DOC_TYPES = {"coa_msds", "quality_cert", "supplier_declaration"}
 _PORK_MARKER = re.compile(r"\b(?:pork|porcine|swine|pig|babi)\b|돼지|돈지|돈육|(?<![가-힣])돈(?![가-힣])", re.I)
 _PORK_TEST_MARKER = re.compile(
@@ -1127,54 +1213,248 @@ _PORK_TEST_MARKER = re.compile(
     r"identifikasi\s*spesies|유전자|종\s*판별", re.I)
 _PORK_NEGATIVE = r"\b(?:not[\s-]*detected|non[\s-]*detected|tidak\s+terdeteksi|negative|negatif|none|absent)\b|불\s*검출|음성|없음"
 _PORK_POSITIVE = r"\b(?:detected|positive|positif|terdeteksi)\b|검출|양성"
+_CONTROL = re.compile(r"\b(?:(?:negative|positive)\s+)?control\b|"
+                      r"\bkontrol(?:\s+(?:negatif|positif))?\b|(?:음성|양성)\s*대조(?:군)?", re.I)
+_SAMPLE = re.compile(r"\b(?:result\s+of\s+(?:the\s+)?sample|sample|sampel)\b|시료|검체", re.I)
+_SAMPLE_LINE = re.compile(r"^\s*(?:result\s+of\s+(?:the\s+)?sample\b|"
+                          r"(?:hasil\s+)?sampel\b|sample\b|(?:결과\s*)?(?:시료|검체))", re.I)
+_RESULT_LINE = re.compile(r"^[\s|:=]*(?:(?:result|hasil|결과|판정)\s*[:|=]?\s*)?"
+                          r"(?:[<>≤≥]?\s*\d+(?:[.,]\d+)?\s*%?\s*)?(?:" +
+                          _PORK_NEGATIVE + "|" + _PORK_POSITIVE + ")", re.I)
 
 
-def extract_measurements(text):
+def _pork_result_words(text):
+    negative = bool(re.search(_PORK_NEGATIVE, text, re.I))
+    positive = bool(re.search(_PORK_POSITIVE, re.sub(_PORK_NEGATIVE, "", text, flags=re.I), re.I))
+    return {value for value, found in ((0.0, negative), (1.0, positive)) if found}
+
+
+def _table_cells(line):
+    return re.split(r"\s*[|\t]\s*| {2,}", line.strip().strip("|"))
+
+
+def _sample_column(line):
+    cells = _table_cells(line)
+    samples = [i for i, cell in enumerate(cells) if _SAMPLE.search(cell) and not _CONTROL.search(cell)]
+    if (len(samples) == 1 and not _pork_result_words(cells[samples[0]])
+            and any(_CONTROL.search(cell) for cell in cells)):
+        return samples[0], len(cells)
+    return None
+
+
+def _pork_measurement(text):
+    lines, values, found, ambiguous = text.splitlines(), set(), False, False
+    for i, line in enumerate(lines):
+        if not (_PORK_MARKER.search(line) and (_PORK_TEST_MARKER.search(line) or
+                (i > 0 and _PORK_TEST_MARKER.search(lines[i - 1])))):
+            continue
+        found = True
+        # 앞줄의 Sample|Control 머리글은 해당 시험 행의 열 위치로 연결한다.
+        header = _sample_column(lines[i - 1]) if i else None
+        if header:
+            column, width = header
+            cells = _table_cells(line)
+            offset = 1 if len(cells) == width + 1 and _PORK_MARKER.search(cells[0]) else 0
+            result = _pork_result_words(cells[column + offset]) if len(cells) == width + offset else set()
+            values.update(result)
+            ambiguous |= not bool(result)
+            continue
+        block = [line]
+        for following in lines[i + 1:]:
+            if _PORK_MARKER.search(following) and _PORK_TEST_MARKER.search(following):
+                break
+            if (_SAMPLE_LINE.search(following) or _CONTROL.search(following)
+                    or _sample_column(following)
+                    or _RESULT_LINE.match(following) or re.fullmatch(r"[\s|:-]+", following)):
+                block.append(following)
+            else:
+                break
+        explicit, implicit, controls, missing_sample = set(), set(), False, False
+        if i and _CONTROL.search(lines[i - 1]):
+            controls = True
+        table_seen = False
+        for j, row in enumerate(block):
+            header = _sample_column(row)
+            if header:
+                table_seen = controls = True
+                column, width = header
+                cells = _table_cells(block[j + 1]) if j + 1 < len(block) else []
+                result = _pork_result_words(cells[column]) if len(cells) == width else set()
+                explicit.update(result)
+                missing_sample |= not bool(result)
+                continue
+            if table_seen:
+                continue
+            for k, cell in enumerate(re.split(r"[|;,\t]", row)):
+                if _CONTROL.search(cell):
+                    controls = True
+                    continue
+                if _SAMPLE_LINE.search(cell):
+                    explicit.update(_pork_result_words(cell))
+                elif (j == 0 and k == 0) or _RESULT_LINE.match(cell):
+                    implicit.update(_pork_result_words(cell))
+        selected = explicit or (implicit if not controls else set())
+        values.update(selected)
+        # 표에 결과가 없거나 대조군과의 연결이 불분명하면 다른 행의 음성으로 덮지 않는다.
+        ambiguous |= missing_sample or (controls and not explicit)
+    if not found:
+        return {}
+    if ambiguous or len(values) != 1:
+        return {"pork_dna_unclear": True}
+    return {"pork_dna": values.pop()}
+
+
+def extract_measurements(text, metadata=None):
     """정량 측정값 추출. 돼지 DNA 결과가 모호하면 수치 대신 pork_dna_unclear=True."""
     if not text:
         return {}
     out = {}
-    for k, pat in _QUANT_PATTERNS.items():
-        m = re.search(pat, text, re.I)
-        if m:
-            try:
-                out[k] = float(m.group(1))
-            except ValueError:
-                pass
-    # 표에서 결과가 다음 줄로 넘어가도 읽되, Salmonella/Remarks 등 다른 항목은 섞지 않는다.
-    scopes = []
     lines = text.splitlines()
-    for i, line in enumerate(lines):
-        if not _PORK_MARKER.search(line):
-            continue
-        # 시험 표지는 같은 줄 또는 바로 이전 머리글 줄에 있어야 한다.
-        if not (_PORK_TEST_MARKER.search(line) or
-                (i > 0 and _PORK_TEST_MARKER.search(lines[i - 1]))):
-            continue
-        scope = line
-        if i + 1 < len(lines) and re.match(
-                r"^[\s|:=]*(?:(?:result|hasil|결과|판정)\s*[:|=]?\s*)?"
-                r"(?:[<>≤≥]?\s*\d+(?:[.,]\d+)?\s*%?\s*)?(?:" +
-                _PORK_NEGATIVE + "|" + _PORK_POSITIVE + ")", lines[i + 1], re.I):
-            scope += "\n" + lines[i + 1]
-        scopes.append(scope)
-    if scopes:
-        scope = "\n".join(scopes)
-        # 부정형을 제거한 뒤 양성어를 찾는다: '불검출' 안의 '검출'은 양성이 아니다.
-        positive = bool(re.search(_PORK_POSITIVE, re.sub(_PORK_NEGATIVE, "", scope, flags=re.I), re.I))
-        negative = bool(re.search(_PORK_NEGATIVE, scope, re.I))
-        if positive == negative:
-            out["pork_dna_unclear"] = True
-        else:
-            out["pork_dna"] = 1.0 if positive else 0.0
+    for key, pattern in _QUANT_PATTERNS.items():
+        for index, line in enumerate(lines):
+            for match in re.finditer(pattern, line, re.I):
+                scope = line + ("\n" + lines[index + 1] if index + 1 < len(lines) else "")
+                result = _quant_result(key, scope, match)
+                if result and key not in out:
+                    out[key], meta = result
+                    if metadata is not None:
+                        metadata[key] = meta
+    out.update(_pork_measurement(text))
     return out
 
 
-# 파일명만으로 종류가 확정되고, LLM 이 뽑는 필드도 쓰지 않는 서류들.
-# 이 경우 LLM 호출은 결과가 어차피 파일명 규칙으로 덮어써져 순수 낭비다(파일당 ~25초).
-# 실측: 16건 인테이크 9분 30초 중 7분이 LLM 대기였고 11건은 파일명으로 이미 판별됐다.
+def _measurement_fields(fields, text):
+    fields.pop("measurements", None)
+    fields.pop("measurements_meta", None)
+    meta = {}
+    measurements = extract_measurements(text, meta)
+    if measurements:
+        fields["measurements"] = measurements
+    if meta:
+        fields["measurements_meta"] = meta
+
+
+# 파일명으로 유형이 확정돼도 필드는 추출해야 한다. 구조 파서가 없는 유형만 LLM으로 보낸다.
 _NAME_DECIDES = {"sjph_manual", "supplier_declaration", "process_flow",
                  "quality_cert", "origin_certificate", "halal_certificate"}
+
+
+def _deterministic_fields(doc_type, text):
+    """지원하는 유형의 명시적 필드만 읽는다. None은 파서 없음, {}는 근거 없음."""
+    fields = {}
+    if doc_type in ("halal_certificate", "quality_cert"):
+        labels = {
+            "cert_no": r"(?:certificate\s*(?:no\.?|number)|cert\s*no\.?|"
+                       r"(?:nomor|no\.?)\s*(?:sertifikat(?:\s+halal)?)?|인증(?:서)?\s*번호)",
+            "issuer": r"(?:issuer|issued\s+by|issuing\s+(?:body|authority)|"
+                      r"lembaga\s+penerbit|diterbitkan\s+oleh|발급\s*기관)",
+            "expiry_date": r"(?:expiry(?:\s*date)?|expiration(?:\s*date)?|valid\s*(?:until|to)|"
+                           r"berlaku(?:\s*(?:sampai|hingga))?|만료일|유효\s*기간)",
+        }
+        for key, label in labels.items():
+            match = re.search(r"^\s*" + label + r"[ \t:：#|.-]+([^\n|]+)", text, re.I | re.M)
+            if match:
+                value = match.group(1).strip()
+                if key == "cert_no":
+                    number = re.match(r"[A-Z0-9][A-Z0-9/_.-]*", value, re.I)
+                    if number and any(c.isdigit() for c in number[0]):
+                        fields[key] = number[0]
+                elif key == "expiry_date":
+                    dates = re.findall(r"\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b", value)
+                    if dates:
+                        from datetime import datetime
+                        date = re.sub(r"[/.]", "-", dates[-1])
+                        for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
+                            try:
+                                fields[key] = datetime.strptime(date, fmt).date().isoformat()
+                                break
+                            except ValueError:
+                                continue
+                else:
+                    fields[key] = value
+        if "issuer" not in fields and doc_type == "halal_certificate":
+            issuer = re.search(r"\b(?:BPJPH|MUI|JAKIM|KMF|KHA)\b", text, re.I)
+            if issuer:
+                fields["issuer"] = issuer[0].upper()
+        if doc_type == "quality_cert":
+            cert_type = re.search(r"\b(?:HACCP|ISO\s*\d+|GMP|FSSC\s*\d*)\b", text, re.I)
+            if cert_type:
+                fields["cert_type"] = cert_type[0]
+        return fields
+    if doc_type == "process_flow":
+        steps = []
+        for line in text.splitlines():
+            if re.search(r"→|->|⇒", line):
+                line = re.sub(r"^.*?(?:steps|stages|단계)\s*[:：]\s*", "", line, flags=re.I)
+                steps.extend(s.strip() for s in re.split(r"→|->|⇒", line) if s.strip())
+            else:
+                step = re.match(r"^\s*(?:\d+[.)]?\s+|[-•]\s+)(\S.*)", line)
+                if step:
+                    steps.append(step[1].strip())
+        return {"process_steps": steps} if steps else {}
+    if doc_type == "sjph_manual":
+        return {key: bool(re.search(pattern, text, re.I)) for key, pattern in {
+            "has_commitment": r"commitment|komitmen|kebijakan\s+halal|경영\s*약속|할랄\s*정책",
+            "has_materials": r"\bmaterials?\b|\bbahan\b|원재료",
+            "has_process": r"\bprocess\b|\bproses\b|공정",
+            "has_product": r"\bproducts?\b|\bproduk\b|제품",
+            "has_monitoring": r"monitoring|pemantauan|evaluasi|모니터링|내부\s*심사",
+        }.items()}
+    if doc_type == "supplier_declaration":
+        _measurement_fields(fields, text)
+        return fields
+    return None
+
+
+_LIST_VALUE_KEYS = {"material_names", "product_names", "process_steps", "ingredients", "names"}
+
+
+def _normalise_names(value):
+    if isinstance(value, str):
+        value = re.split(r"[,\n\r]+", value)
+    if not isinstance(value, list):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
+def _normalise_fields(value):
+    if not isinstance(value, dict):
+        return {}, {"llm_error": "BAD_RESPONSE"}
+    failure = _llm_failure(value)
+    if value.get("error"):
+        return {}, failure
+    fields = {}
+    for key, val in value.items():
+        # 처리 상태와 정량값은 로컬 파서만 기록한다. 모델 응답에서 신뢰하지 않는다.
+        if (not isinstance(key, str) or key.startswith("_") or key in
+                ("error", "llm_error", "confidence", "doc_type", "field_sources", "locked_fields",
+                 "measurements", "measurements_meta")):
+            continue
+        if key in _LIST_VALUE_KEYS:
+            fields[key] = _normalise_names(val)
+        elif val is None or isinstance(val, (str, bool, int, float)):
+            if isinstance(val, float) and not math.isfinite(val):
+                failure = {"llm_error": "BAD_RESPONSE"}
+            else:
+                fields[key] = val
+        else:
+            failure = {"llm_error": "BAD_RESPONSE"}
+    return fields, failure
+
+
+def _confidence(value):
+    try:
+        number = float(value)
+    except (ValueError, TypeError, OverflowError):
+        number = {"high": 0.9, "medium": 0.5, "low": 0.25}.get(str(value).lower(), 0.5)
+    return max(0.0, min(1.0, number)) if math.isfinite(number) else 0.5
+
+
+def _llm_excerpt(text, limit, fields):
+    if len(text) > limit:
+        _record_truncation(fields, "llm_input", limit, len(text))
+        _scan_tail(fields, text[limit:])
+    return text[:limit]
 
 
 def _llm_failure(r):
@@ -1209,7 +1489,7 @@ def _structural_material_result(ing):
 
 
 def classify(name, text):
-    return _parsed_result(_classify_text(name, text), text)
+    return _parsed_result(_classify_text(_nfc(name), text), text)
 
 
 def _classify_text(name, text):
@@ -1222,10 +1502,14 @@ def _classify_text(name, text):
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
     dt_by_name, why = refine_doctype_reason(name, None, text)
     if dt_by_name in _NAME_DECIDES:
-        meas = extract_measurements(text) if dt_by_name in _MEASUREMENT_DOC_TYPES else {}
-        return {"doc_type": dt_by_name, "confidence": 0.9,
-                "fields": {"measurements": meas} if meas else {},
-                "decided_by": "filename", "reason": why}
+        fields = _deterministic_fields(dt_by_name, text)
+        if fields is not None or ai_local.provider() == "none":
+            fields = fields if fields is not None else {}
+            if dt_by_name in _MEASUREMENT_DOC_TYPES:
+                _measurement_fields(fields, text)
+            return {"doc_type": dt_by_name, "confidence": 0.9, "fields": fields,
+                    "field_sources": {key: "structural" for key in fields},
+                    "decided_by": "filename", "reason": why}
     # 사전이 '운영 기록물'(구매·생산·재고·검사 기록)로 확정한 문서는 LLM을 부르지 않는다.
     # 불러봐야 뽑은 값이 전부 버려진다 — other 는 _APPLICANT_DOCS·_PRODUCT_SRC·
     # _MATERIAL_SRC 어디에도 없어 aggregate_fields 가 회사정보·제품·원재료를 모두
@@ -1243,22 +1527,33 @@ def _classify_text(name, text):
     ing = _parse_ingredient_markers(text)
     if ing is not None:
         return _structural_material_result(ing)
-    r = ai_local.llm_json(_CLASSIFY_SYS, "파일명: %s\n본문 발췌:\n%s" % (name, text[:2000]))
-    if not isinstance(r, dict) or "doc_type" not in r:
+    metadata = {}
+    r = ai_local.llm_json(_CLASSIFY_SYS, "파일명: %s\n본문 발췌:\n%s" % (
+        name, _llm_excerpt(text, 2000, metadata)))
+    unavailable = isinstance(r, dict) and r.get("error") == "LLM_UNAVAILABLE"
+    if not isinstance(r, dict) or "doc_type" not in r or r.get("error"):
         # 호출이 실패한 것과 '모델이 보고도 못 찾은 것'은 다르다. 둘 다 other/0.0 으로
         # 떨어뜨리면 화면에는 똑같이 '분석 완료, 특이사항 없음'으로 보인다 — 실측:
         # 다른 서비스가 Ollama 를 점유한 동안 서류가 90초 타임아웃으로 줄줄이 빈 결과가
         # 됐는데 실패한 티가 어디에도 없었다. 실패는 실패라고 남겨 사람이 다시 돌린다.
         r = {"doc_type": "other", "confidence": 0.0, "fields": {},
-             **_llm_failure(r)}
+             **(_llm_failure(r) or ({} if unavailable else {"llm_error": "BAD_RESPONSE"}))}
+    else:
+        r = dict(r)
+    r["fields"], failure = _normalise_fields(r.get("fields", {}))
+    r.update(failure)
+    r["fields"].update(metadata)
+    if not isinstance(r.get("doc_type"), str):
+        r["doc_type"] = "other"
+        r["llm_error"] = "BAD_RESPONSE"
     r["doc_type"] = _refine_doctype(name, r.get("doc_type"), text)  # 파일명·제목줄 교정
     if r.get("doc_type") not in DOC_TYPES:
         r["doc_type"] = "other"
-    r.setdefault("confidence", 0.0)
-    r.setdefault("fields", {})
+    r["confidence"] = (0.0 if r.get("llm_error") else
+                       (0.9 if unavailable and dt_by_name else _confidence(r.get("confidence", 0.0))))
     # 리스트형 문서는 전체 본문에서 목록을 완전 추출(절단 2000자로는 뒤쪽 누락).
     lf = _LIST_FIELDS.get(r["doc_type"])
-    if lf and len(text) > 2000:
+    if lf and len(text) > 2000 and not unavailable and not r.get("llm_error"):
         fk, label = lf
         complete = _extract_list_complete(name, text, label, fields=r["fields"])
         if len(complete) > len(r["fields"].get(fk) or []):
@@ -1278,18 +1573,17 @@ def _classify_text(name, text):
         return r
     # 구조 파서가 안 걸린 목록은 LLM 이 낸 값이다. 출처를 남겨 두면 화면이
     # '사람이 확인할 값'으로 표시할 수 있고, 배포별 차이도 추적된다.
-    r.setdefault("field_sources", {})
+    if not isinstance(r.get("field_sources"), dict):
+        r["field_sources"] = {}
     for _lk in ("material_names", "product_names"):
         if r["fields"].get(_lk) and _lk not in r["field_sources"]:
             r["field_sources"][_lk] = "llm"
-    r.setdefault("locked_fields", [])
+    if not isinstance(r.get("locked_fields"), list):
+        r["locked_fields"] = []
     _enrich_address(r["fields"])   # 도시/국가/우편 보정
     # 시험성적서/성분명세/품질인증 → 정량 측정값 추출(자동 반영용)
     if r["doc_type"] in _MEASUREMENT_DOC_TYPES:
-        r["fields"].pop("measurements", None)
-        _meas = extract_measurements(text)
-        if _meas:
-            r["fields"]["measurements"] = _meas
+        _measurement_fields(r["fields"], text)
     return r
 
 
@@ -1404,7 +1698,7 @@ def parse_typed(doc_type, filename, data):
 
 def parse_typed_text(doc_type, filename, text):
     """확보한 본문에서 해당 유형의 필드만 추출 — 칸 교정 때 파일·OCR을 다시 읽지 않는다."""
-    return _parsed_result(_parse_typed_text(doc_type, filename, text), text)
+    return _parsed_result(_parse_typed_text(doc_type, _nfc(filename), text), text)
 
 
 def _parse_typed_text(doc_type, filename, text):
@@ -1424,6 +1718,15 @@ def _parse_typed_text(doc_type, filename, text):
         return {"doc_type": "material_list", "fields": fields, "confidence": 0.95,
                 "field_sources": {"material_names": "structural", "product_names": "structural"},
                 "text_len": len(text), "excerpt": text[:300], "text": text}
+    deterministic = _deterministic_fields(doc_type, text)
+    if deterministic is not None:
+        if doc_type in _MEASUREMENT_DOC_TYPES:
+            _measurement_fields(deterministic, text)
+        dt_by_name, _ = refine_doctype_reason(filename, None, text)
+        return {"doc_type": doc_type, "fields": deterministic,
+                "confidence": 0.9 if any(deterministic.values()) or dt_by_name == doc_type else 0.0,
+                "field_sources": {key: "structural" for key in deterministic},
+                "text_len": len(text), "excerpt": text[:300], "text": text}
     spec = _FIELD_SPEC.get(doc_type)
     if not spec:
         cl = classify(filename, text)
@@ -1432,32 +1735,41 @@ def _parse_typed_text(doc_type, filename, text):
         return cl
     desc, fmt = spec
     lf = _LIST_FIELDS.get(doc_type)
+    unavailable = False
     if lf and len(text) > 2500:
         # 리스트형: 전체 본문에서 완전 추출(절단 방지)
         fk, label = lf
-        fields, fail = {}, {}
-        fields[fk] = _extract_list_complete(filename, text, label, fields=fields)
+        fields, fail, status = {}, {}, {}
+        fields[fk] = _extract_list_complete(filename, text, label, fields=fields, status=status)
+        unavailable = status.get("unavailable", False)
         if fields.get("_llm_error"):
             fail["llm_error"] = fields["_llm_error"]
     else:
         sys = "문서에서 다음 필드만 추출하세요(없으면 null). 반드시 JSON으로만: " + fmt + " (대상: " + desc + ")"
-        r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, text[:2500]))
+        metadata = {}
+        r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (
+            filename, _llm_excerpt(text, 2500, metadata)))
+        unavailable = isinstance(r, dict) and r.get("error") == "LLM_UNAVAILABLE"
         fail = _llm_failure(r)
         # 실패 응답({'error': ...})을 그대로 필드로 쓰면 error 라는 이름의 값이 저장되고
         # confidence 0.85 까지 붙는다 — 못 뽑았는데 잘 뽑은 것처럼 기록된다.
-        fields = {} if fail or not isinstance(r, dict) else r
+        fields, field_failure = _normalise_fields(
+            r.get("fields") if isinstance(r, dict) and "fields" in r and not r.get("error") else r)
+        fail.update(field_failure)
+        fields.update(metadata)
     # 라벨의 ingredients도 확인 대기 목록에서 사용하는 원재료 키로 통일한다.
     if fields.get("ingredients") and not fields.get("material_names"):
         fields["material_names"] = fields["ingredients"]
     if doc_type in _MEASUREMENT_DOC_TYPES:
-        fields.pop("measurements", None)
-        meas = extract_measurements(text)
-        if meas:
-            fields["measurements"] = meas
+        _measurement_fields(fields, text)
     _enrich_address(fields)   # 도시/국가/우편 보정
+    dt_by_name, _ = refine_doctype_reason(filename, None, text)
+    confidence = 0.0 if fail else 0.85
+    if unavailable:
+        confidence = 0.9 if dt_by_name == doc_type or fields.get("measurements") else 0.0
     out = {"doc_type": doc_type, "fields": fields,
            "field_sources": {k: "llm" for k in ("material_names", "product_names") if fields.get(k)},
-           "confidence": 0.0 if fail else 0.85,
+           "confidence": confidence,
            "text_len": len(text), "excerpt": text[:300], "text": text}
     out.update(fail)
     return out
