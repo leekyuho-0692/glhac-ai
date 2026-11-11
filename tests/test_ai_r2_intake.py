@@ -126,21 +126,24 @@ def test_intervening_analyte_owns_the_value():
     ("Cadmium: 5 ppb", "cadmium_ppm", .005, None, None),
     ("Mercury: 2 ppm", "mercury_ppm", 2, None, None),
     ("Arsenic: 3 mg/kg", "arsenic_ppm", 3, None, None),
-    ("Ethanol: ND (LOD 0.01%)", "ethanol_pct", 0, "ND", .01),
-    ("Ethanol: Not detected (LOD: 0,01%)", "ethanol_pct", 0, "ND", .01),
-    ("Ethanol: <LOD (LOD 0.01%)", "ethanol_pct", 0, "<", .01),
-    ("Ethanol: <LOD (0.01%)", "ethanol_pct", 0, "<", .01),
-    ("Ethanol: <0.01", "ethanol_pct", 0, "<", .01),
-    ("Ethanol: <0,01 %", "ethanol_pct", 0, "<", .01),
-    ("Lead: ND (LOD 10 ppb)", "lead_ppm", 0, "ND", .01),
-    ("Timbal (Pb): <10 ppb", "lead_ppm", 0, "<", .01),
-    ("Ethanol: ND", "ethanol_pct", 0, "ND", None),
-    ("Lead: <LOD", "lead_ppm", 0, "<", None),
+    ("Ethanol: ND (LOD 0.01%)", "ethanol_pct", .01, "ND", .01),
+    ("Ethanol: Not detected (LOD: 0,01%)", "ethanol_pct", .01, "ND", .01),
+    ("Ethanol: <LOD (LOD 0.01%)", "ethanol_pct", .01, "<", .01),
+    ("Ethanol: <LOD (0.01%)", "ethanol_pct", .01, "<", .01),
+    ("Ethanol: <0.01", "ethanol_pct", .01, "<", .01),
+    ("Ethanol: <0,01 %", "ethanol_pct", .01, "<", .01),
+    ("Lead: ND (LOD 10 ppb)", "lead_ppm", .01, "ND", .01),
+    ("Timbal (Pb): <10 ppb", "lead_ppm", .01, "<", .01),
+    ("Ethanol: ND", "ethanol_pct", None, "ND", None),
+    ("Lead: <LOD", "lead_ppm", None, "<", None),
     ("Ethanol\n0.1%", "ethanol_pct", .1, None, None),
 ])
 def test_quant_values_and_qualifiers(text, key, value, qualifier, lod):
     result = intake.parse_typed_text("coa_msds", "CoA.txt", text)
-    assert result["fields"]["measurements"][key] == pytest.approx(value)
+    if value is None:
+        assert result["fields"]["measurements"][key] is None
+    else:
+        assert result["fields"]["measurements"][key] == pytest.approx(value)
     meta = result["fields"]["measurements_meta"][key]
     assert meta.get("qualifier") == qualifier
     assert meta.get("lod") == lod
@@ -154,7 +157,7 @@ def test_quant_metadata_survives_database(case):
     assert doc["fields"]["measurements_meta"]["lead_ppm"]["lod"] == .01
     with m.SessionLocal() as db:
         rows = db.query(models.MaterialMeasurement).filter_by(case_id=case[2]).all()
-        assert {r.param_key: r.value for r in rows} == {"ethanol_pct": 0.0, "lead_ppm": 0.0}
+        assert {r.param_key: r.value for r in rows} == {"ethanol_pct": .01, "lead_ppm": .01}
 
 
 def _office(ext, text="Normal document"):

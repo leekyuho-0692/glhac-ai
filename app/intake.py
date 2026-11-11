@@ -478,6 +478,17 @@ def _record_truncation(fields, kind, limit, total):
         fields["_truncations"] = markers
 
 
+def _clear_truncation(fields, kind):
+    markers = [m for m in fields.get("_truncations", [fields.get("_truncated")])
+               if isinstance(m, dict) and m.get("kind") != kind]
+    fields.pop("_truncated", None)
+    fields.pop("_truncations", None)
+    for marker in markers:
+        _record_truncation(fields, **marker)
+    if not markers:
+        fields.pop("_tail_screening", None)
+
+
 def _scan_tail(fields, text):
     """잘린 원문은 OCR/LLM 없이 사전으로만 검사한다. 추출 목록에 섞지는 않는다."""
     from . import screening
@@ -499,6 +510,17 @@ def _merge_tail_scan(fields, scan):
 def _parsed_result(result, text):
     """분류·유형별 추출의 모든 반환 경로에 동일한 파싱 상태를 붙인다."""
     fields = dict(result.get("fields") or {})
+    doc_type = result.get("doc_type")
+    if (doc_type in ("halal_certificate", "quality_cert") and (text or "").strip()
+            and not getattr(text, "parse_fields", {}).get("_ocr_error")):
+        evidence = _deterministic_fields(doc_type, text or "")
+        fields.update(evidence)
+        required = ("cert_no", "expiry_date", "issuer") if doc_type == "halal_certificate" else ("cert_no", "expiry_date")
+        missing = [key for key in required if not isinstance(fields.get(key), str) or not fields[key].strip()]
+        if missing:
+            fields["_missing_fields"] = missing
+        if sum(bool(evidence.get(key)) for key in ("cert_no", "expiry_date", "issuer")) < 2:
+            result["confidence"] = min(result.get("confidence", 0.0), 0.4)
     metadata = getattr(text, "parse_fields", {})
     for key, value in metadata.items():
         if key == "_truncated":
@@ -893,6 +915,10 @@ _CLASSIFY_SYS = (
 # 파일명이 명백한 경우(소개서·제안서·수입서류·품질인증 등)는 LLM 판단을 무시하고 규칙을 신뢰한다.
 _NAME_RULES = [
     # (정규식, doc_type, 사유) — 순서 중요(구체적인 것 먼저)
+    (r"신청서|신청\s*양식|제안서|견적|\b(?:application|proposal|quotation)\b|"
+     r"\b(?:permohonan|pengajuan|penawaran)\b|request[\s_]*form|certificate[\s_]*requirements",
+     "other", "신청·제안·견적 문서(발급된 인증서 아님)"),
+    (r"halal.{0,25}training[\s_]*manual", "sjph_manual", "할랄 교육 매뉴얼"),
     (r"할랄\s*인증|halal[\s_]*cert|sertifikat[\s_]*halal|"
      r"surat[\s_]*keterangan[\s_]*halal|(?<![a-z])skh(?![a-z])",
      "halal_certificate", "명시적 할랄 인증서(첨부 품질인증·사업자번호보다 우선)"),
@@ -966,6 +992,10 @@ def refine_doctype_reason(name, llm_type, text=None):
     n = (name or "").lower()
     from .domain_dict import doc_type_of, evidence_key_of, lookup
     base = re.sub(r"\.[a-z0-9]{2,5}$", "", (name or "").strip())
+    # 인증서라는 파일명보다 신청·제안 문서의 제목이 우선한다.
+    for candidate in [n, *_title_lines(text)]:
+        if re.search(_NAME_RULES[0][0], candidate, re.I):
+            return "other", _NAME_RULES[0][2]
     for pat, dt, why in _NAME_RULES:
         if re.search(pat, n):
             # 규칙이 잡았더라도 사전이 증빙 항목을 알고 있으면 근거에 함께 남긴다
@@ -1033,6 +1063,8 @@ def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000, field
            '헤더/합계/빈칸은 제외. 반드시 JSON으로만: {"names":[]}' % label)
     seen, out = set(), []
     fields = fields if fields is not None else {}
+    status = status if status is not None else {}
+    status["complete"] = False
     chunks = _chunk_text(text)
     if len(chunks) > max_chunks:
         _record_truncation(fields, "chunks", max_chunks, len(chunks))
@@ -1040,10 +1072,12 @@ def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000, field
     for index, ch in enumerate(chunks[:max_chunks]):
         r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, ch))
         if isinstance(r, dict) and r.get("error") == "LLM_UNAVAILABLE":
-            if status is not None:
-                status["unavailable"] = True
+            status["unavailable"] = True
             break
         failure = _llm_failure(r)
+        if not failure and (not isinstance(r.get("names"), list)
+                            or any(not isinstance(n, str) for n in r["names"])):
+            failure = {"llm_error": "BAD_RESPONSE"}
         if failure:
             fields["_llm_error"] = failure["llm_error"]
         names = _normalise_names(r.get("names") if isinstance(r, dict) and not r.get("error") else None)
@@ -1061,7 +1095,11 @@ def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000, field
                         # 항목 상한에 먼저 닿으면 완전히 추출된 청크 수만 기록한다.
                         _record_truncation(fields, "chunks", index if remaining else index + 1, len(chunks))
                         _scan_tail(fields, "\n".join(chunks[index:]))
+                    else:
+                        status["complete"] = not fields.get("_llm_error")
                     return out
+    else:
+        status["complete"] = len(chunks) <= max_chunks and not fields.get("_llm_error")
     return out
 
 
@@ -1164,8 +1202,21 @@ _QUANT_UNIT = r"(?:%|ppm\b|ppb\b|mg\s*/\s*kg\b|µg\s*/\s*kg\b|ug\s*/\s*kg\b)"
 _QUANT_ND = r"(?:ND\b|not[ -]*detected\b|non[ -]*detected\b|tidak\s+terdeteksi\b|불검출)"
 _QUANT_RESULT = re.compile(
     r"^[\s:：=|()\[\]]*(?:(?:content|result|hasil|kadar|함량|결과)\s*[:=|]?\s*)?"
-    r"(?P<qual>" + _QUANT_ND + r"|<\s*LOD\b|<)?\s*"
+    r"(?P<qual>" + _QUANT_ND + r"|<\s*LOD\b|<=|>=|[<>≤≥])?\s*"
     r"(?P<value>" + _QUANT_NUMBER + r")?\s*(?P<unit>" + _QUANT_UNIT + r")?", re.I)
+
+_SPEC_HEADER = r"specification|spec|limit|standard|batas|syarat|규격|기준"
+_RESULT_HEADER = r"result|hasil|결과|측정값"
+_QUANT_TOKEN = re.compile(r"(?:<=|>=|[<>≤≥])?\s*" + _QUANT_NUMBER + r"\s*" + _QUANT_UNIT, re.I)
+
+
+def _quant_suffix(key, after):
+    """항목의 별칭·CAS·점선을 결과와 규격 양쪽에서 동일하게 제거한다."""
+    alias = _QUANT_PATTERNS[key]
+    after = re.sub(r"^\s*\(\s*(?:" + alias + r")\s*\)", "", after, flags=re.I)
+    after = re.sub(r"^\s*\(?\s*(?:CAS\s*(?:No\.?|number)?\s*[:#]?\s*)?"
+                   r"\d{2,7}-\d{2}-\d\s*\)?", "", after, flags=re.I)
+    return re.sub(r"^\s*\.{2,}\s*", "", after)
 
 
 def _quant_result(key, line, match):
@@ -1174,10 +1225,7 @@ def _quant_result(key, line, match):
     if (re.search(r"(?:\b(?:free\s+from|bebas)|무)\s*[-:]?\s*$", before, re.I)
             or re.match(r"\s*(?:[-‐‑–]?\s*free\b|bebas\b|무(?:첨가|함유)?(?![가-힣]))", after, re.I)):
         return None
-    alias = _QUANT_PATTERNS[key]
-    after = re.sub(r"^\s*\(\s*(?:" + alias + r")\s*\)", "", after, flags=re.I)
-    after = re.sub(r"^\s*\(?\s*(?:CAS\s*(?:No\.?|number)?\s*[:#]?\s*)?"
-                   r"\d{2,7}-\d{2}-\d\s*\)?", "", after, flags=re.I)
+    after = _quant_suffix(key, after)
     result = _QUANT_RESULT.match(after)
     qualifier, value, unit = result.group("qual", "value", "unit")
     if not qualifier and not (value and unit):
@@ -1189,7 +1237,9 @@ def _quant_result(key, line, match):
     number = float(value.replace(",", ".")) * factor if value else None
     meta = {"unit": "%" if key == "ethanol_pct" else "ppm", "source_unit": unit}
     if qualifier:
-        meta["qualifier"] = "<" if qualifier.startswith("<") else "ND"
+        meta["qualifier"] = ({"<=": "≤", ">=": "≥"}.get(qualifier, qualifier)
+                             if qualifier in ("<", ">", "≤", "≥", "<=", ">=")
+                             else "<" if qualifier.startswith("<") else "ND")
         tail = after[result.end():].lstrip(" \t\r\n([")
         lod_prefix = r"(?:LOD\s*[:=(]?\s*)?" if "LOD" in qualifier.upper() else r"LOD\s*[:=(]?\s*"
         lod = re.match(lod_prefix + "(" + _QUANT_NUMBER + r")\s*(" + _QUANT_UNIT + r")?", tail, re.I)
@@ -1200,10 +1250,46 @@ def _quant_result(key, line, match):
                     0.001 if lod_unit in ("ppb", "µg/kg", "ug/kg") else 1.0)
                 if not result.group("unit"):
                     meta["source_unit"] = lod_unit
-        elif number is not None:
+        elif number is not None and meta["qualifier"] in ("<", "≤", "ND"):
             meta["lod"] = number
-        return 0.0, meta
+        # 구간의 경계값을 보존한다. 검출한계가 없으면 대표값도 미확정이다.
+        return meta.get("lod", number), meta
     return number, meta
+
+
+def _quant_row_results(key, line, match):
+    """머리글 없는 행: 명시된 규격 수치는 제외하고 연결된 결과를 모두 읽는다."""
+    after = _quant_suffix(key, line[match.end():])
+    line = line[:match.end()] + after
+    tokens = list(_QUANT_TOKEN.finditer(after))
+    if len(tokens) < 2:
+        result = _quant_result(key, line, match)
+        return [result] if result else []
+    # 자유문장·다른 성분을 건너뛰어 그 수치를 현재 항목에 붙이지 않는다.
+    prefix = after[:tokens[0].start()]
+    allowed = re.sub(r"\b(?:" + _SPEC_HEADER + "|" + _RESULT_HEADER +
+                     r"|max|maks|maximum|content|kadar)\b|함량", "", prefix, flags=re.I)
+    if re.search(r"[^\s:：=|;().\[\]]", allowed):
+        result = _quant_result(key, line, match)
+        return [result] if result else []
+    results = []
+    for index, token in enumerate(tokens):
+        before = after[tokens[index - 1].end() if index else 0:token.start()]
+        following = after[token.end():tokens[index + 1].start() if index + 1 < len(tokens) else len(after)]
+        before = re.split(r"[|;\t]", before)[-1]
+        residual = re.sub(r"(?:" + _QUANT_PATTERNS[key] + "|" + _SPEC_HEADER + "|" +
+                          _RESULT_HEADER + r"|\bmax(?:imum)?\b|\bmaks\b|함량|이하)", "", before, flags=re.I)
+        if re.search(r"[^\s:：=().\[\]]", residual):
+            break
+        if (token[0].lstrip().startswith(("≤", "<=")) or
+                re.search(r"(?:" + _SPEC_HEADER + r"|\bmax(?:imum)?\b|\bmaks\b)", before, re.I) or
+                re.match(r"\s*(?:이하|\bmax(?:imum)?\b|\bmaks\b)", following, re.I)):
+            continue
+        candidate = line[:match.end()] + ": " + token[0]
+        result = _quant_result(key, candidate, match)
+        if result:
+            results.append(result)
+    return results
 
 
 _MEASUREMENT_DOC_TYPES = {"coa_msds", "quality_cert", "supplier_declaration"}
@@ -1213,6 +1299,7 @@ _PORK_TEST_MARKER = re.compile(
     r"identifikasi\s*spesies|유전자|종\s*판별", re.I)
 _PORK_NEGATIVE = r"\b(?:not[\s-]*detected|non[\s-]*detected|tidak\s+terdeteksi|negative|negatif|none|absent)\b|불\s*검출|음성|없음"
 _PORK_POSITIVE = r"\b(?:detected|positive|positif|terdeteksi)\b|검출|양성"
+_PORK_UNCLEAR = r"\b(?:inconclusive|invalid|equivocal|tidak\s+dapat\s+ditentukan)\b|판정\s*불가"
 _CONTROL = re.compile(r"\b(?:(?:negative|positive)\s+)?control\b|"
                       r"\bkontrol(?:\s+(?:negatif|positif))?\b|(?:음성|양성)\s*대조(?:군)?", re.I)
 _SAMPLE = re.compile(r"\b(?:result\s+of\s+(?:the\s+)?sample|sample|sampel)\b|시료|검체", re.I)
@@ -1220,13 +1307,14 @@ _SAMPLE_LINE = re.compile(r"^\s*(?:result\s+of\s+(?:the\s+)?sample\b|"
                           r"(?:hasil\s+)?sampel\b|sample\b|(?:결과\s*)?(?:시료|검체))", re.I)
 _RESULT_LINE = re.compile(r"^[\s|:=]*(?:(?:result|hasil|결과|판정)\s*[:|=]?\s*)?"
                           r"(?:[<>≤≥]?\s*\d+(?:[.,]\d+)?\s*%?\s*)?(?:" +
-                          _PORK_NEGATIVE + "|" + _PORK_POSITIVE + ")", re.I)
+                          _PORK_NEGATIVE + "|" + _PORK_POSITIVE + "|" + _PORK_UNCLEAR + ")", re.I)
 
 
 def _pork_result_words(text):
     negative = bool(re.search(_PORK_NEGATIVE, text, re.I))
     positive = bool(re.search(_PORK_POSITIVE, re.sub(_PORK_NEGATIVE, "", text, flags=re.I), re.I))
-    return {value for value, found in ((0.0, negative), (1.0, positive)) if found}
+    unclear = bool(re.search(_PORK_UNCLEAR, text, re.I))
+    return {value for value, found in ((0.0, negative), (1.0, positive), (None, unclear)) if found}
 
 
 def _table_cells(line):
@@ -1257,7 +1345,7 @@ def _pork_measurement(text):
             offset = 1 if len(cells) == width + 1 and _PORK_MARKER.search(cells[0]) else 0
             result = _pork_result_words(cells[column + offset]) if len(cells) == width + offset else set()
             values.update(result)
-            ambiguous |= not bool(result)
+            ambiguous |= not bool(result) or bool(re.search(_PORK_UNCLEAR, line, re.I))
             continue
         block = [line]
         for following in lines[i + 1:]:
@@ -1296,10 +1384,11 @@ def _pork_measurement(text):
         selected = explicit or (implicit if not controls else set())
         values.update(selected)
         # 표에 결과가 없거나 대조군과의 연결이 불분명하면 다른 행의 음성으로 덮지 않는다.
-        ambiguous |= missing_sample or (controls and not explicit)
+        ambiguous |= (missing_sample or (controls and not explicit) or
+                      any(re.search(_PORK_UNCLEAR, row, re.I) for row in block))
     if not found:
         return {}
-    if ambiguous or len(values) != 1:
+    if ambiguous or None in values or len(values) != 1:
         return {"pork_dna_unclear": True}
     return {"pork_dna": values.pop()}
 
@@ -1310,15 +1399,48 @@ def extract_measurements(text, metadata=None):
         return {}
     out = {}
     lines = text.splitlines()
-    for key, pattern in _QUANT_PATTERNS.items():
-        for index, line in enumerate(lines):
+    observations = {}
+    columns = None
+    for index, line in enumerate(lines):
+        cells = _table_cells(line)
+        result_columns = [i for i, cell in enumerate(cells)
+                          if re.fullmatch(r"(?:" + _RESULT_HEADER + r")(?:\s*\([^)]*\))?", cell, re.I)]
+        spec_columns = [i for i, cell in enumerate(cells)
+                        if re.fullmatch(r"(?:" + _SPEC_HEADER + r")(?:\s*\([^)]*\))?", cell, re.I)]
+        if len(cells) > 1 and (result_columns or spec_columns):
+            columns = (result_columns, len(cells))
+            continue
+        for key, pattern in _QUANT_PATTERNS.items():
             for match in re.finditer(pattern, line, re.I):
-                scope = line + ("\n" + lines[index + 1] if index + 1 < len(lines) else "")
-                result = _quant_result(key, scope, match)
-                if result and key not in out:
-                    out[key], meta = result
-                    if metadata is not None:
-                        metadata[key] = meta
+                if re.match(r"\s*[-‐‑–]?\s*(?:free\b|bebas\b|무(?:첨가|함유)?(?![가-힣]))",
+                            line[match.end():], re.I):
+                    continue
+                if columns and len(cells) == columns[1]:
+                    results = []
+                    for column in columns[0]:
+                        # 현재 항목의 결과 열만 읽는다. 규격 열의 수치는 근거가 아니다.
+                        candidate = line[:match.end()] + ": " + cells[column]
+                        result = _quant_result(key, candidate, match)
+                        if result:
+                            results.append(result)
+                elif columns and len(cells) > 1:
+                    # 열이 어긋난 표를 규격 첫 값으로 폴백하지 않는다.
+                    results = []
+                else:
+                    results = _quant_row_results(key, line, match)
+                    if not results and not _QUANT_TOKEN.search(line[match.end():]) and index + 1 < len(lines):
+                        result = _quant_result(key, line + "\n" + lines[index + 1], match)
+                        results = [result] if result else []
+                for value, meta in results:
+                    observations.setdefault(key, []).append({"value": value, **meta, "line": index + 1})
+                if results:
+                    break  # 같은 항목의 별칭 Pb/(Lead)를 중복 측정으로 세지 않는다.
+    for key, items in observations.items():
+        representative = max(items, key=lambda item: item["value"] if item["value"] is not None else float("-inf"))
+        out[key] = representative["value"]
+        if metadata is not None:
+            metadata[key] = {k: v for k, v in representative.items() if k != "value"}
+            metadata[key]["observations"] = items
     out.update(_pork_measurement(text))
     return out
 
@@ -1349,12 +1471,16 @@ def _deterministic_fields(doc_type, text):
             "issuer": r"(?:issuer|issued\s+by|issuing\s+(?:body|authority)|"
                       r"lembaga\s+penerbit|diterbitkan\s+oleh|발급\s*기관)",
             "expiry_date": r"(?:expiry(?:\s*date)?|expiration(?:\s*date)?|valid\s*(?:until|to)|"
-                           r"berlaku(?:\s*(?:sampai|hingga))?|만료일|유효\s*기간)",
+                           r"berlaku(?:\s*(?:sampai|hingga|s\s*/\s*d))?|만료일|유효\s*기간)",
         }
-        for key, label in labels.items():
-            match = re.search(r"^\s*" + label + r"[ \t:：#|.-]+([^\n|]+)", text, re.I | re.M)
-            if match:
-                value = match.group(1).strip()
+        labelled = list(re.finditer(r"(?<!\w)(?:" + "|".join(
+            "(?P<" + key + ">" + label + ")" for key, label in labels.items()) +
+            r")[ \t:：#|.-]+", text, re.I))
+        for index, match in enumerate(labelled):
+            key = match.lastgroup
+            value = text[match.end():labelled[index + 1].start() if index + 1 < len(labelled) else len(text)]
+            value = re.split(r"[\n|]", value)[0].strip()
+            if value:
                 if key == "cert_no":
                     number = re.match(r"[A-Z0-9][A-Z0-9/_.-]*", value, re.I)
                     if number and any(c.isdigit() for c in number[0]):
@@ -1555,9 +1681,12 @@ def _classify_text(name, text):
     lf = _LIST_FIELDS.get(r["doc_type"])
     if lf and len(text) > 2000 and not unavailable and not r.get("llm_error"):
         fk, label = lf
-        complete = _extract_list_complete(name, text, label, fields=r["fields"])
+        status = {}
+        complete = _extract_list_complete(name, text, label, fields=r["fields"], status=status)
         if len(complete) > len(r["fields"].get(fk) or []):
             r["fields"][fk] = complete
+        if status.get("complete"):
+            _clear_truncation(r["fields"], "llm_input")
     # 구조 파서가 '이건 목록 문서가 아니다'라고 판정했으면(제품×원재료 매트릭스)
     # LLM 이 뽑은 목록은 버린다. 구조 판정이 옳고 LLM 이 지어낸 것이다 —
     # 실측: 같은 매트릭스 파일에서 로컬 LLM 이 제품 35건, GPT 가 원재료 21건을 뽑았고
@@ -1643,6 +1772,54 @@ def autofill_value_in_text(field, value, text):
     return bool(key and key in norm(text))
 
 
+def normalise_verification(response, *, internal=False):
+    """검증 경계에서 스키마를 확정한다. 복구할 수 없는 타입은 오류로 남긴다."""
+    bad = {"verdict": "unknown", "summary": "AI 검증 응답 형식 오류",
+           "doc_type_ok": None, "detected_type": None, "field_issues": [],
+           "source": "llm", "llm_error": "BAD_RESPONSE"}
+    if not isinstance(response, dict):
+        return bad
+    verdict = response.get("verdict")
+    if verdict not in (("ok", "warn", "fail", "unknown") if internal else ("ok", "warn", "fail")):
+        return bad
+    doc_ok = response.get("doc_type_ok")
+    if isinstance(doc_ok, str) and doc_ok.strip().lower() in ("true", "false"):
+        doc_ok = doc_ok.strip().lower() == "true"
+    if doc_ok is not None and not isinstance(doc_ok, bool):
+        return bad
+    issues = response.get("field_issues")
+    if issues is None:
+        issues = []
+    if isinstance(issues, dict):
+        issues = [{"field": field, "issue": issue} for field, issue in issues.items()]
+    if not isinstance(issues, list):
+        return bad
+    normal = []
+    for issue in issues:
+        if (not isinstance(issue, dict) or not isinstance(issue.get("field"), str)
+                or not issue["field"].strip() or not isinstance(issue.get("issue"), str)
+                or not issue["issue"].strip()):
+            return bad
+        item = {"field": issue["field"].strip(), "issue": issue["issue"].strip()}
+        if isinstance(issue.get("code"), str):
+            item["code"] = issue["code"]
+        normal.append(item)
+    detected = response.get("detected_type")
+    if detected is not None and (not isinstance(detected, str) or detected not in DOC_TYPES):
+        return bad
+    summary = response.get("summary") or ""
+    if not isinstance(summary, str):
+        return bad
+    result = {"verdict": "warn" if verdict == "ok" and (normal or doc_ok is False) else verdict,
+              "summary": summary[:300], "doc_type_ok": doc_ok, "detected_type": detected,
+              "field_issues": normal, "source": "llm"}
+    if internal:
+        for key in ("source", "llm_error", "_truncated", "_truncations"):
+            if key in response:
+                result[key] = response[key]
+    return result
+
+
 def verify_extraction(doc_type, filename, text, fields, case_company=None):
     """추출 결과를 원문과 대조한 판정만 돌려준다 — 저장·반영은 호출자가 한다.
 
@@ -1669,25 +1846,38 @@ def verify_extraction(doc_type, filename, text, fields, case_company=None):
         if any(isinstance(value, str) and len(value.strip()) >= 3 and
                re.sub(r"\s+", "", value).casefold() not in norm_text for value in values):
             issues.append({"field": k, "issue": "원문에 없는 값"})
+    shown_json = _json.dumps(shown, ensure_ascii=False)
+    limits = {}
+    for content, limit in ((shown_json, 1500), (text, 8000)):
+        if len(content) > limit:
+            _record_truncation(limits, "verify_input", limit, len(content))
+    if isinstance(fields, dict):
+        _clear_truncation(fields, "verify_input")
+        for marker in limits.get("_truncations", [limits.get("_truncated")]):
+            if marker:
+                _record_truncation(fields, **marker)
     user = ("선택된 서류 종류: %s\n파일명: %s\n신청 업체명: %s\n추출값(JSON): %s\n원문:\n%s"
             % (doc_type, filename, case_company or "-",
-               _json.dumps(shown, ensure_ascii=False)[:1500], text[:8000]))
+               shown_json[:1500], text[:8000]))
     r = ai_local.llm_json(_VERIFY_SYS, user)
     fail = _llm_failure(r)
-    if fail or not isinstance(r, dict) or r.get("error") or r.get("verdict") not in ("ok", "warn", "fail"):
+    if not fail and isinstance(r, dict) and not r.get("error"):
+        r = normalise_verification(r)
+        fail = {"llm_error": r["llm_error"]} if r.get("llm_error") else {}
+    if fail or not isinstance(r, dict) or r.get("error"):
         return {"verdict": "warn" if issues else "unknown",
                 "summary": "원문에 없는 추출값 — AI 검증을 하지 못함" if issues else "AI 검증을 하지 못함",
                 "doc_type_ok": None, "detected_type": None, "field_issues": issues,
-                "source": "rule" if issues else "llm", **fail}
+                "source": "rule" if issues else "llm", **fail, **limits}
     dt = r.get("detected_type")
-    for issue in [i for i in (r.get("field_issues") or []) if isinstance(i, dict)][:10]:
+    for issue in r["field_issues"]:
         if issue not in issues:
             issues.append(issue)
     verdict = "warn" if issues and r["verdict"] == "ok" else r["verdict"]
     return {"verdict": verdict, "summary": str(r.get("summary") or "")[:300],
             "doc_type_ok": r.get("doc_type_ok"),
             "detected_type": dt if dt in DOC_TYPES else None,
-            "field_issues": issues, "source": "llm"}
+            "field_issues": issues, "source": "llm", **limits}
 
 
 def parse_typed(doc_type, filename, data):
@@ -1703,6 +1893,11 @@ def parse_typed_text(doc_type, filename, text):
 
 def _parse_typed_text(doc_type, filename, text):
     text = text or ""
+    # 신청서를 인증서 업로드 칸에 넣어도 인증 필드와 체크리스트로 흘리지 않는다.
+    if doc_type in ("halal_certificate", "quality_cert") and any(
+            re.search(_NAME_RULES[0][0], candidate, re.I) for candidate in [filename, *_title_lines(text)]):
+        return {"doc_type": "other", "fields": {}, "confidence": 0.9,
+                "reason": _NAME_RULES[0][2], "text_len": len(text), "text": text}
     if not text.strip():
         return {"doc_type": doc_type, "fields": {}, "confidence": 0.0, "empty": True, "text_len": 0,
                 "text": text or ""}

@@ -918,6 +918,11 @@ PROBLEM_DOC_MSG = {
         "en": ("The document reading has low confidence.", "The document type or extracted values may be unreliable.", "Check the document type and upload a clear original, or ask the reviewer to check it."),
         "id": ("Tingkat keyakinan pembacaan dokumen rendah.", "Jenis dokumen atau nilai yang diambil mungkin tidak akurat.", "Periksa jenis dokumen dan unggah dokumen asli yang jelas, atau minta petugas memeriksanya."),
     },
+    "FIELDS_MISSING": {
+        "ko": ("인증서의 필수 정보를 읽지 못했습니다({fields}).", "인증번호·유효기간·발급기관 확인이 필요합니다.", "해당 정보가 보이는 원본을 올리거나 담당자에게 확인을 요청해 주세요."),
+        "en": ("Required certificate information could not be read ({fields}).", "The certificate number, validity and issuer need checking.", "Upload an original showing these details or ask the reviewer to check them."),
+        "id": ("Informasi wajib sertifikat tidak dapat dibaca ({fields}).", "Nomor sertifikat, masa berlaku, dan penerbit perlu diperiksa.", "Unggah dokumen asli yang memuat informasi tersebut atau minta petugas memeriksanya."),
+    },
     "TRUNCATED": {
         "ko": ("문서가 길어 앞 {limits}까지만 읽었습니다.", "뒤쪽 내용은 자동 분석에서 빠졌습니다.", "필요한 부분만 나눠서 올려 주세요."),
         "en": ("The long document was read only up to {limits}.", "The remaining contents were omitted from automatic analysis.", "Split the required sections into smaller files and upload them."),
@@ -957,13 +962,13 @@ PROBLEM_DOC_MSG = {
 PROBLEM_DOC_COPY = {
     "ko": {"fallback": "업체 연락 메일이 없어 담당자에게 보냅니다 — 업체에 보완을 요청해 주세요.",
            "uploaded": "올린 시각", "link": "케이스 {case_id}의 서류함에서 문제를 확인하고 보완한 파일을 다시 올려 주세요: {url}",
-           "pages": "쪽", "chars": "자", "llm_input": "자(AI 입력)", "chunks": "개 구간", "unknown": "확인 필요"},
+           "pages": "쪽", "chars": "자", "llm_input": "자(AI 입력)", "verify_input": "자(검증 입력)", "chunks": "개 구간", "unknown": "확인 필요"},
     "en": {"fallback": "Sent to the reviewer because company contact email is unavailable — please request corrections from the company.",
            "uploaded": "Uploaded at", "link": "Check the issues and upload corrected files in the document vault for case {case_id}: {url}",
-           "pages": " pages", "chars": " characters", "llm_input": " characters (AI input)", "chunks": " chunks", "unknown": "needs checking"},
+           "pages": " pages", "chars": " characters", "llm_input": " characters (AI input)", "verify_input": " characters (verification input)", "chunks": " chunks", "unknown": "needs checking"},
     "id": {"fallback": "Dikirim kepada petugas karena email kontak perusahaan tidak tersedia — mohon minta perusahaan melengkapi dokumen.",
            "uploaded": "Waktu unggah", "link": "Periksa masalah dan unggah berkas yang diperbaiki di penyimpanan dokumen kasus {case_id}: {url}",
-           "pages": " halaman", "chars": " karakter", "llm_input": " karakter (masukan AI)", "chunks": " bagian", "unknown": "perlu diperiksa"},
+           "pages": " halaman", "chars": " karakter", "llm_input": " karakter (masukan AI)", "verify_input": " karakter (masukan verifikasi)", "chunks": " bagian", "unknown": "perlu diperiksa"},
 }
 
 
@@ -1152,6 +1157,8 @@ def _problem_document_reasons(document, measurements=()):
         primary = "LOW_CONFIDENCE"
     if primary:
         reasons.append({"code": primary, "params": {}})
+    if fields.get("_missing_fields"):
+        reasons.append({"code": "FIELDS_MISSING", "params": {"fields": ", ".join(fields["_missing_fields"])}})
     if "_truncated" in fields:
         markers = fields.get("_truncations") or [fields["_truncated"]]
         reasons.append({"code": "TRUNCATED", "params": {"limits": [dict(x) for x in markers if isinstance(x, dict)]}})
@@ -1175,7 +1182,8 @@ def _problem_document_reasons(document, measurements=()):
         reasons.append({"code": "AI_ERROR", "params": {}})
     if fields.get("_original_not_stored"):
         reasons.append({"code": "ORIGINAL_NOT_STORED", "params": {}})
-    if any(x.document_id == document.document_id and x.verdict == "review" for x in measurements):
+    if any(x.document_id == document.document_id and x.param_key == "pork_dna"
+           and x.verdict == "review" for x in measurements):
         reasons.append({"code": "PORK_DNA_UNCLEAR", "params": {}})
     return reasons
 
@@ -6022,14 +6030,30 @@ QUANT_CRITERIA = {
 }
 
 
-def _quant_verdict(param_key, value):
+def _quant_verdict(param_key, value, metadata=None):
     crit = QUANT_CRITERIA.get(param_key)
-    if not crit or value is None:
+    if not crit:
         return "unknown"
+    meta = metadata if isinstance(metadata, dict) else {}
+    qualifier = meta.get("qualifier")
+    bound = meta.get("lod", value) if qualifier in ("ND", "<", "≤", "<=") else value
     try:
-        return "pass" if float(value) <= float(crit["max"]) else "fail"
-    except (TypeError, ValueError):
-        return "unknown"
+        import math
+        if bound is None or isinstance(bound, bool) or not math.isfinite(float(bound)) or float(bound) < 0:
+            return "review" if qualifier else "unknown"
+        bound, threshold = float(bound), float(crit["max"])
+        if qualifier in ("ND", "<", "≤", "<="):
+            # ND에 LOD가 없으면 0이라는 구버전 대표값도 불검출 확정으로 보지 않는다.
+            if qualifier == "ND" and meta.get("lod") is None:
+                return "review"
+            return "pass" if bound <= threshold else "review"
+        if qualifier in (">", "≥", ">="):
+            return "fail" if bound > threshold or (bound == threshold and qualifier == ">") else "review"
+        if qualifier:
+            return "review"
+        return "pass" if bound <= threshold else "fail"
+    except (TypeError, ValueError, OverflowError):
+        return "review" if qualifier else "unknown"
 
 
 _QUANT_RANK = {"pass": 0, "review": 1, "fail": 2}
@@ -6037,7 +6061,25 @@ _QUANT_RANK = {"pass": 0, "review": 1, "fail": 2}
 
 def _measurement_verdict(row):
     """저장된 부적합·확인 대기를 보존하고, 수치도 현재 기준과 대조한다."""
-    numeric = _quant_verdict(row.param_key, row.value)
+    import json
+    meta = {}
+    if row.recorded_by == "ai":
+        try:
+            note = json.loads(row.note or "{}")
+            meta = note.get("measurement_meta", {}) if isinstance(note, dict) else {}
+        except (ValueError, TypeError):
+            pass
+        if not meta and row.document_id:
+            # R2에서 이미 저장된 0·pass 행도 원문 메타로 다시 판정한다.
+            from sqlalchemy.orm import object_session
+            db = object_session(row)
+            doc = db.get(models.DocumentAsset, row.document_id) if db else None
+            if doc:
+                meta = (doc.fields or {}).get("measurements_meta", {}).get(row.param_key, {})
+    value = row.value
+    if meta.get("qualifier") == "<" and "lod" not in meta and value == 0:
+        value = None  # R2의 <LOD(상한 미상)도 0이라는 대표값으로 통과시키지 않는다.
+    numeric = _quant_verdict(row.param_key, value, meta)
     if row.verdict == "fail" or numeric == "fail":
         return "fail"
     if row.verdict != "pass" or numeric != "pass":
@@ -6090,7 +6132,8 @@ def _case_blockers(db, c):
 
 
 def _apply_document_measurements(db, c, doc):
-    """자동 추출만 (출처 문서, 항목)별 갱신한다. 수동 입력 행은 그대로 보존한다."""
+    """자동 추출을 (출처 문서, 항목, 결과 순번)별 보존한다. 수동 입력은 유지한다."""
+    import json
     fields = doc.fields or {}
     measurements = dict(fields.get("measurements") or {})
     unclear = measurements.pop("pork_dna_unclear", False)
@@ -6112,22 +6155,47 @@ def _apply_document_measurements(db, c, doc):
             material_id = matches[0]
     count = 0
     for key, value in measurements.items():
-        if key not in QUANT_CRITERIA or (value is None and not (key == "pork_dna" and unclear)):
+        if key not in QUANT_CRITERIA:
             continue
-        row = (db.query(models.MaterialMeasurement)
-               .filter_by(case_id=c.case_id, document_id=doc.document_id,
-                          param_key=key, recorded_by="ai").first())
-        if row is None:
-            row = models.MaterialMeasurement(case_id=c.case_id, document_id=doc.document_id,
-                                             param_key=key, recorded_by="ai")
-            db.add(row)
-        row.material_id = material_id
-        row.value = value
-        row.unit = QUANT_CRITERIA[key]["unit"]
-        row.verdict = "review" if key == "pork_dna" and unclear else _quant_verdict(key, value)
-        row.lab_name = fields.get("issuer")
-        row.note = "돼지 DNA 결과 불명확 — 원문 확인 필요" if key == "pork_dna" and unclear else None
-        count += 1
+        meta = (fields.get("measurements_meta") or {}).get(key, {})
+        observations = meta.get("observations") or [{"value": value, **meta}]
+        rows = (db.query(models.MaterialMeasurement)
+                .filter_by(case_id=c.case_id, document_id=doc.document_id, param_key=key, recorded_by="ai")
+                .order_by(models.MaterialMeasurement.created_at, models.MaterialMeasurement.measurement_id).all())
+        def occurrence(row):
+            try:
+                return json.loads(row.note or "{}").get("occurrence", 0)
+            except (ValueError, AttributeError):
+                return 0
+        rows.sort(key=occurrence)
+        for index, observation in enumerate(observations):
+            value = observation.get("value")
+            row_meta = {k: v for k, v in observation.items() if k not in ("value", "observations")}
+            if row_meta.get("qualifier") in ("ND", "<", "≤", "<="):
+                if row_meta.get("lod") is not None:
+                    value = row_meta["lod"]
+                elif row_meta["qualifier"] == "ND" or value == 0:
+                    value = None
+            if value is None and not row_meta.get("qualifier") and not (key == "pork_dna" and unclear):
+                continue
+            if index < len(rows):
+                row = rows[index]
+            else:
+                row = models.MaterialMeasurement(case_id=c.case_id, document_id=doc.document_id,
+                                                 param_key=key, recorded_by="ai")
+                db.add(row)
+            row.material_id = material_id
+            row.value = value
+            row.unit = QUANT_CRITERIA[key]["unit"]
+            row.verdict = "review" if key == "pork_dna" and unclear else _quant_verdict(key, value, row_meta)
+            row.lab_name = fields.get("issuer")
+            row.note = ("돼지 DNA 결과 불명확 — 원문 확인 필요" if key == "pork_dna" and unclear else
+                        json.dumps({"measurement_meta": row_meta, "occurrence": index}, ensure_ascii=False))
+            count += 1
+        # 재추출로 결과가 줄어도 이전 위험을 조용히 삭제하지 않고 확인 대기로 보존한다.
+        for row in rows[len(observations):]:
+            if row.verdict != "fail":
+                row.verdict = "review"
     db.flush()
     return count
 
@@ -7244,7 +7312,12 @@ def _verify_doc(db, d, c):
     text, fields, company = d.text_full or "", dict(d.fields or {}), c.company_name
     # 읽기 트랜잭션을 끝내고 모델을 기다린다. 300자 발췌는 전문 대신 쓸 수 없다.
     db.rollback()
-    res = intake.verify_extraction(doc_type, filename, text, fields, company)
+    try:
+        res = intake.normalise_verification(
+            intake.verify_extraction(doc_type, filename, text, fields, company), internal=True)
+    except Exception:  # 응답 정규화 예외도 로그에만 남기지 않는다.
+        log.exception("문서 검증 응답 처리 실패 %s", doc_id)
+        res = intake.normalise_verification(None)
     # LLM 대기 중 사람의 저장·확인이 끝났을 수 있다. 최신 값과 출처를 다시 읽는다.
     c = db.get(models.CaseApplication, case_id, populate_existing=True, with_for_update=True)
     d = db.get(models.DocumentAsset, doc_id, populate_existing=True, with_for_update=True)
@@ -7253,7 +7326,8 @@ def _verify_doc(db, d, c):
         return
     fl = dict(d.fields or {})
     # 업로드 때 기록한 상호 경고는 비동기 검증이 ok여도 지우지 않는다.
-    name_issues = [issue for issue in (fl.get("_verify") or {}).get("field_issues", [])
+    previous = intake.normalise_verification(fl.get("_verify"), internal=True)
+    name_issues = [issue for issue in previous["field_issues"]
                    if isinstance(issue, dict) and issue.get("code") == "company_name_mismatch"]
     if name_issues:
         issues = list(res.get("field_issues") or [])
@@ -7261,6 +7335,10 @@ def _verify_doc(db, d, c):
         res = {**res, "field_issues": issues,
                "verdict": "warn" if res.get("verdict") in ("ok", "unknown") else res.get("verdict")}
     fl["_verify"] = {**res, "at": datetime.utcnow().isoformat(timespec="seconds")}
+    intake._clear_truncation(fl, "verify_input")
+    for marker in res.get("_truncations", [res.get("_truncated")]):
+        if isinstance(marker, dict) and marker.get("kind") == "verify_input":
+            intake._record_truncation(fl, **marker)
     d.fields = fl   # JSON 변경 감지를 위해 새 dict 를 대입한다
     unchanged = (d.doc_type == doc_type and (d.text_full or "") == text and
                  {k: v for k, v in fl.items() if not k.startswith("_")} ==
@@ -8575,7 +8653,9 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     text = r.pop("text", "")
     det, why = intake.refine_doctype_reason(body.filename, None, text)
     eff_type, mismatch = body.doc_type, None
-    if det not in (None, "other") and det != body.doc_type and det in intake.DOC_TYPES:
+    if (det in intake.DOC_TYPES and det != body.doc_type and
+            (det != "other" or (body.doc_type in ("halal_certificate", "quality_cert")
+                                and r.get("doc_type") == "other"))):
         mismatch = {"selected": body.doc_type, "detected": det, "reason": why}
         eff_type = det
         r = parse_typed_text(det, body.filename, text)
