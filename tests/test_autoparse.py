@@ -19,8 +19,9 @@ from fastapi.testclient import TestClient   # noqa: E402
 
 import app.main as m                        # noqa: E402
 from app.main import app                    # noqa: E402
+from test_doc_intake_integrity import _pdf  # noqa: E402
 
-PDF = "JVBERi0xLjQK"
+PDF = _pdf("Halal Policy\nWe commit to maintaining the halal product assurance system.")
 
 
 def _tok(c, u="applicant1", p="pw"):
@@ -89,6 +90,22 @@ def test_유형을_안_주면_자동_파싱이_확정한다():
             assert d.confidence and d.confidence > 0
         finally:
             db.close()
+
+
+def test_손상_PDF는_CORRUPT로_기록한다():
+    import app.models as models
+    with TestClient(app) as c:
+        h = _tok(c)
+        cid = c.post("/cases", json={"company_name": "PT Corrupt"}, headers=h).json()["case_id"]
+        response = c.post(f"/cases/{cid}/documents",
+                          json={"filename": "Halal_Policy.pdf", "file_b64": "JVBERi0xLjQK"},
+                          headers=h)
+        assert response.status_code == 200, response.text
+        assert _drain()
+        with m.SessionLocal() as db:
+            d = db.get(models.DocumentAsset, response.json()["document_id"])
+            assert d.fields["_ocr_error"] == "CORRUPT"
+            assert d.confidence == 0.0
 
 
 def test_사용자가_정한_유형은_덮지_않는다():

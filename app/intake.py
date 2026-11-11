@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 # ZIP 추출 상한 — 압축폭탄 방어
 # 업로드 1건 상한 20MB (SRS NFR-05) — main.py 의 _UPLOAD_MAX_BYTES 와 원본 보관(content_b64) 상한이 같은 상수를 쓴다.
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024
-PDF_MAX_PAGES = 40          # PDF 최대 처리 쪽수
+PDF_MAX_PAGES = 40          # PDF OCR/LLM 최대 처리 쪽수(native text 사전 스캔은 전체)
 PDF_MAX_TEXT_CHARS = 200000  # PDF 추출 텍스트 상한(20만 자)
 ZIP_MAX_ENTRIES = 200   # 압축 묶음 1건에서 처리할 최대 파일 수
 ZIP_MAX_UNCOMPRESSED = int(os.environ.get("GLHAC_ZIP_MAX_UNCOMPRESSED", "200000000"))  # 기본 200MB
@@ -447,6 +447,71 @@ def _ocr_score(lines, kept):
     return _mean_conf(lines) if "".join(kept).strip() else -1.0
 
 
+class _ParsedText(str):
+    """기존 문자열 API를 유지하면서 추출 실패/상한 정보를 분류 단계까지 전달한다."""
+    def __new__(cls, text="", fields=None):
+        obj = super().__new__(cls, text)
+        obj.parse_fields = dict(fields or {})
+        return obj
+
+
+def _record_truncation(fields, kind, limit, total):
+    marker = {"kind": kind, "limit": limit, "total": total}
+    if "_truncated" not in fields:
+        fields["_truncated"] = marker
+    elif fields["_truncated"] != marker:
+        markers = list(fields.get("_truncations", [fields["_truncated"]]))
+        if marker not in markers:
+            markers.append(marker)
+        fields["_truncations"] = markers
+
+
+def _scan_tail(fields, text):
+    """잘린 원문은 OCR/LLM 없이 사전으로만 검사한다. 추출 목록에 섞지는 않는다."""
+    from . import screening
+    _merge_tail_scan(fields, screening.screen_text(text))
+
+
+def _merge_tail_scan(fields, scan):
+    scan = dict(scan)
+    previous = fields.get("_tail_screening")
+    if previous:
+        hits = {h["uid"]: h for h in previous["haram_hits"] + scan["haram_hits"]}
+        scan["haram_hits"] = list(hits.values())
+        rank = {"low": 0, "medium": 1, "high": 2}
+        scan["verdict"] = max(previous["verdict"], scan["verdict"], key=rank.get)
+        scan["keyword_risk"] = max(previous["keyword_risk"], scan["keyword_risk"], key=rank.get)
+    fields["_tail_screening"] = {k: scan[k] for k in ("verdict", "keyword_risk", "haram_hits")}
+
+
+def _parsed_result(result, text):
+    """분류·유형별 추출의 모든 반환 경로에 동일한 파싱 상태를 붙인다."""
+    fields = dict(result.get("fields") or {})
+    metadata = getattr(text, "parse_fields", {})
+    for key, value in metadata.items():
+        if key == "_truncated":
+            _record_truncation(fields, **value)
+        elif key == "_truncations":
+            for marker in value:
+                _record_truncation(fields, **marker)
+        elif key == "_tail_screening":
+            _merge_tail_scan(fields, value)
+        else:
+            fields[key] = value
+    if not (text or "").strip():
+        fields["_empty"] = True
+        result["confidence"] = 0.0
+    if fields.get("_ocr_error"):
+        result["confidence"] = 0.0
+    if fields.get("_llm_error"):
+        result["llm_error"] = fields["_llm_error"]
+        result["confidence"] = 0.0
+    result["fields"] = fields
+    if "text" in result:
+        result["text"] = text
+    return result
+
+
 def _ocr_bytes(data, ext, sink=None):
     """OS 독립 임시파일 OCR. confidence 낮은(오인식) 라인 제거로 품질↑.
     (LLM 한글교정은 qwen2.5 테스트 결과 성분명 환각으로 더 악화 → 미채택, 할랄 안전)
@@ -454,11 +519,24 @@ def _ocr_bytes(data, ext, sink=None):
     sink 를 주면 인식 라인(좌표 포함)을 그대로 담아준다 — 표 사진의 행 복원은 좌표가
     있어야 하고, 없으면 나중에 같은 사진을 또 OCR하게 된다."""
     import tempfile
-    fd, path = tempfile.mkstemp(suffix="." + ext)
+    path = None
+    failures = []
+    def recognize(lang=None):
+        try:
+            result = ai_local.ocr_image(path, **({"lang": lang} if lang else {}))
+            if not isinstance(result, dict) or result.get("ok") is False or result.get("error"):
+                reason = str((result or {}).get("error", "ERROR")) if isinstance(result, dict) else "ERROR"
+                failures.append("TIMEOUT" if "TIMEOUT" in reason.upper() else "ERROR")
+                return []
+            return result.get("lines") or []
+        except Exception as exc:  # OCR 프로세스/통신 예외도 실패로 남긴다.
+            failures.append("TIMEOUT" if isinstance(exc, TimeoutError) else "ERROR")
+            return []
     try:
+        fd, path = tempfile.mkstemp(suffix="." + ext)
         with os.fdopen(fd, "wb") as f:
             f.write(data)
-        lines = ai_local.ocr_image(path).get("lines", [])
+        lines = recognize()
         kept = _ocr_kept(lines)
         joined = "".join(kept).strip()
         # 한글이 없으면(=한국어 문서가 아니면) 다른 스크립트로도 읽어 신뢰도 최고를 채택.
@@ -466,19 +544,24 @@ def _ocr_bytes(data, ext, sink=None):
         if (not joined) or (not _has_hangul(joined)):
             best = _ocr_score(lines, kept)
             for lg in _OCR_FALLBACK_LANGS:
-                alt = ai_local.ocr_image(path, lang=lg).get("lines", [])
+                alt = recognize(lg)
                 alt_kept = _ocr_kept(alt)
                 sc = _ocr_score(alt, alt_kept)
                 if sc > best:
                     best, lines, kept = sc, alt, alt_kept
         if sink is not None:
             sink.extend(lines[:4000])     # 병적으로 큰 스캔본 방어(채택된 언어의 라인)
-        return " ".join(kept)
+        text = " ".join(kept)
+        fields = {}
+        if failures and not text.strip():
+            fields["_ocr_error"] = "TIMEOUT" if "TIMEOUT" in failures else "ERROR"
+        return _ParsedText(text, fields)
     except Exception:  # noqa: BLE001
-        return ""
+        return _ParsedText("", {"_ocr_error": "ERROR"})
     finally:
         try:
-            os.remove(path)
+            if path:
+                os.remove(path)
         except OSError:
             pass
 
@@ -650,18 +733,33 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
             return _ocr_bytes(data, ext, ocr_sink)
         if ext == "pdf":
             import fitz
-            doc = fitz.open(stream=data, filetype="pdf")
-            txt = ""
-            max_pages = PDF_MAX_PAGES
-            max_text_len = PDF_MAX_TEXT_CHARS
-            for pg in list(doc)[:max_pages]:
-                if len(txt) > max_text_len:  # 상한 도달 → 중단
-                    break
-                t = pg.get_text()
-                if len(t.strip()) < 20:  # 스캔본 → PNG 렌더 후 OCR (파일경로 없이 bytes)
-                    t = _ocr_bytes(pg.get_pixmap(dpi=_dpi).tobytes("png"), "png")
-                txt += t + "\n"
-            return txt[:max_text_len]  # 상한 적용
+            fields, parts, used, total_chars = {}, [], 0, 0
+            with fitz.open(stream=data, filetype="pdf") as doc:
+                if doc.needs_pass:
+                    return _ParsedText("", {"_ocr_error": "ENCRYPTED"})
+                if doc.is_repaired:
+                    fields["_ocr_error"] = "CORRUPT"
+                if len(doc) > PDF_MAX_PAGES:
+                    _record_truncation(fields, "pages", PDF_MAX_PAGES, len(doc))
+                for index, pg in enumerate(doc):
+                    t = pg.get_text()
+                    remaining = max(0, PDF_MAX_TEXT_CHARS - used)
+                    within_limit = index < PDF_MAX_PAGES and remaining > 0
+                    if within_limit and len(t.strip()) < 20:
+                        ocr = _ocr_bytes(pg.get_pixmap(dpi=_dpi).tobytes("png"), "png")
+                        fields.update(getattr(ocr, "parse_fields", {}))
+                        t = str(ocr) or t
+                    t += "\n"
+                    total_chars += len(t)
+                    if within_limit:
+                        parts.append(t[:remaining])
+                        used += len(parts[-1])
+                    if not within_limit or len(t) > remaining:
+                        # 페이지/문자 상한 뒤에서는 native text만 읽는다. 렌더·OCR·LLM 없음.
+                        _scan_tail(fields, t)
+                if total_chars > PDF_MAX_TEXT_CHARS:
+                    _record_truncation(fields, "chars", PDF_MAX_TEXT_CHARS, total_chars)
+            return _ParsedText("".join(parts), fields)
         if ext in ("txt", "csv"):
             return _decode_text(data)
         if ext == "docx":
@@ -703,7 +801,12 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
                     out.append("[제품/시트: %s]" % p)
                 out.append("[원재료목록]")
                 out.extend(mats)
-                return "\n".join(out)[:60000]
+                full = "\n".join(out)
+                fields = {}
+                if len(full) > 60000:
+                    _record_truncation(fields, "chars", 60000, len(full))
+                    _scan_tail(fields, full)  # 경계에서 성분명이 잘려도 탐지한다.
+                return _ParsedText(full[:60000], fields)
             # 일반 xlsx(전성분표 아님): 기존 flatten
             out = [matrix_note] if matrix_note else []
             for ws in wb.worksheets:
@@ -715,10 +818,15 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
                     if cells:
                         out.append(" ".join(cells))
             wb.close()
-            return "\n".join(out)[:20000]
+            full = "\n".join(out)
+            fields = {}
+            if len(full) > 20000:
+                _record_truncation(fields, "chars", 20000, len(full))
+                _scan_tail(fields, full)
+            return _ParsedText(full[:20000], fields)
     except Exception as e:  # noqa: BLE001
         log.warning("파일 파싱 실패 %s: %s", name, e)
-        return ""
+        return _ParsedText("", {"_ocr_error": "CORRUPT" if ext == "pdf" else "ERROR"})
     return ""
 
 
@@ -881,14 +989,23 @@ def _chunk_text(text, size=4500):
     return chunks or [text]
 
 
-def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000):
-    """전체 본문을 청크로 나눠 목록 항목을 완전 추출·합집합(대소문자 무시 dedup)."""
+def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000, fields=None):
+    """상한 내 청크의 목록 합집합. 미처리 구간과 사전 위험 탐지는 fields에 남긴다."""
     sys = ('문서에서 %s 목록을 빠짐없이 추출하세요. 표·번호목록의 모든 행을 포함하고 '
            '헤더/합계/빈칸은 제외. 반드시 JSON으로만: {"names":[]}' % label)
     seen, out = set(), []
-    for ch in _chunk_text(text)[:max_chunks]:
+    fields = fields if fields is not None else {}
+    chunks = _chunk_text(text)
+    if len(chunks) > max_chunks:
+        _record_truncation(fields, "chunks", max_chunks, len(chunks))
+        _scan_tail(fields, "\n".join(chunks[max_chunks:]))
+    for index, ch in enumerate(chunks[:max_chunks]):
         r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, ch))
-        for nm in (r.get("names") if isinstance(r, dict) else None) or []:
+        failure = _llm_failure(r)
+        if failure:
+            fields["_llm_error"] = failure["llm_error"]
+        names = (r.get("names") if isinstance(r, dict) else None) or []
+        for position, nm in enumerate(names):
             if not isinstance(nm, str):
                 continue
             nm = nm.strip()
@@ -896,6 +1013,12 @@ def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000):
             if nm and k and k not in seen:
                 seen.add(k); out.append(nm)
                 if len(out) >= cap:
+                    remaining = any(isinstance(v, str) and _norm_key(v) and _norm_key(v) not in seen
+                                    for v in names[position + 1:])
+                    if remaining or index + 1 < len(chunks):
+                        # 항목 상한에 먼저 닿으면 완전히 추출된 청크 수만 기록한다.
+                        _record_truncation(fields, "chunks", index if remaining else index + 1, len(chunks))
+                        _scan_tail(fields, "\n".join(chunks[index:]))
                     return out
     return out
 
@@ -1054,13 +1177,15 @@ def _structural_material_result(ing):
 
 
 def classify(name, text):
+    return _parsed_result(_classify_text(name, text), text)
+
+
+def _classify_text(name, text):
     if not text.strip():
-        # 본문이 비어도(이미지 PDF·OCR 미가동) 파일명이 아는 유형은 살린다.
-        # 종전에는 그냥 other 로 떨어뜨려, 파일명 사전이 답을 알고 있는데도 버렸다 —
-        # AI 없는 배포에서는 이 경로가 유일한 판정 수단이다.
+        # 파일명은 편철 유형의 힌트로만 남긴다. 본문을 읽지 못했으므로 신뢰도는 0이다.
         _dt, _why = refine_doctype_reason(name, None, text)
         if _dt and _dt != "other":
-            return {"doc_type": _dt, "confidence": 0.6, "fields": {}, "empty": True,
+            return {"doc_type": _dt, "confidence": 0.0, "fields": {}, "empty": True,
                     "decided_by": "filename", "reason": _why}
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
     dt_by_name, why = refine_doctype_reason(name, None, text)
@@ -1101,7 +1226,7 @@ def classify(name, text):
     lf = _LIST_FIELDS.get(r["doc_type"])
     if lf and len(text) > 2000:
         fk, label = lf
-        complete = _extract_list_complete(name, text, label)
+        complete = _extract_list_complete(name, text, label, fields=r["fields"])
         if len(complete) > len(r["fields"].get(fk) or []):
             r["fields"][fk] = complete
     # 구조 파서가 '이건 목록 문서가 아니다'라고 판정했으면(제품×원재료 매트릭스)
@@ -1228,6 +1353,10 @@ def parse_typed(doc_type, filename, data):
 
 def parse_typed_text(doc_type, filename, text):
     """확보한 본문에서 해당 유형의 필드만 추출 — 칸 교정 때 파일·OCR을 다시 읽지 않는다."""
+    return _parsed_result(_parse_typed_text(doc_type, filename, text), text)
+
+
+def _parse_typed_text(doc_type, filename, text):
     text = text or ""
     if not text.strip():
         return {"doc_type": doc_type, "fields": {}, "confidence": 0.0, "empty": True, "text_len": 0,
@@ -1255,7 +1384,10 @@ def parse_typed_text(doc_type, filename, text):
     if lf and len(text) > 2500:
         # 리스트형: 전체 본문에서 완전 추출(절단 방지)
         fk, label = lf
-        fields, fail = {fk: _extract_list_complete(filename, text, label)}, {}
+        fields, fail = {}, {}
+        fields[fk] = _extract_list_complete(filename, text, label, fields=fields)
+        if fields.get("_llm_error"):
+            fail["llm_error"] = fields["_llm_error"]
     else:
         sys = "문서에서 다음 필드만 추출하세요(없으면 null). 반드시 JSON으로만: " + fmt + " (대상: " + desc + ")"
         r = ai_local.llm_json(sys, "파일명: %s\n본문:\n%s" % (filename, text[:2500]))
@@ -1416,12 +1548,17 @@ def intake_zip_iter(data, limit=200):
         _lines = []                       # 여기서 읽은 OCR을 버리지 않고 넘긴다
         text = parse_file(name, raw, ocr_sink=_lines)
         cl = classify(name, text)
+        fields = dict(cl.get("fields") or {})
+        if cl.get("field_sources"):
+            fields["_sources"] = cl["field_sources"]
+        if cl.get("llm_error"):
+            fields["_llm_error"] = cl["llm_error"]
         # content_b64는 업로드 상한과 같은 값으로 제한 (20MB)
         # main.py 의 _UPLOAD_MAX_BYTES 와 같은 상수(UPLOAD_MAX_BYTES)를 공유한다 (SRS NFR-05)
         d = {"filename": os.path.basename(name), "doc_type": cl["doc_type"],
              "ocr_lines": _lines or None,
              "doc_type_ko": DOC_KO.get(cl["doc_type"], cl["doc_type"]),
-             "confidence": cl.get("confidence", 0.0), "fields": cl.get("fields", {}),
+             "confidence": cl.get("confidence", 0.0), "fields": fields,
              "text_len": len(text), "excerpt": text[:300],
              "content_b64": base64.b64encode(raw).decode() if len(raw) <= UPLOAD_MAX_BYTES else None,
              "llm_error": cl.get("llm_error"),
@@ -1429,7 +1566,8 @@ def intake_zip_iter(data, limit=200):
         docs.append(d)
         yield ("progress", {"done": i, "total": total, "file": d["filename"],
                             "doc_type_ko": d["doc_type_ko"]})
-    found = {d["doc_type"] for d in docs}
+    found = {d["doc_type"] for d in docs if d["text_len"] and not
+             any(d["fields"].get(k) for k in ("_empty", "_ocr_error", "_llm_error"))}
     checklist = [{"doc_type": dt, "doc_type_ko": DOC_KO[dt], "satisfied": dt in found,
                   "files": [d["filename"] for d in docs if d["doc_type"] == dt]}
                  for dt in REQUIRED_DOCS]

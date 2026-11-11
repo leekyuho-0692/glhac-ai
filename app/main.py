@@ -869,6 +869,21 @@ _PKG_LABEL = {"company": "업체 정보", "product": "제품", "material": "성�
               "scope": "취급 서비스", "vehicle": "운송 차량", "facility": "보관·포장 시설", "cleaning": "세척 SOP 서류"}
 
 
+def _document_content_ok(d):
+    fields = d.fields or {}
+    return bool((d.text_full or d.text_excerpt or "").strip()) and not any(
+        fields.get(k) for k in ("_empty", "_ocr_error", "_llm_error"))
+
+
+def _document_parse_warnings(d):
+    fields = d.fields or {}
+    if not fields.get("_truncated"):
+        return []
+    return [{"code": "PARSE_TRUNCATED", "truncated": marker,
+             "tail_screening": fields.get("_tail_screening")}
+            for marker in fields.get("_truncations", [fields["_truncated"]])]
+
+
 def _package_check(db, c):
     company_missing = [k for k, lbl in (("company_name", "업체명"), ("nib", "사업자등록번호"),
                                         ("responsible_person", "대표자"), ("address", "주소"))
@@ -880,18 +895,23 @@ def _package_check(db, c):
     factory_ok = bool(c.facility_ids) or bool((c.factory_address or "").strip())
     # 판독을 돌렸는데 신뢰도가 낮은 서류(손글씨·저품질)와, 판독 자체를 안 돌린 서류(confidence 없음)를 나눈다.
     # 실측: 질경이·천우건설·CITRA 서류 89건은 판독 기능 이전(8월) 업로드라 confidence 가 비어 있었다.
-    docs = [d for d in db.query(models.DocumentAsset).filter_by(case_id=c.case_id).all()
+    all_docs = db.query(models.DocumentAsset).filter_by(case_id=c.case_id).all()
+    docs = [d for d in all_docs
             if (d.review_status or "pending") == "pending"]
     row = lambda d: {"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
-                     "confidence": d.confidence, "has_file": bool(d.content_b64)}
-    unreadable = [row(d) for d in docs if d.confidence is not None and d.confidence < PKG_UNREADABLE_CONF]
+                     "confidence": d.confidence, "has_file": bool(d.content_b64),
+                     "error": (d.fields or {}).get("_ocr_error") or (d.fields or {}).get("_llm_error")}
+    unreadable = [row(d) for d in docs if (d.fields or {}).get("_ocr_error") or
+                  (d.confidence is not None and
+                   (d.confidence < PKG_UNREADABLE_CONF or not _document_content_ok(d)))]
     unprocessed = [row(d) for d in docs if d.confidence is None]
+    warnings = [{**row(d), **warning} for d in all_docs for warning in _document_parse_warnings(d)]
     if (c.scheme or "product") == "logistics":
         scope = list(c.logistics_scope or [])
         need_vehicle = "pendistribusian" in scope
         need_facility = bool({"penyimpanan", "pengemasan"} & set(scope))
         vehicles = db.query(models.Vehicle).filter_by(org_id=c.org_id).count()
-        cleaning = any(d.doc_type == "cleaning_sop" for d in db.query(models.DocumentAsset).filter_by(case_id=c.case_id).all())
+        cleaning = any(d.doc_type == "cleaning_sop" and _document_content_ok(d) for d in all_docs)
         items = {
             "company": {"ok": not company_missing, "missing": company_missing},
             "scope": {"ok": bool(scope), "scope": scope},
@@ -901,7 +921,8 @@ def _package_check(db, c):
         }
         gaps = [k for k, v in items.items() if not v["ok"]]
         return {"case_id": c.case_id, "scheme": "logistics", "complete": not gaps and not unreadable and not unprocessed,
-                "gaps": gaps, "items": items, "unreadable": unreadable, "unprocessed": unprocessed}
+                "gaps": gaps, "items": items, "unreadable": unreadable, "unprocessed": unprocessed,
+                "warnings": warnings}
     items = {
         "company": {"ok": not company_missing, "missing": company_missing},
         "product": {"ok": bool(products), "count": len(products)},
@@ -910,7 +931,7 @@ def _package_check(db, c):
     }
     gaps = [k for k, v in items.items() if not v["ok"]]
     return {"case_id": c.case_id, "scheme": "product", "complete": not gaps and not unreadable and not unprocessed, "gaps": gaps,
-            "items": items, "unreadable": unreadable, "unprocessed": unprocessed}
+            "items": items, "unreadable": unreadable, "unprocessed": unprocessed, "warnings": warnings}
 
 
 def _assigned_auditor_id(db, case_id):
@@ -6277,8 +6298,9 @@ def _apply_agg_to_case(db, c, agg):
     for mn in agg.get("materials", []):
         nk = _norm_material(mn)
         if mn and nk and nk not in have_m:
-            sc = screening.screen_merged(mn, None, None, None, False, True, "")
-            db.add(models.Material(case_id=c.case_id, name=mn, screen_result=sc["result"],
+            enum = screening.extract_e_number(mn)
+            sc = screening.screen_merged(mn, enum, None, None, False, True, "")
+            db.add(models.Material(case_id=c.case_id, name=mn, e_number=enum, screen_result=sc["result"],
                                    screen_status=sc["status"], screen_severity=sc["severity"],
                                    matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk"),
                                    cert=sc.get("v1_cert")))
@@ -6522,7 +6544,8 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
                                                  models.DocumentAsset.confidence.is_(None)).count():
         _notify_package_gaps(db, c)
     result = {"document_id": d.document_id, "doc_type": d.doc_type,
-              "confidence": d.confidence, "text_len": len(text or ""), "applied": applied}
+              "confidence": d.confidence, "text_len": len(text or ""), "applied": applied,
+              "fields": d.fields, "warnings": _document_parse_warnings(d)}
     db.commit()
     verify_enqueue(result["document_id"])   # 모든 재처리 경로는 저장이 끝난 뒤 한 번 검증한다
     return result
@@ -6572,11 +6595,13 @@ def _failed_analyses(db, case_id):
     끝난 평범한 서류와 똑같다. 다시 돌려야 하는 서류를 사람이 골라낼 수 있어야 한다."""
     out = []
     for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all():
-        err = (d.fields or {}).get("_llm_error")
+        fields = d.fields or {}
+        err = fields.get("_ocr_error") or fields.get("_llm_error")
         if err:
             out.append({"document_id": d.document_id, "filename": d.filename,
                         "doc_type": d.doc_type, "error": err,
-                        "note": "AI 분석 실패 — 재처리가 필요합니다(분석 결과 아님)."})
+                        "stage": "ocr" if fields.get("_ocr_error") else "llm",
+                        "note": "서류 판독·분석 실패 — 재처리 또는 원본 교체가 필요합니다."})
     return out
 
 
@@ -7001,8 +7026,9 @@ def _apply_intake_autofill(db, c, res):
     for mn in agg.get("materials", []):
         nk = _norm_material(mn)
         if mn and nk and nk not in have_m:
-            sc = screening.screen_merged(mn, None, None, None, False, True, "")
-            db.add(models.Material(case_id=c.case_id, name=mn, screen_result=sc["result"],
+            enum = screening.extract_e_number(mn)
+            sc = screening.screen_merged(mn, enum, None, None, False, True, "")
+            db.add(models.Material(case_id=c.case_id, name=mn, e_number=enum, screen_result=sc["result"],
                                    screen_status=sc["status"], screen_severity=sc["severity"],
                                    matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk"),
                                    cert=sc.get("v1_cert")))
@@ -7227,6 +7253,7 @@ def reprocess_pending(case_id: str, user=Depends(auth.require_roles("consultant"
             models.DocumentAsset.case_id == c.case_id,
             models.DocumentAsset.content_b64.isnot(None), models.DocumentAsset.content_b64 != "",
             or_(models.DocumentAsset.confidence.is_(None),
+                models.DocumentAsset.fields["_ocr_error"].as_string() != "",
                 models.DocumentAsset.fields["_llm_error"].as_string() != "")).all()]
     queued = sum(1 for i in ids if autoparse_enqueue(i, keep_doc_type=True))
     _audit(db, user, "documents.reprocess_pending", "case", c.case_id, c.case_id, {"queued": queued, "found": len(ids)})
@@ -7671,14 +7698,14 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     raw = base64.b64decode(_validate_upload(body.file_b64, body.filename))   # 크기·타입 검증(§9.3)
     from .intake import parse_typed, parse_typed_text
     r = parse_typed(body.doc_type, body.filename, raw)
-    text = r.pop("text", "") or ""
+    text = r.pop("text", "")
     det, why = intake.refine_doctype_reason(body.filename, None, text)
     eff_type, mismatch = body.doc_type, None
     if det not in (None, "other") and det != body.doc_type and det in intake.DOC_TYPES:
         mismatch = {"selected": body.doc_type, "detected": det, "reason": why}
         eff_type = det
         r = parse_typed_text(det, body.filename, text)
-        text = r.pop("text", "") or ""
+        text = r.pop("text", "")
     f = dict(r.get("fields") or {})
     # 재처리와 동일한 출처를 문서에 보관해야 LLM 목록이 확인 대기에 나타난다.
     sources = r.get("field_sources") or {}
@@ -7753,6 +7780,7 @@ def list_documents(case_id: str, lang: str = Query("ko"),
     return [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
              "doc_type_ko": DOC_KO.get(d.doc_type, d.doc_type),
              "confidence": d.confidence, "fields": d.fields, "excerpt": d.text_excerpt,
+             "warnings": _document_parse_warnings(d),
              "verify": (d.fields or {}).get("_verify"),
              "review_status": d.review_status, "has_file": bool(d.content_b64),
              "created_at": d.created_at.isoformat() if d.created_at else None,
@@ -19775,7 +19803,9 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
     by_type = {}
     for d in docs:
         by_type.setdefault(d.doc_type, []).append(
-            {"document_id": d.document_id, "filename": d.filename, "review_status": d.review_status})
+            {"document_id": d.document_id, "filename": d.filename, "review_status": d.review_status,
+             "readable": _document_content_ok(d),
+             "error": (d.fields or {}).get("_ocr_error") or (d.fields or {}).get("_llm_error")})
     # 시스템이 생성한 산출물도 제출물로 인정한다. SJPH 매뉴얼은 이 플랫폼이 만들어 내는
     # 정식 문서(GeneratedDocument)인데, DocumentAsset만 보면 정작 자기가 생성한 매뉴얼을
     # '미제출'로 표시하게 된다. 다만 무엇으로 충족됐는지는 source로 드러낸다(업로드와 구분).
@@ -19786,7 +19816,7 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
     checklist = []
     for dt in base_types:
         files = by_type.get(dt, [])
-        non_rejected = [x for x in files if x["review_status"] != "rejected"]
+        non_rejected = [x for x in files if x["review_status"] != "rejected" and x["readable"]]
         satisfied = bool(non_rejected)
         source = _L("업로드 파일") if satisfied else None
         g = gen.get(dt)
@@ -19794,7 +19824,9 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
             satisfied = True
             source = "%s v%s · %s" % (_L("생성 문서"), g.version, g.status)
         # 미제출(파일 없음) vs 반려(제출됐으나 전부 반려=내용 부족) 구분
-        status = "ok" if satisfied else ("rejected" if files else "missing")
+        status = "ok" if satisfied else (
+            "unreadable" if any(x["review_status"] != "rejected" for x in files)
+            else "rejected" if files else "missing")
         row = {"doc_type": dt, "doc_type_ko": DOC_KO.get(dt, dt), "satisfied": satisfied,
                "files": files, "file_count": len(files), "status": status,
                "source": source, "applicable": True,
@@ -19807,8 +19839,11 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
     for dt, files in by_type.items():
         if dt in base_types:
             continue
-        checklist.append({"doc_type": dt, "doc_type_ko": DOC_KO.get(dt, dt), "satisfied": True,
-                          "files": files, "file_count": len(files), "status": "ok",
+        satisfied = any(x["review_status"] != "rejected" and x["readable"] for x in files)
+        status = "ok" if satisfied else (
+            "rejected" if all(x["review_status"] == "rejected" for x in files) else "unreadable")
+        checklist.append({"doc_type": dt, "doc_type_ko": DOC_KO.get(dt, dt), "satisfied": satisfied,
+                          "files": files, "file_count": len(files), "status": status,
                           "requirement": requirement_text(dt, lang), "required": False})
     # 공급사 할랄 인증서는 '원본 서류'가 없어도 인증번호는 확보돼 있을 수 있다.
     # 오디터가 대조할 대상이 몇 건인지 함께 보여야 '자료가 전무하다'는 오해가 안 생긴다.
@@ -19831,6 +19866,8 @@ def doc_checklist(case_id: str, lang: str = Query("ko"),
         "note": c.get("note"), "cert_no_on_file": c.get("cert_no_on_file"),
         "reason": ("서류가 제출되지 않았습니다 (파일 없음)"
                    if c["status"] == "missing"
+                   else "제출됐으나 본문을 판독하지 못함 — 재처리 또는 원본 교체가 필요합니다"
+                   if c["status"] == "unreadable"
                    else "제출됐으나 반려됨 — 내용 보완이 필요합니다"),
     } for c in checklist if c.get("required") and not c["satisfied"]]
     return {"checklist": checklist, "missing": missing, "complete": len(missing) == 0}

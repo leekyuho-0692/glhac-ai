@@ -1,6 +1,7 @@
 """원재료 스크리닝 — 설계 24.13.5 결정 로직."""
 import os
 import re
+import unicodedata
 from .models import IngredientOntology
 
 _CACHE = {"by_e": {}, "by_alias": {}, "alias_tok": []}
@@ -10,14 +11,16 @@ def load_ontology(db):
     _CACHE["by_e"], _CACHE["by_alias"], _CACHE["alias_tok"] = {}, {}, []
     for it in db.query(IngredientOntology).all():
         if it.e_number:
-            _CACHE["by_e"][it.e_number.upper()] = it
+            _CACHE["by_e"][extract_e_number(it.e_number)] = it
         names = [it.canonical_name]
         for v in (it.aliases or {}).values():
             names += v if isinstance(v, list) else [v]
         for n in names:
             if n:
-                key = n.strip().lower()
-                _CACHE["by_alias"][key] = it
+                key = _norm_key(n)
+                previous = _CACHE["by_alias"].get(key)
+                if previous is None or _item_rank(it) < _item_rank(previous):
+                    _CACHE["by_alias"][key] = it
                 tok = _tokens(key)
                 if len(tok) >= 2:          # 단일 토큰 별칭은 과잉매칭이라 토큰매칭에서 제외
                     _CACHE["alias_tok"].append((tok, key, it))
@@ -53,48 +56,114 @@ def _tokens(text):
 
 
 _STATUS_RANK = {"haram": 0, "mushbooh": 1, "halal": 2}
+_SEVERITY_RANK = {"high": 0, "medium": 1, "low": 2}
+_CONFUSABLES = str.maketrans({
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
+    "і": "i", "ї": "i", "ј": "j", "ѕ": "s", "к": "k", "м": "m", "т": "t",
+    "в": "b", "н": "h", "ӏ": "l", "α": "a", "ε": "e", "ο": "o", "ρ": "p",
+    "χ": "x", "ι": "i", "κ": "k", "τ": "t", "ν": "v", "υ": "y", "β": "b",
+    "η": "h", "μ": "m", "ζ": "z", "Ν": "n",
+    "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-",
+})
+_E_NUMBER_RE = re.compile(r"(?<![a-z0-9])e[-\s]?(\d{3,4}[a-z]?)(?![a-z0-9])", re.I)
+_NEGATED_PORK = re.compile(
+    r"\b(?:non[\s-]*(?:pork|pig|porcine|swine|hog|babi)|"
+    r"(?:pork|pig|porcine|swine|hog|babi)[\s-]*free|bebas\s+babi)\b|무[\s-]*돼지")
 
 
-def _norm_key(s):
-    """매칭 전 표기 정규화 — 곱슬따옴표·비분리공백처럼 같은 이름을 갈라놓는 문자만 손본다
-    ('Merica Bubuk “Ladaku”'). 내용을 바꾸는 치환은 하지 않는다."""
-    if not s:
-        return ""
+def _item_rank(it):
+    return (_STATUS_RANK.get(it.default_status, 3), _SEVERITY_RANK.get(it.severity, 3))
+
+
+def _fold_unicode(s):
+    s = unicodedata.normalize("NFKC", s or "").translate(_CONFUSABLES).casefold().translate(_CONFUSABLES)
+    s = "".join(c for c in unicodedata.normalize("NFD", s)
+                if unicodedata.category(c) != "Mn")
+    return unicodedata.normalize("NFC", s)
+
+
+def extract_e_numbers(text):
+    """이름/본문의 E 번호를 숫자 치환 전에 읽는다. E1200을 E120으로 읽지 않는다."""
+    return list(dict.fromkeys("E" + m.group(1).upper()
+                             for m in _E_NUMBER_RE.finditer(_fold_unicode(text))))
+
+
+def extract_e_number(text):
+    numbers = extract_e_numbers(text)
+    # 복수 번호를 단일 DB 필드에 담을 때도 가장 위험한 번호를 대표값으로 남긴다.
+    return min(numbers, key=lambda n: _item_rank(_CACHE["by_e"][n])
+               if n in _CACHE["by_e"] else (4, 4)) if numbers else None
+
+
+def _norm_key(s, one="i"):
+    """유니코드·발음 기호·혼동문자·철자 숫자를 접되 E 번호는 보존한다."""
+    s = _fold_unicode(s)
     for a, b in (("\u201c", '"'), ("\u201d", '"'), ("\u2018", "'"), ("\u2019", "'"),
                  ("\u00a0", " "), ("\u200b", " ")):
         s = s.replace(a, b)
+    digits = str.maketrans({"4": "a", "0": "o", "1": one, "3": "e"})
+    def fold_words(part):
+        return re.sub(r"[a-z0-9]*[a-z][a-z0-9]*", lambda m: m.group().translate(digits), part)
+    out, start = [], 0
+    for m in _E_NUMBER_RE.finditer(s):
+        out.extend((fold_words(s[start:m.start()]), "e" + m.group(1)))
+        start = m.end()
+    s = "".join(out) + fold_words(s[start:])
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _name_keys(name):
+    keys = set()
+    for one in ("i", "l"):
+        key = _NEGATED_PORK.sub(" ", _norm_key(name, one))
+        # 괄호 안팎을 개별 후보로 유지해야 '안전 성분(위험 성분)'도 놓치지 않는다.
+        for part in [key, *re.split(r"[()\[\]{}]", key)]:
+            keys.add(part.strip())
+            keys.add(re.sub(r"[^\w\s]|_", "", part).strip())
+    keys.discard("")
+    return keys
+
+
+def _contains_alias(key, alias, it):
+    # 긴 고위험 별칭은 붙여 쓴 합성어(porkfat, lemakbabi)에서도 놓치지 않는다.
+    if len(alias) >= 4 and (it.default_status == "haram" or it.severity == "high"):
+        return alias in key
+    # Latin 단어 경계: ham∈hamburger, rum∈serum 같은 오탐을 피한다.
+    if len(alias) < 4 and not alias.isascii():
+        # 짧은 한글 별칭도 원래의 토큰 경계를 유지한다(개∈개선, 물∈식물 오탐 방지).
+        return re.search(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", key) is not None
+    left = r"(?<![a-z0-9])" if alias[:1].isascii() and alias[:1].isalnum() else ""
+    right = r"(?![a-z0-9])" if alias[-1:].isascii() and alias[-1:].isalnum() else ""
+    return re.search(left + re.escape(alias) + right, key) is not None
+
+
 def _match(name, e_number):
-    if e_number:
-        it = _CACHE["by_e"].get(e_number.strip().upper())
+    cands = []
+    for number in extract_e_numbers(e_number) + extract_e_numbers(name):
+        it = _CACHE["by_e"].get(number)
         if it:
-            return it
-    if name:
-        key = _norm_key(name).lower()
+            cands.append((*_item_rank(it), -1, 0, it))
+    for key in _name_keys(name):
         if key in _CACHE["by_alias"]:
-            return _CACHE["by_alias"][key]
+            it = _CACHE["by_alias"][key]
+            cands.append((*_item_rank(it), 0, -len(key), it))
         # 토큰 매칭(어순·복수형 흡수)과 부분 문자열 매칭을 하나의 후보 풀로 합쳐
         # '안전측 우선'으로 고른다. 단계를 나눠 먼저 걸린 쪽을 반환하면,
         # 단일 토큰 별칭(flavor 등)이 경쟁에서 빠져 위험 성분이 할랄로 통과한다.
         # 정렬: (위험도, 토큰매칭 우선, 매칭 강도 큰 순)
-        cands = []
         key_tok = _tokens(key)
         if key_tok:
             for tok, alias, it in _CACHE["alias_tok"]:
                 if tok <= key_tok:
-                    cands.append((_STATUS_RANK.get(it.default_status, 3), 0, -len(tok), it))
+                    cands.append((*_item_rank(it), 1, -len(tok), it))
         # 짧은 이름(SAN·PP·LDPE 등 약어)은 부분문자열 매칭에서 제외한다.
         # 'san'이 인도네시아어 별칭 'pisang'(바나나)·'santan'(코코넛밀크) 안에 우연히 들어가
         # 플라스틱 SAN이 바나나로 판정됐다. 짧은 약어는 정확·토큰 매칭으로만 잡아야 한다.
-        if len(key) >= 5:
-            for alias, it in _CACHE["by_alias"].items():
-                if len(alias) >= 4 and (alias in key or key in alias):
-                    cands.append((_STATUS_RANK.get(it.default_status, 3), 1, -len(alias), it))
-        if cands:
-            cands.sort(key=lambda p: (p[0], p[1], p[2]))
-            return cands[0][3]
+        for alias, it in _CACHE["by_alias"].items():
+            if (len(alias) >= 4 or it.default_status == "haram") and _contains_alias(key, alias, it):
+                cands.append((*_item_rank(it), 2, -len(alias), it))
+    if cands:
+        return min(cands, key=lambda p: p[:4])[4]
     return None
 
 
@@ -123,6 +192,7 @@ def screen(material):
     if status == "mushbooh" and not material.source_known:
         severity = "high"
     return {"result": result, "status": status, "severity": severity,
+            "category": it.category,
             "matched_uid": it.ingredient_uid, "carrier_check": carrier,
             "sources": it.sources or [],
             "required_evidence": evidence, "alternatives": it.alternatives or []}
@@ -209,15 +279,14 @@ def scan_text(text):
     """OCR 원문에서 ontology 별칭/E-number를 직접 탐지(결정적, 하이브리드 매칭의 '주').
     다중어 별칭(citric acid)은 substring, 짧은 별칭(향료/물)은 토큰 경계로 매칭.
     반환: [(ingredient_uid, item)]."""
-    low = text.lower()
-    tokens = set(t for t in re.split(r"[\s,()/:·\[\]{}*]+", low) if t)
+    keys = _name_keys(text)
     hits = {}
     for alias, it in _CACHE["by_alias"].items():
-        match = (alias in low) if (len(alias) >= 4 or " " in alias) else (alias in tokens)
-        if match:
+        if any(_contains_alias(key, alias, it) for key in keys):
             hits.setdefault(it.ingredient_uid, it)
-    for enum, it in _CACHE["by_e"].items():
-        if enum.lower() in low:
+    for enum in extract_e_numbers(text):
+        it = _CACHE["by_e"].get(enum)
+        if it:
             hits.setdefault(it.ingredient_uid, it)
     return list(hits.items())
 
@@ -232,17 +301,21 @@ KMA1360_EXEMPT = {
     "titanium dioxide", "iron oxide", "carbon black", "kaolin", "talc", "mica", "zinc oxide",
     "magnesium carbonate", "calcium phosphate",
 }
-_RE_HIGH1 = re.compile(r"pork|pig|babi|porcine|lard|bacon|ham\b|gammon|prosciutto|pepperoni|pancetta|chorizo|blood|darah|carrion|bangkai|human|placenta|khamr|wine|beer|rum|vodka|whisky|whiskey|brandy|liquor|carmine|cochineal")
+_RE_HIGH1 = re.compile(
+    r"\b(?:pork|pig|hog|swine|babi|porcine|lard|bacon|ham|gammon|prosciutto|pepperoni|"
+    r"pancetta|chorizo|blood|darah|carrion|bangkai|human|placenta|khamr|wine|beer|rum|"
+    r"rhum|mirin|ang\s*ciu|sake|champagne|tuak|brem|vodka|whisky|whiskey|brandy|liquor)\b|"
+    r"돼지|돈육|돈지|라드|맛술|미림|청주|주정")
 _RE_HIGH2 = re.compile(r"animal|hewani|beef|bovine|cow|chicken|poultry|meat|fat|gelatin|collagen|rennet|tallow|bone|skin")
-_RE_MED = re.compile(r"enzyme|microbial|fermentation|flavo[u]?r|glycerin|glycerol|emulsifier|mono|diglyceride|e471|ethanol|alcohol|solvent|oleic|stearic|polysorbate|lecithin|colou?r")
+_RE_MED = re.compile(r"enzyme|microbial|fermentation|flavo[u]?r|glycerin|glycerol|emulsifier|mono|diglyceride|e471|ethanol|alcohol|solvent|oleic|stearic|polysorbate|lecithin|colou?r|carmine|cochineal|코치닐|카민")
 
 
 def analyze_text_risk(text):
     """v1 analyzeMaterialTextRisk 이식 — 키워드 기반 high/medium/low."""
-    t = (text or "").lower()
-    if _RE_HIGH1.search(t) or _RE_HIGH2.search(t):
+    keys = _name_keys(text)
+    if any(_RE_HIGH1.search(t) or _RE_HIGH2.search(t) for t in keys):
         return "high"
-    if _RE_MED.search(t):
+    if any(_RE_MED.search(t) for t in keys):
         return "medium"
     return "low"
 
@@ -271,7 +344,7 @@ def v1_rule(name, source, cert_no, note=""):
 
 def screen_merged(name, e_number=None, source=None, cert_no=None,
                   evidence_provided=False, source_known=True, note="", docs=None):
-    """병합 스크리닝: ontology 매칭 시 ontology 우선(결정적), 미매칭 시 v1 source-rule.
+    """병합 스크리닝: ontology와 위험 키워드 중 더 엄격한 결과를 선택한다.
     docs 를 주면 인증번호를 제출된 할랄 인증서 문서와 대조한다(REQ-CERT-001)."""
     onto = screen(_Shim(name, e_number, evidence_provided, source_known))
     cert, v1risk = v1_rule(name, source, cert_no, note)
@@ -297,6 +370,19 @@ def screen_merged(name, e_number=None, source=None, cert_no=None,
                "alternatives": [],
                "decision_by": "v1_rule" if v1risk in ("high", "medium") or cert == "exempt"
                else "unmatched_default"}
+    # 이름/주석의 명백한 금지 성분은 안전한 E 번호·유래·일반 성분 매칭으로 덮지 못한다.
+    blob = " ".join([name or "", note or ""])
+    if any(_RE_HIGH1.search(key) for key in _name_keys(blob)):
+        v1risk = "high"
+        out.update(result="BLOCK", status="haram", severity="high",
+                   required_evidence=["reformulation"], decision_by="v1_high")
+    elif analyze_text_risk(blob) == "high":
+        v1risk = "high"
+        out["severity"] = "high"
+        if out["status"] == "halal":
+            out.update(result="NEEDS_EVIDENCE", status="mushbooh", decision_by="v1_high")
+            out["required_evidence"] = list(dict.fromkeys(
+                out["required_evidence"] + ["source_declaration"]))
     # 할랄 인증서 번호가 적혀 있으면 의심(mushbooh)을 할랄로 올린다.
     # 위험도(severity)는 건드리지 않는다 — 무엇을 근거로 올렸는지, 원래 얼마나 위험한
     # 성분인지는 그대로 남아야 오디터가 인증서 진위를 대조할 수 있다.
@@ -315,7 +401,8 @@ def screen_merged(name, e_number=None, source=None, cert_no=None,
         mode = _cert_verify_mode()
         verified = _cv.promotes(cv)
         out["cert_verification"]["mode"] = mode
-        if _cv.may_promote(cv, mode):
+        # 주류/알코올은 용도·유래·잔류량 확인 대상이다. 번호 검증만으로 해소하지 않는다.
+        if _cv.may_promote(cv, mode) and out.get("category") != "alcohol":
             out["status"] = "halal"
             out["result"] = "CLEARED"
             out["cert_promoted"] = True
