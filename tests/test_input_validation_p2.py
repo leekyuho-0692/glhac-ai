@@ -173,14 +173,14 @@ def test_bad_username_is_rejected(bad, why):
 
     공백이나 눈에 안 보이는 문자가 섞이면 '분명히 만들었는데 로그인이 안 되는' 상태가 된다."""
     with pytest.raises(ValidationError):
-        S.RegisterReq(username=bad, password="halal2026")
+        S.RegisterReq(company_email="company@example.com", email_consent=True, username=bad, password="halal2026")
 
 
 def test_existing_account_names_all_still_pass():
     """규칙을 새로 걸 때는 기존 계정이 전부 통과하는지 먼저 확인한다."""
     for u in ("admin", "applicant1", "consultant1", "buzzup2_1784165830",
               "newco1785824124", "demoguide01", "pendamping1"):
-        assert S.RegisterReq(username=u, password="halal2026").username == u
+        assert S.RegisterReq(company_email="company@example.com", email_consent=True, username=u, password="halal2026").username == u
 
 
 def test_admin_user_creation_uses_the_same_username_rule():

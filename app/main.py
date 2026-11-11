@@ -8,7 +8,7 @@ import time
 import threading
 import base64
 import logging
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from fastapi.exceptions import RequestValidationError
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
@@ -1945,9 +1945,13 @@ def search_signup_consultants(request: Request, q: str = Query(..., min_length=2
 
 @app.post("/auth/register")
 def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
+    if not body.email_consent:
+        raise HTTPException(422, {"code": "EMAIL_CONSENT_REQUIRED"})
     if db.query(models.User).filter_by(username=body.username).first():
         raise HTTPException(409, {"code": "DUPLICATE_ACCOUNT"})
     company_name = (body.company_name or "").strip()
+    email_consent = {"agreed": True, "at": datetime.now(timezone.utc).isoformat(),
+                     "version": "2026-11-11", "channel": "signup"}
     # 컨설턴트 초대 코드 — 영업으로 데려온 업체임을 밝힌다. 코드가 잘못됐으면 가입 자체를
     # 막지 않고 관계만 붙이지 않는다(업체가 가입을 못 하는 게 더 나쁘다). 다만 왜 안 붙었는지
     # 응답에 남겨 화면이 안내할 수 있게 한다.
@@ -1984,8 +1988,12 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
     else:
         org = "org_" + models.uid()[:8]
         company_role = "client_admin"    # 새 회사 첫 가입자 = 기업업무 관리자
+        # 초기 케이스가 없는 가입도 업체 메일·동의를 보존해 이후 신청에 상속한다.
+        org_profile = {"company_email": body.company_email, "email_consent": email_consent}
+        if _reg_sectors:
+            org_profile.update(sector=_reg_sectors[0], sectors=_reg_sectors)
         _o = models.Org(org_id=org, name=company_name or "My Company", address=body.address,
-                        profile_ext=(({"sector": _reg_sectors[0], "sectors": _reg_sectors}) if _reg_sectors else None))
+                        profile_ext=org_profile)
         # 컨설턴트 초대만 담당으로 귀속한다. 관리자 발급 클라이언트 초대(kind="client")는
         # 특정 컨설턴트에 안 묶이므로 consultant_id 를 붙이지 않는다(귀속 없음).
         if inv and (getattr(inv, "kind", "consultant") or "consultant") != "client":
@@ -2005,6 +2013,7 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         _reg_scheme, _reg_scope = intake.sector_defaults(_reg_sectors[0]) if _reg_sectors else ("product", None)
         # 가입 폼도 기존 업체 프로필과 같은 키를 쓴다. 선택 담당자의 빈 값은 남기지 않는다.
         _profile = {"sector": _reg_sectors[0], "sectors": _reg_sectors} if _reg_sectors else {}
+        _profile["email_consent"] = email_consent
         if (body.company_name_en or "").strip():
             _profile["company_name_en"] = body.company_name_en.strip()
         for prefix in ("pic", "cp"):
@@ -2017,10 +2026,9 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
                                    nib=body.nib, responsible_person=body.responsible_person,
                                    address=body.address, factory_address=body.factory_address,
                                    scheme=_reg_scheme, logistics_scope=_reg_scope,
+                                   email=body.company_email, notify_consent=True,
                                    profile_ext=_profile or None,
                                    is_msme=True)
-        if not c.email and _profile.get("pic_email"):
-            c.email = _profile["pic_email"]
         if not c.phone and _profile.get("pic_phone"):
             c.phone = _profile["pic_phone"]
         db.add(c)
@@ -4933,6 +4941,9 @@ def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("appli
         if not _same_company and k in _identity:
             continue          # 다른 회사의 신원값은 물려받지 않는다
         setattr(c, k, oext[k])
+    if not c.email and oext.get("company_email"):
+        c.email = oext["company_email"]
+        c.notify_consent = (oext.get("email_consent") or {}).get("agreed") is True
     # 공장도 org 자산 상속(오피스 1:N 공장) — 새 신청에 org 공장 자동 연결(회사프로필 상속과 대칭).
     # 단 다른 회사가 이미 쓰는 공장은 상속하지 않는다(_facilities_for_case 주석 참조).
     facs = _facilities_for_case(db, c)

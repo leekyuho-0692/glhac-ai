@@ -80,7 +80,7 @@ def test_가입_분야_프리필():
         code = r.json()["code"]
         import random, string
         un = "sec_" + "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(8))
-        g = c.post("/auth/register", json={"username": un, "password": "Passw0rd!23", "company_name": "분야테스트", "invite_code": code})
+        g = c.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": un, "password": "Passw0rd!23", "company_name": "분야테스트", "invite_code": code})
         assert g.status_code == 200, g.text
         h = {"Authorization": "Bearer " + g.json()["token"]}
         lst = c.get("/cases", headers=h).json()
@@ -90,7 +90,7 @@ def test_가입_분야_프리필():
         assert d["sector"] == "cosmetics"
         assert d["profile_ext"]["sectors"] == ["cosmetics", "food"]
         un2 = "sec_" + "".join(random.choice(string.ascii_lowercase + string.digits) for _ in range(8))
-        g2 = c.post("/auth/register", json={"username": un2, "password": "Passw0rd!23", "company_name": "수송가입", "sectors": ["transport"]})
+        g2 = c.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": un2, "password": "Passw0rd!23", "company_name": "수송가입", "sectors": ["transport"]})
         assert g2.status_code == 200, g2.text
         h2 = {"Authorization": "Bearer " + g2.json()["token"]}
         lst2 = c.get("/cases", headers=h2).json()

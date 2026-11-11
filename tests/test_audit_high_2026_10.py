@@ -301,7 +301,7 @@ def test_a4_paid_with_correct_amount_not_duplicated():
 def test_a5_approvals_scoped_for_applicant_consultant():
     with TestClient(app) as c:
         # 다른 조직 신청자(자가가입) + 그 조직 케이스
-        rb = c.post("/auth/register", json={"username": "a5other", "password": PW,
+        rb = c.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": "a5other", "password": PW,
                                             "company_name": "Other Co A5"})
         assert rb.status_code == 200, rb.text
         other_org = rb.json()["org_id"]
@@ -331,7 +331,7 @@ def test_a5_approvals_scoped_for_applicant_consultant():
 # ---------- A6. 시설 IDOR ----------
 def test_a6_facility_cross_org_forbidden():
     with TestClient(app) as c:
-        rb = c.post("/auth/register", json={"username": "a6other", "password": PW,
+        rb = c.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": "a6other", "password": PW,
                                             "company_name": "Other Co A6"})
         assert rb.status_code == 200, rb.text
         ho = {"Authorization": "Bearer " + rb.json()["token"]}

@@ -551,7 +551,15 @@ const BASE_FEE = {'식품':6000000,'화장품':5500000,'생활용품':5000000,'�
 
 
 const I18N = {
+  id:{'signup.company_email':'Email perusahaan','signup.required':'Wajib',
+      'signup.email_consent':'[Wajib] Saya setuju menerima email informasi proses sertifikasi. Masalah pada dokumen yang diajukan (tidak dapat dibaca, berkas rusak, perlu dilengkapi, dll.) dan perkembangan audit akan dikirim ke email perusahaan di atas.',
+      'signup.email_invalid':'Masukkan alamat email perusahaan yang valid (maksimal 200 karakter).',
+      'signup.consent_required':'Persetujuan untuk menerima email informasi proses sertifikasi wajib diberikan.'},
   ko:{'sys':'AI 할랄인증 지원시스템','nav.ent-home':'종합 정보','nav.ent-apply':'인증 신청','nav.ent-consultant':'컨설턴트 지원',
+      'signup.company_email':'업체 이메일','signup.required':'필수',
+      'signup.email_consent':'[필수] 인증 진행 안내 메일 수신에 동의합니다. 제출 서류의 문제(판독 실패·파일 손상·보완 필요 등)와 심사 진행 상황을 위 업체 이메일로 보내드립니다.',
+      'signup.email_invalid':'올바른 업체 이메일을 200자 이내로 입력해 주세요.',
+      'signup.consent_required':'인증 진행 안내 메일 수신에 동의해 주세요.',
       'nav.cons-home':'종합 정보','nav.cons-new':'신규인증기업','nav.cons-status':'업체별 현황','nav.cons-contract':'계약·견적 관리','nav.cons-qna':'기업 상담 관리',
       'logout':'로그아웃','lang':'언어','ws.ent':'인증기업','ws.cons':'전담 컨설턴트','login':'로그인','role':'회원 유형',
       'role.ent.sub':'할랄인증을 신청하는 기업','role.cons.sub':'인증기업을 지원하는 컨설턴트','pw':'비밀번호','id.ent':'기업 아이디 (이메일)','id.cons':'컨설턴트 아이디 (이메일)',
@@ -562,6 +570,10 @@ const I18N = {
       'nav.sha-home':'종합 정보','nav.sha-review':'심의 안건','nav.sha-history':'심의 이력',
       'nav.adm-home':'전체 현황','nav.adm-members':'회원 관리','nav.adm-assign':'배정 관리','nav.adm-cert':'인증서 발급','nav.adm-experts':'심사원·샤리아 위원 관리','nav.adm-price':'가격 기준표','nav.adm-docs':'문서 관리','nav.cons-docs':'문서 관리','nav.ent-contract':'계약 관리','nav.ent-pre':'AI 사전심사','nav.ent-docs':'서류 관리','nav.aud-pre':'02 AI 사전심사 검토','nav.aud-detail':'업체 상세','nav.aud-inbox':'01 접수 · 배정함','nav.aud-flow':'인증 프로세스 보드','nav.aud-contract':'03 계약 확인','nav.aud-cert':'07·08 인증서 · SiHalal','nav.aud-resubmit':'보완·재전송','nav.aud-materials':'원재료','nav.aud-aiq':'AI 검수 큐','nav.aud-eval':'SJPH/HAS 평가','nav.aud-mock':'04 모의심사','nav.aud-final':'06 보고서 · 샤리아 상정','nav.adm-contract':'계약 관리'},
   en:{'sys':'AI Halal Certification Support System','nav.ent-home':'Overview','nav.ent-apply':'Application','nav.ent-consultant':'Consultant Support',
+      'signup.company_email':'Company email','signup.required':'Required',
+      'signup.email_consent':'[Required] I agree to receive emails about the certification process. Issues with submitted documents (unreadable content, file damage, required supplements, etc.) and audit progress will be sent to the company email above.',
+      'signup.email_invalid':'Enter a valid company email address (200 characters or fewer).',
+      'signup.consent_required':'Please agree to receive emails about the certification process.',
       'nav.cons-home':'Overview','nav.cons-new':'Invite Company','nav.cons-status':'Company Status','nav.cons-contract':'Contracts & Quotes','nav.cons-qna':'Client Q&A',
       'logout':'Log out','lang':'Lang','ws.ent':'Company','ws.cons':'Consultant','login':'Log in','role':'Account type',
       'role.ent.sub':'Companies applying for halal certification','role.cons.sub':'Consultants supporting companies','pw':'Password','id.ent':'Company ID (email)','id.cons':'Consultant ID (email)',
@@ -727,6 +739,7 @@ function entSignup(){
       <div class="grid-2">
         <div class="field"><label for="es-name">기업명 (국문)<span class="req">필수</span></label><input class="in" id="es-name" required value="${esc(s.company||'')}" placeholder="(주)가나다식품"></div>
         <div class="field"><label for="es-name-en">기업명 (영문)<span class="req">필수</span></label><input class="in" id="es-name-en" required placeholder="GANADA FOOD Co., Ltd."></div>
+        <div class="field"><label for="es-company-email">${t('signup.company_email')}<span class="req">${t('signup.required')}</span></label><input class="in" id="es-company-email" type="email" required maxlength="200" pattern="^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$" autocomplete="email" value="${esc(s.company_email||'')}" onchange="this.value=this.value.trim().toLowerCase()"></div>
         <div class="field"><label for="es-biz">사업자등록번호<span class="req">필수</span></label><input class="in" id="es-biz" required placeholder="120-81-00000"></div>
         <div class="field"><label for="es-ceo">대표자명<span class="req">필수</span></label><input class="in" id="es-ceo" required placeholder="김철수"></div>
         <div class="field"><label for="es-cat">인증 분야<span class="req">필수</span></label><select class="in" id="es-cat">${Object.keys(BASE_FEE).map(k=>`<option>${k}</option>`).join('')}</select></div>
@@ -754,6 +767,7 @@ function entSignup(){
         <div class="field"><label for="es-pw2">비밀번호 확인<span class="req">필수</span></label><input class="in" id="es-pw2" type="password" required minlength="8"></div>
       </div></fieldset>
     ${agreeBlock('es')}
+    <label class="check"><input type="checkbox" id="es-email-consent" required><span>${t('signup.email_consent')}</span></label>
     <button class="btn btn-primary btn-lg btn-block" type="submit">인증기업 가입 완료</button>
   </form>`;
 }
@@ -1041,10 +1055,14 @@ const App = {
     const val = id => { const el=$('#'+id); return el ? el.value.trim() : ''; };
     if(val('es-pw')!==val('es-pw2')) return toast('비밀번호가 일치하지 않습니다. 다시 입력해 주세요.');
     if(!/^[0-9]{3}-[0-9]{2}-[0-9]{5}$/.test(val('es-biz'))) return toast('사업자등록번호는 000-00-00000 형식(숫자 10자리)으로 입력해 주세요.');
+    const company_email = val('es-company-email').toLowerCase();
+    const email_consent = !!$('#es-email-consent')?.checked;
+    if(company_email.length>200 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(company_email)) return toast(t('signup.email_invalid'));
+    if(!email_consent) return toast(t('signup.consent_required'));
     const email = val('es-id').toLowerCase();
     const btn = e.target.querySelector('button[type=submit]'); if(btn) btn.disabled=true;
     try{
-      const body = { username: email, password: val('es-pw') };
+      const body = { username: email, password: val('es-pw'), company_email, email_consent };
       [['company_name','es-name'],['responsible_person','es-ceo'],['address','es-addr'],
        ['nib','es-biz'],['company_name_en','es-name-en']].forEach(([key,id])=>{ if(val(id)) body[key]=val(id); });
       // 분야 선택 화면의 기존 라벨↔코드 표를 그대로 사용한다.
@@ -1063,11 +1081,15 @@ const App = {
       if(r.status===409) return toast('이미 가입된 계정입니다. 로그인해 주세요.');
       if(r.status===422){
         const d=await r.json().catch(()=>({}));
+        if(d.detail?.code==='EMAIL_CONSENT_REQUIRED') return toast(t('signup.consent_required'));
         const fields={username:'대표 이메일(ID)',password:'비밀번호',nib:'사업자등록번호',company_name:'기업명(국문)',company_name_en:'기업명(영문)',
           contacts:'담당자',pic:'담당자 1',cp:'담당자 2',name:'성명',title:'직위',phone:'연락처',email:'이메일',consultant_id:'담당 컨설턴트',invite_code:'초대 코드'};
         const detail=d.detail||{}, issues=Array.isArray(detail)?detail:(detail.errors||[detail]);
         const errors=issues.map(it=>{
-          const field=(it.loc||(it.field||'').split('.')).filter(k=>k&&k!=='body'&&k!=='contacts').map(k=>fields[k]||k).join(' · ');
+          const loc=it.loc||(it.field||'').split('.');
+          if(loc.includes('company_email')) return t('signup.email_invalid');
+          if(loc.includes('email_consent')) return t('signup.consent_required');
+          const field=loc.filter(k=>k&&k!=='body'&&k!=='contacts').map(k=>fields[k]||k).join(' · ');
           return (field?field+': ':'')+(it.msg||it.message||'입력값을 확인해 주세요.');
         });
         return toast(errors.join('\n'));

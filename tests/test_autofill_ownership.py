@@ -71,7 +71,7 @@ def client(ai):
 @pytest.fixture
 def case(client):
     # conftest의 격리 DB를 사용한다. 조직도 분리해 가입 기준번호·Facility가 사례 사이에 섞이지 않게 한다.
-    response = client.post("/auth/register", json={"username": "own" + uuid.uuid4().hex[:12],
+    response = client.post("/auth/register", json={"company_email": "owner@example.com", "email_consent": True, "username": "own" + uuid.uuid4().hex[:12],
                                                   "password": "Owner-test-123!", "company_name": OWNER})
     assert response.status_code == 200, response.text
     headers = {"Authorization": "Bearer " + response.json()["token"]}
@@ -415,7 +415,7 @@ def test_무출처_집계는_업체_공장_값을_반영하지_않는다(case):
 
 
 def test_가입_당시_번호는_나중의_케이스_수정과_독립적으로_대조한다(client, ai):
-    response = client.post("/auth/register", json={"username": "own" + uuid.uuid4().hex[:12],
+    response = client.post("/auth/register", json={"company_email": "owner@example.com", "email_consent": True, "username": "own" + uuid.uuid4().hex[:12],
                                                   "password": "Owner-test-123!", "company_name": OWNER, "nib": NIB})
     assert response.status_code == 200, response.text
     h = {"Authorization": "Bearer " + response.json()["token"]}

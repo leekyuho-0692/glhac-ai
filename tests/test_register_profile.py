@@ -17,6 +17,8 @@ def client():
 
 def _register(client, **extra):
     body = {"username": "profile_" + uuid4().hex[:12], "password": "Passw0rd!23",
+            "company_email": (extra.get("contacts", {}).get("pic") or {}).get("email") or "company@example.com",
+            "email_consent": True,
             "company_name": "가입 테스트 업체", "nib": "120-81-00000", **extra}
     r = client.post("/auth/register", json=body)
     assert r.status_code == 200, r.text
@@ -69,7 +71,7 @@ def test_담당자_길이_상한과_영문명_200자는_정상_저장한다(clie
         "email-length", "email-no-at", "email-no-dot", "email-space"])
 def test_담당자_길이와_형식_위반은_필드명과_함께_422(client, prefix, field, value):
     username = "invalid_" + uuid4().hex[:12]
-    r = client.post("/auth/register", json={"username": username, "password": "Passw0rd!23",
+    r = client.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": username, "password": "Passw0rd!23",
                                             "contacts": {prefix: {field: value}}})
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["field"] == "contacts.%s.%s" % (prefix, field)
@@ -79,7 +81,7 @@ def test_담당자_길이와_형식_위반은_필드명과_함께_422(client, pr
 
 @pytest.mark.parametrize("field,value", [("company_name_en", "A" * 201), ("nib", "12345")], ids=["company-length", "nib-format"])
 def test_영문명_상한과_기존_사업자번호_검증을_유지한다(client, field, value):
-    r = client.post("/auth/register", json={"username": "invalid_" + uuid4().hex[:12],
+    r = client.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": "invalid_" + uuid4().hex[:12],
                                             "password": "Passw0rd!23", field: value})
     assert r.status_code == 422, r.text
     assert r.json()["detail"]["field"] == field
