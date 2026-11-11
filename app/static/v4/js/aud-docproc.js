@@ -14,7 +14,9 @@ async function AUDD_fetchDoc(cid, path, method, body){
 
 async function AUDD_loadDocs(cid){
   RS.auddDocs = RS.auddDocs || {};
-  const res = await AUDD_fetchDoc(cid, '/cases/' + cid + '/documents');
+  const lang=S.lang;
+  const res = await AUDD_fetchDoc(cid, '/cases/' + cid + '/documents?lang='+encodeURIComponent(lang));
+  if(lang!==S.lang) return;
   RS.auddDocs[cid] = res.ok ? { rows: res.data || [] } : { error: true, status: res.status };
 }
 
@@ -73,7 +75,7 @@ function AUDD_aiqPanel(cid){
     const canApply = canCall('POST','/cases/{}/pending-extractions/apply');
     const failHtml = failed.length ? `<div class="note attn"><strong>AI 분석 실패 ${failed.length}건</strong><ul class="rows">${failed.map(f=>`<li class="row"><span>${esc(f.filename||'')}</span>${canRepro?`<button class="link" onclick="App.auddRepro('${cid}','${f.document_id}')">재처리</button>`:''}</li>`).join('')}</ul></div>` : '';
     pendHtml = `${failHtml}
-      ${pend.note?`<p class="muted" style="font-size:12px">${esc(pend.note)}</p>`:''}
+      ${pend.note?`<p class="muted" style="font-size:12px">${esc(UIV4_systemText(pend.note))}</p>`:''}
       ${items.length ? `<ul class="rows">${rows}</ul>
       ${canApply?`<div class="inline" style="margin-top:8px">
         <button class="btn btn-sm" onclick="App.auddApply('${cid}')">선택 반영</button>

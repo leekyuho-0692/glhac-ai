@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
+const {between,source} = require('./fixtures/uiv4_frontend.cjs');
 const messages = [];
 const context = vm.createContext({
   App: {}, RS: {cases: []}, S: {}, VIEWS: {},
@@ -69,6 +70,9 @@ assert.match(html(), /2 \/ 2 페이지/); // Last row removed: clamp rather than
   assert.equal(context.RS.cases.length,501); // Failed refresh preserves the visible data.
   const assignStart=index.indexOf("VIEWS['adm-assign'] = () => {");
   const assignEnd=index.indexOf('App.selAssign =',assignStart);
+  context.S.lang='ko';
+  vm.runInContext(between('const I18N = {','/* ---------- sample data'),context);
+  vm.runInContext(source.match(/^const t = .*$/m)[0],context);
   vm.runInContext(index.slice(assignStart,assignEnd),context);
   context.RS.admAud={auditors:[
     {user_id:'demo',username:'auditor1',is_demo:true,load:0,capacity:8},

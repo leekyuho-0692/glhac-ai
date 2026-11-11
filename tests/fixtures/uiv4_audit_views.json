@@ -1,0 +1,362 @@
+[
+  {
+    "user": "applicant1",
+    "lang": "en",
+    "view": "ent-home"
+  },
+  {
+    "user": "applicant1",
+    "lang": "en",
+    "view": "ent-apply"
+  },
+  {
+    "user": "applicant1",
+    "lang": "en",
+    "view": "ent-docs"
+  },
+  {
+    "user": "applicant1",
+    "lang": "id",
+    "view": "ent-home"
+  },
+  {
+    "user": "applicant1",
+    "lang": "id",
+    "view": "ent-apply"
+  },
+  {
+    "user": "applicant1",
+    "lang": "id",
+    "view": "ent-docs"
+  },
+  {
+    "user": "consultant1",
+    "lang": "en",
+    "view": "cons-new"
+  },
+  {
+    "user": "consultant1",
+    "lang": "en",
+    "view": "cons-docs"
+  },
+  {
+    "user": "consultant1",
+    "lang": "id",
+    "view": "cons-home"
+  },
+  {
+    "user": "consultant1",
+    "lang": "id",
+    "view": "cons-new"
+  },
+  {
+    "user": "consultant1",
+    "lang": "id",
+    "view": "cons-status"
+  },
+  {
+    "user": "consultant1",
+    "lang": "id",
+    "view": "cons-flow"
+  },
+  {
+    "user": "consultant1",
+    "lang": "id",
+    "view": "cons-stage"
+  },
+  {
+    "user": "consultant1",
+    "lang": "id",
+    "view": "cons-contract"
+  },
+  {
+    "user": "consultant1",
+    "lang": "id",
+    "view": "cons-prep"
+  },
+  {
+    "user": "consultant1",
+    "lang": "id",
+    "view": "cons-docs"
+  },
+  {
+    "user": "consultant1",
+    "lang": "id",
+    "view": "cons-qna"
+  },
+  {
+    "user": "consultant1",
+    "lang": "id",
+    "view": "cons-board"
+  },
+  {
+    "user": "penyelia1",
+    "lang": "en",
+    "view": "ent-home"
+  },
+  {
+    "user": "penyelia1",
+    "lang": "en",
+    "view": "ent-docs"
+  },
+  {
+    "user": "penyelia1",
+    "lang": "id",
+    "view": "ent-home"
+  },
+  {
+    "user": "penyelia1",
+    "lang": "id",
+    "view": "ent-docs"
+  },
+  {
+    "user": "pendamping1",
+    "lang": "id",
+    "view": "pen-home"
+  },
+  {
+    "user": "auditor1",
+    "lang": "en",
+    "view": "aud-dossier"
+  },
+  {
+    "user": "auditor1",
+    "lang": "en",
+    "view": "aud-materials"
+  },
+  {
+    "user": "auditor1",
+    "lang": "en",
+    "view": "aud-aiq"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-home"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-flow"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-stage"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-dossier"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-inbox"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-pre"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-contract"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-schedule"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-mock"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-report"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-final"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-cert"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-eval"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-materials"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-aiq"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-resubmit"
+  },
+  {
+    "user": "auditor1",
+    "lang": "id",
+    "view": "aud-selfdecl"
+  },
+  {
+    "user": "fatwa1",
+    "lang": "id",
+    "view": "sha-home"
+  },
+  {
+    "user": "fatwa1",
+    "lang": "id",
+    "view": "sha-review"
+  },
+  {
+    "user": "fatwa1",
+    "lang": "id",
+    "view": "sha-history"
+  },
+  {
+    "user": "operator1",
+    "lang": "en",
+    "view": "adm-home"
+  },
+  {
+    "user": "operator1",
+    "lang": "en",
+    "view": "adm-flow"
+  },
+  {
+    "user": "operator1",
+    "lang": "en",
+    "view": "adm-assign"
+  },
+  {
+    "user": "operator1",
+    "lang": "en",
+    "view": "adm-ops"
+  },
+  {
+    "user": "operator1",
+    "lang": "id",
+    "view": "adm-home"
+  },
+  {
+    "user": "operator1",
+    "lang": "id",
+    "view": "adm-flow"
+  },
+  {
+    "user": "operator1",
+    "lang": "id",
+    "view": "adm-assign"
+  },
+  {
+    "user": "operator1",
+    "lang": "id",
+    "view": "adm-ops"
+  },
+  {
+    "user": "admin",
+    "lang": "en",
+    "view": "adm-home"
+  },
+  {
+    "user": "admin",
+    "lang": "en",
+    "view": "adm-flow"
+  },
+  {
+    "user": "admin",
+    "lang": "en",
+    "view": "adm-assign"
+  },
+  {
+    "user": "admin",
+    "lang": "en",
+    "view": "adm-ops"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-home"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-flow"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-stage"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-report"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-members"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-experts"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-assign"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-price"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-contract"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-docs"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-kb"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-cert"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-ops"
+  },
+  {
+    "user": "admin",
+    "lang": "id",
+    "view": "adm-menus"
+  }
+]

@@ -3,6 +3,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
+const {between,source}=require('./fixtures/uiv4_frontend.cjs');
 const root=path.join(__dirname,'../app/static/v4/js');
 function harness(){
   const c=vm.createContext({console,Map,Set,URLSearchParams,encodeURIComponent,
@@ -14,7 +15,10 @@ function harness(){
     document:{addEventListener(){},getElementById(){return null}},window:{addEventListener(){}},
     apiFetch:async()=>({ok:true,status:200,json:async()=>({})}),loadEnt:async()=>{},_money:String});
   c.load=name=>vm.runInContext(fs.readFileSync(path.join(root,name),'utf8'),c,{filename:name});
-  c.run=code=>vm.runInContext(code,c);return c;
+  c.run=code=>vm.runInContext(code,c);
+  c.run(between('const I18N = {','/* ---------- sample data'));
+  c.run(source.match(/^const t = .*$/m)[0]);
+  return c;
 }
 test('필수서류 객체·면제·응답 오류를 구분한다',()=>{
  const c=harness();c.load('ent-apply-more.js');

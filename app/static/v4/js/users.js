@@ -8,17 +8,17 @@
 const US_ALL_ROLES = [['applicant','인증기업(신청자)'],['consultant','컨설턴트'],['penyelia_halal','할랄감독자'],['pendamping_pph','PPH 동반자'],
   ['auditor','오디터'],['fatwa_liaison','샤리아 위원'],['operator','운영관리자'],['admin','시스템 관리자']];
 const US_STAFF_ROLES = [['consultant','컨설턴트'],['auditor','오디터(심사원)'],['fatwa_liaison','샤리아 위원'],['admin','시스템 관리자']];
-const US_isAdmin = () => (typeof CAN==='function') ? !!CAN('admin.user.manage') : AUTH.role==='admin';
+const US_isAdmin = () => canCall('PATCH','/admin/users/{}') && CAN('admin.user.manage');
 const US_canView = () => AUTH.role==='admin' || AUTH.role==='operator';   // 목록·상세 조회(서버: operator·admin)
-const US_opts = (list, cur) => list.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l} (${v})</option>`).join('');
+const US_opts = (list, cur) => list.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${t('role.'+v)} (${v})</option>`).join('');
 
 // ── 스태프 가입 화면: 신청 역할 선택 ──
 { const f = consSignup;
   consSignup = function(){
     const html = f();
-    const sel = `<fieldset class="fieldset"><legend><span class="eyebrow">00</span>신청 역할</legend>
-      <div class="field"><label for="cs-role">역할<span class="req">필수</span></label><select class="in" id="cs-role" onchange="S.staffRole=this.value">${US_opts(US_STAFF_ROLES, S.staffRole||'consultant')}</select>
-      <span class="muted" style="font-size:12.5px">관리자 승인 후 계정이 만들어집니다. 승인 시 관리자가 역할을 조정할 수 있습니다.</span></div></fieldset>`;
+    const sel = `<fieldset class="fieldset"><legend><span class="eyebrow">00</span>${t('signup.requested_role')}</legend>
+      <div class="field"><label for="cs-role">${t('members.role')}<span class="req">${t('signup.required')}</span></label><select class="in" id="cs-role" onchange="S.staffRole=this.value">${US_opts(US_STAFF_ROLES, S.staffRole||'consultant')}</select>
+      <span class="muted" style="font-size:12.5px">${t('signup.role_approval')}</span></div></fieldset>`;
     const at = html.indexOf('<fieldset');
     return at<0 ? html : html.slice(0,at) + sel + html.slice(at);
   };
@@ -54,17 +54,19 @@ async function US_load(){
   if(S.usOrg && !(S.usQ||'').trim()) qs.set('org_id', S.usOrg);
   try{
     const r = await apiFetch('/admin/users?' + qs.toString());
-    RS.usList = r.ok ? await r.json() : {items:[], total:0, page:1, pages:1, error:true};
+    RS.usList = r.ok ? await r.json() : {items:[], total:0, page:1, pages:1, error:true, status:r.status};
   }catch(e){ RS.usList = {items:[], total:0, page:1, pages:1, error:true}; }
   RS._usLoading = false;
   render();
 }
 const US_dt = (v) => v ? esc(String(v).slice(0,10)) : '-';
 function US_panel(){
-  const m = RS.admMembers; if(!m || m.forbidden || !US_canView()) return '';
+  const m = RS.admMembers; if(!m || m.panels?.users!=='ok' || !canCall('GET','/admin/users')) return '';
   const ED = US_isAdmin();   // 생성·역할 변경·비밀번호 초기화·삭제는 admin 전용(PATCH/DELETE 서버 정책)
   if(RS.usKey !== US_key() && !RS._usLoading){ RS._usLoading = true; US_load(); }
   const d = RS.usList || {items:[], total:0, page:1, pages:1};
+  if(RS._usLoading) return `<section class="panel"><p class="empty">${t('members.loading')}</p></section>`;
+  if(d.error) return memberPanelNotice('users',d.status===403?'forbidden':'error');
   const L = d.items || [];
   const sortTh = (k, label) => `<th><a href="javascript:void(0)" onclick="App.usSort('${k}')">${label}${(S.usSort||'username')===k ? ((S.usDir||'asc')==='desc' ? ' ▼' : ' ▲') : ''}</a></th>`;
   return `<section class="panel"><div class="panel-head"><h2>사용자 관리</h2>
@@ -76,7 +78,7 @@ function US_panel(){
       <input class="in" style="max-width:160px" placeholder="소속(org_id)" value="${esc(S.usOrg||'')}" onchange="App.usFilter('usOrg',this.value)"></div>
     <div class="tbl-wrap"><table><thead><tr>${sortTh('username','아이디')}<th>표기명</th>${sortTh('role','역할')}<th>회사</th><th>상태</th>${sortTh('created_at','가입일')}${sortTh('last_login_at','최근 로그인')}<th>연락처</th>${ED?'<th style="min-width:230px">역할 변경</th>':''}<th></th></tr></thead><tbody>
     ${L.map(u=>`<tr><td><a href="javascript:void(0)" onclick="App.usOpen('${jsq(u.user_id)}')"><b>${esc(u.username)}</b></a></td><td>${esc(u.display_name||'-')}</td>
-      <td><span class="badge">${esc(ROLE_LABEL[u.role]||u.role)}</span></td><td class="muted">${esc(u.company_name||u.org_id||'-')}</td>
+      <td><span class="badge">${esc(t('role.'+u.role))}</span></td><td class="muted">${esc(u.company_name||u.org_id||'-')}</td>
       <td><span class="badge ${u.status==='suspended'?'attn':''}">${u.status==='suspended'?'정지됨':'정상'}</span></td>
       <td class="mono muted">${US_dt(u.created_at)}</td><td class="mono muted">${US_dt(u.last_login_at)}</td>
       <td class="mono muted">${esc(u.contact_email||'')}${u.contact_email&&u.contact_phone?'<br>':''}${esc(u.contact_phone||'')}${!u.contact_email&&!u.contact_phone?'-':''}</td>
