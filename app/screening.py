@@ -4,7 +4,7 @@ import re
 import unicodedata
 from .models import IngredientOntology
 
-_CACHE = {"by_e": {}, "by_alias": {}, "alias_tok": []}
+_CACHE = {"by_e": {}, "by_alias": {}, "alias_tok": [], "negated": None}
 
 
 def load_ontology(db):
@@ -24,6 +24,7 @@ def load_ontology(db):
                 tok = _tokens(key)
                 if len(tok) >= 2:          # 단일 토큰 별칭은 과잉매칭이라 토큰매칭에서 제외
                     _CACHE["alias_tok"].append((tok, key, it))
+    _CACHE["negated"] = _negation_pattern()
 
 
 # 표기 변형 흡수용 불용어 — 의미를 담지 않는 연결어만. 'powder/extract' 같은 형태어는
@@ -65,10 +66,17 @@ _CONFUSABLES = str.maketrans({
     "η": "h", "μ": "m", "ζ": "z", "Ν": "n",
     "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-",
 })
-_E_NUMBER_RE = re.compile(r"(?<![a-z0-9])e[-\s]?(\d{3,4}[a-z]?)(?![a-z0-9])", re.I)
-_NEGATED_PORK = re.compile(
-    r"\b(?:non[\s-]*(?:pork|pig|porcine|swine|hog|babi)|"
-    r"(?:pork|pig|porcine|swine|hog|babi)[\s-]*free|bebas\s+babi)\b|무[\s-]*돼지")
+_E_NUMBER_RE = re.compile(r"(?<![a-z0-9])(?:e|ins)[-\s]?(\d{3,4}[a-z]?)(?![a-z0-9])", re.I)
+_SPELLED_WORD_RE = re.compile(r"(?<!\w)[a-z](?:[^\S\r\n]+[a-z])+(?!\w)")
+_HIGH1_LATIN = (
+    "pork|pig|hog|swine|babi|porcine|lard|bacon|ham|gammon|prosciutto|pepperoni|"
+    "pancetta|chorizo|blood|darah|carrion|bangkai|human|placenta|khamr|wine|beer|rum|"
+    "rhum|mirin|ang ciu|sake|champagne|tuak|brem|vodka|whisky|whiskey|brandy|liquor"
+).split("|")
+_HIGH1_KOREAN = "돼지|돈육|돈지|라드|맛술|미림|청주|주정".split("|")
+_HIGH2_WORDS = (
+    "animal|hewani|beef|bovine|cow|chicken|poultry|meat|fat|gelatin|collagen|rennet|tallow|bone|skin"
+).split("|")
 
 
 def _item_rank(it):
@@ -83,7 +91,7 @@ def _fold_unicode(s):
 
 
 def extract_e_numbers(text):
-    """이름/본문의 E 번호를 숫자 치환 전에 읽는다. E1200을 E120으로 읽지 않는다."""
+    """E/INS 번호를 숫자 치환 전에 읽어 E 번호로 통일한다. E1200을 E120으로 읽지 않는다."""
     return list(dict.fromkeys("E" + m.group(1).upper()
                              for m in _E_NUMBER_RE.finditer(_fold_unicode(text))))
 
@@ -112,14 +120,46 @@ def _norm_key(s, one="i"):
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _negation_pattern():
+    """사전의 모든 high/haram 별칭과 v1 위험어에 같은 부정 범위를 적용한다."""
+    targets = set(_HIGH1_LATIN + _HIGH1_KOREAN + _HIGH2_WORDS)
+    for alias, it in {**_CACHE["by_alias"], **_CACHE["by_e"]}.items():
+        if it.default_status == "haram" or it.severity == "high":
+            key = _norm_key(alias)
+            targets.update((key, re.sub(r"[^\w\s]|_", "", key)))
+    targets.discard("")
+    # non-pork gelatin / 무돼지 젤라틴의 generic gelatin 증빙 요구는 남긴다.
+    # free from pork gelatin / pork gelatin-free는 명시된 전체 별칭을 부정한다.
+    ordered = sorted(targets, key=lambda t: (len(t), t))
+    short = "(?:" + "|".join(re.escape(t) for t in ordered) + ")"
+    long = "(?:" + "|".join(re.escape(t) for t in reversed(ordered)) + ")"
+    return re.compile(
+        r"(?<!\w)(?:(?:non[\s-]*|[무無][\s-]*)" + short + r"(?!\w)|"
+        r"(?:free[\s-]*from[\s-]+|(?:bebas|tanpa)[\s-]+)" + long + r"(?!\w)|"
+        + long + r"[\s-]*free(?!\w))")
+
+
+def _without_negated_risks(key):
+    pattern = _CACHE["negated"]
+    if pattern is None:  # ontology 적재 전에도 v1 키워드는 같은 부정 규칙을 쓴다.
+        pattern = _negation_pattern()
+    return pattern.sub(" ", key)
+
+
 def _name_keys(name):
     keys = set()
-    for one in ("i", "l"):
-        key = _NEGATED_PORK.sub(" ", _norm_key(name, one))
-        # 괄호 안팎을 개별 후보로 유지해야 '안전 성분(위험 성분)'도 놓치지 않는다.
-        for part in [key, *re.split(r"[()\[\]{}]", key)]:
-            keys.add(part.strip())
-            keys.add(re.sub(r"[^\w\s]|_", "", part).strip())
+    folded = _fold_unicode(name)
+    # 최대 연속 구간 전체가 한 글자 토큰인 경우만 합친다. 일반 단어·줄 경계는 유지한다.
+    spelled = _SPELLED_WORD_RE.sub(lambda m: re.sub(r"\s", "", m.group()), folded)
+    for text in {folded, spelled}:
+        for one in ("i", "l"):
+            key = _norm_key(text, one)
+            # 구두점 제거로 L.A.R.D-free가 lardfree가 된 뒤에도 부정을 먼저 해석한다.
+            for variant in (key, re.sub(r"[^\w\s]|_", "", key)):
+                variant = _without_negated_risks(variant)
+                # 괄호 안팎을 개별 후보로 유지해야 '안전 성분(위험 성분)'도 놓치지 않는다.
+                for part in [variant, *re.split(r"[()\[\]{}]", variant)]:
+                    keys.add(part.strip())
     keys.discard("")
     return keys
 
@@ -127,7 +167,21 @@ def _name_keys(name):
 def _contains_alias(key, alias, it):
     # 긴 고위험 별칭은 붙여 쓴 합성어(porkfat, lemakbabi)에서도 놓치지 않는다.
     if len(alias) >= 4 and (it.default_status == "haram" or it.severity == "high"):
-        return alias in key
+        if alias not in key:
+            return False
+        for match in re.finditer(re.escape(alias), key):
+            if alias.isascii() and alias.isalpha():
+                prefix = re.search(r"[a-z]+$", key[:match.start()])
+                if prefix and len(prefix.group()) >= 2:
+                    suffix = re.match(r"[a-z]*", key[match.end():]).group()
+                    word = prefix.group() + alias + suffix
+                    known = _CACHE["by_alias"].get(word)
+                    # collard 안의 lard처럼, 결합 단어 자체가 halal 별칭인 발생만 제외.
+                    # 문장 전체를 면제하지 않으므로 'collard with lard'는 계속 탐지한다.
+                    if known is not None and known.default_status == "halal":
+                        continue
+            return True
+        return False
     # Latin 단어 경계: ham∈hamburger, rum∈serum 같은 오탐을 피한다.
     if len(alias) < 4 and not alias.isascii():
         # 짧은 한글 별칭도 원래의 토큰 경계를 유지한다(개∈개선, 물∈식물 오탐 방지).
@@ -139,7 +193,7 @@ def _contains_alias(key, alias, it):
 
 def _match(name, e_number):
     cands = []
-    for number in extract_e_numbers(e_number) + extract_e_numbers(name):
+    for number in extract_e_numbers(e_number) + extract_e_numbers(_without_negated_risks(_norm_key(name))):
         it = _CACHE["by_e"].get(number)
         if it:
             cands.append((*_item_rank(it), -1, 0, it))
@@ -284,7 +338,7 @@ def scan_text(text):
     for alias, it in _CACHE["by_alias"].items():
         if any(_contains_alias(key, alias, it) for key in keys):
             hits.setdefault(it.ingredient_uid, it)
-    for enum in extract_e_numbers(text):
+    for enum in extract_e_numbers(_without_negated_risks(_norm_key(text))):
         it = _CACHE["by_e"].get(enum)
         if it:
             hits.setdefault(it.ingredient_uid, it)
@@ -302,11 +356,9 @@ KMA1360_EXEMPT = {
     "magnesium carbonate", "calcium phosphate",
 }
 _RE_HIGH1 = re.compile(
-    r"\b(?:pork|pig|hog|swine|babi|porcine|lard|bacon|ham|gammon|prosciutto|pepperoni|"
-    r"pancetta|chorizo|blood|darah|carrion|bangkai|human|placenta|khamr|wine|beer|rum|"
-    r"rhum|mirin|ang\s*ciu|sake|champagne|tuak|brem|vodka|whisky|whiskey|brandy|liquor)\b|"
-    r"돼지|돈육|돈지|라드|맛술|미림|청주|주정")
-_RE_HIGH2 = re.compile(r"animal|hewani|beef|bovine|cow|chicken|poultry|meat|fat|gelatin|collagen|rennet|tallow|bone|skin")
+    r"\b(?:" + "|".join(re.escape(t).replace(r"\ ", r"\s*") for t in _HIGH1_LATIN)
+    + r")\b|" + "|".join(_HIGH1_KOREAN))
+_RE_HIGH2 = re.compile("|".join(_HIGH2_WORDS))
 _RE_MED = re.compile(r"enzyme|microbial|fermentation|flavo[u]?r|glycerin|glycerol|emulsifier|mono|diglyceride|e471|ethanol|alcohol|solvent|oleic|stearic|polysorbate|lecithin|colou?r|carmine|cochineal|코치닐|카민")
 
 
