@@ -668,6 +668,7 @@ def test_재검증_대상_조회는_본문_없이_ID만_읽는다(client, case, 
 ])
 def test_이름수정_제외는_재조회와_같은값_재추출에도_대기로_돌아오지_않는다(client, case, kind, model, bucket):
     h, cid = case
+    reviewer = _tok(client, "auditor1")
     with m.SessionLocal() as db:
         c = db.get(models.CaseApplication, cid)
         c.profile_ext = {"sector": "food", "pending_handled": ["old%d" % i for i in range(2000)]}
@@ -676,7 +677,7 @@ def test_이름수정_제외는_재조회와_같은값_재추출에도_대기로
                                            "_sources": {kind: "llm"}}))
         db.commit()
     body = {"values": ["Keep Me"], "renames": {"Raw Water": "확인한 이름"}, "dismiss": ["Discard Me"]}
-    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=h, json=body)
+    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=reviewer, json={**body, "reason": "원문 대조 후 OCR 교정"})
     assert r.status_code == 200, r.text
     assert r.json()["count"] == 3 and r.json()["applied"][bucket] == 2
     with m.SessionLocal() as db:
@@ -692,7 +693,7 @@ def test_이름수정_제외는_재조회와_같은값_재추출에도_대기로
     for _ in range(2):
         pending = client.get(f"/cases/{cid}/pending-extractions", headers=h).json()["items"]
         assert [x["value"] for x in pending] == ["Not Selected"]
-    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=h, json=body)
+    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=reviewer, json={**body, "reason": "원문 대조 후 OCR 교정"})
     assert r.json()["count"] == r.json()["applied"][bucket] == 0
 
 
@@ -703,12 +704,13 @@ def test_이름수정_제외는_재조회와_같은값_재추출에도_대기로
 ])
 def test_수정과_제외는_미선택값을_등록하지_않고_수정이름의_중복도_막는다(client, case, body, expected):
     h, cid = case
+    reviewer = _tok(client, "auditor1")
     with m.SessionLocal() as db:
         db.add(models.Material(case_id=cid, name="정제수"))
         db.add(models.DocumentAsset(case_id=cid, filename="확인.pdf", doc_type="material_list",
                                    fields={"material_names": ["Old Name", "Not Selected"]}))
         db.commit()
-    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=h, json=body)
+    r = client.post(f"/cases/{cid}/pending-extractions/apply", headers=reviewer, json={**body, "reason": "원문 대조 후 OCR 교정"})
     assert r.status_code == 200, r.text
     assert r.json()["applied"]["materials"] == 0
     with m.SessionLocal() as db:

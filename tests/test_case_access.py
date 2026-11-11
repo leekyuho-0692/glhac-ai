@@ -143,10 +143,19 @@ def _case(db, status, **kw):
     # 발급된다(감사 K4: 인보이스 0건이면 무결제 발급되던 결함). 발급 가능한 전제를 갖춰 둔다.
     c = models.CaseApplication(case_id="c_iss", org_id=OWN, company_name="발급 검증",
                                status=status, fatwa_status=kw.get("fatwa", "approved"),
-                               scope_frozen=kw.get("frozen", True),
+                               scope_frozen=False,
                                pathway="self_declare" if status == "committee_verification" else "reguler")
     db.add(c)
     db.add(models.Invoice(case_id="c_iss", total=1.0, status="paid"))
+    db.commit()
+    product = models.Product(case_id=c.case_id, name="Reviewed product")
+    material = models.Material(case_id=c.case_id, name="sugar")
+    db.add_all([product, material])
+    db.flush()
+    db.add(models.ProductMaterial(case_id=c.case_id, product_id=product.product_id,
+                                  material_id=material.material_id))
+    if kw.get("frozen", True):
+        m.sm.freeze_scope(db, c)
     db.commit()
     return c
 

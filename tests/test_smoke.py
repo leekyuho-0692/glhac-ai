@@ -38,6 +38,8 @@ def _intake_complete(client, cid, company="ABC"):
         "company_name": company, "nib": nib,
         "profile_ext": {"annual_revenue": 1_000_000, "outlet_count": 1}})
     client.post(f"/cases/{cid}/products", json={"name": "Sample Product", "category": "Food"})
+    linked = client.post(f"/cases/{cid}/auto-link-materials")
+    assert linked.status_code == 200, linked.text
 
 
 def test_self_declare_happy_path():

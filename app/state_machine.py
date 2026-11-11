@@ -4,6 +4,7 @@ import hashlib
 import os
 import json
 from datetime import datetime
+from sqlalchemy.orm import object_session
 from .db import lock_chain_tail
 from .models import (CaseApplication, Material, PenyeliaHalal,
                      PendampingAssignment, ExternalIdentity, WorkflowEvent)
@@ -135,26 +136,150 @@ def materials(db, case_id):
     return db.query(Material).filter_by(case_id=case_id).all()
 
 
+REVIEWER_ROLES = {"consultant", "auditor", "fatwa_liaison", "operator", "admin"}
+
+
+def lock_scope(db, case):
+    """추출 대기 중 동결된 경우도 최신 잠금을 확인한다. 커밋까지 쓰기와 동결을 직렬화."""
+    lock_chain_tail(db, "scope:" + case.case_id)
+    db.refresh(case, ["scope_frozen"])
+
+
+def material_identity(m):
+    return {key: getattr(m, key) for key in (
+        "material_id", "name", "e_number", "mat_type", "source", "source_known",
+        "supplier", "manufacturer", "origin", "cert_no", "note")}
+
+
+def scope_snapshot(db, case):
+    from .models import Product, ProductMaterial
+    db.flush()
+    return {"version": 1, "scheme": case.scheme or "product",
+            "logistics_scope": sorted(case.logistics_scope or []),
+            "products": [{k: getattr(p, k) for k in (
+                "product_id", "name", "category", "description", "registration_type")}
+                for p in db.query(Product).filter_by(case_id=case.case_id).order_by(Product.product_id)],
+            "materials": [material_identity(m) for m in
+                          db.query(Material).filter_by(case_id=case.case_id).order_by(Material.material_id)],
+            "links": sorted([[v.product_id, v.material_id] for v in
+                             db.query(ProductMaterial).filter_by(case_id=case.case_id)])}
+
+
+def freeze_scope(db, case, actor_type="system", actor_id=None):
+    lock_scope(db, case)
+    if not case.scope_frozen:
+        snapshot = scope_snapshot(db, case)
+        case.scope_frozen = True
+        record_event(db, case, case.status, case.status, "scope.freeze", actor_type, actor_id,
+                     {"snapshot": snapshot})
+
+
+def frozen_scope(db, case):
+    row = (db.query(WorkflowEvent).filter_by(case_id=case.case_id, action="scope.freeze")
+           .order_by(WorkflowEvent.created_at.desc(), WorkflowEvent.event_id.desc()).first())
+    return (row.payload or {}).get("snapshot") if row else None
+
+
+def approved_material_evidence(db, material):
+    """제출 플래그·자동 판정은 승인이 아니다. 현 원료와 일치하는 검토자 승인만 인정."""
+    from .models import DocumentAsset, MaterialEvidenceLink
+    linked = [v.document_id for v in db.query(MaterialEvidenceLink).filter_by(
+        case_id=material.case_id, material_id=material.material_id)]
+    docs = db.query(DocumentAsset).filter(
+        DocumentAsset.case_id == material.case_id, DocumentAsset.review_status == "approved",
+        (DocumentAsset.material_id == material.material_id) | DocumentAsset.document_id.in_(linked)).all()
+    if not docs:
+        return False
+    approved = {d.document_id for d in docs if d.content_b64 and
+                (d.fields or {}).get("_counts_as_evidence") is not False}
+    identity = material_identity(material)
+    for ev in db.query(WorkflowEvent).filter_by(case_id=material.case_id, action="documents.review"):
+        payload = ev.payload or {}
+        if (ev.actor_type in REVIEWER_ROLES and payload.get("document_id") in approved
+                and payload.get("review_status") == "approved"
+                and identity in payload.get("material_scope", [])):
+            return True
+    return False
+
+
 def _has_evidence(m):
-    """증빙 충족 여부 — 사람이 켠 플래그(evidence_provided)와 제출 문서로 계산된 결과
-    (screen_result == "CLEARED") 둘 다 인정한다. 문서로 해소된 건은 screen_status 가
-    mushbooh 로 남으므로 플래그만 보면 게이트가 계속 막는다."""
-    return bool(m.evidence_provided) or getattr(m, "screen_result", None) == "CLEARED"
+    db = object_session(m)
+    return approved_material_evidence(db, m) if db is not None else False
+
+
+def material_risk(m):
+    from . import screening
+    # 신고 인증번호나 과거 CLEARED 저장값으로 고위험 원료가 숨지 않도록 원래 위험을 재계산.
+    return screening.screen_merged(m.name, m.e_number, m.source, None, False,
+                                   m.source_known is not False, m.note or "")
+
+
+def pending_extractions(db, case_id):
+    from . import intake
+    from .models import DocumentAsset, Product, normalize_material_name as norm
+    c = db.get(CaseApplication, case_id)
+    have = {"product_names": {norm(p.name) for p in db.query(Product).filter_by(case_id=case_id)},
+            "material_names": {norm(m.name) for m in materials(db, case_id)}}
+    handled = set()
+    for ev in db.query(WorkflowEvent).filter_by(case_id=case_id, action="extraction.review"):
+        if ev.actor_type in REVIEWER_ROLES:
+            for item in (ev.payload or {}).get("items", []):
+                handled.add((item["kind"], norm(item["value"])))
+    out, seen = [], set()
+    for doc in db.query(DocumentAsset).filter_by(case_id=case_id):
+        fields = doc.fields or {}
+        scope_fields = {k: fields[k] for k in ("product_names", "material_names", "_sources") if k in fields}
+        agg = intake.aggregate_fields([{"doc_type": doc.doc_type, "fields": scope_fields}])
+        candidates = list(agg.get("pending") or []) + list(fields.get("_scope_pending") or [])
+        # 동결 중 들어온 구조 추출도 확인대기다. 저장 이전의 구 문서 역시 빠뜨리지 않는다.
+        if c and c.scope_frozen:
+            for bucket, kind in (("products", "product_names"), ("materials", "material_names")):
+                candidates += [{"kind": kind, "value": name, "reason": "scope_frozen"}
+                               for name in agg.get(bucket, [])]
+        for item in candidates:
+            key = (item["kind"], norm(item["value"]))
+            if key in seen or key in handled or key[1] in have.get(item["kind"], set()):
+                continue
+            seen.add(key)
+            out.append({**item, "document_id": doc.document_id, "filename": doc.filename,
+                        "requires_scope_unlock": bool(c and c.scope_frozen)})
+    return out
+
+
+def material_safety_blockers(db, case):
+    from . import screening
+    haram, unresolved = [], []
+    for m in materials(db, case.case_id):
+        risk = material_risk(m)
+        if risk["status"] == "haram" or m.screen_status == "haram" or m.screen_result == "BLOCK":
+            haram.append(m.name)
+        elif (risk["severity"] == "high" or m.screen_severity == "high" or m.v1_risk == "high") and not _has_evidence(m):
+            unresolved.append(m.name)
+    pending = []
+    for item in pending_extractions(db, case.case_id):
+        if item["kind"] == "material_names":
+            risk = screening.screen_merged(item["value"])
+            if risk["status"] == "haram" or risk["severity"] == "high":
+                pending.append(item["value"])
+    return ([{"code": "HARAM_MATERIAL", "materials": haram}] if haram else []) + (
+        [{"code": "CRITICAL_MATERIAL_NO_EVIDENCE", "materials": unresolved}] if unresolved else []) + (
+        [{"code": "PENDING_CRITICAL_MATERIAL", "materials": pending}] if pending else [])
 
 
 def critical_materials(db, case_id):
     out = []
     for m in materials(db, case_id):
-        if m.screen_status == "haram":
+        risk = material_risk(m)
+        if risk["status"] == "haram" or m.screen_status == "haram":
             out.append(m)
-        elif m.screen_status == "mushbooh" and m.screen_severity == "high" and not _has_evidence(m):
+        elif risk["severity"] == "high" and not _has_evidence(m):
             out.append(m)
     return out
 
 
 def evidence_complete(db, case_id):
     return all(_has_evidence(m) for m in materials(db, case_id)
-               if m.screen_status == "mushbooh")
+               if m.screen_status == "mushbooh" or material_risk(m)["severity"] == "high")
 
 
 def sihalal_verified(db, case_id):
@@ -221,6 +346,13 @@ def guard_reguler_submit(db, case):
     g = []
     if not sihalal_verified(db, case.case_id):
         g.append({"code": "SIHALAL_IDENTITY_UNVERIFIED"})
+    return g
+
+
+def guard_committee_materials(db, case):
+    g = material_safety_blockers(db, case)
+    if not evidence_complete(db, case.case_id):
+        g.append({"code": "MATERIAL_EVIDENCE_INCOMPLETE"})
     return g
 
 
@@ -331,6 +463,7 @@ GUARDS = {
     "audit_closed": guard_car_closed,                        # §5.2 CAR 종결
     "self_declare_eligible": guard_pathway_selfdeclare,
     "self_declaration_submitted": guard_selfdeclare_submit,
+    "committee_verification": guard_committee_materials,
     "lph_assignment": guard_reguler_submit,
     "certificate_issued": guard_certificate_issue,
 }
@@ -355,6 +488,8 @@ def evaluate_blocking(db, case):
 def can_transition(db, case, to_state):
     if not allowed(case.status, to_state):
         return False, [{"code": "INVALID_TRANSITION", "from": case.status, "to": to_state}]
+    if to_state == "committee_verification":
+        lock_scope(db, case)
     guard = GUARDS.get(to_state)
     blockers = guard(db, case) if guard else []
     return (len(blockers) == 0), blockers
@@ -366,11 +501,8 @@ def apply_side_effects(case, to_state):
     # P1: reguler 전용 상태로의 전이는 pathway를 reguler로 확정(self_declare→reguler 전환 포함)
     if to_state in ("supplementation_required", "consultant_review") and case.pathway in ("undetermined", "self_declare"):
         case.pathway = "reguler"
-    if to_state == "committee_verification":            # 자기선언 위원회 검토 진입
-        case.scope_frozen = True                        # 검토 대상 범위 동결
-        # NOTE(SEHATI): 자동 approved 제거 — 위원회 검증은 /committee/decide(샤리아 승인+근거)로만.
-    if to_state == "final_package_preparation":
-        case.scope_frozen = True
+    if to_state in ("committee_verification", "final_package_preparation"):
+        freeze_scope(object_session(case), case)
     # NOTE(P0-1): fatwa_approved 자동 approved 제거 — 최종승인은 /fatwa/final-approve(operator)만 수행
 
 

@@ -177,6 +177,23 @@ r = httpx.post(f"{B}/cases/{cid}/mock-audit/decision", headers=H(a1), json={"res
 j = step("mock-audit/decision", r)
 j = maybe_approve("mock-audit/decision", j, a2)
 
+# d1: 발급 전제는 검토자 승인 증빙과 실제 제품-원재료 연결이다.
+matrix = step("원료 매트릭스 조회", httpx.get(f"{B}/cases/{cid}/matrix", headers=H(at)))
+for product in matrix["products"]:
+    for material in matrix["materials"]:
+        step("제품-원재료 연결", httpx.post(f"{B}/cases/{cid}/matrix/link", headers=H(at), json={
+            "product_id": product["product_id"], "material_id": material["material_id"], "linked": True}))
+        if material["name"] == "gelatin":
+            import base64
+            proof = base64.b64encode(b"Gelatin supplier source declaration for reviewer inspection.").decode()
+            step("gelatin 증빙 제출", httpx.post(f"{B}/cases/{cid}/materials/{material['material_id']}/evidence",
+                 headers=H(at), json={"filename": "gelatin_source.txt", "file_b64": proof,
+                                     "evidence_type": "source_declaration"}))
+            evidence = step("gelatin 증빙 조회", httpx.get(
+                f"{B}/cases/{cid}/materials/{material['material_id']}/evidence", headers=H(a1)))
+            step("오디터 증빙 승인", httpx.patch(f"{B}/documents/{evidence[0]['document_id']}/review",
+                 headers=H(a1), json={"review_status": "approved"}))
+
 print("=== 15. LPH·현장 전이 ===")
 step("lph-assignment", httpx.post(f"{B}/cases/{cid}/lph-assignment", headers=H(ad), json={"lph_name": "LPH Sucofindo"}, timeout=60))
 step("→lph_assignment", tr(ot, cid, "lph_assignment"))

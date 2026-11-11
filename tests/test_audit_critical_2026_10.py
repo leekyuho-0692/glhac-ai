@@ -70,8 +70,19 @@ def _code(r):
 
 def _issue_ready_case(company):
     """발급 직전 상태(fatwa 승인·범위 동결)의 정규 케이스."""
-    return _db_case(company, status="fatwa_approved", fatwa_status="approved",
-                    scope_frozen=True, pathway="reguler")
+    cid = _db_case(company, status="fatwa_approved", fatwa_status="approved", pathway="reguler")
+    from app import state_machine as sm
+    with SessionLocal() as db:
+        case = db.get(models.CaseApplication, cid)
+        product = models.Product(case_id=cid, name="Reviewed product")
+        material = models.Material(case_id=cid, name="sugar")
+        db.add_all([product, material])
+        db.flush()
+        db.add(models.ProductMaterial(case_id=cid, product_id=product.product_id,
+                                      material_id=material.material_id))
+        sm.freeze_scope(db, case)
+        db.commit()
+    return cid
 
 
 # ---------- K1. 회사명만 맞추면 남의 조직에 편입되던 문제 ----------

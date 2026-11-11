@@ -624,13 +624,40 @@ def _get_case(db, case_id, user=None) -> models.CaseApplication:
     return c
 
 
-def _assert_scope_open(c):
-    """범위 동결(scope_frozen) 케이스의 원재료 변경 차단 — 동결은 심의·위원회 검토 대상을 고정하는
-    것인데, 동결 뒤에도 원재료를 추가·수정·삭제할 수 있어 심사받지 않은 성분이 인증서에 실렸다(감사 K5).
-    재인증이 필요하면 언락(operator) 후 변경한다."""
+def _assert_scope_open(c, *, lock=True):
+    """제품·원재료·연결 쓰기의 공통 가드. 동결과 같은 DB 잠금을 커밋까지 유지한다."""
+    from sqlalchemy.orm import object_session
+    db = object_session(c)
+    if db is not None:
+        if lock:
+            sm.lock_scope(db, c)
+        else:
+            db.refresh(c, ["scope_frozen"])
     if c.scope_frozen:
         raise HTTPException(409, {"code": "SCOPE_FROZEN",
-                                  "message": "범위가 동결된 케이스는 원재료를 변경할 수 없습니다"})
+                                  "message": "범위가 동결된 케이스는 제품·원재료·연결을 변경할 수 없습니다"})
+
+
+def _assert_frozen_scope_matches(db, c):
+    sm.lock_scope(db, c)
+    snapshot = sm.frozen_scope(db, c)
+    if snapshot is None:
+        raise HTTPException(409, {"code": "SCOPE_SNAPSHOT_MISSING",
+                                  "message": "동결 당시 범위 근거가 없습니다. 동결 해제 후 재검토가 필요합니다"})
+    if snapshot != sm.scope_snapshot(db, c):
+        raise HTTPException(409, {"code": "SCOPE_CHANGED",
+                                  "message": "심사 범위가 동결 당시와 다릅니다. 재검토가 필요합니다"})
+
+
+def _assert_materials_safe(db, c):
+    blockers = sm.material_safety_blockers(db, c)
+    if blockers:
+        raise HTTPException(409, blockers[0])
+
+
+def _screen_reviewed_material(db, material):
+    material.evidence_provided = sm.approved_material_evidence(db, material)
+    return screening.apply_screen(material)
 
 
 def _assert_case_open(c):
@@ -1541,6 +1568,7 @@ def _save_ai_extraction(db, case_id, source, extracted, confidence=None, evidenc
 
 def _register_from_judgment(db, c, res):
     from . import screening
+    _assert_scope_open(c)
     created = []
     # 온톨로지 매칭 성분 등록
     for ing in res["ingredients"]:
@@ -3031,7 +3059,7 @@ def admin_ontology_reseed(rescreen: bool = True, user=Depends(auth.require_roles
         mats = db.query(models.Material).all()
         for m in mats:
             before = (m.screen_status, m.screen_result)
-            screening.apply_screen(m)
+            _screen_reviewed_material(db, m)
             if (m.screen_status, m.screen_result) != before:
                 changed += 1
         db.commit()
@@ -5842,7 +5870,9 @@ def list_materials(case_id: str, lang: str = Query("ko"),
 def add_product(case_id: str, body: schemas.ProductCreate,
                 user=Depends(auth.require_roles("applicant", "consultant")),
                 db: Session = Depends(get_db)):
-    _assert_case_open(_get_case(db, case_id, user))   # 종결 케이스 쓰기 차단(R1-1)
+    c = _get_case(db, case_id, user)
+    _assert_case_open(c)
+    _assert_scope_open(c)
     # 같은 이름이 이미 있으면 **알려만 준다**. 막지 않는다.
     #
     # 같은 제품을 두 번 넣으면 인증 범위(scope)에 중복 인쇄되고 매트릭스도 두 줄이 되지만,
@@ -5879,19 +5909,20 @@ def add_material(case_id: str, body: schemas.MaterialCreate,
         raise HTTPException(409, {"code": "DUPLICATE_MATERIAL", "material_id": dup.material_id})
     sk = True if body.source_known is None else bool(body.source_known)
     r = screening.screen_merged(body.name, body.e_number, body.source, body.cert_no,
-                                bool(body.evidence_provided), sk, body.note or "")
+                                False, sk, body.note or "")
     m = models.Material(case_id=case_id, name=body.name, e_number=body.e_number,
                         mat_type=body.mat_type, source=body.source, supplier=body.supplier,
                         manufacturer=body.manufacturer, origin=body.origin,
                         cert=r.get("v1_cert"), cert_no=body.cert_no, note=body.note,
-                        v1_risk=r.get("v1_risk"), evidence_provided=bool(body.evidence_provided),
+                        v1_risk=r.get("v1_risk"), evidence_provided=False,
                         source_known=sk, screen_result=r["result"], screen_status=r["status"],
                         screen_severity=r["severity"], matched_uid=r.get("matched_uid"))
     m, created = _upsert_material(db, m)
     if not created:
         raise HTTPException(409, {"code": "DUPLICATE_MATERIAL", "material_id": m.material_id})
     _audit(db, user, "material.add", "material", m.material_id, case_id,
-           {"name": m.name, "supplier": m.supplier, "origin": m.origin}, commit=False)
+           {"name": m.name, "supplier": m.supplier, "origin": m.origin,
+            "evidence_submitted": bool(body.evidence_provided)}, commit=False)
     db.commit()
     return {"material_id": m.material_id, "screen": r}
 
@@ -5948,6 +5979,7 @@ def patch_material(material_id: str, body: schemas.MaterialPatch,
             changed[f] = v
     if not changed:
         return {"material_id": material_id, "changed": {}, "screen": None}
+    m.evidence_provided = sm.approved_material_evidence(db, m)
     r = screening.screen_merged(m.name, m.e_number, m.source, m.cert_no,
                                 bool(m.evidence_provided),
                                 True if m.source_known is None else bool(m.source_known),
@@ -5981,6 +6013,7 @@ def rename_material(material_id: str, body: schemas.MaterialRenameReq,
     _assert_scope_open(c)   # 동결 후 원재료 변경 금지(감사 K5)
     prev = m.name
     m.name = nm
+    m.evidence_provided = sm.approved_material_evidence(db, m)
     sc = screening.screen_merged(nm, m.e_number, m.source, m.cert_no,
                                  bool(m.evidence_provided),
                                  m.source_known if m.source_known is not None else True, m.note or "")
@@ -6009,6 +6042,7 @@ def _norm_material(name):
 
 def _upsert_material(db, material):
     """DB 유일 키로 경합을 해결하고 기존 행을 반환한다. 호출측 트랜잭션은 유지한다."""
+    _assert_scope_open(_get_case(db, material.case_id))
     if db.get_bind().dialect.name == "postgresql":
         from sqlalchemy.dialects.postgresql import insert
     else:
@@ -6515,7 +6549,9 @@ def get_product(case_id: str, product_id: str, user=Depends(auth.get_current_use
 def update_product(case_id: str, product_id: str, body: schemas.ProductUpdate,
                    user=Depends(auth.require_roles("applicant", "consultant")),
                    db: Session = Depends(get_db)):
-    _get_case(db, case_id, user)
+    c = _get_case(db, case_id, user)
+    _assert_case_open(c)
+    _assert_scope_open(c)
     p = db.get(models.Product, product_id)
     if not p or p.case_id != case_id:
         raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
@@ -6563,7 +6599,9 @@ def delete_product(case_id: str, product_id: str, force: bool = False,
     인증서는 '이 제품들을 인증한다'는 문서다. 제품 행만 사라지면 인증서가 없는 것을
     가리키고, 그 사실이 아무 데도 남지 않는다. force=true 로 지울 때는 동결 목록에서도
     빼고 무엇을 왜 뺐는지 감사기록에 남긴다(운영자·관리자만)."""
-    _get_case(db, case_id, user)
+    c = _get_case(db, case_id, user)
+    _assert_case_open(c)
+    _assert_scope_open(c)
     p = db.get(models.Product, product_id)
     if not p or p.case_id != case_id:
         raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
@@ -6642,7 +6680,7 @@ def _exif_datetime(b64_or_bytes):
 def add_material_evidence(case_id: str, material_id: str, body: schemas.MaterialEvidenceReq,
                           user=Depends(rbac.require_action("material.evidence")),
                           db: Session = Depends(get_db)):
-    """원재료 증빙 업로드 → evidence_provided=true → 자동 재스크리닝 (순환점 C1)."""
+    """증빙은 제출 상태로 보관한다. 해소 여부는 documents/review의 검토자 승인으로 결정."""
     from .intake import _ctype
     c = _get_case(db, case_id, user)
     _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
@@ -6655,6 +6693,8 @@ def add_material_evidence(case_id: str, material_id: str, body: schemas.Material
     db.add(models.DocumentAsset(case_id=case_id, filename=body.filename,
                                 filename_en=_fn_en(body.filename), doc_type=body.evidence_type,
                                 material_id=material_id, review_status="pending",
+                                fields={"_counts_as_evidence": bool(body.counts_as_evidence)},
+                                uploaded_by=user["uid"], uploader_role=user["role"],
                                 content_b64=b64,
                                 content_type=_ctype(body.filename),
                                 lat=gps[0] if gps else None, lng=gps[1] if gps else None,
@@ -6671,18 +6711,14 @@ def add_material_evidence(case_id: str, material_id: str, body: schemas.Material
         return {"material_id": material_id, "evidence_type": body.evidence_type,
                 "screen_result": prev, "was": prev, "recleared": False,
                 "counts_as_evidence": False}
-    m.evidence_provided = True
-    sc = screening.screen_merged(m.name, m.e_number, m.source, m.cert_no, True,
-                                 m.source_known if m.source_known is not None else True, m.note or "")
-    m.screen_result, m.screen_status, m.screen_severity = sc["result"], sc["status"], sc["severity"]
-    m.matched_uid = sc.get("matched_uid")
+    sc = _screen_reviewed_material(db, m)
     sm.record_event(db, c, c.status, c.status, "material.evidence", user["role"], user["uid"],
                     {"material_id": material_id, "evidence_type": body.evidence_type,
                      "from": prev, "to": sc["result"]})
     db.commit()
     return {"material_id": material_id, "evidence_type": body.evidence_type,
             "screen_result": sc["result"], "was": prev,
-            "recleared": prev == "NEEDS_EVIDENCE" and sc["result"] in ("CLEARED", "PASS")}
+            "recleared": False, "review_status": "pending"}
 
 
 # ── S3-4 Excel 내보내기 ────────────────────────────────────────────────────────
@@ -7167,6 +7203,24 @@ def _apply_agg_to_case(db, c, agg, documents=()):
     """목록 집계만 직접 반영한다. 업체·공장은 원문 문서별 소유권 게이트를 통과해야 한다."""
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0,
                "profile": [], "pending": len(agg.get("pending") or [])}
+    _assert_case_open(c)
+    try:
+        _assert_scope_open(c, lock=False)
+    except HTTPException as exc:
+        if exc.detail.get("code") != "SCOPE_FROZEN" or not documents:
+            raise
+        for doc in documents:
+            fields = dict(doc.fields or {})
+            extracted = intake.aggregate_fields([{"doc_type": doc.doc_type, "fields": fields}])
+            deferred = list(fields.get("_scope_pending") or []) + list(extracted.get("pending") or [])
+            for bucket, kind in (("products", "product_names"), ("materials", "material_names")):
+                deferred += [{"kind": kind, "value": value, "reason": "scope_frozen"}
+                             for value in extracted.get(bucket, [])]
+            fields["_scope_pending"] = list({(x["kind"], x["value"]): x for x in deferred}.values())
+            doc.fields = fields
+        applied.update(scope_frozen=True, requires_scope_unlock=True,
+                       pending=sum(len((d.fields or {}).get("_scope_pending") or []) for d in documents))
+        return applied
     if not documents and agg.get("nib") and c.nib and _autofill_key(agg["nib"], "nib") != _autofill_key(c.nib, "nib"):
         applied["nib_conflict"] = True   # 구 집계 호출도 충돌은 알리되 원문 없이 값을 쓰지 않는다
     for doc in documents:
@@ -7182,6 +7236,13 @@ def _apply_agg_to_case(db, c, agg, documents=()):
             applied["facility"] = own["facility"]
     have_p = {_norm_material(p.name) for p in db.query(models.Product).filter_by(case_id=c.case_id)}
     _mat_norms = {_norm_material(m) for m in (agg.get("materials") or []) if m}
+    if agg.get("products"):
+        try:
+            _assert_scope_open(c)
+        except HTTPException as exc:
+            if exc.detail.get("code") != "SCOPE_FROZEN" or not documents:
+                raise
+            return _apply_agg_to_case(db, c, agg, documents=documents)
     for pn in agg.get("products", []):
         pk = _norm_material(pn)
         if pn and pk and pk not in have_p and pk not in _mat_norms:
@@ -7200,7 +7261,12 @@ def _apply_agg_to_case(db, c, agg, documents=()):
             have_m.add(nk)
     # 스크리닝을 모두 끝낸 뒤 짧게 쓰기 트랜잭션을 잡는다(SQLite 동시 업로드 대기 제한).
     for material in materials:
-        _, created = _upsert_material(db, material)
+        try:
+            _, created = _upsert_material(db, material)
+        except HTTPException as exc:
+            if exc.detail.get("code") != "SCOPE_FROZEN" or not documents:
+                raise
+            return _apply_agg_to_case(db, c, agg, documents=documents)
         applied["materials"] += int(created)
     return applied
 
@@ -7450,8 +7516,9 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     # 없는 서류'와 구분되지 않아, 사람이 다시 돌려야 한다는 걸 알 방법이 없다.
     if r.get("llm_error"):
         fl["_llm_error"] = r["llm_error"]
-    if (d.fields or {}).get("_autofill"):
-        fl["_autofill"] = d.fields["_autofill"]   # 재추출도 기존 자동 반영·사람 확인 출처를 보존한다.
+    for key in ("_autofill", "_scope_pending", "_counts_as_evidence"):
+        if key in (d.fields or {}):
+            fl[key] = d.fields[key]   # 재처리로 동결대기·검토 이력을 지우지 않는다.
     d.fields = fl
     d.text_excerpt = (text or "")[:300]
     d.text_full = text or ""
@@ -7481,40 +7548,8 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
 
 
 def _pending_extractions(db, case_id):
-    """LLM 만 뽑아 **아직 케이스에 없는** 제품·원재료 — 문서에 남긴 출처(fields._sources)로 되짚는다.
-
-    이미 반영된 값은 빼야 한다. 종전에는 문서에 남아 있는 LLM 추출값을 전부 내보내서,
-    사람이 확인해 반영한 뒤에도 같은 항목이 계속 대기 목록에 남았다(실측: 어떤 케이스는
-    대기 157건 전부가 이미 케이스에 있는 값이었고, 정작 새로 볼 것은 0건이었다).
-    그러면 목록이 '봐야 할 것'을 알려주지 못하고 그냥 소음이 된다.
-
-    같은 값인지 판단은 반영 쪽(_apply_agg_to_case)과 같은 정규화(_norm_material)를 쓴다 —
-    기준이 다르면 반영했는데도 안 사라지는 항목이 생긴다."""
-    from .intake import aggregate_fields
-    c = db.get(models.CaseApplication, case_id)
-    handled = set((c.profile_ext or {}).get("pending_handled") or []) if c else set()
-    docs = [{"doc_type": d.doc_type, "fields": d.fields or {},
-             "document_id": d.document_id, "filename": d.filename}
-            for d in db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
-            if d.fields]
-    agg = aggregate_fields([{"doc_type": x["doc_type"], "fields": x["fields"]} for x in docs])
-    have_p = {_norm_material(p.name) for p in
-              db.query(models.Product).filter_by(case_id=case_id) if p.name}
-    have_m = {_norm_material(m.name) for m in
-              db.query(models.Material).filter_by(case_id=case_id) if m.name}
-    # 어느 문서에서 나왔는지 붙여 준다 — 확인하는 사람이 원본을 열어봐야 한다
-    out = []
-    for it in (agg.get("pending") or []):
-        _have = have_p if it["kind"] == "product_names" else have_m
-        key = _norm_material(it["value"])
-        if key in _have or key in handled:
-            continue
-        src = next((x for x in docs
-                    if it["value"] in ((x["fields"].get(it["kind"]) or []))), None)
-        out.append({**it,
-                    "document_id": src["document_id"] if src else None,
-                    "filename": src["filename"] if src else None})
-    return out
+    """발급·위원회 가드와 같은 확인대기 정본을 사용한다."""
+    return sm.pending_extractions(db, case_id)
 
 
 def _pending_autofill(db, case_id):
@@ -7632,7 +7667,8 @@ def list_pending_extractions(case_id: str, user=Depends(auth.get_current_user),
 
 @app.post("/cases/{case_id}/pending-extractions/apply")
 def apply_pending_extractions(case_id: str, body: dict = None,
-                              user=Depends(rbac.require_action("material.add")),
+                              user=Depends(auth.require_roles("applicant", "consultant", "penyelia_halal",
+                                                              "auditor", "operator", "fatwa_liaison")),
                               db: Session = Depends(get_db)):
     """확인한 항목을 등록·이름 수정·제외한다. 기존 values 생략/빈 목록의 전량 반영은 유지한다.
 
@@ -7649,6 +7685,12 @@ def apply_pending_extractions(case_id: str, body: dict = None,
             or not isinstance(renames, dict)
             or not all(isinstance(v, str) and v.strip() and _norm_material(v) for v in renames.values())):
         raise HTTPException(422, {"code": "INVALID_PENDING_SELECTION", "message": "values·renames·dismiss 입력을 확인해 주세요"})
+    reason = str(b.get("reason") or "").strip()
+    if renames or dismiss:
+        if user["role"] not in sm.REVIEWER_ROLES:
+            raise HTTPException(403, {"code": "REVIEWER_REQUIRED"})
+        if not reason:
+            raise HTTPException(422, {"code": "REASON_REQUIRED"})
     want = set(values)
     # 이름 수정·제외만 보낸 요청의 빈 values를 전량 등록으로 해석하지 않는다.
     apply_all = not want and "renames" not in b and "dismiss" not in b and "autofill_choices" not in b
@@ -7663,6 +7705,9 @@ def apply_pending_extractions(case_id: str, body: dict = None,
     pe["pending_handled"] = list(dict.fromkeys(
         (pe.get("pending_handled") or []) + [_norm_material(x["value"]) for x in items]))[-2000:]
     c.profile_ext = pe
+    if renames or dismiss:
+        sm.record_event(db, c, c.status, c.status, "extraction.review", user["role"], user["uid"],
+                        {"items": items, "renames": renames, "dismiss": dismiss, "reason": reason})
     _audit(db, user, "extraction.apply", "case", case_id, case_id,
            {"products": agg["products"][:50], "materials": agg["materials"][:50],
             "renames": renames, "dismiss": dismiss, "autofill_choices": choices, "source": "llm_confirmed"}, commit=False)
@@ -7819,7 +7864,9 @@ def get_matrix(case_id: str, user=Depends(auth.get_current_user), db: Session = 
 def matrix_link(case_id: str, body: schemas.MatrixLinkReq,
                 user=Depends(auth.require_roles("applicant", "consultant", "penyelia_halal")),
                 db: Session = Depends(get_db)):
-    _get_case(db, case_id, user)
+    c = _get_case(db, case_id, user)
+    _assert_case_open(c)
+    _assert_scope_open(c)
     q = db.query(models.ProductMaterial).filter_by(case_id=case_id, product_id=body.product_id,
                                                    material_id=body.material_id)
     existing = q.first()
@@ -7845,6 +7892,10 @@ def matrix_link(case_id: str, body: schemas.MatrixLinkReq,
 def _auto_link_pm(db, case_id, max_pairs=2000):
     """제품-원재료 자동 연결. 기존 링크는 보존하고 미연결 (제품,원재료) 쌍만 추가.
     과적재(제품×원재료>max_pairs) 케이스는 폭발 방지로 스킵."""
+    c = _get_case(db, case_id)
+    _assert_case_open(c)
+    _assert_scope_open(c)
+    db.flush()
     prods = db.query(models.Product).filter_by(case_id=case_id).all()
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
     if not prods or not mats or len(prods) * len(mats) > max_pairs:
@@ -8009,8 +8060,9 @@ def _apply_intake_autofill(db, c, res):
         if doc is not None:
             dup_skipped += 1
             # 같은 원본 재업로드도 새 파서 결과는 반영하되 문서 식별자는 유지한다.
-            if (doc.fields or {}).get("_autofill"):
-                fields["_autofill"] = doc.fields["_autofill"]
+            for key in ("_autofill", "_scope_pending", "_counts_as_evidence"):
+                if key in (doc.fields or {}):
+                    fields[key] = doc.fields[key]
             doc.doc_type = d["doc_type"]
             doc.confidence = float(d.get("confidence") or 0)
             doc.fields = fields
@@ -8046,7 +8098,7 @@ def _apply_intake_autofill(db, c, res):
     applied["dup_skipped"] = dup_skipped
     res["_verify_ids"] = [d.document_id for d in saved]
     # 제품·원재료 자동 연결(매트릭스) — 아코디언에 원재료가 붙도록
-    applied["links"] = _auto_link_pm(db, c.case_id)
+    applied["links"] = 0 if applied.get("scope_frozen") else _auto_link_pm(db, c.case_id)
     # 문서 타입별 개별 프로세서 — 공정흐름도/할랄인증서/SJPH매뉴얼을 각 엔티티로 매핑
     for _d in res.get("classified", []):
         _process_doc(db, c, _d, applied)
@@ -8651,7 +8703,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     """개별 파일 업로드 → 문서 종류 교차검증 → 해당 필드 자동채움."""
     c = _get_case(db, case_id, user)
     _assert_case_open(c)
-    _assert_scope_open(c)
+    _assert_scope_open(c, lock=False)   # OCR 대기는 잠금 없이, 실제 목록 쓰기는 공통 반영부에서 잠금
     body.filename = intake._nfc(body.filename)
     raw = base64.b64decode(_validate_upload(body.file_b64, body.filename))   # 크기·타입 검증(§9.3)
     from .intake import parse_typed, parse_typed_text
@@ -8766,6 +8818,7 @@ def review_document(document_id: str, body: schemas.DocReviewReq,
     if not d:
         raise HTTPException(404, {"code": "DOC_NOT_FOUND"})
     c = _get_case(db, d.case_id, user)
+    sm.lock_scope(db, c)
     d.review_status = body.review_status
     if body.review_status == "approved" and (d.fields or {}).get("_autofill"):
         fields = dict(d.fields)
@@ -8774,8 +8827,17 @@ def review_document(document_id: str, body: schemas.DocReviewReq,
                            for k, v in meta.get("changes", {}).items()}
         fields["_autofill"] = meta
         d.fields = fields
+    linked_ids = {v.material_id for v in db.query(models.MaterialEvidenceLink).filter_by(
+        case_id=c.case_id, document_id=document_id)}
+    if d.material_id:
+        linked_ids.add(d.material_id)
+    mats = db.query(models.Material).filter(models.Material.case_id == c.case_id,
+                                            models.Material.material_id.in_(linked_ids)).all()
     sm.record_event(db, c, c.status, c.status, "documents.review", user["role"], user["uid"],
-                    {"document_id": document_id, "review_status": body.review_status})
+                    {"document_id": document_id, "review_status": body.review_status,
+                     "material_scope": [sm.material_identity(v) for v in mats]})
+    for material in mats:
+        _screen_reviewed_material(db, material)
     db.commit()
     return {"document_id": document_id, "review_status": d.review_status}
 
@@ -10233,8 +10295,14 @@ def committee_decide(case_id: str, body: schemas.CommitteeDecisionReq,
     if body.decision == "reject" and not reason:
         raise HTTPException(422, {"code": "REASON_REQUIRED"})
     if body.decision == "approve":
+        sm.lock_scope(db, c)
+        blockers = sm.guard_committee_materials(db, c)
+        if blockers:
+            raise HTTPException(409, {"code": "COMMITTEE_MATERIALS_BLOCKED", "blockers": blockers})
+        if c.scope_frozen:
+            _assert_frozen_scope_matches(db, c)
+        sm.freeze_scope(db, c, user["role"], user["uid"])
         c.fatwa_status = "approved"
-        c.scope_frozen = True
         sm.record_event(db, c, c.status, c.status, "committee.approve", user["role"], user["uid"],
                         {"reason": reason or None})
         _notify(db, c, "committee_approved", "KFPH 승인",
@@ -14978,6 +15046,7 @@ def _issue_guards(db, c, case_id):
     (실측: consultant_review 상태에서 발급됨), 발급 함수의 상태 전이는 조용히 건너뛰어져
     '인증서는 있는데 진행 단계는 심사 중'인 케이스가 남았다. 인증기관 제품에서 이건
     서류상 앞뒤가 안 맞는 상태다."""
+    sm.lock_scope(db, c)
     ready = _issue_ready_states()
     if c.status not in ready and c.status != "certificate_issued":
         raise HTTPException(409, {"code": "STATE_NOT_READY", "status": c.status,
@@ -14997,12 +15066,12 @@ def _issue_guards(db, c, case_id):
     if c.pathway != "self_declare" and db.query(models.Invoice).filter(
             models.Invoice.case_id == case_id, models.Invoice.status == "paid").count() == 0:
         raise HTTPException(409, {"code": "NO_PAYMENT", "message": "결제가 확정되지 않았습니다"})
-    # 하람 원재료가 남은 채 인증서가 나가던 결함(감사 K5) — 판정 BLOCK 또는 상태 haram 이면 발급 금지.
-    haram = db.query(models.Material).filter(
-        models.Material.case_id == case_id,
-        (models.Material.screen_result == "BLOCK") | (models.Material.screen_status == "haram")).all()
-    if haram:
-        raise HTTPException(409, {"code": "HARAM_MATERIAL", "materials": [m.name for m in haram]})
+    _assert_materials_safe(db, c)
+    _assert_frozen_scope_matches(db, c)
+    if (c.scheme or "product") != "logistics":
+        links = db.query(models.ProductMaterial).filter_by(case_id=case_id).count()
+        if not links:
+            raise HTTPException(409, {"code": "PRODUCT_MATERIAL_LINKS_MISSING"})
     if sm.open_major_nc(db, case_id) > 0:
         raise HTTPException(409, {"code": "UNRESOLVED_MAJOR_NC"})
     bad_docs = (db.query(models.DocumentAsset)
@@ -15298,6 +15367,7 @@ def unlock_certificate(case_id: str, body: schemas.UnlockReq,
     reason = (body.reason or "").strip()
     if len(reason) < 5:
         raise HTTPException(400, {"code": "REASON_REQUIRED"})
+    sm.lock_scope(db, c)
     c.scope_frozen = False
     sm.record_event(db, c, c.status, c.status, "certificate.unlock", user["role"], user["uid"],
                     {"reason": reason})
@@ -16891,7 +16961,7 @@ def fatwa_final_approve(case_id: str, user=Depends(rbac.require_action("fatwa.ap
     fd.final_approved_at = datetime.utcnow()
     fd.final_approver = user["uid"]
     c.fatwa_status = "approved"
-    c.scope_frozen = True
+    sm.freeze_scope(db, c, user["role"], user["uid"])
     frm = c.status   # P3e: 상태 선세팅 전 실제 from_status 캡처(fatwa_review→fatwa_approved 전이 감사 정확화)
     if c.status == "fatwa_review" and sm.allowed(c.status, "fatwa_approved"):
         c.status = "fatwa_approved"
@@ -20868,7 +20938,7 @@ def screen_material(material_id: str, user=Depends(auth.get_current_user), db: S
     if not m:
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
     _get_case(db, m.case_id, user)  # P0-2 조직격리
-    r = screening.apply_screen(m)
+    r = _screen_reviewed_material(db, m)
     db.commit()
     return r
 
