@@ -76,7 +76,7 @@ VIEWS['adm-report'] = () => {
   const granBtns = RP_GRANS.map(([k,l])=>`<button class="btn btn-sm ${S.rpGran===k?'btn-primary':''}" onclick="App.rpGran('${k}')">${l}</button>`).join('');
   const ctrl = `<section class="panel"><div class="panel-head"><h2>인증 현황·보고서</h2></div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">${granBtns}</div>
-    <div class="inline" style="margin-top:10px"><button class="btn btn-sm" onclick="App.rpShift(-1)">◀ 이전</button><button class="btn btn-sm" onclick="App.rpShift(0)">오늘</button><button class="btn btn-sm" onclick="App.rpShift(1)">다음 ▶</button><input class="in" type="date" id="rp-date" value="${esc(S.rpDate)}" onchange="App.rpDate((($('#rp-date')||{}).value||'').trim())" style="max-width:160px"></div></section>`;
+    <div class="inline rp-controls"><button class="btn btn-sm" onclick="App.rpShift(-1)">◀ 이전</button><button class="btn btn-sm" onclick="App.rpShift(0)">오늘</button><button class="btn btn-sm" onclick="App.rpShift(1)">다음 ▶</button><input class="in" type="date" id="rp-date" value="${esc(S.rpDate)}" onchange="App.rpDate((($('#rp-date')||{}).value||'').trim())" style="max-width:160px"></div></section>`;
   const d = RS.rp;
   if(!d) return `<div style="display:flex;flex-direction:column;gap:22px">${ctrl}<section class="panel"><p class="empty">불러오는 중…</p></section>${RP_listPanel()}</div>`;
   if(d.error){
@@ -84,7 +84,7 @@ VIEWS['adm-report'] = () => {
     return `<div style="display:flex;flex-direction:column;gap:22px">${ctrl}<section class="panel"><p class="empty">${msg}</p></section>${RP_listPanel()}</div>`;
   }
   const m = d.metrics||{}, pm = d.previous_metrics||{}, p = d.period||{};
-  const head = `<div class="panel-head"><h2>${esc((p.label||'')+' · '+S.rpGran)}</h2><div style="display:flex;gap:8px;align-items:center">${p.in_progress?'<span class="badge attn">진행 중 기간(오늘까지 집계)</span>':''}<span class="muted">전기: ${esc((d.previous&&d.previous.label)||'')}</span></div></div>`;
+  const head = `<div class="panel-head"><h2>${esc((p.label||'')+' · '+S.rpGran)}</h2><div class="rp-period-meta">${p.in_progress?'<span class="badge attn">진행 중 기간(오늘까지 집계)</span>':''}<span class="muted">전기: ${esc((d.previous&&d.previous.label)||'')}</span></div></div>`;
   const cards = `<section class="summary">${RP_METRICS.map(([k,l])=>`<div><span class="k">${l}</span><span class="v">${esc(RP_fmt(m[k],k))}</span><span class="muted" style="font-size:11px">전기 ${esc(RP_fmt(pm[k],k))} ${RP_deltaTag(m[k]||0, pm[k]||0)}</span></div>`).join('')}</section>`;
   const trend = d.trend||[];
   const trendHtml = trend.length ? `

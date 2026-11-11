@@ -71,6 +71,13 @@ textarea.in{resize:vertical;min-height:84px}
 .grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 20px}
 .span-2{grid-column:span 2}
 .inline{display:flex;gap:8px}
+.sector-options{flex-wrap:wrap}
+.sector-options .tag{display:inline-flex;align-items:center;gap:4px;margin-left:0}
+.cin-readiness-head,.rp-period-meta{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0;max-width:100%}
+.cin-readiness-head{margin-bottom:12px}
+.cin-readiness-head>span,.rp-period-meta>span{min-width:0;max-width:100%;overflow-wrap:anywhere}
+.cin-readiness-head .badge,.rp-period-meta .badge{white-space:normal}
+.rp-controls{flex-wrap:wrap;align-items:center;margin-top:10px}
 .inline .in{flex:1}
 .check{display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13.5px}
 .check input{width:16px;height:16px;margin-top:2px;accent-color:var(--ink);flex:none}
@@ -533,6 +540,7 @@ details.faq p{margin:8px 0 0;color:var(--ink-2)}
 .cal-legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;align-items:center}
 .cal-legend span{display:inline-flex;gap:5px;align-items:center}
 @media (max-width:720px){ .tri{grid-template-columns:1fr} .cal-d{min-height:52px} .cal-d .ev,.cal-d>.muted{display:none} .cal-dots{display:flex} }
+.sl-head{flex-wrap:wrap;gap:12px}.sl-pagination{display:flex;flex-wrap:wrap;align-items:center;gap:12px;max-width:100%}.sl-count{line-height:1.5}
 </style>
 </head>
 <body>
@@ -584,6 +592,571 @@ const I18N = {
       'nav.sha-home':'Overview','nav.sha-review':'Review Cases','nav.sha-history':'Decisions',
       'nav.adm-home':'Dashboard','nav.adm-members':'Members','nav.adm-assign':'Assignments','nav.adm-cert':'Certificates','nav.adm-experts':'Auditors & Sharia Board','nav.adm-price':'Price Table','nav.adm-docs':'Documents','nav.cons-docs':'Documents','nav.ent-contract':'Contracts','nav.ent-pre':'AI Pre-assessment','nav.ent-docs':'Documents','nav.aud-pre':'AI Pre-assessment Review','nav.aud-detail':'Company Detail','nav.aud-inbox':'01 Intake · Assignments','nav.aud-flow':'Process Board','nav.aud-contract':'03 Contract','nav.aud-cert':'07·08 Certificate · SiHalal','nav.aud-resubmit':'Resubmit Center','nav.aud-materials':'Materials','nav.aud-aiq':'AI Review Queue','nav.aud-eval':'SJPH/HAS Evaluation','nav.aud-mock':'Mock Audit','nav.aud-final':'Report & Submit','nav.adm-contract':'Contracts'}
 };
+
+
+/* uiv4 translations: KO / EN / ID. Values are UI text, never company data. */
+const UIV4_I18N = {
+  "sector.food": ["식품", "Food", "Pangan"],
+  "sector.cosmetics": ["화장품", "Cosmetics", "Kosmetik"],
+  "sector.household": ["생활용품", "Household goods", "Barang rumah tangga"],
+  "sector.warehouse": ["창고", "Warehouse", "Gudang"],
+  "sector.transport": ["운송", "Transport", "Transportasi"],
+  "stage.pagination": ["페이지 이동", "Pagination", "Navigasi halaman"],
+  "stage.previous": ["이전 페이지", "Previous page", "Halaman sebelumnya"],
+  "stage.next": ["다음 페이지", "Next page", "Halaman berikutnya"],
+  "stage.page_count": ["{count}건 · 페이지 {page}/{pages}", "{count} items · Page {page}/{pages}", "{count} item · Halaman {page}/{pages}"],
+  "members.users": ["사용자", "Users", "Pengguna"],
+  "members.signups": ["스태프 가입 승인 대기", "Pending staff sign-ups", "Pendaftaran staf menunggu persetujuan"],
+  "members.forbidden": ["권한 없음", "Access denied", "Tidak memiliki izin"],
+  "members.error": ["조회에 실패했습니다. 다시 시도해 주세요.", "Could not load. Please try again.", "Gagal memuat. Silakan coba lagi."],
+  "members.retry": ["다시 시도", "Retry", "Coba lagi"],
+  "members.loading": ["불러오는 중…", "Loading…", "Memuat…"],
+  "members.empty_signups": ["대기 중인 가입 신청이 없습니다.", "No pending sign-ups.", "Tidak ada pendaftaran tertunda."],
+  "members.empty_users": ["사용자 없음", "No users", "Tidak ada pengguna"],
+  "members.approve": ["승인", "Approve", "Setujui"],
+  "members.reject": ["반려", "Reject", "Tolak"],
+  "members.all": ["전체", "All", "Semua"],
+  "members.username": ["아이디", "Username", "ID pengguna"],
+  "members.role": ["역할", "Role", "Peran"],
+  "members.org": ["소속(org)", "Organization", "Organisasi"],
+  "docs.ai_unchecked": ["AI 미검증", "AI not verified", "Belum diverifikasi AI"],
+  "docs.ai_unavailable": ["AI가 비활성 상태여서 검증하지 못했습니다.", "AI verification is unavailable because AI is disabled.", "Verifikasi belum dilakukan karena AI tidak aktif."],
+  "docs.ai_unknown": ["AI 검증 결과가 없습니다. 원문과 직접 대조해 주세요.", "No AI verification result. Compare against the original document.", "Belum ada hasil verifikasi AI. Cocokkan dengan dokumen asli."],
+  "docs.ai_match": ["일치", "Matches", "Sesuai"],
+  "docs.ai_review": ["확인 필요", "Review needed", "Perlu diperiksa"],
+  "role.applicant": ["인증기업", "Applicant company", "Perusahaan pemohon"],
+  "role.consultant": ["전담 컨설턴트", "Consultant", "Konsultan"],
+  "role.auditor": ["오디터 (심사원)", "Auditor", "Auditor"],
+  "role.fatwa_liaison": ["샤리아 위원", "Sharia board member", "Anggota dewan syariah"],
+  "role.admin": ["관리자", "Administrator", "Administrator"],
+  "role.operator": ["운영 담당자", "Operations", "Operasional"],
+  "role.penyelia_halal": ["할랄 감독자", "Halal supervisor", "Penyelia halal"],
+  "role.pendamping_pph": ["PPH 동반자", "PPH companion", "Pendamping PPH"],
+  "role.client_admin": ["기업 관리자", "Company administrator", "Administrator perusahaan"],
+  "role.client_staff": ["기업 담당자", "Company staff", "Staf perusahaan"],
+  "signup.intro": ["할랄인증 신청을 위한 기업 정보를 입력해 주세요.", "Enter your company information to apply for halal certification.", "Masukkan informasi perusahaan untuk mengajukan sertifikasi halal."],
+  "signup.find_consultant": ["컨설턴트 찾기", "Find a consultant", "Cari konsultan"],
+  "signup.no_consultant": ["선택하지 않음", "Not selected", "Belum dipilih"],
+  "signup.selected_consultant": ["선택한 컨설턴트", "Selected consultant", "Konsultan terpilih"],
+  "signup.clear_consultant": ["선택 해제", "Clear selection", "Hapus pilihan"],
+  "signup.consultant_hint": ["이름 또는 아이디로 검색하세요. 선택하지 않아도 가입할 수 있습니다.", "Search by name or username. You can sign up without selecting a consultant.", "Cari berdasarkan nama atau ID. Anda dapat mendaftar tanpa memilih konsultan."],
+  "signup.qr_assign": ["QR로 초대한 컨설턴트가 자동 배정됩니다.", "The consultant who invited you via QR will be assigned automatically.", "Konsultan yang mengundang melalui QR akan ditetapkan otomatis."],
+  "signup.qr_consultant": ["QR 초대 컨설턴트 · ", "QR inviting consultant · ", "Konsultan pengundang QR · "],
+  "signup.query": ["이름 또는 아이디", "Name or username", "Nama atau ID pengguna"],
+  "signup.query_hint": ["두 글자 이상 입력하세요", "Enter at least two characters", "Masukkan minimal dua karakter"],
+  "signup.query_required": ["두 글자 이상 입력하세요.", "Enter at least two characters.", "Masukkan minimal dua karakter."],
+  "signup.search_prompt": ["이름 또는 아이디를 입력해 검색하세요.", "Enter a name or username to search.", "Masukkan nama atau ID untuk mencari."],
+  "signup.searching": ["검색 중…", "Searching…", "Mencari…"],
+  "signup.search_error": ["검색에 실패했습니다. 다시 시도해 주세요.", "Search failed. Please try again.", "Pencarian gagal. Silakan coba lagi."],
+  "signup.search_limit": ["최대 20명 표시 · 결과가 많으면 이름이나 아이디를 더 입력하세요.", "Showing up to 20 people. Refine the name or username for more precise results.", "Maksimal 20 orang ditampilkan. Perinci nama atau ID untuk mempersempit hasil."],
+  "signup.official_invite": ["공식 가입 초대 · 담당 컨설턴트 미지정", "Official sign-up invitation · No consultant assigned", "Undangan resmi · Konsultan belum ditetapkan"],
+  "signup.invalid_invite": ["유효하지 않은 초대 코드 · 담당자 확인 필요", "Invalid invitation code · Contact your representative", "Kode undangan tidak valid · Hubungi penanggung jawab"],
+  "invite.recipient": ["받는 고객 이메일", "Customer email", "Email pelanggan"],
+  "invite.qr_help": ["내 영업 QR 이미지와 가입 링크 주소를 함께 보냅니다.", "Send your sales QR image and sign-up link together.", "Kirim gambar QR dan tautan pendaftaran Anda bersama."],
+  "invite.qr_send": ["QR · 가입 링크 이메일 발송", "Email QR and sign-up link", "Kirim QR dan tautan pendaftaran melalui email"],
+  "focus.supervisor": ["기업의 제출 자료와 감독자 정보를 점검하세요.", "Review the company submissions and supervisor information.", "Periksa dokumen perusahaan dan informasi penyelia."],
+  "focus.contact": ["담당 정보 확인", "Review contact information", "Periksa informasi penanggung jawab"],
+  "docs.ai_extraction_note": ["AI 추출값입니다 — 원본 서류와 대조한 뒤 반영하세요.", "These values were extracted by AI. Check the originals before applying them.", "Nilai ini diekstrak oleh AI. Cocokkan dengan dokumen asli sebelum menerapkannya."],
+  "upload.new_version": ["새 버전", "New version", "Versi baru"],
+  "upload.status.queued": ["대기", "Queued", "Antrean"],
+  "upload.status.uploading": ["올리는 중", "Uploading", "Mengunggah"],
+  "upload.status.failed": ["실패", "Failed", "Gagal"],
+  "upload.status.pending": ["분석 대기", "Awaiting analysis", "Menunggu analisis"],
+  "upload.status.complete": ["분석 완료", "Analysis complete", "Analisis selesai"],
+  "upload.status.duplicate": ["이미 올림", "Already uploaded", "Sudah diunggah"],
+  "upload.check_count": ["필수 {ok}/{total} 제출", "Required: {ok}/{total} submitted", "Wajib: {ok}/{total} terkirim"],
+  "upload.missing_count": ["미제출 필수 서류 {count}건: ", "Missing required documents ({count}): ", "Dokumen wajib belum dikirim ({count}): "],
+  "upload.failed_code": ["업로드 실패({code})", "Upload failed ({code})", "Unggahan gagal ({code})"],
+  "upload.materials_pending": ["원재료 {count}건이 확인 대기에 있습니다(원재료 등록 창에서 확인).", "{count} raw material entries await confirmation in the material registration dialog.", "{count} bahan menunggu konfirmasi di dialog pendaftaran bahan."],
+  "upload.starting": ["처리 시작… ({count}건)", "Starting… ({count} files)", "Memulai… ({count} berkas)"],
+  "upload.processing": ["처리 중 {index}/{total} — {filename}", "Processing {index}/{total} — {filename}", "Memproses {index}/{total} — {filename}"],
+  "upload.progress_error": ["진행 상황 조회 실패: ", "Could not retrieve progress: ", "Gagal mengambil progres: "],
+  "upload.zip_error": ["ZIP 업로드 실패: ", "ZIP upload failed: ", "Unggahan ZIP gagal: "],
+  "upload.multiple": ["여러 서류 올리기", "Upload multiple documents", "Unggah beberapa dokumen"],
+  "upload.drop": ["서류 여러 개를 여기로 끌어다 놓으세요", "Drop multiple documents here", "Letakkan beberapa dokumen di sini"],
+  "upload.limit": ["파일당 최대 20MB · 한 번에 하나씩 올립니다.", "Up to 20 MB per file · Files upload one at a time.", "Maksimal 20 MB per berkas · Diunggah satu per satu."],
+  "upload.wait": ["진행 중인 업로드·분석을 기다려 주세요.", "Wait for the current upload and analysis to finish.", "Tunggu unggahan dan analisis saat ini selesai."],
+  "upload.file_error": ["파일 읽기 또는 서버 연결 실패", "Could not read the file or connect to the server", "Gagal membaca berkas atau menghubungi server"],
+  "upload.analysis_wait": ["자동 분석 대기 — 재처리가 필요할 수 있습니다.", "Waiting for automatic analysis; reprocessing may be needed.", "Menunggu analisis otomatis; pemrosesan ulang mungkin diperlukan."],
+  "upload.analysis_failed": ["AI 분석 실패 — 재처리 필요", "AI analysis failed; reprocessing needed", "Analisis AI gagal; perlu diproses ulang"],
+  "upload.progress_failed": ["진행 상황을 불러오지 못했습니다. 문서함에서 다시 확인해 주세요.", "Could not load progress. Check the document library.", "Gagal memuat progres. Periksa kembali di pustaka dokumen."],
+  "upload.timeout": ["3분간 확인했습니다. 분석 대기 서류는 문서함에서 다시 확인해 주세요.", "Checked for three minutes. Review documents awaiting analysis in the document library.", "Pemeriksaan berlangsung tiga menit. Periksa dokumen yang menunggu analisis di pustaka dokumen."],
+  "upload.interrupted": ["업로드 중단", "Upload interrupted", "Unggahan dihentikan"],
+  "upload.check_error": ["서류 정보를 확인하지 못했습니다. 다시 불러와 주세요.", "Could not read document information. Please reload.", "Informasi dokumen tidak dapat dibaca. Silakan muat ulang."],
+  "upload.draft_saved": ["기업 정보를 임시저장했습니다. 품목·공장·조직은 각 등록 버튼으로 저장해 주세요.", "Company draft saved. Save products, facilities and team changes using their own buttons.", "Draf perusahaan tersimpan. Simpan produk, fasilitas, dan tim dengan tombol masing-masing."],
+  "upload.zip_no_result": ["완료 결과를 받지 못했습니다. 문서함을 확인해 주세요.", "No completion result received. Check the document library.", "Hasil penyelesaian belum diterima. Periksa pustaka dokumen."],
+  "upload.zip_disconnected": ["처리 중 연결이 끊겼습니다.", "Connection lost during processing.", "Koneksi terputus saat pemrosesan."],
+  "upload.text_001": ["필요 서류 현황", "Required documents status", "Status berkas yang diperlukan"],
+  "upload.text_002": ["제출", "Submit", "Kirim"],
+  "upload.text_003": ["해당 없음", "Not applicable", "Tidak berlaku"],
+  "upload.text_004": ["미제출", "Not submitted", "Belum diajukan"],
+  "upload.text_005": ["서류", "Documents", "Berkas"],
+  "upload.text_006": ["필수", "Required", "Wajib"],
+  "upload.text_007": ["사유·비고", "Reason·note", "Alasan·catatan"],
+  "upload.text_008": ["선택", "Select", "Pilihan"],
+  "upload.text_009": ["서류 정보가 없습니다.", "No document information.", "Tidak ada informasi berkas."],
+  "upload.text_010": ["임시저장 · 일괄 업로드", "Draft saved · Bulk upload", "Draf tersimpan · Unggah massal"],
+  "upload.text_011": ["ZIP 파일로 서류 일괄 올리기", "Bulk upload documents as ZIP file", "Unggah berkas massal sebagai file ZIP"],
+  "upload.text_012": ["ZIP·RAR·7z 를 압축 해제해 서류를 자동 분류·채웁니다. 처리 중에는 창을 닫지 마세요.", "Extracts ZIP·RAR·7z and auto-classifies·fills documents. Do not close the window during processing.", "Ekstrak ZIP·RAR·7z dan klasifikasi·isi berkas otomatis. Jangan tutup jendela selama proses."],
+  "upload.text_013": ["상태", "Status", "Status"],
+  "upload.text_014": ["결과", "Result", "Hasil"],
+  "upload.text_015": ["환불 요청", "Refund request", "Permintaan pengembalian dana"],
+  "upload.text_016": ["환불 가능한(결제 완료) 인보이스가 없습니다.", "No refundable (paid) invoices.", "Tidak ada invoice yang dapat dikembalikan (pembayaran selesai)."],
+  "upload.text_017": ["환불 사유", "Refund reason", "Alasan pengembalian dana"],
+  "upload.text_018": ["금액 (비우면 전액)", "Amount (blank = full amount)", "Nominal (kosong = penuh)"],
+  "upload.text_019": ["관리자 승인(maker-checker) 후 처리됩니다.", "Processed after admin approval (maker-checker).", "Diproses setelah persetujuan admin (maker-checker)."],
+  "upload.text_020": ["취소", "Cancel", "Batal"],
+  "upload.text_021": ["요청", "Request", "Permintaan"],
+  "upload.text_022": ["환불 사유를 입력하세요", "Enter refund reason", "Masukkan alasan pengembalian dana"],
+  "upload.text_023": ["예: 1500000", "e.g. 1500000", "contoh: 1500000"],
+  "upload.text_024": ["불러오지 못했습니다.", "Failed to load.", "Tidak dapat dimuat."],
+  "upload.text_025": ["대상 업체가 없습니다.", "No target companies.", "Tidak ada perusahaan sasaran."],
+  "upload.text_026": ["이 작업은 권한이 없습니다.", "You do not have permission for this action.", "Anda tidak memiliki izin untuk tindakan ini."],
+  "upload.text_027": ["임시저장에 실패했습니다.", "Failed to save draft.", "Gagal menyimpan draf."],
+  "upload.text_028": ["ZIP 파일을 올리는 중…", "Uploading ZIP file…", "Mengunggah file ZIP…"],
+  "upload.text_029": ["파일을 읽을 수 없습니다.", "Cannot read file.", "Tidak dapat membaca file."],
+  "upload.text_030": ["업로드에 실패했습니다.", "Upload failed.", "Gagal mengunggah."],
+  "upload.text_031": ["처리 실패", "Processing Failed", "Gagal dalam Pemrosesan"],
+  "upload.text_032": ["마무리 중…", "Finishing…", "Menyelesaikan…"],
+  "upload.text_033": ["서류를 처리했습니다.", "Documents processed.", "Berkas telah diproses."],
+  "upload.text_034": ["환불 사유를 입력하세요.", "Enter refund reason.", "Masukkan alasan pengembalian dana."],
+  "upload.text_035": ["이 작업은 권한이 없습니다. (operator 전용)", "No permission for this action. (operator only)", "Tidak ada izin untuk tindakan ini. (khusus operator)"],
+  "upload.text_036": ["환불 요청에 실패했습니다.", "Refund request failed.", "Permintaan pengembalian dana gagal."],
+  "upload.text_037": ["환불을 요청했습니다. 관리자 승인 후 처리됩니다.", "Refund requested. Processed after admin approval.", "Pengembalian dana diminta. Diproses setelah persetujuan admin."],
+  "ui.text_001": ["검색", "Search", "Cari"],
+  "ui.text_002": ["닫기", "Close", "Tutup"],
+  "ui.text_003": ["청구서가 없습니다.", "No invoices.", "Tidak ada tagihan."],
+  "ui.text_004": ["구분", "Category", "Kategori"],
+  "ui.text_005": ["금액", "Amount", "Nominal"],
+  "ui.text_006": ["문서", "Documents", "Dokumen"],
+  "ui.text_007": ["견적서 PDF", "Quotation PDF", "Penawaran PDF"],
+  "ui.text_008": ["영수증", "Receipt", "Faktur"],
+  "ui.text_009": ["세금계산서", "Tax invoice", "Faktur Pajak"],
+  "ui.text_010": ["청구 문서", "Billing Document", "Dokumen Penagihan"],
+  "ui.text_011": ["저장", "Save", "Simpan"],
+  "ui.text_012": ["초대 코드", "Invite codes", "Kode undangan"],
+  "ui.text_013": ["가입 링크", "Signup Link", "Tautan Pendaftaran"],
+  "ui.text_014": ["사용 횟수", "Max uses", "Batas penggunaan"],
+  "ui.text_015": ["QR 내려받기", "Download QR", "Unduh QR"],
+  "ui.text_016": ["담당 기업", "Assigned Company", "Perusahaan yang Ditugaskan"],
+  "ui.text_017": ["결제 완료 공급가 합계", "Payment Complete Supply Amount Total", "Total Nilai Pokok Pembayaran Selesai"],
+  "ui.text_018": ["수수료율", "Commission rate", "Tarif komisi"],
+  "ui.text_019": ["수수료", "Commission", "Komisi"],
+  "ui.text_020": ["실적 내역", "Performance Details", "Detail Kinerja"],
+  "ui.text_021": ["청구서", "Invoice", "Faktur"],
+  "ui.text_022": ["업체", "Company", "Perusahaan"],
+  "ui.text_023": ["공급가", "Supply Amount", "Nilai Pokok"],
+  "ui.text_024": ["일자", "Date", "Tanggal"],
+  "ui.text_025": ["실적이 없습니다.", "No performance.", "Tidak ada kinerja."],
+  "ui.text_026": ["지급 내역", "Payouts", "Pembayaran"],
+  "ui.text_027": ["기간", "Period", "Periode"],
+  "ui.text_028": ["지급일", "Paid on", "Dibayar pada"],
+  "ui.text_029": ["지급 내역이 없습니다.", "No payment records.", "Tidak ada riwayat pembayaran."],
+  "ui.text_030": ["내 영업 정보", "My Sales Info", "Info Sales Saya"],
+  "ui.text_031": ["영업 QR", "Sales QR", "QR Sales"],
+  "ui.text_032": ["아직 발행되지 않았거나 내려받을 수 없습니다.", "Not yet issued or cannot be downloaded.", "Belum diterbitkan atau tidak dapat diunduh."],
+  "ui.text_033": ["표시 이름", "Display Name", "Nama Tampilan"],
+  "ui.text_034": ["회사명", "Company Name", "Nama Perusahaan"],
+  "ui.text_035": ["사업자번호", "Business Number", "Nomor Usaha"],
+  "ui.text_036": ["연락처", "Contact", "Kontak"],
+  "ui.text_037": ["이메일", "Email", "email"],
+  "ui.text_038": ["주소", "Address", "Alamat"],
+  "ui.text_039": ["은행", "Bank", "Bank"],
+  "ui.text_040": ["계좌번호", "Account number", "Nomor rekening"],
+  "ui.text_041": ["예금주", "Account holder", "Nama pemilik rekening"],
+  "ui.text_042": ["이 작업을 할 권한이 없습니다.", "You do not have permission to do this.", "Anda tidak memiliki izin untuk melakukan ini."],
+  "ui.text_043": ["저장에 실패했습니다.", "Failed to save.", "Gagal menyimpan."],
+  "ui.text_044": ["저장했습니다.", "Saved.", "Tersimpan."],
+  "ui.text_045": ["QR을 불러올 수 없습니다.", "Cannot load QR.", "Tidak dapat memuat QR."],
+  "ui.text_046": ["지금 할 일", "To-do now", "Yang harus dilakukan sekarang"],
+  "ui.text_047": ["신청 철회", "Withdraw application", "Tarik permohonan"],
+  "ui.text_048": ["원재료 정리 도구", "Raw material cleanup tool", "Alat perapian bahan baku"],
+  "ui.text_049": ["보류", "Hold", "Ditunda"],
+  "ui.text_050": ["열기", "Open", "Buka"],
+  "ui.text_051": ["종류", "Type", "Jenis"],
+  "ui.text_052": ["분야", "Field", "Bidang"],
+  "ui.text_053": ["단계", "Stage", "Tahap"],
+  "ui.text_054": ["오디터", "Auditor", "Auditor"],
+  "ui.text_055": ["컨설턴트", "Consultant", "Konsultan"],
+  "ui.text_056": ["다음 할 일", "Next task", "Tugas berikutnya"],
+  "ui.text_057": ["마지막 변경", "Last changed", "Perubahan terakhir"],
+  "ui.text_058": ["분야 전체", "All fields", "Semua bidang"],
+  "ui.text_059": ["담당 전체", "All in charge", "Semua penanggung jawab"],
+  "ui.text_060": ["보류만", "Pending only", "Hanya tertunda"],
+  "ui.text_061": ["최근 변경순", "Recently changed", "Terbaru diubah"],
+  "ui.text_062": ["업체명", "Company name", "Nama perusahaan"],
+  "ui.text_063": ["업체명 검색", "Search company name", "Cari nama perusahaan"],
+  "ui.text_064": ["업체가 많으면 보드 대신", "If many companies, instead of the board", "Jika banyak perusahaan, alih-alih papan"],
+  "ui.text_065": ["단계별 업체 목록", "Company list by stage", "Daftar perusahaan per tahap"],
+  "ui.text_066": ["사업자등록증으로 자동 채우기", "Auto-fill with business registration certificate", "Isi otomatis dengan surat izin usaha"],
+  "ui.text_067": ["영문 사업자등록증을 올리고 버튼을 누르면 기업명, 사업자등록번호, 대표자, 주소를 채웁니다.", "Upload the English business registration certificate and press the button to fill in company name, business registration number, representative, and address.", "Unggah surat izin usaha bahasa Inggris dan tekan tombol untuk mengisi nama perusahaan, nomor registrasi usaha, perwakilan, dan alamat."],
+  "ui.text_068": ["사업자등록증을 여기로 끌어다 놓거나 클릭해서 선택하세요", "Drag and drop the business registration certificate here or click to select", "Tarik dan lepas surat izin usaha ke sini atau klik untuk memilih"],
+  "ui.text_069": ["PDF · JPG · PNG 한 개", "One PDF · JPG · PNG", "Satu PDF · JPG · PNG"],
+  "ui.text_070": ["자동 채우기", "Auto-fill", "Isi otomatis"],
+  "ui.text_071": ["컨설턴트 초대 링크로 접속했습니다", "Accessed via consultant invitation link", "Diakses melalui tautan undangan konsultan"],
+  "ui.text_072": ["담당 컨설턴트", "Consultant in charge", "Konsultan penanggung jawab"],
+  "ui.text_073": ["기업 정보", "Company Information", "Informasi Perusahaan"],
+  "ui.text_074": ["기업명 (국문)", "Company Name (Korean)", "Nama Perusahaan (Korea)"],
+  "ui.text_075": ["기업명 (영문)", "Company Name (English)", "Nama Perusahaan (Inggris)"],
+  "ui.text_076": ["사업자등록번호", "Business registration no.", "Nomor izin usaha"],
+  "ui.text_077": ["대표자명", "Representative Name", "Nama Perwakilan"],
+  "ui.text_078": ["인증 분야", "Certification Field", "Bidang Sertifikasi"],
+  "ui.text_079": ["사업장 주소", "Business Address", "Alamat Perusahaan"],
+  "ui.text_080": ["담당자 1 · 실무담당자", "PIC 1 · Working-level Manager", "PIC 1 · Penanggung Jawab Teknis"],
+  "ui.text_081": ["성명", "Full name", "Nama lengkap"],
+  "ui.text_082": ["직위", "Position", "Jabatan"],
+  "ui.text_083": ["담당자 2 · 관리책임자", "PIC 2 · Management Manager", "PIC 2 · Manajer Manajemen"],
+  "ui.text_084": ["계정 정보", "Account Information", "Informasi Akun"],
+  "ui.text_085": ["대표 이메일 (ID)", "Primary Email (ID)", "Email Utama (ID)"],
+  "ui.text_086": ["비밀번호", "Password", "Kata sandi"],
+  "ui.text_087": ["비밀번호 확인", "Confirm Password", "Konfirmasi Kata sandi"],
+  "ui.text_088": ["인증기업 가입 완료", "Certified company registration complete", "Pendaftaran perusahaan tersertifikasi selesai"],
+  "ui.text_089": ["할랄인증 전담 컨설턴트 등록을 위한 정보를 입력해 주세요. 가입 후 기업 초대 링크를 만들 수 있습니다.", "Please enter information to register as a dedicated halal certification consultant. After registration, you can create company invitation links.", "Silakan masukkan informasi untuk mendaftar sebagai konsultan khusus sertifikasi halal. Setelah pendaftaran, Anda dapat membuat tautan undangan perusahaan."],
+  "ui.text_090": ["기본 정보", "Basic Information", "Informasi Dasar"],
+  "ui.text_091": ["소속", "Affiliation", "Afiliasi"],
+  "ui.text_092": ["메일주소 (ID)", "Email Address (ID)", "Alamat Email (ID)"],
+  "ui.text_093": ["중복 확인", "Check Duplicate", "Cek Duplikat"],
+  "ui.text_094": ["비밀번호 (PW)", "Password (PW)", "Kata sandi (PW)"],
+  "ui.text_095": ["컨설턴트 가입 신청", "Consultant Registration", "Pendaftaran Konsultan"],
+  "ui.text_096": ["품질관리 과장", "Quality Control Manager", "Manajer Kontrol Kualitas"],
+  "ui.text_097": ["생산본부 부장", "Production Division Manager", "Manajer Divisi Produksi"],
+  "ui.text_098": ["8자 이상", "8 characters or more", "8 karakter atau lebih"],
+  "ui.text_099": ["메가인포경영자문", "Megainfo Management Consulting", "Megainfo Manajemen Konsultan"],
+  "ui.text_100": ["홍길동", "Hong Gildong", "Hong Gildong"],
+  "ui.text_101": ["수석 컨설턴트", "Senior Consultant", "Konsultan Senior"],
+  "ui.text_102": ["비밀번호가 일치하지 않습니다. 다시 입력해 주세요.", "Passwords do not match. Please re-enter.", "Kata sandi tidak cocok. Silakan masukkan kembali."],
+  "ui.text_103": ["이미 가입된 계정입니다. 로그인해 주세요.", "Account already registered. Please log in.", "Akun sudah terdaftar. Silakan login."],
+  "ui.text_104": ["기업명(국문)", "Company Name (Korean)", "Nama Perusahaan (Korea)"],
+  "ui.text_105": ["기업명(영문)", "Company name (English)", "Nama perusahaan (Inggris)"],
+  "ui.text_106": ["담당자", "Person In Charge", "Penanggung jawab"],
+  "ui.text_107": ["입력값을 확인해 주세요.", "Please check your input.", "Periksa input Anda."],
+  "ui.text_108": ["가입 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.", "An error occurred during registration. Please try again later.", "Terjadi kesalahan saat pendaftaran. Silakan coba lagi nanti."],
+  "ui.text_109": ["인증기업 가입이 완료되었습니다.", "Certification company registration complete.", "Pendaftaran perusahaan sertifikasi selesai."],
+  "ui.text_110": ["서버에 연결할 수 없습니다. 네트워크를 확인해 주세요.", "Cannot connect to server. Please check your network.", "Tidak dapat terhubung ke server. Periksa jaringan Anda."],
+  "ui.text_111": ["진행 중인 인증 신청이 없습니다.", "No ongoing certification application.", "Tidak ada aplikasi sertifikasi yang berlangsung."],
+  "ui.text_112": ["보관 서류", "Stored Documents", "Dokumen Tersimpan"],
+  "ui.text_113": ["서류 종류", "Document Type", "Jenis Dokumen"],
+  "ui.text_114": ["검토 대기", "Pending Review", "Menunggu Tinjauan"],
+  "ui.text_115": ["서류 올리기", "Upload Document", "Unggah Dokumen"],
+  "ui.text_116": ["업로드 시 종류에 맞게 자동 파싱·스크리닝됩니다", "When uploaded, it is automatically parsed and screened according to type", "Saat diunggah, secara otomatis diurai dan disaring sesuai jenis"],
+  "ui.text_117": ["업로드", "Upload", "Unggah"],
+  "ui.text_118": ["서류 업로드는 신청기업·컨설턴트 계정만 할 수 있습니다.", "Document upload is only allowed for applicant company and consultant accounts.", "Unggah berkas hanya dapat dilakukan oleh akun perusahaan pemohon dan konsultan."],
+  "ui.text_119": ["서류함", "Document Box", "Kotak Dokumen"],
+  "ui.text_120": ["파일", "File", "Berkas"],
+  "ui.text_121": ["검토", "Review", "Peninjauan"],
+  "ui.text_122": ["등록", "Register", "Daftar"],
+  "ui.text_123": ["보관된 서류가 없습니다. 위에서 올려 주세요.", "No stored documents. Please upload from above.", "Tidak ada dokumen tersimpan. Silakan unggah dari atas."],
+  "ui.text_124": ["파일명·종류 검색", "Search filename/type", "Cari nama file/jenis"],
+  "ui.text_125": ["보완", "Gap", "Kurang"],
+  "ui.text_126": ["파일을 선택해 주세요.", "Please select a file.", "Silakan pilih file."],
+  "ui.text_127": ["업로드 중…", "Uploading…", "Mengunggah…"],
+  "ui.text_128": ["업로드 실패", "Upload failed", "Upload Gagal"],
+  "ui.text_129": ["서류를 올렸습니다.", "Document uploaded.", "Dokumen telah diunggah."],
+  "ui.text_130": ["건 연결", "Link Case", "Hubungkan Kasus"],
+  "ui.text_131": ["건", "Cases", " kasus"],
+  "ui.text_132": ["파일을 열 수 없습니다.", "Cannot open the file.", "Tidak dapat membuka file."],
+  "ui.text_133": ["신규 인증기업 초대", "Invite New Certified Company", "Undang Perusahaan Tersertifikasi Baru"],
+  "ui.text_134": ["초대 링크로 가입한 기업은 자동으로 내 담당으로 귀속됩니다.", "Companies that sign up via the invitation link are automatically assigned to me.", "Perusahaan yang mendaftar melalui tautan undangan secara otomatis ditugaskan kepada saya."],
+  "ui.text_135": ["업체명(참고, 선택)", "Company Name (Reference, selected)", "Nama Perusahaan (Referensi, Pilihan)"],
+  "ui.text_136": ["메모(선택)", "Memo (selected)", "Catatan (Pilihan)"],
+  "ui.text_137": ["유효기간(일)", "Valid for (days)", "Berlaku (hari)"],
+  "ui.text_138": ["초대 링크 생성", "Create Invitation Link", "Buat Tautan Undangan"],
+  "ui.text_139": ["유효", "Valid", "Valid"],
+  "ui.text_140": ["링크 복사", "Copy link", "Salin tautan"],
+  "ui.text_141": ["회수", "Revoke", "Cabut"],
+  "ui.text_142": ["발급한 초대가 없습니다.", "No issued invitations.", "Tidak ada undangan yang diterbitkan."],
+  "ui.text_143": ["PT 가나다식품", "PT Gana Kana Food", "PT Gana Kana Food"],
+  "ui.text_144": ["만료", "Expired", "Berakhir"],
+  "ui.text_145": ["초대 생성에 실패했습니다.", "Failed to create invitation.", "Gagal membuat undangan."],
+  "ui.text_146": ["회수에 실패했습니다.", "Failed to revoke.", "Gagal mencabut."],
+  "ui.text_147": ["초대를 회수했습니다.", "Invitation revoked.", "Undangan dicabut."],
+  "ui.text_148": ["링크를 복사했습니다.", "Link copied.", "Tautan disalin."],
+  "ui.text_149": ["복사 실패 — 링크를 직접 선택해 복사하세요.", "Copy failed — select and copy the link manually.", "Gagal menyalin — pilih dan salin tautan secara manual."],
+  "focus.closed": ["종결된 신청입니다.", "This application is closed.", "Permohonan ini telah ditutup."],
+  "focus.documents": ["인증 문서함 확인", "View certification documents", "Lihat dokumen sertifikasi"],
+  "focus.done": ["인증 결과와 발급 문서를 확인하세요.", "Review the certification result and issued documents.", "Periksa hasil sertifikasi dan dokumen yang diterbitkan."],
+  "focus.draft": ["기업 정보와 품목을 저장한 뒤 필요한 서류를 제출하세요.", "Save company information and products, then submit the required documents.", "Simpan informasi perusahaan dan produk, lalu kirim dokumen yang diperlukan."],
+  "focus.continue": ["신청서 이어 쓰기", "Continue application", "Lanjutkan permohonan"],
+  "focus.hold": ["요청된 보완 내용과 제출 자료를 확인하세요.", "Review the requested corrections and submitted documents.", "Periksa permintaan pelengkapan dan dokumen yang dikirim."],
+  "focus.corrections": ["보완 요청 확인", "Review correction requests", "Periksa permintaan pelengkapan"],
+  "focus.quote": ["견적과 계약서가 도착하면 내용을 확인하세요.", "Review the quote and contract when they arrive.", "Periksa penawaran dan kontrak setelah diterima."],
+  "focus.contract": ["계약 진행 확인", "View contract progress", "Lihat progres kontrak"],
+  "focus.audit": ["심사 일정과 준비할 자료를 확인하세요.", "Review the audit schedule and materials to prepare.", "Periksa jadwal audit dan dokumen yang perlu disiapkan."],
+  "focus.prepare": ["심사 준비 확인", "Review audit preparation", "Periksa persiapan audit"],
+  "focus.review": ["담당자의 심의·발급 처리를 기다리고 있습니다.", "Awaiting review and issuance by the responsible staff.", "Menunggu peninjauan dan penerbitan oleh petugas."],
+  "focus.progress": ["진행 문서 확인", "View progress documents", "Lihat dokumen progres"],
+  "focus.pre": ["사전심사 결과와 추가 요청을 확인하세요.", "Review pre-assessment results and additional requests.", "Periksa hasil pra-penilaian dan permintaan tambahan."],
+  "focus.pre_result": ["사전심사 결과 확인", "View pre-assessment results", "Lihat hasil pra-penilaian"],
+  "focus.next": ["현재 신청의 다음 작업", "Next task for this application", "Tugas berikutnya untuk permohonan ini"],
+  "focus.contract_wait": ["계약 준비 대기", "Waiting for contract preparation", "Menunggu persiapan kontrak"],
+  "focus.contract_hint": ["사전심사와 정식 신청 접수 후 담당자가 견적·계약서를 발송합니다. 도착하면 이 화면에서 확인할 수 있습니다.", "After pre-assessment and formal intake, your contact will send the quote and contract. You can review them here.", "Setelah pra-penilaian dan penerimaan permohonan resmi, petugas akan mengirim penawaran dan kontrak. Anda dapat meninjaunya di sini."],
+  "upload.draft": ["기업 정보 임시저장", "Save company draft", "Simpan draf perusahaan"],
+  "upload.retry": ["다시 올리기", "Upload again", "Unggah lagi"],
+  "upload.too_large": ["용량 초과", "File too large", "Berkas terlalu besar"],
+  "upload.locked": ["잠긴 신청서", "Application locked", "Permohonan terkunci"],
+  "upload.unsupported": ["지원하지 않는 형식", "Unsupported format", "Format tidak didukung"],
+  "upload.mismatch": ["확장자와 내용이 다름", "Extension does not match content", "Ekstensi tidak sesuai dengan isi"],
+  "upload.filename": ["파일명", "Filename", "Nama berkas"],
+  "docs.verify": ["AI 검증", "AI verification", "Verifikasi AI"],
+  "docs.reverify": ["AI 재검증", "Recheck with AI", "Verifikasi ulang dengan AI"],
+  "docs.verify_failed": ["검증을 시작하지 못했습니다.", "Could not start verification.", "Verifikasi tidak dapat dimulai."],
+  "docs.verify_empty": ["검증할 서류가 없거나 검증 기능이 꺼져 있습니다.", "There are no documents to verify or verification is disabled.", "Tidak ada dokumen untuk diverifikasi atau verifikasi dinonaktifkan."],
+  "docs.verify_started": ["검증을 시작했습니다({count}건).", "Verification started ({count} documents).", "Verifikasi dimulai ({count} dokumen)."],
+  "docs.mismatch": ["불일치", "Mismatch", "Tidak sesuai"],
+  "docs.materials_added": ["원재료 {count}건 연결", "Linked {count} raw materials", "{count} bahan ditautkan"],
+  "docs.products_added": ["제품 {count}건", "{count} products", "{count} produk"],
+  "docs.type_changed": ["칸 확인: {selected}로 올렸지만 문서 내용은 {detected}이므로 해당 종류로 저장했습니다.", "Document type: uploaded as {selected}, but its content matches {detected} and was saved under that type.", "Jenis dokumen: diunggah sebagai {selected}, namun isinya sesuai dengan {detected} dan disimpan dengan jenis tersebut."],
+  "docs.profile_unchanged": ["업체 정보는 바꾸지 않았습니다(사업자번호 {reason}).", "Company information was unchanged (business number: {reason}).", "Informasi perusahaan tidak diubah (nomor usaha: {reason})."],
+  "signup.biz_format": ["사업자등록번호는 000-00-00000 형식(숫자 10자리)으로 입력해 주세요.", "Enter a 10-digit business number in 000-00-00000 format.", "Masukkan nomor usaha 10 digit dengan format 000-00-00000."],
+  "signup.sample_company": ["(주)가나다식품", "Example Foods Ltd.", "PT Pangan Contoh"],
+  "signup.sample_person": ["김철수", "Example contact", "Nama kontak"],
+  "signup.sample_address": ["서울특별시 ...", "Street, city, country", "Jalan, kota, negara"],
+  "signup.account_email": ["대표 이메일(ID)", "Account email (ID)", "Email akun (ID)"],
+  "signup.contact1": ["담당자 1", "Contact 1", "Kontak 1"],
+  "signup.contact2": ["담당자 2", "Contact 2", "Kontak 2"],
+  "signup.no_results": ["검색 결과가 없습니다.", "No search results.", "Tidak ada hasil pencarian."],
+  "signup.consultant_suffix": [" 담당 컨설턴트: ", " Assigned consultant: ", " Konsultan yang ditetapkan: "],
+  "signup.invite_notice": ["가입하면 초대한 컨설턴트가 담당으로 연결됩니다. (초대 코드 {code})", "The inviting consultant will be assigned when you sign up. (Invitation code {code})", "Konsultan pengundang akan ditetapkan saat Anda mendaftar. (Kode undangan {code})"],
+  "invite.created": ["초대 링크를 생성했습니다. 코드 {code}", "Invitation link created. Code: {code}", "Tautan undangan dibuat. Kode: {code}"],
+  "invite.count": ["발급한 초대 {count}건", "Issued invitations: {count}", "Undangan diterbitkan: {count}"],
+  "invite.usage": ["사용 {used}/{max} · 만료 {date}", "Used {used}/{max} · Expires {date}", "Digunakan {used}/{max} · Kedaluwarsa {date}"],
+  "stage.product": ["제품", "Product", "Produk"],
+  "stage.logistics": ["물류", "Logistics", "Logistik"],
+  "stage.all": ["전체 ", "All ", "Semua "],
+  "stage.search_hint": ["에서 검색·필터로 보세요.", "to search and filter.", "untuk mencari dan memfilter."],
+  "stage.done": ["완료", "Complete", "Selesai"],
+  "stage.step0": ["접수", "Intake", "Penerimaan"],
+  "stage.step1": ["사전심사", "Pre-assessment", "Pra-penilaian"],
+  "stage.step2": ["계약", "Contract", "Kontrak"],
+  "stage.step3": ["모의심사", "Mock audit", "Audit simulasi"],
+  "stage.step4": ["현장심사", "On-site audit", "Audit lapangan"],
+  "stage.step5": ["샤리아 심의", "Sharia review", "Peninjauan syariah"],
+  "stage.step6": ["인증서 발급", "Certificate issuance", "Penerbitan sertifikat"],
+  "stage.step7": ["SiHalal 등록", "SiHalal registration", "Pendaftaran SiHalal"],
+  "upload.text_038": ["이 화면을 볼 권한이 없습니다.", "You do not have permission to view this screen.", "Anda tidak memiliki izin untuk melihat layar ini."],
+  "ui.text_150": ["없음", "None", "Tidak ada"],
+  "ui.text_151": ["회수됨", "Revoked", "Dicabut"],
+  "docs.uploaded": ["서류를 올렸습니다.", "Document uploaded.", "Dokumen diunggah."],
+  "docs.no_number": ["없음", "Missing", "Tidak ada"],
+  "sys": ["AI 할랄인증 지원시스템", "AI Halal Certification Support System", "Sistem Dukungan Sertifikasi Halal AI"],
+  "nav.ent-home": ["종합 정보", "Overview", "Informasi Terpadu"],
+  "nav.ent-apply": ["인증 신청", "Application", "Aplikasi Sertifikasi"],
+  "nav.ent-consultant": ["컨설턴트 지원", "Consultant Support", "Dukungan Konsultan"],
+  "nav.cons-home": ["종합 정보", "Overview", "Informasi Terpadu"],
+  "nav.cons-new": ["신규인증기업", "Invite Company", "Perusahaan Sertifikasi Baru"],
+  "nav.cons-status": ["업체별 현황", "Company Status", "Status per Perusahaan"],
+  "nav.cons-contract": ["계약·견적 관리", "Contracts & Quotes", "Manajemen Kontrak·Penawaran"],
+  "nav.cons-qna": ["기업 상담 관리", "Client Q&A", "Manajemen Konsultasi Perusahaan"],
+  "logout": ["로그아웃", "Log out", "Keluar"],
+  "lang": ["언어", "Lang", "Bahasa"],
+  "ws.ent": ["인증기업", "Company", "Perusahaan Tersertifikasi"],
+  "ws.cons": ["전담 컨설턴트", "Consultant", "Konsultan Khusus"],
+  "login": ["로그인", "Log in", "Masuk"],
+  "role": ["회원 유형", "Account type", "Jenis Anggota"],
+  "role.ent.sub": ["할랄인증을 신청하는 기업", "Companies applying for halal certification", "Perusahaan yang mengajukan sertifikasi halal"],
+  "role.cons.sub": ["인증기업을 지원하는 컨설턴트", "Consultants supporting companies", "Konsultan yang mendukung perusahaan tersertifikasi"],
+  "pw": ["비밀번호", "Password", "Kata sandi"],
+  "id.ent": ["기업 아이디 (이메일)", "Company ID (email)", "ID Perusahaan (email)"],
+  "id.cons": ["컨설턴트 아이디 (이메일)", "Consultant ID (email)", "ID Konsultan (email)"],
+  "noacct": ["아직 계정이 없으신가요?", "No account yet?", "Belum punya akun?"],
+  "signup.ent": ["인증기업 회원가입", "Company sign-up", "Daftar Perusahaan"],
+  "signup.cons": ["컨설턴트 회원가입", "Consultant sign-up", "Daftar Konsultan"],
+  "back": ["← 로그인으로 돌아가기", "← Back to log in", "← Kembali ke Masuk"],
+  "ws.aud": ["오디터 (심사원)", "Auditor", "Auditor"],
+  "ws.sha": ["샤리아 위원", "Sharia Board", "Anggota Panitia Syariah"],
+  "ws.adm": ["관리자", "Administrator", "Administrator"],
+  "role.aud.sub": ["모의·현장심사 수행", "Mock & on-site audits", "Melaksanakan audit simulasi·lapangan"],
+  "role.sha.sub": ["샤리아 심의·결정", "Sharia review & decision", "Musyawarah·keputusan syariah"],
+  "role.adm.sub": ["회원·배정·인증서 관리", "Members, assignment, certificates", "Manajemen Anggota·Penugasan·Sertifikat"],
+  "grp.ext": ["외부 회원", "External members", "Anggota Eksternal"],
+  "grp.int": ["기관 내부", "Internal staff", "Internal Lembaga"],
+  "id": ["아이디 (이메일)", "ID (email)", "ID (email)"],
+  "acct.issued": ["기관 내부 계정은 관리자가 발급합니다.", "Internal accounts are issued by the administrator.", "Akun internal lembaga diterbitkan oleh administrator."],
+  "nav.aud-home": ["종합 정보", "Overview", "Informasi Terpadu"],
+  "nav.aud-schedule": ["04·05 심사 일정", "Audit Schedule", "Jadwal Audit 04·05"],
+  "nav.aud-report": ["05 현장심사", "Audit & Report", "Audit Lapangan 05"],
+  "nav.sha-home": ["종합 정보", "Overview", "Informasi Terpadu"],
+  "nav.sha-review": ["심의 안건", "Review Cases", "Agenda Musyawarah"],
+  "nav.sha-history": ["심의 이력", "Decisions", "Riwayat Musyawarah"],
+  "nav.adm-home": ["전체 현황", "Dashboard", "Status Keseluruhan"],
+  "nav.adm-members": ["회원 관리", "Members", "Manajemen Anggota"],
+  "nav.adm-assign": ["배정 관리", "Assignments", "Manajemen Penugasan"],
+  "nav.adm-cert": ["인증서 발급", "Certificates", "Penerbitan sertifikat"],
+  "nav.adm-experts": ["심사원·샤리아 위원 관리", "Auditors & Sharia Board", "Manajemen Auditor·Anggota Panitia Syariah"],
+  "nav.adm-price": ["가격 기준표", "Price Table", "Tabel Standar Harga"],
+  "nav.adm-docs": ["문서 관리", "Documents", "Manajemen Dokumen"],
+  "nav.cons-docs": ["문서 관리", "Documents", "Manajemen Dokumen"],
+  "nav.ent-contract": ["계약 관리", "Contracts", "Manajemen Kontrak"],
+  "nav.ent-pre": ["AI 사전심사", "AI Pre-assessment", "Pra-audit AI"],
+  "nav.ent-docs": ["서류 관리", "Documents", "Manajemen Dokumen"],
+  "nav.aud-pre": ["02 AI 사전심사 검토", "AI Pre-assessment Review", "Peninjauan Pra-audit AI 02"],
+  "nav.aud-detail": ["업체 상세", "Company Detail", "Detail Perusahaan"],
+  "nav.aud-inbox": ["01 접수 · 배정함", "01 Intake · Assignments", "Kotak Penerimaan · Penugasan 01"],
+  "nav.aud-flow": ["인증 프로세스 보드", "Process Board", "Papan Proses Sertifikasi"],
+  "nav.aud-contract": ["03 계약 확인", "03 Contract", "Konfirmasi Kontrak 03"],
+  "nav.aud-cert": ["07·08 인증서 · SiHalal", "07·08 Certificate · SiHalal", "Sertifikat · SiHalal 07·08"],
+  "nav.aud-resubmit": ["보완·재전송", "Resubmit Center", "Perbaikan · Retransmisikan"],
+  "nav.aud-materials": ["원재료", "Materials", "Bahan baku"],
+  "nav.aud-aiq": ["AI 검수 큐", "AI Review Queue", "Antrian Peninjauan AI"],
+  "nav.aud-eval": ["SJPH/HAS 평가", "SJPH/HAS Evaluation", "Penilaian SJPH/HAS"],
+  "nav.aud-mock": ["04 모의심사", "Mock Audit", "Audit Simulasi 04"],
+  "nav.aud-final": ["06 보고서 · 샤리아 상정", "Report & Submit", "Laporan · Pengajuan Syariah 06"],
+  "nav.adm-contract": ["계약 관리", "Contracts", "Manajemen Kontrak"],
+  "signup.email_format": ["올바른 이메일 형식으로 입력해 주세요.", "Enter a valid email address.", "Masukkan alamat email yang valid."],
+  "signup.checking": ["확인 중…", "Checking…", "Memeriksa…"],
+  "signup.check_failed": ["중복 확인에 실패했습니다. 잠시 후 다시 시도해 주세요.", "Could not check email availability. Please try again shortly.", "Gagal memeriksa ketersediaan email. Silakan coba lagi nanti."],
+  "signup.available": ["✓ 사용할 수 있는 이메일입니다.", "✓ This email is available.", "✓ Email ini dapat digunakan."],
+  "signup.email_taken": ["이미 사용 중인 이메일입니다.", "This email is already in use.", "Email ini sudah digunakan."],
+  "signup.email_other": ["다른 이메일을 입력하세요.", "Enter another email address.", "Masukkan alamat email lain."],
+  "signup.network_error": ["서버에 연결할 수 없습니다.", "Could not connect to the server.", "Tidak dapat terhubung ke server."],
+  "signup.check_required": ["메일주소 중복 확인을 먼저 진행해 주세요.", "Check email availability first.", "Periksa ketersediaan email terlebih dahulu."],
+  "signup.pending": ["이미 승인 대기 중인 신청이 있습니다.", "Your application is already awaiting approval.", "Pendaftaran Anda sudah menunggu persetujuan."],
+  "signup.registered": ["이미 가입된 계정입니다.", "This account is already registered.", "Akun ini sudah terdaftar."],
+  "signup.staff_error": ["가입 신청 중 오류가 발생했습니다.", "Could not submit your sign-up request.", "Gagal mengirim permintaan pendaftaran."],
+  "signup.staff_submitted": ["가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다.", "Your sign-up request has been received. You can log in after an administrator approves it.", "Permintaan pendaftaran telah diterima. Anda dapat masuk setelah disetujui administrator."],
+  "signup.biz_one_file": ["사업자등록증은 한 개만 올릴 수 있어 첫 번째 파일만 사용합니다.", "Only one business registration file is allowed. The first file will be used.", "Hanya satu berkas pendaftaran usaha yang diizinkan. Berkas pertama akan digunakan."],
+  "signup.biz_types": ["PDF, JPG, PNG 파일만 올릴 수 있습니다.", "Upload a PDF, JPG or PNG file.", "Unggah berkas PDF, JPG, atau PNG."],
+  "signup.biz_selected": ["사업자등록증을 올렸습니다. [자동 채우기]로 기업 정보를 채울 수 있습니다.", "Business registration selected. Use Autofill to fill in company information.", "Dokumen pendaftaran usaha dipilih. Gunakan Isi otomatis untuk mengisi informasi perusahaan."],
+  "signup.biz_required": ["사업자등록증 파일을 먼저 선택해 주세요.", "Select a business registration file first.", "Pilih berkas pendaftaran usaha terlebih dahulu."],
+  "signup.biz_reading": ["사업자등록증 판독 중…", "Reading business registration…", "Membaca dokumen pendaftaran usaha…"],
+  "signup.biz_large": ["파일이 너무 큽니다. 용량을 줄여 다시 올려 주세요.", "The file is too large. Reduce its size and upload it again.", "Berkas terlalu besar. Kurangi ukurannya dan unggah kembali."],
+  "signup.biz_failed": ["자동 판독에 실패했습니다. 직접 입력해 주세요.", "Could not read the document automatically. Enter the information manually.", "Dokumen tidak dapat dibaca otomatis. Masukkan informasi secara manual."],
+  "signup.company_name": ["기업명", "Company name", "Nama perusahaan"],
+  "signup.representative": ["대표자", "Representative", "Perwakilan"],
+  "signup.english_missing": ["영문 없음(직접 입력)", "English name unavailable (enter manually)", "Nama Inggris tidak tersedia (isi manual)"],
+  "signup.biz_filled": ["✓ {fields}을(를) 채웠습니다. 내용을 확인해 주세요.", "✓ Filled in: {fields}. Please review the information.", "✓ Terisi: {fields}. Periksa kembali informasinya."],
+  "signup.biz_empty": ["문서에서 기업 정보를 찾지 못했습니다. 직접 입력해 주세요.", "No company information was found in the document. Enter it manually.", "Informasi perusahaan tidak ditemukan dalam dokumen. Masukkan secara manual."],
+  "signup.biz_missing": ["읽지 못한 항목: {fields} — 직접 입력해 주세요.", "Unread fields: {fields} — enter them manually.", "Kolom tidak terbaca: {fields} — isi secara manual."],
+  "signup.biz_network": ["서버에 연결할 수 없습니다. 직접 입력해 주세요.", "Could not connect to the server. Enter the information manually.", "Tidak dapat terhubung ke server. Masukkan informasi secara manual."],
+  "docs.items_count": ["{count}건", "{count} items", "{count} item"],
+  "docs.types_count": ["{count}종", "{count} types", "{count} jenis"],
+  "docs.companies_count": ["담당 기업 {count}개사", "Assigned companies: {count}", "Perusahaan yang ditangani: {count}"],
+  "docs.for_company": ["기업 대신 서류를 올릴 수 있습니다", "You can upload documents on behalf of a company", "Anda dapat mengunggah dokumen atas nama perusahaan"],
+  "docs.company_nav": ["문서 대상 기업", "Company for documents", "Perusahaan pemilik dokumen"],
+  "signup.requested_role": ["신청 역할", "Requested role", "Peran yang diajukan"],
+  "signup.role_approval": ["관리자 승인 후 계정이 만들어집니다. 승인 시 관리자가 역할을 조정할 수 있습니다.", "An account will be created after administrator approval. The administrator may adjust the role when approving.", "Akun akan dibuat setelah persetujuan administrator. Administrator dapat menyesuaikan peran saat menyetujui."],
+  "ui.text_152": ["보관된 서류가 없습니다.", "No stored documents.", "Tidak ada berkas tersimpan."],
+  "ui.text_153": ["담당 기업이 없습니다.", "No assigned companies.", "Tidak ada perusahaan yang ditugaskan."],
+  "docs.type.nib_business_license": ["사업자등록증", "Business licence", "Izin usaha"],
+  "docs.type.factory_registration": ["공장등록증", "Factory registration", "Registrasi pabrik"],
+  "docs.type.coa_msds": ["성분분석표(CoA/MSDS)", "Ingredient Analysis Sheet (CoA/MSDS)", "Lembar Analisis Komposisi (CoA/MSDS)"],
+  "docs.type.material_list": ["원료 목록", "Raw Material List", "Daftar Bahan"],
+  "docs.type.product_label": ["제품 라벨", "Product Label", "Label produk"],
+  "docs.type.product_list": ["제품 목록", "Product list", "Daftar produk"],
+  "docs.type.quality_cert": ["품질 인증서", "Quality Certificate", "Sertifikat Mutu"],
+  "docs.type.supplier_declaration": ["공급자 선언서", "Supplier Declaration", "Deklarasi Pemasok"],
+  "docs.type.halal_certificate": ["할랄 인증서", "halal certificate", "sertifikat halal"],
+  "docs.type.consent": ["동의서", "Consent Form", "Surat Persetujuan"],
+  "profile.field.nib": ["사업자 식별번호(NIB)", "Business Identification Number (NIB)", "Nomor Induk Berusaha (NIB)"],
+  "profile.field.responsible_person": ["책임자", "Responsible Person", "Pegawai yang Berwenang"],
+  "profile.field.phone": ["전화", "Phone", "Telepon"],
+  "profile.field.address": ["회사 주소", "Company address", "Alamat perusahaan"],
+  "profile.field.factory_reg_no": ["공장 등록번호", "Factory Registration Number", "Nomor Registrasi Pabrik"],
+  "profile.field.factory_address": ["공장 주소", "Factory address", "Alamat pabrik"],
+  "profile.field.due_date": ["처리 목표 기한", "Target Processing Deadline", "Batas Waktu Target Tindakan"],
+  "profile.field.office_phone": ["회사 전화", "Company Phone", "Telepon Perusahaan"],
+  "profile.field.business_type": ["업종", "Industry type", "Sektor"],
+  "profile.field.total_employee": ["총 직원 수", "Total employees", "Jumlah karyawan"],
+  "profile.field.employee_count": ["직원 수(별도 제출 항목)", "Employees (separate submission field)", "Jumlah karyawan (isian terpisah)"],
+  "profile.field.annual_revenue": ["연매출", "Annual Revenue", "Pendapatan Tahunan"],
+  "profile.field.outlet_count": ["매장 수", "Number of Stores", "Jumlah Gerai"],
+  "profile.field.establishment_date": ["설립일", "Established Date", "Tanggal Berdiri"],
+  "profile.field.corporate_reg_no": ["법인등록번호", "Corporate registration no.", "Nomor registrasi badan hukum"],
+  "profile.field.responsible_person_en": ["책임자(영문)", "Responsible Person (English)", "Penanggung Jawab (Inggris)"],
+  "profile.field.city": ["도시", "City", "Kota"],
+  "profile.field.country": ["국가", "Country", "Negara"],
+  "profile.field.zip": ["우편번호", "Postal code", "Kode pos"],
+  "profile.dirty": ["저장하지 않은 변경 있음", "Unsaved changes", "Perubahan belum disimpan"],
+  "profile.saved": ["저장된 기업 정보", "Company information saved", "Informasi perusahaan tersimpan"],
+  "profile.discard": ["저장하지 않은 신청 정보가 있습니다. 로그아웃하면 사라집니다. 로그아웃할까요?", "You have unsaved application information. Log out and discard it?", "Informasi permohonan belum disimpan. Keluar dan buang perubahan?"],
+  "profile.basic": ["기업 기본 정보", "Company information", "Informasi perusahaan"],
+  "profile.contacts": ["기업 정보·담당자", "Company information · Contacts", "Informasi perusahaan · Kontak"],
+  "profile.extra": ["추가 기업 정보", "Additional company information", "Informasi perusahaan tambahan"],
+  "profile.load_failed": ["기업 정보를 불러오지 못했습니다. 입력 내용은 유지됩니다.", "Could not load company information. Your input has been kept.", "Gagal memuat informasi perusahaan. Isian Anda tetap disimpan."],
+  "profile.save_failed": ["기업 정보를 저장하지 못했습니다. 입력 내용은 유지됩니다.", "Could not save company information. Your input has been kept.", "Gagal menyimpan informasi perusahaan. Isian Anda tetap disimpan."],
+  "profile.saved_notice": ["기업 정보를 저장했습니다.", "Company information saved.", "Informasi perusahaan disimpan."],
+  "profile.check_access": ["입력값과 권한을 확인해 주세요.", "Check your input and permissions.", "Periksa isian dan izin Anda."],
+  "profile.case_failed": ["케이스를 불러오지 못했습니다.", "Failed to load case.", "Gagal memuat kasus."],
+  "profile.autofill": ["서류에서 자동 채우기", "Auto-fill from documents", "Isi otomatis dari berkas"],
+  "profile.save": ["프로필 저장", "Save Profile", "Simpan Profil"],
+  "profile.edit_hint": ["프로필 수정은 신청기업·컨설턴트 계정만 할 수 있습니다.", "Only applicant company and consultant accounts can edit the profile.", "Hanya akun perusahaan pengaju dan konsultan yang dapat mengubah profil."],
+  "profile.org_forbidden": ["이 조직 정보를 볼 권한이 없습니다.", "No permission to view this organization information.", "Tidak ada akses untuk melihat informasi organisasi ini."],
+  "profile.supervisors_failed": ["감독자 목록을 불러오지 못했습니다.", "Failed to load supervisor list.", "Gagal memuat daftar penyelia."],
+  "profile.edit": ["수정", "Edit", "Ubah"],
+  "profile.supervisors": ["할랄 감독자(Penyelia Halal)", "Halal Supervisor (Penyelia Halal)", "Penyelia Halal"],
+  "profile.add_supervisor": ["감독자 추가", "Add Supervisor", "Tambah Penyelia"],
+  "profile.name": ["이름", "Name", "Nama"],
+  "profile.training": ["교육 이수", "Training Completed", "Pelatihan Selesai"],
+  "profile.expiry": ["만료일", "Expiry date", "Tanggal kedaluwarsa"],
+  "profile.no_supervisors": ["등록된 감독자가 없습니다.", "No supervisors registered.", "Tidak ada penyelia terdaftar."],
+  "profile.collapse": ["접기", "Collapse", "Tutup"],
+  "profile.expand": ["펼치기", "Expand", "Buka"],
+  "profile.expand_hint": ["펼치면 기업 프로필과 할랄 감독자를 확인·수정할 수 있습니다.", "Expand to view and edit company profile and halal supervisor.", "Perluas untuk melihat dan mengubah profil perusahaan dan penyelia halal."],
+  "profile.no_case": ["대상 케이스가 없습니다.", "No target cases.", "Tidak ada kasus sasaran."],
+  "profile.unchanged": ["변경된 항목이 없습니다.", "No changed items.", "Tidak ada item yang berubah."],
+  "profile.forbidden": ["권한이 없습니다.", "You do not have permission.", "Anda tidak memiliki izin."],
+  "profile.autofill_forbidden": ["자동 채우기에 실패했습니다. (권한 없음)", "Auto-fill failed. (No permission)", "Gagal mengisi otomatis. (Tidak ada izin)"],
+  "profile.autofill_failed": ["자동 채우기에 실패했습니다.", "Auto-fill failed.", "Gagal mengisi otomatis."],
+  "profile.add_supervisor_title": ["할랄 감독자 추가", "Add Halal Supervisor", "Tambah Penyelia Halal"],
+  "profile.training_info": ["교육 이수 정보", "Training completion info", "Info pelatihan"],
+  "profile.qualification_expiry": ["자격 만료일", "Qualification expiry date", "Tanggal kedaluwarsa kualifikasi"],
+  "profile.add": ["추가", "Add", "Tambah"],
+  "profile.no_org": ["조직 정보가 없습니다.", "No organization information.", "Tidak ada informasi organisasi."],
+  "profile.add_forbidden": ["추가 권한이 없습니다.", "You do not have permission to add a supervisor.", "Anda tidak memiliki izin untuk menambah penyelia."],
+  "profile.check_input": ["입력값을 확인하세요.", "Check your input.", "Periksa input Anda."],
+  "profile.supervisor_invalid": ["감독자 추가에 실패했습니다. (입력 오류)", "Failed to add supervisor. (Input error)", "Gagal menambah penyelia. (Kesalahan input)"],
+  "profile.supervisor_add_failed": ["감독자 추가에 실패했습니다.", "Failed to add supervisor.", "Gagal menambah penyelia."],
+  "profile.supervisor_added": ["감독자를 추가했습니다.", "Supervisor added.", "Penyelia ditambahkan."],
+  "profile.edit_supervisor": ["감독자 상태 수정", "Edit Supervisor Status", "Ubah Status Penyelia"],
+  "profile.edit_forbidden": ["수정 권한이 없습니다.", "No permission to edit.", "Tidak ada izin untuk mengubah."],
+  "profile.invalid_status": ["상태값이 올바르지 않습니다.", "Status value is invalid.", "Nilai status tidak valid."],
+  "profile.supervisor_edit_invalid": ["감독자 수정에 실패했습니다. (입력 오류)", "Failed to edit supervisor. (Input error)", "Gagal mengubah penyelia. (Kesalahan input)"],
+  "profile.supervisor_edit_failed": ["감독자 수정에 실패했습니다.", "Failed to edit supervisor.", "Gagal mengubah penyelia."],
+  "profile.supervisor_saved": ["감독자 상태를 저장했습니다.", "Supervisor status saved.", "Status penyelia disimpan."],
+  "profile.supervisor_count": ["활성 {active}명 / 전체 {total}명", "Active {active} / Total {total}", "Aktif {active} / Total {total}"],
+  "profile.autofilled": ["서류에서 {count}개 항목을 채웠습니다.", "Filled {count} fields from documents.", "Mengisi {count} kolom dari dokumen."],
+  "assign.empty": ["배정할 케이스가 없습니다.", "No cases to assign.", "Tidak ada kasus untuk ditugaskan."],
+  "assign.cases": ["배정 케이스", "Cases for assignment", "Kasus untuk penugasan"],
+  "assign.assigned": ["배정", "Assigned", "Ditugaskan"],
+  "assign.action": ["배정", "Assign", "Tugaskan"],
+  "assign.unassigned": ["미배정", "Unassigned", "Belum ditugaskan"],
+  "assign.no_auditors": ["배정 가능한 실제 심사원 계정이 없습니다", "No active auditor accounts are available for assignment.", "Tidak ada akun auditor nyata yang tersedia untuk penugasan."],
+  "assign.account_hint": ["실제 심사원이 오디터로 가입한 뒤 관리자가 승인하거나, 회원 관리에서 실제 오디터 계정을 등록해야 배정할 수 있습니다.", "An administrator must approve an auditor sign-up or create an auditor account in Members before assignment.", "Administrator harus menyetujui pendaftaran auditor atau membuat akun auditor di Manajemen Anggota sebelum penugasan."],
+  "assign.main": ["메인 오디터", "Lead auditor", "Auditor utama"],
+  "assign.companion": ["동반 오디터", "Companion auditor", "Auditor pendamping"],
+  "assign.assign_main": ["메인 오디터 배정", "Assign lead auditor", "Tugaskan auditor utama"],
+  "assign.add_companion": ["동반 오디터 추가", "Add companion auditor", "Tambah auditor pendamping"],
+  "assign.companion_short": ["동반", "Companion", "Pendamping"],
+  "assign.remove": ["해제", "Remove", "Lepas"],
+  "assign.permission_hint": ["오디터 배정·재배정·동반 추가는 운영관리자(operator) 권한입니다.", "Assigning, reassigning and adding companion auditors requires operations permissions.", "Penugasan, penggantian, dan penambahan auditor pendamping memerlukan izin operasional."],
+  "assign.count": ["케이스 {count}건", "{count} cases", "{count} kasus"],
+  "assign.auditors": ["등록 심사원 {count}명", "{count} registered auditors", "{count} auditor terdaftar"],
+  "assign.demo_excluded": [" · 샘플 계정 {count}명 제외", " · {count} demo accounts excluded", " · {count} akun demo dikecualikan"],
+  "assign.load": ["부하 {load}/{capacity}", "Load {load}/{capacity}", "Beban {load}/{capacity}"],
+  "application.submitted": ["신청서 제출됨", "Application submitted", "Permohonan telah diajukan"],
+  "application.stage": ["현재 {stage} 단계입니다. ({status})", "Current stage: {stage}. ({status})", "Tahap saat ini: {stage}. ({status})"],
+  "application.start": ["인증 신청서 작성", "Complete certification application", "Isi permohonan sertifikasi"],
+  "application.hint": ["인증 품목을 등록하고 서류를 올린 뒤 아래에서 AI 사전심사를 신청하세요. 품목이 1개 이상 있어야 신청할 수 있습니다.", "Register products and upload documents, then request AI pre-assessment below. At least one product is required.", "Daftarkan produk dan unggah dokumen, lalu ajukan pra-penilaian AI di bawah. Minimal satu produk diperlukan."],
+  "application.products": ["인증 품목 {count}개", "{count} certification products", "{count} produk sertifikasi"],
+  "application.product_name": ["제품명", "Product name", "Nama produk"],
+  "application.category": ["분류", "Category", "Kategori"],
+  "application.delete": ["삭제", "Delete", "Hapus"],
+  "application.empty_products": ["등록된 품목이 없습니다.", "No products registered.", "Belum ada produk terdaftar."],
+  "application.product_placeholder": ["제품명 (예: 프리미엄 홍삼 스틱)", "Product name (e.g. premium red ginseng stick)", "Nama produk (mis. stik ginseng merah premium)"],
+  "application.category_optional": ["분류(선택)", "Category (optional)", "Kategori (opsional)"],
+  "application.add_product": ["＋ 품목 추가", "＋ Add product", "＋ Tambah produk"],
+  "application.documents": ["필요 서류", "Required documents", "Dokumen wajib"],
+  "application.open_docs": ["문서함 열기 →", "Open document library →", "Buka pustaka dokumen →"],
+  "application.logistics_documents": ["사업자등록증·SJPH 매뉴얼·취급 범위·세척 SOP·차량 목록(유통)·창고 배치도(보관·포장) 등을 문서함에서 업로드합니다.", "Upload business registration, SJPH manual, service scope, cleaning SOP, vehicle list (distribution) and warehouse plan (storage/packing) in the document library.", "Unggah registrasi usaha, manual SJPH, lingkup layanan, SOP pembersihan, daftar kendaraan (distribusi), dan denah gudang (penyimpanan/pengemasan) di pustaka dokumen."],
+  "application.product_documents": ["사업자등록증·성분분석표·제조공정도 등을 문서함에서 업로드합니다.", "Upload business registration, ingredient analysis and manufacturing process documents in the document library.", "Unggah registrasi usaha, analisis komposisi, dan diagram proses produksi di pustaka dokumen."],
+  "application.document_count": ["현재 {count}건 보관 중.", "{count} documents stored.", "{count} dokumen tersimpan."],
+  "application.submit_hint": ["AI 사전심사를 신청하면 오디터 검토로 넘어갑니다.", "Requesting AI pre-assessment starts auditor review.", "Pengajuan pra-penilaian AI akan dilanjutkan ke peninjauan auditor."],
+  "application.services_required": ["취급 서비스(보관·포장·유통)를 1개 이상 선택해야 신청할 수 있습니다.", "Select at least one service (storage, packing or distribution) to apply.", "Pilih minimal satu layanan (penyimpanan, pengemasan, atau distribusi) untuk mengajukan."],
+  "application.product_required": ["품목을 1개 이상 등록해야 신청할 수 있습니다.", "Register at least one product to apply.", "Daftarkan minimal satu produk untuk mengajukan."],
+  "application.submit": ["AI 사전심사 신청", "Request AI pre-assessment", "Ajukan pra-penilaian AI"]
+};
+for(const [key,values] of Object.entries(UIV4_I18N)){ ['ko','en','id'].forEach((lang,i)=>{ I18N[lang][key]=values[i]; }); }
+function tf(key,params={}){ return t(key).replace(/\{(\w+)\}/g,(m,k)=>params[k]??m); }
 
 /* ---------- sample data ---------- */
 
@@ -718,80 +1291,80 @@ function entSignup(){
   if(S.urlRef) setTimeout(() => { if(App.signupConsultantQr) App.signupConsultantQr(S.urlRef); }, 0);
   return `<form class="signup-card" onsubmit="App.submitEnt(event)">
     <button type="button" class="link back" onclick="App.goLogin()">${t('back')}</button>
-    <div><div class="eyebrow">Sign up · ${t('ws.ent')}</div><h2 style="font-size:28px;margin-top:6px">${t('signup.ent')}</h2><p class="muted" style="margin-top:6px;font-size:14px">할랄인증 신청을 위한 기업 정보를 입력해 주세요.</p></div>
+    <div><div class="eyebrow">Sign up · ${t('ws.ent')}</div><h2 style="font-size:28px;margin-top:6px">${t('signup.ent')}</h2><p class="muted" style="margin-top:6px;font-size:14px">${t('signup.intro')}</p></div>
     <div class="banner" style="gap:10px">
-      <b>사업자등록증으로 자동 채우기</b>
-      <span class="muted">영문 사업자등록증을 올리고 버튼을 누르면 기업명, 사업자등록번호, 대표자, 주소를 채웁니다.</span>
+      <b>${t('ui.text_066')}</b>
+      <span class="muted">${t('ui.text_067')}</span>
       <label class="dropzone" for="biz-up" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="App.bizDrop(event)">
-        <b id="biz-name">사업자등록증을 여기로 끌어다 놓거나 클릭해서 선택하세요</b><span class="muted">PDF · JPG · PNG 한 개</span>
+        <b id="biz-name">${t('ui.text_068')}</b><span class="muted">${t('ui.text_069')}</span>
         <input type="file" id="biz-up" hidden accept=".pdf,.jpg,.jpeg,.png" onchange="App.bizPicked(this.files[0])"></label>
-      <div class="row-act" style="justify-content:flex-end"><button type="button" class="btn btn-primary" onclick="App.bizAutofill()">자동 채우기</button></div>
+      <div class="row-act" style="justify-content:flex-end"><button type="button" class="btn btn-primary" onclick="App.bizAutofill()">${t('ui.text_070')}</button></div>
       <div class="inline-msg" id="biz-msg"></div>
     </div>
-    ${S.urlRef?`<div class="banner"><b>컨설턴트 초대 링크로 접속했습니다</b><span class="muted">가입하면 초대한 컨설턴트가 담당으로 연결됩니다. (초대 코드 ${esc(S.urlRef)})</span></div>`:''}
-    <fieldset class="fieldset"><legend>담당 컨설턴트</legend>
-      <div class="row-act"><input class="in" id="es-consultant" readonly aria-label="선택한 컨설턴트" value="${esc(S.urlRef ? 'QR 초대 컨설턴트 · '+S.urlRef : (S.signupConsultant ? S.signupConsultant.display_name+' ('+S.signupConsultant.username+')' : '선택하지 않음'))}">
-      <button type="button" class="btn" ${S.urlRef?'disabled':''} onclick="App.signupConsultantFind()">컨설턴트 찾기</button>
-      ${!S.urlRef?'<button type="button" class="btn btn-ghost" onclick="App.signupConsultantClear()">선택 해제</button>':''}</div>
-      <p class="muted">${S.urlRef?'QR로 초대한 컨설턴트가 자동 배정됩니다.':'이름 또는 아이디로 검색하세요. 선택하지 않아도 가입할 수 있습니다.'}</p>
+    ${S.urlRef?`<div class="banner"><b>${t('ui.text_071')}</b><span class="muted">${esc(tf('signup.invite_notice',{code:S.urlRef}))}</span></div>`:''}
+    <fieldset class="fieldset"><legend>${t('ui.text_072')}</legend>
+      <div class="row-act"><input class="in" id="es-consultant" readonly aria-label="${t('signup.selected_consultant')}" value="${esc(S.urlRef ? t('signup.qr_consultant')+S.urlRef : (S.signupConsultant ? S.signupConsultant.display_name+' ('+S.signupConsultant.username+')' : t('signup.no_consultant')))}">
+      <button type="button" class="btn" ${S.urlRef?'disabled':''} onclick="App.signupConsultantFind()">${t('signup.find_consultant')}</button>
+      ${!S.urlRef?`<button type="button" class="btn btn-ghost" onclick="App.signupConsultantClear()">${t('signup.clear_consultant')}</button>`:''}</div>
+      <p class="muted">${S.urlRef?t('signup.qr_assign'):t('signup.consultant_hint')}</p>
     </fieldset>
-    <fieldset class="fieldset"><legend><span class="eyebrow">01</span>기업 정보</legend>
+    <fieldset class="fieldset"><legend><span class="eyebrow">01</span>${t('ui.text_073')}</legend>
       <div class="grid-2">
-        <div class="field"><label for="es-name">기업명 (국문)<span class="req">필수</span></label><input class="in" id="es-name" required value="${esc(s.company||'')}" placeholder="(주)가나다식품"></div>
-        <div class="field"><label for="es-name-en">기업명 (영문)<span class="req">필수</span></label><input class="in" id="es-name-en" required placeholder="GANADA FOOD Co., Ltd."></div>
+        <div class="field"><label for="es-name">${t('ui.text_074')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="es-name" required value="${esc(s.company||'')}" placeholder="${t('signup.sample_company')}"></div>
+        <div class="field"><label for="es-name-en">${t('ui.text_075')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="es-name-en" required placeholder="GANADA FOOD Co., Ltd."></div>
         <div class="field"><label for="es-company-email">${t('signup.company_email')}<span class="req">${t('signup.required')}</span></label><input class="in" id="es-company-email" type="email" required maxlength="200" pattern="^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$" autocomplete="email" value="${esc(s.company_email||'')}" onchange="this.value=this.value.trim().toLowerCase()"></div>
-        <div class="field"><label for="es-biz">사업자등록번호<span class="req">필수</span></label><input class="in" id="es-biz" required placeholder="120-81-00000"></div>
-        <div class="field"><label for="es-ceo">대표자명<span class="req">필수</span></label><input class="in" id="es-ceo" required placeholder="김철수"></div>
-        <div class="field"><label for="es-cat">인증 분야<span class="req">필수</span></label><select class="in" id="es-cat">${Object.keys(BASE_FEE).map(k=>`<option>${k}</option>`).join('')}</select></div>
-        <div class="field"><label for="es-addr">사업장 주소<span class="req">필수</span></label><input class="in" id="es-addr" required placeholder="서울특별시 ..."></div>
+        <div class="field"><label for="es-biz">${t('ui.text_076')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="es-biz" required placeholder="120-81-00000"></div>
+        <div class="field"><label for="es-ceo">${t('ui.text_077')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="es-ceo" required placeholder="${t('signup.sample_person')}"></div>
+        <div class="field"><label for="es-cat">${t('ui.text_078')}<span class="req">${t('upload.text_006')}</span></label><select class="in" id="es-cat">${['food','cosmetics','household','warehouse','transport'].map(k=>`<option value="${k}">${t('sector.'+k)}</option>`).join('')}</select></div>
+        <div class="field"><label for="es-addr">${t('ui.text_079')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="es-addr" required placeholder="${t('signup.sample_address')}"></div>
         
       </div></fieldset>
-    <fieldset class="fieldset"><legend><span class="eyebrow">02</span>담당자 1 · 실무담당자</legend>
+    <fieldset class="fieldset"><legend><span class="eyebrow">02</span>${t('ui.text_080')}</legend>
       <div class="grid-2">
-        <div class="field"><label for="m1-name">성명<span class="req">필수</span></label><input class="in" id="m1-name" required value="${esc(s.manager||'')}"></div>
-        <div class="field"><label for="m1-title">직위<span class="req">필수</span></label><input class="in" id="m1-title" required placeholder="품질관리 과장"></div>
-        <div class="field"><label for="m1-phone">연락처<span class="req">필수</span></label><input class="in" id="m1-phone" type="tel" required value="${esc(s.phone||'')}" placeholder="010-0000-0000"></div>
-        <div class="field"><label for="m1-email">이메일<span class="req">필수</span></label><input class="in" id="m1-email" type="email" required value="${esc(s.email||'')}"></div>
+        <div class="field"><label for="m1-name">${t('ui.text_081')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="m1-name" required value="${esc(s.manager||'')}"></div>
+        <div class="field"><label for="m1-title">${t('ui.text_082')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="m1-title" required placeholder="${t('ui.text_096')}"></div>
+        <div class="field"><label for="m1-phone">${t('ui.text_036')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="m1-phone" type="tel" required value="${esc(s.phone||'')}" placeholder="010-0000-0000"></div>
+        <div class="field"><label for="m1-email">${t('ui.text_037')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="m1-email" type="email" required value="${esc(s.email||'')}"></div>
       </div></fieldset>
-    <fieldset class="fieldset"><legend><span class="eyebrow">03</span>담당자 2 · 관리책임자</legend>
+    <fieldset class="fieldset"><legend><span class="eyebrow">03</span>${t('ui.text_083')}</legend>
       <div class="grid-2">
-        <div class="field"><label for="m2-name">성명<span class="req">선택</span></label><input class="in" id="m2-name"></div>
-        <div class="field"><label for="m2-title">직위<span class="req">선택</span></label><input class="in" id="m2-title" placeholder="생산본부 부장"></div>
-        <div class="field"><label for="m2-phone">연락처<span class="req">선택</span></label><input class="in" id="m2-phone" type="tel"></div>
-        <div class="field"><label for="m2-email">이메일<span class="req">선택</span></label><input class="in" id="m2-email" type="email"></div>
+        <div class="field"><label for="m2-name">${t('ui.text_081')}<span class="req">${t('upload.text_008')}</span></label><input class="in" id="m2-name"></div>
+        <div class="field"><label for="m2-title">${t('ui.text_082')}<span class="req">${t('upload.text_008')}</span></label><input class="in" id="m2-title" placeholder="${t('ui.text_097')}"></div>
+        <div class="field"><label for="m2-phone">${t('ui.text_036')}<span class="req">${t('upload.text_008')}</span></label><input class="in" id="m2-phone" type="tel"></div>
+        <div class="field"><label for="m2-email">${t('ui.text_037')}<span class="req">${t('upload.text_008')}</span></label><input class="in" id="m2-email" type="email"></div>
       </div></fieldset>
-    <fieldset class="fieldset"><legend><span class="eyebrow">04</span>계정 정보</legend>
+    <fieldset class="fieldset"><legend><span class="eyebrow">04</span>${t('ui.text_084')}</legend>
       <div class="grid-3">
-        <div class="field"><label for="es-id">대표 이메일 (ID)<span class="req">필수</span></label><input class="in" id="es-id" type="email" required value="${esc(s.email||'')}"></div>
-        <div class="field"><label for="es-pw">비밀번호<span class="req">필수</span></label><input class="in" id="es-pw" type="password" required minlength="8" placeholder="8자 이상"></div>
-        <div class="field"><label for="es-pw2">비밀번호 확인<span class="req">필수</span></label><input class="in" id="es-pw2" type="password" required minlength="8"></div>
+        <div class="field"><label for="es-id">${t('ui.text_085')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="es-id" type="email" required value="${esc(s.email||'')}"></div>
+        <div class="field"><label for="es-pw">${t('ui.text_086')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="es-pw" type="password" required minlength="8" placeholder="${t('ui.text_098')}"></div>
+        <div class="field"><label for="es-pw2">${t('ui.text_087')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="es-pw2" type="password" required minlength="8"></div>
       </div></fieldset>
     ${agreeBlock('es')}
     <label class="check"><input type="checkbox" id="es-email-consent" required><span>${t('signup.email_consent')}</span></label>
-    <button class="btn btn-primary btn-lg btn-block" type="submit">인증기업 가입 완료</button>
+    <button class="btn btn-primary btn-lg btn-block" type="submit">${t('ui.text_088')}</button>
   </form>`;
 }
 function consSignup(){
   return `<form class="signup-card" style="max-width:640px" onsubmit="App.submitCons(event)">
     <button type="button" class="link back" onclick="App.goLogin()">${t('back')}</button>
-    <div><div class="eyebrow">Sign up · ${t('ws.cons')}</div><h2 style="font-size:28px;margin-top:6px">${t('signup.cons')}</h2><p class="muted" style="margin-top:6px;font-size:14px">할랄인증 전담 컨설턴트 등록을 위한 정보를 입력해 주세요. 가입 후 기업 초대 링크를 만들 수 있습니다.</p></div>
-    <fieldset class="fieldset"><legend><span class="eyebrow">01</span>기본 정보</legend>
+    <div><div class="eyebrow">Sign up · ${t('ws.cons')}</div><h2 style="font-size:28px;margin-top:6px">${t('signup.cons')}</h2><p class="muted" style="margin-top:6px;font-size:14px">${t('ui.text_089')}</p></div>
+    <fieldset class="fieldset"><legend><span class="eyebrow">01</span>${t('ui.text_090')}</legend>
       <div class="grid-2">
-        <div class="field span-2"><label for="cs-org">소속<span class="req">필수</span></label><input class="in" id="cs-org" required placeholder="메가인포경영자문"></div>
-        <div class="field"><label for="cs-name">성명<span class="req">필수</span></label><input class="in" id="cs-name" required placeholder="홍길동"></div>
-        <div class="field"><label for="cs-title">직위<span class="req">필수</span></label><input class="in" id="cs-title" required placeholder="수석 컨설턴트"></div>
-        <div class="field span-2"><label for="cs-phone">연락처<span class="req">필수</span></label><input class="in" id="cs-phone" type="tel" required placeholder="010-0000-0000"></div>
+        <div class="field span-2"><label for="cs-org">${t('ui.text_091')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="cs-org" required placeholder="${t('ui.text_099')}"></div>
+        <div class="field"><label for="cs-name">${t('ui.text_081')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="cs-name" required placeholder="${t('ui.text_100')}"></div>
+        <div class="field"><label for="cs-title">${t('ui.text_082')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="cs-title" required placeholder="${t('ui.text_101')}"></div>
+        <div class="field span-2"><label for="cs-phone">${t('ui.text_036')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="cs-phone" type="tel" required placeholder="010-0000-0000"></div>
       </div></fieldset>
-    <fieldset class="fieldset"><legend><span class="eyebrow">02</span>계정 정보</legend>
-      <div class="field"><label for="cs-email">메일주소 (ID)<span class="req">필수</span></label>
-        <div class="inline"><input class="in" id="cs-email" type="email" required placeholder="name@company.com" oninput="App.dupReset()"><button type="button" class="btn" onclick="App.dupCheck()">중복 확인</button></div>
+    <fieldset class="fieldset"><legend><span class="eyebrow">02</span>${t('ui.text_084')}</legend>
+      <div class="field"><label for="cs-email">${t('ui.text_092')}<span class="req">${t('upload.text_006')}</span></label>
+        <div class="inline"><input class="in" id="cs-email" type="email" required placeholder="name@company.com" oninput="App.dupReset()"><button type="button" class="btn" onclick="App.dupCheck()">${t('ui.text_093')}</button></div>
         <div class="inline-msg" id="dup-msg"></div></div>
       <div class="grid-2">
-        <div class="field"><label for="cs-pw">비밀번호 (PW)<span class="req">필수</span></label><input class="in" id="cs-pw" type="password" required minlength="8" placeholder="8자 이상"></div>
-        <div class="field"><label for="cs-pw2">비밀번호 확인<span class="req">필수</span></label><input class="in" id="cs-pw2" type="password" required minlength="8"></div>
+        <div class="field"><label for="cs-pw">${t('ui.text_094')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="cs-pw" type="password" required minlength="8" placeholder="${t('ui.text_098')}"></div>
+        <div class="field"><label for="cs-pw2">${t('ui.text_087')}<span class="req">${t('upload.text_006')}</span></label><input class="in" id="cs-pw2" type="password" required minlength="8"></div>
       </div></fieldset>
     ${agreeBlock('cs')}
-    <button class="btn btn-primary btn-lg btn-block" type="submit">컨설턴트 가입 신청</button>
+    <button class="btn btn-primary btn-lg btn-block" type="submit">${t('ui.text_095')}</button>
   </form>`;
 }
 
@@ -938,6 +1511,14 @@ const AUTH = { access:null, refresh:null, role:null, uiRole:null, username:null,
 function authSave(){ try{ localStorage.setItem('glhac_v4_auth', JSON.stringify(AUTH)); }catch(e){} }
 function authLoad(){ try{ const j=JSON.parse(localStorage.getItem('glhac_v4_auth')||'null'); if(j) Object.assign(AUTH,j); }catch(e){} }
 function authClear(){ Object.assign(AUTH,{access:null,refresh:null,role:null,uiRole:null,username:null,org_id:null}); authSave(); }
+function consumeSignupLink(){
+  const url = new URL(location.href);
+  if(!url.searchParams.has('signup') && !url.searchParams.has('ref')) return;
+  url.searchParams.delete('signup');
+  url.searchParams.delete('ref');
+  history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+  S.urlRef=null;
+}
 async function apiRefresh(){
   if(!AUTH.refresh) return false;
   try{ const r = await fetch(API_BASE+'/auth/refresh', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({refresh_token:AUTH.refresh})});
@@ -1053,8 +1634,8 @@ const App = {
   async submitEnt(e){
     e.preventDefault();
     const val = id => { const el=$('#'+id); return el ? el.value.trim() : ''; };
-    if(val('es-pw')!==val('es-pw2')) return toast('비밀번호가 일치하지 않습니다. 다시 입력해 주세요.');
-    if(!/^[0-9]{3}-[0-9]{2}-[0-9]{5}$/.test(val('es-biz'))) return toast('사업자등록번호는 000-00-00000 형식(숫자 10자리)으로 입력해 주세요.');
+    if(val('es-pw')!==val('es-pw2')) return toast(t('ui.text_102'));
+    if(!/^[0-9]{3}-[0-9]{2}-[0-9]{5}$/.test(val('es-biz'))) return toast(t('signup.biz_format'));
     const company_email = val('es-company-email').toLowerCase();
     const email_consent = !!$('#es-email-consent')?.checked;
     if(company_email.length>200 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(company_email)) return toast(t('signup.email_invalid'));
@@ -1065,9 +1646,8 @@ const App = {
       const body = { username: email, password: val('es-pw'), company_email, email_consent };
       [['company_name','es-name'],['responsible_person','es-ceo'],['address','es-addr'],
        ['nib','es-biz'],['company_name_en','es-name-en']].forEach(([key,id])=>{ if(val(id)) body[key]=val(id); });
-      // 분야 선택 화면의 기존 라벨↔코드 표를 그대로 사용한다.
-      const sector = typeof SC_SECTORS==='undefined' ? null : SC_SECTORS.find(([,label])=>label===val('es-cat'));
-      if(sector) body.sectors = [sector[0]];
+      const sector=val('es-cat');
+      if(sector) body.sectors=[sector];
       const contacts = {};
       [['pic','m1'],['cp','m2']].forEach(([key,prefix])=>{
         const contact = {};
@@ -1078,65 +1658,66 @@ const App = {
       if(!S.urlRef && S.signupConsultant) body.consultant_id = S.signupConsultant.consultant_id;
       if(S.urlRef) body.invite_code = S.urlRef;   // 컨설턴트 초대(?ref=) 귀속
       const r = await fetch(API_BASE+'/auth/register', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-      if(r.status===409) return toast('이미 가입된 계정입니다. 로그인해 주세요.');
+      if(r.status===409) return toast(t('ui.text_103'));
       if(r.status===422){
         const d=await r.json().catch(()=>({}));
         if(d.detail?.code==='EMAIL_CONSENT_REQUIRED') return toast(t('signup.consent_required'));
-        const fields={username:'대표 이메일(ID)',password:'비밀번호',nib:'사업자등록번호',company_name:'기업명(국문)',company_name_en:'기업명(영문)',
-          contacts:'담당자',pic:'담당자 1',cp:'담당자 2',name:'성명',title:'직위',phone:'연락처',email:'이메일',consultant_id:'담당 컨설턴트',invite_code:'초대 코드'};
+        const fields={username:t('signup.account_email'),password:t('ui.text_086'),nib:t('ui.text_076'),company_name:t('ui.text_104'),company_name_en:t('ui.text_105'),
+          contacts:t('ui.text_106'),pic:t('signup.contact1'),cp:t('signup.contact2'),name:t('ui.text_081'),title:t('ui.text_082'),phone:t('ui.text_036'),email:t('ui.text_037'),consultant_id:t('ui.text_072'),invite_code:t('ui.text_012')};
         const detail=d.detail||{}, issues=Array.isArray(detail)?detail:(detail.errors||[detail]);
         const errors=issues.map(it=>{
           const loc=it.loc||(it.field||'').split('.');
           if(loc.includes('company_email')) return t('signup.email_invalid');
           if(loc.includes('email_consent')) return t('signup.consent_required');
           const field=loc.filter(k=>k&&k!=='body'&&k!=='contacts').map(k=>fields[k]||k).join(' · ');
-          return (field?field+': ':'')+(it.msg||it.message||'입력값을 확인해 주세요.');
+          return (field?field+': ':'')+(it.msg||it.message||t('ui.text_107'));
         });
         return toast(errors.join('\n'));
       }
-      if(!r.ok) return toast(await apiErr(r, '가입 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.'));
+      if(!r.ok) return toast(await apiErr(r, t('ui.text_108')));
       const d = await r.json();
       /* register 가 토큰을 반환 → 즉시 로그인 */
       AUTH.access=d.token; AUTH.refresh=d.refresh_token; AUTH.role=d.role; AUTH.uiRole=uiRoleFromServer(d.role); AUTH.username=d.username; AUTH.org_id=d.org_id; authSave();
+      consumeSignupLink();
       const ui=AUTH.uiRole||'ent'; const rk=Object.keys(ROLES).find(k=>ROLES[k].code===ui);
       S.role=ui; S.view=ROLES[rk].home; S.userId=null;
       S.signup=null; S.auth='login';
       if(typeof loadRbac==='function') await loadRbac();
       await loadEnt();
       render(); window.scrollTo(0,0);
-      toast('인증기업 가입이 완료되었습니다.'+(d.referral&&d.referral.consultant?(' 담당 컨설턴트: '+d.referral.consultant):''));
-    }catch(err){ toast('서버에 연결할 수 없습니다. 네트워크를 확인해 주세요.'); }
+      toast(t('ui.text_109')+(d.referral&&d.referral.consultant?(t('signup.consultant_suffix')+d.referral.consultant):''));
+    }catch(err){ toast(t('ui.text_110')); }
     finally{ if(btn) btn.disabled=false; }
   },
   dupReset(){ S.dupEmail=null; $('#dup-msg').textContent=''; },
   async dupCheck(){
     const el = $('#cs-email'); const email = el.value.trim().toLowerCase(); const msg = $('#dup-msg');
-    if(!el.checkValidity() || !email){ msg.textContent='올바른 이메일 형식으로 입력해 주세요.'; return; }
-    msg.textContent='확인 중…';
+    if(!el.checkValidity() || !email){ msg.textContent=t('signup.email_format'); return; }
+    msg.textContent=t('signup.checking');
     try{
       const r = await fetch(API_BASE+'/auth/check-username?username='+encodeURIComponent(email));
-      if(!r.ok){ S.dupEmail=null; msg.textContent='중복 확인에 실패했습니다. 잠시 후 다시 시도해 주세요.'; return; }
+      if(!r.ok){ S.dupEmail=null; msg.textContent=t('signup.check_failed'); return; }
       const d = await r.json();
-      if(d.available){ S.dupEmail=email; msg.textContent='✓ 사용할 수 있는 이메일입니다.'; }
-      else { S.dupEmail=null; msg.innerHTML='<b>이미 사용 중인 이메일입니다.</b> 다른 이메일을 입력하세요.'; }
-    }catch(e){ S.dupEmail=null; msg.textContent='서버에 연결할 수 없습니다.'; }
+      if(d.available){ S.dupEmail=email; msg.textContent=t('signup.available'); }
+      else { S.dupEmail=null; msg.innerHTML=`<b>${t('signup.email_taken')}</b> ${t('signup.email_other')}`; }
+    }catch(e){ S.dupEmail=null; msg.textContent=t('signup.network_error'); }
   },
   async submitCons(e){
     e.preventDefault(); const val = id => { const el=$('#'+id); return el ? el.value.trim() : ''; };
     const email = val('cs-email').toLowerCase();
-    if(S.dupEmail!==email){ $('#dup-msg').textContent='메일주소 중복 확인을 먼저 진행해 주세요.'; $('#cs-email').focus(); return; }
-    if(val('cs-pw')!==val('cs-pw2')) return toast('비밀번호가 일치하지 않습니다. 다시 입력해 주세요.');
+    if(S.dupEmail!==email){ $('#dup-msg').textContent=t('signup.check_required'); $('#cs-email').focus(); return; }
+    if(val('cs-pw')!==val('cs-pw2')) return toast(t('ui.text_102'));
     const btn = e.target.querySelector('button[type=submit]'); if(btn) btn.disabled=true;
     try{
       const body = { username: email, password: val('cs-pw'), requested_role: (S.staffRole||'consultant'),
                      display_name: val('cs-name'), note: [val('cs-org'),val('cs-title'),val('cs-phone')].filter(Boolean).join(' · ') };
       const r = await fetch(API_BASE+'/auth/staff-signup', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
-      if(r.status===409){ const d=await r.json().catch(()=>({})); return toast(apiCode(d)==='SIGNUP_PENDING'?'이미 승인 대기 중인 신청이 있습니다.':'이미 가입된 계정입니다.'); }
-      if(r.status===422) return toast(await apiErr(r, '입력값을 확인해 주세요.'));
-      if(!r.ok) return toast(await apiErr(r, '가입 신청 중 오류가 발생했습니다.'));
+      if(r.status===409){ const d=await r.json().catch(()=>({})); return toast(apiCode(d)==='SIGNUP_PENDING'?t('signup.pending'):t('signup.registered')); }
+      if(r.status===422) return toast(await apiErr(r, t('ui.text_107')));
+      if(!r.ok) return toast(await apiErr(r, t('signup.staff_error')));
       S.auth='login'; S.loginRole='consultant'; S.loginEmail=email; S.dupEmail=null;
-      render(); window.scrollTo(0,0); toast('가입 신청이 접수되었습니다. 관리자 승인 후 로그인할 수 있습니다.');
-    }catch(err){ toast('서버에 연결할 수 없습니다.'); }
+      render(); window.scrollTo(0,0); toast(t('signup.staff_submitted'));
+    }catch(err){ toast(t('signup.network_error')); }
     finally{ if(btn) btn.disabled=false; }
   },
 
@@ -1146,32 +1727,32 @@ const App = {
 
   bizDrop(e){ e.preventDefault(); e.currentTarget.classList.remove('over');
     const f = e.dataTransfer.files[0]; if(!f) return;
-    if(e.dataTransfer.files.length>1) toast('사업자등록증은 한 개만 올릴 수 있어 첫 번째 파일만 사용합니다.');
+    if(e.dataTransfer.files.length>1) toast(t('signup.biz_one_file'));
     App.bizPicked(f); },
   bizPicked(f){ if(!f) return;
-    if(!/\.(pdf|jpe?g|png)$/i.test(f.name)) return toast('PDF, JPG, PNG 파일만 올릴 수 있습니다.');
+    if(!/\.(pdf|jpe?g|png)$/i.test(f.name)) return toast(t('signup.biz_types'));
     try{ const dt = new DataTransfer(); dt.items.add(f); $('#biz-up').files = dt.files; }catch(err){}
     const nm = $('#biz-name'); nm.textContent = `✓ ${f.name}`; nm.closest('.dropzone').style.borderStyle='solid';
-    toast('사업자등록증을 올렸습니다. [자동 채우기]로 기업 정보를 채울 수 있습니다.'); },
+    toast(t('signup.biz_selected')); },
   async bizAutofill(){
     const f = $('#biz-up').files[0]; const msg = $('#biz-msg');
-    if(!f){ msg.textContent = '사업자등록증 파일을 먼저 선택해 주세요.'; return; }
-    msg.textContent = '사업자등록증 판독 중…';
+    if(!f){ msg.textContent = t('signup.biz_required'); return; }
+    msg.textContent = t('signup.biz_reading');
     try{
       const b64 = await new Promise((res,rej)=>{ const rd = new FileReader(); rd.onload = ()=>res(String(rd.result)); rd.onerror = ()=>rej(rd.error); rd.readAsDataURL(f); });
       const r = await fetch(API_BASE+'/auth/ocr-extract', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({image_b64:b64, doc_type:'business_registration'})});
-      if(!r.ok){ msg.textContent = r.status===413 ? '파일이 너무 큽니다. 용량을 줄여 다시 올려 주세요.' : '자동 판독에 실패했습니다. 직접 입력해 주세요.'; return; }
+      if(!r.ok){ msg.textContent = r.status===413 ? t('signup.biz_large') : t('signup.biz_failed'); return; }
       const d = await r.json(); const fl = d.fields || {};
-      const map = [['es-name','company_name','기업명'],['es-biz','nib','사업자등록번호'],['es-ceo','responsible_person','대표자'],['es-addr','address','주소'],['es-name-en','company_name_en','기업명(영문)']];
+      const map = [['es-name','company_name',t('signup.company_name')],['es-biz','nib',t('ui.text_076')],['es-ceo','responsible_person',t('signup.representative')],['es-addr','address',t('ui.text_038')],['es-name-en','company_name_en',t('ui.text_105')]];
       map.forEach(([id,key])=>{ const el = $('#'+id); if(!el) return; el.value = fl[key] || ''; if(fl[key]) markAuto(el); else el.classList.remove('auto'); });
-      $('#es-name-en').placeholder = fl.company_name_en ? 'GANADA FOOD Co., Ltd.' : '영문 없음(직접 입력)';
-      if(!d.ocr_available){ msg.textContent = '자동 판독에 실패했습니다. 직접 입력해 주세요.' + (d.error ? ' (' + d.error + ')' : ''); return; }
+      $('#es-name-en').placeholder = fl.company_name_en ? 'GANADA FOOD Co., Ltd.' : t('signup.english_missing');
+      if(!d.ocr_available){ msg.textContent = t('signup.biz_failed') + (d.error ? ' (' + d.error + ')' : ''); return; }
       const labels = Object.fromEntries(map.map(([,key,label])=>[key,label]));
       const filled = (d.filled || []).filter(k=>labels[k] && fl[k]).map(k=>labels[k]);
       const missing = (d.missing || []).filter(k=>labels[k]).map(k=>labels[k]);
-      msg.textContent = filled.length ? '✓ ' + filled.join(', ') + '을(를) 채웠습니다. 내용을 확인해 주세요.' : '문서에서 기업 정보를 찾지 못했습니다. 직접 입력해 주세요.';
-      if(missing.length) msg.textContent += ' 읽지 못한 항목: ' + missing.join(', ') + ' — 직접 입력해 주세요.';
-    }catch(e){ msg.textContent = '서버에 연결할 수 없습니다. 직접 입력해 주세요.'; }
+      msg.textContent = filled.length ? tf('signup.biz_filled',{fields:filled.join(', ')}) : t('signup.biz_empty');
+      if(missing.length) msg.textContent += ' ' + tf('signup.biz_missing',{fields:missing.join(', ')});
+    }catch(e){ msg.textContent = t('signup.biz_network'); }
   },
 
   
@@ -2005,96 +2586,104 @@ App.selCompany = async function(id){ S.selCompany=id; if(!(RS.consPre||{})[id]) 
 
 
 /* ===== P4 슬라이스6: 기업 문서함(ent-docs) 실데이터 — 목록·업로드·다운로드 ===== */
-const DOC_TYPES = [['nib_business_license','사업자등록증'],['factory_registration','공장등록증'],
-  ['coa_msds','성분분석표(CoA/MSDS)'],['material_list','원료 목록'],['product_label','제품 라벨'],
-  ['product_list','제품 목록'],['quality_cert','품질 인증서'],['supplier_declaration','공급자 선언서'],
-  ['halal_certificate','할랄 인증서'],['consent','동의서']];
+const DOC_TYPES = [['nib_business_license','docs.type.nib_business_license'],['factory_registration','docs.type.factory_registration'],
+  ['coa_msds','docs.type.coa_msds'],['material_list','docs.type.material_list'],['product_label','docs.type.product_label'],
+  ['product_list','docs.type.product_list'],['quality_cert','docs.type.quality_cert'],['supplier_declaration','docs.type.supplier_declaration'],
+  ['halal_certificate','docs.type.halal_certificate'],['consent','docs.type.consent']];
 function _docTypeForCase(cid){
   // 마지막 선택은 같은 케이스에서만 유지한다.
   if(S.docTypeCase!==cid){ S.docTypeCase=cid; S.docType=''; }
   return S.docType || 'nib_business_license';
 }
 function _docVerifyBadge(d){
-  const v=d.verify||{}, labels={ok:'일치',warn:'확인 필요',fail:'불일치'};
-  return `<span class="badge ${v.verdict==='ok'?'strong':(['warn','fail'].includes(v.verdict)?'attn':'')}" title="${esc(v.summary||'')}">${labels[v.verdict]||'-'}</span>`;
+  const v=d.verify||(d.fields||{})._verify||{}, fields=d.fields||{};
+  const unavailable=[v.error,v.llm_error,fields._llm_error,fields.error,d.llm_error].includes('LLM_UNAVAILABLE');
+  const issues=(v.field_issues||[]).filter(x=>x.field && !['error','llm_error'].includes(x.field) && !x.field.startsWith('_'));
+  const checkedByAI=v.source==='llm' && ['ok','warn','fail'].includes(v.verdict);
+  const unchecked=!['ok','warn','fail'].includes(v.verdict)||(unavailable&&!checkedByAI&&!issues.length&&v.doc_type_ok!==false);
+  const label=unchecked?'docs.ai_unchecked':v.verdict==='ok'?'docs.ai_match':'docs.ai_review';
+  const reason=unchecked?(unavailable?t('docs.ai_unavailable'):t('docs.ai_unknown')):(v.summary||'');
+  return `<span class="badge ${unchecked?'':v.verdict==='ok'?'strong':'attn'}" title="${esc(reason)}">${t(label)}</span>`;
 }
 async function loadEntDocs(cid){
-  try{ const r=await apiFetch('/cases/'+cid+'/documents'); RS.entDocs[cid]=r.ok?await r.json():[]; }
-  catch(e){ RS.entDocs[cid]=[]; }
+  const lang=S.lang;
+  try{ const r=await apiFetch('/cases/'+cid+'/documents?lang='+encodeURIComponent(lang)); const docs=r.ok?await r.json():[]; if(lang===S.lang) RS.entDocs[cid]=docs; }
+  catch(e){ if(lang===S.lang) RS.entDocs[cid]=[]; }
 }
 VIEWS['ent-docs'] = () => {
-  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">${t('upload.text_024')}<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">${t('members.retry')}</button></p></section>`;
   const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
-  if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
+  if(!c) return `<section class="panel"><p class="empty">${t('ui.text_111')}</p></section>`;
   const cid=c.case_id, docs=(RS.entDocs||{})[cid];
   const dt=_docTypeForCase(cid);
-  if(!docs){ if(RS._entDocsLoading!==cid){ RS._entDocsLoading=cid; loadEntDocs(cid).then(()=>{RS._entDocsLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  if(!docs){ if(RS._entDocsLoading!==cid){ RS._entDocsLoading=cid; loadEntDocs(cid).then(()=>{RS._entDocsLoading=null; render();}); } return `<section class="panel"><p class="empty">${t('members.loading')}</p></section>`; }
   const q=(S.docQ||'').toLowerCase();
   const list=docs.filter(d=>!q||(d.filename||'').toLowerCase().includes(q)||(d.doc_type_ko||'').toLowerCase().includes(q)).slice().reverse();
-  const RVW={approved:'승인', rejected:'반려', rework:'보완', pending:'검토 대기'};
+  const RVW={approved:t('members.approve'), rejected:t('members.reject'), rework:t('ui.text_125'), pending:t('ui.text_114')};
   return `
   <section class="summary">
-    <div><span class="k">보관 서류</span><span class="v mono">${docs.length}건</span></div>
-    <div><span class="k">서류 종류</span><span class="v mono">${new Set(docs.map(d=>d.doc_type)).size}종</span></div>
-    <div><span class="k">승인</span><span class="v mono">${docs.filter(d=>d.review_status==='approved').length}건</span></div>
-    <div><span class="k">검토 대기</span><span class="v mono">${docs.filter(d=>!d.review_status||d.review_status==='pending').length}건</span></div>
+    <div><span class="k">${t('ui.text_112')}</span><span class="v mono">${tf('docs.items_count',{count:docs.length})}</span></div>
+    <div><span class="k">${t('ui.text_113')}</span><span class="v mono">${tf('docs.types_count',{count:new Set(docs.map(d=>d.doc_type)).size})}</span></div>
+    <div><span class="k">${t('members.approve')}</span><span class="v mono">${tf('docs.items_count',{count:docs.filter(d=>d.review_status==='approved').length})}</span></div>
+    <div><span class="k">${t('ui.text_114')}</span><span class="v mono">${tf('docs.items_count',{count:docs.filter(d=>!d.review_status||d.review_status==='pending').length})}</span></div>
   </section>
-  <section class="panel"><div class="panel-head"><h2>서류 올리기</h2><span class="muted">업로드 시 종류에 맞게 자동 파싱·스크리닝됩니다</span></div>
+  <section class="panel"><div class="panel-head"><h2>${t('ui.text_115')}</h2><span class="muted">${t('ui.text_116')}</span></div>
     <div class="inline" style="flex-wrap:wrap">
-      <select class="in" id="doc-type" style="flex:1 1 200px" onchange="S.docType=this.value;S.docTypeCase='${cid}'">${DOC_TYPES.map(([v,l])=>`<option value="${v}" ${dt===v?'selected':''}>${l}</option>`).join('')}</select>
+      <select class="in" id="doc-type" style="flex:1 1 200px" onchange="S.docType=this.value;S.docTypeCase='${cid}'">${DOC_TYPES.map(([v,l])=>`<option value="${v}" ${dt===v?'selected':''}>${t(l)}</option>`).join('')}</select>
       <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" style="flex:2 1 240px">
-      ${canCall('POST','/cases/{}/parse-file')?`<button class="btn btn-primary" onclick="App.docUpload('${cid}')">업로드</button>`:'<span class="muted">서류 업로드는 신청기업·컨설턴트 계정만 할 수 있습니다.</span>'}
+      ${canCall('POST','/cases/{}/parse-file')?`<button class="btn btn-primary" onclick="App.docUpload('${cid}')">${t('ui.text_117')}</button>`:`<span class="muted">${t('ui.text_118')}</span>`}
     </div>
   </section>
-  <section class="panel"><div class="panel-head"><h2>서류함</h2>${canCall('POST','/cases/{}/documents/verify')?`<button class="btn btn-ghost" onclick="App.docVerify('${cid}')">AI 재검증</button>`:''}<input class="in" style="max-width:260px" placeholder="파일명·종류 검색" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
-    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th>AI 검증</th><th>등록</th><th></th></tr></thead><tbody>
+  <section class="panel"><div class="panel-head"><h2>${t('ui.text_119')}</h2>${canCall('POST','/cases/{}/documents/verify')?`<button class="btn btn-ghost" onclick="App.docVerify('${cid}')">${t('docs.reverify')}</button>`:''}<input class="in" style="max-width:260px" placeholder="${t('ui.text_124')}" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
+    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">${t('ui.text_120')}</th><th>${t('ui.text_051')}</th><th>${t('ui.text_121')}</th><th>${t('docs.verify')}</th><th>${t('ui.text_122')}</th><th></th></tr></thead><tbody>
     ${list.map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td>
-      <td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
+      <td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||t('ui.text_114')}</span></td>
       <td>${_docVerifyBadge(d)}</td>
       <td class="mono">${esc((d.created_at||'').slice(0,10))}</td>
-      <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${jsq((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
-    </tbody></table></div>`:'<p class="empty">보관된 서류가 없습니다. 위에서 올려 주세요.</p>'}
+      <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${jsq((d.filename||'doc').replace(/'/g,''))}')">${t('ui.text_050')}</button>`:''}</td></tr>`).join('')}
+    </tbody></table></div>`:`<p class="empty">${t('ui.text_123')}</p>`}
   </section>`;
 };
 App.docSearch = function(v){ S.docQ=v; render(); };
 App.docUpload = function(cid){
   const dt=_docTypeForCase(cid);
   S.docType=dt;   // 업로드 뒤 render() 가 돌아도 마지막으로 고른 칸을 유지한다
-  const inp=$('#doc-file'); if(!inp||!inp.files||!inp.files[0]) return toast('파일을 선택해 주세요.');
-  const f=inp.files[0]; toast('업로드 중…');
+  const inp=$('#doc-file'); if(!inp||!inp.files||!inp.files[0]) return toast(t('ui.text_126'));
+  const f=inp.files[0]; toast(t('ui.text_127'));
   const rd=new FileReader();
   rd.onload=async()=>{ const b64=(rd.result||'').toString().split(',')[1]||'';
     const r=await apiFetch('/cases/'+cid+'/parse-file',{method:'POST',body:JSON.stringify({doc_type:dt,filename:f.name,file_b64:b64})});
-    if(!r.ok){ const d=await r.json().catch(()=>({})); return toast('업로드 실패'+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
+    if(!r.ok){ const d=await r.json().catch(()=>({})); return toast(t('ui.text_128')+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
     const res=await r.json(); const ap=res.applied||{};
     delete RS.entDocs[cid]; await loadEntDocs(cid); await loadEnt();
     if(typeof PKG_load==='function') await PKG_load(cid);
     render();
-    let msg='서류를 올렸습니다.'+(ap.materials_added?(' 원재료 '+ap.materials_added+'건 연결'):'')+(ap.products_added?(' 제품 '+ap.products_added+'건'):'');
-    if(ap.materials_pending) msg+=' 원재료 '+ap.materials_pending+'건이 확인 대기에 있습니다(원재료 등록 창에서 확인).';
+    let msg=t('docs.uploaded');
+    if(ap.materials_added) msg+=' '+tf('docs.materials_added',{count:ap.materials_added});
+    if(ap.products_added) msg+=' '+tf('docs.products_added',{count:ap.products_added});
+    if(ap.materials_pending) msg+=' '+tf('upload.materials_pending',{count:ap.materials_pending});
     if(res.mismatch){
-      const label=v=>(DOC_TYPES.find(([k])=>k===v)||[v,v])[1];
-      const selected=label(res.mismatch.selected), detected=label(res.mismatch.detected);
-      msg+=` 칸 확인: '${selected}'로 올렸지만 문서 내용은 '${detected}'라서 '${detected}'로 저장했습니다.`;
+      const label=v=>t((DOC_TYPES.find(([k])=>k===v)||[v,v])[1]);
+      msg+=' '+tf('docs.type_changed',{selected:label(res.mismatch.selected),detected:label(res.mismatch.detected)});
     }
-    if(ap.skipped==='no_nib'||ap.skipped==='nib_conflict') msg+=' 업체 정보는 바꾸지 않았습니다(사업자번호 '+(ap.skipped==='no_nib'?'없음':'불일치')+').';
+    if(ap.skipped==='no_nib'||ap.skipped==='nib_conflict') msg+=' '+tf('docs.profile_unchanged',{reason:ap.skipped==='no_nib'?t('docs.no_number'):t('docs.mismatch')});
     toast(msg);   // 토스트는 하나이므로 경고가 완료 알림에 가려지지 않게 함께 표시한다
   };
   rd.readAsDataURL(f);
 };
 App.docVerify = async function(cid){
   try{ const r=await apiFetch('/cases/'+cid+'/documents/verify',{method:'POST'});
-    if(!r.ok) return toast(await apiErr(r, '검증을 시작하지 못했습니다.'));
+    if(!r.ok) return toast(await apiErr(r, t('docs.verify_failed')));
     const res=await r.json();
-    if(res.queued===0) return toast('검증할 서류가 없거나 검증 기능이 꺼져 있습니다.');
-    toast('검증을 시작했습니다('+res.queued+'건).');
-  }catch(e){ toast('검증을 시작하지 못했습니다.'); }
+    if(res.queued===0) return toast(t('docs.verify_empty'));
+    toast(tf('docs.verify_started',{count:res.queued}));
+  }catch(e){ toast(t('docs.verify_failed')); }
 };
 App.docDownload = async function(docId, name){
-  try{ const r=await apiFetch('/documents/'+docId+'/file'); if(!r.ok) return toast(await apiErr(r, '파일을 열 수 없습니다.'));
+  try{ const r=await apiFetch('/documents/'+docId+'/file'); if(!r.ok) return toast(await apiErr(r, t('ui.text_132')));
     const blob=await r.blob(); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name||'document';
     document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},4000);
-  }catch(e){ toast('파일을 열 수 없습니다.'); }
+  }catch(e){ toast(t('ui.text_132')); }
 };
 
 
@@ -2106,23 +2695,23 @@ async function loadConsInv(){
 const _refLink = code => location.origin + '/ui/v4/?ref=' + code;
 VIEWS['cons-new'] = () => {
   const invs=RS.consInv;
-  if(invs===null){ if(!RS._consInvLoading){ RS._consInvLoading=true; loadConsInv().then(()=>{RS._consInvLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  if(invs===null){ if(!RS._consInvLoading){ RS._consInvLoading=true; loadConsInv().then(()=>{RS._consInvLoading=false; render();}); } return `<section class="panel"><p class="empty">${t('members.loading')}</p></section>`; }
   const now=Date.now();
   const active=invs.filter(i=>!i.revoked && (!i.expires_at||new Date(i.expires_at).getTime()>now));
   return `<div class="cols-2" style="align-items:start">
-    <section class="panel"><div class="panel-head"><h2>신규 인증기업 초대</h2></div>
-      <p class="muted">초대 링크로 가입한 기업은 자동으로 내 담당으로 귀속됩니다.</p>
-      <div class="field"><label for="iv-company">업체명(참고, 선택)</label><input class="in" id="iv-company" placeholder="PT 가나다식품"></div>
-      <div class="field"><label for="iv-note">메모(선택)</label><input class="in" id="iv-note"></div>
-      <div class="field"><label for="iv-days">유효기간(일)</label><input class="in" id="iv-days" type="number" value="30" style="max-width:120px"></div>
-      <div class="row-act"><button class="btn btn-primary" data-act="invite" onclick="App.consCreateInvite()">초대 링크 생성</button></div>
+    <section class="panel"><div class="panel-head"><h2>${t('ui.text_133')}</h2></div>
+      <p class="muted">${t('ui.text_134')}</p>
+      <div class="field"><label for="iv-company">${t('ui.text_135')}</label><input class="in" id="iv-company" placeholder="${t('ui.text_143')}"></div>
+      <div class="field"><label for="iv-note">${t('ui.text_136')}</label><input class="in" id="iv-note"></div>
+      <div class="field"><label for="iv-days">${t('ui.text_137')}</label><input class="in" id="iv-days" type="number" value="30" style="max-width:120px"></div>
+      <div class="row-act"><button class="btn btn-primary" data-act="invite" onclick="App.consCreateInvite()">${t('ui.text_138')}</button></div>
     </section>
-    <section class="panel"><div class="panel-head"><h2>발급한 초대 ${active.length}건</h2><span class="muted">전체 ${invs.length}</span></div>
+    <section class="panel"><div class="panel-head"><h2>${tf('invite.count',{count:active.length})}</h2><span class="muted">${t('members.all')} ${invs.length}</span></div>
       ${invs.length?`<ul class="rows">${invs.slice().reverse().map(i=>{const rl=_refLink(i.code); const dead=i.revoked||(i.expires_at&&new Date(i.expires_at).getTime()<=now);
         return `<li class="row" style="flex-wrap:wrap;gap:6px"><div style="min-width:0"><b class="mono">${esc(i.code)}</b> ${i.company_name?`<span class="muted">· ${esc(i.company_name)}</span>`:''}
           <div class="muted mono" style="font-size:11px;word-break:break-all">${esc(rl)}</div>
-          <span class="muted" style="font-size:11px">사용 ${i.used_count||0}/${i.max_uses||1} · 만료 ${esc((i.expires_at||'').slice(0,10))}</span></div>
-          <div class="row-act">${dead?`<span class="badge">${i.revoked?'회수됨':'만료'}</span>`:`<span class="badge strong">유효</span><button class="btn btn-sm btn-ghost" onclick="App.copyLink('${jsq(rl)}')">링크 복사</button><button class="btn btn-sm btn-ghost" onclick="App.consRevoke('${i.invite_id}')">회수</button>`}</div></li>`;}).join('')}</ul>`:'<p class="empty">발급한 초대가 없습니다.</p>'}
+          <span class="muted" style="font-size:11px">${esc(tf('invite.usage',{used:i.used_count||0,max:i.max_uses||1,date:(i.expires_at||'').slice(0,10)}))}</span></div>
+          <div class="row-act">${dead?`<span class="badge">${i.revoked?t('ui.text_151'):t('ui.text_144')}</span>`:`<span class="badge strong">${t('ui.text_139')}</span><button class="btn btn-sm btn-ghost" onclick="App.copyLink('${jsq(rl)}')">${t('ui.text_140')}</button><button class="btn btn-sm btn-ghost" onclick="App.consRevoke('${i.invite_id}')">${t('ui.text_141')}</button>`}</div></li>`;}).join('')}</ul>`:`<p class="empty">${t('ui.text_142')}</p>`}
     </section></div>`;
 };
 App.consCreateInvite = async function(){
@@ -2130,18 +2719,18 @@ App.consCreateInvite = async function(){
   const note=(($('#iv-note')||{}).value||'').trim()||null;
   const expires_days=parseInt((($('#iv-days')||{}).value||'30'),10)||30;
   const r=await apiFetch('/consultant/invites',{method:'POST',body:JSON.stringify({company_name,note,expires_days,max_uses:1})});
-  if(!r.ok) return toast(await apiErr(r, '초대 생성에 실패했습니다.'));
+  if(!r.ok) return toast(await apiErr(r, t('ui.text_145')));
   const d=await r.json(); await loadConsInv(); render();
-  toast('초대 링크를 생성했습니다. 코드 '+d.code);
+  toast(tf('invite.created',{code:d.code}));
 };
 App.consRevoke = async function(id){
   const r=await apiFetch('/consultant/invites/'+id+'/revoke',{method:'POST'});
-  if(!r.ok) return toast(await apiErr(r, '회수에 실패했습니다.'));
-  await loadConsInv(); render(); toast('초대를 회수했습니다.');
+  if(!r.ok) return toast(await apiErr(r, t('ui.text_146')));
+  await loadConsInv(); render(); toast(t('ui.text_147'));
 };
 App.copyLink = async function(url){
-  try{ await navigator.clipboard.writeText(url); toast('링크를 복사했습니다.'); }
-  catch(e){ toast('복사 실패 — 링크를 직접 선택해 복사하세요.'); }
+  try{ await navigator.clipboard.writeText(url); toast(t('ui.text_148')); }
+  catch(e){ toast(t('ui.text_149')); }
 };
 
 
@@ -2215,31 +2804,31 @@ function _docVaultBody(cid, docs){
   const dt=_docTypeForCase(cid);
   const q=(S.docQ||'').toLowerCase();
   const list=docs.filter(d=>!q||(d.filename||'').toLowerCase().includes(q)||(d.doc_type_ko||'').toLowerCase().includes(q)).slice().reverse();
-  const RVW={approved:'승인', rejected:'반려', rework:'보완', pending:'검토 대기'};
+  const RVW={approved:t('members.approve'), rejected:t('members.reject'), rework:t('ui.text_125'), pending:t('ui.text_114')};
   return `
-  <section class="panel"><div class="panel-head"><h2>서류 올리기</h2><span class="muted">기업 대신 서류를 올릴 수 있습니다</span></div>
+  <section class="panel"><div class="panel-head"><h2>${t('ui.text_115')}</h2><span class="muted">${t('docs.for_company')}</span></div>
     <div class="inline" style="flex-wrap:wrap">
-      <select class="in" id="doc-type" style="flex:1 1 200px" onchange="S.docType=this.value;S.docTypeCase='${cid}'">${DOC_TYPES.map(([v,l])=>`<option value="${v}" ${dt===v?'selected':''}>${l}</option>`).join('')}</select>
+      <select class="in" id="doc-type" style="flex:1 1 200px" onchange="S.docType=this.value;S.docTypeCase='${cid}'">${DOC_TYPES.map(([v,l])=>`<option value="${v}" ${dt===v?'selected':''}>${t(l)}</option>`).join('')}</select>
       <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" style="flex:2 1 240px">
-      ${canCall('POST','/cases/{}/parse-file')?`<button class="btn btn-primary" onclick="App.docUpload('${cid}')">업로드</button>`:''}</div></section>
-  <section class="panel"><div class="panel-head"><h2>서류함 ${docs.length}건</h2>${canCall('POST','/cases/{}/documents/verify')?`<button class="btn btn-ghost" onclick="App.docVerify('${cid}')">AI 재검증</button>`:''}<input class="in" style="max-width:240px" placeholder="파일명·종류 검색" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
+      ${canCall('POST','/cases/{}/parse-file')?`<button class="btn btn-primary" onclick="App.docUpload('${cid}')">${t('ui.text_117')}</button>`:''}</div></section>
+  <section class="panel"><div class="panel-head"><h2>${t('ui.text_119')} ${tf('docs.items_count',{count:docs.length})}</h2>${canCall('POST','/cases/{}/documents/verify')?`<button class="btn btn-ghost" onclick="App.docVerify('${cid}')">${t('docs.reverify')}</button>`:''}<input class="in" style="max-width:240px" placeholder="${t('ui.text_124')}" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
     ${typeof PDN_panel==='function'?PDN_panel(cid):''}
-    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th>AI 검증</th><th>등록</th><th></th></tr></thead><tbody>
+    ${list.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">${t('ui.text_120')}</th><th>${t('ui.text_051')}</th><th>${t('ui.text_121')}</th><th>${t('docs.verify')}</th><th>${t('ui.text_122')}</th><th></th></tr></thead><tbody>
     ${list.map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td>
-      <td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
+      <td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||t('ui.text_114')}</span></td>
       <td>${_docVerifyBadge(d)}</td>
       <td class="mono">${esc((d.created_at||'').slice(0,10))}</td>
-      <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${jsq((d.filename||'doc').replace(/'/g,''))}')">열기</button>`:''}</td></tr>`).join('')}
-    </tbody></table></div>`:'<p class="empty">보관된 서류가 없습니다.</p>'}</section>`;
+      <td>${d.has_file?`<button class="btn btn-sm btn-ghost" onclick="App.docDownload('${d.document_id}','${jsq((d.filename||'doc').replace(/'/g,''))}')">${t('ui.text_050')}</button>`:''}</td></tr>`).join('')}
+    </tbody></table></div>`:`<p class="empty">${t('ui.text_152')}</p>`}</section>`;
 }
 VIEWS['cons-docs'] = () => {
   const list=RS.cases||[];
-  if(!list.length) return `<section class="panel"><p class="empty">담당 기업이 없습니다.</p></section>`;
+  if(!list.length) return `<section class="panel"><p class="empty">${t('ui.text_153')}</p></section>`;
   let cur=(S.selDocCo&&list.find(c=>c.case_id===S.selDocCo))?S.selDocCo:list[0].case_id; S.selDocCo=cur;
   _docTypeForCase(cur);
-  const nav=`<nav class="mlist" aria-label="문서 대상 기업"><div class="mh">담당 기업 ${list.length}개사</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selDocCo('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const nav=`<nav class="mlist" aria-label="${t('docs.company_nav')}"><div class="mh">${tf('docs.companies_count',{count:list.length})}</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selDocCo('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
   const docs=(RS.entDocs||{})[cur]; let body;
-  if(!docs){ if(RS._entDocsLoading!==cur){ RS._entDocsLoading=cur; loadEntDocs(cur).then(()=>{RS._entDocsLoading=null; render();}); } body='<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  if(!docs){ if(RS._entDocsLoading!==cur){ RS._entDocsLoading=cur; loadEntDocs(cur).then(()=>{RS._entDocsLoading=null; render();}); } body=`<section class="panel"><p class="empty">${t('members.loading')}</p></section>`; }
   else body=`<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${_docVaultBody(cur,docs)}</div>`;
   return `<div class="md">${nav}${body}</div>`;
 };
@@ -2288,26 +2877,26 @@ async function loadEntProd(cid){
   catch(e){ RS.entProd[cid]=[]; }
 }
 VIEWS['ent-apply'] = () => {
-  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">불러오지 못했습니다.<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">다시 시도</button></p></section>`;
+  if(RS.cases && RS.cases.error) return `<section class="panel"><p class="empty">${t('upload.text_024')}<br><button type="button" class="btn-link" onclick="${jsq('loadEnt().then(()=>render())')}" style="margin-top:1rem;">${t('members.retry')}</button></p></section>`;
   const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
-  if(!c) return `<section class="panel"><p class="empty">진행 중인 인증 신청이 없습니다.</p></section>`;
+  if(!c) return `<section class="panel"><p class="empty">${t('ui.text_111')}</p></section>`;
   const cid=c.case_id, prods=(RS.entProd||{})[cid];
-  if(!prods){ if(RS._entProdLoading!==cid){ RS._entProdLoading=cid; loadEntProd(cid).then(()=>{RS._entProdLoading=null; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  if(!prods){ if(RS._entProdLoading!==cid){ RS._entProdLoading=cid; loadEntProd(cid).then(()=>{RS._entProdLoading=null; render();}); } return `<section class="panel"><p class="empty">${t('members.loading')}</p></section>`; }
   const submitted = !['onboarding','application_draft'].includes(c.status);
   const docs=(RS.entDocs||{})[cid];
   const docCount = docs ? docs.length : null;
   return `
-  ${submitted?`<div class="note ${c.hold?'attn':''}"><b>신청서 제출됨</b><p>현재 <b>${esc(_s8label(c))}</b> 단계입니다. (${esc(c.status||'')})</p></div>`:`<div class="note"><b>인증 신청서 작성</b><p>인증 품목을 등록하고 서류를 올린 뒤 아래에서 AI 사전심사를 신청하세요. 품목이 1개 이상 있어야 신청할 수 있습니다.</p></div>`}
-  <section class="panel"><div class="panel-head"><h2>인증 품목 ${prods.length}개</h2></div>
-    ${prods.length?`<div class="tbl-wrap"><table><thead><tr><th class="num">No.</th><th style="min-width:200px">제품명</th><th>분류</th>${submitted?'':'<th></th>'}</tr></thead><tbody>
-    ${prods.map((pr,i)=>`<tr><td class="num">${i+1}</td><td><b>${esc(pr.name||'-')}</b>${pr.description?`<div class="muted">${esc(pr.description)}</div>`:''}</td><td class="muted">${esc(pr.category||pr.registration_type||'-')}</td>${submitted?'':`<td>${canCall('DELETE','/cases/{}/products/{}')?`<button class="btn btn-sm btn-ghost" onclick="App.entDelProduct('${cid}','${pr.product_id}')">삭제</button>`:''}</td>`}</tr>`).join('')}
-    </tbody></table></div>`:'<p class="empty">등록된 품목이 없습니다.</p>'}
-    ${submitted||!canCall('POST','/cases/{}/products')?'':`<div class="inline" style="flex-wrap:wrap;margin-top:8px"><input class="in" id="pr-name" placeholder="제품명 (예: 프리미엄 홍삼 스틱)" style="flex:2 1 220px"><input class="in" id="pr-cat" placeholder="분류(선택)" style="flex:1 1 140px"><button class="btn" onclick="App.entAddProduct('${cid}')">＋ 품목 추가</button></div>`}
+  ${submitted?`<div class="note ${c.hold?'attn':''}"><b>${t('application.submitted')}</b><p>${esc(tf('application.stage',{stage:_s8label(c),status:c.status||''}))}</p></div>`:`<div class="note"><b>${t('application.start')}</b><p>${t('application.hint')}</p></div>`}
+  <section class="panel"><div class="panel-head"><h2>${tf('application.products',{count:prods.length})}</h2></div>
+    ${prods.length?`<div class="tbl-wrap"><table><thead><tr><th class="num">No.</th><th style="min-width:200px">${t('application.product_name')}</th><th>${t('application.category')}</th>${submitted?'':'<th></th>'}</tr></thead><tbody>
+    ${prods.map((pr,i)=>`<tr><td class="num">${i+1}</td><td><b>${esc(pr.name||'-')}</b>${pr.description?`<div class="muted">${esc(pr.description)}</div>`:''}</td><td class="muted">${esc(pr.category||pr.registration_type||'-')}</td>${submitted?'':`<td>${canCall('DELETE','/cases/{}/products/{}')?`<button class="btn btn-sm btn-ghost" onclick="App.entDelProduct('${cid}','${pr.product_id}')">${t('application.delete')}</button>`:''}</td>`}</tr>`).join('')}
+    </tbody></table></div>`:`<p class="empty">${t('application.empty_products')}</p>`}
+    ${submitted||!canCall('POST','/cases/{}/products')?'':`<div class="inline" style="flex-wrap:wrap;margin-top:8px"><input class="in" id="pr-name" placeholder="${t('application.product_placeholder')}" style="flex:2 1 220px"><input class="in" id="pr-cat" placeholder="${t('application.category_optional')}" style="flex:1 1 140px"><button class="btn" onclick="App.entAddProduct('${cid}')">${t('application.add_product')}</button></div>`}
   </section>
-  <section class="panel"><div class="panel-head"><h2>필요 서류</h2><button class="link" onclick="App.go('ent-docs')">문서함 열기 →</button></div>
-    <p class="muted">${c.scheme==='logistics' ? '사업자등록증·SJPH 매뉴얼·취급 범위·세척 SOP·차량 목록(유통)·창고 배치도(보관·포장) 등은' : '사업자등록증·성분분석표·제조공정도 등은'} <b>문서함</b>에서 업로드합니다.${docCount!=null?` 현재 ${docCount}건 보관 중.`:''}</p></section>
-  ${submitted||!canCall('POST','/cases/{}/submit-application')?'':`<div class="action-bar"><span class="muted">${(c.scheme==='logistics' ? !!(c.logistics_scope&&c.logistics_scope.length) : !!prods.length)?'AI 사전심사를 신청하면 오디터 검토로 넘어갑니다.':(c.scheme==='logistics'?'취급 서비스(보관·포장·유통)를 1개 이상 선택해야 신청할 수 있습니다.':'품목을 1개 이상 등록해야 신청할 수 있습니다.')}</span>
-    <div class="row-act"><button class="btn btn-primary" ${(c.scheme==='logistics' ? !!(c.logistics_scope&&c.logistics_scope.length) : !!prods.length)?'':'disabled style="opacity:.45;cursor:not-allowed"'} onclick="App.entSubmitApp('${cid}')">AI 사전심사 신청</button></div></div>`}`;
+  <section class="panel"><div class="panel-head"><h2>${t('application.documents')}</h2><button class="link" onclick="App.go('ent-docs')">${t('application.open_docs')}</button></div>
+    <p class="muted">${t(c.scheme==='logistics'?'application.logistics_documents':'application.product_documents')}${docCount!=null?' '+tf('application.document_count',{count:docCount}):''}</p></section>
+  ${submitted||!canCall('POST','/cases/{}/submit-application')?'':`<div class="action-bar"><span class="muted">${(c.scheme==='logistics' ? !!(c.logistics_scope&&c.logistics_scope.length) : !!prods.length)?t('application.submit_hint'):(c.scheme==='logistics'?t('application.services_required'):t('application.product_required'))}</span>
+    <div class="row-act"><button class="btn btn-primary" ${(c.scheme==='logistics' ? !!(c.logistics_scope&&c.logistics_scope.length) : !!prods.length)?'':'disabled style="opacity:.45;cursor:not-allowed"'} onclick="App.entSubmitApp('${cid}')">${t('application.submit')}</button></div></div>`}`;
 };
 App.entAddProduct = async function(cid){
   const name=(($('#pr-name')||{}).value||'').trim(); if(!name) return toast('제품명을 입력해 주세요.');
@@ -2461,31 +3050,41 @@ VIEWS['adm-home'] = () => {
 const ROLE_LABEL = {applicant:'인증기업', penyelia_halal:'인증기업', pendamping_pph:'인증기업', client_admin:'인증기업', client_staff:'인증기업',
   consultant:'컨설턴트', auditor:'오디터', fatwa_liaison:'샤리아 위원', admin:'관리자', operator:'운영관리자'};
 async function loadAdmMembers(){
-  try{
-    const [ru, rs] = await Promise.all([apiFetch('/admin/users'), apiFetch('/admin/staff-signups?status=pending')]);
-    const uj = ru.ok?await ru.json():{items:[]};
-    RS.admMembers = { users: (uj.items||uj||[]), signups: rs.ok?((await rs.json()).items||[]):[], forbidden: (ru.status===403 && rs.status===403) };
-  }catch(e){ RS.admMembers={users:[],signups:[]}; }
+  const read=async path=>{
+    if(!canCall('GET',path) || (path.startsWith('/admin/staff-signups') && !CAN('admin.user.manage'))) return {state:'forbidden',items:[]};
+    try{
+      const r=await apiFetch(path);
+      if(!r.ok) return {state:r.status===403?'forbidden':'error',items:[]};
+      const d=await r.json(), items=Array.isArray(d)?d:d.items;
+      return Array.isArray(items)?{state:'ok',items}:{state:'error',items:[]};
+    }catch(e){ return {state:'error',items:[]}; }
+  };
+  const [users,signups]=await Promise.all([read('/admin/users'),read('/admin/staff-signups?status=pending')]);
+  RS.admMembers={users:users.items,signups:signups.items,panels:{users:users.state,signups:signups.state}};
+}
+function memberPanelNotice(key,state){
+  if(state==='ok') return '';
+  return `<p class="note ${state==='error'?'attn':''}" data-member-state="${state}">${t('members.'+key)}: ${t('members.'+state)}${state==='error'?` <button class="btn btn-sm" onclick="App.reloadMembers()">${t('members.retry')}</button>`:''}</p>`;
 }
 VIEWS['adm-members'] = () => {
-  if(RS.admMembers===null){ if(!RS._admMembersLoading){ RS._admMembersLoading=true; loadAdmMembers().then(()=>{RS._admMembersLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
-  const {users, signups}=RS.admMembers;
-  if(RS.admMembers.forbidden) return `<section class="panel"><div class="note attn"><b>관리자 전용 화면</b><p>회원 목록과 스태프 가입 승인은 시스템 관리자(admin) 계정에서만 볼 수 있습니다. 현재 계정 권한: ${esc(AUTH.role||'-')}</p></div></section>`;
-  const tab=S.memTab||'전체';
-  const bucket=u=>ROLE_LABEL[u.role]||u.role;
-  const tabs=['전체','인증기업','컨설턴트','오디터','샤리아 위원','관리자'];
-  const L=users.filter(u=>tab==='전체'||bucket(u)===tab);
-  return `
-  <section class="panel"><div class="panel-head"><h2>스태프 가입 승인 대기</h2><span class="badge ${signups.length?'attn':''}">${signups.length}건</span></div>
-    ${signups.length?`<ul class="rows">${signups.map(x=>`<li class="row"><div><b>${esc(x.display_name||x.username)}</b> <span class="muted">${esc(x.username)} · ${ROLE_LABEL[x.requested_role]||x.requested_role}${x.note?(' · '+esc(x.note)):''}</span></div>
-      <div class="row-act"><button class="btn btn-sm btn-primary" onclick="App.admApproveSignup('${x.request_id}')">승인</button><button class="btn btn-sm btn-ghost" onclick="App.admRejectSignup('${x.request_id}')">반려</button></div></li>`).join('')}</ul>`:'<p class="empty">대기 중인 가입 신청이 없습니다.</p>'}
-  </section>
-  <section class="panel"><div class="panel-head"><h2>사용자 ${users.length}명</h2></div>
-    <div class="tabs">${tabs.map(k=>`<button class="${tab===k?'on':''}" onclick="App.memTab('${k}')">${k} <span class="mono muted">${k==='전체'?users.length:users.filter(u=>bucket(u)===k).length}</span></button>`).join('')}</div>
-    <div class="tbl-wrap"><table><thead><tr><th style="min-width:180px">아이디</th><th>역할</th><th>소속(org)</th></tr></thead><tbody>
-    ${L.map(u=>`<tr><td><b>${esc(u.username)}</b></td><td><span class="badge">${esc(bucket(u))}</span></td><td class="mono muted">${esc(u.org_id||'-')}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">사용자 없음</td></tr>'}
-    </tbody></table></div></section>`;
+  if(!RS.admMembers){ if(!RS._admMembersLoading){ RS._admMembersLoading=true; loadAdmMembers().then(()=>{RS._admMembersLoading=false; render();}); } return `<section class="panel"><p class="empty">${t('members.loading')}</p></section>`; }
+  const {users,signups,panels}=RS.admMembers;
+  const tab=S.memTab||'all';
+  const bucket=u=>['applicant','penyelia_halal','pendamping_pph','client_admin','client_staff'].includes(u.role)?'applicant':u.role;
+  const tabs=['all','applicant','consultant','auditor','fatwa_liaison','admin'];
+  const L=users.filter(u=>tab==='all'||bucket(u)===tab);
+  return memberPanelNotice('signups',panels.signups)+memberPanelNotice('users',panels.users)+`
+  ${panels.signups==='ok'?`<section class="panel" data-member-panel="signups"><div class="panel-head"><h2>${t('members.signups')}</h2><span class="badge ${signups.length?'attn':''}">${signups.length}</span></div>
+    ${signups.length?`<ul class="rows">${signups.map(x=>`<li class="row"><div><b data-noi18n>${esc(x.display_name||x.username)}</b> <span class="muted"><span data-noi18n>${esc(x.username)}</span> · ${t('role.'+x.requested_role)}${x.note?(' · '+esc(x.note)):''}</span></div>
+      <div class="row-act"><button class="btn btn-sm btn-primary" onclick="App.admApproveSignup('${x.request_id}')">${t('members.approve')}</button><button class="btn btn-sm btn-ghost" onclick="App.admRejectSignup('${x.request_id}')">${t('members.reject')}</button></div></li>`).join('')}</ul>`:`<p class="empty">${t('members.empty_signups')}</p>`}
+  </section>`:''}
+  ${panels.users==='ok'?`<section class="panel" data-member-panel="users"><div class="panel-head"><h2>${t('members.users')} ${users.length}</h2></div>
+    <div class="tabs">${tabs.map(k=>`<button class="${tab===k?'on':''}" onclick="App.memTab('${k}')">${t(k==='all'?'members.all':'role.'+k)} <span class="mono muted">${k==='all'?users.length:users.filter(u=>bucket(u)===k).length}</span></button>`).join('')}</div>
+    <div class="tbl-wrap"><table><thead><tr><th>${t('members.username')}</th><th>${t('members.role')}</th><th>${t('members.org')}</th></tr></thead><tbody>
+    ${L.map(u=>`<tr><td data-noi18n><b>${esc(u.username)}</b></td><td><span class="badge">${t('role.'+u.role)}</span></td><td class="mono muted" data-noi18n>${esc(u.org_id||'-')}</td></tr>`).join('')||`<tr><td colspan="3" class="empty">${t('members.empty_users')}</td></tr>`}
+    </tbody></table></div></section>`:''}`;
 };
+App.reloadMembers = async function(){ RS.admMembers=null; RS.usKey=null; render(); };
 App.memTab = function(k){ S.memTab=k; render(); };
 App.admApproveSignup = async function(id){
   const r=await apiFetch('/admin/staff-signups/'+id+'/approve',{method:'POST',body:JSON.stringify({})});
@@ -2511,28 +3110,28 @@ async function loadAdmAssign(){
 }
 VIEWS['adm-assign'] = () => {
   const list=RS.cases||[];
-  if(!list.length) return `<section class="panel"><p class="empty">배정할 케이스가 없습니다.</p></section>`;
-  if(RS.admAud===null){ if(!RS._admAudLoading){ RS._admAudLoading=true; loadAdmAssign().then(()=>{RS._admAudLoading=false; render();}); } return '<section class="panel"><p class="empty">불러오는 중…</p></section>'; }
+  if(!list.length) return `<section class="panel"><p class="empty">${t('assign.empty')}</p></section>`;
+  if(RS.admAud===null){ if(!RS._admAudLoading){ RS._admAudLoading=true; loadAdmAssign().then(()=>{RS._admAudLoading=false; render();}); } return `<section class="panel"><p class="empty">${t('members.loading')}</p></section>`; }
   const available=(RS.admAud&&RS.admAud.auditors)||[];
   const auds=available.filter(a=>!a.is_demo), demoCount=available.length-auds.length;
   const nameOf=uid=>{ const a=auds.find(x=>x.user_id===uid); return a?a.username:uid; };
   let cur=(S.selAssign&&list.find(c=>c.case_id===S.selAssign))?S.selAssign:list[0].case_id; S.selAssign=cur;
   const c=list.find(x=>x.case_id===cur);
-  const nav=`<nav class="mlist" aria-label="배정 케이스"><div class="mh">케이스 ${list.length}건</div>${list.map(x=>`<button class="mitem ${x.case_id===cur?'on':''}" onclick="App.selAssign('${x.case_id}')"><span class="t"><span>${esc(x.company_name)}</span>${x.main_auditor?`<span class="badge strong">배정</span>`:'<span class="badge attn">미배정</span>'}</span><span class="muted mono" style="font-size:11px">${esc(_s8label(x))}</span></button>`).join('')}</nav>`;
-  const opts=auds.length?auds.map(a=>`<option value="${a.user_id}">${esc(a.display_name||a.username)}${a.display_name&&a.display_name!==a.username?' · '+esc(a.username):''} (부하 ${a.load}/${a.capacity})</option>`).join(''):'<option value="">배정 가능한 실제 심사원 계정이 없습니다</option>';
-  const accountNote=`<p class="muted">등록 심사원 ${auds.length}명${demoCount?' · 샘플 계정 '+demoCount+'명 제외':''}</p>${!auds.length?'<p class="empty">실제 심사원이 오디터로 가입한 뒤 관리자가 승인하거나, 회원 관리에서 실제 오디터 계정을 등록해야 배정할 수 있습니다.</p>':''}`;
+  const nav=`<nav class="mlist" aria-label="${t('assign.cases')}"><div class="mh">${tf('assign.count',{count:list.length})}</div>${list.map(x=>`<button class="mitem ${x.case_id===cur?'on':''}" onclick="App.selAssign('${x.case_id}')"><span class="t"><span>${esc(x.company_name)}</span>${x.main_auditor?`<span class="badge strong">${t('assign.assigned')}</span>`:`<span class="badge attn">${t('assign.unassigned')}</span>`}</span><span class="muted mono" style="font-size:11px">${esc(_s8label(x))}</span></button>`).join('')}</nav>`;
+  const opts=auds.length?auds.map(a=>`<option value="${a.user_id}">${esc(a.display_name||a.username)}${a.display_name&&a.display_name!==a.username?' · '+esc(a.username):''} (${tf('assign.load',{load:a.load,capacity:a.capacity})})</option>`).join(''):`<option value="">${t('assign.no_auditors')}</option>`;
+  const accountNote=`<p class="muted">${tf('assign.auditors',{count:auds.length})}${demoCount?tf('assign.demo_excluded',{count:demoCount}):''}</p>${!auds.length?`<p class="empty">${t('assign.account_hint')}</p>`:''}`;
   const co=(c.co_auditors||[]);
   const body=`<div style="display:flex;flex-direction:column;gap:22px;min-width:0">
     <section class="panel"><div class="panel-head"><h2 style="font-size:20px">${esc(c.company_name)}</h2><span class="badge">${esc(_s8label(c))}</span></div>
-      <dl class="dl"><div><dt>메인 오디터</dt><dd>${c.main_auditor?`<b>${esc(c.main_auditor)}</b>`:'<span class="muted">미배정</span>'}</dd></div>
-        <div><dt>동반 오디터</dt><dd>${co.length?co.map(uid=>esc(nameOf(uid))).join(', '):'<span class="muted">없음</span>'}</dd></div></dl>
+      <dl class="dl"><div><dt>${t('assign.main')}</dt><dd>${c.main_auditor?`<b>${esc(c.main_auditor)}</b>`:`<span class="muted">${t('assign.unassigned')}</span>`}</dd></div>
+        <div><dt>${t('assign.companion')}</dt><dd>${co.length?co.map(uid=>esc(nameOf(uid))).join(', '):`<span class="muted">${t('docs.no_number')}</span>`}</dd></div></dl>
     </section>
-    <section class="panel"><div class="panel-head"><h2>메인 오디터 배정</h2></div>
-      ${accountNote}<div class="row-act"><select class="in" id="assign-main" style="flex:1" ${!auds.length?'disabled':''}>${opts}</select><button class="btn btn-primary" ${!auds.length?'disabled':''} onclick="App.admAssignMain('${cur}')">배정</button></div></section>
-    <section class="panel"><div class="panel-head"><h2>동반 오디터 추가</h2></div>
-      <div class="row-act"><select class="in" id="assign-co" style="flex:1" ${!auds.length?'disabled':''}>${opts}</select><button class="btn" ${!auds.length?'disabled':''} onclick="App.admAddCo('${cur}')">추가</button></div>
-      ${co.length?`<ul class="rows" style="margin-top:8px">${co.map(uid=>`<li class="row"><div><b>${esc(nameOf(uid))}</b> <span class="muted">동반</span></div><button class="btn btn-sm btn-ghost" onclick="App.admDelCo('${cur}','${uid}')">해제</button></li>`).join('')}</ul>`:''}</section>
-    <div class="note"><p>오디터 배정·재배정·동반 추가는 운영관리자(operator) 권한입니다.</p></div></div>`;
+    <section class="panel"><div class="panel-head"><h2>${t('assign.assign_main')}</h2></div>
+      ${accountNote}<div class="row-act"><select class="in" id="assign-main" style="flex:1" ${!auds.length?'disabled':''}>${opts}</select><button class="btn btn-primary" ${!auds.length?'disabled':''} onclick="App.admAssignMain('${cur}')">${t('assign.action')}</button></div></section>
+    <section class="panel"><div class="panel-head"><h2>${t('assign.add_companion')}</h2></div>
+      <div class="row-act"><select class="in" id="assign-co" style="flex:1" ${!auds.length?'disabled':''}>${opts}</select><button class="btn" ${!auds.length?'disabled':''} onclick="App.admAddCo('${cur}')">${t('profile.add')}</button></div>
+      ${co.length?`<ul class="rows" style="margin-top:8px">${co.map(uid=>`<li class="row"><div><b>${esc(nameOf(uid))}</b> <span class="muted">${t('assign.companion_short')}</span></div><button class="btn btn-sm btn-ghost" onclick="App.admDelCo('${cur}','${uid}')">${t('assign.remove')}</button></li>`).join('')}</ul>`:''}</section>
+    <div class="note"><p>${t('assign.permission_hint')}</p></div></div>`;
   return `<div class="md">${nav}${body}</div>`;
 };
 App.selAssign = function(id){ S.selAssign=id; render(); };
@@ -2720,7 +3319,7 @@ VIEWS['aud-flow'] = () => {
         ${gen.map(g=>`<tr><td><b>${esc(GENDOC_KO[g.doc_type]||g.doc_type)}</b></td><td class="mono">v${g.version||1}</td><td><span class="badge ${g.status==='approved'?'strong':''}">${esc(g.status||'')}</span></td><td class="mono">${esc((g.created_at||'').slice(0,10))}</td>
           <td><button class="btn btn-sm btn-ghost" onclick="App.genPdf('${g.gen_doc_id}','${jsq(GENDOC_KO[g.doc_type]||g.doc_type)}')">PDF</button></td></tr>`).join('')}
         </tbody></table></div>`:'<p class="empty">생성된 문서가 없습니다.</p>'}</section>
-      <section class="panel"><div class="panel-head"><h2>업로드 문서 ${docs.length}건</h2><span class="muted">제출 서류</span></div>
+      <section class="panel"><div class="panel-head"><h2>업로드 문서 ${tf('docs.items_count',{count:docs.length})}</h2><span class="muted">제출 서류</span></div>
         ${typeof PDN_panel==='function'?PDN_panel(cur):''}
         ${docs.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:200px">파일</th><th>종류</th><th>검토</th><th></th></tr></thead><tbody>
         ${docs.slice().reverse().map(d=>`<tr><td><b>${esc(d.filename||'-')}</b></td><td class="muted">${esc(d.doc_type_ko||d.doc_type||'-')}</td><td><span class="badge ${d.review_status==='approved'?'strong':(d.review_status==='rejected'||d.review_status==='rework'?'attn':'')}">${RVW[d.review_status]||'검토 대기'}</span></td>
@@ -3398,6 +3997,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <!--MODULES-->
 <script src="js/mail.js"></script>
 <script src="js/signup-consultant.js"></script>
+<script src="js/uiv4-audit-i18n.js"></script>
 <script src="js/ux-focus.js?v=20261023-ux3"></script>
 </body>
 </html>

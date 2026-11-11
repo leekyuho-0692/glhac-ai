@@ -50,8 +50,7 @@ render = function(){
     if(S.scInviteSector && !S.scInviteApplied){
       const cat = $('#es-cat');
       if(cat){
-        const lbl = SC_label(S.scInviteSector);
-        for(let i=0;i<cat.options.length;i++){ if(cat.options[i].value===lbl || cat.options[i].text===lbl){ cat.selectedIndex = i; break; } }
+        cat.value=S.scInviteSector;
         S.scInviteApplied = true;
       }
     }
@@ -59,7 +58,7 @@ render = function(){
       const note = $('#iv-note');
       if(note && !$('#iv-sector-box')){
         const wrap = note.closest('.field') || note;
-        const html = `<div class="field" id="iv-sector-box"><label>분야 <span class="req">*</span></label><div class="inline">${SC_SECTORS.map(([c,l])=>`<label class="tag"><input type="checkbox" name="iv-sector" value="${c}"> ${l}</label>`).join('')}</div></div><div class="field"><label for="iv-contact">담당자</label><input class="in" id="iv-contact"></div><div class="field"><label for="iv-phone">연락처</label><input class="in" id="iv-phone"></div>`;
+        const html = `<div class="field" id="iv-sector-box"><label>분야 <span class="req">*</span></label><div class="inline sector-options">${SC_SECTORS.map(([c,l])=>`<label class="tag"><input type="checkbox" name="iv-sector" value="${c}"> ${l}</label>`).join('')}</div></div><div class="field"><label for="iv-contact">담당자</label><input class="in" id="iv-contact"></div><div class="field"><label for="iv-phone">연락처</label><input class="in" id="iv-phone"></div>`;
         wrap.insertAdjacentHTML('afterend', html);
       }
     }

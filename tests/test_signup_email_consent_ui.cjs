@@ -34,6 +34,7 @@ function screen(kind, lang='ko'){
     $:selector=>dom[selector.slice(1)] || null, v:id=>dom[id]?.value || '', esc:String,
     document:{getElementById:id=>dom[id] || null}, window:{scrollTo(){}},
     localStorage:{setItem(){}}, authSave(){}, uiRoleFromServer:()=>'ent',
+    URL,location:new URL('http://localhost/ui/v4/'),history:{state:null,replaceState(){}},
     loadEnt:async()=>{}, render(){}, boot(){}, agreeBlock:()=>'',
     toast:message=>notices.push(message), EMSG:error=>error.message || error.code,
   });
@@ -51,6 +52,7 @@ function screen(kind, lang='ko'){
   if(kind === 'v4'){
     vm.runInContext(between(source, 'const I18N = {', '/* ---------- sample data'), c);
     vm.runInContext(source.match(/^const t = .*$/m)[0], c);
+    vm.runInContext(between(source, 'function consumeSignupLink(){', 'async function apiRefresh(){'), c);
     vm.runInContext(between(source, 'function entSignup(){', 'function consSignup(){'), c);
     vm.runInContext('App.submitEnt=({' + between(source, '  async submitEnt(e){', '  dupReset()') + '}).submitEnt;', c);
   }else{

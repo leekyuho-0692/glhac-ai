@@ -43,11 +43,11 @@ function OPSA_renderLogs(){
     const tampered = v.tampered_count||0;
     const gaps = (v.deleted_predecessor||[]).length;
     const parts = [];
-    parts.push(`검사 ${v.checked}행 · ${esc(v.summary||'')}`);
-    if(v.break_at) parts.push(`첫 단절 위치: ${esc(v.break_at)}`);
-    if(tampered) parts.push(`위조 의심 행: ${(v.tampered||[]).map(x=>esc(x)).join(', ')}`);
-    if(gaps) parts.push(`선행로그 삭제 단절: ${(v.deleted_predecessor||[]).map(x=>esc(x)).join(', ')}`);
-    if(v.note) parts.push(esc(v.note));
+    parts.push(esc(tf('audit.log_summary',{tampered,legacy:v.legacy||0,epoch:(v.epoch||'').slice(0,10),gaps,checked:v.checked||0})));
+    if(v.break_at) parts.push(esc(tf('audit.first_break',{id:v.break_at})));
+    if(tampered) parts.push(esc(tf('audit.tampered_rows',{ids:(v.tampered||[]).join(', ')})));
+    if(gaps) parts.push(esc(tf('audit.deleted_rows',{ids:(v.deleted_predecessor||[]).join(', ')})));
+    if(v.note) parts.push(esc(UIV4_systemText(v.note)));
     verifyHtml = `<p class="note ${ok?'':'attn'}">${ok?'무결성 정상 · ':''}${parts.join(' · ')}</p>`;
   }
   const rows = shown.length
@@ -288,8 +288,8 @@ function OPSA_renderCompliance(){
     const items = comp.items || comp || [];
     compHtml = Array.isArray(items) && items.length
       ? `<div class="dl">${items.map(it=>`<div>
-          <dt>${esc(it.label||it.key||'')} ${OPSA_statusBadge(it.status)}</dt>
-          <dd>${esc(it.detail||'')}</dd>
+          <dt>${esc(S.lang==='id'&&it.label_id?it.label_id:UIV4_systemText(it.label||it.key))} ${OPSA_statusBadge(it.status)}</dt>
+          <dd>${esc(S.lang==='id'&&it.detail_id?it.detail_id:UIV4_systemText(it.detail))}</dd>
         </div>`).join('')}</div>`
       : '<p class="muted">항목이 없습니다.</p>';
   }
@@ -307,7 +307,7 @@ function OPSA_renderCompliance(){
       <div><dt>제공자</dt><dd class="mono">${esc(p.provider||'—')}</dd></div>
       <div><dt>구현</dt><dd>${p.implemented?'<span class="badge strong">구현됨</span>':'<span class="badge">미구현</span>'}</dd></div>
       <div><dt>상태</dt><dd>${esc(p.status||'')}</dd></div>
-      <div><dt>비고</dt><dd class="muted">${esc(p.note||'')}</dd></div>
+      <div><dt>비고</dt><dd class="muted">${esc(UIV4_systemText(p.note))}</dd></div>
     </div>`;
   }
 
@@ -323,7 +323,7 @@ function OPSA_renderCompliance(){
       <div><dt>설정 여부</dt><dd>${OPSA_statusBadge(t.configured?'met':'not_configured')}</dd></div>
       <div><dt>구현</dt><dd>${t.implemented?'<span class="badge strong">구현됨</span>':'<span class="badge">미구현</span>'}</dd></div>
       <div><dt>상태</dt><dd>${esc(t.status||'')}</dd></div>
-      <div><dt>비고</dt><dd class="muted">${esc(t.note||'')}</dd></div>
+      <div><dt>비고</dt><dd class="muted">${esc(UIV4_systemText(t.note))}</dd></div>
     </div>`;
   }
 

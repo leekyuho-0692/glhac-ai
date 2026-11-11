@@ -183,6 +183,8 @@ function I18D_start(){
     App.setLang = function(l){
       try{ localStorage.setItem('glhac_v4_lang', l); }catch(e){}
       S.lang = l;
+      RS.entaCheck=null; RS.entDocs={}; RS.auddDocs={}; RS.auddPend={};
+      RS._entaChkLoading=null; RS._entDocsLoading=null;
       render();
     };
   }catch(e){ /* noop */ }

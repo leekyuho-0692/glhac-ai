@@ -1,18 +1,15 @@
 /* 현재 신청의 다음 작업. 서버의 단계/권한은 그대로 사용한다. */
-function UX_roleLabel(){
-  const special={penyelia_halal:{ko:'할랄 감독자',en:'Halal Supervisor',id:'Penyelia Halal'},operator:{ko:'운영 담당자',en:'Operations',id:'Operasional'}};
-  return special[AUTH.role] ? special[AUTH.role][S.lang] || special[AUTH.role].ko : t(roleByCode(S.role).label);
-}
+function UX_roleLabel(){ return t('role.'+AUTH.role); }
 function UX_next(c){
-  if(c.closed) return ['종결된 신청입니다.','인증 문서함 확인','ent-flow'];
-  if(c.done) return ['인증 결과와 발급 문서를 확인하세요.','인증 문서함 확인','ent-flow'];
-  if(AUTH.role==='penyelia_halal') return ['기업의 제출 자료와 감독자 정보를 점검하세요.','담당 정보 확인','ent-apply'];
-  if(['onboarding','application_draft'].includes(c.status)) return ['기업 정보와 품목을 저장한 뒤 필요한 서류를 제출하세요.','신청서 이어 쓰기','ent-apply'];
-  if(c.hold) return ['요청된 보완 내용과 제출 자료를 확인하세요.','보완 요청 확인',c.step8>=3?'ent-prep':'ent-pre'];
-  if(c.step8===2) return ['견적과 계약서가 도착하면 내용을 확인하세요.','계약 진행 확인','ent-contract'];
-  if(c.step8===3 || c.step8===4) return ['심사 일정과 준비할 자료를 확인하세요.','심사 준비 확인','ent-prep'];
-  if(c.step8>=5) return ['담당자의 심의·발급 처리를 기다리고 있습니다.','진행 문서 확인','ent-flow'];
-  return ['사전심사 결과와 추가 요청을 확인하세요.','사전심사 결과 확인','ent-pre'];
+  if(c.closed) return [t('focus.closed'),t('focus.documents'),'ent-flow'];
+  if(c.done) return [t('focus.done'),t('focus.documents'),'ent-flow'];
+  if(AUTH.role==='penyelia_halal') return [t('focus.supervisor'),t('focus.contact'),'ent-apply'];
+  if(['onboarding','application_draft'].includes(c.status)) return [t('focus.draft'),t('focus.continue'),'ent-apply'];
+  if(c.hold) return [t('focus.hold'),t('focus.corrections'),c.step8>=3?'ent-prep':'ent-pre'];
+  if(c.step8===2) return [t('focus.quote'),t('focus.contract'),'ent-contract'];
+  if(c.step8===3 || c.step8===4) return [t('focus.audit'),t('focus.prepare'),'ent-prep'];
+  if(c.step8>=5) return [t('focus.review'),t('focus.progress'),'ent-flow'];
+  return [t('focus.pre'),t('focus.pre_result'),'ent-pre'];
 }
 {
   const home=VIEWS['ent-home'];
@@ -20,7 +17,7 @@ function UX_next(c){
     const c=(Array.isArray(RS.cases)?RS.cases:[])[0];
     if(!c) return home();
     const [message,label,view]=UX_next(c);
-    return `<section class="panel" aria-label="현재 신청의 다음 작업"><div class="panel-head"><h2>지금 할 일</h2><span data-noi18n>${esc(c.company_name||'')}</span></div><p>${esc(message)}</p><div class="row-act" style="margin-top:14px"><button class="btn btn-primary" onclick="App.go('${view}')">${esc(label)}</button></div></section>`+home();
+    return `<section class="panel" aria-label="${t('focus.next')}"><div class="panel-head"><h2>${t('ui.text_046')}</h2><span data-noi18n>${esc(c.company_name||'')}</span></div><p>${esc(message)}</p><div class="row-act" style="margin-top:14px"><button class="btn btn-primary" onclick="App.go('${view}')">${esc(label)}</button></div></section>`+home();
   };
 }
 // 보조 기능은 필요할 때 펼친다. 기존 이벤트/버튼과 권한 판정은 보존한다.
@@ -37,7 +34,7 @@ function UX_next(c){
     if(S.view==='ent-home'){
       [...page.children].forEach(panel=>{
         const h=panel.querySelector('h2');
-        if(!h || !['신청 철회','원재료 정리 도구'].includes(h.textContent.trim())) return;
+        if(!h || ![t('ui.text_047'),t('ui.text_048')].includes(h.textContent.trim())) return;
         const details=document.createElement('details'), summary=document.createElement('summary');
         details.className='panel'; summary.textContent=h.textContent;
         details.append(summary); panel.replaceWith(details); details.append(panel);
@@ -57,7 +54,7 @@ function UX_next(c){
 { const contract=VIEWS['ent-contract']; VIEWS['ent-contract']=()=>{
   const html=contract(), c=(RS.cases||[])[0], d=c && (RS.bleCt||{})[c.case_id];
   if(d && d.contract && d.contract.exists===false && d.quote && !d.quote.quote && Array.isArray(d.invoices) && !d.invoices.length && d.notices && !(d.notices.items||[]).length){
-    return CN_bar(false,true)+`<section class="panel"><h2>계약 준비 대기</h2><p>사전심사와 정식 신청 접수 후 담당자가 견적·계약서를 발송합니다. 도착하면 이 화면에서 확인할 수 있습니다.</p><button class="btn" onclick="App.go('ent-pre')">사전심사 결과 확인</button></section>`;
+    return CN_bar(false,true)+`<section class="panel"><h2>${t('focus.contract_wait')}</h2><p>${t('focus.contract_hint')}</p><button class="btn" onclick="App.go('ent-pre')">${t('focus.pre_result')}</button></section>`;
   }
   return html;
 }; }

@@ -1,7 +1,7 @@
 /* ===== 결제 문서 · 영업 정보 (pay-docs) ===== */
 const PAYD_ = {
   mime: {'application/pdf':'pdf','image/png':'png','image/svg+xml':'svg'},
-  err: (r)=> r.status===403 ? '이 화면을 볼 권한이 없습니다.' : (r.status===404 ? '아직 발행되지 않았거나 내려받을 수 없습니다.' : '불러오지 못했습니다.'),
+  err: (r)=> r.status===403 ? t('upload.text_038') : (r.status===404 ? t('ui.text_032') : t('upload.text_024')),
 };
 
 async function PAYD_fetch(key, path){
@@ -20,31 +20,31 @@ function PAYD_money(v, cur){
 }
 
 function PAYD_invTable(invs, withDocs){
-  if(!Array.isArray(invs) || !invs.length) return `<p class="empty">청구서가 없습니다.</p>`;
-  return `<div class="tbl-wrap"><table><thead><tr><th>구분</th><th class="num">금액</th><th>상태</th>${withDocs?'<th>문서</th>':''}</tr></thead><tbody>${
+  if(!Array.isArray(invs) || !invs.length) return `<p class="empty">${t('ui.text_003')}</p>`;
+  return `<div class="tbl-wrap"><table><thead><tr><th>${t('ui.text_004')}</th><th class="num">${t('ui.text_005')}</th><th>${t('upload.text_013')}</th>${withDocs?`<th>${t('ui.text_006')}</th>`:''}</tr></thead><tbody>${
     invs.map((iv,i)=>`<tr>
       <td>${esc(iv.service_type||'—')}<div class="muted mono" style="font-size:11px">${esc(iv.invoice_no||'')}</div></td>
       <td class="num mono">${esc(PAYD_money(iv.total))}<div class="muted" style="font-size:11px">공급 ${esc(PAYD_money(iv.amount))} + PPN ${esc(PAYD_money(iv.ppn))}</div></td>
       <td><span class="badge ${iv.status==='paid'?'strong':'attn'}">${esc(iv.status||'')}</span></td>
       ${withDocs?`<td class="row-act">
-        <button class="link" onclick="App.paydDoc(${i},'quotation.pdf')">견적서 PDF</button>
-        <button class="link" onclick="App.paydDoc(${i},'receipt')">영수증</button>
-        <button class="link" onclick="App.paydDoc(${i},'tax-invoice')">세금계산서</button>
+        <button class="link" onclick="App.paydDoc(${i},'quotation.pdf')">${t('ui.text_007')}</button>
+        <button class="link" onclick="App.paydDoc(${i},'receipt')">${t('ui.text_008')}</button>
+        <button class="link" onclick="App.paydDoc(${i},'tax-invoice')">${t('ui.text_009')}</button>
       </td>`:''}
     </tr>`).join('')}</tbody></table></div>`;
 }
 
 function PAYD_invoicePanel(cid){
-  if(!cid) return `<section class="panel"><p class="empty">대상 업체가 없습니다.</p></section>`;
+  if(!cid) return `<section class="panel"><p class="empty">${t('upload.text_025')}</p></section>`;
   const key = 'payd_inv_'+cid;
   const d = RS[key];
   if(!d || d.loading){
     if(!d){ RS[key]={loading:true}; PAYD_fetch(key,'/cases/'+cid+'/invoices').then(()=>render()); }
-    return `<section class="panel"><div class="panel-head"><h2>청구 문서</h2></div><p class="empty">불러오는 중…</p></section>`;
+    return `<section class="panel"><div class="panel-head"><h2>${t('ui.text_010')}</h2></div><p class="empty">${t('members.loading')}</p></section>`;
   }
-  if(d.error) return `<section class="panel"><div class="panel-head"><h2>청구 문서</h2></div><p class="empty">${PAYD_.err({status:d.status})}</p></section>`;
+  if(d.error) return `<section class="panel"><div class="panel-head"><h2>${t('ui.text_010')}</h2></div><p class="empty">${PAYD_.err({status:d.status})}</p></section>`;
   S.paydInvoices = d;
-  return `<section class="panel"><div class="panel-head"><h2>청구 문서</h2><span class="count">${d.length}건</span></div>${PAYD_invTable(d, true)}</section>`;
+  return `<section class="panel"><div class="panel-head"><h2>${t('ui.text_010')}</h2><span class="count">${d.length}건</span></div>${PAYD_invTable(d, true)}</section>`;
 }
 
 const PAYD_OLD_CONTRACT = VIEWS['cons-contract'];
@@ -74,64 +74,64 @@ App.paydDoc = async function(idx, kind){
   const fname = (iv.invoice_no||iv.invoice_id)+'-'+kind.replace('/','.');
   try{
     const r = await apiFetch(path);
-    if(!r.ok) return toast(await apiErr(r, '아직 발행되지 않았거나 내려받을 수 없습니다.'));
+    if(!r.ok) return toast(await apiErr(r, t('ui.text_032')));
     const blob = await r.blob();
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = fname;
     document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000);
-  }catch(e){ toast('아직 발행되지 않았거나 내려받을 수 없습니다.'); }
+  }catch(e){ toast(t('ui.text_032')); }
 };
 
 /* ── B. 컨설턴트 내 영업 정보 ── */
 const PAYD_FIELDS = [
-  ['display_name','표시 이름'], ['company_name','회사명'], ['biz_reg_no','사업자번호'],
-  ['phone','연락처'], ['email','이메일'], ['address','주소'],
-  ['bank_name','은행'], ['bank_account','계좌번호'], ['account_holder','예금주'],
+  ['display_name','ui.text_033'], ['company_name','ui.text_034'], ['biz_reg_no','ui.text_035'],
+  ['phone','ui.text_036'], ['email','ui.text_037'], ['address','ui.text_038'],
+  ['bank_name','ui.text_039'], ['bank_account','ui.text_040'], ['account_holder','ui.text_041'],
 ];
 
 function PAYD_meForm(d){
   const p = d.profile || {};
-  const row = ([k,label]) => `<div class="field"><label>${esc(label)}</label><input class="in" id="payd-f-${k}" value="${esc(p[k]||'')}"></div>`;
+  const row = ([k,label]) => `<div class="field"><label>${esc(t(label))}</label><input class="in" id="payd-f-${k}" value="${esc(p[k]||'')}"></div>`;
   return `<div class="grid-2">${PAYD_FIELDS.map(row).join('')}</div>
-    <div class="inline"><button class="btn btn-primary" onclick="App.paydSave()">저장</button><span class="inline-msg" id="payd-me-msg"></span></div>`;
+    <div class="inline"><button class="btn btn-primary" onclick="App.paydSave()">${t('ui.text_011')}</button><span class="inline-msg" id="payd-me-msg"></span></div>`;
 }
 
 function PAYD_qrHtml(qr){
-  if(!qr) return `<p class="empty">불러오는 중…</p>`;
+  if(!qr) return `<p class="empty">${t('members.loading')}</p>`;
   if(qr.error) return `<p class="empty">${PAYD_.err(qr)}</p>`;
   return `<div class="summary">
-      <div><span class="k">초대 코드</span><span class="v mono">${esc(qr.code||'')}</span></div>
-      <div><span class="k">가입 링크</span><span class="v mono" style="word-break:break-all">${esc(qr.url||'')}</span></div>
-      <div><span class="k">사용 횟수</span><span class="v mono">${esc(String(qr.used_count||0))}</span></div>
+      <div><span class="k">${t('ui.text_012')}</span><span class="v mono">${esc(qr.code||'')}</span></div>
+      <div><span class="k">${t('ui.text_013')}</span><span class="v mono" style="word-break:break-all">${esc(qr.url||'')}</span></div>
+      <div><span class="k">${t('ui.text_014')}</span><span class="v mono">${esc(String(qr.used_count||0))}</span></div>
     </div>
-    <div class="inline"><button class="btn btn-sm" onclick="App.paydQr()">QR 내려받기</button></div>
+    <div class="inline"><button class="btn btn-sm" onclick="App.paydQr()">${t('ui.text_015')}</button></div>
     <form onsubmit="App.sendQrMail(event)" style="margin-top:16px">
-      <div class="field"><label for="qr-mail-to">받는 고객 이메일</label><input class="in" id="qr-mail-to" type="email" maxlength="254" required autocomplete="email"></div>
-      <p class="muted">내 영업 QR 이미지와 가입 링크 주소를 함께 보냅니다.</p>
-      <button class="btn btn-primary" type="submit">QR · 가입 링크 이메일 발송</button><p role="status" class="inline-msg"></p>
+      <div class="field"><label for="qr-mail-to">${t('invite.recipient')}</label><input class="in" id="qr-mail-to" type="email" maxlength="254" required autocomplete="email"></div>
+      <p class="muted">${t('invite.qr_help')}</p>
+      <button class="btn btn-primary" type="submit">${t('invite.qr_send')}</button><p role="status" class="inline-msg"></p>
     </form>`;
 }
 
 function PAYD_commHtml(cm){
-  if(!cm) return `<p class="empty">불러오는 중…</p>`;
+  if(!cm) return `<p class="empty">${t('members.loading')}</p>`;
   if(cm.error) return `<p class="empty">${PAYD_.err(cm)}</p>`;
   const rate = cm.commission_rate;
   const invs = cm.invoices||[];
   const paid = cm.payouts||[];
   return `<div class="summary">
-      <div><span class="k">담당 기업</span><span class="v mono">${esc(String(cm.client_count||0))}</span></div>
-      <div><span class="k">결제 완료 공급가 합계</span><span class="v mono">${esc(PAYD_money(cm.base_amount))}</span></div>
-      <div><span class="k">수수료율</span><span class="v mono">${rate===null||rate===undefined?'—':esc(rate+' %')}</span></div>
-      <div><span class="k">수수료</span><span class="v mono">${cm.commission_amount===null||cm.commission_amount===undefined?'—':esc(PAYD_money(cm.commission_amount))}</span></div>
+      <div><span class="k">${t('ui.text_016')}</span><span class="v mono">${esc(String(cm.client_count||0))}</span></div>
+      <div><span class="k">${t('ui.text_017')}</span><span class="v mono">${esc(PAYD_money(cm.base_amount))}</span></div>
+      <div><span class="k">${t('ui.text_018')}</span><span class="v mono">${rate===null||rate===undefined?'—':esc(rate+' %')}</span></div>
+      <div><span class="k">${t('ui.text_019')}</span><span class="v mono">${cm.commission_amount===null||cm.commission_amount===undefined?'—':esc(PAYD_money(cm.commission_amount))}</span></div>
     </div>
-    <div class="panel-head"><h2>실적 내역</h2><span class="count">${invs.length}건</span></div>
-    ${invs.length?`<div class="tbl-wrap"><table><thead><tr><th>청구서</th><th>업체</th><th class="num">공급가</th><th>일자</th></tr></thead><tbody>${
+    <div class="panel-head"><h2>${t('ui.text_020')}</h2><span class="count">${invs.length}건</span></div>
+    ${invs.length?`<div class="tbl-wrap"><table><thead><tr><th>${t('ui.text_021')}</th><th>${t('ui.text_022')}</th><th class="num">${t('ui.text_023')}</th><th>${t('ui.text_024')}</th></tr></thead><tbody>${
       invs.map(iv=>`<tr><td class="mono">${esc(iv.invoice_no||'')}</td><td>${esc(iv.company_name||'')}</td><td class="num mono">${esc(PAYD_money(iv.amount))}</td><td class="muted mono" style="font-size:11px">${esc(iv.created_at||'')}</td></tr>`).join('')
-    }</tbody></table></div>`:`<p class="empty">실적이 없습니다.</p>`}
-    <div class="panel-head"><h2>지급 내역</h2><span class="count">${paid.length}건</span></div>
-    ${paid.length?`<div class="tbl-wrap"><table><thead><tr><th>기간</th><th class="num">금액</th><th>상태</th><th>지급일</th></tr></thead><tbody>${
+    }</tbody></table></div>`:`<p class="empty">${t('ui.text_025')}</p>`}
+    <div class="panel-head"><h2>${t('ui.text_026')}</h2><span class="count">${paid.length}건</span></div>
+    ${paid.length?`<div class="tbl-wrap"><table><thead><tr><th>${t('ui.text_027')}</th><th class="num">${t('ui.text_005')}</th><th>${t('upload.text_013')}</th><th>${t('ui.text_028')}</th></tr></thead><tbody>${
       paid.map(p=>`<tr><td class="mono">${esc(p.period||'')}</td><td class="num mono">${esc(PAYD_money(p.amount))}</td><td><span class="badge">${esc(p.status||'')}</span></td><td class="muted mono" style="font-size:11px">${esc(p.paid_at||'')}</td></tr>`).join('')
-    }</tbody></table></div>`:`<p class="empty">지급 내역이 없습니다.</p>`}`;
+    }</tbody></table></div>`:`<p class="empty">${t('ui.text_029')}</p>`}`;
 }
 
 const PAYD_OLD_NEW = VIEWS['cons-new'];
@@ -141,11 +141,11 @@ VIEWS['cons-new'] = () => {
   if(!RS.payd_qr){ RS.payd_qr={loading:true}; PAYD_fetch('payd_qr','/consultant/qr/info').then(()=>render()); }
   if(!RS.payd_cm){ RS.payd_cm={loading:true}; PAYD_fetch('payd_cm','/consultant/commission').then(()=>render()); }
   const me = RS.payd_me;
-  const meHtml = !me || me.loading ? `<p class="empty">불러오는 중…</p>`
+  const meHtml = !me || me.loading ? `<p class="empty">${t('members.loading')}</p>`
     : me.error ? `<p class="empty">${PAYD_.err(me)}</p>` : PAYD_meForm(me);
-  return base + `<section class="panel"><div class="panel-head"><h2>내 영업 정보</h2></div>${meHtml}</section>
-    <section class="panel"><div class="panel-head"><h2>영업 QR</h2></div>${PAYD_qrHtml(RS.payd_qr)}</section>
-    <section class="panel"><div class="panel-head"><h2>수수료</h2></div>${PAYD_commHtml(RS.payd_cm)}</section>`;
+  return base + `<section class="panel"><div class="panel-head"><h2>${t('ui.text_030')}</h2></div>${meHtml}</section>
+    <section class="panel"><div class="panel-head"><h2>${t('ui.text_031')}</h2></div>${PAYD_qrHtml(RS.payd_qr)}</section>
+    <section class="panel"><div class="panel-head"><h2>${t('ui.text_019')}</h2></div>${PAYD_commHtml(RS.payd_cm)}</section>`;
 };
 
 App.paydSave = async function(){
@@ -158,22 +158,22 @@ App.paydSave = async function(){
     const r = await apiFetch('/consultant/me', {method:'PUT', body:JSON.stringify(body)});
     if(!r.ok){
       let code = ''; try{ const j = await r.json(); code = j && j.detail && j.detail.code ? ' ('+j.detail.code+')' : ''; }catch(e){}
-      if(r.status===403) return toast('이 작업을 할 권한이 없습니다.');
-      return toast('저장에 실패했습니다.'+code);
+      if(r.status===403) return toast(t('ui.text_042'));
+      return toast(t('ui.text_043')+code);
     }
     RS.payd_me = null;
     await PAYD_fetch('payd_me','/consultant/me');
-    render(); toast('저장했습니다.');
-  }catch(e){ toast('저장에 실패했습니다.'); }
+    render(); toast(t('ui.text_044'));
+  }catch(e){ toast(t('ui.text_043')); }
 };
 
 App.paydQr = async function(){
   try{
     const r = await apiFetch('/consultant/qr');
-    if(!r.ok) return toast(await apiErr(r, 'QR을 불러올 수 없습니다.'));
+    if(!r.ok) return toast(await apiErr(r, t('ui.text_045')));
     const blob = await r.blob();
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'consultant_qr.png';
     document.body.appendChild(a); a.click();
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000);
-  }catch(e){ toast('QR을 불러올 수 없습니다.'); }
+  }catch(e){ toast(t('ui.text_045')); }
 };

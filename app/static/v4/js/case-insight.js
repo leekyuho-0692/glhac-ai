@@ -54,7 +54,7 @@ function CIN_readiness(cid){
   const incomplete=d.evaluation_complete===false;
   const value=k=>bd[k]==null ? '미평가' : esc(String(bd[k]));
   const inner = `
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+    <div class="cin-readiness-head">
       <span class="num mono" style="font-size:30px;font-weight:700">${incomplete ? '평가 진행 중' : esc(String(read))+'점'}</span>
       <span class="badge ${bandCls}">${incomplete ? '미평가 항목 있음' : esc(bandLabel)}</span>
     </div>
