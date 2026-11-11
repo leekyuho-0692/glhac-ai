@@ -3067,7 +3067,7 @@ def gen_report(case_id: str, user=Depends(auth.get_current_user), db: Session = 
     c = _get_case(db, case_id, user)
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
     crit = [m.name for m in mats if m.screen_result in ("BLOCK", "NEEDS_EVIDENCE")]
-    blockers = sm.evaluate_blocking(db, c)
+    blockers = _case_blockers(db, c)
     have = _ensure_hpas(db, case_id)
     findings = db.query(models.AuditFinding).filter_by(case_id=case_id).all()
     invs = db.query(models.Invoice).filter_by(case_id=case_id).all()
@@ -5311,6 +5311,7 @@ def get_case(case_id: str, user=Depends(auth.get_current_user), db: Session = De
     c = _get_case(db, case_id, user)
     _audit(db, user, "case.read", "case", case_id, case_id)
     d = _case_dict(c)
+    d["quant_verdict"] = _case_quant_verdict(db, case_id)
     # R1-2: 자기선언 구간이면 긍정목록 경고를 그때그때 계산해 싣는다(막지 않는 경고)
     d["warnings"] = sm.selfdeclare_warnings(db, c) if c.status in sm.SELFDECLARE_STATES else []
     return d
@@ -5321,7 +5322,7 @@ def timeline(case_id: str, user=Depends(auth.get_current_user), db: Session = De
     c = _get_case(db, case_id, user)
     evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id)
            .order_by(models.WorkflowEvent.created_at).all())
-    return {"case": _case_dict(c), "blockers": sm.evaluate_blocking(db, c),
+    return {"case": _case_dict(c), "blockers": _case_blockers(db, c),
             "events": [{"from": e.from_status, "to": e.to_status, "action": e.action,
                         "actor": e.actor_type, "hash": (e.row_hash or "")[:12]} for e in evs]}
 
@@ -5581,6 +5582,106 @@ def _quant_verdict(param_key, value):
         return "unknown"
 
 
+_QUANT_RANK = {"pass": 0, "review": 1, "fail": 2}
+
+
+def _measurement_verdict(row):
+    """저장된 부적합·확인 대기를 보존하고, 수치도 현재 기준과 대조한다."""
+    numeric = _quant_verdict(row.param_key, row.value)
+    if row.verdict == "fail" or numeric == "fail":
+        return "fail"
+    if row.verdict != "pass" or numeric != "pass":
+        return "review"
+    return "pass"
+
+
+def _worst_measurements(db, case_id):
+    """서류·원재료별 모든 행 중 항목별 최악 판정, 같은 판정이면 최대 수치."""
+    worst = {}
+
+    def rank(row):
+        return (_QUANT_RANK[_measurement_verdict(row)],
+                row.value if row.value is not None else float("-inf"),
+                str(row.created_at or ""), row.measurement_id)
+
+    for row in db.query(models.MaterialMeasurement).filter_by(case_id=case_id).all():
+        if row.param_key not in QUANT_CRITERIA:
+            continue
+        prev = worst.get(row.param_key)
+        if prev is None or rank(row) > rank(prev):
+            worst[row.param_key] = row
+    return worst
+
+
+def _case_quant_verdict(db, case_id):
+    verdicts = [_measurement_verdict(r) for r in _worst_measurements(db, case_id).values()]
+    return max(verdicts, key=_QUANT_RANK.get) if verdicts else "unknown"
+
+
+def _quant_blockers(db, case_id):
+    rows = sorted(_worst_measurements(db, case_id).values(),
+                  key=lambda r: (-_QUANT_RANK[_measurement_verdict(r)], r.param_key))
+    return [{"code": "MEASUREMENT_FAILED" if _measurement_verdict(r) == "fail"
+                     else "MEASUREMENT_REVIEW_REQUIRED",
+             "param_key": r.param_key, "verdict": _measurement_verdict(r),
+             "measurement_id": r.measurement_id, "document_id": r.document_id,
+             "material_id": r.material_id}
+            for r in rows if _measurement_verdict(r) != "pass"]
+
+
+def _assert_measurements_pass(db, case_id):
+    blockers = _quant_blockers(db, case_id)
+    if blockers:
+        raise HTTPException(409, {"code": blockers[0]["code"], "measurements": blockers})
+
+
+def _case_blockers(db, c):
+    return sm.evaluate_blocking(db, c) + _quant_blockers(db, c.case_id)
+
+
+def _apply_document_measurements(db, c, doc):
+    """자동 추출만 (출처 문서, 항목)별 갱신한다. 수동 입력 행은 그대로 보존한다."""
+    fields = doc.fields or {}
+    measurements = dict(fields.get("measurements") or {})
+    unclear = measurements.pop("pork_dna_unclear", False)
+    if unclear:
+        measurements["pork_dna"] = None
+    if not measurements:
+        return 0
+    # 큐·수동 재처리가 동시에 처음 반영해도 조회~삽입을 직렬화한다(기존 DB 잠금 관례).
+    lock_chain_tail(db, "measurements:" + c.case_id)
+    db.flush()  # autoflush=False: 문서·원재료 PK와 같은 ZIP의 앞 측정값을 확정한다.
+    materials = db.query(models.Material).filter_by(case_id=c.case_id).all()
+    material_id = next((m.material_id for m in materials if m.material_id == doc.material_id), None)
+    if material_id is None:
+        def words(s):
+            return " " + re.sub(r"[\W_]+", " ", (s or "").casefold()).strip() + " "
+        source = words((doc.filename or "") + "\n" + (doc.text_full or doc.text_excerpt or ""))
+        matches = [m.material_id for m in materials if m.name and words(m.name) in source]
+        if len(matches) == 1:
+            material_id = matches[0]
+    count = 0
+    for key, value in measurements.items():
+        if key not in QUANT_CRITERIA or (value is None and not (key == "pork_dna" and unclear)):
+            continue
+        row = (db.query(models.MaterialMeasurement)
+               .filter_by(case_id=c.case_id, document_id=doc.document_id,
+                          param_key=key, recorded_by="ai").first())
+        if row is None:
+            row = models.MaterialMeasurement(case_id=c.case_id, document_id=doc.document_id,
+                                             param_key=key, recorded_by="ai")
+            db.add(row)
+        row.material_id = material_id
+        row.value = value
+        row.unit = QUANT_CRITERIA[key]["unit"]
+        row.verdict = "review" if key == "pork_dna" and unclear else _quant_verdict(key, value)
+        row.lab_name = fields.get("issuer")
+        row.note = "돼지 DNA 결과 불명확 — 원문 확인 필요" if key == "pork_dna" and unclear else None
+        count += 1
+    db.flush()
+    return count
+
+
 @app.get("/meta/quant-criteria")
 def get_quant_criteria(user=Depends(auth.get_current_user)):
     """정량 기준 카탈로그 — 프런트 입력 폼·비교표의 기준 소스."""
@@ -5669,7 +5770,9 @@ def list_measurements(case_id: str, user=Depends(auth.get_current_user), db: Ses
                     "method": r.method, "lab_name": r.lab_name, "tested_at": r.tested_at,
                     "document_id": r.document_id, "note": r.note})
     return {"items": out, "count": len(out),
-            "fail_count": sum(1 for x in out if x["verdict"] == "fail")}
+            "fail_count": sum(1 for r in rows if _measurement_verdict(r) == "fail"),
+            "review_count": sum(1 for r in rows if _measurement_verdict(r) == "review"),
+            "verdict": _case_quant_verdict(db, case_id)}
 
 
 @app.post("/cases/{case_id}/measurements")
@@ -6512,6 +6615,10 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     applied = (_apply_agg_to_case(db, c, aggregate_fields([{"doc_type": d.doc_type,
                                                             "fields": d.fields}]))
                if apply else {"skipped": True})
+    if apply:
+        count = _apply_document_measurements(db, c, d)
+        if count:
+            applied["measurements"] = count
     sm.record_event(db, c, c.status, c.status, "documents.reprocess", actor_role, actor_id,
                     {"document_id": d.document_id, "from": prev, "to": d.doc_type,
                      "text_len": len(text or ""), "applied": applied})
@@ -6954,26 +7061,38 @@ def _sha256_b64(content_b64):
 def _apply_intake_autofill(db, c, res):
     """분류 결과 → DocumentAsset 저장 + 신청서 자동채움(회사/NIB/제품/원재료). 임시저장(commit은 호출측).
     중복 방지: 같은 케이스에 동일 내용(file_hash) 또는 동일 파일명(내용없는 문서)은 재저장하지 않는다."""
-    _ex = (db.query(models.DocumentAsset.file_hash, models.DocumentAsset.filename)
-             .filter(models.DocumentAsset.case_id == c.case_id).all())
-    _seen_h = {h for h, _ in _ex if h}
-    _seen_n = {n for h, n in _ex if not h and n}
+    from sqlalchemy.orm import defer
+    _ex = (db.query(models.DocumentAsset).options(defer(models.DocumentAsset.content_b64))
+           .filter_by(case_id=c.case_id).all())
+    _seen_h = {d.file_hash: d for d in _ex if d.file_hash}
+    _seen_n = {d.filename: d for d in _ex if not d.file_hash and d.filename}
+    documents = []
     dup_skipped = 0
     for d in res["classified"]:
         _h = _sha256_b64(d.get("content_b64"))
         _nm = d["filename"]
-        if (_h and _h in _seen_h) or (not _h and _nm in _seen_n):
+        doc = _seen_h.get(_h) if _h else _seen_n.get(_nm)
+        if doc is not None:
             dup_skipped += 1
+            # 같은 원본 재업로드도 새 파서 결과는 반영하되 문서 식별자는 유지한다.
+            if "measurements" in (d.get("fields") or {}):
+                doc.fields = {**(doc.fields or {}), "measurements": d["fields"]["measurements"]}
+            if d.get("text_full"):
+                doc.text_full = d["text_full"]
+            if doc not in documents:
+                documents.append(doc)
             continue
+        doc = models.DocumentAsset(case_id=c.case_id, filename=_nm, filename_en=_fn_en(_nm), doc_type=d["doc_type"],
+                                   confidence=float(d.get("confidence") or 0), fields=d.get("fields"),
+                                   text_excerpt=d.get("excerpt"), text_full=d.get("text_full"),
+                                   ocr_lines=d.get("ocr_lines"), content_b64=d.get("content_b64"),
+                                   content_type=d.get("content_type"), file_hash=_h)
+        db.add(doc)
+        documents.append(doc)
         if _h:
-            _seen_h.add(_h)
+            _seen_h[_h] = doc
         else:
-            _seen_n.add(_nm)
-        db.add(models.DocumentAsset(case_id=c.case_id, filename=_nm, filename_en=_fn_en(_nm), doc_type=d["doc_type"],
-                                    confidence=float(d.get("confidence") or 0), fields=d.get("fields"),
-                                    text_excerpt=d.get("excerpt"), ocr_lines=d.get("ocr_lines"),
-                                    content_b64=d.get("content_b64"),
-                                    content_type=d.get("content_type"), file_hash=_h))
+            _seen_n[_nm] = doc
     agg = res.get("extracted", {})
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0, "profile": [],
                "dup_skipped": dup_skipped}
@@ -7058,27 +7177,8 @@ def _apply_intake_autofill(db, c, res):
     # 문서 타입별 개별 프로세서 — 공정흐름도/할랄인증서/SJPH매뉴얼을 각 엔티티로 매핑
     for _d in res.get("classified", []):
         _process_doc(db, c, _d, applied)
-    # CoA/성적서 정량 측정값 자동 반영 → MaterialMeasurement (기준 대비 pass/fail 자동 판정)
-    import uuid as _uuid
-    _mcount = 0
-    for _d in res.get("classified", []):
-        _meas = (_d.get("fields") or {}).get("measurements") or {}
-        for _pk, _val in _meas.items():
-            _crit = QUANT_CRITERIA.get(_pk)
-            if not _crit or _val is None:
-                continue
-            _mx = _crit.get("max")
-            _vd = "pass" if (_mx is not None and float(_val) <= float(_mx)) else "fail"
-            _ex = (db.query(models.MaterialMeasurement)
-                   .filter_by(case_id=c.case_id, param_key=_pk).first())
-            if _ex:
-                _ex.value = _val; _ex.unit = _crit.get("unit"); _ex.verdict = _vd
-            else:
-                db.add(models.MaterialMeasurement(
-                    measurement_id=_uuid.uuid4().hex, case_id=c.case_id, param_key=_pk,
-                    value=_val, unit=_crit.get("unit"), verdict=_vd,
-                    lab_name=(_d.get("fields") or {}).get("issuer"), recorded_by="ai"))
-            _mcount += 1
+    # 출처 문서별 누적. 다른 CoA와 수동 입력의 fail을 뒤의 pass로 덮지 않는다.
+    _mcount = sum(_apply_document_measurements(db, c, doc) for doc in documents)
     if _mcount:
         applied["measurements"] = _mcount
     # 사전심사 업로드 → 신청서 임시저장 진입(작성 이어하기 대상)
@@ -7728,6 +7828,9 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                content_b64=_b64 if len(_b64) < 4_000_000 else None,
                                content_type=_ctype(body.filename))
     db.add(doc)
+    count = _apply_document_measurements(db, c, doc)
+    if count:
+        applied["measurements"] = count
     # ① 검수로그 — 파싱 추출 근거를 ai_extraction 에 기록(§7.2/§7.4). label_judgment 만이 아니라
     #    문서 필드추출도 검수/감사에 남긴다. reviewer_status=unreviewed 로 시작.
     if f:
@@ -11833,7 +11936,8 @@ STAFF_ROLES = {"auditor", "fatwa_liaison", "operator", "admin"}
 def _ai_second_analysis_compute(db, c):
     """보완 서류를 반영한 재분석 — 규칙 기반 인증 가능성(%)·권고. 사람이 반드시 확인한다(AI-04)."""
     a = sm.assess_pathway(db, c)
-    blockers = [b.get("code") for b in sm.evaluate_blocking(db, c)]
+    blockers = [b.get("code") for b in _case_blockers(db, c)]
+    quant_verdict = _case_quant_verdict(db, c.case_id)
     mats = sm.materials(db, c.case_id)
     with_ev = sum(1 for m in mats if sm._has_evidence(m))
     crit = len(sm.critical_materials(db, c.case_id))
@@ -11848,13 +11952,18 @@ def _ai_second_analysis_compute(db, c):
     risk = a.get("risk_category")
     p -= 15 if risk == "high" else (5 if risk == "medium" else 0)
     p = max(5, min(98, p))
+    if quant_verdict in ("fail", "review"):
+        p = min(p, 49 if quant_verdict == "fail" else 79)
     if p >= 80:
         rec = "인증 가능 — 정식 인증 신청을 권고합니다."
     elif p >= 50:
         rec = "보완 후 가능 — 지적 항목(원재료 증빙·할랄 감독자)을 보완한 뒤 판정을 권고합니다."
     else:
         rec = "현 상태로는 인증이 어렵습니다 — 원재료 대체 또는 증빙 확보가 필요합니다."
+    if quant_verdict in ("fail", "review"):
+        rec += " 성적서 부적합 또는 불명확한 결과의 원문 확인이 필요합니다."
     return {"probability": p, "risk_category": risk, "suggested_pathway": a.get("suggested_pathway"),
+            "quant_verdict": quant_verdict,
             "blockers": blockers, "materials": {"total": len(mats), "with_evidence": with_ev, "critical": crit},
             "recommendation": rec}
 
@@ -11901,6 +12010,8 @@ def _do_eligibility_verdict(db, c, actor, body):
     """FRM-02 인증 가능 여부 판정 본체 — 이벤트 + D-05 통지서 + 기업·컨설턴트 알림(가능·불가만)."""
     import json as _json
     verdict = (body.get("verdict") or "").lower()
+    if verdict == "eligible":
+        _assert_measurements_pass(db, c.case_id)  # 2인 승인 대기 중 추가된 성적서도 재검증
     reason = (body.get("reason") or "").strip()
     note = (body.get("note") or "").strip()
     label = "가능" if verdict == "eligible" else "불가"
@@ -11932,6 +12043,8 @@ def eligibility_verdict(case_id: str, body: dict = None,
     if not nav8.latest_event(db, case_id, "ai_second_analysis"):
         raise HTTPException(409, {"code": "AI2_REQUIRED", "hint": "AI 2차 분석을 먼저 실행하세요."})
     b["verdict"] = verdict
+    if verdict == "eligible":
+        _assert_measurements_pass(db, case_id)
     pend = _two_person_gate(db, c, user, "eligibility.verdict", b)
     if pend:
         return pend
@@ -12607,7 +12720,7 @@ def _fatwa_gate_check(db, c):
     (a) audit_report GeneratedDocument approved 존재
     (b) audit_report.sign 이벤트 존재(오디터 서명)
     (c) SJPH/HPAS complete(HPAS 5요소 ok + PenyeliaHalal active) — get_sjph 로직 재사용."""
-    missing = []
+    missing = list(dict.fromkeys(b["code"] for b in _quant_blockers(db, c.case_id)))
     g = _latest_audit_report(db, c.case_id)
     report_approved = bool(g and g.status == "approved")
     if not report_approved:
@@ -12625,6 +12738,7 @@ def _fatwa_gate_check(db, c):
     if not sjph_complete:
         missing.append("SJPH_INCOMPLETE")
     ctx = {"report_approved": report_approved, "signed": sign is not None,
+           "quant_verdict": _case_quant_verdict(db, c.case_id),
            "sjph_complete": sjph_complete, "hpas_ok": hpas_ok,
            "hpas_total": len(HPAS_ELEMENTS), "penyelia_ok": penyelia_ok,
            "gen_doc_id": (g.gen_doc_id if g else None),
@@ -13990,6 +14104,7 @@ def _issue_guards(db, c, case_id):
         raise HTTPException(409, {"code": "FATWA_NOT_APPROVED"})
     if not c.scope_frozen:
         raise HTTPException(409, {"code": "SCOPE_NOT_FROZEN"})
+    _assert_measurements_pass(db, case_id)
     # draft는 아직 청구 전 상태이므로 미결로 세지 않음 (분할 청구 A1)
     if db.query(models.Invoice).filter(models.Invoice.case_id == case_id,
                                        models.Invoice.status.notin_(sm.INVOICE_SETTLED | {"draft"})).count() > 0:
@@ -17274,7 +17389,7 @@ def get_workflow(case_id: str, user=Depends(auth.get_current_user), db: Session 
         ok, bl = sm.can_transition(db, c, ns)
         nexts.append({"to": ns, "to_label": _STATE_KO.get(ns, ns), "allowed": ok, "blockers": bl})
     return {"state": cur, "state_label": _STATE_KO.get(cur, cur), "pathway": c.pathway,
-            "phases": out, "next_states": nexts, "blockers": sm.evaluate_blocking(db, c)}
+            "phases": out, "next_states": nexts, "blockers": _case_blockers(db, c)}
 
 
 # ── 워크플로우 모니터(관리자·운영자) — 전 케이스 진행단계·핸드오프·게이트 집약 ──
@@ -17321,7 +17436,7 @@ def admin_workflow_monitor(lang: str = Query("ko"),
         pipeline[phase_key] = pipeline.get(phase_key, 0) + 1
         nxt = sorted(sm.forward_states(cur))
         next_state = nxt[0] if nxt else None
-        blockers = [] if cur in sm.TERMINAL_STATES else [b.get("code") for b in sm.evaluate_blocking(db, c)]
+        blockers = [] if cur in sm.TERMINAL_STATES else [b.get("code") for b in _case_blockers(db, c)]
         if blockers:
             blocked_total += 1
         rank = _rank.get(cur, -1)
@@ -18704,6 +18819,8 @@ def _preassess_dossier(db, c, lang="ko"):
             "materials": mats, "summary": rep["summary"],
             "quantitative": rep.get("quantitative") or [],
             "quant_fail": rep.get("quant_fail", 0),
+            "quant_review": rep.get("quant_review", 0),
+            "quant_verdict": rep.get("quant_verdict", "unknown"),
             "documents": docs,
             "doc_counts": {"total": len(docs),
                            "negative": sum(1 for d in docs if d["review_status"] in ("rejected", "rework")),
@@ -18937,12 +19054,13 @@ def preassess_report_docx(case_id: str, lang: str = Query("ko"),
                for m in sorted(certs, key=lambda x: (x.get("name") or ""))],
               headers=[L("원재료"), L("공급사"), L("인증번호"), L("원산지")])
 
-    q = [x for x in (dos.get("quantitative") or []) if x.get("value") is not None]
+    q = [x for x in (dos.get("quantitative") or [])
+         if x.get("value") is not None or x.get("verdict") == "review"]
     if q:
         doc.add_heading(L("6. 정량 기준 비교 · Quantitative"), level=1)
-        table([[x["param_ko"], "%s %s" % (x["value"], x.get("unit") or ""),
+        table([[x["param_ko"], "%s %s" % (x["value"], x.get("unit") or "") if x["value"] is not None else "-",
                 "≤ %s" % x.get("threshold"),
-                {"pass": L("적합"), "fail": L("부적합")}.get(x.get("verdict"), "-")]
+                {"pass": L("적합"), "fail": L("부적합"), "review": L("보완 필요")}.get(x.get("verdict"), "-")]
                for x in q], headers=[L("항목"), L("측정값"), L("기준"), L("판정")])
 
     rv = dos.get("review") or {}
@@ -19075,15 +19193,14 @@ def _material_report(db, c, lang="ko"):
                      "explanation": exp.get("explanation") or ""})
     category_registration = [{"category": k, "count": cat_counts[k],
                               "registered": cat_counts[k] > 0} for k in _CATS]
-    # P3: 정량 측정값(파라미터별 최신) — 정량 기준 비교표의 '측정값' 컬럼 소스
+    # 모든 출처 중 최악 판정. 뒤에 들어온 적합 성적서가 부적합·확인 대기를 숨기지 않는다.
     meas = {}
-    for r in (db.query(models.MaterialMeasurement).filter_by(case_id=c.case_id)
-              .order_by(models.MaterialMeasurement.created_at.asc()).all()):
+    for r in _worst_measurements(db, c.case_id).values():
         crit = QUANT_CRITERIA.get(r.param_key, {})
         meas[r.param_key] = {"param_key": r.param_key, "param_ko": crit.get("ko", r.param_key),
                              "value": r.value, "unit": r.unit or crit.get("unit"),
                              "threshold": crit.get("max"), "basis": crit.get("basis"),
-                             "verdict": r.verdict, "material_id": r.material_id,
+                             "verdict": _measurement_verdict(r), "material_id": r.material_id,
                              "lab_name": r.lab_name, "tested_at": r.tested_at,
                              "document_id": r.document_id}
     quant = [meas.get(k) or {"param_key": k, "param_ko": v["ko"], "value": None, "unit": v["unit"],
@@ -19094,7 +19211,9 @@ def _material_report(db, c, lang="ko"):
             "category_registration": category_registration,
             "quantitative": quant,
             "quant_measured": len(meas), "quant_total": len(QUANT_CRITERIA),
-            "quant_fail": sum(1 for q in quant if q.get("verdict") == "fail")}
+            "quant_fail": sum(1 for q in quant if q.get("verdict") == "fail"),
+            "quant_review": sum(1 for q in quant if q.get("verdict") == "review"),
+            "quant_verdict": _case_quant_verdict(db, c.case_id)}
 
 
 @app.get("/cases/{case_id}/material-report")
@@ -19146,6 +19265,13 @@ def material_report_pdf(case_id: str, lang: str = Query("ko"),
         if r["alternatives"]:
             L.append("  할랄 대체재: " + ", ".join(r["alternatives"]))
         L.append("")
+    L.append("[정량 기준 비교]")
+    for q in rep["quantitative"]:
+        if q["verdict"] == "unknown":
+            continue
+        L.append("• %s: %s %s — %s" % (
+            q["param_ko"], q["value"] if q["value"] is not None else "미확정", q["unit"],
+            {"pass": "적합", "fail": "부적합", "review": "사람 확인 필요"}[q["verdict"]]))
     L.append("※ 온톨로지 기반 준비용 분석. 공식 판정은 BPJPH/MUI Fatwa로 확정.")
     pdf = _render_pdf("성분 AI 분석 보고서 · Material Analysis",
                       "\n".join(L),
@@ -19194,7 +19320,7 @@ def ask_ai(case_id: str, body: schemas.AskReq,
     if not body.question or not body.question.strip():
         raise HTTPException(status_code=400, detail="question은 비어있을 수 없습니다")
     c = _get_case(db, case_id, user)
-    blockers = sm.evaluate_blocking(db, c)
+    blockers = _case_blockers(db, c)
     mats = db.query(models.Material).filter_by(case_id=case_id).all()
     crit = [m.name for m in mats if m.screen_result in ("BLOCK", "NEEDS_EVIDENCE")]
     have = _ensure_hpas(db, case_id)
@@ -19663,6 +19789,7 @@ def hpas_auto(case_id: str, lang: str = Query("ko"),
     mat_ev = sum(1 for m in mats if m.evidence_provided)
     sev = {e.item_key for e in db.query(models.SjphEvidence).filter_by(case_id=case_id)}
     verdicts = _eval_verdicts(db, case_id)
+    quant_verdict = _case_quant_verdict(db, case_id)
 
     def st(cond):
         return "ok" if cond else "gap"
@@ -19679,6 +19806,11 @@ def hpas_auto(case_id: str, lang: str = Query("ko"),
 
     def merge3(el, det):   # 오디터 판정 우선, 없으면 자동판정(ok→good, gap→gap)
         v = verdicts.get(el)
+        if el == "materials":
+            if quant_verdict == "fail":
+                return "fail"
+            if quant_verdict == "review":
+                return "fail" if v == "fail" else "gap"
         if v in ("good", "gap", "fail"):
             return v
         return "good" if det == "ok" else "gap"
@@ -19687,7 +19819,8 @@ def hpas_auto(case_id: str, lang: str = Query("ko"),
     _hl = _HPAS_L10N.get((lang or "ko").lower()) or _HPAS_L10N["ko"]
     base = [
         ("commitment", _hl["commitment"], st(pen and "halal_supervisor" in sev), _hl["r_commitment"]),
-        ("materials", _hl["materials"], st(bool(mats) and not bad), _hl["r_materials"] % len(bad)),
+        ("materials", _hl["materials"], st(bool(mats) and not bad and quant_verdict not in ("fail", "review")),
+         _hl["r_materials"] % len(bad)),
         ("process", _hl["process"], st("production_flow" in sev), _hl["r_process"]),
         ("product", _hl["product"], st(prods > 0 and photos > 0), _hl["r_product"] % (prods, photos)),
         ("monitoring", _hl["monitoring"], st("internal_audit" in sev), _hl["r_monitoring"]),

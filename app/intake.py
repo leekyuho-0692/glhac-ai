@@ -994,10 +994,17 @@ _QUANT_PATTERNS = {
     "mercury_ppm":  r"(?:mercury|\bHg\b|수은)[^\d]{0,25}?([\d.]+)\s*(?:ppm|mg/kg)",
     "arsenic_ppm":  r"(?:arsenic|\bAs\b|비소)[^\d]{0,25}?([\d.]+)\s*(?:ppm|mg/kg)",
 }
+_MEASUREMENT_DOC_TYPES = {"coa_msds", "quality_cert", "supplier_declaration"}
+_PORK_MARKER = re.compile(r"\b(?:pork|porcine|swine|pig|babi)\b|돼지|돈지|돈육|(?<![가-힣])돈(?![가-힣])", re.I)
+_PORK_TEST_MARKER = re.compile(
+    r"dna|pcr|qpcr|real[\s-]*time|species\s*identification|"
+    r"identifikasi\s*spesies|유전자|종\s*판별", re.I)
+_PORK_NEGATIVE = r"\b(?:not[\s-]*detected|non[\s-]*detected|tidak\s+terdeteksi|negative|negatif|none|absent)\b|불\s*검출|음성|없음"
+_PORK_POSITIVE = r"\b(?:detected|positive|positif|terdeteksi)\b|검출|양성"
 
 
 def extract_measurements(text):
-    """시험성적서 본문에서 정량 파라미터 측정값을 추출(결정적 정규식). {param_key: value(float)}."""
+    """정량 측정값 추출. 돼지 DNA 결과가 모호하면 수치 대신 pork_dna_unclear=True."""
     if not text:
         return {}
     out = {}
@@ -1008,10 +1015,32 @@ def extract_measurements(text):
                 out[k] = float(m.group(1))
             except ValueError:
                 pass
-    # 돼지 DNA: 검출/불검출(정성)
-    if re.search(r"(?:pork|porcine|돼지|돈지|babi)[^\n]{0,20}?(?:dna|pcr)", text, re.I):
-        neg = re.search(r"(?:not\s*detect|non[- ]?detect|negative|불검출|음성|없음|none|absent)", text, re.I)
-        out["pork_dna"] = 0.0 if neg else 1.0
+    # 표에서 결과가 다음 줄로 넘어가도 읽되, Salmonella/Remarks 등 다른 항목은 섞지 않는다.
+    scopes = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if not _PORK_MARKER.search(line):
+            continue
+        # 시험 표지는 같은 줄 또는 바로 이전 머리글 줄에 있어야 한다.
+        if not (_PORK_TEST_MARKER.search(line) or
+                (i > 0 and _PORK_TEST_MARKER.search(lines[i - 1]))):
+            continue
+        scope = line
+        if i + 1 < len(lines) and re.match(
+                r"^[\s|:=]*(?:(?:result|hasil|결과|판정)\s*[:|=]?\s*)?"
+                r"(?:[<>≤≥]?\s*\d+(?:[.,]\d+)?\s*%?\s*)?(?:" +
+                _PORK_NEGATIVE + "|" + _PORK_POSITIVE + ")", lines[i + 1], re.I):
+            scope += "\n" + lines[i + 1]
+        scopes.append(scope)
+    if scopes:
+        scope = "\n".join(scopes)
+        # 부정형을 제거한 뒤 양성어를 찾는다: '불검출' 안의 '검출'은 양성이 아니다.
+        positive = bool(re.search(_PORK_POSITIVE, re.sub(_PORK_NEGATIVE, "", scope, flags=re.I), re.I))
+        negative = bool(re.search(_PORK_NEGATIVE, scope, re.I))
+        if positive == negative:
+            out["pork_dna_unclear"] = True
+        else:
+            out["pork_dna"] = 1.0 if positive else 0.0
     return out
 
 
@@ -1065,7 +1094,9 @@ def classify(name, text):
         return {"doc_type": "other", "confidence": 0.0, "fields": {}, "empty": True}
     dt_by_name, why = refine_doctype_reason(name, None, text)
     if dt_by_name in _NAME_DECIDES:
-        return {"doc_type": dt_by_name, "confidence": 0.9, "fields": {},
+        meas = extract_measurements(text) if dt_by_name in _MEASUREMENT_DOC_TYPES else {}
+        return {"doc_type": dt_by_name, "confidence": 0.9,
+                "fields": {"measurements": meas} if meas else {},
                 "decided_by": "filename", "reason": why}
     # 사전이 '운영 기록물'(구매·생산·재고·검사 기록)로 확정한 문서는 LLM을 부르지 않는다.
     # 불러봐야 뽑은 값이 전부 버려진다 — other 는 _APPLICANT_DOCS·_PRODUCT_SRC·
@@ -1126,7 +1157,8 @@ def classify(name, text):
     r.setdefault("locked_fields", [])
     _enrich_address(r["fields"])   # 도시/국가/우편 보정
     # 시험성적서/성분명세/품질인증 → 정량 측정값 추출(자동 반영용)
-    if r["doc_type"] in ("coa_msds", "quality_cert", "supplier_declaration"):
+    if r["doc_type"] in _MEASUREMENT_DOC_TYPES:
+        r["fields"].pop("measurements", None)
         _meas = extract_measurements(text)
         if _meas:
             r["fields"]["measurements"] = _meas
@@ -1266,6 +1298,11 @@ def parse_typed_text(doc_type, filename, text):
     # 라벨의 ingredients도 확인 대기 목록에서 사용하는 원재료 키로 통일한다.
     if fields.get("ingredients") and not fields.get("material_names"):
         fields["material_names"] = fields["ingredients"]
+    if doc_type in _MEASUREMENT_DOC_TYPES:
+        fields.pop("measurements", None)
+        meas = extract_measurements(text)
+        if meas:
+            fields["measurements"] = meas
     _enrich_address(fields)   # 도시/국가/우편 보정
     out = {"doc_type": doc_type, "fields": fields,
            "field_sources": {k: "llm" for k in ("material_names", "product_names") if fields.get(k)},
@@ -1422,7 +1459,7 @@ def intake_zip_iter(data, limit=200):
              "ocr_lines": _lines or None,
              "doc_type_ko": DOC_KO.get(cl["doc_type"], cl["doc_type"]),
              "confidence": cl.get("confidence", 0.0), "fields": cl.get("fields", {}),
-             "text_len": len(text), "excerpt": text[:300],
+             "text_len": len(text), "excerpt": text[:300], "text_full": text,
              "content_b64": base64.b64encode(raw).decode() if len(raw) <= UPLOAD_MAX_BYTES else None,
              "llm_error": cl.get("llm_error"),
              "content_type": _ctype(name)}
