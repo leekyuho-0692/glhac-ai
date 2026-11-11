@@ -6238,8 +6238,11 @@ def _apply_agg_to_case(db, c, agg):
                "profile": [], "pending": len(agg.get("pending") or [])}
     if agg.get("company_name") and _co_replaceable(db, c):
         c.company_name = agg["company_name"]; applied["company_set"] = True
-    if agg.get("nib") and c.nib != agg["nib"]:
-        c.nib = agg["nib"]; applied["nib_set"] = True   # 문서 파싱 NIB가 상속/기존값보다 우선
+    # 업체 번호는 비어 있을 때만 채운다 — 다른 회사(제조사 등) 등록증 재처리가 신청 업체 번호를 바꾸면 안 된다.
+    if agg.get("nib") and not (c.nib or "").strip():
+        c.nib = agg["nib"]; applied["nib_set"] = True
+    elif agg.get("nib") and re.sub(r"\D", "", str(c.nib)) != re.sub(r"\D", "", str(agg["nib"])):
+        applied["nib_conflict"] = True
     applied["profile"] += _apply_profile_extras(c, agg)
     have_p = {_norm_material(p.name) for p in db.query(models.Product).filter_by(case_id=c.case_id)}
     _mat_norms = {_norm_material(m) for m in (agg.get("materials") or []) if m}
@@ -6457,6 +6460,13 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     if not keep_doc_type:
         d.doc_type = r.get("doc_type", "other")
     d.confidence = float(r.get("confidence") or 0)
+    # 유형별 추출 규칙이 있으면 그 규칙으로 필드를 뽑는다 — 범용 분류 필드로는 성적서의 원료명이 빠졌다.
+    if d.doc_type in intake._FIELD_SPEC:
+        typed = intake.parse_typed_text(d.doc_type, d.filename, text)
+        if typed.get("fields"):
+            r = {**r, "fields": typed["fields"]}
+        if typed.get("llm_error"):
+            r["llm_error"] = typed["llm_error"]
     fl = dict(r.get("fields") or {})
     # 어느 값이 구조 파서에서 나왔고 어느 값이 LLM 에서 나왔는지 문서에 남긴다.
     # 이게 없으면 나중에 '왜 이 원재료가 자동 반영되지 않았는지' 설명할 수 없다.
@@ -6924,8 +6934,8 @@ def _apply_intake_autofill(db, c, res):
     if agg.get("company_name") and _co_replaceable(db, c):
         c.company_name = agg["company_name"]
         applied["company_set"] = True
-    if agg.get("nib") and c.nib != agg["nib"]:
-        c.nib = agg["nib"]   # 문서 파싱 NIB가 상속/기존값보다 우선(공식 문서 기준)
+    if agg.get("nib") and not (c.nib or "").strip():
+        c.nib = agg["nib"]   # 비어 있을 때만 — 다른 회사 등록증이 신청 업체 번호를 덮지 않게
         applied["nib_set"] = True
     applied["profile"] += _apply_profile_extras(c, agg)
     # 주소 최종 재정리(OCR 글리치 — 경로 무관 보장)

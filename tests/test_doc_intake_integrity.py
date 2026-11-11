@@ -491,6 +491,25 @@ def test_종결_케이스는_재검증을_거부한다(client, case, monkeypatch
     assert r.json()["detail"]["code"] == "CASE_CLOSED"
 
 
+def test_재처리_집계는_기존_사업자번호를_다른_번호로_덮지_않는다():
+    """다른 회사(제조사) 등록증을 재처리해도 신청 업체 번호는 그대로다(2026-11-11 복구 중 발견)."""
+    db = m.SessionLocal()
+    try:
+        c = models.CaseApplication(case_id="nibguard01", org_id="org_demo", company_name="신청업체", nib="597-19-01669")
+        db.add(c); db.flush()
+        ap = m._apply_agg_to_case(db, c, {"nib": "123-45-67890", "products": [], "materials": [], "pending": []})
+        assert c.nib == "597-19-01669" and ap.get("nib_conflict") is True and not ap.get("nib_set")
+        c.nib = None
+        ap = m._apply_agg_to_case(db, c, {"nib": "123-45-67890", "products": [], "materials": [], "pending": []})
+        assert c.nib == "123-45-67890" and ap.get("nib_set") is True
+    finally:
+        db.rollback(); db.close()
+
+
+def test_검증_프롬프트는_공급사_서류의_회사명_차이를_문제로_보지_않는다():
+    assert "coa_msds" in intake._VERIFY_SYS and "정상" in intake._VERIFY_SYS
+
+
 def test_재검증_대상_조회는_본문_없이_ID만_읽는다(client, case, monkeypatch):
     from sqlalchemy import event
     _, cid = case
