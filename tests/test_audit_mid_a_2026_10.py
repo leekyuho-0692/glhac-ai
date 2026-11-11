@@ -134,7 +134,7 @@ def test_ma1_PG웹훅_결제는_계약통화():
     iid = _invoice(cid, ref="ORD-MA1-WH", total=1_100_000.0)
     with TestClient(app) as c:
         r = c.post("/pg/webhook/manual", json={"order_id": "ORD-MA1-WH", "transaction_status": "settlement",
-                                               "gross_amount": "1100000.00", "event_id": "evt-ma1-wh"})
+                                               "gross_amount": "1100000.00", "currency": "USD", "event_id": "evt-ma1-wh"})
         assert r.status_code == 200, r.text
     assert _inv_status(iid) == "paid"
     assert [p.currency for p in _payments(iid)] == ["USD"]
@@ -149,7 +149,7 @@ def test_ma1_입금자동확정은_Deposit_Payment_모두_계약통화():
     with TestClient(app) as c:
         r = c.post("/admin/deposits", headers=_op(c),
                    json={"bank_name": "B", "account_no": "1234567890", "depositor_name": "MA-Co",
-                         "amount": 1_100_000.0, "ref_memo": "PAY-MA1-DEP"})
+                         "amount": 1_100_000.0, "currency": "USD", "ref_memo": "PAY-MA1-DEP"})
         assert r.status_code == 200, r.text
         assert r.json()["verdict"] == "COMMIT", r.text
         dep_id = r.json()["deposit_id"]

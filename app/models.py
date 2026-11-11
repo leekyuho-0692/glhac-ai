@@ -82,7 +82,10 @@ class Notification(Base):
     # title/body 는 한국어로 저장한 뒤 그대로 보여줬다. 인니어 화면에도 한국어 알림이 떴다
     # (실측: 인니어 화면에 남은 한글 245건 중 대부분). 발송 채널(SMS·WhatsApp)은 저장된
     # 문구를 그대로 쓰므로 건드리지 않고, 화면에 보일 때만 payload 로 다시 조립한다.
-    status = Column(String, default="unsent")  # unsent|sent|failed|skipped
+    status = Column(String, default="unsent")  # unsent|sending|partial|sent|failed|skipped
+    channel_status = Column(JSON)             # channel -> {status, attempts, retryable, reason}
+    claimed_at = Column(DateTime)             # drain lease; active workers cannot reclaim each other
+    retry_pending = Column(Boolean, default=True)
     attempts = Column(Integer, default=0)      # 발송 시도 횟수(비동기 워커)
     last_error = Column(String)
     read = Column(Boolean, default=False)
@@ -340,7 +343,8 @@ class Invoice(Base):
     amount = Column(Float)
     ppn = Column(Float)
     total = Column(Float)
-    status = Column(String, default="waiting_payment")  # 9종(draft~refunded/expired), legacy unpaid=waiting
+    currency = Column(String)          # 청구 시 계약 통화 고정; 기존 행은 최초 처리 시 확정
+    status = Column(String, default="waiting_payment")  # draft~paid/partially_refunded/refunded/expired, legacy unpaid=waiting
     due_date = Column(DateTime)
     payment_ref = Column(String, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -691,7 +695,8 @@ class Payment(Base):
     currency = Column(String, default="KRW")  # MA1: KRW 통일(기록 시 케이스 계약 통화로 덮어씀)
     method = Column(String)           # bank_transfer|va|card|manual
     reference = Column(String)
-    status = Column(String, default="confirmed")  # pending|confirmed
+    source_key = Column(String)       # 결제/입금/환불 원천 1건 = 원장 1행(재시도에도 유일)
+    status = Column(String, default="confirmed")  # pending|confirmed|superseded(실제 수납으로 대체된 주장)
     paid_by = Column(String)
     paid_at = Column(DateTime, default=datetime.utcnow)
 
@@ -738,8 +743,9 @@ class Deposit(Base):
     account_no_masked = Column(String)
     depositor_name = Column(String)
     amount = Column(Float)
-    currency = Column(String, default="KRW")  # MA1: KRW 통일(기록 시 케이스 계약 통화로 덮어씀)
+    currency = Column(String, default="KRW")  # 은행 거래 통화 보존; 청구 통화와 일치해야 확정
     ref_memo = Column(String)                 # 이체 메모(invoice_no/payment_ref 포함 가능)
+    source_key = Column(String)               # 은행 거래 ID 또는 요청 멱등 키
     deposit_at = Column(DateTime, default=datetime.utcnow)
     matched_invoice_id = Column(String, ForeignKey("invoice.invoice_id", ondelete="SET NULL"), index=True)
     match_status = Column(String, default="unmatched")   # unmatched|candidate|matched|rejected
@@ -1145,3 +1151,54 @@ class DocumentRequest(Base):
     requested_by = Column(String)       # 요청한 사용자 uid
     requested_role = Column(String)     # 그때의 역할
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PaymentOperation(Base):
+    """DB 트랜잭션에 함께 저장하는 결제·견적 요청 응답(재시도 멱등)."""
+    __tablename__ = "payment_operation"
+    key = Column(String, primary_key=True)
+    request_hash = Column(String, nullable=False)
+    response = Column(JSON)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ChainAnchor(Base):
+    """로그 테이블과 분리된 꼬리 체크포인트. 삭제/수정으로 자동 재계산하지 않는다."""
+    __tablename__ = "chain_anchor"
+    chain_key = Column(String, primary_key=True)
+    last_hash = Column(String, nullable=False)
+    event_count = Column(Integer, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+# create_all(새 DB) + main._ensure_payment_indexes(기존 DB)에 같은 제약을 적용한다.
+Index("uq_payment_source", Payment.source_key, unique=True)
+Index("uq_deposit_source", Deposit.source_key, unique=True)
+Index("uq_approval_pending", ApprovalRequest.case_id, ApprovalRequest.action_type, unique=True,
+      sqlite_where=ApprovalRequest.status == "pending", postgresql_where=ApprovalRequest.status == "pending")
+Index("uq_quotation_version", GeneratedDocument.case_id, GeneratedDocument.version, unique=True,
+      sqlite_where=GeneratedDocument.doc_type == "quotation", postgresql_where=GeneratedDocument.doc_type == "quotation")
+Index("uq_pg_event", IntegrationEvent.idempotency_key, unique=True,
+      sqlite_where=IntegrationEvent.event_type.like("pg.webhook.%"),
+      postgresql_where=IntegrationEvent.event_type.like("pg.webhook.%"))
+
+
+def _append_chain_anchor(connection, key, row_hash):
+    """작성자가 잡은 체인 DB 락 안에서, 이벤트 INSERT와 동일 트랜잭션으로 증분 갱신."""
+    table = ChainAnchor.__table__
+    updated = connection.execute(table.update().where(table.c.chain_key == key).values(
+        last_hash=row_hash or "", event_count=table.c.event_count + 1, updated_at=datetime.utcnow()))
+    if not updated.rowcount:
+        connection.execute(table.insert().values(chain_key=key, last_hash=row_hash or "", event_count=1))
+
+
+@event.listens_for(WorkflowEvent, "after_insert")
+def _anchor_workflow_insert(mapper, connection, target):
+    _append_chain_anchor(connection, "wf:" + target.case_id, target.row_hash)
+
+
+@event.listens_for(AuditLog, "after_insert")
+def _anchor_audit_insert(mapper, connection, target):
+    chain = (target.meta or {}).get("_chain")
+    if isinstance(chain, dict):
+        _append_chain_anchor(connection, "audit:global", chain.get("row"))

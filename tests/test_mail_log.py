@@ -99,7 +99,8 @@ def test_failed_send_logged_with_reason(env, monkeypatch):
         assert "535" in row.error
 
 
-def test_notification_email_logged_from_worker(env, monkeypatch):
+@pytest.mark.parametrize("error,notification_status", [(None, "sent"), ("smtp_error:timeout", "partial")])
+def test_notification_email_logged_from_worker(env, monkeypatch, error, notification_status):
     c, S, tok, sent = env
     with S() as db:
         case = models.CaseApplication(case_id="c-ml", org_id="org_a", company_name="CV. ML",
@@ -110,12 +111,16 @@ def test_notification_email_logged_from_worker(env, monkeypatch):
                   channels=["inapp", "email"], role="applicant")
         db.commit()
         monkeypatch.setitem(nt.PROVIDERS, "email",
-                            lambda contacts, text, n=None: {"channel": "email", "ok": True})
+                            lambda contacts, text, n=None: {"channel": "email", "ok": error is None, "reason": error})
         m.drain_notifications(db)
         row = db.query(models.MailLog).one()
-        assert row.kind == "notification" and row.status == "sent" and row.case_id == "c-ml"
+        assert row.kind == "notification" and row.status == ("failed" if error else "sent") and row.case_id == "c-ml"
+        assert row.error == error
         assert row.recipient == "owner@company.test" and "현장심사 예정: CV. ML — 11/02" == row.body
-        assert db.query(models.Notification).filter_by(case_id="c-ml").one().status == "sent"
+        notice = db.query(models.Notification).filter_by(case_id="c-ml").one()
+        assert notice.status == notification_status
+        assert notice.channel_status["inapp"]["status"] == "sent"
+        assert notice.channel_status["email"]["status"] == ("failed" if error else "sent")
 
 
 def test_admin_only_list_detail_and_audit(env):

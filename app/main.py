@@ -9,6 +9,7 @@ import threading
 import base64
 import logging
 from datetime import datetime, date, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from fastapi.exceptions import RequestValidationError
 from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
@@ -21,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s :: %(message)s")
 log = logging.getLogger("glhac")
 from sqlalchemy import event, func, inspect, or_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, load_only
 from sqlalchemy.orm.attributes import flag_modified
 from .db import Base, engine, get_db, SessionLocal, lock_chain_tail
@@ -321,13 +322,15 @@ async def _validation_exc(request: Request, exc: RequestValidationError):
 async def _integrity_exc(request: Request, exc: IntegrityError):
     """FK 위반 — 없는 id 를 참조해 만들려 했거나(자식 삽입), 이 행을 가리키는 기록이 남아 있는데
     지우려 했다(RESTRICT). 서버 오류가 아니라 요청이 현재 데이터와 맞지 않는 것이므로 409 로 돌려준다.
-    유니크 등 다른 무결성 오류는 종전대로 처리한다(각 호출부가 잡지 못했다면 500)."""
+    유일 제약 충돌도 재시도/중복 요청이므로 409로 돌려준다."""
     if "FOREIGN KEY" in str(getattr(exc, "orig", exc)).upper():
         rid = getattr(request.state, "request_id", "-")
         log.warning("FK 위반 [rid=%s] %s %s: %s", rid, request.method, request.url.path, getattr(exc, "orig", exc))
         return JSONResponse(status_code=409, content={"detail": {
             "code": "FK_CONSTRAINT", "request_id": rid,
             "message": "참조하는 대상이 없거나, 이 데이터를 참조하는 기록이 남아 있어 처리할 수 없습니다"}})
+    if "UNIQUE" in str(getattr(exc, "orig", exc)).upper() or getattr(exc.orig, "pgcode", None) == "23505":
+        return JSONResponse(status_code=409, content={"detail": {"code": "DUPLICATE_REQUEST"}})
     return await _unhandled_exc(request, exc)
 
 
@@ -617,6 +620,43 @@ def _ensure_indexes():
                 conn.execute(_sql(ddl))
         except Exception as e:  # noqa: BLE001
             log.warning("unique index %s skipped (기존 중복 가능): %s", name, e)
+    _ensure_payment_indexes()
+
+
+def _ensure_payment_indexes():
+    """금전/승인 중복 방어는 실패 시 부팅을 중단한다. 기존 행을 임의 삭제하지 않는다."""
+    from sqlalchemy import text
+    indexes = (
+        ("uq_payment_source", "payment", "source_key", None),
+        ("uq_deposit_source", "deposit", "source_key", None),
+        ("uq_approval_pending", "approval_request", "case_id, action_type", "status = 'pending'"),
+        ("uq_quotation_version", "generated_document", "case_id, version", "doc_type = 'quotation'"),
+        ("uq_pg_event", "integration_event", "idempotency_key", "event_type LIKE 'pg.webhook.%'"),
+    )
+    for name, table, columns, where in indexes:
+        with engine.begin() as conn:
+            conn.execute(text(f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {table} ({columns})"
+                              + (f" WHERE {where}" if where else "")))
+
+
+def _bootstrap_chain_anchors(db):
+    """업그레이드 시 기존 체인의 기준선을 단 한 번 기록(과거 삭제까지 입증하지는 못함)."""
+    lock_chain_tail(db, "audit:global")
+    if db.get(models.ChainAnchor, "bootstrap:v1"):
+        return
+    keys = [cid for (cid,) in db.query(models.WorkflowEvent.case_id).distinct()]
+    for cid in keys:
+        rows = db.query(models.WorkflowEvent).filter_by(case_id=cid).order_by(
+            models.WorkflowEvent.created_at, models.WorkflowEvent.event_id).all()
+        if not db.get(models.ChainAnchor, "wf:" + cid):
+            db.add(models.ChainAnchor(chain_key="wf:" + cid, last_hash=rows[-1].row_hash or "", event_count=len(rows)))
+    rows = [r for r in db.query(models.AuditLog).order_by(models.AuditLog.created_at, models.AuditLog.id)
+            if isinstance((r.meta or {}).get("_chain"), dict)]
+    if not db.get(models.ChainAnchor, "audit:global"):
+        db.add(models.ChainAnchor(chain_key="audit:global", last_hash=(rows[-1].meta["_chain"].get("row") or "") if rows else "",
+                                  event_count=len(rows)))
+    db.add(models.ChainAnchor(chain_key="bootstrap:v1", last_hash="", event_count=0))
+    db.commit()
 
 
 def _notify_worker_loop(interval=30):
@@ -660,6 +700,7 @@ def _startup():
     _ensure_indexes()   # Phase B: 핫 인덱스 + 경합 방지 유니크
     db = SessionLocal()
     try:
+        _bootstrap_chain_anchors(db)
         seed(db)
         auth.seed_users(db)
         seed_menus(db)   # 동적 메뉴 시드(idempotent) — 설계서 §10
@@ -1634,7 +1675,7 @@ def notify_problem_documents(case_id: str, lang: str = Query("ko"),
     return {**_problem_documents_result(db, c, lang), **result}
 
 
-_NOTIFY_NONRETRY = ("no_credentials", "no_contact", "not_implemented")
+_NOTIFY_NONRETRY = ("no_credentials", "no_contact", "not_implemented", "consent_skipped")
 _USER_CHANNELS = {"sms", "whatsapp", "email", "kakao"}   # 수신동의 필요(사용자 대상)
 
 
@@ -1694,86 +1735,84 @@ def _notify_staff_user(db, n):
 
 
 def drain_notifications(db, batch=50, max_attempts=3):
-    """미발송 알림 큐를 드레인 — 원자 클레임(중복발송 방지) + 수신동의 게이트 + 재시도."""
+    """채널별 성공을 보존하고 실패 채널만 재시도한다. lease가 만료된 발송만 회수한다."""
     from . import notify as _nt
-    # 크래시로 남은 'sending'(고아) 회수 — 단일 워커 가정. 멀티워커는 리스 타임스탬프 필요.
-    db.query(models.Notification).filter(models.Notification.status == "sending").update(
-        {"status": "unsent"}, synchronize_session=False)
+    stale = datetime.utcnow() - timedelta(minutes=5)
+    db.query(models.Notification).filter(models.Notification.status == "sending",
+        or_(models.Notification.claimed_at < stale, models.Notification.claimed_at.is_(None))).update(
+            {"status": "unsent", "retry_pending": True}, synchronize_session=False)
     db.commit()
-    # 원자적 클레임: unsent → sending. 동시 드레인/워커가 같은 행을 이중 발송하지 못하게.
-    candidates = (db.query(models.Notification).filter(models.Notification.status == "unsent")
-                  .order_by(models.Notification.created_at).limit(batch).all())
-    claimed = []
+    candidates = db.query(models.Notification).filter(or_(
+        models.Notification.status == "unsent",
+        (models.Notification.status.in_(["partial", "failed"]) & models.Notification.retry_pending.is_(True))
+    )).order_by(models.Notification.created_at).limit(batch).all()
+    stats = {"processed": 0, "sent": 0, "partial": 0, "retried": 0, "failed": 0, "skipped": 0}
     for n in candidates:
-        got = (db.query(models.Notification)
-               .filter(models.Notification.notification_id == n.notification_id,
-                       models.Notification.status == "unsent")
-               .update({"status": "sending"}, synchronize_session=False))
-        if got:
-            claimed.append(n)
-    db.commit()
-
-    stats = {"processed": 0, "sent": 0, "retried": 0, "failed": 0, "skipped": 0}
-    for n in claimed:
+        got = db.query(models.Notification).filter(models.Notification.notification_id == n.notification_id,
+            models.Notification.status.in_(["unsent", "partial", "failed"])).update(
+                {"status": "sending", "claimed_at": datetime.utcnow()}, synchronize_session=False)
+        db.commit()
+        if not got:
+            continue
+        db.refresh(n)
         stats["processed"] += 1
         if n.event_type == "problem.documents":
             case = db.get(models.CaseApplication, n.case_id)
             if case is None or case.status in sm.TERMINAL_STATES:
-                n.status, n.last_error = "skipped", "case_closed"
+                n.status, n.last_error, n.retry_pending = "skipped", "case_closed", False
+                n.claimed_at = None
                 stats["skipped"] += 1
+                db.commit()
                 continue
         contacts, consent = _notification_contacts(db, n)
-        # 수신동의 게이트 — 사용자 대상 채널(sms/whatsapp/email/kakao)은 동의 시에만.
-        # inapp·webhook(시스템 연동)은 항상 발송.
-        requested = n.channels or ["inapp"]
-        eff = [ch for ch in requested if ch not in _USER_CHANNELS or consent]
-        dropped = [ch for ch in requested if ch in _USER_CHANNELS and not consent]
-        try:
-            results = _nt.dispatch(n, contacts=contacts, channels=eff)
-        except Exception as e:  # noqa: BLE001
-            results = [{"channel": "?", "ok": False, "reason": str(e)}]
-        # 메일 발송 기록(관리자 '메일 발송 기록') — 받는 주소가 있어 실제로 보낸/시도한 것만
-        if contacts.get("email"):
-            for r in results:
-                if r.get("channel") == "email" and r.get("reason") not in ("no_contact", "no_credentials"):
-                    _mail_log.add(db, "notification", contacts["email"],
-                                  "[GL-HAC] " + (n.title or "")[:120], _nt.message_text(n), r.get("ok"),
-                                  r.get("reason"), case_id=n.case_id, notification_id=n.notification_id)
-        retryable = any((not r.get("ok")) and r.get("reason") not in _NOTIFY_NONRETRY
-                        for r in results)
-        n.attempts = (n.attempts or 0) + 1
-        # 실제 성공한 채널과 실패 채널별 사유 확인
-        has_success = any(r.get("ok") for r in results)
-        # 채널별 실패 사유: {채널: 사유}
-        failed_by_channel = {r.get("channel", "?"): r.get("reason", "")
-                             for r in results if not r.get("ok")}
-
-        # 성공한 채널이 있으면 sent, 아니면 skipped 또는 재시도/실패
-        if not retryable:
-            # 실제 성공한 채널이 있으면 sent, 없으면 skipped
-            if has_success:
-                n.status = "sent"
-                stats["sent"] += 1
-            else:
-                n.status = "skipped"
-                stats["skipped"] += 1
-            # 비록 성공했어도 실패·생략 채널이 있으면 last_error에 기록
-            error_parts = []
-            for ch, reason in failed_by_channel.items():
-                error_parts.append(f"{ch}:{reason}")
-            if dropped:
-                error_parts.append("consent_skipped:" + ",".join(dropped))
-            n.last_error = ";".join(error_parts) if error_parts else None
-        elif n.attempts >= max_attempts:
-            n.status = "failed"
-            n.last_error = "max_attempts"
-            stats["failed"] += 1
-            obs.inc("glhac_notification_failed_total")
-        else:
-            n.status = "unsent"   # 재시도 위해 큐로 복귀
-            n.last_error = "; ".join("%s:%s" % (ch, rs) for ch, rs in failed_by_channel.items())
+        requested = list(dict.fromkeys(n.channels or ["inapp"]))
+        states = {ch: dict(value) for ch, value in (n.channel_status or {}).items() if ch in requested}
+        channels = []
+        for ch in requested:
+            previous = states.get(ch, {})
+            if previous.get("status") in ("sent", "skipped"):
+                continue
+            if ch in _USER_CHANNELS and not consent:
+                states[ch] = {"status": "skipped", "attempts": previous.get("attempts", 0),
+                              "retryable": False, "reason": "consent_skipped"}
+            elif not previous or (previous.get("status") == "failed" and previous.get("retryable")
+                                  and previous.get("attempts", 0) < max_attempts):
+                channels.append(ch)
+        results = []
+        for ch in channels:
+            try:
+                results.extend(_nt.dispatch(n, contacts=contacts, channels=[ch]))
+            except Exception as exc:  # noqa: BLE001
+                # 뒤 채널의 예외가 앞 채널의 성공 기록을 지우면 안 된다.
+                results.append({"channel": ch, "ok": False, "reason": str(exc)})
+        by_channel = {r.get("channel"): r for r in results}
+        for ch in channels:
+            result = by_channel.get(ch, {"ok": False, "reason": "no_result"})
+            ok, reason = bool(result.get("ok")), result.get("reason")
+            status = "sent" if ok else ("skipped" if reason in _NOTIFY_NONRETRY else "failed")
+            attempts = states.get(ch, {}).get("attempts", 0) + (status != "skipped")
+            states[ch] = {"status": status, "attempts": attempts,
+                          "retryable": status == "failed" and attempts < max_attempts,
+                          "reason": None if ok else reason}
+            if ch == "email" and contacts.get("email") and status != "skipped":
+                _mail_log.add(db, "notification", contacts["email"], "[GL-HAC] " + (n.title or "")[:120],
+                              _nt.message_text(n), ok, reason, case_id=n.case_id, notification_id=n.notification_id)
+        n.attempts = (n.attempts or 0) + any(states[ch]["status"] != "skipped" for ch in channels)
+        n.channel_status = states
+        n.retry_pending = any(value["status"] == "failed" and value.get("retryable") for value in states.values())
+        # 발송하지 않은 채널은 성공/실패 집계에서 제외한다.
+        succeeded = any(value["status"] == "sent" for value in states.values())
+        failed = any(value["status"] == "failed" for value in states.values())
+        n.status = ("partial" if succeeded else "failed") if failed else ("sent" if succeeded else "skipped")
+        n.last_error = ";".join(ch + ":" + str(value.get("reason")) for ch, value in states.items()
+                                if value["status"] != "sent") or None
+        n.claimed_at = None
+        stats[n.status] += 1
+        if n.retry_pending:
             stats["retried"] += 1
-    db.commit()
+        if n.status == "failed":
+            obs.inc("glhac_notification_failed_total")
+        db.commit()
     return stats
 
 
@@ -3541,13 +3580,15 @@ def audit_verify(case_id: str, user=Depends(auth.get_current_user), db: Session 
     import hashlib
     import json as _json
     _get_case(db, case_id, user)
+    lock_chain_tail(db, "wf:" + case_id)  # 행 목록과 앵커를 같은 커밋 경계에서 비교
     evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id)
            .order_by(models.WorkflowEvent.created_at, models.WorkflowEvent.event_id).all())
-    r = _verify_wf_chain(evs)
+    r = _verify_wf_chain(evs, db=db, case_id=case_id)
     # 기존 키(count·integrity_ok·broken_at) 유지 + 구간 구분 필드
     return {"count": r["count"], "integrity_ok": r["integrity_ok"], "broken_at": r["break_at"],
             "verified": r["verified"], "legacy": r["legacy"], "legacy_until": r["legacy_until"],
-            "epoch": r["epoch"], "status": r["status"]}
+            "epoch": r["epoch"], "status": r["status"], "anchor_ok": r["anchor_ok"],
+            "anchor": r["anchor"]}
 
 
 @app.get("/admin/audit-log-verify")
@@ -3561,6 +3602,7 @@ def audit_log_verify(actor: str = Query(None), action: str = Query(None),
     구분할 수 없었다(실측: 위조 0건인데 삭제자국 4건 때문에 false).
     이제 tampered(위조)와 deleted_predecessor(선행 로그 삭제)를 갈라 돌려준다.
     integrity_ok 자체는 보수적으로 유지한다 — 지워서 감춘 것을 '무결'로 부르지 않는다."""
+    lock_chain_tail(db, "audit:global")
     q = db.query(models.AuditLog)
     if actor:
         q = q.filter(models.AuditLog.actor_id == actor)
@@ -3570,10 +3612,12 @@ def audit_log_verify(actor: str = Query(None), action: str = Query(None),
         q = q.filter(models.AuditLog.case_id == case)
     rows = q.order_by(models.AuditLog.created_at, models.AuditLog.id).all()
     filtered = bool(actor or action or case)
-    out = _verify_audit_chain(rows, subset=filtered, known_hashes=_audit_chain_hashes(db))
+    out = _verify_audit_chain(rows, subset=filtered, known_hashes=_audit_chain_hashes(db), db=db)
     gaps = out.get("deleted_predecessor") or []
     out["summary"] = ("위조 %d건 · 이전 서명 체계 %d건(%s 이전 기록, 현재 키로 검증 불가·위조 아님) · 선행로그 삭제로 인한 단절 %d건 (검사 %d행)"
                       % (out["tampered_count"], out["legacy"], out["epoch"][:10], len(gaps), out["checked"]))
+    if not out["anchor_ok"]:
+        out["summary"] += " · 꼬리 앵커 불일치(삭제 또는 변경)"
     return out
 
 
@@ -3592,7 +3636,13 @@ def _audit_chain_epoch():
         return datetime.fromisoformat(AUDIT_CHAIN_EPOCH_DEFAULT)
 
 
-def _verify_wf_chain(evs):
+def _check_chain_anchor(db, key, count, last_hash):
+    anchor = db.get(models.ChainAnchor, key, populate_existing=True)
+    return {"anchor_ok": (count == anchor.event_count and (last_hash or "") == anchor.last_hash) if anchor else count == 0,
+            "anchor": {"key": key, "count": anchor.event_count, "last_hash": anchor.last_hash} if anchor else None}
+
+
+def _verify_wf_chain(evs, db=None, case_id=None):
     """WorkflowEvent 해시체인 재계산 → integrity_ok·count·break_at + 구간 구분(verified·legacy·status).
 
     status: 'ok'(전부 현재 키로 검증) · 'ok_with_legacy'(검증 구간 무결, 경계 이전 기록은 검증 불가) · 'broken'.
@@ -3615,10 +3665,15 @@ def _verify_wf_chain(evs):
             break
         prev = e.row_hash
     status = "broken" if broken else ("ok_with_legacy" if legacy else "ok")
-    return {"integrity_ok": broken is None, "count": len(evs), "break_at": broken,
+    out = {"integrity_ok": broken is None, "count": len(evs), "break_at": broken,
             "verified": verified, "legacy": legacy,
             "legacy_until": legacy_until.isoformat() if legacy_until else None,
             "epoch": epoch.isoformat(), "status": status}
+    if db is not None:
+        out.update(_check_chain_anchor(db, "wf:" + case_id, len(evs), evs[-1].row_hash if evs else ""))
+        if not out["anchor_ok"]:
+            out.update(integrity_ok=False, status="broken", break_at=broken or "anchor:wf:" + case_id)
+    return out
 
 
 def _audit_chain_hashes(db):
@@ -3631,7 +3686,7 @@ def _audit_chain_hashes(db):
     return out
 
 
-def _verify_audit_chain(rows, subset=False, known_hashes=None):
+def _verify_audit_chain(rows, subset=False, known_hashes=None, db=None):
     """AuditLog HMAC 체인 재계산(audit_log_verify 미러) → (integrity_ok, checked, break_at).
 
     감사체인은 전역이다(_last_audit_hash가 테이블 전체의 마지막 행을 prev로 삼는다).
@@ -3682,6 +3737,13 @@ def _verify_audit_chain(rows, subset=False, known_hashes=None):
                        "선행 로그가 삭제된 단절은 deleted_predecessor로 별도 보고.")
     if deleted:
         out["deleted_predecessor"] = deleted
+    if db is not None:
+        all_rows = [r for r in db.query(models.AuditLog).order_by(models.AuditLog.created_at, models.AuditLog.id)
+                    if isinstance((r.meta or {}).get("_chain"), dict)]
+        tail = all_rows[-1].meta["_chain"].get("row") if all_rows else ""
+        out.update(_check_chain_anchor(db, "audit:global", len(all_rows), tail))
+        if not out["anchor_ok"]:
+            out.update(integrity_ok=False, break_at=broken or "anchor:audit:global")
     return out
 
 
@@ -3702,9 +3764,9 @@ def evidence_bundle_zip(case_id: str, user=Depends(auth.require_roles("operator"
     docs = (db.query(models.GeneratedDocument).filter_by(case_id=case_id)
             .order_by(models.GeneratedDocument.created_at).all())
     cert = db.query(models.HalalCertificate).filter_by(case_id=case_id, status="active").first()
-    wf_report = _verify_wf_chain(evs)
+    wf_report = _verify_wf_chain(evs, db=db, case_id=case_id)
     # audits는 케이스로 거른 부분집합이고 감사체인은 전역이므로 연결성은 면제한다(오탐 방지).
-    al_report = _verify_audit_chain(audits, subset=True, known_hashes=_audit_chain_hashes(db))
+    al_report = _verify_audit_chain(audits, subset=True, known_hashes=_audit_chain_hashes(db), db=db)
     generated_at = datetime.utcnow().isoformat()
     evidence = {
         "generated_at": generated_at,
@@ -3939,7 +4001,8 @@ def list_notifications(lang: str = Query("ko"), user=Depends(auth.get_current_us
         title, body = notify_text(n, lang)
         out.append({"id": n.notification_id, "case_id": n.case_id, "event_type": n.event_type,
                     "title": title, "body": body, "read": bool(n.read), "status": n.status,
-                    "channels": n.channels, "created_at": str(n.created_at)})
+                    "channels": n.channels, "channel_status": n.channel_status or {},
+                    "retry_pending": bool(n.retry_pending), "created_at": str(n.created_at)})
     return out
 
 
@@ -3973,7 +4036,7 @@ def read_all_notifications(user=Depends(auth.get_current_user), db: Session = De
 def admin_drain_notifications(user=Depends(auth.require_roles("operator")),
                               db: Session = Depends(get_db)):
     """미발송 알림 큐를 즉시 발송(drain) — 관리자 수동 트리거(워커 미기동 시에도 실발송).
-    크리덴셜(GLHAC_TWILIO_*/GLHAC_SMTP_*) 설정 시 실제 전송, 미설정 시 stub 로그 후 sent 처리."""
+    채널별 실제 결과를 합산하며, 크리덴셜 누락은 실패로 기록한다."""
     stats = drain_notifications(db)
     _audit(db, user, "notification.drain", "notification", None, None, stats)
     return stats
@@ -3988,7 +4051,7 @@ def admin_list_notifications(status: str = None, limit: int = 100, lang: str = Q
     if user["role"] != "admin":
         q = q.filter_by(org_id=user["org_id"])
     all_rows = q.all()
-    counts = {"unsent": 0, "sent": 0, "failed": 0, "sending": 0}
+    counts = {"unsent": 0, "sent": 0, "partial": 0, "failed": 0, "sending": 0, "skipped": 0}
     for n in all_rows:
         counts[n.status] = counts.get(n.status, 0) + 1
     fq = q
@@ -3998,6 +4061,7 @@ def admin_list_notifications(status: str = None, limit: int = 100, lang: str = Q
     items = [{"id": n.notification_id, "event_type": n.event_type,
               "title": notify_text(n, lang)[0],
               "channels": n.channels, "status": n.status, "attempts": n.attempts,
+              "channel_status": n.channel_status or {}, "retry_pending": bool(n.retry_pending),
               "last_error": n.last_error, "role": n.role, "case_id": n.case_id,
               "created_at": str(n.created_at)} for n in rows]
     return {"counts": counts, "total": len(items), "items": items}
@@ -15227,9 +15291,14 @@ def _do_send_fatwa(db, c, actor, body):
 
 def _create_approval(db, action_type, c, user, reason):
     """maker의 승인요청 생성(pending). 동일 케이스·액션의 중복 pending 방지."""
+    _payment_lock(db)
     dup = db.query(models.ApprovalRequest).filter_by(
         action_type=action_type, case_id=c.case_id, status="pending").first()
     if dup:
+        if action_type in ("certificate.issue", "certificate.revoke") and dup.requested_by == user["uid"] and dup.reason == (reason or None):
+            response = _approval_response(dup)
+            db.rollback()
+            return response
         raise HTTPException(409, {"code": "APPROVAL_PENDING", "approval_id": dup.id})
     ar = models.ApprovalRequest(
         action_type=action_type, case_id=c.case_id, org_id=c.org_id,
@@ -15237,13 +15306,18 @@ def _create_approval(db, action_type, c, user, reason):
         requested_by=user["uid"], requester_role=user["role"],
         requester_name=user.get("username"))
     db.add(ar)
+    db.flush()
     sm.record_event(db, c, c.status, c.status, action_type + ".requested",
                     user["role"], user["uid"], {"approval_id": ar.id, "reason": reason or None})
     db.commit()
-    rule = MAKER_CHECKER.get(action_type, {})
-    return {"approval_id": ar.id, "status": "pending", "action_type": action_type,
+    return _approval_response(ar)
+
+
+def _approval_response(ar):
+    rule = MAKER_CHECKER.get(ar.action_type, {})
+    return {"approval_id": ar.id, "status": ar.status, "action_type": ar.action_type,
             "checker_roles": _checker_roles(rule),
-            "message": "2인 승인 대기 — 승인자 확인 후 %s이(가) 실행됩니다." % (rule.get("label") or action_type)}
+            "message": "2인 승인 대기 — 승인자 확인 후 %s이(가) 실행됩니다." % (rule.get("label") or ar.action_type)}
 
 
 def _check_checker(db, ar, user):
@@ -17645,7 +17719,7 @@ def add_invoice(case_id: str, body: schemas.InvoiceReq,
     ppn = round(amount * float(_billing_settings(db, c.org_id).get("ppn_rate", 0.10)), 2)
     total = round(amount + ppn, 2)
     inv = models.Invoice(case_id=case_id, service_type=body.service_type, amount=amount,
-                         ppn=ppn, total=total, status="waiting_payment",
+                         ppn=ppn, total=total, currency=_case_currency(db, case_id), status="waiting_payment",
                          due_date=datetime.utcnow() + timedelta(days=14))
     db.add(inv)
     db.flush()
@@ -17674,6 +17748,8 @@ def _on_invoice_paid(db, c, user):
     # 이미 모의심사/그 이후 단계면 재전이·중복알림 금지(멱등)
     if c.status in MOCK_AUDIT_STAGES:
         return None
+    if _guard_invoice_receipts(db, c):
+        return None
     ok, _blk = sm.can_transition(db, c, target)
     if not ok:
         return None  # 가드 실패/유효 전이 아님 → 상태 유지(no-op)
@@ -17696,52 +17772,74 @@ def pay_invoice(invoice_id: str, user=Depends(auth.require_roles("operator")),
                 db: Session = Depends(get_db)):
     # 결제 확정은 운영자(operator/admin)만 — 신청자·컨설턴트가 돈을 안 내고 paid 로 찍어
     # 모의심사 게이트를 통과시키던 자기결제 결함(감사 K2) 차단.
+    _payment_lock(db)
     inv = db.get(models.Invoice, invoice_id)
     if not inv:
         raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
     c = _get_case(db, inv.case_id, user)
-    inv.status = "paid"
-    sm.record_event(db, c, c.status, c.status, "invoice.pay", user["role"], user["uid"],
-                    {"invoice_id": invoice_id})
-    _on_invoice_paid(db, c, user)   # 결제확정 → 모의심사 진입 게이트(가드 통과 시)
+    before = inv.status
+    _transition_invoice(db, inv, "paid", user=user, confirm_pending=True)
+    if before != "paid":
+        sm.record_event(db, c, c.status, c.status, "invoice.pay", user["role"], user["uid"],
+                        {"invoice_id": invoice_id})
+        _audit(db, user, "payment.confirm", "invoice", invoice_id, inv.case_id, commit=False)
     db.commit()
-    return {"invoice_id": invoice_id, "status": "paid"}
+    return {"invoice_id": invoice_id, "status": inv.status}
 
 
 # ---------- 결제 기록 (§P2 billing/payment) ----------
+class PaymentInput(schemas.PaymentReq):
+    currency: str | None = None
+
+
+class DepositInput(schemas.DepositReq):
+    currency: str = "KRW"
+    transaction_id: str | None = None
+
+
 @app.post("/invoices/{invoice_id}/payment")
-def record_payment(invoice_id: str, body: schemas.PaymentReq,
+def record_payment(invoice_id: str, body: PaymentInput, request: Request,
                    user=Depends(auth.require_roles("applicant", "consultant", "operator")),
                    db: Session = Depends(get_db)):
-    """결제 확인 기록 — Payment 생성 + 인보이스 paid 처리(결제 게이트웨이 시뮬레이션)."""
+    """신청자 기록은 수납 주장이며 pending. 운영자 카드/VA 수납만 금액 일치 시 확정한다."""
+    _payment_lock(db)
     inv = db.get(models.Invoice, invoice_id)
     if not inv:
         raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
     c = _get_case(db, inv.case_id, user)
     if body.method not in ("bank_transfer", "va", "card", "manual"):
         raise HTTPException(400, {"code": "BAD_METHOD"})
-    paid_amt = body.amount if body.amount is not None else inv.total
-    # 자동 확정(paid)은 operator/admin 기록만 — 신청자가 method=card·금액일치로 자기 결제를
-    # 확정해 게이트를 통과하던 결함(감사 K2). 그 외 기록은 pending → 관리자 검증으로 간다.
-    can_auto_confirm = user["role"] in ("operator", "admin")
-    auto = (can_auto_confirm and body.method in ("va", "card")
-            and abs((paid_amt or 0) - (inv.total or 0)) < 0.01)
-    p = models.Payment(invoice_id=invoice_id, case_id=inv.case_id, amount=paid_amt,
-                       currency=_case_currency(db, inv.case_id), method=body.method, reference=body.reference,
-                       status=("confirmed" if auto else "pending"), paid_by=user["uid"])
-    db.add(p)
-    frm = inv.status
-    inv.status = "paid" if auto else "need_verification"   # 은행이체/수기·금액불일치 → 관리자 검증
+    op = _payment_operation(db, "payment:" + invoice_id + ":" + user["uid"],
+                            request.headers.get("Idempotency-Key") or body.reference, body.model_dump())
+    if op.response is not None:
+        response = op.response
+        db.rollback()
+        return response
+    # 같은 은행 참조는 입력자나 요청 헤더가 바뀌어도 한 번만 계상한다.
+    receipt = (_payment_operation(db, "receipt:" + invoice_id, body.reference, body.model_dump())
+               if body.reference else op)
+    if receipt.response is not None:
+        op.response = receipt.response
+        db.commit()
+        return op.response
+    amount = _money(body.amount if body.amount is not None else inv.total, positive=True)
+    auto = (user["role"] in ("operator", "admin") and body.method in ("va", "card")
+            and amount + _invoice_receipts(db, inv) == _money(inv.total))
+    before = inv.status
+    _transition_invoice(db, inv, "paid" if auto else "need_verification", user=user,
+                        amount=amount, currency=body.currency, method=body.method,
+                        reference=body.reference, source_key=receipt.key, confirmed=auto)
+    pmt = db.query(models.Payment).filter_by(source_key=receipt.key).one()
     _audit(db, user, "payment.record", "invoice", invoice_id, inv.case_id,
-           {"method": body.method, "amount": paid_amt, "auto": auto,
-            "before": frm, "after": inv.status}, commit=False)
+           {"method": body.method, "amount": float(amount), "auto": auto,
+            "before": before, "after": inv.status}, commit=False)
     sm.record_event(db, c, c.status, c.status, "invoice.payment", user["role"], user["uid"],
-                    {"invoice_id": invoice_id, "method": body.method, "amount": paid_amt})
-    if inv.status == "paid":        # 자동승인(va/card·금액일치) 확정 → 모의심사 진입 게이트
-        _on_invoice_paid(db, c, user)
+                    {"invoice_id": invoice_id, "method": body.method, "amount": float(amount)})
+    op.response = {"payment_id": pmt.id, "invoice_id": invoice_id, "amount": pmt.amount,
+                   "method": pmt.method, "status": pmt.status, "invoice_status": inv.status}
+    receipt.response = op.response
     db.commit()
-    return {"payment_id": p.id, "invoice_id": invoice_id, "amount": p.amount,
-            "method": p.method, "status": p.status, "invoice_status": inv.status}
+    return op.response
 
 
 @app.get("/cases/{case_id}/payments")
@@ -17762,10 +17860,9 @@ def _case_currency(db, case_id):
 
 
 _INVOICE_STATES = {"draft", "invoice_created", "waiting_payment", "payment_processing",
-                   "need_verification", "paid", "rejected", "refunded", "expired", "cancelled"}
+                   "need_verification", "paid", "rejected", "partially_refunded", "refunded", "expired", "cancelled"}
 
-# MA2: PATCH /invoices/{id}/status 허용 전이표(from → {to}). 표에 없는 전이는 409.
-# paid 에서 나가는 전이는 이 라우트에서 금지 — 환불은 기존 환불 흐름(/invoices/{id}/refund/request → /refunds/{id}/decide, maker-checker)으로만.
+# 모든 수납 경로의 단일 전이표. 환불 전이는 실제 음수 원장을 쓰는 환불 경로만 사용한다.
 _INVOICE_TRANSITIONS = {
     "draft": {"invoice_created", "waiting_payment", "cancelled"},
     "invoice_created": {"waiting_payment", "cancelled"},
@@ -17774,7 +17871,137 @@ _INVOICE_TRANSITIONS = {
     "need_verification": {"paid", "rejected"},
     "rejected": {"waiting_payment"},
     "expired": {"waiting_payment"},
+    "paid": {"partially_refunded", "refunded"},
+    "partially_refunded": {"partially_refunded", "refunded"},
 }
+
+
+def _payment_lock(db):
+    """조회 이전부터 커밋까지 직렬화(SQLite 쓰기 락/Postgres advisory transaction lock)."""
+    try:
+        lock_chain_tail(db, "payment:operations")
+        db.expire_all()  # 인증 의존성 등이 먼저 읽은 스냅샷도 락 획득 후 다시 읽는다.
+    except OperationalError as exc:
+        db.rollback()
+        if "locked" in str(exc).lower() or getattr(exc.orig, "pgcode", None) in ("40P01", "40001", "55P03"):
+            raise HTTPException(409, {"code": "CONCURRENT_REQUEST", "message": "동일 요청으로 재시도해 주세요"}) from exc
+        raise
+
+
+def _request_digest(value):
+    import json
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str).encode()).hexdigest()
+
+
+def _payment_operation(db, scope, key, payload):
+    """같은 키+내용은 같은 응답, 같은 키+다른 내용은 409. 호출자는 먼저 _payment_lock."""
+    digest = _request_digest(payload)
+    op_key = scope + ":" + _request_digest(key or digest)
+    op = db.get(models.PaymentOperation, op_key)
+    if op:
+        if op.request_hash != digest:
+            raise HTTPException(409, {"code": "IDEMPOTENCY_CONFLICT"})
+        return op
+    op = models.PaymentOperation(key=op_key, request_hash=digest)
+    db.add(op)
+    db.flush()
+    return op
+
+
+def _money(value, *, positive=False):
+    try:
+        amount = Decimal(str(value))
+        if not amount.is_finite() or amount != amount.quantize(Decimal("0.01")) or (positive and amount <= 0):
+            raise ValueError()
+        return amount
+    except (InvalidOperation, ValueError, TypeError):
+        raise HTTPException(409, {"code": "INVALID_AMOUNT"})
+
+
+def _invoice_currency(db, inv):
+    return (inv.currency or _case_currency(db, inv.case_id)).upper()
+
+
+def _invoice_receipts(db, inv):
+    currency = _invoice_currency(db, inv)
+    db.flush()
+    return sum((_money(p.amount) for p in db.query(models.Payment).filter_by(invoice_id=inv.invoice_id, status="confirmed")
+                if (p.currency or "").upper() == currency), Decimal("0"))
+
+
+def _guard_invoice_receipts(db, case):
+    """청구된 금액은 실제 확정 수납(환불 차감)으로 충족해야 한다. 상태 이름은 증거가 아니다."""
+    for inv in db.query(models.Invoice).filter_by(case_id=case.case_id):
+        if inv.status in ("draft", "cancelled"):
+            continue  # 미청구 회차 및 취소된 청구는 채무가 아니다.
+        if _invoice_receipts(db, inv) < _money(inv.total or 0):
+            return [{"code": "UNPAID_INVOICE", "invoice_id": inv.invoice_id}]
+    return []
+
+
+# 결제 도메인의 가드만 등록한다. 상태 전이표/타 도메인 가드는 변경하지 않는다.
+sm.GUARDS["document_pre_audit_in_review"] = _guard_invoice_receipts
+
+
+def _transition_invoice(db, inv, target, *, user=None, amount=None, currency=None,
+                        method="manual", reference=None, source_key=None, confirmed=False,
+                        confirm_pending=False, refund=False):
+    """금액·통화·전이를 한 곳에서 검증하고 원장과 상태를 함께 변경한다. 커밋은 호출자 책임."""
+    case = db.get(models.CaseApplication, inv.case_id)
+    _assert_case_open(case)
+    expected = _invoice_currency(db, inv)
+    if currency is not None and str(currency).upper() != expected:
+        raise HTTPException(409, {"code": "CURRENCY_MISMATCH", "expected": expected})
+    total = _money(inv.total or 0)
+    if total < 0:
+        raise HTTPException(409, {"code": "INVALID_AMOUNT"})
+    net = _invoice_receipts(db, inv)
+    cur = "waiting_payment" if inv.status == "unpaid" else inv.status
+    amt = _money(amount, positive=True) if amount is not None else None
+    if refund:
+        if cur not in ("paid", "partially_refunded") or amt is None or net <= 0 or amt > net:
+            raise HTTPException(409, {"code": "NOT_REFUNDABLE", "balance": float(net)})
+        target = "refunded" if amt == net else "partially_refunded"
+    elif target in ("refunded", "partially_refunded"):
+        raise HTTPException(409, {"code": "INVALID_INVOICE_TRANSITION", "from": cur, "to": target})
+    if cur == target == "paid" and confirm_pending and net >= total:
+        return inv.status
+    if target not in _INVOICE_TRANSITIONS.get(cur, set()) and not (cur == target == "need_verification"):
+        raise HTTPException(409, {"code": "INVALID_INVOICE_TRANSITION", "from": cur, "to": target,
+                                  "allowed": sorted(_INVOICE_TRANSITIONS.get(cur, set()))})
+    if target == "paid" and amt is not None and not refund and net + amt != total:
+        raise HTTPException(409, {"code": "AMOUNT_MISMATCH", "expected": float(total - net)})
+    inv.currency = expected
+    if confirm_pending:
+        pending = db.query(models.Payment).filter_by(invoice_id=inv.invoice_id, status="pending").all()
+        for p in pending:
+            if (p.currency or "").upper() != expected:
+                raise HTTPException(409, {"code": "CURRENCY_MISMATCH", "expected": expected})
+            _money(p.amount, positive=True)
+        received = net + sum((_money(p.amount) for p in pending), Decimal("0"))
+        if received < total and (pending or net != 0):
+            raise HTTPException(409, {"code": "UNDERPAID", "paid_sum": float(received), "total": float(total)})
+        for p in pending:
+            p.status = "confirmed"
+        if not pending and net == 0 and total > 0:
+            db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, amount=float(total),
+                                  currency=expected, method="manual", status="confirmed", paid_by=(user or {}).get("uid"),
+                                  source_key="manual:" + inv.invoice_id))
+    elif amt is not None:
+        db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, amount=float(-amt if refund else amt),
+                              currency=expected, method=method, reference=reference, source_key=source_key,
+                              status="confirmed" if confirmed or refund else "pending", paid_by=(user or {}).get("uid")))
+        if target == "paid":
+            # 신청자가 제출한 입금 주장(pending)과 PG/은행 수납은 같은 돈이다. 두 번 확정하지 않는다.
+            for p in db.query(models.Payment).filter_by(invoice_id=inv.invoice_id, status="pending"):
+                p.status = "superseded"
+    db.flush()
+    if target == "paid" and _invoice_receipts(db, inv) < total:
+        raise HTTPException(409, {"code": "UNDERPAID"})
+    inv.status = target
+    if target == "paid":
+        _on_invoice_paid(db, case, user)
+    return target
 
 
 @app.patch("/invoices/{invoice_id}/status")
@@ -17787,36 +18014,13 @@ def set_invoice_status(invoice_id: str, body: schemas.InvoiceStatusReq,
         raise HTTPException(422, {"code": "BAD_STATUS", "allowed": sorted(_INVOICE_STATES)})
     if not (body.reason or "").strip():
         raise HTTPException(422, {"code": "REASON_REQUIRED", "detail": "상태 변경 사유(reason)는 필수입니다."})
+    _payment_lock(db)
     inv = db.get(models.Invoice, invoice_id)
     if not inv:
         raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
+    c = _get_case(db, inv.case_id, user)
     frm = inv.status
-    cur_state = "waiting_payment" if frm == "unpaid" else frm   # 레거시 unpaid = waiting_payment
-    allowed = _INVOICE_TRANSITIONS.get(cur_state, set())
-    if body.status not in allowed:
-        raise HTTPException(409, {"code": "INVALID_INVOICE_TRANSITION", "from": frm, "to": body.status,
-                                  "allowed": sorted(allowed)})
-    pend = []
-    if body.status == "paid":
-        # MA3: 확정될 pending + 이미 confirmed 합계가 청구 total 이상일 때만 paid. 부분입금 확정 차단.
-        # (기록된 결제가 전혀 없으면 관리자가 수기로 전액 수령을 확인하는 기존 경로 — 아래 manual Payment — 유지)
-        pend = db.query(models.Payment).filter_by(invoice_id=invoice_id, status="pending").all()
-        conf = db.query(models.Payment).filter_by(invoice_id=invoice_id, status="confirmed").all()
-        has_pos = any((p.amount or 0) > 0 for p in conf)
-        if pend or has_pos:
-            paid_sum = round(sum((p.amount or 0) for p in conf) + sum((p.amount or 0) for p in pend), 2)
-            total = round(inv.total or 0, 2)
-            if paid_sum < total - 0.01:
-                raise HTTPException(409, {"code": "UNDERPAID", "paid_sum": paid_sum, "total": total})
-    inv.status = body.status
-    if body.status == "paid":   # 확정 시 대기중 결제 confirmed 처리
-        for p in pend:
-            p.status = "confirmed"
-        # 확인된 결제(+)가 하나도 없으면 정산 현금흐름용 Payment 생성(단일소스)
-        if not pend and not has_pos:
-            db.add(models.Payment(invoice_id=invoice_id, case_id=inv.case_id, amount=(inv.total or 0),
-                                  currency=_case_currency(db, inv.case_id), method="manual",
-                                  status="confirmed", paid_by=user["uid"]))
+    _transition_invoice(db, inv, body.status, user=user, confirm_pending=body.status == "paid")
     _audit(db, user, "payment.status", "invoice", invoice_id, inv.case_id,
            {"before": frm, "after": body.status, "reason": body.reason}, commit=False)
     if body.status == "paid":       # 관리자 결제확정 → 모의심사 진입 게이트
@@ -17881,76 +18085,75 @@ async def pg_webhook(provider: str, request: Request, db: Session = Depends(get_
         payload = _json.loads(raw or b"{}")
     except Exception:  # noqa: BLE001
         raise HTTPException(400, {"code": "BAD_PAYLOAD"})
-    order_id = (payload.get("order_id") or payload.get("payment_ref")
-                or payload.get("reference") or "")
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(_apply_pg_webhook, db, provider, payload, verified)
+
+
+def _apply_pg_webhook(db, provider, payload, verified):
+    if not isinstance(payload, dict):
+        raise HTTPException(400, {"code": "BAD_PAYLOAD"})
+    order_id = str(payload.get("order_id") or payload.get("payment_ref") or payload.get("reference") or "")
     status_raw = str(payload.get("transaction_status") or payload.get("status") or "").lower()
-    event_id = (payload.get("event_id") or payload.get("id")
-                or ("%s:%s" % (order_id, status_raw) if order_id else uuid.uuid4().hex))
+    event_id = str(payload.get("event_id") or payload.get("id") or _request_digest(payload))
     idem = "pg:%s:%s" % (provider, event_id)
+    _payment_lock(db)
+    op = _payment_operation(db, "pg:" + provider, event_id, payload)
+    if op.response is not None:
+        response = op.response
+        db.rollback()
+        return response
     dup = db.query(models.IntegrationEvent).filter_by(idempotency_key=idem).first()
     if dup:
+        if dup.payload != payload:
+            raise HTTPException(409, {"code": "IDEMPOTENCY_CONFLICT"})
         return {"idempotent": True, "status": dup.status, "event_id": dup.id}
     new_status = _PG_STATUS_MAP.get(status_raw)
     inv = db.query(models.Invoice).filter_by(payment_ref=order_id).first() if order_id else None
     applied = None
     if inv and new_status:
         frm = inv.status
-        # 이미 paid 상태면 다른 상태로 되돌리지 않음 (A4-2: refunded 제외)
-        if frm == "paid" and new_status != "refunded":
-            # no-op: 이미 paid 상태는 refunded만 허용
-            applied = {"invoice_id": inv.invoice_id, "from": "paid", "to": None, "ignored": "already_paid"}
-        elif new_status == "paid":
-            # paid: 금액 검증 (A4-1)
-            amt_raw = payload.get("gross_amount") or payload.get("amount")
-            # 금액 없거나 변환 실패면 need_verification (A4)
-            amt_ok = False
-            if amt_raw is not None:
-                try:
-                    amt = float(amt_raw)
-                    if abs(amt - inv.total) <= 0.01:
-                        amt_ok = True
-                except (ValueError, TypeError):
-                    pass  # 변환 실패 → need_verification
-
-            if not amt_ok:
-                inv.status = "need_verification"
-                # 금액 검증 실패 사유 기록
-                if amt_raw is None:
-                    reason = "amount_missing"
-                else:
-                    try:
-                        float(amt_raw)
-                        reason = "amount_mismatch"
-                    except (ValueError, TypeError):
-                        reason = "amount_unparseable"
-                applied = {"invoice_id": inv.invoice_id, "from": frm, "to": "need_verification",
-                          "reason": reason, "amount_received": amt_raw, "amount_expected": inv.total}
-                log.warning("[pg-webhook] %s 금액 검증 실패 — %s (받음: %s, 기대: %.2f)", provider, reason, amt_raw, inv.total)
+        currency = payload.get("currency")
+        if currency is not None and str(currency).upper() != _invoice_currency(db, inv):
+            raise HTTPException(409, {"code": "CURRENCY_MISMATCH"})
+        if frm in ("paid", "partially_refunded", "refunded") and new_status != "refunded":
+            # 지연된 승인/실패 콜백은 성공/환불 수납을 되돌리지 않는다(전이 없음).
+            applied = {"invoice_id": inv.invoice_id, "from": frm, "to": None, "ignored": "already_settled"}
+        elif new_status in ("paid", "refunded"):
+            if not currency:
+                raise HTTPException(409, {"code": "CURRENCY_REQUIRED"})
+            amt_raw = payload.get("refund_amount") if new_status == "refunded" else None
+            if amt_raw is None:
+                amt_raw = payload.get("gross_amount", payload.get("amount"))
+            if new_status == "refunded":
+                _transition_invoice(db, inv, "refunded", amount=_money(amt_raw, positive=True), currency=currency,
+                                    method="refund", reference=event_id, source_key=op.key, refund=True)
+                applied = {"invoice_id": inv.invoice_id, "from": frm, "to": inv.status}
             else:
-                inv.status = new_status
-                # Payment 기록
-                db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, method=provider,
-                                      amount=amt, currency=_case_currency(db, inv.case_id), status="confirmed",
-                                      reference=str(order_id)))
-                for p in db.query(models.Payment).filter_by(invoice_id=inv.invoice_id, status="pending"):
-                    p.status = "confirmed"
-                # 케이스 전진 게이트 호출 (A4-3)
-                case = db.get(models.CaseApplication, inv.case_id)
-                if case:
-                    _on_invoice_paid(db, case, None)
-                applied = {"invoice_id": inv.invoice_id, "from": frm, "to": new_status}
+                try:
+                    amount = _money(amt_raw, positive=True)
+                    amount_ok = amount + _invoice_receipts(db, inv) == _money(inv.total)
+                except HTTPException:
+                    amount_ok = False
+                if not amount_ok:
+                    _transition_invoice(db, inv, "need_verification", currency=currency)
+                    applied = {"invoice_id": inv.invoice_id, "from": frm, "to": inv.status,
+                               "reason": "amount_mismatch" if amt_raw is not None else "amount_missing"}
+                else:
+                    _transition_invoice(db, inv, "paid", amount=amount, currency=currency, method=provider,
+                                        reference=order_id, source_key=op.key, confirmed=True)
+                    applied = {"invoice_id": inv.invoice_id, "from": frm, "to": inv.status}
         else:
-            inv.status = new_status
-            applied = {"invoice_id": inv.invoice_id, "from": frm, "to": new_status}
-    ev = models.IntegrationEvent(
-        provider=provider, event_type="pg.webhook." + (status_raw or "unknown"),
-        external_id=str(order_id or ""), idempotency_key=idem,
-        case_id=inv.case_id if inv else None, payload=payload,
-        status="processed" if applied else "received")
+            _transition_invoice(db, inv, new_status)
+            applied = {"invoice_id": inv.invoice_id, "from": frm, "to": inv.status}
+    ev = models.IntegrationEvent(provider=provider, event_type="pg.webhook." + (status_raw or "unknown"),
+        external_id=order_id, idempotency_key=idem, case_id=inv.case_id if inv else None,
+        payload=payload, status="processed" if applied else "received")
     db.add(ev)
+    db.flush()
+    op.response = {"received": True, "verified": bool(verified), "provider": provider,
+                   "mapped_status": new_status, "applied": applied, "event_id": ev.id}
     db.commit()
-    return {"received": True, "verified": bool(verified), "provider": provider,
-            "mapped_status": new_status, "applied": applied, "event_id": ev.id}
+    return op.response
 
 
 @app.get("/admin/payments")
@@ -18001,15 +18204,20 @@ def admin_payments_dashboard(user=Depends(auth.require_roles("fatwa_liaison", "o
 def request_refund(invoice_id: str, body: schemas.RefundReq,
                    user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
     """환불 요청(1단계) — 결제완료 인보이스만. 승인은 다른 관리자가(maker-checker)."""
+    _payment_lock(db)
     inv = db.get(models.Invoice, invoice_id)
     if not inv:
         raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
-    if inv.status not in ("paid",):
+    if inv.status not in ("paid", "partially_refunded"):
         raise HTTPException(409, {"code": "NOT_REFUNDABLE", "detail": "결제완료(paid) 인보이스만 환불 가능"})
     dup = db.query(models.Refund).filter_by(invoice_id=invoice_id, status="requested").first()
     if dup:
         raise HTTPException(409, {"code": "REFUND_PENDING", "refund_id": dup.id})
-    amt = body.amount if body.amount is not None else (inv.total or 0)
+    net = _invoice_receipts(db, inv)
+    amt = _money(body.amount if body.amount is not None else net, positive=True)
+    if amt > net:
+        raise HTTPException(409, {"code": "NOT_REFUNDABLE", "balance": float(net)})
+    amt = float(amt)
     r = models.Refund(invoice_id=invoice_id, case_id=inv.case_id, amount=amt,
                       reason=body.reason, status="requested", requested_by=user["uid"])
     db.add(r); db.flush()
@@ -18025,6 +18233,7 @@ def decide_refund(refund_id: str, body: schemas.RefundDecideReq,
     """환불 승인/거절(2단계) — 요청자≠승인자(maker-checker). 승인 시 인보이스 refunded."""
     if body.decision not in ("approved", "rejected"):
         raise HTTPException(422, {"code": "BAD_DECISION"})
+    _payment_lock(db)
     r = db.get(models.Refund, refund_id)
     if not r:
         raise HTTPException(404, {"code": "REFUND_NOT_FOUND"})
@@ -18037,10 +18246,9 @@ def decide_refund(refund_id: str, body: schemas.RefundDecideReq,
     r.decided_at = datetime.utcnow()
     inv = db.get(models.Invoice, r.invoice_id)
     if body.decision == "approved" and inv:
-        inv.status = "refunded"
-        db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, amount=-(r.amount or 0),
-                              currency=_case_currency(db, inv.case_id), method="refund", reference=refund_id, status="confirmed",
-                              paid_by=user["uid"]))
+        _transition_invoice(db, inv, "refunded", user=user, amount=r.amount,
+                            currency=_invoice_currency(db, inv), method="refund", reference=refund_id,
+                            source_key="refund:" + refund_id, refund=True)
     _audit(db, user, "payment.refund." + body.decision, "invoice", r.invoice_id, r.case_id,
            {"refund_id": refund_id, "amount": r.amount, "requester": r.requested_by}, commit=False)
     db.commit()
@@ -18184,8 +18392,10 @@ def _match_deposit(db, dep):
                   bool(inv.invoice_no and inv.invoice_no.lower() in memo)
         if ref_hit:
             score += 1.0; reason.append("결제참조 일치")
-        amt = dep.amount or 0; tot = inv.total or 0
-        amount_ok = abs(amt - tot) < 0.01
+        amt = _money(dep.amount or 0); tot = _money(inv.total or 0) - _invoice_receipts(db, inv)
+        if (dep.currency or "").upper() != _invoice_currency(db, inv):
+            risk.append("통화 불일치")
+        amount_ok = amt == tot
         if amount_ok:
             score += 1.0; reason.append("금액 일치")
         elif amt < tot:
@@ -18214,15 +18424,26 @@ def _judge_match(cands):
 
 
 @app.post("/admin/deposits")
-def add_deposit(body: schemas.DepositReq, user=Depends(auth.require_roles("operator")),
+def add_deposit(body: DepositInput, request: Request, user=Depends(auth.require_roles("operator")),
                 db: Session = Depends(get_db)):
-    """입금내역 등록 → 자동매칭(COMMIT=자동확정 / DEFER=후보생성 / REJECT=미매칭)."""
+    """은행 거래/요청 키 단위 멱등 등록. 실제 입금 통화를 보존하고 동일 통화만 매칭한다."""
+    _payment_lock(db)
+    _money(body.amount, positive=True)
+    source = request.headers.get("Idempotency-Key")
+    if body.transaction_id:
+        source = _request_digest([body.bank_name, body.account_no, body.transaction_id])
+    op = _payment_operation(db, "deposit", source, body.model_dump())
+    if op.response is not None:
+        response = op.response
+        db.rollback()
+        return response
     acct = body.account_no or ""
     masked = ("****" + acct[-4:]) if len(acct) >= 4 else "****"
     dep = models.Deposit(bank_name=body.bank_name, account_no_masked=masked,
-                         depositor_name=body.depositor_name, amount=body.amount,
-                         ref_memo=body.ref_memo)
-    db.add(dep); db.flush()
+                         depositor_name=body.depositor_name, amount=body.amount, currency=body.currency.upper(),
+                         ref_memo=body.ref_memo, source_key=op.key)
+    db.add(dep)
+    db.flush()
     _audit(db, user, "payment.deposit.create", "deposit", dep.id, None,
            {"amount": body.amount, "bank": body.bank_name}, commit=False)
     cands = _match_deposit(db, dep)
@@ -18230,22 +18451,21 @@ def add_deposit(body: schemas.DepositReq, user=Depends(auth.require_roles("opera
     res = {"deposit_id": dep.id, "verdict": verdict, "candidates": len(cands)}
     if verdict == "COMMIT":
         inv = cands[0]["invoice"]
-        inv.status = "paid"
-        dep.matched_invoice_id = inv.invoice_id; dep.match_status = "matched"
-        dep.currency = _case_currency(db, inv.case_id)   # MA1: 입금 통화 = 매칭된 케이스 계약 통화
-        db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id, amount=dep.amount,
-                              currency=dep.currency, method="bank_transfer", reference=dep.ref_memo,
-                              status="confirmed", paid_by=user["uid"]))
+        _transition_invoice(db, inv, "paid", user=user, amount=dep.amount, currency=dep.currency,
+                            method="bank_transfer", reference=dep.ref_memo, source_key="deposit:" + dep.id, confirmed=True)
+        dep.matched_invoice_id = inv.invoice_id
+        dep.match_status = "matched"
         _audit(db, user, "payment.match.auto", "invoice", inv.invoice_id, inv.case_id,
                {"deposit_id": dep.id, "score": cands[0]["score"], "auto": True}, commit=False)
         res["matched_invoice"] = inv.invoice_no
     else:
         dep.match_status = "candidate" if cands else "unmatched"
-        for c in cands[:5]:
-            db.add(models.PaymentMatchCandidate(deposit_id=dep.id, invoice_id=c["invoice"].invoice_id,
-                   case_id=c["invoice"].case_id, score=c["score"], reason=c["reason"], risk_flags=c["risk"]))
+        for candidate in cands[:5]:
+            db.add(models.PaymentMatchCandidate(deposit_id=dep.id, invoice_id=candidate["invoice"].invoice_id,
+                   case_id=candidate["invoice"].case_id, score=candidate["score"], reason=candidate["reason"], risk_flags=candidate["risk"]))
+    op.response = res
     db.commit()
-    return res
+    return op.response
 
 
 @app.get("/admin/deposits")
@@ -18281,27 +18501,35 @@ def decide_match(candidate_id: str, body: schemas.MatchDecisionReq,
     """매칭 후보 승인/보류/거절 — 승인 시 인보이스 paid + 입금 matched (maker-checker + 감사)."""
     if body.decision not in ("approved", "held", "rejected"):
         raise HTTPException(422, {"code": "BAD_DECISION"})
+    _payment_lock(db)
     cand = db.get(models.PaymentMatchCandidate, candidate_id)
     if not cand:
         raise HTTPException(404, {"code": "CANDIDATE_NOT_FOUND"})
-    cand.decision_status = body.decision; cand.reviewer_id = user["uid"]; cand.reviewed_at = datetime.utcnow()
+    if cand.decision_status == body.decision:
+        return {"candidate_id": candidate_id, "decision": body.decision}
+    if cand.decision_status == "approved":
+        raise HTTPException(409, {"code": "ALREADY_DECIDED"})
     frm = None
     if body.decision == "approved":
-        inv = db.get(models.Invoice, cand.invoice_id); dep = db.get(models.Deposit, cand.deposit_id)
-        if inv:
-            frm = inv.status; inv.status = "paid"
-            _cur = _case_currency(db, inv.case_id)   # MA1
-            if dep:
-                dep.currency = _cur
-            db.add(models.Payment(invoice_id=inv.invoice_id, case_id=inv.case_id,
-                   amount=(dep.amount if dep else inv.total), currency=_cur, method="bank_transfer",
-                   reference=(dep.ref_memo if dep else None), status="confirmed", paid_by=user["uid"]))
-        if dep:
-            dep.matched_invoice_id = cand.invoice_id; dep.match_status = "matched"
-        for other in db.query(models.PaymentMatchCandidate).filter_by(
-                deposit_id=cand.deposit_id, decision_status="pending"):
+        inv = db.get(models.Invoice, cand.invoice_id)
+        dep = db.get(models.Deposit, cand.deposit_id)
+        if not inv or not dep:
+            raise HTTPException(409, {"code": "MATCH_SOURCE_MISSING"})
+        if dep.match_status == "matched":
+            raise HTTPException(409, {"code": "DEPOSIT_ALREADY_MATCHED"})
+        frm = inv.status
+        net = _invoice_receipts(db, inv) + _money(dep.amount, positive=True)
+        target = "paid" if net >= _money(inv.total) else "need_verification"
+        _transition_invoice(db, inv, target, user=user, amount=dep.amount, currency=dep.currency,
+                            method="bank_transfer", reference=dep.ref_memo, source_key="deposit:" + dep.id, confirmed=True)
+        dep.matched_invoice_id = cand.invoice_id
+        dep.match_status = "matched"
+        for other in db.query(models.PaymentMatchCandidate).filter_by(deposit_id=cand.deposit_id, decision_status="pending"):
             if other.id != cand.id:
                 other.decision_status = "held"
+    cand.decision_status = body.decision
+    cand.reviewer_id = user["uid"]
+    cand.reviewed_at = datetime.utcnow()
     _audit(db, user, "payment.match.decide", "invoice", cand.invoice_id, cand.case_id,
            {"decision": body.decision, "candidate": candidate_id, "before": frm}, commit=False)
     db.commit()
@@ -19270,7 +19498,7 @@ def _case_sector(c):
 def _quote_compute(db, c, settings, opts):
     """CTR-01 — 분야 기본 심사비 + 품목당 추가(2번째부터) + 출장비 + 선택 옵션 + 부가세. 산출 근거를 lines 로."""
     sector = opts.get("sector") if opts.get("sector") in SECTORS else _case_sector(c)
-    n_prod = int(opts.get("product_count") if opts.get("product_count") is not None else len(c.product_ids or []))
+    n_prod = db.query(models.Product).filter_by(case_id=c.case_id).count()
     lines = [{"code": "base", "label": "기본 심사비 (" + SECTOR_KO[sector] + ")", "qty": 1,
               "unit": float(settings["sector_base"][sector]), "amount": float(settings["sector_base"][sector])}]
     extra_n = max(0, n_prod - 1)
@@ -19303,16 +19531,27 @@ def _latest_quote(db, case_id):
 
 
 @app.post("/cases/{case_id}/quote")
-def issue_quote(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
-    """D-07 견적서 자동 산출(관리자). body: {sector?, product_count?, onsite?(기본 true), options?[], adjustments?[{label,amount}], note?}.
-    다시 부르면 새 버전(변경 요청 반영)."""
+def issue_quote(case_id: str, request: Request, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
+    """D-07 견적: 등록 제품 수 + sector/onsite/options/adjustments/note.
+    같은 키/입력은 같은 결과. 새 입력·변경요청·새 Idempotency-Key는 새 버전."""
     import json as _json
+    _payment_lock(db)
     c = _get_case(db, case_id, user)
     _assert_case_open(c)   # 종결 케이스 쓰기 차단(R1-1)
     if nav8.formal_flow_on() and nav8.formal_state(db, case_id) != "accepted":
         raise HTTPException(409, {"code": "FORMAL_NOT_ACCEPTED"})
     settings = _billing_settings(db, user.get("org_id"))
     q = _quote_compute(db, c, settings, dict(body or {}))
+    change = nav8.latest_event(db, case_id, "quote.change_requested")
+    explicit_key = request.headers.get("Idempotency-Key")
+    inputs = dict(body or {})
+    fallback = [inputs, q, change.event_id if change else None]
+    op = _payment_operation(db, "quote:" + case_id, explicit_key or _request_digest(fallback),
+                            inputs if explicit_key else fallback)
+    if op.response is not None:
+        response = op.response
+        db.rollback()
+        return response
     prev = _latest_quote(db, case_id)
     q["version"] = (int(prev.get("version") or 0) + 1) if prev else 1
     q["note"] = ((body or {}).get("note") or "").strip()
@@ -19322,8 +19561,9 @@ def issue_quote(case_id: str, body: dict = None, user=Depends(auth.require_roles
     sm.record_event(db, c, c.status, c.status, "quote.issued", user["role"], user["uid"], q)
     for r in ("client", "consultant"):
         _notify(db, c, "quote.issued", "견적서 발송 (v%d)" % q["version"], body="총액 %s원" % format(int(q["total"]), ","), role=r)
+    op.response = q
     db.commit()
-    return q
+    return op.response
 
 
 @app.get("/cases/{case_id}/quote")
@@ -19375,6 +19615,7 @@ def _create_installments(db, c, contract, settings, user):
     for rnd, amt, stage in plan:
         base = round(amt / (1 + float(settings.get("ppn_rate", 0.10))), 2)
         inv = models.Invoice(case_id=c.case_id, service_type="installment", amount=base, ppn=round(amt - base, 2), total=amt,
+                             currency=(contract.currency or "KRW").upper(),
                              status="waiting_payment" if stage == "contract" else "draft",
                              due_date=(datetime.utcnow() + timedelta(days=int(settings.get("due_days") or 7))) if stage == "contract" else None)
         db.add(inv)
@@ -19431,7 +19672,7 @@ def _send_notice(db, c, kind, user, invoice=None, recipients=None, channels=None
         if kind == "payment_due":
             invoice.due_date = datetime.utcnow() + timedelta(days=int(due_days or settings.get("due_days") or 7))
             if invoice.status == "draft":
-                invoice.status = "waiting_payment"
+                _transition_invoice(db, invoice, "waiting_payment", user=user)
         due_date = invoice.due_date.isoformat() if invoice.due_date else None
     title = NOTICE_KINDS[kind] + ((" — " + invoice.invoice_no) if invoice and invoice.invoice_no else "")
     body = (message or "").strip()
@@ -19459,6 +19700,7 @@ def _send_notice(db, c, kind, user, invoice=None, recipients=None, channels=None
 @app.post("/cases/{case_id}/billing/notice")
 def billing_notice(case_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
     """NTF-02 관리자 결정형 발송 창 — {kind, invoice_id?, recipients?[], channels?[], due_days?, message?}."""
+    _payment_lock(db)
     c = _get_case(db, case_id, user)
     b = dict(body or {})
     inv = db.get(models.Invoice, b.get("invoice_id")) if b.get("invoice_id") else None
@@ -19484,13 +19726,12 @@ def billing_notices(case_id: str, user=Depends(auth.get_current_user), db: Sessi
 def invoice_paid_notice(invoice_id: str, body: dict = None, user=Depends(auth.require_roles("applicant", "penyelia_halal", "consultant")),
                         db: Session = Depends(get_db)):
     """CTR-10 기업 [입금 완료 알림] → 입금확인중(need_verification) + 관리자 알림."""
+    _payment_lock(db)
     inv = db.get(models.Invoice, invoice_id)
     if not inv:
         raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
     c = _get_case(db, inv.case_id, user)
-    if inv.status in ("paid", "refunded", "cancelled"):
-        raise HTTPException(409, {"code": "INVOICE_SETTLED", "status": inv.status})
-    inv.status = "need_verification"
+    _transition_invoice(db, inv, "need_verification", user=user)
     note = ((body or {}).get("note") or "").strip()
     sm.record_event(db, c, c.status, c.status, "invoice.client_paid_notice", user["role"], user["uid"],
                     {"invoice_id": invoice_id, "note": note})
@@ -19503,6 +19744,7 @@ def invoice_paid_notice(invoice_id: str, body: dict = None, user=Depends(auth.re
 @app.post("/invoices/{invoice_id}/bill-now")
 def invoice_bill_now(invoice_id: str, body: dict = None, user=Depends(auth.require_roles("operator")), db: Session = Depends(get_db)):
     """CTR-11 미리 청구 — 대기(draft) 회차를 지급 시점 전에 청구·입금 고지."""
+    _payment_lock(db)
     inv = db.get(models.Invoice, invoice_id)
     if not inv:
         raise HTTPException(404, {"code": "INVOICE_NOT_FOUND"})
@@ -19983,13 +20225,25 @@ def auditor_assignment_respond(case_id: str, body: dict = None,
     return {"ok": True, "case_id": case_id, "decision": decision, "reason": reason or None}
 
 
+def _active_auditor_cases(db, user):
+    completed = sm.TERMINAL_STATES | {"certificate_issued", "post_certification_monitoring", "renewal_preparation"}
+    return [c for c in _ops_cases(db, user) if c.status not in completed]
+
+
+def _active_auditor_assignments(db, cases):
+    return {cid: a for cid, a in _ops_latest_assignment(db, [c.case_id for c in cases]).items()
+            if a.get("accept_status") != "rejected"}
+
+
 @app.post("/ops/cases/{case_id}/assign-auditor")
 def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
                        user=Depends(auth.require_roles("operator")),
                        db: Session = Depends(get_db)):
     """미배정 케이스에 오디터 배정 — 업무량 기반. WorkflowEvent(latest-wins) + 오디터 알림.
     재배정 시 이전 응답은 자동 무효화(_ops_latest_assignment가 배정 이후 응답만 반영)."""
+    _payment_lock(db)
     c = _get_case(db, case_id, user)
+    _assert_case_open(c)
     au = db.get(models.User, body.auditor_id)
     if not au or au.role != "auditor":
         raise HTTPException(404, {"code": "AUDITOR_NOT_FOUND", "auditor_id": body.auditor_id})
@@ -19998,8 +20252,9 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
     if user["role"] != "admin" and au.org_id != user["org_id"]:
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
     _limit = _audit_settings(db, user.get("org_id")).get("max_cases_per_auditor") or 6
-    _assign_all = _ops_latest_assignment(db, [x.case_id for x in _ops_cases(db, user)])
-    _load = sum(1 for p in _assign_all.values() if p.get("auditor_id") == au.user_id)
+    active_cases = _active_auditor_cases(db, user)
+    _assign_all = _active_auditor_assignments(db, active_cases)
+    _load = sum(1 for cid, p in _assign_all.items() if cid != case_id and p.get("auditor_id") == au.user_id)
     if _load >= _limit and not (body.__dict__.get("force") if hasattr(body, "__dict__") else False):
         raise HTTPException(409, {"code": "AUDITOR_OVERLOADED", "load": _load, "limit": _limit})
     sm.record_event(db, c, c.status, c.status, "ops.auditor_assigned", user["role"], user["uid"],
@@ -20010,11 +20265,12 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
         cands = db.query(models.User).filter_by(role="auditor", org_id=au.org_id).all()
         cands = [u for u in cands if u.user_id != au.user_id and (auth.dev_mode() or not _is_demo_auditor(u))]
         if cands:
-            all_assign = _ops_latest_assignment(db, [x.case_id for x in _ops_cases(db, user)])
+            all_assign = _active_auditor_assignments(db, active_cases)
             main_load = {}
             for p in all_assign.values():
                 main_load[p.get("auditor_id")] = main_load.get(p.get("auditor_id"), 0) + 1
-            co_rows = db.query(models.CaseAuditor).filter_by(role="co").all()
+            co_rows = db.query(models.CaseAuditor).filter(models.CaseAuditor.role == "co",
+                    models.CaseAuditor.case_id.in_([c.case_id for c in active_cases])).all()
             co_load = {}
             for r in co_rows:
                 co_load[r.user_id] = co_load.get(r.user_id, 0) + 1
@@ -20028,8 +20284,8 @@ def ops_assign_auditor(case_id: str, body: schemas.OpsAssignAuditorReq,
     db.flush()
     _notify_package_gaps(db, c)   # 새 담당 오디터에게 남아 있는 패키지 공백 통보
     db.commit()
-    cases = _ops_cases(db, user)
-    assignments = _ops_latest_assignment(db, [x.case_id for x in cases])
+    cases = _active_auditor_cases(db, user)
+    assignments = _active_auditor_assignments(db, cases)
     load = sum(1 for p in assignments.values() if p.get("auditor_id") == au.user_id)
     co = db.query(models.CaseAuditor).filter_by(case_id=case_id, role="co").first()
     return {"ok": True, "case_id": case_id, "auditor_id": au.user_id,

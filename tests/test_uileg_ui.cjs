@@ -15,34 +15,77 @@ function translations(c) {
   vm.runInContext(between('const UI_STRINGS={','/* 전 언어 렌더 후처리'),c);
   for(const name of ['_dualSplit','T']) vm.runInContext(source.match(new RegExp('^function '+name+'\\(.*$','m'))[0],c);
 }
-function materials(actions,role) {
+function materials(actions,role,material={},translate=String) {
   const c=vm.createContext({SCREEN:{},CURCASE:'case1',ROLE:role,RBAC_ACTIONS:actions,MAT_OPEN:new Map(),
-    API:async()=>[{material_id:'mat1',name:'Gelatin',status:'mushbooh',evidence:[]}],
-    ENUMS:async()=>({material_type:[{value:'raw',label:'Raw'}]}),T:String,esc:String,
+    API:async()=>[{material_id:'mat1',name:'Gelatin',status:'mushbooh',evidence:[],...material}],
+    ENUMS:async()=>({material_type:[{value:'raw',label:'Raw'}]}),T:translate,
     pageSlice:(_,items)=>({items}),pager:()=>'',matCategoryChecklist:()=>'',scol:()=>'',rcol:()=>'',bTag:(_,s)=>s,statusColor:()=>''});
+  for(const name of ['esc','safeClick']) vm.runInContext(source.match(new RegExp('^function '+name+'\\(.*$','m'))[0],c);
   vm.runInContext(source.match(/^function CAN\(.*$/m)[0],c);
   vm.runInContext(between('SCREEN.materials=async()=>{','async function exportMaterialsXlsx'),c);
   return c.SCREEN.materials();
 }
+function hasControl(html,fn) {
+  return html.includes(`data-safe-click="${fn}"`) || html.includes(`onclick="${fn}(`);
+}
 test('M1 consultant controls follow server actions',async()=>{
   const html=await materials({'material.add':true,'material.delete':true,'material.evidence':true},'consultant');
-  for(const fn of ['addMaterial','editMaterial','delMaterial','attachEvidence']) assert.ok(html.includes(fn+'('),fn);
+  assert.ok(hasControl(html,'addMaterial'));
+  for(const fn of ['renameMaterial','editMaterial','rescreen','delMaterial','attachEvidence']) assert.ok(html.includes(`data-safe-click="${fn}"`),fn);
   assert.ok(!html.includes('읽기전용'));
 });
 test('M1 pendamping mapped to client has no write controls',async()=>{
   const html=await materials({},'client');
-  for(const fn of ['addMaterial','editMaterial','renameMaterial','delMaterial','attachEvidence','dedupMaterials','reuseMaterials','intakeZip','labelOcr']) assert.ok(!html.includes(fn+'('),fn);
+  for(const fn of ['addMaterial','editMaterial','renameMaterial','rescreen','delMaterial','attachEvidence','dedupMaterials','reuseMaterials','intakeZip','labelOcr']) assert.ok(!hasControl(html,fn),fn);
   assert.match(html,/읽기전용/);
 });
 test('M1 missing actions fail closed even for frontend admin',async()=>{
   const html=await materials({},'admin');
-  assert.ok(!html.includes('addMaterial(') && !html.includes('editMaterial('));
+  for(const fn of ['addMaterial','editMaterial','renameMaterial','rescreen','delMaterial','attachEvidence']) assert.ok(!hasControl(html,fn),fn);
 });
-const handlers=[['material.add','editMaterial'],['material.delete','delMaterial'],['material.evidence','attachEvidence']];
-for(const [action,fn] of handlers) test('M1 independent action '+action,async()=>{
+const handlers=[['material.add',['renameMaterial','editMaterial','rescreen']],['material.delete',['delMaterial']],['material.evidence',['attachEvidence']]];
+for(const [action,fns] of handlers) test('M1 independent action '+action,async()=>{
   const html=await materials({[action]:true},'auditor');
-  assert.ok(html.includes(fn+'('));
-  for(const [other,handler] of handlers) if(other!==action) assert.ok(!html.includes(handler+'('),handler);
+  for(const fn of fns) assert.ok(html.includes(`data-safe-click="${fn}"`),fn);
+  for(const [other,others] of handlers) if(other!==action) for(const fn of others) assert.ok(!hasControl(html,fn),fn);
+});
+test('M1 material row delegates escaped arguments with translations and certificate fallback',async()=>{
+  const payload=`a');window.__audit_marker=1;// " <img src=x onerror="window.__audit_marker=1"> &quot;\\\n\u2028\u2029`;
+  const mid="mat');window.__audit_marker=1;//";
+  const actions={'material.add':true,'material.delete':true,'material.evidence':true};
+  const entities={'&amp;':'&','&lt;':'<','&gt;':'>','&quot;':'"','&#39;':"'"};
+  for(const [cert_no,declared_cert_no,expectedCert] of [['',payload,payload],['verified',payload,'verified'],['','','']]) {
+    const html=await materials(actions,'consultant',{material_id:mid,name:payload,manufacturer:payload,mat_type_code:payload,
+      cert_no,declared_cert_no,evidence:[{}]},key=>'translated:'+key);
+    const row=html.match(/<tbody>([\s\S]*?)<\/tbody>/)[1];
+    assert.ok(row.includes('text-align:right;white-space:nowrap'));
+    assert.ok(!row.includes('<img'));
+    const buttons=[...row.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)];
+    const expected=[['matEvidenceList',['case1',mid,payload]],['renameMaterial',[mid,payload]],
+      ['editMaterial',[mid,{manufacturer:payload,mat_type_code:payload,cert_no:expectedCert}]],
+      ['attachEvidence',['case1',mid]],['rescreen',[mid]],['delMaterial',[mid]]];
+    assert.equal(buttons.length,expected.length);
+    assert.equal(buttons[3][2],'translated:증빙');
+    assert.equal(buttons[4][2],'translated:재스크');
+    const calls=[];let listener,prevented=0,stopped=0;
+    const c=vm.createContext({window:{__audit_marker:0},
+      document:{addEventListener(type,fn,capture){assert.equal(type,'click');assert.equal(capture,true);listener=fn;}},
+      ...Object.fromEntries(expected.map(([fn])=>[fn,(...args)=>calls.push([fn,args])]))});
+    vm.runInContext(between('function safeClick(','/* end safe data events */'),c);
+    for(const [index,button] of buttons.entries()) {
+      const attrs=Object.fromEntries([...button[1].matchAll(/([\w-]+)="([^"]*)"/g)]
+        .map(([,key,value])=>[key,value.replace(/&amp;|&lt;|&gt;|&quot;|&#39;/g,entity=>entities[entity])]));
+      assert.ok(Object.keys(attrs).every(key=>!/^on/i.test(key)));
+      assert.equal(attrs['data-safe-click'],expected[index][0]);
+      assert.deepEqual(JSON.parse(attrs['data-safe-args']),expected[index][1]);
+      const target={dataset:{safeClick:attrs['data-safe-click'],safeArgs:attrs['data-safe-args']}};
+      listener({target:{closest:()=>target},preventDefault(){prevented++;},stopPropagation(){stopped++;}});
+    }
+    assert.deepEqual(JSON.parse(JSON.stringify(calls)),expected);
+    assert.equal(c.window.__audit_marker,0);
+    assert.equal(prevented,expected.length);
+    assert.equal(stopped,expected.length);
+  }
 });
 for(const [lang,index] of [['ko',1],['en',0],['id',2]]) test('M7 '+lang+' manual guidance uses message keys',()=>{
   const c=vm.createContext({LANG:index,esc:String});translations(c);
