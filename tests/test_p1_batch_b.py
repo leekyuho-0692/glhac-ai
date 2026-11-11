@@ -17,6 +17,8 @@ os.environ["GLHAC_DEV"] = "1"                                   # 데모 계정 
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
+from app import models
+from app.db import SessionLocal
 
 
 def _tok(c, u, p):
@@ -105,6 +107,10 @@ def test_d_manual_layout_ocr_caption_roundtrip():
         admin = _tok(c, "admin", "admin")
         con = _tok(c, "consultant1", "pw")
         cid = _mkcase(c, admin, "ManualCo")
+        with SessionLocal() as db:
+            db.add(models.DocumentAsset(document_id="docORG", case_id=cid,
+                                        filename="org.png"))
+            db.commit()
         payload = {"order": [], "inserts": {
             "org_chart": {"document_id": "docORG", "filename": "org.png",
                           "caption": "조직도 · 할랄 담당자 구조"}}}

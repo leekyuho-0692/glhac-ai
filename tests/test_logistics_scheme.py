@@ -287,23 +287,24 @@ def test_차량_등록과_조회():
         h = _tok(cl, "consultant1", "pw")
         cid = cl.post("/cases", json={"company_name": "차량물류", "scheme": "logistics",
                                       "logistics_scope": ["pendistribusian"]}, headers=h).json()["case_id"]
+        org = cl.get(f"/cases/{cid}", headers=h).json()["org_id"]
         # 번호판 없으면 422
-        r0 = cl.post("/orgs/org_demo/vehicles", json={"vehicle_type": "truck"}, headers=h)
+        r0 = cl.post(f"/orgs/{org}/vehicles", json={"vehicle_type": "truck"}, headers=h)
         assert r0.status_code == 422
         # 등록
-        r = cl.post("/orgs/org_demo/vehicles", json={
+        r = cl.post(f"/orgs/{org}/vehicles", json={
             "plate_no": "B 9 XYZ", "vehicle_type": "reefer", "transport_type": "frozen",
             "previous_cargo": "pork", "previous_cargo_halal": False, "sertu": False,
             "case_id": cid}, headers=h)
         assert r.status_code == 200, r.text
         vid = r.json()["vehicle_id"]
-        rows = cl.get("/orgs/org_demo/vehicles", headers=h).json()
+        rows = cl.get(f"/orgs/{org}/vehicles", headers=h).json()
         v = [x for x in rows if x["vehicle_id"] == vid][0]
         assert v["plate_no"] == "B 9 XYZ" and v["transport_type"] == "frozen"
         assert v["previous_cargo_halal"] is False and v["sertu"] is False
         # Sertu 세정 후 편집
         cl.patch("/vehicles/%s" % vid, json={"sertu": True, "last_cleaned": "2026-09-13"}, headers=h)
-        v2 = [x for x in cl.get("/orgs/org_demo/vehicles", headers=h).json()
+        v2 = [x for x in cl.get(f"/orgs/{org}/vehicles", headers=h).json()
               if x["vehicle_id"] == vid][0]
         assert v2["sertu"] is True
         # 삭제
@@ -317,7 +318,8 @@ def test_차량_등록시_연동이벤트를_남긴다():
         h = _tok(cl, "consultant1", "pw")
         cid = cl.post("/cases", json={"company_name": "차량연동", "scheme": "logistics",
                                       "logistics_scope": ["pendistribusian"]}, headers=h).json()["case_id"]
-        r = cl.post("/orgs/org_demo/vehicles", json={"plate_no": "B 5 SYNC",
+        org = cl.get(f"/cases/{cid}", headers=h).json()["org_id"]
+        r = cl.post(f"/orgs/{org}/vehicles", json={"plate_no": "B 5 SYNC",
                     "previous_cargo_halal": False, "sertu": False, "case_id": cid}, headers=h)
         vid = r.json()["vehicle_id"]
         db = next(m.get_db())

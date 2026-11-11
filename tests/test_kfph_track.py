@@ -43,6 +43,8 @@ def _prep(case_id, pathway, status, add_product=False, **extra):
     try:
         c = db.get(models.CaseApplication, case_id)
         c.pathway = pathway
+        if pathway == "self_declare":
+            c.risk_category, c.is_msme = "low", True
         c.status = status
         for k, v in extra.items():
             setattr(c, k, v)

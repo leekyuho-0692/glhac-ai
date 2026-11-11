@@ -202,7 +202,7 @@ step("→onsite_audit_in_progress", tr(a1, cid, "onsite_audit_in_progress"))
 step("→audit_closed", tr(a1, cid, "audit_closed"))
 step("→hpas_evaluation_ready", tr(a1, cid, "hpas_evaluation_ready"))
 step("→final_package_preparation", tr(ot, cid, "final_package_preparation"))
-step("→fatwa_review", tr(ot, cid, "fatwa_review"))
+step("샤리아 직접 전이 차단", tr(ot, cid, "fatwa_review"), want=403)
 
 print("=== 16. 심사보고서·정본 ===")
 r = httpx.post(f"{B}/cases/{cid}/audit-report", headers=H(a1), json={}, timeout=60)

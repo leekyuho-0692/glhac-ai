@@ -943,6 +943,17 @@ def _get_case(db, case_id, user=None) -> models.CaseApplication:
     return c
 
 
+def _get_body_resource(db, model, resource_id, user, *, case_id=None, org_id=None):
+    """본문 참조도 부모 케이스 접근권한과 연결 대상의 일치 여부를 검사한다."""
+    row = db.get(model, resource_id)
+    if not row:
+        raise HTTPException(404, {"code": "RESOURCE_NOT_FOUND"})
+    parent = _get_case(db, row.case_id, user)
+    if (case_id is not None and parent.case_id != case_id) or (org_id is not None and parent.org_id != org_id):
+        raise HTTPException(403, {"code": "RESOURCE_CASE_MISMATCH"})
+    return row
+
+
 def _assert_scope_open(c, *, lock=True):
     """제품·원재료·연결 쓰기의 공통 가드. 동결과 같은 DB 잠금을 커밋까지 유지한다."""
     from sqlalchemy.orm import object_session
@@ -954,7 +965,42 @@ def _assert_scope_open(c, *, lock=True):
             db.refresh(c, ["scope_frozen"])
     if c.scope_frozen:
         raise HTTPException(409, {"code": "SCOPE_FROZEN",
-                                  "message": "범위가 동결된 케이스는 제품·원재료·연결을 변경할 수 없습니다"})
+                                  "message": "범위가 동결된 케이스는 시설·제품·원재료·연결을 변경할 수 없습니다"})
+
+
+def _assert_facility_scope_open(db, facility_id=None, case=None):
+    """시설 ID 경로와 공유 시설의 모든 연결 케이스가 같은 범위 가드를 사용한다."""
+    cases = {case.case_id: case} if case is not None else {}
+    if facility_id:
+        # JSON의 SQL contains는 SQLite/PostgreSQL 의미가 달라 저장된 ID 목록을 직접 대조한다.
+        for cid, ids in db.query(models.CaseApplication.case_id, models.CaseApplication.facility_ids):
+            if facility_id in (ids or []):
+                cases[cid] = db.get(models.CaseApplication, cid)
+    for c in sorted(cases.values(), key=lambda c: c.case_id):
+        _assert_case_open(c)
+        _assert_scope_open(c)
+
+
+@event.listens_for(SessionLocal, "before_flush")
+def _guard_facility_and_eligibility_writes(db, flush_context, instances):
+    """수동 편집·분류·자동채움의 저장 경계에서 시설 동결과 적격 판정 무효화를 보장한다."""
+    for row in list(db.dirty) + list(db.deleted):
+        state = inspect(row)
+        if isinstance(row, models.Facility) and (row in db.deleted or db.is_modified(row)):
+            _assert_facility_scope_open(db, row.facility_id)
+        if not isinstance(row, models.CaseApplication) or not state.persistent:
+            continue
+        fields = {k for k in ("facility_ids", "scheme", "logistics_scope", "factory_reg_no", "factory_address")
+                  if state.attrs[k].history.has_changes()}
+        if fields:
+            _assert_facility_scope_open(db, case=row)
+        if "facility_ids" in fields:
+            for fid in row.facility_ids or []:
+                _assert_facility_scope_open(db, fid)
+        if row.pathway == "self_declare" and any(state.attrs[k].history.has_changes() for k in (
+                "annual_revenue", "outlet_count", "is_msme", "risk_category", "facility_ids")):
+            row.sehati_eligible = "needs_review"
+            row.fatwa_status = "none"
 
 
 def _assert_frozen_scope_matches(db, c):
@@ -6840,6 +6886,8 @@ def add_measurement(case_id: str, body: dict = None,
     mid = b.get("material_id") or None
     if mid and not db.query(models.Material).filter_by(case_id=case_id, material_id=mid).first():
         raise HTTPException(404, {"code": "MATERIAL_NOT_FOUND"})
+    if b.get("document_id"):
+        _get_body_resource(db, models.DocumentAsset, b["document_id"], user, case_id=case_id)
     try:
         val = float(b["value"]) if b.get("value") is not None else None
     except (TypeError, ValueError):
@@ -8893,7 +8941,12 @@ def select_facilities(case_id: str, body: schemas.FacilitySelectReq,
     """이 신청 대상 공장 선택·분류(오피스 공장 중 선택) — facility_ids 저장."""
     c = _get_case(db, case_id, user)
     # 소속 오피스(org)의 공장만 허용 — 다른 회사가 쓰는 공장은 선택 대상이 아니다
+    _assert_facility_scope_open(db, case=c)
     valid = {f.facility_id for f in _facilities_for_case(db, c)}
+    if set(body.facility_ids or []) - valid:
+        raise HTTPException(403, {"code": "FACILITY_FORBIDDEN"})
+    for fid in body.facility_ids or []:
+        _assert_facility_scope_open(db, fid)
     c.facility_ids = [fid for fid in (body.facility_ids or []) if fid in valid]
     _protect_autofill(db, {"facility"}, user["uid"], case_id=case_id)
     db.commit()
@@ -9587,6 +9640,7 @@ def set_sjph_manual_layout(case_id: str, body: dict = None,
     inserts = {}
     for k, v in (b.get("inserts") or {}).items():
         if k in kset and isinstance(v, dict) and v.get("document_id"):
+            _get_body_resource(db, models.DocumentAsset, v["document_id"], user, case_id=case_id)
             item = {"document_id": str(v.get("document_id")), "filename": str(v.get("filename") or "")}
             cap = v.get("caption")   # P1-#6: OCR 자동배치 캡션(선택) — 이미지에 딱 붙는 설명. 스키마 무변경(payload).
             if cap:
@@ -9608,6 +9662,9 @@ def set_sjph_manual_layout(case_id: str, body: dict = None,
                 signers[k] = val
     else:
         signers = prev
+    for signer in signers.values():
+        if signer.get("stamp_document_id"):
+            _get_body_resource(db, models.DocumentAsset, signer["stamp_document_id"], user, case_id=case_id)
     sm.record_event(db, c, c.status, c.status, "sjph_manual.layout", user["role"], user["uid"],
                     {"order": order, "inserts": inserts, "signers": signers})
     db.commit()
@@ -9746,7 +9803,7 @@ def reconcile_halal_org(case_id: str, body: dict = None,
     if not doc_id:
         raise HTTPException(400, {"code": "NO_ORG_CHART",
                                   "detail": "조직도 이미지가 없습니다 — 먼저 조직도를 삽입/업로드하세요."})
-    d = db.get(models.DocumentAsset, doc_id)
+    d = _get_body_resource(db, models.DocumentAsset, doc_id, user, case_id=case_id)
     if not d or not d.content_b64:
         raise HTTPException(404, {"code": "FILE_NOT_AVAILABLE"})
     persons = _form_halal_persons(db, c)
@@ -10727,6 +10784,30 @@ def _fatwa_member_keys(db, org_id):
             for m in _fatwa_committee(db, org_id)]
 
 
+def _fatwa_seat_users(db, org_id):
+    members = _fatwa_committee(db, org_id)
+    keys = _fatwa_member_keys(db, org_id)
+    seats = dict(zip(keys, [m.get("user_id") for m in members]))
+    if (len(seats) != len(members) or None in seats.values()
+            or len(set(seats.values())) != len(members) or "chairman" not in seats):
+        return {}
+    for uid in seats.values():
+        account = db.get(models.User, uid)
+        if not account or account.role not in {"fatwa_liaison", "admin"}:
+            return {}
+    return seats
+
+
+def _assert_fatwa_seat(db, c, user, member):
+    if member not in _fatwa_member_keys(db, c.org_id):
+        raise HTTPException(422, {"code": "NOT_COMMITTEE_MEMBER"})
+    seats = _fatwa_seat_users(db, c.org_id)
+    if not seats:
+        raise HTTPException(409, {"code": "COMMITTEE_ACCOUNTS_REQUIRED"})
+    if seats.get(member) != user["uid"]:
+        raise HTTPException(403, {"code": "NOT_SEAT_OWNER"})
+
+
 def _fatwa_round(db, case_id):
     """재심의 차수 = 상정(audit_report.send_fatwa) 횟수."""
     return db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="audit_report.send_fatwa").count() or 1
@@ -10744,12 +10825,16 @@ def _fatwa_quorum_ok(db, case_id):
     c0 = db.get(models.CaseApplication, case_id)
     proxy = bool(c0 and _fatwa_proxy(db, c0.org_id))
     proxy_keys = _fatwa_proxy_keys(db, c0) if proxy else set()
+    seats = _fatwa_seat_users(db, c0.org_id) if c0 and _fatwa_srs(db) and not proxy else {}
     for e in events:
         p = e.payload or {}
         mk = p.get("member")
         if not mk:
             continue
         if proxy and (mk not in proxy_keys or mk != FATWA_PROXY_KEY + ":" + str(e.actor_id)):
+            continue
+        if _fatwa_srs(db) and (p.get("round") != _fatwa_round(db, case_id)
+                              or (not proxy and seats.get(mk) != e.actor_id)):
             continue
         img = p.get("image")
         signers[mk] = isinstance(img, str) and img.startswith("data:image/")
@@ -10761,7 +10846,7 @@ def _fatwa_quorum_ok(db, case_id):
         return ok, ([] if ok else ["PROXY_SIGNATURES_INCOMPLETE"]), {"chairman_signed": False,
             "signer_count": len(valid), "signers": valid, "quorum": need, "proxy": True}
     if _fatwa_srs(db):
-        valid = [key for key in valid if key in _fatwa_member_keys(db, c0.org_id if c0 else None)]
+        valid = [key for key in valid if key in seats]
         has_chairman = "chairman" in valid
         missing = []
         if not has_chairman:
@@ -12975,6 +13060,7 @@ def list_factories(case_id, user=Depends(auth.get_current_user), db=Depends(get_
 def add_factory(case_id, body: dict = None, user=Depends(auth.get_current_user), db=Depends(get_db)):
     """빈 공장 수동 추가 — 리스트에 공장N 자동 라벨."""
     c = _get_case(db, case_id, user)
+    _assert_facility_scope_open(db, case=c)
     ids = list(c.facility_ids or [])
     label = (body or {}).get("label") or ("공장%d" % (len(ids) + 1))
     f = models.Facility(org_id=c.org_id, name=(body or {}).get("name"),
@@ -13024,6 +13110,7 @@ def delete_factory(case_id, facility_id, user=Depends(auth.get_current_user), db
     데모 시드)에서 한 케이스에서 빼면 다른 케이스의 공장까지 사라졌다(실제로 발생시킴).
     '잘못 붙은 공장을 뗀다'와 '공장을 없앤다'는 다른 행위다."""
     c = _get_case(db, case_id, user)
+    _assert_facility_scope_open(db, case=c)
     ids = [x for x in (c.facility_ids or []) if x != facility_id]
     c.facility_ids = ids
     f = db.get(models.Facility, facility_id)
@@ -13047,6 +13134,9 @@ def classify_factories(case_id, user=Depends(auth.get_current_user), db=Depends(
     """공장등록증(factory_registration) 문서를 등록번호 우선 dedup으로 분류 → Facility 생성/갱신.
     문서·공장 없으면 빈 공장1 자동 생성."""
     c = _get_case(db, case_id, user)
+    _assert_facility_scope_open(db, case=c)
+    for fid in c.facility_ids or []:
+        _assert_facility_scope_open(db, fid)
     _audit(db, user, "factory.classify", "case", case_id, case_id)
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id, doc_type="factory_registration").all()
     groups = {}
@@ -13289,9 +13379,8 @@ def create_consultation(body: dict = None, user=Depends(auth.get_current_user), 
     message = (b.get("message") or "").strip()
     if not message:
         raise HTTPException(400, {"code": "EMPTY_MESSAGE"})
-    if b.get("case_id") and not db.get(models.CaseApplication, b.get("case_id")):
-        raise HTTPException(404, {"code": "CASE_NOT_FOUND"})   # FK: 없는 케이스를 가리키는 상담 금지
-    row = models.Consultation(org_id=user.get("org_id"), case_id=(b.get("case_id") or None),
+    case = _get_case(db, b["case_id"], user) if b.get("case_id") else None
+    row = models.Consultation(org_id=case.org_id if case else user.get("org_id"), case_id=(b.get("case_id") or None),
                               channel=(b.get("channel") or "inapp"), subject=subject or "(제목없음)",
                               message=message, created_by=user["uid"])
     db.add(row)
@@ -14049,6 +14138,8 @@ def _audit_report_event_latest(db, case_id, action):
     p = dict(e.payload or {})
     p["at"] = e.created_at.isoformat() if e.created_at else None
     p["actor"] = e.actor_id
+    p["event_id"] = e.event_id
+    p["actor_type"] = e.actor_type
     return p
 
 
@@ -14146,7 +14237,7 @@ def audit_report_client_sign(case_id: str, body: dict = None,
         raise HTTPException(422, {"code": "NAME_AND_IMAGE_REQUIRED"})
     at = datetime.utcnow().isoformat()
     sm.record_event(db, c, c.status, c.status, "audit_report.client_sign", user["role"], user["uid"],
-                    {"name": name, "gen_doc_id": g.gen_doc_id, "at": at, "image": image[:200000]})
+                    {"name": name, **_report_version(g), "at": at, "image": image[:200000]})
     _notify(db, c, "audit_report.client_sign", "기업 확인 서명 완료 — 현장심사 보고서", body=name + " 서명", role="auditor")
     db.commit()
     return {"ok": True, "name": name, "at": at, "gen_doc_id": g.gen_doc_id}
@@ -14199,7 +14290,12 @@ def canonical_d17_file(case_id: str, fmt: str, lang: str = Query("en"), version:
                     headers={"Content-Disposition": "attachment; filename=D-17_v%d_%s.pdf" % (meta["version"], lang)})
 
 
-def _fatwa_gate_check(db, c):
+def _report_version(g):
+    return {"gen_doc_id": g.gen_doc_id, "version": g.version,
+            "report_hash": hashlib.sha256((g.content or "").encode("utf-8")).hexdigest()}
+
+
+def _fatwa_gate_check(db, c, *, dispatched=False):
     """파트와 상정 선행조건 검증 — (미충족 코드 리스트, 근거 dict) 반환.
     (a) audit_report GeneratedDocument approved 존재
     (b) audit_report.sign 이벤트 존재(오디터 서명)
@@ -14210,24 +14306,49 @@ def _fatwa_gate_check(db, c):
     if not report_approved:
         missing.append("REPORT_NOT_APPROVED")
     sign = _audit_report_event_latest(db, c.case_id, "audit_report.sign")
-    if not sign:
+    version = _report_version(g) if g else {}
+    signed = bool(g and sign and all(sign.get(k) == v for k, v in version.items())
+                  and sign.get("actor_type") in {"auditor", "operator", "admin"})
+    if not signed:
         missing.append("AUDITOR_SIGN_REQUIRED")
+    client_sign = _audit_report_event_latest(db, c.case_id, "audit_report.client_sign")
     if nav8.formal_flow_on():
-        if not _audit_report_event_latest(db, c.case_id, "audit_report.client_sign"):
+        if not (g and client_sign and all(client_sign.get(k) == v for k, v in version.items())):
             missing.append("CLIENT_SIGN_REQUIRED")
-    have = _ensure_hpas(db, c.case_id)
-    hpas_ok = sum(1 for el in HPAS_ELEMENTS if have[el].status == "ok")
-    penyelia_ok = db.query(models.PenyeliaHalal).filter_by(org_id=c.org_id, status="active").count() > 0
+    # 발급 승인 트랜잭션에서도 호출하므로 조회 가드가 commit/상태 생성을 해서는 안 된다.
+    have = {h.element: h for h in db.query(models.HpasEvaluation).filter_by(case_id=c.case_id)}
+    hpas_ok = sum(1 for el in HPAS_ELEMENTS if el in have and have[el].status == "ok")
+    penyelia_ok = sm.has_active_penyelia(db, c.org_id)
     sjph_complete = (hpas_ok == len(HPAS_ELEMENTS)) and penyelia_ok
     if not sjph_complete:
         missing.append("SJPH_INCOMPLETE")
-    ctx = {"report_approved": report_approved, "signed": sign is not None,
+    basis = {**version, "auditor_sign": (sign or {}).get("event_id"),
+             "client_sign": (client_sign or {}).get("event_id") if nav8.formal_flow_on() else None,
+             "sjph": {el: {"status": have[el].status, "note": have[el].note} if el in have else None
+                      for el in HPAS_ELEMENTS}}
+    if dispatched:
+        sent = _audit_report_event_latest(db, c.case_id, "audit_report.send_fatwa") or {}
+        ar = db.get(models.ApprovalRequest, sent.get("approval_id")) if sent.get("approval_id") else None
+        if (not ar or ar.action_type != "audit_report.send_fatwa" or ar.case_id != c.case_id
+                or ar.status != "approved" or not ar.decided_by or ar.requested_by == ar.decided_by
+                or (ar.payload or {}).get("review_basis") != basis
+                or sent.get("review_basis") != basis or sent.get("transition_skipped")):
+            missing.append("SEND_APPROVAL_REQUIRED")
+    ctx = {"report_approved": report_approved, "signed": signed, "review_basis": basis,
            "quant_verdict": _case_quant_verdict(db, c.case_id),
            "sjph_complete": sjph_complete, "hpas_ok": hpas_ok,
            "hpas_total": len(HPAS_ELEMENTS), "penyelia_ok": penyelia_ok,
            "gen_doc_id": (g.gen_doc_id if g else None),
            "version": (g.version if g else None)}
     return missing, ctx
+
+
+def _guard_sharia_entry(db, c):
+    missing, _ = _fatwa_gate_check(db, c)
+    return [{"code": code} for code in missing]
+
+
+sm.GUARDS["fatwa_review"] = _guard_sharia_entry
 
 
 @app.post("/cases/{case_id}/audit-report/return")
@@ -14292,7 +14413,7 @@ def audit_report_sign(case_id: str, body: schemas.AuditReportSignReq,
         raise HTTPException(422, {"code": "NAME_REQUIRED"})
     at = datetime.utcnow().isoformat()
     sm.record_event(db, c, c.status, c.status, "audit_report.sign", user["role"], user["uid"],
-                    {"name": name, "gen_doc_id": g.gen_doc_id, "at": at})
+                    {"name": name, **_report_version(g), "at": at})
     # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op). 내부 서명 이벤트는 위에서 그대로 병행.
     if _psre_config()["configured"]:
         import hashlib as _h
@@ -14314,7 +14435,7 @@ def audit_report_send_fatwa(case_id: str,
     missing, _ctx = _fatwa_gate_check(db, c)
     if missing:
         raise HTTPException(409, {"code": "FATWA_GATE_BLOCKED", "missing": missing})
-    pend = _two_person_gate(db, c, user, "audit_report.send_fatwa", {})
+    pend = _two_person_gate(db, c, user, "audit_report.send_fatwa", {"review_basis": _ctx["review_basis"]})
     if pend:
         return pend
     return _do_send_fatwa(db, c, user, {})
@@ -14666,10 +14787,10 @@ def fatwa_sign(case_id: str, body: dict = None,
         raise HTTPException(403, {"code": "NOT_AUTHORIZED"})
     if _fatwa_proxy(db, c.org_id):
         member = _fatwa_proxy_member(db, c, user, member)
-    elif _fatwa_srs(db) and member not in _fatwa_member_keys(db, c.org_id):
-        raise HTTPException(422, {"code": "NOT_COMMITTEE_MEMBER"})
+    elif _fatwa_srs(db):
+        _assert_fatwa_seat(db, c, user, member)
     sm.record_event(db, c, c.status, c.status, "fatwa.sign", user["role"], user["uid"],
-                    {"member": member, "image": image, "name": name})
+                    {"member": member, "image": image, "name": name, "round": _fatwa_round(db, case_id)})
     # 법적효력 Phase 1 — PSrE 공인 전자서명 훅(미설정 시 no-op). 내부 서명 이벤트는 위에서 그대로 병행.
     if _psre_config()["configured"]:
         import hashlib as _h
@@ -14717,9 +14838,27 @@ def set_fatwa_committee(body: dict = None,
         name = str((m or {}).get("name") or "").strip()
         if role not in FATWA_MEMBER_ROLES or not name:
             raise HTTPException(422, {"code": "BAD_MEMBER_ENTRY", "allowed_roles": list(FATWA_MEMBER_ROLES)})
-        clean.append({"role": role, "name": name[:80], "title": str((m or {}).get("title") or "")[:80]})
+        clean.append({"role": role, "name": name[:80], "title": str((m or {}).get("title") or "")[:80],
+                      "user_id": m.get("user_id"), "user": m.get("user")})
     if sum(1 for m in clean if m["role"] == "chair") != 1:
         raise HTTPException(422, {"code": "CHAIR_REQUIRED", "hint": "위원장(chair) 정확히 1인"})
+    keys = [("chairman" if m["role"] == "chair" else m["role"] + ":" + m["name"]) for m in clean]
+    if len(set(keys)) != len(keys):
+        raise HTTPException(422, {"code": "DUPLICATE_SEAT"})
+    seen_users = set()
+    for member in clean:
+        account = (db.get(models.User, member["user_id"]) if member.get("user_id") else
+                   db.query(models.User).filter_by(username=member["user"]).first() if member.get("user") else None)
+        if _fatwa_srs(db) or member.get("user_id") or member.get("user"):
+            if not account or account.role not in {"fatwa_liaison", "admin"}:
+                raise HTTPException(422, {"code": "COMMITTEE_ACCOUNT_REQUIRED"})
+            if account.user_id in seen_users:
+                raise HTTPException(422, {"code": "DUPLICATE_COMMITTEE_USER"})
+            seen_users.add(account.user_id)
+            member.update(user_id=account.user_id, user=account.username)
+        else:
+            member.pop("user_id")
+            member.pop("user")
     shim = _committee_shim(user.get("org_id"))
     sm.record_event(db, shim, "committee", "committee", FATWA_COMMITTEE_ACTION,
                     user["role"], user["uid"], {"members": clean})
@@ -15135,14 +15274,19 @@ def _fatwa_tally(db, case_id, detail=False):
                  .order_by(models.FatwaVote.created_at.asc(), models.FatwaVote.id.asc()).all())
         c = db.get(models.CaseApplication, case_id)
         keys = _fatwa_member_keys(db, c.org_id if c else None)
+        latest_votes = {}
+        for ev in (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="fatwa.vote")
+                   .order_by(models.WorkflowEvent.created_at.asc(), models.WorkflowEvent.event_id.asc())):
+            latest_votes[(ev.payload or {}).get("member")] = ev
+        def authentic(v, uid):
+            ev = latest_votes.get(v.member)
+            p = (ev.payload or {}) if ev else {}
+            return bool(uid and ev and ev.actor_id == uid and p.get("vote") == v.vote
+                        and p.get("round") == _fatwa_round(db, case_id))
         if _fatwa_proxy(db, c.org_id if c else None):
             keys = _fatwa_proxy_keys(db, c)
-            voters = {}
-            for ev in (db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="fatwa.vote")
-                       .order_by(models.WorkflowEvent.created_at.asc(), models.WorkflowEvent.event_id.asc())):
-                voters[(ev.payload or {}).get("member")] = ev.actor_id
             votes = list({v.member: v for v in votes if v.member in keys
-                          and v.member == FATWA_PROXY_KEY + ":" + str(voters.get(v.member))}.values())
+                          and authentic(v, v.member.split(":", 1)[1])}.values())
             count = _audit_settings(db, c.org_id)["quorum"]
             approve = sum(v.vote == "approve" for v in votes)
             cond = sum(v.vote == "conditional" for v in votes)
@@ -15166,12 +15310,14 @@ def _fatwa_tally(db, case_id, detail=False):
             if detail:
                 out["ballots"] = [{"member": v.member, "vote": v.vote, "note": v.note} for v in votes]
             return out
-        votes = [v for v in votes if v.member in keys]
+        seats = _fatwa_seat_users(db, c.org_id if c else None)
+        votes = list({seats[v.member]: v for v in votes if v.member in seats
+                      and authentic(v, seats[v.member])}.values())
         approve = sum(1 for v in votes if v.vote == "approve")
         cond = sum(1 for v in votes if v.vote == "conditional")
         reject = sum(1 for v in votes if v.vote == "reject")
         need = FATWA_QUORUM if _audit_settings(db, c.org_id if c else None).get("decision_rule") == "unanimous" else (FATWA_QUORUM // 2) + 1
-        all_in = len(votes) >= FATWA_QUORUM
+        all_in = len(votes) >= FATWA_QUORUM and any(v.member == "chairman" for v in votes)
         if all_in and reject >= need:
             result = "rejected"
         elif all_in and (approve + cond) >= need:
@@ -15218,6 +15364,8 @@ def fatwa_vote(case_id: str, body: schemas.FatwaVoteReq,
     member = body.member
     if _fatwa_proxy(db, c.org_id):
         member = _fatwa_proxy_member(db, c, user, member)
+    elif _fatwa_srs(db):
+        _assert_fatwa_seat(db, c, user, member)
     if _fatwa_srs(db):
         keys = _fatwa_proxy_keys(db, c) if _fatwa_proxy(db, c.org_id) else _fatwa_member_keys(db, c.org_id)
         if member not in keys:
@@ -15232,7 +15380,7 @@ def fatwa_vote(case_id: str, body: schemas.FatwaVoteReq,
     else:
         db.add(models.FatwaVote(case_id=case_id, member=member, vote=body.vote, note=body.note))
     sm.record_event(db, c, c.status, c.status, "fatwa.vote", user["role"], user["uid"],
-                    {"member": member, "vote": body.vote, "note": body.note})
+                    {"member": member, "vote": body.vote, "note": body.note, "round": _fatwa_round(db, case_id)})
     db.commit()
     return _fatwa_tally(db, case_id)
 
@@ -15306,7 +15454,7 @@ def _two_person_strict():
 
 def _two_person_gate(db, c, user, action_type, payload):
     cos = _case_co_auditor_uids(db, c.case_id)
-    strict = _two_person_strict()
+    strict = _two_person_strict() or action_type == "audit_report.send_fatwa"
     if user["role"] == "auditor" and user["uid"] in cos:
         raise HTTPException(403, {"code": "NOT_MAIN_AUDITOR", "hint": "서브 오디터는 열람·확인만 할 수 있습니다."})
     # strict 에서는 operator/admin 도 우회하지 못한다(감사 지적) — 비 strict 는 종전처럼 즉시 실행.
@@ -15397,24 +15545,29 @@ def _do_send_fatwa(db, c, actor, body):
     missing, ctx = _fatwa_gate_check(db, c)
     if missing:
         raise HTTPException(409, {"code": "FATWA_GATE_BLOCKED", "missing": missing})
+    if body.get("review_basis") != ctx["review_basis"]:
+        raise HTTPException(409, {"code": "STALE_REVIEW_APPROVAL"})
+    ar = db.get(models.ApprovalRequest, body.get("approval_id")) if body.get("approval_id") else None
+    confirmed = _audit_report_event_latest(db, c.case_id, "two_person.confirmed") or {}
+    if (not ar or ar.case_id != c.case_id or ar.action_type != "audit_report.send_fatwa"
+            or ar.requested_by != actor["uid"] or confirmed.get("approval_id") != ar.id
+            or confirmed.get("main") != actor["uid"] or not confirmed.get("sub")
+            or confirmed["sub"] == actor["uid"]):
+        raise HTTPException(409, {"code": "SEND_APPROVAL_REQUIRED"})
+    ok, blockers = ((True, []) if c.status == "fatwa_review" else sm.can_transition(db, c, "fatwa_review"))
+    if not ok:
+        raise HTTPException(409, {"code": "TRANSITION_BLOCKED", "blockers": blockers})
     d17 = _issue_canonical_d17(db, c, actor)
     d18 = _issue_final_package_d18(db, c, actor, d17)
     target = "fatwa_review"
-    transitioned_to = None
-    ok, _blk = sm.can_transition(db, c, target)
-    if ok:
-        frm = c.status
-        sm.apply_side_effects(c, target)
-        c.status = target
-        sm.record_event(db, c, frm, target, "audit_report.send_fatwa", actor["role"], actor["uid"],
-                        {"gate": "passed", "gen_doc_id": ctx.get("gen_doc_id"),
-                         "canonical_version": d17["version"], "d18_gen_doc_id": d18["gen_doc_id"]})
-        transitioned_to = target
-    else:
-        sm.record_event(db, c, c.status, c.status, "audit_report.send_fatwa", actor["role"], actor["uid"],
-                        {"gate": "passed", "transition_skipped": True,
-                         "gen_doc_id": ctx.get("gen_doc_id"),
-                         "canonical_version": d17["version"], "d18_gen_doc_id": d18["gen_doc_id"]})
+    frm = c.status
+    sm.apply_side_effects(c, target)
+    c.status = target
+    sm.record_event(db, c, frm, target, "audit_report.send_fatwa", actor["role"], actor["uid"],
+                    {"gate": "passed", "gen_doc_id": ctx.get("gen_doc_id"),
+                     "review_basis": ctx["review_basis"], "approval_id": ar.id,
+                     "canonical_version": d17["version"], "d18_gen_doc_id": d18["gen_doc_id"]})
+    transitioned_to = target
     _notify(db, c, "audit_report.send_fatwa", "파트와 상정 — 현장심사 보고서",
             body="현장심사 보고서(영문 정본 + 인니어·한국어 번역본)와 취합본이 상정되었습니다.", role="fatwa_liaison")
     db.commit()
@@ -15487,7 +15640,7 @@ def _exec_approved(db, ar, user):
         if ar.action_type == "mock_audit.decision":
             return _do_mock_audit_decide(db, c, actor, ar.payload or {})
         if ar.action_type == "audit_report.send_fatwa":
-            return _do_send_fatwa(db, c, actor, ar.payload or {})
+            return _do_send_fatwa(db, c, actor, {**(ar.payload or {}), "approval_id": ar.id})
         if ar.action_type == "eligibility.verdict":
             return _do_eligibility_verdict(db, c, actor, ar.payload or {})
     if ar.action_type == "consultant.change":
@@ -15688,12 +15841,14 @@ def _issue_guards(db, c, case_id):
     if c.pathway != "self_declare" and db.query(models.Invoice).filter(
             models.Invoice.case_id == case_id, models.Invoice.status == "paid").count() == 0:
         raise HTTPException(409, {"code": "NO_PAYMENT", "message": "결제가 확정되지 않았습니다"})
+    receipts = _guard_invoice_receipts(db, c)
+    if receipts:
+        raise HTTPException(409, {"code": "PAYMENT_PENDING", "blockers": receipts})
     _assert_materials_safe(db, c)
     _assert_frozen_scope_matches(db, c)
-    if (c.scheme or "product") != "logistics":
-        links = db.query(models.ProductMaterial).filter_by(case_id=case_id).count()
-        if not links:
-            raise HTTPException(409, {"code": "PRODUCT_MATERIAL_LINKS_MISSING"})
+    product_blockers = sm.guard_product_materials(db, c)
+    if product_blockers:
+        raise HTTPException(409, product_blockers[0])
     if sm.open_major_nc(db, case_id) > 0:
         raise HTTPException(409, {"code": "UNRESOLVED_MAJOR_NC"})
     bad_docs = (db.query(models.DocumentAsset)
@@ -15701,6 +15856,18 @@ def _issue_guards(db, c, case_id):
                         models.DocumentAsset.review_status.in_(("rejected", "rework"))).count())
     if bad_docs > 0:
         raise HTTPException(409, {"code": "DOCUMENTS_NOT_APPROVED", "unresolved": bad_docs})
+    if c.pathway == "self_declare":
+        blockers = sm.guard_committee_materials(db, c)
+        if blockers:
+            raise HTTPException(409, {"code": "SELF_DECLARE_INELIGIBLE", "blockers": blockers})
+    else:
+        missing, _ = _fatwa_gate_check(db, c, dispatched=True)
+        if missing:
+            raise HTTPException(409, {"code": "FATWA_GATE_BLOCKED", "missing": missing})
+        if _fatwa_srs(db):
+            tally = _fatwa_tally(db, case_id)
+            if not (tally.get("quorum_met") and tally.get("signatures_ok") and tally.get("result") == "passed"):
+                raise HTTPException(409, {"code": "FATWA_QUORUM_NOT_MET"})
 
 
 def _sync_logistics_cert(db, c, cert, event):
@@ -17205,6 +17372,8 @@ def integration_event(body: schemas.IntegrationEventReq,
     """외부 연동 이벤트 기록 — idempotency_key로 중복수신 방지(§10.1)."""
     if body.event_type not in _INTEGRATION_EVENTS:
         raise HTTPException(400, {"code": "BAD_EVENT_TYPE", "allowed": sorted(_INTEGRATION_EVENTS)})
+    if body.case_id:
+        _get_case(db, body.case_id, user)
     dup = db.query(models.IntegrationEvent).filter_by(idempotency_key=body.idempotency_key).first()
     if dup:
         return {"id": dup.id, "idempotent": True, "status": dup.status}
@@ -17700,8 +17869,9 @@ def fatwa_confirm(case_id: str, body: dict = None, user=Depends(auth.require_rol
         raise HTTPException(409, {"code": "SIGNATURES_INCOMPLETE", "signatures": t.get("signatures")})
     committee = _fatwa_committee(db, c.org_id)
     chair = next((m for m in committee if m.get("role") == "chair"), None)
-    if not proxy and chair and chair.get("user") and chair.get("user") != user.get("username"):
-        raise HTTPException(403, {"code": "NOT_CHAIR"})
+    if not proxy and _fatwa_srs(db):
+        if _fatwa_seat_users(db, c.org_id).get("chairman") != user["uid"]:
+            raise HTTPException(403, {"code": "NOT_CHAIR"})
     result = t["result"]
     decision = {"passed": "approved", "conditional": "conditional", "rejected": "rejected"}.get(result)
     if not decision:
@@ -18450,7 +18620,7 @@ def decide_refund(refund_id: str, body: schemas.RefundDecideReq,
         raise HTTPException(404, {"code": "REFUND_NOT_FOUND"})
     if r.status != "requested":
         raise HTTPException(409, {"code": "ALREADY_DECIDED", "status": r.status})
-    if r.requested_by == user["uid"] and user["role"] != "admin":
+    if r.requested_by == user["uid"]:
         raise HTTPException(403, {"code": "SELF_APPROVAL_FORBIDDEN",
                                   "detail": "요청자는 승인할 수 없습니다(maker-checker)"})
     r.status = body.decision; r.decided_by = user["uid"]; r.decide_note = body.note
@@ -23352,8 +23522,10 @@ def add_vehicle(org_id: str, body: schemas.VehicleReq,
     _assert_org_access(db, user, org_id)
     if not (body.plate_no or "").strip():
         raise HTTPException(422, {"code": "PLATE_REQUIRED", "message": "번호판을 입력해 주세요"})
-    if body.case_id and not db.get(models.CaseApplication, body.case_id):
-        raise HTTPException(404, {"code": "CASE_NOT_FOUND"})   # FK: 없는 케이스를 가리키는 차량 금지
+    if body.case_id:
+        c = _get_case(db, body.case_id, user)
+        if c.org_id != org_id:
+            raise HTTPException(403, {"code": "RESOURCE_CASE_MISMATCH"})
     v = models.Vehicle(org_id=org_id, case_id=body.case_id,
                        plate_no=body.plate_no.strip(), vehicle_type=body.vehicle_type,
                        transport_type=body.transport_type, capacity=body.capacity,
@@ -23482,6 +23654,8 @@ def add_cleaning(vehicle_id: str, body: schemas.VehicleCleaningReq,
         raise HTTPException(404, {"code": "VEHICLE_NOT_FOUND"})
     _assert_org_access(db, user, v.org_id)
     method = (body.method or "normal")
+    if body.photo_doc_id:
+        _get_body_resource(db, models.DocumentAsset, body.photo_doc_id, user, case_id=v.case_id, org_id=v.org_id)
     if method not in ("sertu", "normal"):
         raise HTTPException(422, {"code": "BAD_METHOD", "message": "method는 sertu|normal"})
     cl = models.VehicleCleaning(

@@ -14,6 +14,7 @@ os.environ["GLHAC_RATE_LIMIT_PER_MIN"] = "0"
 os.environ["GLHAC_NOTIFY_WORKER"] = "0"
 
 from app import main, models, notify, state_machine as sm
+from test_final_e2_rules import seed_reviewed_issue_prerequisites
 from app.db import SessionLocal
 
 
@@ -167,6 +168,7 @@ def test_threaded_retries_have_one_result(api, operation):
             mid = material.material_id
             db.add(models.ProductMaterial(case_id=cid, product_id=product.product_id, material_id=mid))
             # D1 발급 전제: 제품·원재료·연결을 포함한 실제 동결 스냅샷을 남긴다.
+            seed_reviewed_issue_prerequisites(db, c)
             sm.freeze_scope(db, c)
             db.commit()
         r = api.post(f"/cases/{cid}/materials/{mid}/evidence", json={
@@ -640,7 +642,9 @@ def test_manual_refund_uses_same_net_balance_as_pg(api):
     _, iid, _ = invoice("paid", paid=100)
     r = api.post(f"/invoices/{iid}/refund/request", json={"amount": 30, "reason": "partial"})
     assert r.status_code == 200, r.text
-    r = api.post(f"/refunds/{r.json()['refund_id']}/decide", json={"decision": "approved"})
+    checker = api.post("/auth/login", json={"username": "operator1", "password": "pw"}).json()["token"]
+    r = api.post(f"/refunds/{r.json()['refund_id']}/decide", json={"decision": "approved"},
+                 headers={"Authorization": "Bearer " + checker})
     assert r.status_code == 200 and r.json()["invoice_status"] == "partially_refunded", r.text
     assert balance(iid) == 70
     r = api.post(f"/invoices/{iid}/refund/request", json={"amount": 71, "reason": "excess"})

@@ -25,6 +25,7 @@ from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 import app.main as m  # noqa: E402
+from test_final_e2_rules import seed_reviewed_issue_prerequisites, seed_paid_receipt
 import app.models as models  # noqa: E402
 
 OWN, OTHER = "org_staff", "org_newco"
@@ -143,10 +144,11 @@ def _case(db, status, **kw):
     # 발급된다(감사 K4: 인보이스 0건이면 무결제 발급되던 결함). 발급 가능한 전제를 갖춰 둔다.
     c = models.CaseApplication(case_id="c_iss", org_id=OWN, company_name="발급 검증",
                                status=status, fatwa_status=kw.get("fatwa", "approved"),
-                               scope_frozen=False,
+                               scope_frozen=False, is_msme=True, risk_category="low",
                                pathway="self_declare" if status == "committee_verification" else "reguler")
     db.add(c)
-    db.add(models.Invoice(case_id="c_iss", total=1.0, status="paid"))
+    inv = models.Invoice(case_id="c_iss", total=1.0, status="paid")
+    db.add(inv)
     db.commit()
     product = models.Product(case_id=c.case_id, name="Reviewed product")
     material = models.Material(case_id=c.case_id, name="sugar")
@@ -154,6 +156,8 @@ def _case(db, status, **kw):
     db.flush()
     db.add(models.ProductMaterial(case_id=c.case_id, product_id=product.product_id,
                                   material_id=material.material_id))
+    seed_paid_receipt(db, inv)
+    seed_reviewed_issue_prerequisites(db, c)
     if kw.get("frozen", True):
         m.sm.freeze_scope(db, c)
     db.commit()

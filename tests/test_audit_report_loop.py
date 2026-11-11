@@ -129,8 +129,7 @@ def test_sign_gate_requires_approved_report():
 
 def test_send_fatwa_gate_blocks_and_passes():
     """④ send-fatwa 게이트 — 서명/SJPH 없으면 409 FATWA_GATE_BLOCKED+missing,
-    전부 충족 시 성공(gate passed) + 이벤트 기록. 전이 가드로 fatwa_review 직접전이가
-    막혀도 게이트 통과+이벤트 기록으로 단언(LLM/상태머신 미의존)."""
+    전부 충족한 뒤 독립 공동 심사자가 확인하면 상정과 이벤트 기록이 완료된다."""
     with TestClient(app) as c:
         admin = _tok(c, "admin", "admin")
         aud = _tok(c, "auditor1", "pw")
@@ -149,10 +148,18 @@ def test_send_fatwa_gate_blocks_and_passes():
         assert r1.json()["detail"]["missing"] == ["SJPH_INCOMPLETE"], r1.json()
         # SJPH 완성 → 게이트 통과
         _make_sjph_complete(c, admin, cid)
+        with SessionLocal() as db:
+            db.get(models.CaseApplication, cid).status = "final_package_preparation"
+            db.commit()
+        added = c.post(f"/cases/{cid}/auditors", json={"username": "auditor2"}, headers=_h(admin))
+        assert added.status_code == 200, added.text
         before_ev = _event_count(cid, "audit_report.send_fatwa")
         before_notif = _notif_count(cid, "fatwa_liaison")
         r2 = c.post(f"/cases/{cid}/audit-report/send-fatwa", headers=_h(aud))
-        assert r2.status_code == 200 and r2.json()["gate"] == "passed", r2.text
+        assert r2.status_code == 200 and r2.json().get("pending"), r2.text
+        r2 = c.post(f"/approvals/{r2.json()['approval_id']}/approve", json={},
+                    headers=_h(_tok(c, "auditor2", "pw")))
+        assert r2.status_code == 200 and r2.json()["result"]["gate"] == "passed", r2.text
         assert _event_count(cid, "audit_report.send_fatwa") == before_ev + 1, "send_fatwa 이벤트 미기록"
         assert _notif_count(cid, "fatwa_liaison") == before_notif + 1, "샤리아 알림 미적재"
         st = c.get(f"/cases/{cid}/audit-report/status", headers=_h(aud)).json()

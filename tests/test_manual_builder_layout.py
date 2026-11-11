@@ -54,6 +54,8 @@ def test_reorder_persisted_latest_wins(tmp_path):
 def test_image_insert_completes_section_and_ready(tmp_path):
     """org_chart 이미지 삽입 → 해당 섹션 완료·전체 준비완료(4/4). 잘못된 insert는 무시."""
     db = _seed(tmp_path)
+    db.add(models.DocumentAsset(document_id="docXYZ", case_id="caseMB", filename="orgchart.png"))
+    db.commit()
     payload = {"order": [], "inserts": {
         "org_chart": {"document_id": "docXYZ", "filename": "orgchart.png"},
         "unknown": {"document_id": "d2"},          # 미지의 키 → 무시
