@@ -82,6 +82,9 @@ def allowed(frm, to):
 # ---- 전이 권한 (P0-1) — /transition 우회로 승인·발급 무력화 방지 ----
 # raw /transition으로 진입 금지(전용 엔드포인트만): 최종승인·발급
 PROTECTED_STATES = {"fatwa_approved", "certificate_issued"} | TERMINAL_STATES   # 종결은 POST /cases/{id}/close 로만
+# 모의심사 승인에는 준비서류 확인과 2인 확인이 수반된다. 자동 진행과 구별하여
+# raw /transition 진입만 금지하고 전용 API가 기존 승인 절차를 수행하게 한다.
+DEDICATED_REVIEW_STATES = {"document_pre_audit_approved"}
 # 진입(to_state)에 필요한 역할. admin은 항상 허용. 미정의 상태는 DEFAULT.
 TRANSITION_ROLES = {
     "committee_verification": {"operator"},                     # SEHATI ketetapan = 최종 결제자
@@ -367,7 +370,9 @@ def guard_certificate_issue(db, case):
 
 def open_major_nc(db, case_id):
     from .models import AuditFinding
-    return db.query(AuditFinding).filter_by(case_id=case_id, status="open", severity="major").count()
+    return db.query(AuditFinding).filter(
+        AuditFinding.case_id == case_id, AuditFinding.severity == "major",
+        AuditFinding.status.is_distinct_from("closed")).count()
 
 
 def guard_final_package(db, case):
@@ -432,7 +437,8 @@ def guard_car_closed(db, case):
     """시정조치 종결(§5.2 finding_open→car_closed) — 미해결 finding·미종결 CAR 없음."""
     from .models import AuditFinding, CorrectiveAction
     g = []
-    open_find = db.query(AuditFinding).filter_by(case_id=case.case_id, status="open").count()
+    open_find = db.query(AuditFinding).filter(
+        AuditFinding.case_id == case.case_id, AuditFinding.status.is_distinct_from("closed")).count()
     if open_find > 0:
         g.append({"code": "OPEN_FINDINGS", "count": open_find})
     open_car = db.query(CorrectiveAction).filter(
@@ -454,6 +460,18 @@ def guard_formal_accepted(db, case):
     return []
 
 
+def guard_lph_assigned(db, case):
+    from .models import LphAssignment
+    assigned = db.query(LphAssignment).filter_by(case_id=case.case_id).all()
+    if not any((row.lph_name or "").strip() for row in assigned):
+        return [{"code": "LPH_NOT_ASSIGNED"}]
+    return []
+
+
+def guard_lph_entry(db, case):
+    return guard_reguler_submit(db, case) + guard_lph_assigned(db, case)
+
+
 GUARDS = {
     "ai_pre_assessment_ready": guard_intake_complete,        # §5.2 신청 완비
     "document_pre_audit_requested": guard_formal_accepted,   # 정식 흐름 접수 확인(K4)
@@ -464,7 +482,8 @@ GUARDS = {
     "self_declare_eligible": guard_pathway_selfdeclare,
     "self_declaration_submitted": guard_selfdeclare_submit,
     "committee_verification": guard_committee_materials,
-    "lph_assignment": guard_reguler_submit,
+    "lph_assignment": guard_lph_entry,               # guard_reguler_submit + LPH 배정 확인
+    "onsite_audit_scheduled": guard_lph_assigned,
     "certificate_issued": guard_certificate_issue,
 }
 

@@ -23,6 +23,14 @@ def _h(tok):
     return {"Authorization": "Bearer " + tok}
 
 
+def _ready_for_fatwa(cid):
+    from app import models
+    from app.db import SessionLocal
+    with SessionLocal() as db:
+        db.get(models.CaseApplication, cid).status = "fatwa_review"
+        db.commit()
+
+
 def test_password_pbkdf2_and_legacy_upgrade():
     """비밀번호가 pbkdf2로 저장·검증되고, 레거시 sha256 해시는 로그인 시 자동 승격."""
     from app import auth, models
@@ -207,6 +215,7 @@ def test_sod_and_severity_enum():
         aud = _tok(c, "auditor1", "pw")
         cid = c.post("/cases", json={"company_name": "SoD", "org_id": "org_demo"},
                      headers=_h(adm)).json()["case_id"]
+        _ready_for_fatwa(cid)
         # SoD: operator는 가승인(patch_fatwa) 불가, 샤리아만
         assert c.patch(f"/cases/{cid}/fatwa", json={"decision": "approved"},
                        headers=_h(op)).status_code == 403
@@ -227,6 +236,7 @@ def test_two_stage_fatwa_approval():
         op = _tok(c, "operator1", "pw")
         cid = c.post("/cases", json={"company_name": "2Stage", "org_id": "org_demo"},
                      headers=_h(adm)).json()["case_id"]
+        _ready_for_fatwa(cid)
         # 샤리아 가승인 → fatwa_status=provisional (최종 아님)
         assert c.patch(f"/cases/{cid}/fatwa", json={"decision": "approved"},
                        headers=_h(fat)).status_code == 200

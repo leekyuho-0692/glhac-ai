@@ -16,15 +16,18 @@ def client():
 
 
 def _register(client, **extra):
+    # 각 가입은 별도 업체다. 동일 번호 재사용은 이제 모든 저장 경로에서 거부된다.
+    nib = str(uuid4().int)[:10]
+    nib = nib[:3] + "-" + nib[3:5] + "-" + nib[5:]
     body = {"username": "profile_" + uuid4().hex[:12], "password": "Passw0rd!23",
             "company_email": (extra.get("contacts", {}).get("pic") or {}).get("email") or "company@example.com",
             "email_consent": True,
-            "company_name": "가입 테스트 업체", "nib": "120-81-00000", **extra}
+            "company_name": "가입 테스트 업체", "nib": nib, **extra}
     r = client.post("/auth/register", json=body)
     assert r.status_code == 200, r.text
     with SessionLocal() as db:
         c = db.query(models.CaseApplication).filter_by(org_id=r.json()["org_id"]).one()
-        return {"nib": c.nib, "profile_ext": c.profile_ext or {}, "email": c.email, "phone": c.phone,
+        return {"nib": c.nib, "submitted_nib": body["nib"], "profile_ext": c.profile_ext or {}, "email": c.email, "phone": c.phone,
                 "scheme": c.scheme, "logistics_scope": c.logistics_scope}
 
 
@@ -34,7 +37,7 @@ def test_가입_사업자번호_영문명_담당자와_분야를_저장한다(cl
         "cp": {"name": "이책임", "title": "생산본부 부장", "phone": "02-123-4567", "email": "cp@example.com"},
     }
     c = _register(client, company_name_en="  GL Food Co., Ltd.  ", contacts=contacts, sectors=["food"])
-    assert c["nib"] == "120-81-00000"
+    assert c["nib"] == c["submitted_nib"]
     pe = c["profile_ext"]
     assert pe["company_name_en"] == "GL Food Co., Ltd."
     assert pe["sector"] == "food" and pe["sectors"] == ["food"]

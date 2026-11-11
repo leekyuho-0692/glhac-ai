@@ -154,7 +154,7 @@ for inv in invs:
 print("=== 12. 서류 사전심사 전이 ===")
 step("→document_pre_audit_requested", tr(ad, cid, "document_pre_audit_requested"))
 step("→document_pre_audit_in_review", tr(ad, cid, "document_pre_audit_in_review"))
-step("→document_pre_audit_approved", tr(ad, cid, "document_pre_audit_approved"))
+step("원시 모의심사 승인 우회 차단", tr(ad, cid, "document_pre_audit_approved"), want=403)
 
 print("=== 13. 준비 서류 ===")
 r = httpx.get(f"{B}/cases/{cid}/prep", headers=H(ad), timeout=60)
@@ -221,10 +221,19 @@ j = maybe_approve("send-fatwa", j, a2)
 ok("D-17 정본 발급", ((j.get("canonical") or {}).get("doc") if isinstance(j, dict) else None) == "D-17", j)
 ok("D-18 취합본", ((j.get("final_package") or {}).get("doc") if isinstance(j, dict) else None) == "D-18", j)
 
-print("=== 17. 샤리아 대리(오디터) ===")
-step("fatwa/vote", httpx.post(f"{B}/cases/{cid}/fatwa/vote", headers=H(a1), json={"member": "auditor", "vote": "approve", "note": "ok"}, timeout=60))
-step("fatwa/sign", httpx.post(f"{B}/cases/{cid}/fatwa/sign", headers=H(a1), json={"member": "auditor", "image": PNG}, timeout=60))
-step("fatwa/confirm", httpx.post(f"{B}/cases/{cid}/fatwa/confirm", headers=H(a1), json={}, timeout=60))
+print("=== 17. 독립 오디터 3인 대리 심의 ===")
+step("현장 오디터 이해충돌 차단", httpx.post(f"{B}/cases/{cid}/fatwa/vote", headers=H(a1), json={"member": "auditor", "vote": "approve"}, timeout=60), want=403)
+proxies = []
+for i in range(3):
+    username = f"proxy_{ts}_{i}"
+    step(f"독립 심의자 {i+1} 생성", httpx.post(f"{B}/admin/users", headers=H(ad), json={"username": username, "password": "ProxyPass!234", "role": "auditor", "org_id": "org_demo"}, timeout=60))
+    proxy = login(username, "ProxyPass!234")
+    proxies.append(proxy)
+    step(f"독립 심의자 {i+1} 투표", httpx.post(f"{B}/cases/{cid}/fatwa/vote", headers=H(proxy), json={"member": "auditor", "vote": "approve", "note": "ok"}, timeout=60))
+    step(f"독립 심의자 {i+1} 서명", httpx.post(f"{B}/cases/{cid}/fatwa/sign", headers=H(proxy), json={"member": "auditor", "image": PNG}, timeout=60))
+    if i < 2:
+        step("정족수 미달 확정 차단", httpx.post(f"{B}/cases/{cid}/fatwa/confirm", headers=H(proxy), json={}, timeout=60), want=409)
+step("fatwa/confirm", httpx.post(f"{B}/cases/{cid}/fatwa/confirm", headers=H(proxies[0]), json={}, timeout=60))
 step("운영자 최종승인(final-approve)", httpx.post(f"{B}/cases/{cid}/fatwa/final-approve", headers=H(ot), json={}, timeout=60))
 
 print("=== 18. 인증서 ===")
@@ -238,6 +247,7 @@ if not (isinstance(j, dict) and j.get("certificate_no")) and isinstance(j, dict)
     jj = step("certificate approve", r)
     j = (jj.get("result") if isinstance(jj, dict) else None) or jj
 ok("인증서 번호", bool(isinstance(j, dict) and j.get("certificate_no")), j)
+verify_url = j.get("verify_url", "") if isinstance(j, dict) else ""
 r = httpx.get(f"{B}/cases/{cid}", headers=H(ad), timeout=60)
 j = step("case 조회", r)
 ok("상태 certificate_issued", (j.get("status") if isinstance(j, dict) else None) == "certificate_issued", j.get("status") if isinstance(j, dict) else j)
@@ -249,7 +259,33 @@ j = step("gen-docs", r)
 docs = listify(j)
 print("  생성 문서:", sorted({d.get("doc_type") or d.get("doc") or d.get("kind") or "?" for d in docs if isinstance(d, dict)}))
 
-print("=== 20. 요약 ===")
+print("=== 20. 발급 후 신원·정지·재개·갱신·철회 ===")
+step("발급 후 신원 직접 변경 차단", httpx.patch(f"{B}/cases/{cid}/profile", headers=H(at),
+     json={"company_name": "Unreviewed Company"}, timeout=60), want=409)
+step("발급 후 샤리아 결정 변경 차단", httpx.post(f"{B}/cases/{cid}/fatwa/vote", headers=H(proxies[0]),
+     json={"member": "auditor", "vote": "reject", "note": "재판정 시도"}, timeout=60), want=409)
+j = step("발급 시점 회사명 공개 검증", httpx.get(B + verify_url, timeout=60))
+ok("공개 검증 스냅샷", j.get("company_name") == f"CycleCo {ts}" and j.get("identity_snapshot_available") is True, j)
+step("인증서 정지", httpx.post(f"{B}/cases/{cid}/certificate/suspend", headers=H(ot), json={"reason": "사후관리 검토"}, timeout=60))
+j = step("정지 후 검증", httpx.get(B + verify_url, timeout=60))
+ok("정지 인증서는 유효하지 않음", j.get("valid") is False, j)
+step("인증서 재개", httpx.post(f"{B}/cases/{cid}/certificate/reactivate", headers=H(ot), json={"reason": "보완 검증 완료"}, timeout=60))
+j = step("재개 후 검증", httpx.get(B + verify_url, timeout=60))
+ok("재개 인증서는 유효함", j.get("valid") is True, j)
+step("갱신 신청", httpx.post(f"{B}/cases/{cid}/renew/request", headers=H(at), json={"reason": "갱신 심사 요청"}, timeout=60))
+j = step("갱신 케이스 생성", httpx.post(f"{B}/cases/{cid}/renew", headers=H(ot), timeout=60))
+renewal_id = j.get("new_case_id")
+j = step("갱신 재요청", httpx.post(f"{B}/cases/{cid}/renew", headers=H(ot), timeout=60))
+ok("갱신 생성 멱등", bool(renewal_id) and j.get("new_case_id") == renewal_id, j)
+j = step("인증서 철회 요청", httpx.post(f"{B}/cases/{cid}/certificate/revoke", headers=H(ot), json={"reason": "인증 철회"}, timeout=60))
+step("인증서 철회 2인 승인", httpx.post(f"{B}/approvals/{j.get('approval_id')}/approve", headers=H(ad), timeout=60))
+j = step("갱신 자식 조회", httpx.get(f"{B}/cases/{renewal_id}", headers=H(ad), timeout=60))
+ok("부모 철회 시 진행 중 갱신 취소", j.get("status") == "cancelled", j.get("status"))
+j = step("철회 후 공개 검증", httpx.get(B + verify_url, timeout=60))
+ok("철회 인증서는 유효하지 않음", j.get("valid") is False, j)
+step("종결 후 프로필 쓰기 차단", httpx.patch(f"{B}/cases/{cid}/profile", headers=H(at), json={"phone": "010-1234-5678"}, timeout=60), want=409)
+
+print("=== 21. 요약 ===")
 print(f"PASS {len(P)} / FAIL {len(F)}")
 if F:
     print("실패 목록:")

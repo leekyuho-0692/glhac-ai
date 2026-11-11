@@ -28,7 +28,7 @@ ACTION_ROLES = {
     "document.review": {"consultant", "auditor"},   # A05: 오디터 문서 단위 판정(승인/반려/재요청) — 설계 정본
     "sjph.edit": {"applicant", "consultant", "penyelia_halal"},
     "finding.add": {"auditor", "consultant"},
-    "finding.update": {"auditor", "consultant"},
+    "finding.update": {"auditor"},
     "onsite.checklist": {"auditor", "consultant"},
     "auditor_pool.add": {"operator"},
     "penyelia.update": {"applicant", "consultant", "penyelia_halal"},

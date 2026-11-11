@@ -10,6 +10,8 @@ os.environ.setdefault("GLHAC_DEV", "1")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
+from app import models
+from app.db import SessionLocal
 
 SIG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
        "AAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC")
@@ -26,8 +28,12 @@ def _h(t):
 
 
 def _mkcase(c, tok):
-    return c.post("/cases", json={"company_name": "Fatwa Iso Co", "org_id": "org_demo"},
-                  headers=_h(tok)).json()["case_id"]
+    cid = c.post("/cases", json={"company_name": "Fatwa Iso Co", "org_id": "org_demo"},
+                 headers=_h(tok)).json()["case_id"]
+    with SessionLocal() as db:
+        db.get(models.CaseApplication, cid).status = "fatwa_review"
+        db.commit()
+    return cid
 
 
 def test_sign_roundtrip_latest_wins():

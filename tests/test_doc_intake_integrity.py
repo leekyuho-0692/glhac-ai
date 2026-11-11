@@ -87,7 +87,13 @@ def case(client):
         c = db.get(models.CaseApplication, cid)
         c.address = "Seoul"
         db.commit()
-    return h, cid
+    yield h, cid
+    _drain()
+    # 같은 예시 사업자번호를 다음 업체 픽스처가 재사용하지 않게 격리한다.
+    # 종결 상태도 포함하는 테스트 데이터 정리이므로 API를 거치지 않는다.
+    with m.SessionLocal() as db:
+        db.query(models.CaseApplication).filter_by(case_id=cid).update({"nib": None})
+        db.commit()
 
 
 def _upload(client, case, filename="scan001.pdf", text=PLAIN_TEXT):
