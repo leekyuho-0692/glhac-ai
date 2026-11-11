@@ -79,9 +79,13 @@ def _bidx_key():
 
 
 def enc(plaintext):
-    """평문 → ``ver:token``. None은 None 유지."""
-    if plaintext is None:
-        return None
+    """평문 → ``ver:token``. None·빈 문자열은 그대로 유지.
+
+    빈 문자열까지 암호화하면 매번 다른 암호문이 되어 SQL 의 ``col != ""``·``col == ""`` 비교가
+    항상 참/거짓이 된다(빈 원본 문서가 재처리 대상에 섞이던 원인). 빈 값 여부는 암호문 길이로도
+    드러나므로 그대로 두어도 새로 노출되는 정보는 없다."""
+    if plaintext is None or plaintext == "":
+        return plaintext
     if not isinstance(plaintext, str):
         plaintext = str(plaintext)
     key = _keys()[ACTIVE_VER]

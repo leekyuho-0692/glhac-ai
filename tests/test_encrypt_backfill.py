@@ -6,11 +6,10 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-# 임시 테스트 DB 설정 (암호화 OFF)
+# 임시 테스트 DB 설정 (외부에서 지정한 암호화 모드는 유지)
 _TMPDIR = tempfile.mkdtemp(prefix="glhac_encrypt_test_")
 _DBFILE = os.path.join(_TMPDIR, "test_encrypt.db")
 os.environ["GLHAC_DB_URL"] = "sqlite:///" + _DBFILE
-os.environ["GLHAC_ENCRYPTION"] = "0"  # 스크립트는 이 플래그를 무시하지만 테스트는 OFF로 시작
 os.environ.setdefault("GLHAC_SECRET", "test-" + "x" * 36)
 
 import pytest
@@ -18,11 +17,19 @@ from sqlalchemy import create_engine, Column, String, Integer, text
 from sqlalchemy.orm import sessionmaker
 from app.db import Base, SessionLocal, DB_URL
 from app.crypto import EncryptedType, enc, dec
+import app.crypto as crypto_module
 from scripts.encrypt_backfill import (
     _get_encrypted_columns,
     _init_crypto_keys,
+    normalize_empty_ciphertexts,
     main as backfill_main,
 )
+
+
+@pytest.fixture(autouse=True)
+def plaintext_backfill_setup(monkeypatch):
+    """백필용 평문 준비만 OFF로 격리하고 후속 테스트에는 원래 암호화 모드를 복구."""
+    monkeypatch.setattr(crypto_module, "ENCRYPT_COLUMNS", False)
 
 
 # 테스트용 모델 (임시)
@@ -296,6 +303,71 @@ def test_verify_does_not_mistake_v_colon_plaintext(monkeypatch):
     _init_crypto_keys()
     assert backfill_main(["--verify"]) is False
     engine.dispose()
+
+
+@pytest.fixture
+def empty_ciphertext_rows():
+    engine = _init_test_db()
+    _init_crypto_keys()
+    # enc("")는 이제 ""이므로 구형 토큰은 AES-GCM으로 직접 만든다.
+    nonce = crypto_module.get_random_bytes(12)
+    cipher = crypto_module.AES.new(crypto_module._keys()["v1"], crypto_module.AES.MODE_GCM, nonce=nonce)
+    ciphertext, tag = cipher.encrypt_and_digest(b"")
+    legacy_empty = "v1:" + base64.urlsafe_b64encode(nonce + tag + ciphertext).decode("ascii")
+    values = {800: legacy_empty, 801: "", 802: enc("NIB-802"), 803: None}
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("INSERT INTO test_case_for_encryption (id, nib) VALUES (:id, :nib)"),
+                         [{"id": pk, "nib": value} for pk, value in values.items()])
+        yield engine, values
+    finally:
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM test_case_for_encryption WHERE id BETWEEN 800 AND 803"))
+        engine.dispose()
+
+
+def test_normalize_empty_ciphertexts(empty_ciphertext_rows):
+    """구형 빈 암호문만 정규화하고 dry-run 무변경·재실행 멱등성을 보장."""
+    engine, original = empty_ciphertext_rows
+    columns = _get_encrypted_columns()
+    query = text("SELECT id, nib FROM test_case_for_encryption WHERE id BETWEEN 800 AND 803")
+
+    assert normalize_empty_ciphertexts(columns, DB_URL, apply=False) == 1
+    with engine.connect() as conn:
+        assert dict(conn.execute(query).all()) == original
+
+    assert normalize_empty_ciphertexts(columns, DB_URL, apply=True) == 1
+    expected = {**original, 800: ""}
+    with engine.connect() as conn:
+        assert dict(conn.execute(query).all()) == expected
+
+    assert normalize_empty_ciphertexts(columns, DB_URL, apply=True) == 0
+    assert normalize_empty_ciphertexts(columns, DB_URL, apply=False) == 0
+    with engine.connect() as conn:
+        assert dict(conn.execute(query).all()) == expected
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_normalize_empty_cli(empty_ciphertext_rows, apply):
+    """--normalize-empty의 단독/--apply 조합이 일반 암호화 없이 선택적으로 동작."""
+    engine, original = empty_ciphertext_rows
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE test_case_for_encryption SET email = 'plain: untouched' WHERE id = 800"))
+    args = ["--normalize-empty"]
+    if apply:
+        args += ["--apply", "--allow-derived-key"]
+    assert backfill_main(args) is True
+    with engine.connect() as conn:
+        values = dict(conn.execute(text(
+            "SELECT id, nib FROM test_case_for_encryption WHERE id BETWEEN 800 AND 803"
+        )).all())
+        assert values == ({**original, 800: ""} if apply else original)
+        assert conn.execute(text("SELECT email FROM test_case_for_encryption WHERE id = 800")).scalar() == "plain: untouched"
+
+
+def test_encrypt_empty_string_roundtrip():
+    assert enc("") == ""
+    assert dec(enc("")) == ""
 
 
 if __name__ == "__main__":
