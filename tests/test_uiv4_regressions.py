@@ -36,7 +36,8 @@ def login(client, username, password='pw'):
 @pytest.mark.parametrize('lang', ['ko', 'en', 'id'])
 @pytest.mark.parametrize('sector', intake.SECTORS)
 def test_translated_signup_form_persists_sector(client, payloads, lang, sector):
-    payload = payloads[lang, sector]
+    payload = payloads[lang, sector].copy()
+    payload['nib'] = f'123-45-{67890 + list(payloads).index((lang, sector)):05d}'
     assert payload['sectors'] == [sector]
     response = client.post('/auth/register', json=payload)
     assert response.status_code == 200, response.text
