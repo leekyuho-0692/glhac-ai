@@ -40,11 +40,23 @@ def _srs(on=True):
     os.environ["GLHAC_FORMAL_FLOW"] = "1" if on else "0"
 
 
+def _seat_header(c, member, chair):
+    username = {"member:Budi": "fatwa_budi", "member:Citra": "fatwa_citra"}.get(member)
+    return _tok(c, username, "pw") if username else chair
+
+
 def _committee3(c, fatwa):
+    with SessionLocal() as db:
+        original = db.query(models.User).filter_by(username="fatwa1").one()
+        for username in ("fatwa_budi", "fatwa_citra"):
+            if not db.query(models.User).filter_by(username=username).first():
+                db.add(models.User(username=username, password_hash=original.password_hash,
+                                   org_id="org_demo", role="fatwa_liaison"))
+        db.commit()
     r = c.post("/fatwa/committee", headers=fatwa, json={"members": [
-        {"role": "chair", "name": "Ahmad"},
-        {"role": "member", "name": "Budi"},
-        {"role": "member", "name": "Citra"},
+        {"role": "chair", "name": "Ahmad", "user": "fatwa1"},
+        {"role": "member", "name": "Budi", "user": "fatwa_budi"},
+        {"role": "member", "name": "Citra", "user": "fatwa_citra"},
     ]})
     assert r.status_code == 200, r.text
     return r.json()
@@ -97,22 +109,22 @@ def test_투표_검증_위원키_의견종류_사유():
         cid = _mkcase(c, admin)
         _set_status(cid, "fatwa_review")
         # 위원 키 아님 → 422 NOT_COMMITTEE_MEMBER
-        r = c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'nope', fatwa),
                    json={"member": "nope", "vote": "approve"})
         assert r.status_code == 422, r.text
         assert r.json()["detail"]["code"] == "NOT_COMMITTEE_MEMBER", r.text
         # abstain → 422 OPINION_REQUIRED
-        r = c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'chairman', fatwa),
                    json={"member": "chairman", "vote": "abstain"})
         assert r.status_code == 422, r.text
         assert r.json()["detail"]["code"] == "OPINION_REQUIRED", r.text
         # conditional 노트 없음 → 422 REASON_REQUIRED
-        r = c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'member:Budi', fatwa),
                    json={"member": "member:Budi", "vote": "conditional"})
         assert r.status_code == 422, r.text
         assert r.json()["detail"]["code"] == "REASON_REQUIRED", r.text
         # reject 노트 없음 → 422 REASON_REQUIRED
-        r = c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'member:Budi', fatwa),
                    json={"member": "member:Budi", "vote": "reject"})
         assert r.status_code == 422, r.text
         assert r.json()["detail"]["code"] == "REASON_REQUIRED", r.text
@@ -130,26 +142,26 @@ def test_과반_결과_3가지():
         # approve 2 + reject 1 → passed
         cid = _mkcase(c, admin)
         _set_status(cid, "fatwa_review")
-        r = c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'chairman', fatwa),
                    json={"member": "chairman", "vote": "approve"})
         assert r.status_code == 200, r.text
-        r = c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'member:Budi', fatwa),
                    json={"member": "member:Budi", "vote": "approve"})
         assert r.status_code == 200, r.text
-        r = c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'member:Citra', fatwa),
                    json={"member": "member:Citra", "vote": "reject", "note": "미비"})
         assert r.status_code == 200, r.text
         assert r.json()["result"] == "passed", r.text
         # approve 1 + conditional 1 + reject 1 → conditional
         cid2 = _mkcase(c, admin)
         _set_status(cid2, "fatwa_review")
-        r = c.post("/cases/%s/fatwa/vote" % cid2, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid2, headers=_seat_header(c, 'chairman', fatwa),
                    json={"member": "chairman", "vote": "approve"})
         assert r.status_code == 200, r.text
-        r = c.post("/cases/%s/fatwa/vote" % cid2, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid2, headers=_seat_header(c, 'member:Budi', fatwa),
                    json={"member": "member:Budi", "vote": "conditional", "note": "보완"})
         assert r.status_code == 200, r.text
-        r = c.post("/cases/%s/fatwa/vote" % cid2, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid2, headers=_seat_header(c, 'member:Citra', fatwa),
                    json={"member": "member:Citra", "vote": "reject", "note": "미비"})
         assert r.status_code == 200, r.text
         g = c.get("/cases/%s/fatwa/votes" % cid2, headers=fatwa)
@@ -158,13 +170,13 @@ def test_과반_결과_3가지():
         # reject 2 + approve 1 → rejected
         cid3 = _mkcase(c, admin)
         _set_status(cid3, "fatwa_review")
-        r = c.post("/cases/%s/fatwa/vote" % cid3, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid3, headers=_seat_header(c, 'member:Citra', fatwa),
                    json={"member": "member:Citra", "vote": "reject", "note": "미비"})
         assert r.status_code == 200, r.text
-        r = c.post("/cases/%s/fatwa/vote" % cid3, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid3, headers=_seat_header(c, 'member:Budi', fatwa),
                    json={"member": "member:Budi", "vote": "reject", "note": "미비"})
         assert r.status_code == 200, r.text
-        r = c.post("/cases/%s/fatwa/vote" % cid3, headers=fatwa,
+        r = c.post("/cases/%s/fatwa/vote" % cid3, headers=_seat_header(c, 'chairman', fatwa),
                    json={"member": "chairman", "vote": "approve"})
         assert r.status_code == 200, r.text
         g = c.get("/cases/%s/fatwa/votes" % cid3, headers=fatwa)
@@ -188,16 +200,16 @@ def test_위원장_확정_선행조건과_D19():
         assert r.status_code == 409, r.text
         assert r.json()["detail"]["code"] == "VOTES_INCOMPLETE", r.text
         # 투표 3개
-        c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa, json={"member": "chairman", "vote": "approve"})
-        c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa, json={"member": "member:Budi", "vote": "approve"})
-        c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa, json={"member": "member:Citra", "vote": "reject", "note": "미비"})
+        c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'chairman', fatwa), json={"member": "chairman", "vote": "approve"})
+        c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'member:Budi', fatwa), json={"member": "member:Budi", "vote": "approve"})
+        c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'member:Citra', fatwa), json={"member": "member:Citra", "vote": "reject", "note": "미비"})
         # 서명 3개 미만 → 409 SIGNATURES_INCOMPLETE
         r = c.post("/cases/%s/fatwa/confirm" % cid, headers=fatwa, json={"note": ""})
         assert r.status_code == 409, r.text
         assert r.json()["detail"]["code"] == "SIGNATURES_INCOMPLETE", r.text
         # 서명 3개
         for m in ("chairman", "member:Budi", "member:Citra"):
-            r = c.post("/cases/%s/fatwa/sign" % cid, headers=fatwa,
+            r = c.post("/cases/%s/fatwa/sign" % cid, headers=_seat_header(c, m, fatwa),
                        json={"member": m, "image": "data:image/png;base64,iVBORw0KGgo=", "name": m})
             assert r.status_code == 200, r.text
         # 확정 성공
@@ -252,11 +264,11 @@ def test_안건_이력():
         assert isinstance(ag["items"], list), ag
         assert any(it["case_id"] == cid for it in ag["items"]), ag
         # 확정까지
-        c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa, json={"member": "chairman", "vote": "approve"})
-        c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa, json={"member": "member:Budi", "vote": "approve"})
-        c.post("/cases/%s/fatwa/vote" % cid, headers=fatwa, json={"member": "member:Citra", "vote": "approve"})
+        c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'chairman', fatwa), json={"member": "chairman", "vote": "approve"})
+        c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'member:Budi', fatwa), json={"member": "member:Budi", "vote": "approve"})
+        c.post("/cases/%s/fatwa/vote" % cid, headers=_seat_header(c, 'member:Citra', fatwa), json={"member": "member:Citra", "vote": "approve"})
         for m in ("chairman", "member:Budi", "member:Citra"):
-            c.post("/cases/%s/fatwa/sign" % cid, headers=fatwa,
+            c.post("/cases/%s/fatwa/sign" % cid, headers=_seat_header(c, m, fatwa),
                    json={"member": m, "image": "data:image/png;base64,iVBORw0KGgo=", "name": m})
         r = c.post("/cases/%s/fatwa/confirm" % cid, headers=fatwa, json={"note": ""})
         assert r.status_code == 200, r.text

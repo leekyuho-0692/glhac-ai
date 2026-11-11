@@ -84,7 +84,7 @@ def allowed(frm, to):
 PROTECTED_STATES = {"fatwa_approved", "certificate_issued"} | TERMINAL_STATES   # 종결은 POST /cases/{id}/close 로만
 # 모의심사 승인에는 준비서류 확인과 2인 확인이 수반된다. 자동 진행과 구별하여
 # raw /transition 진입만 금지하고 전용 API가 기존 승인 절차를 수행하게 한다.
-DEDICATED_REVIEW_STATES = {"document_pre_audit_approved"}
+DEDICATED_REVIEW_STATES = {"document_pre_audit_approved", "fatwa_review"}
 # 진입(to_state)에 필요한 역할. admin은 항상 허용. 미정의 상태는 DEFAULT.
 TRANSITION_ROLES = {
     "committee_verification": {"operator"},                     # SEHATI ketetapan = 최종 결제자
@@ -155,10 +155,16 @@ def material_identity(m):
 
 
 def scope_snapshot(db, case):
-    from .models import Product, ProductMaterial
+    from .models import Product, ProductMaterial, Facility
     db.flush()
-    return {"version": 1, "scheme": case.scheme or "product",
+    return {"version": 2, "scheme": case.scheme or "product",
             "logistics_scope": sorted(case.logistics_scope or []),
+            "facility_ids": sorted(set(case.facility_ids or [])),
+            "facilities": [{k: getattr(f, k) for k in (
+                "facility_id", "org_id", "name", "address", "city", "country", "zip", "reg_no", "profile_ext")}
+                for f in db.query(Facility).filter(Facility.facility_id.in_(case.facility_ids or []))
+                .order_by(Facility.facility_id)],
+            "factory_reg_no": case.factory_reg_no, "factory_address": case.factory_address,
             "products": [{k: getattr(p, k) for k in (
                 "product_id", "name", "category", "description", "registration_type")}
                 for p in db.query(Product).filter_by(case_id=case.case_id).order_by(Product.product_id)],
@@ -305,7 +311,7 @@ SELF_DECLARE_MAX_OUTLETS = 1                  # 매장(영업장) 최대 1개
 
 def guard_pathway_selfdeclare(db, case):
     g = []
-    if case.risk_category != "low":
+    if case.risk_category != "low" or assess_pathway(db, case)["risk_category"] != "low":
         g.append({"code": "RISK_NOT_LOW"})
     if not case.is_msme:
         g.append({"code": "NOT_MSME"})
@@ -333,7 +339,7 @@ def guard_pathway_selfdeclare(db, case):
 
 
 def guard_selfdeclare_submit(db, case):
-    g = []
+    g = guard_pathway_selfdeclare(db, case)
     if pendamping_decision(db, case.case_id) != "verified":
         g.append({"code": "PENDAMPING_NOT_VERIFIED"})
     if not sihalal_verified(db, case.case_id):
@@ -354,9 +360,31 @@ def guard_reguler_submit(db, case):
 
 def guard_committee_materials(db, case):
     g = material_safety_blockers(db, case)
+    if case.pathway == "self_declare":
+        g += guard_pathway_selfdeclare(db, case)
     if not evidence_complete(db, case.case_id):
         g.append({"code": "MATERIAL_EVIDENCE_INCOMPLETE"})
     return g
+
+
+def guard_product_materials(db, case):
+    """제품마다 연결된 원료가 있고 그 원료의 검토가 끝나야 한다. 물류는 매트릭스 면제."""
+    from .models import Product, ProductMaterial
+    if (case.scheme or "product") == "logistics":
+        return []
+    products = db.query(Product).filter_by(case_id=case.case_id).all()
+    mats = {m.material_id: m for m in materials(db, case.case_id)}
+    links = {}
+    for link in db.query(ProductMaterial).filter_by(case_id=case.case_id):
+        if link.material_id in mats:
+            links.setdefault(link.product_id, []).append(mats[link.material_id])
+    missing = [p.product_id for p in products if not links.get(p.product_id)]
+    if not products or missing:
+        return [{"code": "PRODUCT_MATERIAL_LINKS_MISSING", "product_ids": missing}]
+    unreviewed = [p.product_id for p in products if any(
+        m.screen_result not in ("PASS", "CLEARED") or (
+            m.screen_result == "CLEARED" and not _has_evidence(m)) for m in links[p.product_id])]
+    return [{"code": "PRODUCT_MATERIAL_REVIEW_INCOMPLETE", "product_ids": unreviewed}] if unreviewed else []
 
 
 def guard_certificate_issue(db, case):

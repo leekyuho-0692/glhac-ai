@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app import main as m, models
 from app.db import SessionLocal
+from test_final_e2_rules import seed_reviewed_issue_prerequisites, seed_paid_receipt
 
 
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
@@ -61,7 +62,10 @@ def freeze(api, cid):
         c = db.get(models.CaseApplication, cid)
         c.status, c.pathway, c.fatwa_status = "fatwa_review", "reguler", "provisional"
         db.add(models.FatwaDecision(case_id=cid, decision="approved"))
-        db.add(models.Invoice(case_id=cid, amount=100, status="paid"))
+        inv = models.Invoice(case_id=cid, amount=100, status="paid")
+        db.add(inv)
+        seed_paid_receipt(db, inv)
+        seed_reviewed_issue_prerequisites(db, c)
         db.commit()
     ok(api("POST", f"/cases/{cid}/fatwa/final-approve", role="operator"))
 
@@ -407,6 +411,7 @@ def test_safe_self_declare_entry_freezes_scope_and_can_issue(api):
     with SessionLocal() as db:
         c = db.get(models.CaseApplication, cid)
         c.pathway, c.status = "self_declare", "self_declaration_submitted"
+        c.risk_category, c.is_msme = "low", True
         db.commit()
     ok(api("POST", f"/cases/{cid}/transition", {"to_state": "committee_verification"}, "operator"))
     blocked(api("POST", f"/cases/{cid}/materials", {"name": "gelatin"}), "SCOPE_FROZEN")
@@ -422,6 +427,7 @@ def test_self_declare_pending_risk_is_rechecked(api, phase):
     with SessionLocal() as db:
         c = db.get(models.CaseApplication, cid)
         c.pathway, c.status = "self_declare", "self_declaration_submitted"
+        c.risk_category, c.is_msme = "low", True
         db.commit()
     if phase == "approval":
         ok(api("POST", f"/cases/{cid}/transition", {"to_state": "committee_verification"}, "operator"))

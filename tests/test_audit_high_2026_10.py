@@ -14,7 +14,8 @@ os.environ.setdefault("GLHAC_NOTIFY_WORKER", "0")
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app                    # noqa: E402
 from app import models, auth, state_machine as sm  # noqa: E402
-from app.db import SessionLocal             # noqa: E402
+from app.db import SessionLocal
+from test_final_e2_rules import seed_reviewed_issue_prerequisites, seed_paid_receipt             # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PW = "Passw0rd!23"
@@ -116,7 +117,10 @@ def test_a1_issue_guard_draft_passes_pending_blocks():
         # 2회차 draft 만 있음 → PAYMENT_PENDING 으로 막히지 않아야 한다
         cid = _db_case("PT A1c", status="fatwa_approved", fatwa_status="approved",
                        scope_frozen=True, pathway="reguler")
-        _invoice(cid, status="paid")
+        iid = _invoice(cid, status="paid")
+        with SessionLocal() as db:
+            seed_paid_receipt(db, db.get(models.Invoice, iid))
+            db.commit()
         _invoice(cid, status="draft")
         r = c.post("/cases/%s/certificate/issue" % cid, headers=h, json={"reason": "a1"})
         assert _code(r) != "PAYMENT_PENDING", r.text

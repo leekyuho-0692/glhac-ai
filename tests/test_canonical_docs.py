@@ -31,8 +31,14 @@ def _h(tok):
 
 
 def _mkcase(c, admin):
-    return c.post("/cases", json={"org_id": "org_demo", "company_name": "AuditRepCo"},
-                  headers=_h(admin)).json()["case_id"]
+    cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "AuditRepCo"},
+                 headers=_h(admin)).json()["case_id"]
+    with SessionLocal() as db:
+        db.get(models.CaseApplication, cid).status = "final_package_preparation"
+        db.commit()
+    added = c.post(f"/cases/{cid}/auditors", json={"username": "auditor2"}, headers=_h(admin))
+    assert added.status_code == 200, added.text
+    return cid
 
 
 def _notif_count(case_id, role):
@@ -72,7 +78,17 @@ def _make_sjph_complete(c, admin, cid):
 
 def _send_fatwa(c, aud, cid):
     c.post(f"/cases/{cid}/audit-report/sign", json={"name": "Auditor Kim"}, headers=_h(aud))
-    return c.post(f"/cases/{cid}/audit-report/send-fatwa", headers=_h(aud))
+    response = c.post(f"/cases/{cid}/audit-report/send-fatwa", headers=_h(aud))
+    if response.status_code != 200:
+        return response
+    assert response.json().get("pending"), response.text
+    response = c.post(f"/approvals/{response.json()['approval_id']}/approve", json={},
+                      headers=_h(_tok(c, "auditor2", "pw")))
+    if response.status_code == 200:
+        # 본 테스트들은 송부 결과(정본/취합본)를 검사한다.
+        import httpx
+        return httpx.Response(200, json=response.json()["result"])
+    return response
 
 
 def test_상정시_3개국어_정본과_취합본():

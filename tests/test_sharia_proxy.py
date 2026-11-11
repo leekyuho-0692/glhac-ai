@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app                    # noqa: E402
 from app import models                      # noqa: E402
 from app.db import SessionLocal             # noqa: E402
+from test_sharia_quorum import _committee3
 
 
 client = TestClient(app)
@@ -134,8 +135,7 @@ def test_위원회_등록되면_오디터_차단():
             admin = _tok(c, "admin", "admin")
             auditor = _tok(c, "auditor1", "pw")
             fatwa = _tok(c, "fatwa1", "pw")
-            r = c.post("/fatwa/committee", headers=fatwa, json={"members": [{"role": "chair", "name": "Ahmad"}, {"role": "member", "name": "Budi"}, {"role": "member", "name": "Citra"}]})
-            assert r.status_code == 200, r.text
+            _committee3(c, fatwa)
             cid = _mkcase(c, admin)
             _set_status(cid, "fatwa_review")
             r = c.post(f"/cases/{cid}/fatwa/vote", headers=auditor, json={"member": "auditor", "vote": "approve", "note": "x"})

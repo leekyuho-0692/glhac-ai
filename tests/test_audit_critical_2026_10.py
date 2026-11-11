@@ -13,7 +13,8 @@ os.environ.setdefault("GLHAC_NOTIFY_WORKER", "0")
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app                    # noqa: E402
 from app import models                      # noqa: E402
-from app.db import SessionLocal             # noqa: E402
+from app.db import SessionLocal
+from test_final_e2_rules import seed_reviewed_issue_prerequisites, seed_paid_receipt             # noqa: E402
 
 
 # ---------- 헬퍼 ----------
@@ -60,6 +61,10 @@ def _db_get(model, pk):
 def _invoice(case_id, status="waiting_payment", total=1_110_000.0):
     inv = _db_add(models.Invoice(case_id=case_id, service_type="pre_audit", amount=1_000_000.0,
                                  ppn=110_000.0, total=total, status=status))
+    if status == "paid":
+        with SessionLocal() as db:
+            seed_paid_receipt(db, db.get(models.Invoice, inv.invoice_id))
+            db.commit()
     return inv.invoice_id
 
 
@@ -80,6 +85,7 @@ def _issue_ready_case(company):
         db.flush()
         db.add(models.ProductMaterial(case_id=cid, product_id=product.product_id,
                                       material_id=material.material_id))
+        seed_reviewed_issue_prerequisites(db, case)
         sm.freeze_scope(db, case)
         db.commit()
     return cid

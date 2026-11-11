@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 from app import auth, intake, main as m, models, screening
+from test_final_e2_rules import seed_reviewed_issue_prerequisites, seed_paid_receipt
 from app.db import SessionLocal
 
 @pytest.fixture(scope='module')
@@ -332,9 +333,13 @@ def test_issued_certificate_number_is_server_generated(client, actors):
         db.flush()
         db.add(models.ProductMaterial(case_id=cid, product_id=product.product_id,
                                       material_id=material.material_id))
+        seed_reviewed_issue_prerequisites(db, case)
         m.sm.freeze_scope(db, case)
         db.commit()
-    invoice(cid, 'paid')
+    inv = invoice(cid, 'paid')
+    with SessionLocal() as db:
+        seed_paid_receipt(db, db.get(models.Invoice, inv))
+        db.commit()
     chosen = 'USER-CHOSEN-CERTIFICATE'
     expect(request(client, 'POST', f'/cases/{cid}/certificate/issue', actors['a'],
                    json={'reason': 'local regression', 'cert_no': chosen}), 403)
