@@ -360,8 +360,7 @@ def test_mock_evidence_documents_tagged_and_listed():
     """모의감사 클라이언트 뷰 백엔드: doc_type=mock_evidence_* 태깅 저장 + 목록에
     created_at 노출(섹션별 업로드 일시) + 영상(mp4) 확장자 업로드 허용."""
     import base64
-    png = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAA"
-           "C0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC")   # 1x1 PNG
+    png = ('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==')   # 1x1 PNG
     mp4 = base64.b64encode(b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom").decode()
     with TestClient(app) as c:
         adm = _tok(c, "admin", "admin")

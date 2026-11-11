@@ -17,7 +17,10 @@ from app.main import app  # noqa: E402
 from app import models  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 
-_PDF_B64 = base64.b64encode(b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF").decode()
+import fitz
+with fitz.open() as _pdf:
+    _pdf.new_page()
+    _PDF_B64 = base64.b64encode(_pdf.tobytes()).decode()
 
 
 def _tok(c, u, p):

@@ -160,8 +160,8 @@ def test_material_actions_match_add_edit_delete_and_evidence_api(world, username
     r = client.patch(f"/materials/{mid}", json={"manufacturer": "Uileg manufacturer"}, headers=headers)
     assert r.status_code == (200 if actions["material.add"] else 403), r.text
     r = client.post(f"/cases/{cid}/materials/{mid}/evidence",
-                    json={"evidence_type": "coa", "filename": "uileg.pdf",
-                          "file_b64": "JVBERi0xLjQK"}, headers=headers)
+                    json={"evidence_type": "coa", "filename": "uileg.txt",
+                          "file_b64": "QWNjZXNzIGV2aWRlbmNl"}, headers=headers)
     assert r.status_code == (200 if actions["material.evidence"] else 403), r.text
     r = client.delete(f"/materials/{mid}", headers=headers)
     assert r.status_code == (200 if actions["material.delete"] else 403), r.text

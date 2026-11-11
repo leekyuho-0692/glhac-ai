@@ -148,7 +148,7 @@ def test_서류_유형을_손으로_고칠_수_있다(monkeypatch):
         h = _tok(c)
         cid = c.post("/cases", json={"company_name": "PT Reclass"}, headers=h).json()["case_id"]
         did = c.post(f"/cases/{cid}/documents",
-                     json={"filename": "x.pdf", "file_b64": "JVBERi0xLjQK",
+                     json={"filename": "x.txt", "file_b64": "UmVjbGFzc2lmeSBldmlkZW5jZQ==",
                            "doc_type": "other"}, headers=h).json()["document_id"]
         r = c.patch(f"/documents/{did}/reclassify",
                     json={"doc_type": "halal_policy"}, headers=h)

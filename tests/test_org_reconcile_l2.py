@@ -17,8 +17,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app, _reconcile_org, _org_name_score, _org_norm  # noqa: E402
 
 # 1x1 투명 PNG (OCR 미설치 환경에서도 엔드포인트 플러밍만 검증)
-_PNG_1x1 = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAA"
-            "AAAEAAH2FzhVAAAAAElFTkSuQmCC")
+_PNG_1x1 = ('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==')
 
 
 def test_reconcile_logic_missing_and_match():

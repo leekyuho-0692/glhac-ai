@@ -385,7 +385,7 @@ def test_r405_explicit_certificate_label_beats_bare_number(label):
 
 @pytest.mark.parametrize("number", ["021555123", "010-1234-5678", "+62 21 555 1234", "(021) 5551234", "02 555 1234"])
 def test_r405_phone_shaped_certificate_is_missing(number):
-    text = "HALAL CERTIFICATE\nCertificate No: " + number + "\nIssuer: BPJPH\nValid until: 2027-01-01"
+    text = "HALAL CERTIFICATE\nTelephone No: " + number + "\nIssuer: BPJPH\nValid until: 2027-01-01"
     parsed = intake.parse_typed_text("halal_certificate", "Halal Certificate.txt", text)
     assert not parsed["fields"].get("cert_no")
     assert "cert_no" in parsed["fields"]["_missing_fields"]

@@ -15,8 +15,7 @@ os.environ.setdefault("GLHAC_DEV", "1")
 from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
 
-_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAA"
-        "AAAEAAH2FzhVAAAAAElFTkSuQmCC")
+_PNG = ('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==')
 
 
 def _tok(c, u, p):

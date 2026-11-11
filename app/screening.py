@@ -67,7 +67,7 @@ _CONFUSABLES = str.maketrans({
     "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-",
 })
 _E_NUMBER_RE = re.compile(r"(?<![a-z0-9])(?:e|ins)[-\s]?(\d{3,4}[a-z]?)(?![a-z0-9])", re.I)
-_SPELLED_WORD_RE = re.compile(r"(?<!\w)[a-z](?:[ \t.,:;!?/·-]+[a-z](?!\w))+(?!\w)")
+_SPELLED_WORD_RE = re.compile(r"(?<!\w)[a-z](?:[ \t.,:;!?/·_+|\\-]+[a-z](?!\w))+(?!\w)")
 _HIGH1_LATIN = (
     "pork|pig|hog|swine|babi|porcine|lard|bacon|ham|gammon|prosciutto|pepperoni|"
     "pancetta|chorizo|blood|darah|carrion|bangkai|human|placenta|khamr|wine|beer|rum|"
@@ -86,7 +86,7 @@ def _item_rank(it):
 def _fold_unicode(s):
     s = unicodedata.normalize("NFKC", s or "").translate(_CONFUSABLES).casefold().translate(_CONFUSABLES)
     s = "".join(c for c in unicodedata.normalize("NFD", s)
-                if unicodedata.category(c) != "Mn")
+                if unicodedata.category(c) not in ("Mn", "Cf"))
     return unicodedata.normalize("NFC", s)
 
 
@@ -107,7 +107,7 @@ def _norm_key(s, one="i"):
     """유니코드·발음 기호·혼동문자·철자 숫자를 접되 E 번호는 보존한다."""
     s = re.sub(r"[\r\n]+", ";", _fold_unicode(s))
     for a, b in (("\u201c", '"'), ("\u201d", '"'), ("\u2018", "'"), ("\u2019", "'"),
-                 ("\u00a0", " "), ("\u200b", " ")):
+                 ("\u00a0", " ")):
         s = s.replace(a, b)
     digits = str.maketrans({"4": "a", "0": "o", "1": one, "3": "e"})
     def fold_words(part):
@@ -141,16 +141,18 @@ def _negation_pattern():
               r"bebas\s+(?:dari\s+)?|tanpa\s+|tidak\s+mengandung\s+")
     suffix = (r"[\s-]*free(?!\w)|"
               r"\s+(?:(?:is|are)\s+)?(?:not\s+(?:present|contained|included)|absent)(?!\w)|"
-              r"(?:[이가은는을를])?\s*(?:무첨가|불포함|미함유|"
-              r"함유하지\s*않(?:음|는|다)|없(?:지\s*않(?:은|다|음)|음|는|다))(?!\w)")
+              r"(?:[이가은는을를])?\s*(?:전혀\s*)?(?:무첨가|불포함|미함유|"
+              r"(?:함유하|포함하|들어\s*있)지\s*않(?:는다|음|는|다)|"
+              r"없(?:지\s*않(?:은|다|음)|음|는|다))(?!\w)")
     return re.compile(
         r"(?<!\w)(?:(?P<narrow>non[\s-]*|[무無][\s-]*)(?P<narrow_risk>" + short + r")(?!\w)|"
         r"(?P<prefix>" + prefix + r")(?P<risks>" + listed + r")|"
         r"(?P<suffix_risk>" + long + r")(?P<suffix>" + suffix + r"))")
 
 
-_OUTER_NEGATION = re.compile(r"(?<!\w)(?:not|never|tidak|bukan)[\s-]+"
-                             r"(?:(?:entirely|completely|fully)\s+)?$")
+_OUTER_NEGATION = re.compile(r"(?<!\w)(?:(?:not|never|tidak|bukan)[\s-]+"
+                             r"(?:(?:entirely|completely|fully|totally|always|guaranteed|sepenuhnya)\s+)?|"
+                             r"(?:cannot|can't|can\s+not)\s+guarantee\s+)$")
 
 
 def _without_negated_risks(key):
@@ -161,7 +163,10 @@ def _without_negated_risks(key):
         # not free from / not pork-free / tidak bebas 는 함유 쪽으로 남긴다.
         # 바로 앞의 부정만 확인하므로 다른 구의 not은 영향을 주지 않는다.
         if (_OUTER_NEGATION.search(key[:match.start()])
-                or re.search(r"없지\s*않", match.group("suffix") or "")):
+                or re.search(r"없지\s*않", match.group("suffix") or "")
+                or ((match.group("suffix") or "") and re.match(
+                    r"\s*(?:것(?:은|이)?\s*아(?:님|니)|(?:다고|다고는|다는)\s*(?:말|할)|"
+                    r"(?:것이라고|것이\s*아니라고)\s*할\s*수\s*없)", key[match.end():]))):
             return (match.group("narrow_risk") or match.group("risks")
                     or match.group("suffix_risk"))
         return " "

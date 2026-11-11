@@ -511,6 +511,17 @@ def _parsed_result(result, text):
     """분류·유형별 추출의 모든 반환 경로에 동일한 파싱 상태를 붙인다."""
     fields = dict(result.get("fields") or {})
     doc_type = result.get("doc_type")
+    if marker := (certificate_invalid_marker(result.get("filename", ""), text)
+                  or ("invalid" if result.get("reason") == "CERT_NOT_VALID" else None)):
+        fields["_cert_not_valid"] = marker
+        fields["_counts_as_evidence"] = False
+        result["doc_type"] = doc_type = "other"
+        for key in ("cert_no", "issuer", "expiry_date", "scope"):
+            fields.pop(key, None)
+    for key in ("nib", "factory_reg_no"):
+        if fields.get(key) and not autofill_value_in_text(key, fields[key], text):
+            # 원문 대조/충돌 안내를 위한 후보는 남기되 공통 autofill 가드가 저장을 막는다.
+            fields.setdefault("_rejected_identifiers", {})[key] = fields[key]
     if (doc_type in ("halal_certificate", "quality_cert") and (text or "").strip()
             and not getattr(text, "parse_fields", {}).get("_ocr_error")):
         evidence = _deterministic_fields(doc_type, text or "")
@@ -982,6 +993,34 @@ def _title_lines(text):
     return out
 
 
+def certificate_invalid_marker(filename, text):
+    """미발급/무효 표지를 인증서의 내용으로 해석하지 않는다(Sample ID는 제외)."""
+    context = str(filename or "") + "\n" + str(text or "")
+    if not re.search(r"certificat|sertifikat|인증|성적서", context, re.I):
+        return None
+    marker = re.compile(r"\b(?:draft|void|specimen|contoh|template|cancelled|canceled|revoked|"
+                        r"not[\s-]+issued|not[\s-]+valid|tidak\s+berlaku|belum\s+terbit)\b|"
+                        r"견본|무효|취소|미발급|초안", re.I)
+    for line in context.splitlines():
+        # 표지 워터마크와 인증서 제목/파일명에 붙은 상태만 인정한다.
+        value = line.strip()
+        hit = marker.search(value)
+        if hit and (hit.start() == 0 or re.search(r"certificat|sertifikat|인증|성적서", value, re.I)):
+            return hit[0]
+        if re.search(r"\bsample\s+(?:halal\s+)?certificate\b|\bcertificate\s+sample\b", value, re.I):
+            return "sample"
+    return None
+
+
+def _request_document(filename, text):
+    for candidate in [filename or "", *_title_lines(text)]:
+        if re.match(r"\s*(?:renewal|procedure|instructions?)\s*:", candidate, re.I):
+            continue  # 갱신 안내 문구는 문서 제목이 아니다.
+        if re.search(_NAME_RULES[0][0], candidate, re.I):
+            return True
+    return False
+
+
 def refine_doctype_reason(name, llm_type, text=None):
     """(doc_type, 규칙근거) — 파일명 규칙 → 사전(파일명) → 사전(제목줄) → LLM 판단 순.
 
@@ -998,9 +1037,10 @@ def refine_doctype_reason(name, llm_type, text=None):
     from .domain_dict import doc_type_of, evidence_key_of, lookup
     base = re.sub(r"\.[a-z0-9]{2,5}$", "", (name or "").strip())
     # 신청 목적이 명시된 제목만 우선한다. 본문의 Application No/용도는 근거가 아니다.
-    for candidate in [n, *_title_lines(text)]:
-        if re.search(_NAME_RULES[0][0], candidate, re.I):
-            return "other", _NAME_RULES[0][2]
+    if certificate_invalid_marker(name, text):
+        return "other", "CERT_NOT_VALID"
+    if _request_document(name, text):
+        return "other", _NAME_RULES[0][2]
     for pat, dt, why in _NAME_RULES:
         if re.search(pat, n):
             # 규칙이 잡았더라도 사전이 증빙 항목을 알고 있으면 근거에 함께 남긴다
@@ -1067,6 +1107,8 @@ def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000, field
     sys = ('문서에서 %s 목록을 빠짐없이 추출하세요. 표·번호목록의 모든 행을 포함하고 '
            '헤더/합계/빈칸은 제외. 반드시 JSON으로만: {"names":[]}' % label)
     seen, out = set(), []
+    from .models import normalize_material_name
+    key_of = normalize_material_name if label in ("원재료명", "성분명") else _norm_key
     fields = fields if fields is not None else {}
     status = status if status is not None else {}
     status["complete"] = False
@@ -1090,11 +1132,11 @@ def _extract_list_complete(filename, text, label, max_chunks=12, cap=1000, field
             if not isinstance(nm, str):
                 continue
             nm = nm.strip()
-            k = _norm_key(nm)
+            k = key_of(nm)
             if nm and k and k not in seen:
                 seen.add(k); out.append(nm)
                 if len(out) >= cap:
-                    remaining = any(isinstance(v, str) and _norm_key(v) and _norm_key(v) not in seen
+                    remaining = any(isinstance(v, str) and key_of(v) and key_of(v) not in seen
                                     for v in names[position + 1:])
                     if remaining or index + 1 < len(chunks):
                         # 항목 상한에 먼저 닿으면 완전히 추출된 청크 수만 기록한다.
@@ -1202,9 +1244,12 @@ _QUANT_PATTERNS = {
     "mercury_ppm":  r"\b(?:mercury|merkuri|Hg)\b|수은",
     "arsenic_ppm":  r"\b(?:arsenic|arsen|As)\b|비소",
 }
-_QUANT_NUMBER = r"(?:\d+(?:[.,]\d+)?|[.,]\d+)"
-_QUANT_UNIT = r"(?:%|ppm\b|ppb\b|mg\s*/\s*kg\b|µg\s*/\s*kg\b|ug\s*/\s*kg\b)"
+_QUANT_NUMBER = r"(?:\d+(?:[.,]\d+)?|[.,]\d+)(?:[eE][+-]?\d+)?"
+_QUANT_UNIT = r"(?:%|ppm\b|ppb\b|mg\s*/\s*kg\b|[µμu]g\s*/\s*kg\b)"
 _QUANT_ND = r"(?:ND\b|not[ -]*detected\b|non[ -]*detected\b|tidak\s+terdeteksi\b|불검출)"
+_QUANT_UNCLEAR = (r"\b(?:pending|tbd|unknown|unavailable|indeterminate|inconclusive|invalid|"
+                  r"not\s+(?:tested|analyzed)|no\s+result|awaiting\s+analysis)\b|"
+                  r"시험\s*중|미실시|판정\s*보류")
 _QUANT_RESULT = re.compile(
     r"^[\s:：=|()\[\]]*(?:(?:content|result|hasil|kadar|함량|결과)\s*[:=|]?\s*)?"
     r"(?P<qual>" + _QUANT_ND + r"|<\s*LOD\b|<=|>=|[<>≤≥])?\s*"
@@ -1242,12 +1287,34 @@ def _quant_review(key, raw, reason="unparsed_result"):
 
 
 def _quant_result(key, line, match, unit_hint=None, strict=False):
+    import math
     # 자유문장을 건너뛰지 않는다. 항목의 별칭·CAS·결과 라벨만 수치 앞에 올 수 있다.
     if _quant_absence_claim(line, match):
         return None
     after = _quant_suffix(key, line[match.end():])
+    if re.search(_QUANT_UNCLEAR, after, re.I):
+        return _quant_review(key, after, "unconfirmed_result")
     result = _QUANT_RESULT.match(after)
     qualifier, value, unit = result.group("qual", "value", "unit")
+    # 범위/불확도를 첫 숫자 하나로 축소하지 않는다. 원 구간을 보존하고 검토를 요구한다.
+    interval = re.match(r"\s*(?P<op>±|\+/-|to\b|[-–—~])\s*(?P<end>" +
+                        _QUANT_NUMBER + r")\s*(?P<unit>" + _QUANT_UNIT + r")?",
+                        after[result.end():], re.I)
+    if interval and value and not qualifier:
+        if after[result.end() + interval.end():].strip(" \t)]"):
+            return _quant_review(key, after)
+        first_unit = re.sub(r"\s", "", unit or unit_hint or interval["unit"] or "").lower()
+        last_unit = re.sub(r"\s", "", interval["unit"] or first_unit).lower()
+        if not first_unit:
+            return _quant_review(key, after, "missing_unit")
+        first = float(value.replace(",", ".")) * _quant_factor(key, first_unit)
+        last = float(interval["end"].replace(",", ".")) * _quant_factor(key, last_unit)
+        lower, upper = ((first - last, first + last) if interval["op"] in ("±", "+/-")
+                        else (first, last))
+        if not all(math.isfinite(v) for v in (lower, upper)) or lower > upper:
+            return _quant_review(key, after, "invalid_interval")
+        return None, {"qualifier": "interval", "lower": lower, "upper": upper,
+                      "unit": "%" if key == "ethanol_pct" else "ppm", "raw": after}
     if not qualifier and not (value and (unit or unit_hint)):
         return None
     if not unit and unit_hint and not qualifier and after[result.end():].strip(" \t)]"):
@@ -1261,6 +1328,8 @@ def _quant_result(key, line, match, unit_hint=None, strict=False):
     unit = re.sub(r"\s", "", unit or unit_hint or ("%" if key == "ethanol_pct" else "ppm")).lower()
     factor = _quant_factor(key, unit)
     number = float(value.replace(",", ".")) * factor if value else None
+    if number is not None and not math.isfinite(number):
+        return _quant_review(key, after, "invalid_number")
     meta = {"unit": "%" if key == "ethanol_pct" else "ppm", "source_unit": unit}
     if qualifier:
         meta["qualifier"] = ({"<=": "≤", ">=": "≥"}.get(qualifier, qualifier)
@@ -1272,6 +1341,8 @@ def _quant_result(key, line, match, unit_hint=None, strict=False):
         if lod:
             lod_unit = re.sub(r"\s", "", lod.group(2) or unit).lower()
             meta["lod"] = float(lod.group(1).replace(",", ".")) * _quant_factor(key, lod_unit)
+            if not math.isfinite(meta["lod"]):
+                return _quant_review(key, after, "invalid_number")
             if not result.group("unit"):
                 meta["source_unit"] = lod_unit
         elif number is not None and meta["qualifier"] in ("<", "≤", "ND"):
@@ -1285,10 +1356,13 @@ def _quant_row_results(key, line, match):
     """머리글 없는 행: 명시된 규격 수치는 제외하고 연결된 결과를 모두 읽는다."""
     after = _quant_suffix(key, line[match.end():])
     line = line[:match.end()] + after
+    whole = _quant_result(key, line, match)
+    if whole and whole[1].get("qualifier") == "interval":
+        return [whole]
     # 결과 라벨/ND가 있는 복수 셀은 각 관측을 따로 읽는다. 상한 부호는 규격 근거가 아니다.
     parts = re.split(r"[|;\t]", after)
     if len(parts) > 1 and (re.search(r"(?:" + _RESULT_HEADER + r")\s*[:=]?", after, re.I)
-                           or re.search(_QUANT_ND, after, re.I)):
+                           or re.search(_QUANT_ND + "|" + _QUANT_UNCLEAR, after, re.I)):
         results = []
         for part in parts:
             if not part.strip() or re.search(r"\b(?:" + _SPEC_HEADER + r"|max|maks|maximum)\b|이하", part, re.I):
@@ -1306,7 +1380,7 @@ def _quant_row_results(key, line, match):
     if len(tokens) < 2:
         result = _quant_result(key, line, match)
         return [result] if result else ([_quant_review(key, after)]
-                                        if re.search(_RESULT_HEADER, after, re.I) else [])
+                                        if re.search(_RESULT_HEADER + "|" + _QUANT_UNCLEAR, after, re.I) else [])
     # 자유문장·다른 성분을 건너뛰어 그 수치를 현재 항목에 붙이지 않는다.
     prefix = after[:tokens[0].start()]
     allowed = re.sub(r"\b(?:" + _SPEC_HEADER + "|" + _RESULT_HEADER +
@@ -1343,7 +1417,9 @@ _PORK_NEGATIVE = r"\b(?:not[\s-]*detected|non[\s-]*detected|tidak\s+terdeteksi|n
 _PORK_POSITIVE = r"\b(?:detected|positive|positif|terdeteksi)\b|검출|양성"
 _PORK_UNCLEAR = (r"\b(?:inconclusive|invalid|equivocal|pending|indeterminate|not\s+tested|"
                  r"to\s+follow|menunggu|belum\s+(?:diuji|diperiksa)|tidak\s+dapat\s+ditentukan|"
-                 r"not\s+(?:negative|positive))\b|판정\s*(?:불가|보류)|시험\s*중|미실시|진행\s*중")
+                 r"failed|unavailable|insufficient\s+sample|no\s+result|not\s+analyzed|"
+                 r"not\s+yet\s+detected|not\s+valid|tidak\s+valid|"
+                 r"not\s+(?:negative|positive))\b|부적합|판정\s*(?:불가|보류)|시험\s*중|미실시|진행\s*중")
 _CONTROL = re.compile(r"\b(?:(?:negative|positive)\s+)?control\b|"
                       r"\bkontrol(?:\s+(?:negatif|positif))?\b|(?:음성|양성)\s*대조(?:군)?", re.I)
 _SAMPLE = re.compile(r"\b(?:result\s+of\s+(?:the\s+)?sample|sample|sampel)\b|시료|검체", re.I)
@@ -1360,6 +1436,25 @@ def _pork_result_words(text):
     positive = bool(re.search(_PORK_POSITIVE, re.sub(_PORK_NEGATIVE, "", text, flags=re.I), re.I))
     unclear = bool(re.search(_PORK_UNCLEAR, text, re.I))
     return {value for value, found in ((0.0, negative), (1.0, positive), (None, unclear)) if found}
+
+
+def _control_valid(label, result):
+    """대조군 극성은 시료 결과와 독립적이다. 실패/오염/미확정은 시험 전체 무효."""
+    if re.search(_PORK_UNCLEAR, result, re.I):
+        return False
+    values = _pork_result_words(result)
+    if not values:
+        return bool(re.fullmatch(r"\s*(?:passed?|valid|validado|적합|정상)\s*", result, re.I))
+    if re.search(r"negative|negatif|음성", label, re.I):
+        return values == {0.0}
+    if re.search(r"positive|positif|양성", label, re.I):
+        return values == {1.0}
+    return None not in values and len(values) == 1
+
+
+def _invalid_table_controls(header, cells):
+    return any(_CONTROL.search(label) and not _control_valid(label, cells[i])
+               for i, label in enumerate(_table_cells(header)) if i < len(cells))
 
 
 def _table_cells(line):
@@ -1384,10 +1479,11 @@ def _pork_measurement(text):
     text = re.sub(r"[;|]\s*(?=(?:porcine|pork|swine|pig|babi|돼지)\b[^;|\n]*(?:DNA|PCR))",
                   "\n", text, flags=re.I)
     lines, values, found, ambiguous = text.splitlines(), set(), False, False
-    table_header = None
+    table_header, header_line = None, ""
     for i, line in enumerate(lines):
         if header := _sample_column(line):
             table_header = header
+            header_line = line
         elif len(_table_cells(line)) <= 1:
             table_header = None
         if not (_PORK_MARKER.search(line) and (_PORK_TEST_MARKER.search(line) or
@@ -1408,6 +1504,7 @@ def _pork_measurement(text):
             result = _pork_result_words(cells[column + offset]) if len(cells) == width + offset else set()
             values.update(result)
             ambiguous |= not bool(result) or bool(re.search(_PORK_UNCLEAR, line, re.I))
+            ambiguous |= _invalid_table_controls(header_line or lines[i - 1], cells[offset:])
             continue
         block = [line]
         for following in lines[i + 1:]:
@@ -1433,12 +1530,16 @@ def _pork_measurement(text):
                 result = _pork_result_words(cells[column]) if len(cells) == width else set()
                 explicit.update(result)
                 missing_sample |= not bool(result)
+                ambiguous |= _invalid_table_controls(row, cells)
                 continue
             if table_seen:
                 continue
             for k, cell in enumerate(re.split(r"[|;,\t]", row)):
-                if _CONTROL.search(cell):
+                if control := _CONTROL.search(cell):
                     controls = True
+                    status = cell[control.end():].strip(" :=")
+                    if status or re.search(r"[:=]", cell[control.end():]):
+                        ambiguous |= not _control_valid(control[0], status)
                     continue
                 if _SAMPLE_LINE.search(cell):
                     result = _pork_result_words(cell)
@@ -1470,7 +1571,13 @@ def extract_measurements(text, metadata=None):
     lines = text.splitlines()
     observations = {}
     columns = None
+    previous_analyte, wrapped_line = None, None
     for index, line in enumerate(lines):
+        if index == wrapped_line:
+            continue
+        if previous_analyte and re.match(r"^\s*(?:(?:" + _RESULT_HEADER + r")\s*[:=]?\s*)?(?:" +
+                                        _QUANT_UNCLEAR + r")", line, re.I):
+            line = previous_analyte + ": " + line
         cells = _table_cells(line)
         header_suffix = r"(?:\s*\([^)]*\)|\s*\[[^]]*\]|\s*" + _QUANT_UNIT + r")?"
         result_columns = [i for i, cell in enumerate(cells)
@@ -1494,6 +1601,7 @@ def extract_measurements(text, metadata=None):
                         and re.match(r"\s*\)", line[match.end():])):
                     continue  # Pb/(Lead) 별칭은 같은 관측이다.
             analytes.append((key, match))
+        previous_analyte = analytes[-1][1][0] if analytes else None
         for pos, (key, match) in enumerate(analytes):
             if _quant_absence_claim(line, match):
                 continue
@@ -1522,6 +1630,8 @@ def extract_measurements(text, metadata=None):
                         and index + 1 < len(lines)):
                     result = _quant_result(key, line + "\n" + lines[index + 1], match)
                     results = [result] if result else []
+                    if result:
+                        wrapped_line = index + 1
             for value, meta in results:
                 observations.setdefault(key, []).append({"value": value, **meta, "line": index + 1})
     for key, items in observations.items():
@@ -1550,7 +1660,7 @@ _NAME_DECIDES = {"sjph_manual", "supplier_declaration", "process_flow",
                  "quality_cert", "origin_certificate", "halal_certificate"}
 
 
-def _deterministic_fields(doc_type, text):
+def _deterministic_fields(doc_type, text, *, explicit_only=False):
     """지원하는 유형의 명시적 필드만 읽는다. None은 파서 없음, {}는 근거 없음."""
     fields = {}
     if doc_type in ("halal_certificate", "quality_cert"):
@@ -1575,17 +1685,15 @@ def _deterministic_fields(doc_type, text):
         for index, match in enumerate(labelled):
             key = match.lastgroup
             value = text[match.end():labelled[index + 1].start() if index + 1 < len(labelled) else len(text)]
-            value = re.split(r"[\n|]", value)[0].strip()
+            value = re.split(r"[\n|]", value.lstrip())[0].strip()
             if value:
                 if key in ("cert_no", "cert_fallback"):
-                    # 전화 형식은 명시 라벨 뒤에 있어도 인증번호로 채택하지 않는다.
-                    phone = re.match(r"\+?\d[\d ()-]{6,}\d(?![\w/])", value)
-                    if phone:
-                        digits = re.sub(r"\D", "", phone[0])
-                        if (phone[0].startswith("+") or " " in phone[0] or "(" in phone[0]
-                                or (digits.startswith("0") and 8 <= len(digits) <= 13)
-                                or ("-" in phone[0] and len(digits) in (9, 10, 11))):
-                            continue
+                    if explicit_only and key == "cert_fallback":
+                        continue
+                    # 명시 인증번호 라벨의 값은 원문 후보로 보존한다. 형식 판정은 별도다.
+                    if key == "cert_no" and re.fullmatch(r"[+\d][\d ()/_.-]*|\(\d[\d ()/_.-]*", value):
+                        cert_candidates.append((False, index, value))
+                        continue
                     number = re.match(r"[A-Z0-9][A-Z0-9/_.-]*", value, re.I)
                     if number and any(c.isdigit() for c in number[0]):
                         cert_candidates.append((key != "cert_no", index, number[0]))
@@ -1867,12 +1975,32 @@ _VERIFY_SYS = (
 
 
 def autofill_value_in_text(field, value, text):
-    """식별값의 원문 근거. 번호 표기 차이는 허용하되 부분 번호는 승인하지 않는다."""
+    """역할 라벨과 완전한 식별값이 함께 있어야 자동 반영/검증 근거로 쓴다."""
     value, text = str(value or ""), str(text or "")
-    if field == "nib":
-        digits = re.sub(r"\D", "", value)
-        numbers = re.findall(r"\d+(?:[\s.\-‐‑‒–—―－−]+\d+)*", text)
-        return bool(digits and any(re.sub(r"\D", "", n) == digits for n in numbers))
+    if field in ("cert_no", "certificate_no"):
+        candidate = _deterministic_fields("halal_certificate", text, explicit_only=True).get("cert_no")
+        return bool(candidate and re.sub(r"\s+", "", value).casefold() == re.sub(r"\s+", "", candidate).casefold())
+    labels = {
+        "nib": r"\bNIB\b|nomor\s+induk\s+berusaha|사\s*업\s*자\s*등\s*록\s*번\s*호|사업자\s*번호|"
+               r"business\s+(?:registration|license)\s*(?:no\.?|number)",
+        "factory_reg_no": r"factory\s*(?:registration\s*)?(?:no\.?|number)|공장\s*등록\s*번호|"
+                          r"nomor\s+(?:registrasi\s+)?pabrik|izin\s+usaha\s+industri",
+    }
+    if field == "factory_reg_no" and re.search(r"^\s*factory\s+registration\b", text, re.I | re.M):
+        labels[field] += r"|registration(?:\s*(?:no\.?|number))?"
+    if field in labels:
+        from .schemas import NIB_DIGIT_LENGTHS
+        if field == "nib" and (not re.fullmatch(r"[0-9\s.\-‐‑‒–—―－−]+", value)
+                               or len(re.sub(r"\D", "", value)) not in NIB_DIGIT_LENGTHS):
+            return False
+        norm = lambda s: re.sub(r"[\s.\-‐‑‒–—―－−]", "", s).casefold()
+        for label in re.finditer(r"(?<!\w)(?:" + labels[field] + r")(?!\w)", text, re.I):
+            tail = text[label.end():].lstrip(" \t:：#|.-\r\n")
+            token = re.match(r"[0-9]+(?:[ .\-‐‑‒–—―－−]+[0-9]+)*" if field == "nib"
+                             else r"[A-Z0-9][A-Z0-9/_.-]*", tail, re.I)
+            if token and norm(token[0]) == norm(value) and not re.match(r"[\w]", tail[token.end():]):
+                return True
+        return False
     norm = lambda s: re.sub(r"[\W_]+", "", s, flags=re.UNICODE).casefold()
     key = norm(value)
     return bool(key and key in norm(text))
@@ -1937,14 +2065,15 @@ def verify_extraction(doc_type, filename, text, fields, case_company=None):
                 "doc_type_ok": None, "detected_type": None, "field_issues": [], "source": "rule"}
     # 원문에 없는 값은 모델의 판단과 무관하게 먼저 표시한다. 예약 키는 추출값이 아니다.
     norm_text = re.sub(r"\s+", "", text).casefold()
-    issues = []
+    issues = [{"field": key, "issue": "원문 역할 라벨 또는 번호 형식 불일치"}
+              for key in (fields or {}).get("_rejected_identifiers", {})]
     # 정규화·추론되는 값(날짜 YYYY-MM-DD, 주소에서 보정한 도시·국가 등)은 원문 문자열과 달라도 정상이다.
     _derived = {"city", "province", "country", "zip", "factory_city", "factory_province", "factory_country",
                 "factory_zip", "establishment_date", "issue_date", "expiry_date", "signed_date"}
     for k, v in shown.items():
         if k in _derived:
             continue
-        if k in ("nib", "factory_reg_no"):
+        if k in ("nib", "factory_reg_no", "cert_no", "certificate_no"):
             if v and not autofill_value_in_text(k, v, text):
                 issues.append({"field": k, "issue": "원문에 없는 값"})
             continue
@@ -2000,9 +2129,9 @@ def parse_typed_text(doc_type, filename, text):
 def _parse_typed_text(doc_type, filename, text):
     text = text or ""
     # 신청서를 인증서 업로드 칸에 넣어도 인증 필드와 체크리스트로 흘리지 않는다.
-    if doc_type in ("halal_certificate", "quality_cert") and any(
-            re.search(_NAME_RULES[0][0], candidate, re.I) for candidate in [filename, *_title_lines(text)]):
-        return {"doc_type": "other", "fields": {}, "confidence": 0.9,
+    invalid = certificate_invalid_marker(filename, text)
+    if invalid or (doc_type in ("halal_certificate", "quality_cert") and _request_document(filename, text)):
+        return {"doc_type": "other", "fields": {"_cert_not_valid": invalid, "_counts_as_evidence": False} if invalid else {}, "confidence": 0.9,
                 "reason": _NAME_RULES[0][2], "text_len": len(text), "text": text}
     if not text.strip():
         return {"doc_type": doc_type, "fields": {}, "confidence": 0.0, "empty": True, "text_len": 0,
@@ -2164,21 +2293,23 @@ def aggregate_fields(docs):
 
         def _take(key, bucket, seenset, srcset):
             """구조 파서 값과 제품 목록 문서의 제품명은 즉시 반영하고 나머지는 확인한다."""
-            vals = [v for v in (f.get(key) or []) if v and _norm_key(v)]
+            from .models import normalize_material_name
+            key_of = normalize_material_name if key == "material_names" else _norm_key
+            vals = [v for v in (f.get(key) or []) if v and key_of(v)]
             if not vals:
                 return
             if (_src.get(key) == "structural"
                     or (_dt == "product_list" and key == "product_names"
                         and _src.get(key) != "structural_reject")):
                 for v in vals:
-                    if _norm_key(v) not in seenset:
-                        seenset.add(_norm_key(v)); bucket.append(v)
+                    if key_of(v) not in seenset:
+                        seenset.add(key_of(v)); bucket.append(v)
             elif _src.get(key) == "structural_reject":
                 return                      # 구조 파서가 '목록 아님'이라 판정한 문서
             else:
                 for v in vals:
-                    if _norm_key(v) not in srcset:
-                        srcset.add(_norm_key(v))
+                    if key_of(v) not in srcset:
+                        srcset.add(key_of(v))
                         agg["pending"].append({"kind": key, "value": v,
                                                "doc_type": _dt, "source": "llm"})
 
