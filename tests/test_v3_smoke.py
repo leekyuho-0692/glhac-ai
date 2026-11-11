@@ -90,7 +90,7 @@ def test_dashboard_events_org_isolation():
         cid = c.post("/cases", json={"org_id": "org_demo", "company_name": "EvtCo"},
                      headers=_h(atok)).json()["case_id"]
         c.post(f"/cases/{cid}/transition", json={"to_state": "application_draft"}, headers=_h(atok))
-        c.post("/auth/register", json={"username": "isouser2", "password": "halal-test-1"})
+        c.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": "isouser2", "password": "halal-test-1"})
         utok = _tok(c, "isouser2", "halal-test-1")
         ev = c.get("/dashboard/summary", headers=_h(utok)).json()["events"]
         assert all(e["case_id"] != cid for e in ev), ("타조직 이벤트 누수", ev)

@@ -176,6 +176,8 @@ test('가입 전 사업자번호를 검사하고 서버 422의 담당자 칸을 
   vm.runInContext('App.submitEnt=({'+html.slice(start,end)+'}).submitEnt;',c);
   c.API_BASE='';
   for(const [id,value] of Object.entries({'es-pw':'Passw0rd!23','es-pw2':'Passw0rd!23','es-id':'a@b.com','es-biz':'1234567890'})) dom['#'+id]={value};
+  dom['#es-company-email']={value:'company@example.com'};
+  dom['#es-email-consent']={checked:true};
   let calls=0;
   c.fetch=async()=>{calls++;return reply({detail:{code:'VALIDATION_ERROR',errors:[{field:'contacts.cp.phone',message:'전화 형식 오류'}]}},422);};
   const event={preventDefault(){},target:{querySelector:()=>({})}};

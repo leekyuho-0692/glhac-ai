@@ -77,10 +77,10 @@ def _issue_ready_case(company):
 # ---------- K1. 회사명만 맞추면 남의 조직에 편입되던 문제 ----------
 def test_register_same_company_creates_new_org():
     with TestClient(app) as c:
-        ra = c.post("/auth/register", json={"username": "k1victim", "password": "Passw0rd!23",
+        ra = c.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": "k1victim", "password": "Passw0rd!23",
                                             "company_name": "ABC Corp K1"})
         assert ra.status_code == 200, ra.text
-        rb = c.post("/auth/register", json={"username": "k1attacker", "password": "Passw0rd!23",
+        rb = c.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": "k1attacker", "password": "Passw0rd!23",
                                             "company_name": "ABC Corp K1"})
         assert rb.status_code == 200, rb.text
         assert ra.json()["org_id"] != rb.json()["org_id"], "같은 회사명 자가가입이 기존 조직에 편입됨"
@@ -101,7 +101,7 @@ def test_register_same_company_creates_new_org():
 def test_company_org_for_reuse_only_my_consultant():
     """컨설턴트가 회사명으로 담당 없는 자가가입 조직을 가로채지 못한다."""
     with TestClient(app) as c:
-        ra = c.post("/auth/register", json={"username": "k1selfreg", "password": "Passw0rd!23",
+        ra = c.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": "k1selfreg", "password": "Passw0rd!23",
                                             "company_name": "Victim Self Co"})
         assert ra.status_code == 200, ra.text
         victim_org = ra.json()["org_id"]
@@ -189,7 +189,7 @@ def test_sign_contract_other_org_forbidden():
     with TestClient(app) as c:
         cid = _db_case("PT IdorK3")
         ct = _db_add(models.Contract(case_id=cid, org_id="org_demo", status="sent"))
-        rg = c.post("/auth/register", json={"username": "k3outsider", "password": "Passw0rd!23",
+        rg = c.post("/auth/register", json={"company_email": "company@example.com", "email_consent": True, "username": "k3outsider", "password": "Passw0rd!23",
                                             "company_name": "Outsider K3"})
         assert rg.status_code == 200, rg.text
         h = {"Authorization": "Bearer " + rg.json()["token"]}

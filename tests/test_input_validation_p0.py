@@ -110,11 +110,11 @@ def test_surrounding_spaces_are_trimmed_not_rejected():
 @pytest.mark.parametrize("bad", ["pw", "1234567", "aaaaaaaa", ""])
 def test_weak_password_is_rejected(bad):
     with pytest.raises(ValidationError):
-        S.RegisterReq(username="tester1", password=bad)
+        S.RegisterReq(company_email="company@example.com", email_consent=True, username="tester1", password=bad)
 
 
 def test_reasonable_password_passes():
-    assert S.RegisterReq(username="tester1", password="halal2026").password == "halal2026"
+    assert S.RegisterReq(company_email="company@example.com", email_consent=True, username="tester1", password="halal2026").password == "halal2026"
 
 
 def test_admin_paths_use_the_same_policy():

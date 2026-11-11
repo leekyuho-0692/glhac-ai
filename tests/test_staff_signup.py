@@ -93,6 +93,7 @@ def test_관리자_클라이언트초대는_컨설턴트_귀속이_없다():
         assert png.status_code == 200 and png.headers["content-type"] == "image/png"
         # 이 코드로 가입 → org 에 컨설턴트 귀속 없음
         rg = c.post("/auth/register", json={
+            "company_email": "company@example.com", "email_consent": True,
             "username": "clientco1", "password": "secret12",
             "company_name": "PT 하우스클라이언트", "invite_code": code})
         assert rg.status_code == 200

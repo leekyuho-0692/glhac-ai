@@ -709,6 +709,14 @@ class RegisterContacts(BaseModel):
 class RegisterReq(BaseModel):
     username: str
     password: str
+    company_email: str = Field(max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    email_consent: bool
+
+    @field_validator("company_email", mode="before")
+    @classmethod
+    def _company_email(cls, value):
+        return value.strip().lower() if isinstance(value, str) else value
+
     _pw = field_validator("password")(classmethod(lambda cls, v: _password(v)))
     _nibv = field_validator("nib")(classmethod(lambda cls, v: _nib(v)))
     _un = field_validator("username")(classmethod(lambda cls, v: _username(v)))
