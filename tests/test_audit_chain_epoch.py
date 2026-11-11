@@ -93,6 +93,14 @@ def test_경계이전_불일치는_이전서명체계():
         assert eids
         _set_all_created_at(cid, datetime(2026, 7, 1, 0, 0, 0))
         _tamper(eids[-1], created_at=datetime(2026, 8, 1, 0, 0, 0))
+        # 이전 서명 데이터가 앵커 도입 전에 존재했던 상황을 구성한다.
+        # 앵커 생성 이후 변조/삭제 탐지는 d3 회귀 테스트가 별도로 검증한다.
+        with SessionLocal() as db:
+            rows = db.query(models.WorkflowEvent).filter_by(case_id=cid).order_by(
+                models.WorkflowEvent.created_at, models.WorkflowEvent.event_id).all()
+            anchor = db.get(models.ChainAnchor, "wf:" + cid)
+            anchor.last_hash, anchor.event_count = rows[-1].row_hash, len(rows)
+            db.commit()
         r = _verify(c, admin, cid)
         assert r["status"] == "ok_with_legacy"
         assert r["integrity_ok"] is True

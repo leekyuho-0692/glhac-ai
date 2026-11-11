@@ -244,4 +244,6 @@ def dispatch(notification, contacts=None, channels=None):
         fn = PROVIDERS.get(ch)
         if fn:
             results.append(fn(contacts, text, notification))
+        else:
+            results.append({"channel": ch, "ok": False, "reason": "not_implemented"})
     return results

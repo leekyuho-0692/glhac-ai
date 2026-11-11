@@ -120,12 +120,20 @@ def test_견적_산출_근거와_버전():
         admin = _tok(c, "admin", "admin")
         operator = _tok(c, "operator1", "pw")
         cid = _mkcase(c, admin)
+        # 제품 수는 등록 제품에서 계산한다. 가격식/버전 검증의 전제만 보강.
+        with SessionLocal() as db:
+            db.add_all([models.Product(case_id=cid, name="QuoteProduct" + str(i)) for i in range(3)])
+            db.commit()
         q1 = _quote(c, operator, cid, {"product_count": 3, "onsite": True, "options": ["sihalal_registration"]})
         assert q1["subtotal"] == 9100000
         assert q1["ppn"] == 910000          # MA1: 기본 부가세 10%
         assert q1["total"] == 10010000
         codes = {l["code"] for l in q1["lines"]}
         assert {"base", "product_extra", "onsite_travel", "opt:sihalal_registration"} <= codes
+        with SessionLocal() as db:
+            for product in db.query(models.Product).filter_by(case_id=cid).order_by(models.Product.name).limit(2):
+                db.delete(product)
+            db.commit()
         q2 = _quote(c, operator, cid, {"product_count": 1, "onsite": False})
         assert q2["version"] == 2
         assert q2["total"] == round(6500000 * 1.10)

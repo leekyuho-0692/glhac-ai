@@ -189,7 +189,7 @@ def test_a3_return_to_auditor_allowed_state():
 
 # ---------- A4. PG 웹훅 ----------
 def _hook(c, order, status, **extra):
-    body = {"order_id": order, "transaction_status": status}
+    body = {"order_id": order, "transaction_status": status, "currency": "KRW"}
     body.update(extra)
     return c.post("/pg/webhook/midtrans", json=body)
 
