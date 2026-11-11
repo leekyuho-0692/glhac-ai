@@ -5,6 +5,7 @@
   python3 scripts/encrypt_backfill.py                           # dry-run(통계만)
   python3 scripts/encrypt_backfill.py --apply                   # 평문→암호화 적용
   python3 scripts/encrypt_backfill.py --verify                  # 남은 평문 수 확인
+  python3 scripts/encrypt_backfill.py --normalize-empty         # 구형 빈 암호문 수 확인 (--apply로 적용)
 
 환경변수:
   GLHAC_DB_URL: sqlite:///./glhac.db (기본) 또는 Postgres 연결
@@ -300,6 +301,63 @@ def _commit_batch_tx(engine, table_name, pk_cols, col_name, batch):
     return updated_count, skipped_conflict
 
 
+def normalize_empty_ciphertexts(encrypted_cols_map: Dict, db_url: str, apply: bool) -> int:
+    """구형 빈 평문 암호문을 세거나 빈 문자열로 정규화하고 컬럼별 처리 행 수를 반환."""
+    log.info("=== NORMALIZE EMPTY (%s) ===", "적용" if apply else "DRY-RUN (무변경)")
+    log.info(f"DB: {db_url}")
+    log.info(f"키 소스: {_get_key_source()}")
+    log.info("")
+    _init_crypto_keys()
+
+    engine = create_engine(
+        db_url,
+        connect_args={"check_same_thread": False} if db_url.startswith("sqlite") else {},
+    )
+    total = 0
+    try:
+        for table_name, info in encrypted_cols_map.items():
+            pk_cols = info['pk_cols']
+            if not pk_cols:
+                log.warning(f"  {table_name}: PK 없음, 건너뜀")
+                continue
+
+            pk_expr = ", ".join(pk_cols)
+            pk_where = " AND ".join(f"{c} = :pk_{i}" for i, c in enumerate(pk_cols))
+            for col_name in info['encrypted_cols']:
+                # 짧은 후보만 읽어 대용량 content_b64가 Python으로 넘어오지 않게 한다.
+                with engine.connect() as conn:
+                    candidates = conn.execute(text(
+                        f"SELECT {pk_expr}, {col_name} FROM {table_name} "
+                        f"WHERE {col_name} LIKE '%:%' AND length({col_name}) <= 64"
+                    )).all()
+
+                col_count = 0
+                with engine.begin() as conn:
+                    for row in candidates:
+                        value = row[-1]
+                        if not is_encrypted(value) or dec(value) != "":
+                            continue
+                        if apply:
+                            params = {f"pk_{i}": row[i] for i in range(len(pk_cols))}
+                            params['old'] = value
+                            # 원시 SQL로 갱신하고, 읽은 뒤 앱이 고친 값은 덮어쓰지 않는다.
+                            result = conn.execute(text(
+                                f"UPDATE {table_name} SET {col_name} = '' "
+                                f"WHERE {pk_where} AND {col_name} = :old"
+                            ), params)
+                            col_count += result.rowcount
+                        else:
+                            col_count += 1
+                total += col_count
+                if col_count:
+                    log.info(f"  {table_name}.{col_name}: 빈 암호문 {col_count}행")
+
+        log.info("총 %s: %s행", "정규화" if apply else "정규화 대상", total)
+        return total
+    finally:
+        engine.dispose()
+
+
 def verify(encrypted_cols_map: Dict, db_url: str) -> bool:
     """verify: 남은 평문 수만 세기."""
     log.info("=== VERIFY (검증) ===")
@@ -353,6 +411,11 @@ def main(argv: Optional[List[str]] = None):
         help="남은 평문 수 확인 (exit 0 = 전부 암호화됨, 1 = 평문 남음)",
     )
     parser.add_argument(
+        "--normalize-empty",
+        action="store_true",
+        help="구형 빈 암호문 수 확인 (--apply와 함께 쓰면 빈 문자열로 정규화)",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=200,
@@ -388,7 +451,10 @@ def main(argv: Optional[List[str]] = None):
         log.info(f"  {table_name}: {', '.join(info['encrypted_cols'])}")
     log.info("")
 
-    if args.apply:
+    if args.normalize_empty:
+        normalize_empty_ciphertexts(encrypted_cols_map, DB_URL, args.apply)
+        return True
+    elif args.apply:
         success, updated, skipped = apply_encryption(
             encrypted_cols_map,
             DB_URL,
