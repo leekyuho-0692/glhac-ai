@@ -287,7 +287,10 @@ def test_consultation_flow(tmp_path):
 def test_upload_case_document(tmp_path):
     import base64
     db = _seed_db(tmp_path)
-    b64 = base64.b64encode(b"hello world pdf").decode()
+    import fitz
+    with fitz.open() as document:
+        document.new_page().insert_text((50, 50), "Local document upload")
+        b64 = base64.b64encode(document.tobytes()).decode()
     r = m.upload_case_document("case1", body={"filename": "m.pdf", "file_b64": b64, "doc_type": "mock_audit_evidence"}, user=USER, db=db)
     assert r["doc_type"] == "mock_audit_evidence" and r["document_id"]
 
