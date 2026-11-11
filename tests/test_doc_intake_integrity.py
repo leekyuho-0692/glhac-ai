@@ -734,7 +734,7 @@ def test_원재료는_공백_대소문자_정규화_중복시_기존ID와_409(cl
     r = client.post(f"/cases/{cid}/materials", headers=h, json={"name": "Raw Water"})
     assert r.status_code == 200, r.text
     mid = r.json()["material_id"]
-    r = client.post(f"/cases/{cid}/materials", headers=h, json={"name": "rawWATER (국내산)"})
+    r = client.post(f"/cases/{cid}/materials", headers=h, json={"name": "rawWATER"})
     assert r.status_code == 409, r.text
     assert r.json()["detail"] == {"code": "DUPLICATE_MATERIAL", "material_id": mid}
     with m.SessionLocal() as db:

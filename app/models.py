@@ -1,6 +1,7 @@
 """SQLAlchemy 모델 — 설계서 v2 24.9(마이그레이션)/24.13(ontology)/Part 9 매핑."""
 import uuid
 import re
+import unicodedata
 from datetime import datetime
 from sqlalchemy import Column, String, ForeignKey, Boolean, DateTime, Date, JSON, Text, Float, Integer, Index, event
 from .db import Base
@@ -127,9 +128,21 @@ class ProductMaterial(Base):
 
 
 def normalize_material_name(name):
-    """기존 목록 중복 판정과 DB 키가 같은 정규화를 사용한다."""
-    value = re.sub(r"\([^)]*\)", "", (name or "").lower())
-    return re.sub(r"[\s\-_·,#]|중국산|국내산|수입", "", value).strip()
+    """저장·중복 정리 공통 키. 괄호 안 성분/유래도 원재료의 식별 정보다."""
+    value = unicodedata.normalize("NFC", name or "").lower().replace("（", "(").replace("）", ")")
+    # 기존 바깥쪽 원산지 접미 정규화는 유지하되, 괄호 안은 지우지 않는다.
+    # 닫히지 않은 괄호도 OCR에서 올 수 있으므로 내용은 그대로 보존한다.
+    parts = re.split(r"([()])", value)
+    depth = 0
+    for i, part in enumerate(parts):
+        if part == "(":
+            depth += 1
+        elif part == ")":
+            depth = max(0, depth - 1)
+        else:
+            pattern = r"[\s\-_·,#]" if depth else r"[\s\-_·,#]|중국산|국내산|수입"
+            parts[i] = re.sub(pattern, "", part)
+    return "".join(parts)
 
 
 def _material_name_default(context):

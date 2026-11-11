@@ -105,7 +105,7 @@ def extract_e_number(text):
 
 def _norm_key(s, one="i"):
     """유니코드·발음 기호·혼동문자·철자 숫자를 접되 E 번호는 보존한다."""
-    s = _fold_unicode(s)
+    s = re.sub(r"[\r\n]+", ";", _fold_unicode(s))
     for a, b in (("\u201c", '"'), ("\u201d", '"'), ("\u2018", "'"), ("\u2019", "'"),
                  ("\u00a0", " "), ("\u200b", " ")):
         s = s.replace(a, b)
@@ -121,29 +121,57 @@ def _norm_key(s, one="i"):
 
 
 def _negation_pattern():
-    """사전의 모든 high/haram 별칭과 v1 위험어에 같은 부정 범위를 적용한다."""
+    """별칭에 인접한 부정만 읽는다. 병렬 목록도 접속어 바로 뒤의 별칭까지만."""
     targets = set(_HIGH1_LATIN + _HIGH1_KOREAN + _HIGH2_WORDS)
     for alias, it in {**_CACHE["by_alias"], **_CACHE["by_e"]}.items():
         if it.default_status == "haram" or it.severity == "high":
             key = _norm_key(alias)
-            targets.update((key, re.sub(r"[^\w\s]|_", "", key)))
+            targets.update((key, _punctuation_key(key)))
     targets.discard("")
     # non-pork gelatin / 무돼지 젤라틴의 generic gelatin 증빙 요구는 남긴다.
     # free from pork gelatin / pork gelatin-free는 명시된 전체 별칭을 부정한다.
     ordered = sorted(targets, key=lambda t: (len(t), t))
     short = "(?:" + "|".join(re.escape(t) for t in ordered) + ")"
     long = "(?:" + "|".join(re.escape(t) for t in reversed(ordered)) + ")"
+    # 'no pork or lard'는 병렬 부정이지만 'no pork or contains lard'의 두 번째
+    # 구에는 전파하지 않는다. 임의의 중간 단어를 건너뛰는 wildcard는 쓰지 않는다.
+    listed = long + r"(?!\w)(?:\s+(?:and|or|dan|atau|및|또는)\s+" + long + r"(?!\w))*"
+    prefix = (r"free[\s-]*from[\s-]+|without\s+|no\s+(?:added\s+)?|"
+              r"(?:does\s+not|do\s+not|not)\s+contain\s+|contains?\s+no\s+|"
+              r"bebas\s+(?:dari\s+)?|tanpa\s+|tidak\s+mengandung\s+")
+    suffix = (r"[\s-]*free(?!\w)|"
+              r"\s+(?:(?:is|are)\s+)?(?:not\s+(?:present|contained|included)|absent)(?!\w)|"
+              r"(?:[이가은는을를])?\s*(?:무첨가|불포함|미함유|"
+              r"없(?:지\s*않(?:은|다|음)|음|는|다))(?!\w)")
     return re.compile(
-        r"(?<!\w)(?:(?:non[\s-]*|[무無][\s-]*)" + short + r"(?!\w)|"
-        r"(?:free[\s-]*from[\s-]+|(?:bebas|tanpa)[\s-]+)" + long + r"(?!\w)|"
-        + long + r"[\s-]*free(?!\w))")
+        r"(?<!\w)(?:(?P<narrow>non[\s-]*|[무無][\s-]*)(?P<narrow_risk>" + short + r")(?!\w)|"
+        r"(?P<prefix>" + prefix + r")(?P<risks>" + listed + r")|"
+        r"(?P<suffix_risk>" + long + r")(?P<suffix>" + suffix + r"))")
+
+
+_OUTER_NEGATION = re.compile(r"(?<!\w)(?:not|never|tidak|bukan)[\s-]+$")
 
 
 def _without_negated_risks(key):
     pattern = _CACHE["negated"]
     if pattern is None:  # ontology 적재 전에도 v1 키워드는 같은 부정 규칙을 쓴다.
         pattern = _negation_pattern()
-    return pattern.sub(" ", key)
+    def replace(match):
+        # not free from / not pork-free / tidak bebas 는 함유 쪽으로 남긴다.
+        # 바로 앞의 부정만 확인하므로 다른 구의 not은 영향을 주지 않는다.
+        if (_OUTER_NEGATION.search(key[:match.start()])
+                or re.search(r"없지\s*않", match.group("suffix") or "")):
+            return (match.group("narrow_risk") or match.group("risks")
+                    or match.group("suffix_risk"))
+        return " "
+
+    return pattern.sub(replace, key)
+
+
+def _punctuation_key(key):
+    # 철자 위장 L.A.R.D는 합치되 문장/구/괄호 경계를 지워 부정이 번지지 않게 한다.
+    key = re.sub(r"(?<=\w)\.(?=\w)", "", key)
+    return re.sub(r"[^\w\s,;:!?().\[\]{}]|_", "", key)
 
 
 def _name_keys(name):
@@ -155,7 +183,7 @@ def _name_keys(name):
         for one in ("i", "l"):
             key = _norm_key(text, one)
             # 구두점 제거로 L.A.R.D-free가 lardfree가 된 뒤에도 부정을 먼저 해석한다.
-            for variant in (key, re.sub(r"[^\w\s]|_", "", key)):
+            for variant in (key, _punctuation_key(key)):
                 variant = _without_negated_risks(variant)
                 # 괄호 안팎을 개별 후보로 유지해야 '안전 성분(위험 성분)'도 놓치지 않는다.
                 for part in [variant, *re.split(r"[()\[\]{}]", variant)]:
