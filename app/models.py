@@ -1,7 +1,8 @@
 """SQLAlchemy 모델 — 설계서 v2 24.9(마이그레이션)/24.13(ontology)/Part 9 매핑."""
 import uuid
+import re
 from datetime import datetime
-from sqlalchemy import Column, String, ForeignKey, Boolean, DateTime, Date, JSON, Text, Float, Integer
+from sqlalchemy import Column, String, ForeignKey, Boolean, DateTime, Date, JSON, Text, Float, Integer, Index, event
 from .db import Base
 from .crypto import EncryptedType
 
@@ -125,11 +126,24 @@ class ProductMaterial(Base):
     material_id = Column(String, ForeignKey("material.material_id", ondelete="CASCADE"), nullable=False)
 
 
+def normalize_material_name(name):
+    """기존 목록 중복 판정과 DB 키가 같은 정규화를 사용한다."""
+    value = re.sub(r"\([^)]*\)", "", (name or "").lower())
+    return re.sub(r"[\s\-_·,#]|중국산|국내산|수입", "", value).strip()
+
+
+def _material_name_default(context):
+    return normalize_material_name(context.get_current_parameters().get("name"))
+
+
 class Material(Base):
     __tablename__ = "material"
+    __table_args__ = (Index("uq_material_case_name", "case_id", "normalized_name", unique=True),)
     material_id = Column(String, primary_key=True, default=uid)
     case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     name = Column(String, nullable=False)
+    # 기존 SQL 이관은 이 키 없이 적재한다. 시작 마이그레이션이 NULL을 병합·백필한다.
+    normalized_name = Column(String, default=_material_name_default)
     e_number = Column(String)
     # v1 상속 필드
     mat_type = Column(String)   # raw|additive|processing_aid|packaging|lubricant|sanitizer
@@ -148,6 +162,12 @@ class Material(Base):
     screen_status = Column(String)
     screen_severity = Column(String)
     matched_uid = Column(String)
+
+
+@event.listens_for(Material, "before_insert")
+@event.listens_for(Material, "before_update")
+def _material_name_key(_mapper, _connection, material):
+    material.normalized_name = normalize_material_name(material.name)
 
 
 class WorkflowEvent(Base):

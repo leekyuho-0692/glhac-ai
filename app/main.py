@@ -28,6 +28,8 @@ from .db import Base, engine, get_db, SessionLocal, lock_chain_tail
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from . import nav8
 from . import intake
+# 앱의 주소 외부 전송은 명시적으로 켠 환경에서만 허용한다(선행 import에도 적용).
+intake._ZIP_LOOKUP = os.environ.get("GLHAC_ZIP_LOOKUP", "0") == "1"
 from . import observability as obs
 from . import domain_dict as _dd_mod
 from . import mail_features as _mail_features
@@ -335,6 +337,73 @@ _UNIQUE_INDEXES = [
 ]
 
 
+def _ensure_material_uniqueness():
+    """기존 시작 마이그레이션: 참조를 보존해 병합한 뒤 유일 인덱스를 만든다.
+
+    이 제약 실패는 부팅 실패로 처리한다. 중복 방어 없이 서비스하지 않는다.
+    """
+    import json
+    from sqlalchemy import inspect, select, update, delete, text
+    insp = inspect(engine)
+    if not insp.has_table("material"):
+        return
+    table = models.Material.__table__
+    if any(i["name"] == "uq_material_case_name" and i["unique"] for i in insp.get_indexes("material")):
+        # 모델로 만든 DB라도 기존 SQL 이관 도구가 키 없이 적재했으면 먼저 백필한다.
+        with engine.connect() as conn:
+            if conn.execute(select(table.c.material_id).where(table.c.normalized_name.is_(None)).limit(1)).first() is None:
+                return
+    pm = models.ProductMaterial.__table__
+    with engine.begin() as conn:
+        if engine.dialect.name == "sqlite":
+            conn.exec_driver_sql("BEGIN IMMEDIATE")
+        elif engine.dialect.name == "postgresql":
+            conn.execute(text("LOCK TABLE material IN SHARE ROW EXCLUSIVE MODE"))
+        groups = {}
+        for row in conn.execute(select(table)).mappings():
+            groups.setdefault((row["case_id"], models.normalize_material_name(row["name"])), []).append(dict(row))
+        remap = {}
+        for (case_id, key), rows in groups.items():
+            # 병합이 위험 판정을 완화하지 않게 가장 보수적인 판정 행을 유지한다.
+            rank = {"BLOCK": 5, "NEEDS_EVIDENCE": 4, "REVIEW": 3, "CLEARED": 1, "PASS": 1}
+            rows.sort(key=lambda r: (-rank.get(r["screen_result"], 2), r["material_id"]))
+            keep, *duplicates = rows
+            values = {"normalized_name": key}
+            for row in duplicates:
+                old, new = row["material_id"], keep["material_id"]
+                remap[old] = new
+                # 같은 제품에 두 행이 연결돼 있으면 중복 링크 하나만 제거한다.
+                for link in conn.execute(select(pm).where(pm.c.material_id == old)).mappings().all():
+                    exists = conn.execute(select(pm.c.id).where(
+                        pm.c.case_id == link["case_id"], pm.c.product_id == link["product_id"],
+                        pm.c.material_id == new)).first()
+                    if exists:
+                        conn.execute(delete(pm).where(pm.c.id == link["id"]))
+                    else:
+                        conn.execute(update(pm).where(pm.c.id == link["id"]).values(material_id=new))
+                for model in (models.DocumentAsset, models.MaterialMeasurement, models.MaterialEvidenceLink):
+                    ref = model.__table__
+                    conn.execute(update(ref).where(ref.c.material_id == old).values(material_id=new))
+                # 소실될 행의 값은 note에 출처 ID와 함께 남기고 빈 정보만 보충한다.
+                for field in ("e_number", "mat_type", "source", "supplier", "manufacturer", "origin", "cert_no"):
+                    if not values.get(field, keep[field]) and row[field]:
+                        values[field] = row[field]
+                conn.execute(delete(table).where(table.c.material_id == old))
+            if duplicates:
+                values["evidence_provided"] = any(r["evidence_provided"] for r in rows)
+                values["source_known"] = all(r["source_known"] is not False for r in rows)
+                values["note"] = (keep["note"] or "") + "\n[merged material records] " + json.dumps(duplicates, ensure_ascii=False)
+            conn.execute(update(table).where(table.c.material_id == keep["material_id"]).values(**values))
+        if remap:
+            cert = models.HalalCertificate.__table__
+            for row in conn.execute(select(cert.c.id, cert.c.frozen_material_ids)).mappings().all():
+                ids = row["frozen_material_ids"] or []
+                if any(mid in remap for mid in ids):
+                    conn.execute(update(cert).where(cert.c.id == row["id"]).values(
+                        frozen_material_ids=list(dict.fromkeys(remap.get(mid, mid) for mid in ids))))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_material_case_name ON material (case_id, normalized_name)"))
+
+
 def _ensure_indexes():
     """인덱스·유니크 인덱스 idempotent 생성. 기존 데이터에 중복이 있으면 유니크 생성만 skip(로그)."""
     from sqlalchemy import text as _sql, inspect as _inspect
@@ -342,6 +411,7 @@ def _ensure_indexes():
     log = logging.getLogger("glhac.migrate")
     insp = _inspect(engine)
     tables = set(insp.get_table_names())
+    _ensure_material_uniqueness()
     with engine.begin() as conn:
         for table, col in _HOT_INDEXES:
             if table not in tables:
@@ -868,6 +938,16 @@ PROBLEM_DOC_MSG = {
         "en": ("An error occurred during automatic document analysis.", "The required application information may not have been fully extracted.", "Ask the reviewer to retry the analysis or check the required information manually."),
         "id": ("Terjadi kesalahan saat analisis dokumen otomatis.", "Informasi yang diperlukan untuk permohonan mungkin belum diambil seluruhnya.", "Minta petugas mengulangi analisis atau periksa informasi yang diperlukan secara manual."),
     },
+    "VERIFY_ERROR": {
+        "ko": ("자동 검증을 완료하지 못했습니다.", "담당자가 확인합니다 — 업체 조치 불필요."),
+        "en": ("Automatic verification could not be completed.", "The reviewer will check it — no company action is required."),
+        "id": ("Verifikasi otomatis tidak dapat diselesaikan.", "Petugas akan memeriksanya — perusahaan tidak perlu melakukan tindakan."),
+    },
+    "ORIGINAL_NOT_STORED": {
+        "ko": ("원본 파일이 저장되지 않았습니다.", "원본을 다운로드하거나 재처리할 수 없습니다.", "20MB 이하의 원본 파일로 다시 올려 주세요."),
+        "en": ("The original file was not stored.", "It cannot be downloaded or reprocessed.", "Upload the original file again, no larger than 20 MB."),
+        "id": ("Berkas asli tidak tersimpan.", "Berkas tidak dapat diunduh atau diproses ulang.", "Unggah ulang berkas asli berukuran maksimal 20 MB."),
+    },
     "PORK_DNA_UNCLEAR": {
         "ko": ("이 문서의 돼지 DNA 검사 결과는 추가 확인이 필요합니다.", "현재 결과만으로는 돼지 유래 성분의 검출 여부를 확정할 수 없습니다.", "검출 여부와 시험법이 명확한 성적서를 올리거나 시험기관에 확인해 주세요."),
         "en": ("The pork DNA test result in this document needs further review.", "The current result cannot conclusively establish whether pork material was detected.", "Upload a report stating the detection result and test method clearly, or consult the laboratory."),
@@ -1076,6 +1156,8 @@ def _problem_document_reasons(document, measurements=()):
         markers = fields.get("_truncations") or [fields["_truncated"]]
         reasons.append({"code": "TRUNCATED", "params": {"limits": [dict(x) for x in markers if isinstance(x, dict)]}})
     verify = fields.get("_verify") or {}
+    if verify.get("llm_error"):
+        reasons.append({"code": "VERIFY_ERROR", "params": {}})
     issues = [x for x in (verify.get("field_issues") or []) if isinstance(x, dict)]
     if verify.get("verdict") == "fail":
         details = ["%s: %s" % (x.get("field") or "?", x.get("issue") or x.get("code") or "?") for x in issues]
@@ -1091,6 +1173,8 @@ def _problem_document_reasons(document, measurements=()):
         reasons.append({"code": "OWNERSHIP_MISMATCH", "params": {"fields": "; ".join(ownership)}})
     if "_llm_error" in fields:
         reasons.append({"code": "AI_ERROR", "params": {}})
+    if fields.get("_original_not_stored"):
+        reasons.append({"code": "ORIGINAL_NOT_STORED", "params": {}})
     if any(x.document_id == document.document_id and x.verdict == "review" for x in measurements):
         reasons.append({"code": "PORK_DNA_UNCLEAR", "params": {}})
     return reasons
@@ -1113,7 +1197,11 @@ def _problem_documents_body(params, lang):
     for d in params.get("documents", []):
         lines.append("\n%s — %s: %s" % (d["filename"], copy["uploaded"], d["uploaded_at"]))
         lines.extend("- " + _problem_document_explanation(r, lang) for r in d["reasons"])
-    lines.append("\n" + copy["link"].format(**params))
+    if params.get("staff_only"):
+        lines.append("\n" + {"ko": "담당자 확인: {url}", "en": "Reviewer check: {url}",
+                             "id": "Pemeriksaan petugas: {url}"}[lang].format(**params))
+    else:
+        lines.append("\n" + copy["link"].format(**params))
     return "\n".join(lines)
 
 
@@ -1167,8 +1255,10 @@ def _problem_documents_language(db, c, role):
     return "ko"   # notify_text의 기본 언어
 
 
-def _problem_documents_recipient(db, c):
+def _problem_documents_recipient(db, c, rows=None):
     auditor = _assigned_auditor_id(db, c.case_id)
+    if rows and all(r["code"] == "VERIFY_ERROR" for d in rows for r in d["reasons"]):
+        return ("auditor" if auditor else "operator"), auditor
     role = "applicant" if (c.email or "").strip() and c.notify_consent else ("auditor" if auditor else "operator")
     return role, auditor
 
@@ -1182,7 +1272,7 @@ def _problem_documents_result(db, c, lang="ko"):
             "closed": c.status in sm.TERMINAL_STATES,
             "last_notified_at": (last.payload or {}).get("notified_at") if last else None,
             "last_recipient_type": (last.payload or {}).get("recipient_type") if last else None,
-            "recipient_type": _problem_documents_recipient(db, c)[0]}
+            "recipient_type": _problem_documents_recipient(db, c, rows)[0]}
 
 
 def _notify_problem_documents(db, c, force=False, actor=None):
@@ -1231,9 +1321,10 @@ def _queue_problem_documents(db, c, force, actor):
     last = _problem_documents_latest(db, c.case_id, PROBLEM_DOC_EVENT)
     if not force and last and (last.payload or {}).get("fp") == fp:
         return {"notified": False, "reason": "unchanged"}
-    role, auditor = _problem_documents_recipient(db, c)
+    role, auditor = _problem_documents_recipient(db, c, rows)
+    staff_only = all(r["code"] == "VERIFY_ERROR" for d in rows for r in d["reasons"])
     params = {"company": c.company_name or c.case_id, "case_id": c.case_id, "count": len(rows),
-              "documents": rows, "fallback": role != "applicant",
+              "documents": rows, "fallback": role != "applicant" and not staff_only, "staff_only": staff_only,
               "url": os.environ.get("GLHAC_APP_URL", "https://glhac.co.kr").rstrip("/") + "/ui/v4/"}
     n = _notify(db, c, "problem.documents", channels=["inapp", "email"], role=role,
                 msg=("problem.documents", params))
@@ -1442,8 +1533,7 @@ def _register_from_judgment(db, c, res):
         m = models.Material(case_id=c.case_id, name=ing["name"], e_number=ing.get("e_number"),
                             screen_result=ing["result"], screen_status=ing["status"],
                             screen_severity=ing["severity"], matched_uid=ing.get("matched_uid"))
-        db.add(m)
-        db.flush()
+        m, _ = _upsert_material(db, m)
         created.append({"material_id": m.material_id, "name": m.name, "result": m.screen_result})
 
     # 미등재 성분(llm_unmatched) 등록 — ontology 판정값으로
@@ -1455,8 +1545,7 @@ def _register_from_judgment(db, c, res):
         m = models.Material(case_id=c.case_id, name=name, e_number=enum,
                             screen_result=sc.get("result"), screen_status=sc.get("status"),
                             screen_severity=sc.get("severity"), matched_uid=sc.get("matched_uid"))
-        db.add(m)
-        db.flush()
+        m, _ = _upsert_material(db, m)
         created.append({"material_id": m.material_id, "name": m.name, "result": m.screen_result})
 
     # §7.2 AI 근거저장 — 라벨 판정 원문/신뢰도 보존(Human-in-the-loop 추적)
@@ -5784,8 +5873,9 @@ def add_material(case_id: str, body: schemas.MaterialCreate,
                         v1_risk=r.get("v1_risk"), evidence_provided=bool(body.evidence_provided),
                         source_known=sk, screen_result=r["result"], screen_status=r["status"],
                         screen_severity=r["severity"], matched_uid=r.get("matched_uid"))
-    db.add(m)
-    db.flush()
+    m, created = _upsert_material(db, m)
+    if not created:
+        raise HTTPException(409, {"code": "DUPLICATE_MATERIAL", "material_id": m.material_id})
     _audit(db, user, "material.add", "material", m.material_id, case_id,
            {"name": m.name, "supplier": m.supplier, "origin": m.origin}, commit=False)
     db.commit()
@@ -5882,6 +5972,15 @@ def rename_material(material_id: str, body: schemas.MaterialRenameReq,
                                  m.source_known if m.source_known is not None else True, m.note or "")
     m.screen_result, m.screen_status, m.screen_severity = sc["result"], sc["status"], sc["severity"]
     m.matched_uid = sc.get("matched_uid")
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        duplicate = db.query(models.Material).filter_by(
+            case_id=c.case_id, normalized_name=_norm_material(nm)).first()
+        if duplicate and duplicate.material_id != material_id:
+            raise HTTPException(409, {"code": "DUPLICATE_MATERIAL", "material_id": duplicate.material_id})
+        raise
     sm.record_event(db, c, c.status, c.status, "material.rename", user["role"], user["uid"],
                     {"material_id": material_id, "from": prev, "to": nm, "result": sc["result"]})
     db.commit()
@@ -5891,11 +5990,24 @@ def rename_material(material_id: str, body: schemas.MaterialRenameReq,
 
 def _norm_material(name):
     """원재료명 정규화 — 공백·괄호주석·구두점·국가/원산지 접미 제거해 중복 판정 키."""
-    import re
-    s = (name or "").lower()
-    s = re.sub(r"\([^)]*\)", "", s)           # (중국), (대상) 등 괄호 제거
-    s = re.sub(r"[\s\-_·,#]|중국산|국내산|수입", "", s)
-    return s.strip()
+    return models.normalize_material_name(name)
+
+
+def _upsert_material(db, material):
+    """DB 유일 키로 경합을 해결하고 기존 행을 반환한다. 호출측 트랜잭션은 유지한다."""
+    if db.get_bind().dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+    values = {col.name: getattr(material, col.name) for col in models.Material.__table__.columns
+              if getattr(material, col.name) is not None}
+    values.setdefault("material_id", models.uid())
+    values["normalized_name"] = _norm_material(material.name)
+    result = db.execute(insert(models.Material).values(**values).on_conflict_do_nothing(
+        index_elements=["case_id", "normalized_name"]))
+    existing = db.query(models.Material).filter_by(
+        case_id=material.case_id, normalized_name=values["normalized_name"]).one()
+    return existing, result.rowcount == 1
 
 
 # ── 정량 기준·측정값 (P3 데이터 선행) — 정성 온톨로지가 못 다루는 임계 판정의 근거 ──
@@ -6219,13 +6331,13 @@ def reuse_materials(case_id: str, body: dict = None,
         nm = models.Material(case_id=case_id, name=m.name, e_number=m.e_number, mat_type=m.mat_type,
                              source=m.source, supplier=m.supplier, cert=m.cert, cert_no=m.cert_no,
                              evidence_provided=False)   # 증빙은 케이스별 재확인(안전측)
-        db.add(nm)
         try:
             screening.apply_screen(nm)   # 재스크리닝(온톨로지 갱신 반영)
         except Exception:  # noqa: BLE001
             pass
+        _, created = _upsert_material(db, nm)
         have.add(k)
-        added.append(m.name)
+        (added if created else skipped).append(m.name)
     sm.record_event(db, c, c.status, c.status, "material.reuse", user["role"], user["uid"],
                     {"added": added, "skipped": skipped})
     db.commit()
@@ -6469,7 +6581,7 @@ def add_material_evidence(case_id: str, material_id: str, body: schemas.Material
     db.add(models.DocumentAsset(case_id=case_id, filename=body.filename,
                                 filename_en=_fn_en(body.filename), doc_type=body.evidence_type,
                                 material_id=material_id, review_status="pending",
-                                content_b64=b64 if len(b64) < 4_000_000 else None,
+                                content_b64=b64,
                                 content_type=_ctype(body.filename),
                                 lat=gps[0] if gps else None, lng=gps[1] if gps else None,
                                 geo_source="exif" if gps else None))
@@ -6573,7 +6685,7 @@ def add_product_photo(case_id: str, product_id: str, body: schemas.ProductPhotoR
     db.add(models.DocumentAsset(case_id=case_id, filename=body.filename,
                                 filename_en=_fn_en(body.filename), doc_type="product_photo",
                                 product_id=product_id, review_status="pending",
-                                content_b64=b64 if len(b64) < 4_000_000 else None,
+                                content_b64=b64,
                                 content_type=_ctype(body.filename),
                                 lat=gps[0] if gps else None, lng=gps[1] if gps else None,
                                 geo_source="exif" if gps else None))
@@ -6659,6 +6771,15 @@ def reclassify_document(document_id: str, body: schemas.DocTypeReq,
 
 def _autofill_key(value, field=""):
     return re.sub(r"\D" if field == "nib" else r"[\W_]+", "", str(value or "")).casefold()
+
+
+def _autofill_company_key(value):
+    import unicodedata
+    name = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    name = re.sub(r"주식회사|\(\s*주\s*\)", " ", name)
+    name = re.sub(r"\b(?:p[.\s]*t|c[.\s]*v|tbk|inc)\b\.?", " ", name)
+    name = re.sub(r"\bco[.,\s]+ltd\b\.?", " ", name)
+    return _autofill_key(name)
 
 
 def _autofill_references(db, c):
@@ -6751,7 +6872,8 @@ def _apply_owned_autofill(db, c, doc):
         names += [org.name, (org.profile_ext or {}).get("company_name_en")]
     names = [n for n in names if not _is_co_placeholder(n)]
     company = f.get("company_name") or f.get("company_name_ko") or f.get("company_name_en")
-    company_matches = bool(company and any(_autofill_key(company) == _autofill_key(n) for n in names))
+    company_key = _autofill_company_key(company)
+    company_matches = bool(company_key and any(company_key == _autofill_company_key(n) for n in names))
     number_matches = bool(nib and any(_autofill_key(r["value"], "nib") == nib for r in refs))
     if not number_matches and nib and current_nib == nib:
         number_matches = (is_nib or
@@ -6766,22 +6888,13 @@ def _apply_owned_autofill(db, c, doc):
         reason = "value_not_in_text"
     elif confirmed_type != doc.doc_type:
         reason = "unconfirmed_document_type"
+    elif is_nib and not company_matches and (not current_nib or not number_matches):
+        reason = "company_conflict" if company and names else "ownership_unconfirmed"
     elif not is_nib and company and names and not company_matches:
         reason = "company_conflict"
     elif not is_nib and not (company_matches and intake.autofill_value_in_text("company_name", company, text)
                             or number_matches):
         reason = "ownership_unconfirmed"
-
-    if is_nib and not reason and not number_matches and company and names and not company_matches:
-        # 가입 상호와 정식 상호의 차이는 번호 채움을 막지 않고 확인 경고로 남긴다.
-        verify = dict(f.get("_verify") or {})
-        issues = list(verify.get("field_issues") or [])
-        if not any(issue.get("code") == "company_name_mismatch" for issue in issues):
-            issues.append({"field": "company_name", "code": "company_name_mismatch",
-                           "issue": f"신청 업체명({c.company_name})과 등록증 상호({company})가 다릅니다 — 소유권 확인 필요"})
-        f["_verify"] = {**verify, "field_issues": issues,
-                        "verdict": "fail" if verify.get("verdict") == "fail" else "warn",
-                        "summary": verify.get("summary") or "신청 업체명과 등록증 상호 불일치", "source": "rule"}
 
     applied, conflicts = {}, []
     pe = dict(c.profile_ext or {})
@@ -7000,16 +7113,21 @@ def _apply_agg_to_case(db, c, agg, documents=()):
         if pn and pk and pk not in have_p and pk not in _mat_norms:
             db.add(models.Product(case_id=c.case_id, name=pn)); applied["products"] += 1; have_p.add(pk)
     have_m = {_norm_material(m.name) for m in db.query(models.Material).filter_by(case_id=c.case_id)}
+    materials = []
     for mn in agg.get("materials", []):
         nk = _norm_material(mn)
         if mn and nk and nk not in have_m:
             enum = screening.extract_e_number(mn)
             sc = screening.screen_merged(mn, enum, None, None, False, True, "")
-            db.add(models.Material(case_id=c.case_id, name=mn, e_number=enum, screen_result=sc["result"],
+            materials.append(models.Material(case_id=c.case_id, name=mn, e_number=enum, screen_result=sc["result"],
                                    screen_status=sc["status"], screen_severity=sc["severity"],
                                    matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk"),
                                    cert=sc.get("v1_cert")))
-            applied["materials"] += 1; have_m.add(nk)
+            have_m.add(nk)
+    # 스크리닝을 모두 끝낸 뒤 짧게 쓰기 트랜잭션을 잡는다(SQLite 동시 업로드 대기 제한).
+    for material in materials:
+        _, created = _upsert_material(db, material)
+        applied["materials"] += int(created)
     return applied
 
 
@@ -7793,20 +7911,36 @@ def _apply_intake_autofill(db, c, res):
            .filter_by(case_id=c.case_id).all())
     _seen_h = {d.file_hash: d for d in _ex if d.file_hash}
     _seen_n = {d.filename: d for d in _ex if not d.file_hash and d.filename}
-    dup_skipped, saved = 0, []
+    dup_skipped, saved, saved_rows = 0, [], []
     for d in res["classified"]:
+        fields = dict(d.get("fields") or {})
+        if not d.get("content_b64"):
+            fields["_original_not_stored"] = True
+        if d.get("llm_error"):
+            fields["_llm_error"] = d["llm_error"]
+        d["fields"] = fields
         _h = _sha256_b64(d.get("content_b64"))
         _nm = d["filename"]
         doc = _seen_h.get(_h) if _h else _seen_n.get(_nm)
         if doc is not None:
             dup_skipped += 1
             # 같은 원본 재업로드도 새 파서 결과는 반영하되 문서 식별자는 유지한다.
-            if "measurements" in (d.get("fields") or {}):
-                doc.fields = {**(doc.fields or {}), "measurements": d["fields"]["measurements"]}
-            if d.get("text_full"):
-                doc.text_full = d["text_full"]
+            if (doc.fields or {}).get("_autofill"):
+                fields["_autofill"] = doc.fields["_autofill"]
+            doc.doc_type = d["doc_type"]
+            doc.confidence = float(d.get("confidence") or 0)
+            doc.fields = fields
+            doc.text_full = d.get("text_full") or ""
+            doc.text_excerpt = d.get("excerpt") or ""
+            doc.ocr_lines = d.get("ocr_lines")
+            doc.translations = None
+            if d.get("content_b64"):
+                doc.content_b64 = d["content_b64"]
+                doc.content_type = d.get("content_type")
+            d["fields"] = doc.fields
             if doc not in saved:
                 saved.append(doc)
+            saved_rows.append((d, doc))
             continue
         doc = models.DocumentAsset(case_id=c.case_id, filename=_nm, filename_en=_fn_en(_nm), doc_type=d["doc_type"],
                                    confidence=float(d.get("confidence") or 0), fields=d.get("fields"),
@@ -7815,6 +7949,7 @@ def _apply_intake_autofill(db, c, res):
                                    content_type=d.get("content_type"), file_hash=_h)
         db.add(doc)
         saved.append(doc)
+        saved_rows.append((d, doc))
         if _h:
             _seen_h[_h] = doc
         else:
@@ -7841,6 +7976,8 @@ def _apply_intake_autofill(db, c, res):
         if not c.draft_state or c.draft_state in ("returned",):
             c.draft_state = "saved"
     res["applied"] = applied
+    for row, doc in saved_rows:
+        row["fields"], row["confidence"] = doc.fields, doc.confidence
     return applied
 
 
@@ -8466,7 +8603,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                filename_en=_fn_en(body.filename), doc_type=eff_type,
                                confidence=float(r.get("confidence") or 0), fields=f,
                                text_excerpt=r.get("excerpt"), text_full=text,
-                               content_b64=_b64 if len(_b64) < 4_000_000 else None,
+                               content_b64=_b64,
                                content_type=_ctype(body.filename))
     db.add(doc)
     db.flush()
@@ -20389,7 +20526,7 @@ def add_sjph_evidence(case_id: str, body: schemas.SjphEvidenceReq,
     b64 = _validate_upload(body.file_b64, body.filename)
     doc = models.DocumentAsset(case_id=case_id, filename=body.filename,
                                 filename_en=_fn_en(body.filename), doc_type="sjph_evidence",
-                               review_status="pending", content_b64=b64 if len(b64) < 4_000_000 else None,
+                               review_status="pending", content_b64=b64,
                                content_type=_ctype(body.filename))
     db.add(doc)
     db.flush()
