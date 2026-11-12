@@ -167,13 +167,16 @@ def test_공급사_인증번호가_있어도_체크리스트가_열린다():
         # 체크리스트의 다국어 건수 표시가 목적이다. 인증번호는 검토 완료된 참조로 준비한다.
         from app import models
         with m.SessionLocal() as db:
-            db.add(models.DocumentAsset(case_id=cid, material_id=mid, filename="supplier.pdf",
+            import base64
+            db.add(models.DocumentAsset(case_id=cid, material_id=mid, filename="supplier.txt",
                    doc_type="halal_certificate", review_status="approved",
-                   text_full="HALAL CERTIFICATE\nCertificate No: ID00410000001",
-                   text_excerpt="HALAL CERTIFICATE\nCertificate No: ID00410000001",
-                   fields={"cert_no": "ID00410000001", "expiry_date": "2099-01-01"}))
+                   text_full="HALAL CERTIFICATE\nCertificate No: ID00410000500391022",
+                   text_excerpt="HALAL CERTIFICATE\nCertificate No: ID00410000500391022",
+                   content_b64=base64.b64encode(b"Halal Certificate No: ID00410000500391022").decode(),
+                   fields={"cert_no": "ID00410000500391022", "expiry_date": "2099-01-01"}))
             db.commit()
-        c.patch(f"/materials/{mid}", json={"cert_no": "ID00410000001"}, headers=h)
+        response = c.patch(f"/materials/{mid}", json={"cert_no": "ID00410000500391022"}, headers=h)
+        assert response.status_code == 200 and response.json()["cert_no"] == "ID00410000500391022"
         for lang in ("ko", "en", "id"):
             r = c.get(f"/cases/{cid}/doc-checklist?lang={lang}", headers=h)
             assert r.status_code == 200, (lang, r.status_code)

@@ -1,5 +1,6 @@
 """MISC FIXES — 사전심사 반려 사유 통지·D-02R 열람 제한·회원 정지/해제."""
 import os, sys
+import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("GLHAC_DB_URL", "sqlite:///./glhac_misc_test.db")
 os.environ.setdefault("GLHAC_DEV", "1")
@@ -85,7 +86,22 @@ def test_불가_판정_사유_통지():
         assert client is not None and consultant is not None
 
 
-def test_D02R_기업_열람_샤리아_비공개():
+@pytest.mark.parametrize("converter", ["pdf", "unavailable"])
+def test_D02R_기업_열람_샤리아_비공개(monkeypatch, converter):
+    # 권한 시험을 설치된 soffice의 실행 가능 여부와 분리한다. 바이너리가 있어도
+    # 샌드박스에서는 exit 134가 난다. 성공/PDF와 실패/DOCX 양쪽 계약을 검증한다.
+    import app.main as m
+    calls = []
+    def convert(data):
+        assert data.startswith(b"PK")
+        calls.append(data)
+        if converter == "unavailable":
+            raise RuntimeError("Local converter unavailable fixture")
+        import fitz
+        with fitz.open() as document:
+            document.new_page()
+            return document.tobytes()
+    monkeypatch.setattr(m, "_docx_to_pdf_bytes", convert)
     with TestClient(app) as c:
         admin = _tok(c, "admin", "admin")
         applicant = _tok(c, "applicant1", "pw")
@@ -94,18 +110,16 @@ def test_D02R_기업_열람_샤리아_비공개():
 
         r = c.get("/cases/%s/preassess-report.pdf" % cid, headers=applicant)
         assert r.status_code == 200, r.text
-        # 엔드포인트는 LibreOffice(soffice)가 있으면 PDF, 없으면 같은 양식의 docx 로 대체한다(문서화된 폴백).
-        # CI 러너엔 soffice 가 없어 docx 가 온다 — 환경별 기대값을 정확히 본다.
-        import shutil
-        import os.path
-        # 앱(_docx_to_pdf_bytes)과 같은 판별 — PATH 의 soffice 또는 맥 기본 설치 경로.
-        if shutil.which("soffice") or os.path.exists("/Applications/LibreOffice.app/Contents/MacOS/soffice"):
+        if converter == "pdf":
             assert "application/pdf" in r.headers.get("content-type", ""), r.headers
+            assert r.content.startswith(b"%PDF-")
         else:
             assert "wordprocessingml" in r.headers.get("content-type", ""), r.headers
+            assert r.content.startswith(b"PK")
 
         r = c.get("/cases/%s/preassess-report.pdf" % cid, headers=fatwa)
         assert r.status_code == 403, r.text
+        assert len(calls) == 1
 
 
 def test_회원_정지_해제():

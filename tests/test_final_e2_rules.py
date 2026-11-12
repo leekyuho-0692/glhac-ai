@@ -35,7 +35,7 @@ def seed_reviewed_issue_prerequisites(db, c):
     for material in db.query(M.Material).filter_by(case_id=c.case_id):
         if material.screen_result is None:
             m.screening.apply_screen(material)
-    for element, row in m._ensure_hpas(db, c.case_id).items():
+    for element, row in m._ensure_hpas(db, c.case_id, persist=True).items():
         row.status = "ok"
     if not sm.has_active_penyelia(db, c.org_id):
         db.add(M.PenyeliaHalal(org_id=c.org_id, name="Reviewed fixture supervisor", status="active"))

@@ -110,11 +110,48 @@ def test_유효기간이_지나면_EXPIRED():
 
 
 def test_본문에서_번호를_찾는다():
-    """번호 필드가 비어도 원문의 명시 라벨로 찾는다. 유효기간은 별도로 확인돼야 한다."""
+    """번호 필드가 비어도 원문의 명시 라벨로 찾고, 확인된 유효기간 안에서만 승격한다."""
     doc = {"doc_type": "halal_certificate", "fields": {"expiry_date": "2030-01-01"},
            "text": "Sertifikat Halal Nomor ID00410000500391022 berlaku"}
     res = cv.verify("ID00410000500391022", docs=[doc], today=date(2026, 9, 28))
     assert res["verdict"] == "VERIFIED"
+
+
+def test_모든_텍스트의_무효_상태를_함께_확인한다():
+    for key in ("text", "text_full", "text_excerpt"):
+        for status in ("REVOKED", "DRAFT"):
+            doc = _doc()
+            doc.update(text_full=doc["text"], text_excerpt=doc["text"])
+            doc[key] += "\nStatus: " + status
+            assert "invalid_status" in cv.certificate_evidence_issues(doc)
+            assert not cv.document_context_valid(doc)
+            assert not cv.promotes(cv.verify(doc["fields"]["cert_no"], [doc]))
+
+
+def test_전문의_번호_역할을_발췌로_덮어쓰지_않는다():
+    for fulltext in ("HALAL CERTIFICATE\nLot No: ID00410000500391022",
+                     "HALAL CERTIFICATE\nCertificate No: ID00410000185650421"):
+        doc = _doc()
+        doc.update(text_full=fulltext, text_excerpt=doc["text"])
+        assert "identifier" in cv.certificate_evidence_issues(doc)
+        assert not cv.document_context_valid(doc)
+        assert not cv.promotes(cv.verify(doc["fields"]["cert_no"], [doc]))
+
+
+def test_같은_번호의_사본도_적격한_증빙만_선택한다():
+    expired = _doc(expiry="2000-01-01")
+    warned = _doc()
+    warned["fields"]["_verify"] = {"verdict": "warn"}
+    draft = _doc()
+    draft["text_excerpt"] = "Status: DRAFT"
+    valid = _doc()
+    number = valid["fields"]["cert_no"]
+    today = date(2026, 9, 28)
+    blocked = [expired, warned, draft]
+    assert cv.verify(number, blocked, today=today)["verdict"] == "EXPIRED"
+    result = cv.verify(number, blocked + [valid], today=today)
+    assert cv.promotes(result)
+    assert result["matched_document"] is valid
 
 
 def test_플래그_꺼짐이면_기존_승격이_유지된다():
