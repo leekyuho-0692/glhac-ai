@@ -30,10 +30,10 @@ const NTF_modalBody = () => {
     return `<li class="row" style="display:flex;flex-direction:column;gap:6px;align-items:stretch">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         ${read?'':'<span class="badge attn">새 알림</span>'}
-        <span style="font-weight:600">${NTF_esc(n.title)}</span>
+        <span data-noi18n style="font-weight:600">${NTF_esc(n.title)}</span>
         <span class="muted mono" style="font-size:11px;margin-left:auto">${NTF_esc(n.created_at)}</span>
       </div>
-      ${n.body?`<div class="muted" style="font-size:13px;white-space:pre-wrap">${NTF_esc(n.body)}</div>`:''}
+      ${n.body?`<div class="muted" data-noi18n style="font-size:13px;white-space:pre-wrap">${NTF_esc(n.body)}</div>`:''}
       <div class="row-act" style="display:flex;gap:6px">
         ${read?'':`<button class="btn btn-sm" onclick="App.ntfRead('${i}')">읽음</button>`}
       </div>

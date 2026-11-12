@@ -13,12 +13,12 @@ function CSJ_cache(cid){
 async function CSJ_loadSjph(cid){
   const c = CSJ_cache(cid);
   if(c.sjph && c.sjph.t) return;
-  c.sjph = await CSJ_get('/cases/'+cid+'/sjph'); c.sjph.t = 1;
+  c.sjph = await CSJ_get('/cases/'+cid+'/sjph?lang='+S.lang); c.sjph.t = 1;
 }
 async function CSJ_loadEv(cid){
   const c = CSJ_cache(cid);
   if(c.ev && c.ev.t) return;
-  c.ev = await CSJ_get('/cases/'+cid+'/sjph-evidence'); c.ev.t = 1;
+  c.ev = await CSJ_get('/cases/'+cid+'/sjph-evidence?lang='+S.lang); c.ev.t = 1;
 }
 const CSJ_err = (d, msg) => `<section class="panel"><p class="empty">${d && d.status===403 ? '권한이 없습니다.' : msg}</p></section>`;
 
@@ -55,7 +55,7 @@ const CSJ_ev = (cid) => {
   const items = d.items || [];
   const rows = items.map((it,i)=>{
     const up = it.uploaded ? `<span class="badge strong">제출</span>` : `<span class="badge attn">미제출</span>`;
-    const doc = it.document_id ? `<button class="link" onclick="App.docDownload('${it.document_id}', ${JSON.stringify(it.filename||'evidence')})">${esc(it.filename||'')}</button>` : '<span class="muted">—</span>';
+    const doc = it.document_id ? `<button class="link" data-csj-document="${esc(it.document_id)}" data-csj-filename="${esc(it.filename||'evidence')}">${esc(it.filename||'')}</button>` : '<span class="muted">—</span>';
     return `<tr><td><span>${esc(it.label||'')}</span> <span class="muted mono">${esc(it.item_key||'')}</span></td><td>${up}</td><td>${doc}</td>
       <td class="row-act"><label class="btn btn-sm">업로드<input type="file" style="display:none" onchange="App.csjEvUp('${cid}','${it.item_key}',this)"></label></td></tr>`;
   }).join('');
@@ -67,6 +67,14 @@ const CSJ_ev = (cid) => {
 };
 
 App.csjPanel = (cid) => CSJ_sjph(cid) + CSJ_ev(cid);
+
+// Keep filenames as data: JSON string quotes must never become inline JavaScript.
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-csj-document]');
+  if(!button) return;
+  event.preventDefault();
+  return App.docDownload(button.dataset.csjDocument, button.dataset.csjFilename);
+});
 
 { const f = VIEWS['cons-docs'];
   VIEWS['cons-docs'] = () => {

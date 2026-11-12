@@ -19,7 +19,7 @@ const RP_bucketLabel = (b) => {
   if(/^\d{4}-\d{2}-\d{2}$/.test(s)){
     const d = new Date(s+'T00:00:00');
     if(isNaN(d.getTime())) return s;
-    const wd = ['일','월','화','수','목','금','토'][d.getDay()];
+    const wd = new Intl.DateTimeFormat(S.lang||'ko', {weekday:'short'}).format(d);
     return s.slice(5)+'('+wd+')';
   }
   if(/^\d{4}-\d{2}$/.test(s)) return s;
@@ -41,6 +41,7 @@ async function RP_loadList(){
 
 App.rpGran = function(g){ S.rpGran = g; RS.rp = undefined; render(); };
 App.rpDate = function(v){ S.rpDate = v||RP_today(); RS.rp = undefined; render(); };
+App.rpRetry = async function(){ await RP_load(); render(); };
 App.rpShift = function(dir){
   const d = new Date((S.rpDate||RP_today())+'T00:00:00');
   if(isNaN(d.getTime())) return;
@@ -81,7 +82,7 @@ VIEWS['adm-report'] = () => {
   if(!d) return `<div style="display:flex;flex-direction:column;gap:22px">${ctrl}<section class="panel"><p class="empty">불러오는 중…</p></section>${RP_listPanel()}</div>`;
   if(d.error){
     const msg = d.status===403 ? '이 화면을 볼 권한이 없습니다.' : '불러오지 못했습니다.';
-    return `<div style="display:flex;flex-direction:column;gap:22px">${ctrl}<section class="panel"><p class="empty">${msg}</p></section>${RP_listPanel()}</div>`;
+    return `<div style="display:flex;flex-direction:column;gap:22px">${ctrl}<section class="panel"><p class="empty">${msg} <button class="btn btn-sm" onclick="App.rpRetry()">${t('members.retry')}</button></p></section>${RP_listPanel()}</div>`;
   }
   const m = d.metrics||{}, pm = d.previous_metrics||{}, p = d.period||{};
   const head = `<div class="panel-head"><h2>${esc((p.label||'')+' · '+S.rpGran)}</h2><div class="rp-period-meta">${p.in_progress?'<span class="badge attn">진행 중 기간(오늘까지 집계)</span>':''}<span class="muted">전기: ${esc((d.previous&&d.previous.label)||'')}</span></div></div>`;

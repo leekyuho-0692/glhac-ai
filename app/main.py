@@ -1716,12 +1716,59 @@ PROBLEM_DOC_COPY = {
 def notify_text(n, lang="ko"):
     """알림을 읽는 사람의 언어로 조립 — (제목, 본문).
 
-    payload 가 없으면(예전에 쌓인 알림, 카탈로그에 없는 이벤트) 저장된 한국어를 그대로 쓴다.
+    payload 없는 알려진 배정 이벤트는 저장된 템플릿에서 매개변수만 복원한다.
+    그 외 예전 알림/알 수 없는 이벤트는 원문을 유지한다.
     본문 템플릿이 None 이면 사람이 쓴 원문을 그대로 둔다."""
     lang = lang if lang in ("ko", "en", "id") else "ko"
     pl = n.payload if isinstance(n.payload, dict) else None
     tmpl = NOTIFY_MSG.get((pl or {}).get("key") or "", {}).get(lang)
     if not tmpl:
+        # These assignment events predate payload-based notifications. Translate
+        # only an exact system template for its event key, never names/free text.
+        assignment_messages = {
+            "auditor.assignment_accepted": (
+                r"(.*?) 님이 심사를 수락했습니다\.",
+                {"en": ("Auditor assignment accepted", "{0} accepted the audit."),
+                 "id": ("Penugasan auditor diterima", "{0} menerima audit.")}),
+            "auditor.assignment_rejected": (
+                r"(.*?) 님이 심사를 거절했습니다\. 사유: (.*)",
+                {"en": ("Auditor assignment declined — reassignment required", "{0} declined the audit. Reason: {1}"),
+                 "id": ("Penugasan auditor ditolak — perlu penugasan ulang", "{0} menolak audit. Alasan: {1}")}),
+        }
+        spec = assignment_messages.get(n.event_type)
+        if spec and lang in spec[1]:
+            match = re.fullmatch(spec[0], n.body or "", re.DOTALL)
+            if match:
+                title, body = spec[1][lang]
+                return title, body.format(*match.groups())
+        if n.event_type == "package.gap" and lang in ("en", "id"):
+            match = re.fullmatch(r"\[(.*)\] 인증 패키지 확인 필요 — (.*)", n.title or "", re.DOTALL)
+            if match:
+                labels = {"company": ("Company information", "Informasi perusahaan"),
+                          "product": ("Products", "Produk"), "material": ("Ingredients (raw materials)", "Bahan baku"),
+                          "factory": ("Factory", "Pabrik"), "scope": ("Service scope", "Lingkup layanan"),
+                          "vehicle": ("Vehicles", "Kendaraan"), "facility": ("Storage/packing facilities", "Fasilitas penyimpanan/pengemasan"),
+                          "cleaning": ("Cleaning SOP", "SOP pembersihan")}
+                li = 0 if lang == "en" else 1
+                parts = []
+                for part in match[2].split(" · "):
+                    key = next((k for k, label in _PKG_LABEL.items() if part == label + " 누락"), None)
+                    unread = re.fullmatch(r"미판독 서류 (\d+)건\(판독 전 — 재처리 필요\)", part)
+                    if key in labels:
+                        parts.append(("Missing: ", "Belum tersedia: ")[li] + labels[key][li])
+                    elif unread:
+                        parts.append(("Unread documents: %s (reprocessing required)",
+                                      "Dokumen belum terbaca: %s (perlu diproses ulang)")[li] % unread[1])
+                    else:
+                        break  # Unknown or human-edited text is preserved verbatim.
+                else:
+                    title = "[%s] %s — %s" % (match[1], ("Certification package review required", "Paket sertifikasi perlu diperiksa")[li], " · ".join(parts))
+                    body = n.body
+                    if body == ("업체·제품·성분·공장은 한 묶음입니다. 올라온 서류에서 찾지 못했거나 판독되지 않은 항목이 있어 "
+                                "수기 확인·입력이 필요합니다."):
+                        body = ("Company, products, ingredients and factory information form one package. Missing or unreadable items require manual review and entry.",
+                                "Informasi perusahaan, produk, bahan dan pabrik merupakan satu paket. Data yang hilang atau belum terbaca perlu diperiksa dan diisi secara manual.")[li]
+                    return title, body
         return n.title, n.body
     params = (pl or {}).get("params") or {}
     try:
@@ -19477,7 +19524,9 @@ def _report_trend(db, cases, evs, pays, certs, granularity, s, e):
     """RPT-03 추이 — daily/weekly 는 일 단위, 그 외 월 단위 버킷."""
     unit = "day" if granularity in ("daily", "weekly") else "month"
     def key(d):
-        d = d.date() if hasattr(d, "date") and not isinstance(d, date) else d
+        # datetime is a date subclass: test the more specific type first.
+        # Cases, signatures and payments must all use the calendar bucket key.
+        d = d.date() if isinstance(d, datetime) else d
         return d.isoformat() if unit == "day" else d.strftime("%Y-%m")
     buckets = {}
     cur = s

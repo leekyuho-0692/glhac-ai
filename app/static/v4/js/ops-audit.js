@@ -147,10 +147,12 @@ async function OPSA_loadChannels(){
   }catch(e){ RS.opsa.channels = {error:true}; }
 }
 async function OPSA_loadNotifs(){
+  const lang=S.lang;
   try{
-    const r = await apiFetch('/admin/notifications?limit='+OPSA_LIMIT);
-    RS.opsa.notifs = r.ok ? (await r.json()) : {error:true, status:r.status};
-  }catch(e){ RS.opsa.notifs = {error:true}; }
+    const r = await apiFetch('/admin/notifications?limit='+OPSA_LIMIT+'&lang='+lang);
+    const data = r.ok ? (await r.json()) : {error:true, status:r.status};
+    if(S.lang===lang) RS.opsa.notifs = data;
+  }catch(e){ if(S.lang===lang) RS.opsa.notifs = {error:true}; }
 }
 function OPSA_channelBadge(ch){
   const state = ch.status || (ch.configured ? 'connected' : (ch.implemented ? 'unset' : 'stub'));
@@ -196,7 +198,7 @@ function OPSA_renderNotifs(){
     </div>`;
     const rows = items.length
       ? items.map(x=>`<tr>
-          <td>${esc(x.title||x.event_type||'')}<div class="muted mono" style="font-size:11px">${esc(x.event_type||'')}</div></td>
+          <td data-noi18n>${esc(x.title||x.event_type||'')}<div class="muted mono" style="font-size:11px">${esc(x.event_type||'')}</div></td>
           <td>${(x.channels||[]).map(ch=>`<span class="tag">${esc(ch)}</span>`).join(' ')}</td>
           <td><span class="badge ${x.status==='sent'?'strong':(x.status==='failed'?'attn':'')}">${esc(x.status||'')}</span></td>
           <td class="num mono">${x.attempts!=null?esc(x.attempts):''}</td>

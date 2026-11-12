@@ -57,7 +57,7 @@ function SL_detail(cur, arr){
     <td class="muted mono" style="font-size:11px">${esc((c.last_event_at||'').slice(0,16).replace('T',' '))}</td>
     <td><button class="btn btn-sm" onclick="event.stopPropagation();App.slOpenCase('${c.case_id}')">${t('ui.text_050')}</button></td>
   </tr>`).join('');
-  return `<section class="panel">${head}<div class="tbl-wrap"><table><thead><tr>
+  return `<section class="panel">${head}<div class="tbl-wrap" tabindex="0" role="region" aria-label="${t('nav.cons-stage')}"><table class="sl-table"><thead><tr>
     <th>${t('ui.text_022')}</th><th>${t('ui.text_051')}</th><th>${t('ui.text_052')}</th><th>${t('ui.text_053')}</th><th>${t('upload.text_013')}</th><th>${t('ui.text_054')}</th><th>${t('ui.text_055')}</th><th>${t('ui.text_056')}</th><th>${t('ui.text_057')}</th><th></th>
   </tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }

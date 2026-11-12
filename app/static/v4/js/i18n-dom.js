@@ -184,6 +184,8 @@ function I18D_start(){
       try{ localStorage.setItem('glhac_v4_lang', l); }catch(e){}
       S.lang = l;
       RS.entaCheck=null; RS.entDocs={}; RS.auddDocs={}; RS.auddPend={};
+      RS.sjb={}; RS.mats={}; RS.__csj={};
+      if(RS.opsa) RS.opsa.notifs=undefined;
       RS._entaChkLoading=null; RS._entDocsLoading=null;
       render();
     };

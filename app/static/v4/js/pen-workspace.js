@@ -44,8 +44,7 @@ VIEWS['pen-home'] = () => {
       ${it.verified_at?`<div><dt>결정 시각</dt><dd class="mono">${esc(String(it.verified_at).slice(0,19))}</dd></div>`:''}
       ${it.note?`<div><dt>메모</dt><dd>${esc(it.note)}</dd></div>`:''}
     </dl>
-    ${it.pathway!=='self_declare'?'<div class="note attn"><p>이 건은 자기선언 경로가 아닙니다(반려 등으로 정규 전환). 추가 검증은 필요 없습니다.</p></div>':''}
-    ${done?'<div class="note"><p>검증 결정을 마쳤습니다. 자기선언서를 다시 확인하려면 아래 미리보기를 쓰세요.</p></div>':''}
+    ${done && it.pathway==='self_declare'?'<div class="note"><p>검증 결정을 마쳤습니다. 자기선언서를 다시 확인하려면 아래 미리보기를 쓰세요.</p></div>':''}
     ${SDC_blocks(cur)}
   </section>`;
   return head + `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${detail}</div></div>`;
