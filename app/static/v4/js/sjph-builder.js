@@ -25,20 +25,21 @@ const SJB_dataURL = (file) => new Promise((resolve, reject) => {
 });
 
 async function SJB_load(cid){
+  const lang=S.lang;
   try{
     const [lr, pr] = await Promise.all([
       apiFetch('/cases/'+cid+'/sjph-manual/layout'),
-      apiFetch('/cases/'+cid+'/manual-placement?lang=ko')
+      apiFetch('/cases/'+cid+'/manual-placement?lang='+lang)
     ]);
     if(!lr.ok || !pr.ok){
-      RS.sjb[cid] = {error:true, status:(!lr.ok ? lr.status : pr.status)};
+      if(S.lang===lang) RS.sjb[cid] = {error:true, status:(!lr.ok ? lr.status : pr.status)};
       return;
     }
     const L = await lr.json();
     const P = await pr.json();
-    RS.sjb[cid] = {L, P};
+    if(S.lang===lang) RS.sjb[cid] = {L, P};
   }catch(e){
-    RS.sjb[cid] = {error:true};
+    if(S.lang===lang) RS.sjb[cid] = {error:true};
   }
 }
 
@@ -141,7 +142,7 @@ function SJB_place(cid, P){
     if(s.decided_by === 'manual') deco = '<span class="badge strong">사람 지정</span>';
     else if(s.decided_by === 'auto') deco = '<span class="badge attn">AI 추정</span>';
     else deco = '<span class="badge">비움</span>';
-    const reason = s.reason ? `<div class="muted" style="font-size:11px">${esc(s.reason)}</div>` : '';
+    const reason = s.reason ? `<div class="muted" data-noi18n style="font-size:11px">${esc(s.reason)}</div>` : '';
     return `<tr>
       <td><b>${esc(s.label||'')}</b><div class="muted" style="font-size:11px">${esc(s.anchor||'')}</div></td>
       <td>${cell2}</td>
