@@ -160,7 +160,11 @@ def material_identity(m):
 def scope_snapshot(db, case):
     from .models import Product, ProductMaterial, Facility
     db.flush()
-    return {"version": 2, "scheme": case.scheme or "product",
+    return {"version": 3, "scheme": case.scheme or "product",
+            "identity": {key: getattr(case, key) for key in (
+                "org_id", "company_name", "nib", "responsible_person", "address")},
+            "identity_ext": {key: (case.profile_ext or {}).get(key) for key in (
+                "company_name_ko", "company_name_en", "corporate_reg_no")},
             "logistics_scope": sorted(case.logistics_scope or []),
             "facility_ids": sorted(set(case.facility_ids or [])),
             "facilities": [{k: getattr(f, k) for k in (
@@ -190,6 +194,18 @@ def frozen_scope(db, case):
     row = (db.query(WorkflowEvent).filter_by(case_id=case.case_id, action="scope.freeze")
            .order_by(WorkflowEvent.created_at.desc(), WorkflowEvent.event_id.desc()).first())
     return (row.payload or {}).get("snapshot") if row else None
+
+
+def review_subject(db, case):
+    """보고서·서명·의결·발급이 공유하는 업체/범위 지문과 재검토 세대.
+
+    같은 내용으로 되돌려도 언락 이전 승인은 재사용하지 않는다. 기존 감사체인을
+    버전 근거로 쓰므로 운영 테이블에 가변 버전 필드를 추가할 필요가 없다.
+    """
+    revision = (db.query(WorkflowEvent).filter_by(case_id=case.case_id, action="review.invalidated")
+                .order_by(WorkflowEvent.created_at.desc(), WorkflowEvent.event_id.desc()).first())
+    body = {"scope": scope_snapshot(db, case), "revision": revision.event_id if revision else None}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 def approved_material_evidence(db, material, today=None):
@@ -344,13 +360,14 @@ def evidence_complete(db, case_id):
 
 
 def sihalal_verified(db, case_id):
-    return db.query(ExternalIdentity).filter_by(
-        case_id=case_id, verification_status="verified", identifier_match=True).count() > 0
+    identities = db.query(ExternalIdentity).filter_by(case_id=case_id).all()
+    return bool(identities) and all(
+        row.verification_status == "verified" and row.identifier_match for row in identities)
 
 
 def pendamping_decision(db, case_id):
     pa = (db.query(PendampingAssignment).filter_by(case_id=case_id)
-          .order_by(PendampingAssignment.assignment_id.desc()).first())
+          .order_by(PendampingAssignment.assigned_at.desc(), PendampingAssignment.assignment_id.desc()).first())
     return pa.decision if pa else None
 
 
@@ -413,7 +430,7 @@ def guard_reguler_submit(db, case):
 def guard_committee_materials(db, case):
     g = material_safety_blockers(db, case)
     if case.pathway == "self_declare":
-        g += guard_pathway_selfdeclare(db, case)
+        g += guard_selfdeclare_submit(db, case)
     if not evidence_complete(db, case.case_id):
         g.append({"code": "MATERIAL_EVIDENCE_INCOMPLETE"})
     return g
@@ -448,11 +465,27 @@ def guard_certificate_issue(db, case):
     return g
 
 
+def finding_has_verified_car(db, finding, reviewed_car=None):
+    """종결과 발급/재개가 동일한 독립 심사 근거를 확인한다."""
+    from .models import CorrectiveAction, User
+    cars = [reviewed_car] if reviewed_car else db.query(CorrectiveAction).filter_by(
+        case_id=finding.case_id, finding_id=finding.finding_id).all()
+    for car in cars:
+        reviewer = db.get(User, car.reviewer) if car.reviewer else None
+        if (car.case_id == finding.case_id and car.finding_id == finding.finding_id
+                and car.status in {"accepted", "closed"}
+                and (car.description or "").strip() and (car.evidence or "").strip()
+                and reviewer and reviewer.role == "auditor" and car.submitted_by
+                and car.reviewer != car.submitted_by):
+            return True
+    return False
+
+
 def open_major_nc(db, case_id):
     from .models import AuditFinding
-    return db.query(AuditFinding).filter(
-        AuditFinding.case_id == case_id, AuditFinding.severity == "major",
-        AuditFinding.status.is_distinct_from("closed")).count()
+    return sum(f.status != "closed" or not finding_has_verified_car(db, f)
+               for f in db.query(AuditFinding).filter(
+                   AuditFinding.case_id == case_id, AuditFinding.severity.in_(("major", "critical"))))
 
 
 def guard_final_package(db, case):

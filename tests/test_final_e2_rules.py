@@ -39,12 +39,24 @@ def seed_reviewed_issue_prerequisites(db, c):
         row.status = "ok"
     if not sm.has_active_penyelia(db, c.org_id):
         db.add(M.PenyeliaHalal(org_id=c.org_id, name="Reviewed fixture supervisor", status="active"))
+    if c.pathway == "self_declare":
+        seed_selfdeclare_prerequisites(db, c)
+        sm.record_event(db, c, c.status, c.status, "committee.approve", "fatwa_liaison", None,
+                        {"review_subject": sm.review_subject(db, c)})
+        return
     g = M.GeneratedDocument(case_id=c.case_id, org_id=c.org_id, doc_type="audit_report",
                             version=1, status="approved", content="Reviewed fixture scope")
     db.add(g)
     db.flush()
+    subject = sm.review_subject(db, c)
+    sm.record_event(db, c, c.status, c.status, "audit_report.generated", "auditor", auditor.user_id,
+                    {**m._report_version(g), "review_subject": subject})
     sm.record_event(db, c, c.status, c.status, "audit_report.sign", "auditor", auditor.user_id,
-                    {"name": auditor.username, **m._report_version(g)})
+                    {"name": auditor.username, **m._report_version(g), "review_subject": subject})
+    if m.nav8.formal_flow_on():
+        applicant = db.query(M.User).filter_by(username="applicant1").one()
+        sm.record_event(db, c, c.status, c.status, "audit_report.client_sign", "applicant", applicant.user_id,
+                        {"name": applicant.username, **m._report_version(g), "review_subject": subject})
     _, context = m._fatwa_gate_check(db, c)
     ar = M.ApprovalRequest(case_id=c.case_id, org_id=c.org_id, action_type="audit_report.send_fatwa",
                            requested_by=auditor.user_id, decided_by=checker.user_id, status="approved",
@@ -53,6 +65,28 @@ def seed_reviewed_issue_prerequisites(db, c):
     db.flush()
     sm.record_event(db, c, c.status, "fatwa_review", "audit_report.send_fatwa", "auditor", auditor.user_id,
                     {"approval_id": ar.id, "review_basis": context["review_basis"], "gate": "passed"})
+    sm.record_event(db, c, c.status, c.status, "fatwa.provisional", "fatwa_liaison", None,
+                    {"decision": "approved", "review_basis": context["review_basis"]})
+    if c.fatwa_status == "approved":
+        sm.record_event(db, c, c.status, c.status, "fatwa.final_approve", "operator", None,
+                        {"review_basis": context["review_basis"]})
+
+
+def seed_selfdeclare_prerequisites(db, c):
+    """판정서/발급 fixture도 동반자·식별자·감독자 전제는 갖춘다."""
+    db.add(M.ExternalIdentity(case_id=c.case_id, org_id=c.org_id,
+                              external_email="fixture@example.invalid",
+                              verification_status="verified", identifier_match=True))
+    pendamping = db.query(M.User).filter_by(role="pendamping_pph").first()
+    if not pendamping:
+        pendamping = M.User(username="fixture_pendamping", password_hash=m.auth.hash_pw("fixture-only"),
+                            role="pendamping_pph", org_id=c.org_id)
+        db.add(pendamping)
+        db.flush()
+    db.add(M.PendampingAssignment(case_id=c.case_id, pendamping_id=pendamping.user_id, decision="verified"))
+    if not sm.has_active_penyelia(db, c.org_id):
+        db.add(M.PenyeliaHalal(org_id=c.org_id, name="Reviewed fixture supervisor", status="active"))
+    db.flush()
 
 
 def seed_paid_receipt(db, inv):
@@ -180,7 +214,7 @@ def test_shared_terminal_facility_cannot_change(api, status):
 
 
 @pytest.mark.parametrize("terminal", [False, True])
-def test_selecting_facility_already_bound_to_locked_case_is_blocked(api, terminal):
+def test_selecting_immutable_facility_preserves_locked_source(api, terminal):
     cid = new_case(api, logistics=True)
     fid = ok(api("POST", f"/cases/{cid}/factories", {"name": "Reviewed warehouse"}))["facility_id"]
     other = new_case(api, logistics=True)
@@ -194,10 +228,11 @@ def test_selecting_facility_already_bound_to_locked_case_is_blocked(api, termina
         if terminal:
             db.get(M.CaseApplication, cid).status = "cancelled"
             db.commit()
-    blocked(api("PATCH", f"/cases/{other}/facilities-select", {"facility_ids": [fid]}),
+    ok(api("PATCH", f"/cases/{other}/facilities-select", {"facility_ids": [fid]}))
+    blocked(api("PATCH", f"/facilities/{fid}", {"address": "Unreviewed edit"}),
             "CASE_CLOSED" if terminal else "SCOPE_FROZEN")
     with SessionLocal() as db:
-        assert fid not in (db.get(M.CaseApplication, other).facility_ids or [])
+        assert fid in (db.get(M.CaseApplication, other).facility_ids or [])
         assert sm.frozen_scope(db, db.get(M.CaseApplication, cid)) == snapshot
 
 
@@ -426,7 +461,8 @@ def test_normal_review_and_split_billing_can_issue(api, logistics):
         db.add(M.Invoice(case_id=cid, total=500, amount=500, status="draft", currency="KRW"))
         db.add(M.Invoice(case_id=cid, total=500, amount=500, status="cancelled", currency="KRW"))
         db.commit()
-    freeze(cid)
+    ok(api("PATCH", f"/cases/{cid}/fatwa", {"decision": "approved"}, "fatwa1"))
+    ok(api("POST", f"/cases/{cid}/fatwa/final-approve", {}, "operator1"))
     req = ok(request_issue(api, cid))
     ok(api("POST", f"/approvals/{req['approval_id']}/approve", {}))
     with SessionLocal() as db:

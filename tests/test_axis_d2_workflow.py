@@ -70,6 +70,10 @@ def auditor(client):
 def test_proxy_requires_three_distinct_independent_auditors(client, tokens, monkeypatch):
     monkeypatch.setenv("GLHAC_FORMAL_FLOW", "1")
     cid = case("fatwa_review")
+    from test_final_e2_rules import seed_reviewed_issue_prerequisites
+    with SessionLocal() as db:
+        seed_reviewed_issue_prerequisites(db, db.get(models.CaseApplication, cid))
+        db.commit()
     reviewers = [auditor(client) for _ in range(3)]
     for i, (uid, header) in enumerate(reviewers):
         r = client.post(f"/cases/{cid}/fatwa/vote", headers=header, json={"member": "auditor", "vote": "approve"})

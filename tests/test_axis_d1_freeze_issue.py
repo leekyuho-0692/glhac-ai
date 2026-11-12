@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from app import main as m, models
 from app.db import SessionLocal
-from test_final_e2_rules import seed_reviewed_issue_prerequisites, seed_paid_receipt
+from test_final_e2_rules import seed_reviewed_issue_prerequisites, seed_paid_receipt, seed_selfdeclare_prerequisites
 
 
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
@@ -412,6 +412,7 @@ def test_safe_self_declare_entry_freezes_scope_and_can_issue(api):
         c = db.get(models.CaseApplication, cid)
         c.pathway, c.status = "self_declare", "self_declaration_submitted"
         c.risk_category, c.is_msme = "low", True
+        seed_selfdeclare_prerequisites(db, c)
         db.commit()
     ok(api("POST", f"/cases/{cid}/transition", {"to_state": "committee_verification"}, "operator"))
     blocked(api("POST", f"/cases/{cid}/materials", {"name": "gelatin"}), "SCOPE_FROZEN")
@@ -428,6 +429,7 @@ def test_self_declare_pending_risk_is_rechecked(api, phase):
         c = db.get(models.CaseApplication, cid)
         c.pathway, c.status = "self_declare", "self_declaration_submitted"
         c.risk_category, c.is_msme = "low", True
+        seed_selfdeclare_prerequisites(db, c)
         db.commit()
     if phase == "approval":
         ok(api("POST", f"/cases/{cid}/transition", {"to_state": "committee_verification"}, "operator"))

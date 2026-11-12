@@ -238,6 +238,12 @@ def test_two_stage_fatwa_approval():
                      headers=_h(adm)).json()["case_id"]
         _ready_for_fatwa(cid)
         # 샤리아 가승인 → fatwa_status=provisional (최종 아님)
+        from test_final_e2_rules import seed_reviewed_issue_prerequisites
+        from app import models
+        from app.db import SessionLocal
+        with SessionLocal() as db:
+            seed_reviewed_issue_prerequisites(db, db.get(models.CaseApplication, cid))
+            db.commit()
         assert c.patch(f"/cases/{cid}/fatwa", json={"decision": "approved"},
                        headers=_h(fat)).status_code == 200
         assert c.get(f"/cases/{cid}", headers=_h(adm)).json()["fatwa_status"] == "provisional"

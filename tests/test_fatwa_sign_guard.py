@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
 from app import models
 from app.db import SessionLocal
+from test_r7_f1 import seed_member_headers
 
 SIG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
        "AAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC")
@@ -29,6 +30,7 @@ def _h(t):
 
 
 def _mkcase(c, tok):
+    seed_member_headers(c, chair="fatwa1")
     cid = c.post("/cases", json={"company_name": "Sign Guard Co", "org_id": "org_demo"},
                  headers=_h(tok)).json()["case_id"]
     with SessionLocal() as db:
@@ -49,16 +51,16 @@ def test_fatwa_liaison_can_sign():
         assert r.status_code == 200, r.text
 
 
-def test_operator_can_sign():
-    """(a') operator POST sign 200."""
+def test_operator_cannot_sign_for_committee_member():
+    """운영자도 등록 위원의 서명을 대신할 수 없다(R7 일반/정식 공통 정책)."""
     with TestClient(app) as c:
         applicant = _tok(c, "applicant1", "pw")
         cid = _mkcase(c, applicant)
         op = _tok(c, "operator1", "pw")
         r = c.post(f"/cases/{cid}/fatwa/sign",
-                   json={"member": "member1", "image": SIG, "name": "Ops"},
+                   json={"member": "member:member1", "image": SIG, "name": "Ops"},
                    headers=_h(op))
-        assert r.status_code == 200, r.text
+        assert r.status_code == 403, r.text
 
 
 def test_applicant_cannot_sign():
@@ -82,7 +84,7 @@ def test_owner_client_can_get_sign():
 
 
 if __name__ == "__main__":
-    tests = [test_fatwa_liaison_can_sign, test_operator_can_sign,
+    tests = [test_fatwa_liaison_can_sign, test_operator_cannot_sign_for_committee_member,
              test_applicant_cannot_sign, test_owner_client_can_get_sign]
     ok = 0
     for fn in tests:

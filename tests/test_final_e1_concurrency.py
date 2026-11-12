@@ -263,8 +263,12 @@ def test_reviewed_car_and_resolution_can_reactivate(api):
         finding = models.AuditFinding(case_id=cid, severity="major", status="closed", finding="Resolved")
         db.add(finding)
         db.flush()
+        auditor = db.query(models.User).filter_by(username="auditor1").one()
+        submitter = db.query(models.User).filter_by(username="applicant1").one()
         db.add(models.CorrectiveAction(case_id=cid, finding_id=finding.finding_id,
-                                      status="accepted", reviewer="independent-reviewer"))
+                                      status="accepted", reviewer=auditor.user_id,
+                                      submitted_by=submitter.user_id, description="Separation corrected",
+                                      evidence="Independent inspection record"))
         db.commit()
     ok(api("POST", f"/cases/{cid}/certificate/reactivate", {"reason": "시정조치 검토 및 정지 사유 해소 확인"}, "operator1"))
     assert ok(api("GET", cert["verify_url"]))["valid"] is True

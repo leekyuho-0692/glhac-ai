@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
 from app import models  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
+from test_final_e2_rules import seed_selfdeclare_prerequisites
 
 
 def _tok(c, u, p):
@@ -45,6 +46,7 @@ def _prep(case_id, pathway, status, add_product=False, **extra):
         c.pathway = pathway
         if pathway == "self_declare":
             c.risk_category, c.is_msme = "low", True
+            seed_selfdeclare_prerequisites(db, c)
         c.status = status
         for k, v in extra.items():
             setattr(c, k, v)

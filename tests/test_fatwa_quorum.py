@@ -13,6 +13,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
 from app import models
 from app.db import SessionLocal
+from test_r7_f1 import seed_member_headers
+
+_SEAT_HEADERS = {}
 
 SIG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
        "AAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC")
@@ -29,6 +32,8 @@ def _h(t):
 
 
 def _mkcase(c, tok):
+    _SEAT_HEADERS.clear()
+    _SEAT_HEADERS.update(seed_member_headers(c))
     cid = c.post("/cases", json={"company_name": "Quorum Iso Co", "org_id": "org_demo"},
                  headers=_h(tok)).json()["case_id"]
     with SessionLocal() as db:
@@ -38,9 +43,10 @@ def _mkcase(c, tok):
 
 
 def _sign(c, tok, cid, member):
+    member = member if member == "chairman" else "member:" + member
     return c.post(f"/cases/{cid}/fatwa/sign",
                   json={"member": member, "image": SIG, "name": member.title()},
-                  headers=_h(tok))
+                  headers=_SEAT_HEADERS[member])
 
 
 def test_no_chairman_blocks():

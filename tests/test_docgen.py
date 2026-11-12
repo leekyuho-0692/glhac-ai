@@ -122,11 +122,18 @@ def test_fatwa_decree_generate_and_pdf(tmp_path):
         committee_head="Dr. Ahmad", committee_secretary="Ust. Farhan",
         committee_members=["Dr. Siti"], decided_at=datetime.utcnow()))
     db.add(models.FatwaVote(case_id="case1", member="Dr. Ahmad", vote="approve"))
-    # 정족수 충족: 위원장 + 위원 1인 서명(fatwa.sign 이벤트)
+    # 정족수 fixture도 실제 계정별 좌석·해당 심의 회차를 담는다(R7).
+    for uid in ("chair1", "member1"):
+        db.add(models.User(user_id=uid, username=uid, role="fatwa_liaison",
+                           org_id="org1", password_hash="fixture-only"))
+    db.add(models.WorkflowEvent(case_id="fatwa-committee:org1", action="fatwa.committee",
+                                payload={"members": [
+                                    {"role": "chair", "name": "Dr. Ahmad", "user_id": "chair1"},
+                                    {"role": "member", "name": "Dr. Siti", "user_id": "member1"}]}))
     db.add(models.WorkflowEvent(case_id="case1", action="fatwa.sign", actor_type="user",
-                                payload={"member": "chairman", "image": _SIG}))
+                                actor_id="chair1", payload={"member": "chairman", "image": _SIG, "round": 1}))
     db.add(models.WorkflowEvent(case_id="case1", action="fatwa.sign", actor_type="user",
-                                payload={"member": "member1", "image": _SIG}))
+                                actor_id="member1", payload={"member": "member:Dr. Siti", "image": _SIG, "round": 1}))
     db.commit()
     r = m.gen_fatwa_decree("case1", user=USER, db=db)
     assert r["decision"] == "approved"

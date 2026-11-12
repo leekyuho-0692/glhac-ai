@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
 from app import models
 from app.db import SessionLocal
+from test_r7_f1 import seed_member_headers
 
 SIG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
        "AAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC")
@@ -40,14 +41,15 @@ def test_sign_roundtrip_latest_wins():
     with TestClient(app) as c:
         adm = _tok(c, "admin", "admin")
         cid = _mkcase(c, adm)
+        seats = seed_member_headers(c)
         assert c.get(f"/cases/{cid}/fatwa/sign", headers=_h(adm)).json() == {"signatures": {}}
         assert c.post(f"/cases/{cid}/fatwa/sign", json={"member": "chairman", "image": SIG, "name": "Dr. Ahmad"},
                       headers=_h(adm)).status_code == 200
         c.post(f"/cases/{cid}/fatwa/sign", json={"member": "chairman", "image": SIG, "name": "Dr. Ahmad Hidayat"}, headers=_h(adm))
-        c.post(f"/cases/{cid}/fatwa/sign", json={"member": "member1", "image": SIG, "name": "Ust. Farhan"}, headers=_h(adm))
+        c.post(f"/cases/{cid}/fatwa/sign", json={"member": "member:member1", "image": SIG, "name": "Ust. Farhan"}, headers=seats["member:member1"])
         got = c.get(f"/cases/{cid}/fatwa/sign", headers=_h(adm)).json()["signatures"]
         assert got["chairman"]["name"] == "Dr. Ahmad Hidayat", got   # latest-wins per member
-        assert got["member1"]["name"] == "Ust. Farhan", got
+        assert got["member:member1"]["name"] == "Ust. Farhan", got
         assert got["chairman"]["image"].startswith("data:image/"), got
         assert got["chairman"]["at"], got                            # 시각 메타 노출
 

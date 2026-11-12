@@ -146,6 +146,8 @@ def test_d_final_approve_from_status_accurate():
             case.status = "fatwa_review"
             case.fatwa_status = "provisional"
             db.add(models.FatwaDecision(case_id=cid, decision="approved"))
+            from test_final_e2_rules import seed_reviewed_issue_prerequisites
+            seed_reviewed_issue_prerequisites(db, case)
             db.commit()
         finally:
             db.close()
