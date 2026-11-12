@@ -485,7 +485,8 @@ def test_r401_r402_upload_report_and_review_queue(http_case, route, kind, expect
     assert len(measurements["items"]) == count
     assert {x["document_id"] for x in measurements["items"]} == {docs[0]["document_id"]}
     if expected == "review":
-        problems = client.get(f"/cases/{cid}/problem-documents", headers=headers).json()
+        staff = client.post("/auth/login", json={"username":"operator1", "password":"pw"}).json()
+        problems = client.get(f"/cases/{cid}/problem-documents", headers={"Authorization":"Bearer " + staff["token"]}).json()
         assert "QUANT_REVIEW" in {r["code"] for d in problems["documents"] for r in d["reasons"]}
 
 
@@ -511,7 +512,7 @@ def test_r408_noncritical_warning_and_existing_ownership_path(case):
     db.commit()
     result = m._problem_documents_result(db, c)
     assert [r["code"] for r in result["documents"][0]["reasons"]] == ["OWNERSHIP_MISMATCH"]
-    assert result["recipient_type"] == "applicant"
+    assert result["recipient_type"] == "operator"
 
 
 @pytest.mark.parametrize("note", [None, "legacy imported value"])

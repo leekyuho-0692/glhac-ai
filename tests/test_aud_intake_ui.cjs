@@ -26,6 +26,31 @@ function sample(){return {
   summary:{problem_document_count:1,pending_count:1,conflict_count:1}
 };}
 for(const lang of ['ko','en','id']){
+  test(`measurement exclusions are reference notes in document detail and pending: ${lang}`,()=>{
+    const {c}=setup(lang); c.data=sample();
+    const item={row:'Ethanol Result: 0.02% <script>bad()</script>',keyword:'Ethanol',
+      reason:'explicit_test_result',location:{page:2,line:4,start:50,end:57}};
+    c.data.documents[0].measurement_excluded=[item];
+    c.data.pending={items:[],conflicts:[],measurement_excluded:[{...item,filename:'test <b>.txt'}]};
+    c.data.summary.pending_count=0;
+    const html=c.run('INTAKE_render(data)');
+    for(const id of ['documents','pending']){
+      const section=html.split(`id="intake-${id}"`)[1].split('</section>')[0];
+      assert.ok(section.includes(c.t('intake.measurement_excluded')));
+      assert.ok(section.includes(c.t('intake.measurement_reference')));
+      assert.ok(section.includes(c.t('intake.measurement_reason.explicit_test_result')));
+      assert.ok(section.includes(c.run("tf('intake.measurement_page',{page:2})")));
+      assert.ok(section.includes('Ethanol Result: 0.02% &lt;script&gt;'));
+      assert.ok(!section.includes('<script>bad()'));
+    }
+    assert.ok(html.includes('test &lt;b&gt;.txt'));
+    assert.ok(!html.includes('intake.measurement_'));
+    assert.ok(!html.includes('explicit_test_result'));
+    assert.ok(!html.includes('audd-pick')&&!html.includes('audd-dismiss'));
+    if(lang!=='ko') assert.ok(!/[가-힣]/.test(html),html);
+    item.reason='test_table_result'; c.item=item;
+    assert.ok(c.run('INTAKE_measurementExcluded([item])').includes(c.t('intake.measurement_reason.test_table_result')));
+  });
   test(`intake sections, empty values, sources and escaping: ${lang}`,()=>{
     const {c}=setup(lang); c.data=sample();
     const html=c.run('INTAKE_render(data)');
@@ -225,3 +250,14 @@ test('code-like company names and extracted free text remain verbatim in every l
     assert.equal(c.run("INTAKE_value('pending','review_status')"),c.t('intake.value.pending'));
   }
 });
+
+for(const lang of ['ko','en','id']){
+  test(`field provenance and review badge: ${lang}`,()=>{
+    const {c}=setup(lang); c.doc={filename:'product.pdf',review_status:'pending',fields:{company_name:'Acme'},
+      field_meta:{company_name:{source:'ai',review:true,evidence:'<b>Acme</b>'}},classification:{review:true},verify:{}};
+    const html=c.run('INTAKE_document(doc,0)');
+    assert.ok(html.includes(c.t('docs.ai_review')) && html.includes(c.t('docs.source.ai')));
+    assert.ok(html.includes('&lt;b&gt;Acme&lt;/b&gt;'));
+    assert.ok(!html.includes('intake.field.field_meta') && !html.includes('intake.field.classification'));
+  });
+}

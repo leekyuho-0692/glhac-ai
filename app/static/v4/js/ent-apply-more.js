@@ -6,6 +6,13 @@ const ENTA_I18N = {
   "docs.ai_unchecked": ["AI 미검증", "AI not verified", "Belum diverifikasi AI"],
   "docs.ai_match": ["일치", "Matches", "Sesuai"],
   "docs.ai_review": ["확인 필요", "Review needed", "Perlu diperiksa"],
+  "upload.archive_done": ["압축 내 서류 {count}건 처리", "Processed {count} documents in the archive", "Memproses {count} dokumen dalam arsip"],
+  "upload.zip_hint": ["압축 파일은 위 ZIP 버튼으로 올려 주세요.", "Use the ZIP button above for archives.", "Gunakan tombol ZIP di atas untuk arsip."],
+  "upload.skipped": ["건너뜀", "Skipped", "Dilewati"],
+  "upload.skip.METADATA": ["시스템 메타데이터", "System metadata", "Metadata sistem"],
+  "upload.skip.UNSUPPORTED_TYPE": ["지원하지 않는 형식", "Unsupported format", "Format tidak didukung"],
+  "upload.skip.DEPTH_LIMIT": ["중첩 압축 깊이 제한(최대 2)", "Archive depth limit (maximum 2)", "Batas kedalaman arsip (maksimal 2)"],
+  "upload.skip.ENTRY_LIMIT": ["압축 전체 파일 수 제한", "Archive file count limit", "Batas jumlah berkas arsip"],
   "upload.new_version": ["새 버전", "New version", "Versi baru"],
   "upload.status.queued": ["대기", "Queued", "Antrean"],
   "upload.status.uploading": ["올리는 중", "Uploading", "Mengunggah"],
@@ -156,8 +163,9 @@ function ENTA_applyPanel(){
     </div>
     <p class="muted" style="font-size:12px;margin-top:6px">${ENTA_t('upload.text_012')}</p>
     ${prog?`<p class="note">${esc(prog)}</p>`:''}
+    ${ENTA_skippedPanel(cid)}
     ${canBulk?`<div class="field"><label for="enta-files">${ENTA_t('upload.multiple')}</label>
-      <input class="in" type="file" id="enta-files" multiple accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.docx,.doc,.csv,.txt,.hwp" ${bulk&&bulk.busy?'disabled':''} onchange="App.entaUpload(this.files)"></div>
+      <input class="in" type="file" id="enta-files" multiple accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.docx,.doc,.csv,.txt,.hwp,.zip,.rar,.7z" ${bulk&&bulk.busy?'disabled':''} onchange="App.entaUpload(this.files)"></div>
       <div class="dropzone" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="App.entaDrop(event)">
         <b>${ENTA_t('upload.drop')}</b><span class="muted">${ENTA_t('upload.limit')}</span></div>`:''}
     ${bulk?`<div aria-live="polite">${bulk.note?`<p class="note">${esc(bulk.note)}</p>`:''}
@@ -167,6 +175,12 @@ function ENTA_applyPanel(){
         ${it.reason?`<span>${esc(it.reason)}</span>`:''}
         ${canBulk&&it.status==='failed'&&it.file?`<button class="btn btn-sm" ${bulk.busy?'disabled':''} onclick="App.entaRetry(${i})">${ENTA_t('upload.retry')}</button>`:''}</td></tr>`).join('')}</tbody></table></div></div>`:''}
   </section>`;
+}
+
+function ENTA_skippedPanel(cid){
+  const saved=S.entaSkipped;
+  if(!saved || saved.cid!==cid || saved.owner!==AUTH.username || !saved.items.length) return '';
+  return `<details class="note"><summary>${ENTA_t('upload.skipped')} (${saved.items.length})</summary><ul>${saved.items.map(x=>`<li>${esc(x.filename)} — ${esc(ENTA_t('upload.skip.'+x.reason))}</li>`).join('')}</ul></details>`;
 }
 
 function ENTA_refundPanel(){
@@ -288,6 +302,15 @@ async function ENTA_runBulk(bulk, items, retry=false){
       if(file.size>20*1024*1024){ it.status='failed'; it.reason=ENTA_t('upload.too_large'); render(); continue; }
       it.status='uploading'; render();
       try{
+        if(/\.(zip|rar|7z)$/i.test(file.name)){
+          if(!canCall('POST','/cases/{}/intake-zip-stream')){
+            it.status='failed'; it.reason=ENTA_t('upload.zip_hint'); render(); continue;
+          }
+          const result=await App.entaZip(file,{bulk,signal:bulk.controller.signal});
+          if(!active()) break;
+          it.status='complete'; it.reason=ENTA_t('upload.archive_done',{count:result.classified?.length||0});
+          render(); continue;
+        }
         const buffer=await file.arrayBuffer();
         it.file_hash=await ENTA_fileHash(buffer);
         if(!active()) break;
@@ -311,10 +334,12 @@ async function ENTA_runBulk(bulk, items, retry=false){
         else{
           const d=await r.json();
           if(!active()) break;
-          it.document_id=d.document_id; it.status='pending'; it.reason='';
-          if(!d.autoparse_queued) it.reason=ENTA_t('upload.analysis_wait');
+          it.document_id=d.document_id; it.status=d.recovered && d.confidence!=null?'complete':'pending'; it.reason='';
+          it.doc_type_ko=d.doc_type_ko||'';
+          if(d.recovered) ENTA_applyParsedStatus(it,d);
+          if(it.status==='pending' && !d.autoparse_queued) it.reason=ENTA_t('upload.analysis_wait');
         }
-      }catch(e){ if(active()){ it.status='failed'; it.reason=ENTA_t('upload.file_error'); } }
+      }catch(e){ if(active()){ it.status='failed'; it.reason=e.uploadReason||ENTA_t('upload.file_error'); } }
       if(active()) render();
     }
     if(active()) await ENTA_pollBulk(bulk, active);
@@ -325,6 +350,12 @@ async function ENTA_runBulk(bulk, items, retry=false){
       if(active()) render();
     }
   }
+}
+function ENTA_applyParsedStatus(it,d){
+  it.doc_type_ko=d.doc_type_ko||d.doc_type; it.verdict=(d.verify||{}).verdict;
+  if((d.fields||{})._llm_error==='LLM_UNAVAILABLE'){ it.status='complete'; it.verdict='unknown'; it.reason=ENTA_t('docs.ai_unavailable'); }
+  else if((d.fields||{})._llm_error){ it.status='failed'; it.reason=ENTA_t('upload.analysis_failed'); }
+  else if(d.confidence!=null){ it.status='complete'; it.reason=''; }
 }
 async function ENTA_pollBulk(bulk, active){
   const end=Date.now()+180000;
@@ -347,10 +378,7 @@ async function ENTA_pollBulk(bulk, active){
           if(it.status==='duplicate') continue;
           const d=docs.find(x=>x.document_id===it.document_id);
           if(!d) continue;
-          it.doc_type_ko=d.doc_type_ko||d.doc_type; it.verdict=(d.verify||{}).verdict;
-          if((d.fields||{})._llm_error==='LLM_UNAVAILABLE'){ it.status='complete'; it.verdict='unknown'; it.reason=ENTA_t('docs.ai_unavailable'); }
-          else if((d.fields||{})._llm_error){ it.status='failed'; it.reason=ENTA_t('upload.analysis_failed'); }
-          else if(d.confidence!=null){ it.status='complete'; it.reason=''; }
+          ENTA_applyParsedStatus(it,d);
         }
       }
     }catch(e){ bulk.note=ENTA_t('upload.progress_failed'); }
@@ -387,11 +415,18 @@ App.entaSaveDraft = async function(){
   }catch(e){ toast(ENTA_t('upload.text_027')); }
 };
 
-App.entaZip = async function(file){
+App.entaZip = async function(file,options={}){
   const cid = ENTA_CASE();
   if(!cid) return toast(ENTA_t('upload.text_025'));
   if(!file || !canCall('POST','/cases/{}/intake-zip-stream')) return;
-  const fail = msg => { S.entaProg=ENTA_t('upload.zip_error')+msg; render(); toast(msg); };
+  const active=()=>options.bulk?ENTA_bulkActive(options.bulk):(ENTA_CASE()===cid && AUTH.username===owner);
+  const owner=AUTH.username;
+  const fail = msg => {
+    if(active()){ S.entaProg=ENTA_t('upload.zip_error')+msg; render(); if(!options.bulk) toast(msg); }
+    if(options.bulk) throw Object.assign(new Error(msg),{uploadReason:msg});
+    return null;
+  };
+  if(file.size>20*1024*1024) return fail(ENTA_t('upload.too_large'));
   S.entaProg = ENTA_t('upload.text_028'); render();
   let b64;
   try{
@@ -402,9 +437,10 @@ App.entaZip = async function(file){
     b64 = btoa(bin);
   }catch(e){ return fail(ENTA_t('upload.text_029')); }
 
+  if(!active()) return null;
   let r;
   try{
-    r = await apiFetch(`/cases/${cid}/intake-zip-stream`, {method:'POST', body:JSON.stringify({zip_b64:b64})});
+    r = await apiFetch(`/cases/${cid}/intake-zip-stream`, {method:'POST', body:JSON.stringify({zip_b64:b64}),signal:options.signal});
   }catch(e){ return fail(ENTA_t('upload.text_030')); }
 
   if(!r.ok){
@@ -415,8 +451,9 @@ App.entaZip = async function(file){
   const dec = new TextDecoder();
   let buf='', errMsg=null, result=null;
   const handle = (obj) => {
+    if(!active()) return;
     if(obj.type==='start'){ S.entaProg=ENTA_t('upload.starting',{count:obj.file_count||obj.total||0}); render(); }
-    else if(obj.type==='progress'){ S.entaProg=ENTA_t('upload.processing',{index:obj.index||obj.done||0,total:obj.total||obj.file_count||0,filename:obj.filename||''}); render(); }
+    else if(obj.type==='progress'){ S.entaProg=ENTA_t('upload.processing',{index:obj.index||obj.done||0,total:obj.total||obj.file_count||0,filename:obj.filename||obj.file||''}); render(); }
     else if(obj.type==='error'){ errMsg = ENTA_errorText(obj.code||obj.message||obj.detail||ENTA_t('upload.text_031')); }
     else if(obj.type==='result'){ result=obj; S.entaProg=ENTA_t('upload.text_032'); render(); }
   };
@@ -425,6 +462,7 @@ App.entaZip = async function(file){
     while(true){
       const {done, value} = await reader.read();
       if(done) break;
+      if(!active()){ await reader.cancel(); return null; }
       buf += dec.decode(value, {stream:true});
       let idx;
       while((idx = buf.indexOf('\n\n')) >= 0){
@@ -438,8 +476,12 @@ App.entaZip = async function(file){
     }
   }catch(e){ errMsg = errMsg || ENTA_t('upload.zip_disconnected'); }
 
+  if(!active()) return null;
   if(errMsg || !result) return fail(errMsg||ENTA_t('upload.zip_no_result'));
+  const previous=S.entaSkipped;
+  S.entaSkipped={cid,owner,items:[...(previous?.cid===cid && previous.owner===owner?previous.items:[]),...(result.skipped_files||[])]};
   S.entaProg = ENTA_t('upload.text_033');
+  if(options.bulk) return result;
   try{
     const pending=await apiFetch(`/cases/${cid}/pending-extractions`);
     if(pending.ok){
@@ -449,7 +491,8 @@ App.entaZip = async function(file){
   }catch(e){ /* 처리 결과는 유지한다. */ }
   await loadEnt();
   if(typeof PKG_load==='function') await PKG_load(cid);
-  render(); toast(ENTA_t('upload.text_033'));
+  if(active()){ render(); toast(ENTA_t('upload.text_033')); }
+  return result;
 };
 
 App.entaRefund = function(invoiceId){

@@ -699,7 +699,7 @@ def test_report_quant_and_dna(api, name, text, wanted):
         blockers = m._quant_blockers(db, cid)
         assert bool(blockers) if wanted == 'blocked' else verdict == wanted
         if wanted in ('blocked', 'review', 'fail'):
-            assert ok(api('GET', f'/cases/{cid}/problem-documents'))['count'] > 0
+            assert ok(api('GET', f'/cases/{cid}/problem-documents', actor='operator1'))['count'] > 0
 
 
 @pytest.mark.parametrize('name,filename,text,wanted', GROUPS['classification'])
@@ -807,7 +807,7 @@ def test_new_pending_evidence_blocks_previous(api, filename):
     evidence(api, cid, mid, CERT_BODY.replace('HC-666666', 'HC-777777'), filename, review=False)
     with m.SessionLocal() as db:
         assert not m.sm.approved_material_evidence(db, db.get(models.Material, mid))
-    reasons = ok(api('GET', f'/cases/{cid}/problem-documents'))
+    reasons = ok(api('GET', f'/cases/{cid}/problem-documents', actor='operator1'))
     assert any(d['document_id'] == old for d in reasons['documents'])
     ready(api, cid, [mid])
     issue(api, cid, False)
@@ -818,7 +818,7 @@ def test_expiry_has_problem_guidance_and_blocks_issue(api, expiry):
     cid = new_case(api)
     mid = ok(api('POST', f'/cases/{cid}/materials', {'name': 'Gelatin'}))['material_id']
     evidence(api, cid, mid, CERT_BODY.replace('2099-12-31', expiry))
-    assert ok(api('GET', f'/cases/{cid}/problem-documents'))['count'] > 0
+    assert ok(api('GET', f'/cases/{cid}/problem-documents', actor='operator1'))['count'] > 0
     ready(api, cid, [mid])
     issue(api, cid, False)
 
@@ -999,7 +999,7 @@ def test_reviewed_replacement_resolves_superseded_guidance(api):
     mid = ok(api('POST', f'/cases/{cid}/materials', {'name': 'Gelatin'}))['material_id']
     old = evidence(api, cid, mid)
     evidence(api, cid, mid, CERT_BODY.replace('HC-666666', 'HC-999999'))
-    documents = ok(api('GET', f'/cases/{cid}/problem-documents'))['documents']
+    documents = ok(api('GET', f'/cases/{cid}/problem-documents', actor='operator1'))['documents']
     assert not any(d['document_id'] == old and any(r['code'] == 'EVIDENCE_SUPERSEDED' for r in d['reasons'])
                    for d in documents)
     ready(api, cid, [mid])

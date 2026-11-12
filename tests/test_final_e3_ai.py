@@ -551,7 +551,7 @@ def test_r509_notification_recipient(client, headers, kind):
             doc.fields = {**doc.fields, "_verify": {**OK, "verdict": "warn", "field_issues": [{"field": field, "issue": "check"}]}}
         db.commit()
     for lang in ("ko", "en", "id"):
-        response = client.get(f"/cases/{cid}/problem-documents?lang={lang}", headers=headers["applicant"])
+        response = client.get(f"/cases/{cid}/problem-documents?lang={lang}", headers=headers["operator"])
         assert response.status_code == 200, response.text
         result = response.json()
         assert result["count"] == 1

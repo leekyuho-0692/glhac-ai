@@ -33,7 +33,6 @@ def document(**kw):
     ("CORRUPT", {"fields": {"_ocr_error": "CORRUPT"}}),
     ("EMPTY_TEXT", {"text_full": "", "text_excerpt": ""}),
     ("LOW_CONFIDENCE", {"confidence": m.PKG_UNREADABLE_CONF - 0.01}),
-    ("TRUNCATED", {"fields": {"_truncated": {"kind": "pages", "limit": 40, "total": 60}}}),
     ("VERIFY_FAILED", {"fields": {"_verify": {"verdict": "fail", "field_issues": [
         {"field": "nib", "issue": "wrong number"}]}}}),
     ("OWNERSHIP_MISMATCH", {"fields": {"_verify": {"verdict": "warn", "field_issues": [
@@ -68,7 +67,7 @@ def test_normal_and_precedence_and_multiple_reasons():
     d = document(confidence=0, text_full="", fields={
         "_ocr_error": "ENCRYPTED", "_truncated": {"kind": "chars", "limit": 20000, "total": 30000},
         "_verify": {"verdict": "fail", "summary": "value missing"}, "_llm_error": "timeout"})
-    assert [r["code"] for r in m._problem_document_reasons(d)] == ["ENCRYPTED", "TRUNCATED", "VERIFY_FAILED", "AI_ERROR"]
+    assert [r["code"] for r in m._problem_document_reasons(d)] == ["ENCRYPTED", "VERIFY_FAILED", "AI_ERROR"]
     # 원본 전문이 명시적으로 비면 옛 발췌가 남아 있어도 빈 본문이다.
     assert [r["code"] for r in m._problem_document_reasons(document(text_full="", confidence=0))] == ["EMPTY_TEXT"]
     assert [r["code"] for r in m._problem_document_reasons(document(text_full=None))] == []
@@ -85,12 +84,24 @@ def test_actual_h1_h3_ownership_keys(reason):
     assert m._problem_document_reasons(d) == []
 
 
-def test_truncation_keeps_all_limits():
+def test_truncation_is_staff_information_only():
     markers = [{"kind": "pages", "limit": 40, "total": 60}, {"kind": "chars", "limit": 20000, "total": 30000},
-               {"kind": "chunks", "limit": 12, "total": 20}]
-    reason = m._problem_document_reasons(document(fields={"_truncated": markers[0], "_truncations": markers}))[0]
-    ko = m._problem_document_explanation(reason)
-    assert all(s in ko for s in ("40쪽", "20000자", "12개 구간"))
+               {"kind": "llm_input", "limit": 2500, "total": 2600}, {"kind": "verify_input", "limit": 6000, "total": 7000}]
+    d = document(fields={"_truncated": markers[0], "_truncations": markers})
+    assert m._problem_document_reasons(d) == []
+    warnings = m._document_parse_warnings(d)
+    assert [w["truncated"] for w in warnings] == markers
+    assert all(w["severity"] == "info" and w["message"] == "자동 분석은 앞부분만 사용" for w in warnings)
+
+
+def test_truncation_alone_does_not_notify_company(db, case):
+    d = db.get(models.DocumentAsset, "d1")
+    d.fields = {"_truncated": {"kind": "llm_input", "limit": 2500, "total": 2600},
+                "_verify": {"verdict": "warn", "field_issues": [{"field": "document",
+                    "code": "partial_verification", "issue": "검증 입력 한도 초과"}]}}
+    db.commit()
+    assert m._notify_problem_documents(db, case) == {"notified": False, "reason": "no_problems"}
+    assert notices(db) == []
 
 
 @pytest.fixture
@@ -126,6 +137,17 @@ def case(db):
 
 def notices(db):
     return db.query(models.Notification).filter_by(event_type="problem.documents").all()
+
+
+def test_original_not_stored_still_notifies_applicant_to_reupload(db, case):
+    doc = db.get(models.DocumentAsset, "d1")
+    doc.content_b64 = None
+    doc.fields = {"_original_not_stored": True}
+    db.commit()
+    assert m._notify_problem_documents(db, case)["notified"]
+    [notice] = notices(db)
+    assert notice.role == "applicant"
+    assert "20MB" in notice.body and "다시 올려" in notice.body
 
 
 def test_company_delivery_and_auditor_inapp_in_indonesian(db, case):
@@ -185,14 +207,59 @@ def test_no_duplicate_new_problem_sends_whole_list_and_resolved_sends_nothing(db
     db.add(document(document_id="d2", filename="new.pdf", fields={"_llm_error": "timeout"}))
     db.commit()
     assert m._notify_problem_documents(db, case)["notified"]
-    assert len(notices(db)) == 2
-    n = sorted(notices(db), key=lambda n: n.created_at)[-1]
-    assert "evidence.pdf" in n.body and "new.pdf" in n.body
+    assert len(notices(db)) == 3
+    applicant = [n for n in notices(db) if n.role == "applicant"][-1]
+    auditor = [n for n in notices(db) if n.role == "auditor"][-1]
+    assert "evidence.pdf" in applicant.body and "new.pdf" not in applicant.body
+    assert "new.pdf" in auditor.body and "evidence.pdf" not in auditor.body
     for d in db.query(models.DocumentAsset):
         d.fields, d.confidence, d.text_full = {}, 0.95, "readable"
     db.commit()
     assert m._notify_problem_documents(db, case) == {"notified": False, "reason": "no_problems"}
-    assert len(notices(db)) == 2
+    assert len(notices(db)) == 3
+
+
+def test_round2_verify_failure_becomes_applicant_action(db, case):
+    doc = db.get(models.DocumentAsset, "d1")
+    doc.fields = {"_verify": {"verdict": "fail", "applicant_action_required": False,
+        "field_issues": [{"field": "address", "code": "ungrounded_value", "issue": "Made up"}]}}
+    db.commit()
+    assert m._notify_problem_documents(db, case)["notified"]
+    assert [n.role for n in notices(db)] == ["auditor"]
+    assert m._notify_problem_documents(db, case)["reason"] == "unchanged"
+    doc.fields = {"_verify": {"verdict": "fail", "applicant_action_required": True,
+        "field_issues": [{"field": "document", "code": "document_type_mismatch", "issue": "확정 유형 불일치"}]}}
+    db.commit()
+    assert m._problem_documents_result(db, case, applicant_only=True)["count"] == 1
+    assert m._notify_problem_documents(db, case)["notified"]
+    assert sorted(n.role for n in notices(db)) == ["applicant", "auditor"]
+    assert m._notify_problem_documents(db, case) == {"notified": False, "reason": "unchanged"}
+
+
+def test_round2_recipient_change_without_reason_change_resends(db, case):
+    case.notify_consent = False
+    db.commit()
+    assert m._notify_problem_documents(db, case)["notified"]
+    assert [n.role for n in notices(db)] == ["auditor"]
+    case.notify_consent = True
+    db.commit()
+    assert m._notify_problem_documents(db, case)["notified"]
+    assert sorted(n.role for n in notices(db)) == ["applicant", "auditor"]
+    assert m._notify_problem_documents(db, case)["reason"] == "unchanged"
+
+
+def test_round2_new_assigned_auditor_receives_unchanged_problem(db, case):
+    case.notify_consent = False
+    db.commit()
+    assert m._notify_problem_documents(db, case)["notified"]
+    db.add(models.User(user_id="aud2", username="aud2", role="auditor", password_hash="unused",
+                       org_id="staff", contact_email="new-auditor@example.test"))
+    m.sm.record_event(db, case, case.status, case.status, "ops.auditor_assigned", "operator", "op1",
+                      {"auditor_id": "aud2"})
+    db.commit()
+    assert m._notify_problem_documents(db, case)["notified"]
+    assert {n.payload["auditor_id"] for n in notices(db)} == {"aud1", "aud2"}
+    assert m._notify_problem_documents(db, case)["reason"] == "unchanged"
 
 
 @pytest.mark.parametrize("status", sorted(m.sm.TERMINAL_STATES))
@@ -333,7 +400,7 @@ def test_changed_reason_on_same_document_resends_current_list(db, case):
     db.get(models.DocumentAsset, "d1").fields = {"_ocr_error": "ENCRYPTED", "_llm_error": "timeout"}
     db.commit()
     assert m._notify_problem_documents(db, case)["notified"]
-    assert len(notices(db)) == 2
+    assert len(notices(db)) == 3
 
 
 def test_reprocess_with_same_values_restarts_quiet_period(db, case, monkeypatch):
@@ -425,3 +492,19 @@ for(const lang of ['ko','en','id']){
 """
     result = subprocess.run(["node", "-e", script], cwd=root, text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize('verdict', ['warn','fail'])
+def test_ai_field_issues_are_auditor_only_even_when_mixed_with_company_problems(db, case, verdict):
+    d = db.get(models.DocumentAsset, 'd1')
+    d.fields = {'_verify': {'verdict': verdict, 'field_issues': [{'field':'nib','issue':'AI uncertain'}]}}
+    db.commit()
+    assert m._notify_problem_documents(db, case)['notified']
+    assert [n.role for n in notices(db)] == ['auditor']
+    db.add(document(document_id='d2', filename='broken.pdf', fields={'_ocr_error':'CORRUPT'}))
+    db.commit()
+    assert m._notify_problem_documents(db, case)['notified']
+    applicant = next(n for n in notices(db) if n.role=='applicant')
+    assert 'broken.pdf' in applicant.body and 'AI uncertain' not in applicant.body and 'evidence.pdf' not in applicant.body
+    visible = m._problem_documents_result(db, case, applicant_only=True)
+    assert [x['filename'] for x in visible['documents']] == ['broken.pdf']

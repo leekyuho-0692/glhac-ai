@@ -142,7 +142,9 @@ def test_parse_typed_does_not_dress_up_a_failed_call(monkeypatch):
                         lambda *a, **k: {"error": "ReadTimeout"})
     r = intake.parse_typed("nib_business_license", "사업자등록증.txt",
                            "사업자등록증\n등록번호 123-45-67890\n대표자 홍길동".encode())
-    assert r["fields"] == {}, "실패 응답이 필드에 저장됐다: %r" % (r["fields"],)
+    assert "error" not in r["fields"]
+    assert r["fields"]["nib"] == "123-45-67890"
+    assert all(x["source"] == "fallback" and x["review"] for x in r["fields"]["_field_meta"].values())
     assert r["confidence"] == 0.0
     assert r.get("llm_error") == "ReadTimeout"
 

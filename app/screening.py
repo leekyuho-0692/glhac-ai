@@ -204,10 +204,10 @@ def _name_keys(name):
 
 
 def _contains_alias(key, alias, it):
+    if alias not in key:
+        return False  # 전체 원문 검사에서도 없는 별칭마다 경계 정규식을 돌리지 않는다.
     # 긴 고위험 별칭은 붙여 쓴 합성어(porkfat, lemakbabi)에서도 놓치지 않는다.
     if len(alias) >= 4 and (it.default_status == "haram" or it.severity == "high"):
-        if alias not in key:
-            return False
         for match in re.finditer(re.escape(alias), key):
             if alias.isascii() and alias.isalpha():
                 prefix = re.search(r"[a-z]+$", key[:match.start()])

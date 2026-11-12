@@ -105,7 +105,8 @@ def test_first_foreign_nib_is_pending_until_selected(client, case, monkeypatch, 
     assert {x["field"] for x in pending} >= {"nib", "company_name", "address"}
     assert len({x["document_id"] for x in pending}) == 1
     assert {x["filename"] for x in pending} == {"NIB.pdf"}
-    problems = client.get(f"/cases/{cid}/problem-documents", headers=headers).json()
+    staff = client.post("/auth/login", json={"username":"operator1", "password":"pw"}).json()
+    problems = client.get(f"/cases/{cid}/problem-documents", headers={"Authorization":"Bearer " + staff["token"]}).json()
     assert "OWNERSHIP_MISMATCH" in {r["code"] for d in problems["documents"] for r in d["reasons"]}
     response = client.post(f"/cases/{cid}/pending-extractions/apply", headers=headers, json={
         "autofill_choices": [{"conflict_id": x["conflict_id"], "value": x["proposed"]} for x in pending]})
@@ -303,7 +304,10 @@ def test_missing_zip_original_is_reported(client, case, monkeypatch):
     raw = random.Random(42).randbytes(half) + b"x" * (half + 1)
     response = client.post(f"/cases/{cid}/intake-zip", headers=headers, json=zip_body("large.txt", raw))
     assert response.status_code == 200, response.text
-    problems = client.get(f"/cases/{cid}/problem-documents", headers=headers).json()
+    applicant_problems = client.get(f"/cases/{cid}/problem-documents", headers=headers).json()
+    assert "ORIGINAL_NOT_STORED" in {r["code"] for d in applicant_problems["documents"] for r in d["reasons"]}
+    staff = client.post("/auth/login", json={"username":"operator1", "password":"pw"}).json()
+    problems = client.get(f"/cases/{cid}/problem-documents", headers={"Authorization":"Bearer " + staff["token"]}).json()
     assert "ORIGINAL_NOT_STORED" in {r["code"] for d in problems["documents"] for r in d["reasons"]}
     for lang in ("ko", "en", "id"):
         assert m._problem_document_explanation({"code": "ORIGINAL_NOT_STORED"}, lang)
@@ -373,7 +377,8 @@ def test_verify_error_routes_mail_to_staff_only_when_no_company_action(case, mon
         db.add(models.DocumentAsset(case_id=cid, filename="certificate.pdf", confidence=.9, text_full="Readable", fields=fields))
         db.commit()
         assert m._notify_problem_documents(db, c)["notified"]
-        notice = db.query(models.Notification).filter_by(case_id=cid, event_type="problem.documents").one()
+        notice = db.query(models.Notification).filter_by(case_id=cid, event_type="problem.documents",
+                    role="applicant" if company_action else "auditor").one()
         assert notice.role == ("applicant" if company_action else "auditor")
         contacts, _ = m._notification_contacts(db, notice)
         assert contacts["email"] == ("company@example.test" if company_action else "auditor@example.test")

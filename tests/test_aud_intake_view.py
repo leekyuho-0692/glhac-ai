@@ -85,6 +85,28 @@ def seed_document(client, cid, headers):
         return doc.document_id
 
 
+@pytest.mark.parametrize("endpoint", ["documents", "intake-view", "ai-extractions"])
+@pytest.mark.parametrize("role", ["applicant", "consultant", "auditor", "operator", "admin", "fatwa_liaison"])
+def test_advisory_filtered_on_every_document_read_response(setup, role, endpoint):
+    client, cid, roles, ids = setup
+    did = seed_document(client, cid, roles["applicant"])
+    with m.SessionLocal() as db:
+        doc = db.get(models.DocumentAsset, did)
+        doc.fields = {**doc.fields, "_verify": {"verdict": "warn", "field_issues": [],
+            "advisory": [{"field": "address", "issue": "STAFF_ONLY_OPINION"}]},
+            "_analysis": {"partial": True, "message": "STAFF_ONLY_PARTIAL"},
+            "_measurement_excluded": [{"row": "STAFF_ONLY_EXCLUDED", "keyword": "Ethanol",
+                "reason": "explicit_test_result", "location": {"line": 1, "start": 0, "end": 7}}]}
+        m._save_ai_extraction(db, cid, "parse_file", doc.fields)
+        db.commit()
+    payload = ok(client.get(f"/cases/{cid}/{endpoint}", headers=roles[role]))
+    encoded = json.dumps(payload)
+    assert ("STAFF_ONLY_EXCLUDED" in encoded) is (role in m.STAFF_ROLES)
+    assert ("measurement_excluded" in encoded) is (role in m.STAFF_ROLES)
+    assert ("STAFF_ONLY_OPINION" in encoded) is (role in m.STAFF_ROLES)
+    assert ("STAFF_ONLY_PARTIAL" in encoded) is (role in m.STAFF_ROLES)
+
+
 @pytest.mark.parametrize('role', ['applicant', 'auditor', 'consultant', 'operator', 'admin', 'fatwa_liaison'])
 def test_authorized_roles(setup, role):
     client, cid, roles, ids = setup

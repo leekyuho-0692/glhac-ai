@@ -326,11 +326,17 @@ def test_pdf_page_limit_reports_and_scans_page_56_without_extra_ocr_or_llm(case,
     assert calls and all("Lemak babi" not in body and "page 056" not in body for body in calls)
     client, headers, cid = case
     docs = client.get(f"/cases/{cid}/documents", headers=headers).json()
+    assert docs[0]["warnings"] == []  # 시스템 분석 상한은 업체 보완 사유가 아니다.
+    staff = {"Authorization": "Bearer " + client.post("/auth/login", json={"username": "auditor1", "password": "pw"}).json()["token"]}
+    docs = client.get(f"/cases/{cid}/documents", headers=staff).json()
     warning = docs[0]["warnings"][0]
+    assert warning["severity"] == "info"
     assert warning["code"] == "PARSE_TRUNCATED" and warning["truncated"] == fields["_truncated"]
     assert warning["tail_screening"] == fields["_tail_screening"]
     package = client.get(f"/cases/{cid}/package-check", headers=headers).json()
-    assert package["warnings"][0]["truncated"] == fields["_truncated"]
+    assert package["warnings"] == []
+    staff_package = client.get(f"/cases/{cid}/package-check", headers=staff).json()
+    assert staff_package["warnings"][0]["truncated"] == fields["_truncated"]
     assert package["complete"] is False
 
 

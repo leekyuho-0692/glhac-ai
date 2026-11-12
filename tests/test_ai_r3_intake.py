@@ -341,7 +341,7 @@ def test_invalid_verification_is_persisted_and_reported(case, monkeypatch, respo
 ])
 def test_recoverable_verification_types_are_normalised(monkeypatch, response, expected_issues, doc_ok):
     monkeypatch.setattr(intake.ai_local, 'llm_json', lambda *a, **kw: response)
-    result = intake.verify_extraction('quality_cert', 'HACCP.txt', 'HACCP CERTIFICATE', {})
+    result = intake.normalise_verification(response)
     assert result['field_issues'] == expected_issues and result['doc_type_ok'] is doc_ok
     assert 'llm_error' not in result
     if expected_issues or doc_ok is False:
@@ -377,7 +377,9 @@ def test_verification_input_limits_survive_database(case, monkeypatch, long_fiel
     db.refresh(doc)
     markers = doc.fields.get('_truncations', [doc.fields['_truncated']])
     assert {marker['limit'] for marker in markers if marker['kind'] == 'verify_input'} == expected_limits
-    assert 'TRUNCATED' in {r['code'] for r in m._problem_document_reasons(doc)}
+    assert 'TRUNCATED' not in {r['code'] for r in m._problem_document_reasons(doc)}
+    assert {w['truncated']['limit'] for w in m._document_parse_warnings(doc)} == expected_limits
+    assert all(w['severity'] == 'info' for w in m._document_parse_warnings(doc))
     doc.text_full, doc.fields = 'Salt', {'material_names': ['Salt'], '_truncated': doc.fields['_truncated']}
     db.commit()
     m._verify_doc(db, doc, c)

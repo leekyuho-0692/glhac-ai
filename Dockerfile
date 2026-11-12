@@ -7,6 +7,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+# RAR/7z를 디스크에 전량 해제하지 않고 크기 제한을 적용하며 읽는다.
+RUN apt-get update && apt-get install -y --no-install-recommends libarchive-tools \
+    && rm -rf /var/lib/apt/lists/*
+
 # 의존성 먼저(레이어 캐시)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

@@ -147,14 +147,22 @@ function INTAKE_conflicts(conflicts){
 function INTAKE_button(cid){
   return cid ? `<button class="btn btn-sm intake-open" onclick="event.stopPropagation();App.intakeOpen('${jsq(cid)}')">${t('intake.open')}</button>` : '';
 }
+function INTAKE_measurementExcluded(items){
+  if(!items?.length) return '';
+  return `<aside class="note intake-measurement-excluded"><h3>${t('intake.measurement_excluded')}</h3><p>${t('intake.measurement_reference')}</p><ul>${items.map(item=>`<li>
+    ${item.filename?`<b>${esc(item.filename)}</b> · `:''}${item.location?.page?esc(tf('intake.measurement_page',{page:item.location.page}))+' · ':''}${esc(tf('intake.measurement_location',{line:item.location?.line}))}
+    <p>${t('intake.measurement_keyword')}: ${esc(item.keyword)} · ${esc(t('intake.measurement_reason.'+item.reason))}</p>
+    <div>${t('intake.measurement_row')}: <span style="white-space:pre-wrap">${esc(item.row)}</span></div></li>`).join('')}</ul></aside>`;
+}
 function INTAKE_document(d, index){
-  return `<details class="intake-card intake-document"><summary><b>${INTAKE_value(d.filename)}</b> <span class="badge">${INTAKE_value(d.review_status,'review_status')}</span></summary>
-    ${INTAKE_fields(d,['document_id','filename','fields','sources','verify','truncated','truncations','problem_reasons','has_file','uploaded_by','material_id','product_id'])}
+  return `<details class="intake-card intake-document"><summary><b>${INTAKE_value(d.filename)}</b> <span class="badge">${INTAKE_value(d.review_status,'review_status')}</span> ${d.classification?.review||Object.values(d.field_meta||{}).some(x=>x.review)?`<span class="badge attn">${t('docs.ai_review')}</span>`:''}</summary>
+    ${INTAKE_fields(d,['document_id','filename','fields','sources','field_meta','classification','verify','truncated','truncations','problem_reasons','has_file','uploaded_by','material_id','product_id','measurement_excluded'])}
     ${d.has_file?`<button class="btn btn-sm" onclick="App.intakeOriginal(${index})">${t('intake.original')}</button>`:''}
     ${d.problem_reasons?.length?`<ul class="note attn">${d.problem_reasons.map(r=>`<li>${esc(INTAKE_problem(r))}</li>`).join('')}</ul>`:''}
-    ${d.truncated?`<p class="note attn">${t('intake.truncated')}</p>${INTAKE_value(d.truncations)}`:''}
+    ${d.truncated?`<p class="note">${t('intake.truncated')}</p>${INTAKE_value(d.truncations)}`:''}
+    ${INTAKE_measurementExcluded(d.measurement_excluded)}
     <h3>${t('intake.fields')}</h3><div class="tbl-wrap" tabindex="0"><table class="intake-extracted"><thead><tr><th>${t('intake.field.field')}</th><th>${t('intake.fields')}</th><th>${t('intake.source')}</th></tr></thead><tbody>
-      ${Object.entries(d.fields||{}).map(([key,value])=>`<tr><th>${esc(INTAKE_label(key))}</th><td>${INTAKE_value(value,key)}</td><td>${INTAKE_source(d.sources?.[key])}</td></tr>`).join('')||`<tr><td colspan="3">${t('intake.empty')}</td></tr>`}
+      ${Object.entries(d.fields||{}).map(([key,value])=>`<tr><th>${esc(INTAKE_label(key))}</th><td>${INTAKE_value(value,key)} ${d.field_meta?.[key]?.review?`<span class="badge attn">${t('docs.ai_review')}</span>`:''}</td><td>${d.field_meta?.[key]?.source?esc(t('docs.source.'+d.field_meta[key].source)):INTAKE_source(d.sources?.[key])}${d.field_meta?.[key]?.evidence?`<div class="muted">${esc(String(d.field_meta[key].evidence))}</div>`:''}</td></tr>`).join('')||`<tr><td colspan="3">${t('intake.empty')}</td></tr>`}
     </tbody></table></div><h3>${t('intake.verify')}</h3>${INTAKE_fields(d.verify)}</details>`;
 }
 function INTAKE_render(data){
@@ -173,7 +181,7 @@ function INTAKE_render(data){
     ${section('products','products',cards(data.products,p=>`<article class="intake-card">${INTAKE_fields(p,['product_id'])}</article>`))}
     ${section('materials','materials',cards(data.materials,m=>`<article class="intake-card"><h3>${INTAKE_value(m.name)}</h3><p>${t('intake.stored_screen')} <span class="badge ${['BLOCK','NEEDS_EVIDENCE'].includes(m.screen_result)?'attn':'strong'}">${INTAKE_value(m.screen_result,'screen_result')}</span></p>${INTAKE_fields(m,['material_id','name','evidence'])}<h4>${t('intake.evidence')}</h4>${cards(m.evidence,e=>INTAKE_fields(e,['document_id']))}</article>`))}
     ${section('documents','documents',cards(data.documents,INTAKE_document))}
-    ${section('pending','pending',cards(data.pending?.items,p=>`<article class="intake-card">${INTAKE_fields(p,['document_id'])}</article>`)+INTAKE_conflicts(data.pending?.conflicts))}
+    ${section('pending','pending',cards(data.pending?.items,p=>`<article class="intake-card">${INTAKE_fields(p,['document_id'])}</article>`)+INTAKE_conflicts(data.pending?.conflicts)+INTAKE_measurementExcluded(data.pending?.measurement_excluded))}
     ${section('history','history',data.history?.length?data.history.map(h=>`<article class="intake-card">${INTAKE_fields({actor_name:h.actor_name||t('intake.no_history'),actor_role:h.actor_role||t('intake.no_history'),at:h.at||t('intake.no_history'),action:h.action})}${(h.changes||[]).map(c=>`<b>${esc(INTAKE_label(c.field||'field'))}</b><dl class="intake-grid"><div><dt>${t('intake.before')}</dt><dd>${'before' in c?INTAKE_value(c.before,c.field):t('intake.no_history')}</dd></div><div><dt>${t('intake.after')}</dt><dd>${'after' in c?INTAKE_value(c.after,c.field):t('intake.no_history')}</dd></div></dl>`).join('')||`<p>${t('intake.no_history')}</p>`}${h.details?INTAKE_fields(h.details):''}${h.filename?INTAKE_fields({filename:h.filename}):''}</article>`).join(''):`<p>${t('intake.no_history')}</p>`)}
     ${section('formal','formal',INTAKE_fields(app.formal_application))}</div>`;
 }

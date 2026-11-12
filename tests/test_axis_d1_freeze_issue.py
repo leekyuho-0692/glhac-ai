@@ -455,17 +455,19 @@ def test_freeze_during_extraction_defers_before_first_write(api, monkeypatch):
     did = ok(api("POST", f"/cases/{cid}/documents", {
         "filename": "Daftar bahan.xlsx", "doc_type": "material_list",
         "file_b64": base64.b64encode(material_table()).decode()}))["document_id"]
-    upsert = m._upsert_material
+    extract = m.intake.parse_typed_text
     frozen = False
 
-    def freeze_before_write(db, material):
+    def freeze_during_extraction(*args, **kwargs):
         nonlocal frozen
+        result = extract(*args, **kwargs)
         if not frozen:
             frozen = True
             freeze(api, cid)
-        return upsert(db, material)
+        return result
 
-    monkeypatch.setattr(m, "_upsert_material", freeze_before_write)
+    # 재처리는 추출 뒤 케이스 쓰기 잠금을 잡는다. 경쟁 동결도 그 전에 완료시킨다.
+    monkeypatch.setattr(m.intake, "parse_typed_text", freeze_during_extraction)
     result = ok(api("POST", f"/documents/{did}/reprocess", role="operator"))
     assert frozen and result["applied"]["requires_scope_unlock"]
     assert names(cid) == ["sugar"]

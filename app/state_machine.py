@@ -310,7 +310,7 @@ def material_risk(m):
 
 
 def pending_extractions(db, case_id):
-    from . import intake
+    from . import intake, screening
     from .models import DocumentAsset, Product, normalize_material_name as norm
     c = db.get(CaseApplication, case_id)
     have = {"product_names": {norm(p.name) for p in db.query(Product).filter_by(case_id=case_id)},
@@ -320,12 +320,25 @@ def pending_extractions(db, case_id):
         if ev.actor_type in REVIEWER_ROLES:
             for item in (ev.payload or {}).get("items", []):
                 handled.add((item["kind"], norm(item["value"])))
-    out, seen = [], set()
+    out, seen, risk_uids = [], set(), {}
+    def risk_uid(name):
+        if name not in risk_uids:
+            risk_uids[name] = screening.screen_merged(name).get("matched_uid")
+        return risk_uids[name]
     for doc in db.query(DocumentAsset).filter_by(case_id=case_id):
         fields = doc.fields or {}
-        scope_fields = {k: fields[k] for k in ("product_names", "material_names", "_sources") if k in fields}
+        scope_fields = {k: fields[k] for k in ("product_names", "material_names", "_sources", "_rule_omissions") if k in fields}
         agg = intake.aggregate_fields([{"doc_type": doc.doc_type, "fields": scope_fields}])
         candidates = list(agg.get("pending") or []) + list(fields.get("_scope_pending") or [])
+        scan = fields.get("_tail_screening") or {}
+        risks = scan.get("risk_hits", scan.get("haram_hits", []))
+        # 사전 표준명과 원문 별칭(Pork/Pork (swine))을 별도 확인 건으로 중복시키지 않는다.
+        represented = ({risk_uid(name) for name in have["material_names"]}
+                       | {risk_uid(name) for kind, name in handled | seen if kind == "material_names"}
+                       | {risk_uid(item["value"]) for item in candidates if item["kind"] == "material_names"}
+                       ) if risks else set()
+        candidates += [{"kind": "material_names", "value": hit["name"], "source": "rule",
+                        "reason": "source_risk"} for hit in risks if hit["uid"] not in represented]
         # 동결 중 들어온 구조 추출도 확인대기다. 저장 이전의 구 문서 역시 빠뜨리지 않는다.
         if c and c.scope_frozen:
             for bucket, kind in (("products", "product_names"), ("materials", "material_names")):

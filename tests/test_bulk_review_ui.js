@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const {harness}=require('./fixtures/uiv4_frontend.cjs');
 const root = path.join(__dirname, '..', 'app', 'static', 'v4');
 const reply = (body, status=200) => new Response(JSON.stringify(body), {status});
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -11,7 +12,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 function screen(){
   let now=0;
   const dom={'#pk-material':{}, '#pk-product':{}}, notices=[];
-  const c={App:{},S:{view:'ent-apply'},AUTH:{role:'applicant',username:'user'},RS:{cases:[{case_id:'c1'}]},
+  const c=Object.assign(harness().c,{App:{},S:{lang:'ko',view:'ent-apply'},AUTH:{role:'applicant',username:'user'},RS:{cases:[{case_id:'c1'}]},
     VIEWS:{'ent-home':()=>'', 'ent-apply':()=>'', 'ent-contract':()=>''},
     AbortController,AbortSignal,Uint8Array,btoa,
     Date:class extends Date{ static now(){ return now; } },
@@ -21,9 +22,8 @@ function screen(){
     apiErr:async r=>(await r.json()).detail?.code||'실패',
     apiFetch:async()=>reply({items:[]}),render:()=>{
       if(c.S.entaBulk) c.ENTA_bulkActive(c.S.entaBulk);
-    }};
-  vm.createContext(c);
-  for(const file of ['ent-apply-more.js','package-check.js']){
+    }});
+  for(const file of ['aud-intake.js','ent-apply-more.js','package-check.js']){
     vm.runInContext(fs.readFileSync(path.join(root,'js',file),'utf8'),c,{filename:file});
   }
   c.PKG_load=async()=>{};
@@ -33,6 +33,7 @@ function screen(){
 for(const kind of ['material','product']){
   test(kind+' 확인 대기는 미선택이며 수정·제외를 한 요청으로 처리한다',async()=>{
     const {c,dom}=screen(), posts=[];
+    c.AUTH.role='consultant';
     let items=['Keep','Rename','Dismiss','Untouched'].map(value=>({kind:kind+'_names',value,filename:'source.pdf'}));
     c.apiFetch=async(url,opts={})=>{
       if(opts.method==='POST'){
@@ -47,15 +48,20 @@ for(const kind of ['material','product']){
     const s=c.S[kind==='material'?'pkgMaterial':'pkgProduct'];
     assert.equal(s.pending.length,4);
     assert.ok(s.pending.every(it=>!it.selected&&!it.dismiss));
-    assert.match(dom['#pk-'+kind].innerHTML,/등록 안 함/);
+    assert.match(dom['#pk-'+kind].innerHTML,/제외/);
     const apply=kind==='material'?c.App.pkgMaterialApply:c.App.pkgProductApply;
     await apply();
     assert.equal(posts.length,0);
+    assert.match(s.notice,/검토 사유/);
+    s.reason='원문과 대조하여 선택';
+    await apply();
+    assert.equal(posts.length,0);
+    assert.match(s.notice,/선택/);
     s.pending[0].selected=true;
     s.pending[1].selected=true; s.pending[1].name='New Name';
     s.pending[2].dismiss=true;
     await apply();
-    assert.deepEqual(posts,[{url:'/cases/c1/pending-extractions/apply',body:{values:['Keep'],renames:{Rename:'New Name'},dismiss:['Dismiss']}}]);
+    assert.deepEqual(posts,[{url:'/cases/c1/pending-extractions/apply',body:{values:['Keep'],renames:{Rename:'New Name'},dismiss:['Dismiss'],reason:'원문과 대조하여 선택'}}]);
     assert.deepEqual(plain(s.pending.map(it=>it.value)),['Untouched']);
   });
 }
@@ -91,7 +97,7 @@ test('편집 역할과 API 권한이 모두 있어야 등록 버튼을 표시한
 });
 
 function file(name,size=3){
-  return {name,size,reads:0,async arrayBuffer(){this.reads++;return new Uint8Array(size).buffer;}};
+  return {name,size,reads:0,async arrayBuffer(){this.reads++;return new Uint8Array(size).fill(name.charCodeAt(0)).buffer;}};
 }
 
 test('검증 배지 없이 완료하고 실패 파일만 재전송하며 성공 파일 재선택은 건너뛴다',async()=>{
@@ -105,13 +111,14 @@ test('검증 배지 없이 완료하고 실패 파일만 재전송하며 성공 
       docs.push({document_id,confidence:0,doc_type:'product_label',fields:{}});
       return reply({document_id,autoparse_queued:true});
     }
-    if(url.endsWith('/documents')){polls++;return reply(docs);}
+    if(url.split('?')[0].endsWith('/documents')){polls++;return reply(docs);}
     return reply({items:[]});
   };
   await c.App.entaUpload([good,bad]);
-  assert.equal(polls,1);
+  assert.equal(polls,2); // 업로드 전 목록 확인 + 분석 상태 조회
   assert.equal(c.S.entaBulk.busy,false);
-  assert.equal(c.S.entaBulk.items[0].status,'분석 완료');
+  assert.equal(c.S.entaBulk.items[0].status,'complete');
+  assert.match(c.ENTA_applyPanel(),/분석 완료/);
   assert.equal(c.S.entaBulk.items[1].reason,'권한 없음');
   assert.match(c.ENTA_applyPanel(),/다시 올리기/);
   fail=false;
@@ -120,7 +127,8 @@ test('검증 배지 없이 완료하고 실패 파일만 재전송하며 성공 
   assert.equal(good.reads,1); assert.equal(bad.reads,2);
   await c.App.entaUpload([file('good.pdf')]);
   assert.equal(posts.length,3);
-  assert.equal(c.S.entaBulk.items.at(-1).status,'이미 올림');
+  assert.equal(c.S.entaBulk.items.at(-1).status,'duplicate');
+  assert.match(c.ENTA_applyPanel(),/이미 올림/);
   await c.App.entaUpload([file('good.pdf',4)]);
   assert.equal(posts.length,4);
 });
@@ -128,10 +136,11 @@ test('검증 배지 없이 완료하고 실패 파일만 재전송하며 성공 
 for(const change of ['view','case']){
   test(change+' 변경 시 진행 중 조회를 취소하고 폴링을 중단한다',async()=>{
     const {c}=screen(), urls=[];
-    let signal;
+    let signal,posted=false;
     c.apiFetch=async(url,opts={})=>{
       urls.push(url);
-      if(opts.method==='POST') return reply({document_id:'d1',autoparse_queued:true});
+      if(opts.method==='POST'){posted=true;return reply({document_id:'d1',autoparse_queued:true});}
+      if(!posted) return reply([]);
       signal=opts.signal;
       if(change==='view') c.S.view='ent-docs';
       else c.RS.cases=[{case_id:'c2'}];
@@ -142,16 +151,17 @@ for(const change of ['view','case']){
     assert.equal(c.S.entaBulk.cancelled,true);
     assert.equal(c.S.entaBulk.busy,false);
     assert.equal(signal.aborted,true);
-    assert.equal(urls.length,2);
-    assert.equal(c.S.entaBulk.items[0].status,'분석 대기');
+    assert.equal(urls.length,3);
+    assert.equal(c.S.entaBulk.items[0].status,'pending');
   });
 }
 
 test('분석 대기 폴링은 3분을 넘지 않고 있는 검증 배지는 표시한다',async()=>{
   const {c}=screen();
-  let polls=0;
+  let polls=0,posted=false;
   c.apiFetch=async(url,opts={})=>{
-    if(opts.method==='POST') return reply({document_id:'d1',autoparse_queued:true});
+    if(opts.method==='POST'){posted=true;return reply({document_id:'d1',autoparse_queued:true});}
+    if(!posted) return reply([]);
     polls++;
     return reply([{document_id:'d1',confidence:null,fields:{},verify:{verdict:'warn'}}]);
   };

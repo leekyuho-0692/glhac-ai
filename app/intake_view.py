@@ -129,7 +129,11 @@ def build(db, case, pending, problem_reasons, explain_reason):
         documents.append({**pick(d, "document_id filename doc_type review_status uploader_role uploaded_by material_id product_id confidence has_file"),
                           "uploaded_at": stamp(d.created_at), "fields": fields,
                           "sources": {k: public(v) for k, v in (raw.get("_sources") or {}).items() if k in fields},
-                          "verify": public({k: verify[k] for k in ("verdict", "field_issues", "summary", "at") if k in verify}),
+                          "field_meta": public(raw.get("_field_meta") or {}),
+                          "classification": public(raw.get("_classification") or {}),
+                          "advisory": ([public(raw["_analysis"])] if raw.get("_analysis") else []),
+                          "measurement_excluded": public(raw.get("_measurement_excluded") or []),
+                          "verify": public({k: verify[k] for k in ("verdict", "field_issues", "advisory", "summary", "at") if k in verify}),
                           "truncated": bool(raw.get("_truncated") or raw.get("_truncations")),
                           "truncations": public(raw.get("_truncations") or ([raw["_truncated"]] if raw.get("_truncated") else [])),
                           "problem_reasons": reasons})
@@ -233,7 +237,9 @@ def build(db, case, pending, problem_reasons, explain_reason):
                              **domain_dict.code_labels("MATERIAL", "material_type", lang)}
     return {"case_id": cid, "company": company, "contacts": contacts, "consent": consent,
             "facilities": facilities, "products": products, "materials": materials, "documents": documents,
-            "pending": public(pending), "history": history,
+            "pending": {**public(pending), "measurement_excluded": [
+                {**item, "document_id": d["document_id"], "filename": d["filename"]}
+                for d in documents for item in d["measurement_excluded"]]}, "history": history,
             "application": {"status": case.status, "draft_state": case.draft_state,
                             "submitted_at": stamp(submitted.created_at) if submitted else None,
                             "formal_application": formal},

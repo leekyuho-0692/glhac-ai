@@ -99,7 +99,8 @@ def test_control_verdict_is_persisted(case, text, verdict):
         assert row.verdict == verdict
     if verdict == "review":
         client, headers, cid = case
-        problems = client.get(f"/cases/{cid}/problem-documents", headers=headers).json()
+        staff = client.post("/auth/login", json={"username":"operator1", "password":"pw"}).json()
+        problems = client.get(f"/cases/{cid}/problem-documents", headers={"Authorization":"Bearer " + staff["token"]}).json()
         assert any(r["code"] == "PORK_DNA_UNCLEAR" for d in problems["documents"] for r in d["reasons"])
 
 
@@ -360,7 +361,7 @@ def test_filename_decision_still_extracts_fields_without_llm(monkeypatch, name, 
         pytest.fail("A deterministic parser must not call the LLM")
     monkeypatch.setattr(intake.ai_local, "llm_json", forbidden)
     for result in (intake.classify(name, text), intake.parse_typed_text(doc_type, name, text)):
-        assert result["doc_type"] == doc_type and result["fields"] == expected
+        assert result["doc_type"] == doc_type and {k:v for k,v in result["fields"].items() if not k.startswith("_")} == expected
 
 
 def test_filename_parsers_feed_existing_certificate_and_process_storage(case):
@@ -379,7 +380,7 @@ def test_missing_parser_uses_existing_llm_path(monkeypatch):
     monkeypatch.setattr(intake.ai_local, "PROVIDER", "openai")
     monkeypatch.setattr(intake.ai_local, "llm_json", lambda *a, **kw: calls.append(a) or {
         "doc_type": "origin_certificate", "fields": {"issuer": "Example issuer"}, "confidence": .9})
-    assert intake.classify("Certificate of Origin.txt", "Country of origin Indonesia")["fields"]["issuer"] == "Example issuer"
+    assert intake.classify("Certificate of Origin.txt", "Country of origin Indonesia\nIssuer: Example issuer")["fields"]["issuer"] == "Example issuer"
     assert len(calls) == 1
     calls.clear()
     monkeypatch.setattr(intake.ai_local, "PROVIDER", "none")

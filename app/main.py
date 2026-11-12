@@ -30,6 +30,7 @@ from .db import Base, engine, get_db, SessionLocal, lock_chain_tail
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from . import nav8
 from . import intake
+from .document_extraction import document_budget, current_budget
 # 앱의 주소 외부 전송은 명시적으로 켠 환경에서만 허용한다(선행 import에도 적용).
 intake._ZIP_LOOKUP = os.environ.get("GLHAC_ZIP_LOOKUP", "0") == "1"
 from . import observability as obs
@@ -455,9 +456,7 @@ def _sandboxed_path(raw_path: str) -> str:
 
 # 문서 P0(§9.3): 업로드 검증 — 크기·확장자 allowlist·매직바이트 sniff
 _UPLOAD_MAX_BYTES = intake.UPLOAD_MAX_BYTES  # 20MB (SRS NFR-05) — 원본 보관 상한과 같은 상수
-_UPLOAD_EXT_ALLOW = {"pdf", "png", "jpg", "jpeg", "webp", "gif",
-                     "xlsx", "xls", "docx", "doc", "csv", "txt", "hwp",
-                     "mp4", "mov", "webm", "m4v"}   # 모의감사 생산공정 영상(§P0-5 클라이언트 뷰)
+_UPLOAD_EXT_ALLOW = intake.UPLOAD_EXT_ALLOW
 
 
 def _upload_kind(raw):
@@ -785,10 +784,11 @@ def _validate_upload(file_b64, filename, max_bytes=_UPLOAD_MAX_BYTES):
 
 
 def _validate_archive_upload(raw):
-    # 파싱/자동채움 및 스트림 응답 시작 전에 전수 확인한다. 압축 자체의 개수·해제 크기
-    # 상한은 기존 extract_zip 가드를 사용한다. 실패하면 첫 정상 파일도 저장되지 않는다.
-    for filename, content in intake.extract_zip(raw):
-        _validate_upload_type(content, filename)
+    # 스트림/저장 전에 전체 검사. 같은 해제 결과를 처리 단계에 넘겨 이중 해제를 막는다.
+    try:
+        return intake.extract_zip(raw, validator=_validate_upload_type)
+    except intake.ArchiveContentMismatch as exc:
+        raise HTTPException(415, {"code": "CONTENT_MISMATCH", "message": str(exc)}) from exc
 
 
 def _is_duplicate_column_error(e):
@@ -1655,9 +1655,9 @@ PROBLEM_DOC_MSG = {
         "id": ("Informasi wajib sertifikat tidak dapat dibaca ({fields}).", "Nomor sertifikat, masa berlaku, dan penerbit perlu diperiksa.", "Unggah dokumen asli yang memuat informasi tersebut atau minta petugas memeriksanya."),
     },
     "TRUNCATED": {
-        "ko": ("문서가 길어 앞 {limits}까지만 읽었습니다.", "뒤쪽 내용은 자동 분석에서 빠졌습니다.", "필요한 부분만 나눠서 올려 주세요."),
-        "en": ("The long document was read only up to {limits}.", "The remaining contents were omitted from automatic analysis.", "Split the required sections into smaller files and upload them."),
-        "id": ("Dokumen panjang hanya dibaca sampai {limits}.", "Bagian selanjutnya tidak tercakup dalam analisis otomatis.", "Pisahkan bagian yang diperlukan menjadi berkas lebih kecil lalu unggah."),
+        "ko": ("자동 분석은 앞부분({limits})만 사용했습니다.", "원본은 그대로 보관되어 있습니다.", "담당자는 원본을 확인할 수 있습니다."),
+        "en": ("Automatic analysis used only the beginning ({limits}).", "The original is retained.", "The reviewer can check the original."),
+        "id": ("Analisis otomatis hanya menggunakan bagian awal ({limits}).", "Dokumen asli tetap disimpan.", "Petugas dapat memeriksa dokumen asli."),
     },
     "VERIFY_FAILED": {
         "ko": ("자동 추출한 값이 원문과 맞지 않습니다({fields}).", "잘못된 값이 신청서에 들어갈 수 있습니다.", "서류가 맞는지 확인하고 다시 올리거나 담당자에게 알려 주세요."),
@@ -1832,9 +1832,14 @@ def _document_content_ok(d):
 
 def _document_parse_warnings(d):
     fields = d.fields or {}
+    if fields.get("_analysis", {}).get("partial"):
+        return [{"code": "PARTIAL_ANALYSIS", "severity": "info",
+                 "message": fields["_analysis"]["message"],
+                 "tail_screening": fields.get("_tail_screening")}]
     if not fields.get("_truncated"):
         return []
-    return [{"code": "PARSE_TRUNCATED", "truncated": marker,
+    return [{"code": "PARSE_TRUNCATED", "severity": "info",
+             "message": "자동 분석은 앞부분만 사용", "truncated": marker,
              "tail_screening": fields.get("_tail_screening")}
             for marker in fields.get("_truncations", [fields["_truncated"]])]
 
@@ -1959,24 +1964,26 @@ def _problem_document_reasons(document, measurements=()):
         reasons.append({"code": "VERIFY_WARN", "params": {"fields": "cert_no"}})
     if fields.get("_scope_pending"):
         reasons.append({"code": "VERIFY_WARN", "params": {"fields": "material_names / product_names (scope pending)"}})
-    if fields.get("_truncated"):
-        markers = fields.get("_truncations") or [fields["_truncated"]]
-        reasons.append({"code": "TRUNCATED", "params": {"limits": [dict(x) for x in markers if isinstance(x, dict)]}})
+    # 추출/AI 입력 상한은 시스템 제약이다. 업체 보완 요청 사유로 쓰지 않는다.
     verify = fields.get("_verify") or {}
     if verify.get("llm_error"):
         reasons.append({"code": "VERIFY_ERROR", "params": {}})
-    issues = [x for x in (verify.get("field_issues") or []) if isinstance(x, dict)]
+    issues = [x for x in (verify.get("field_issues") or []) if isinstance(x, dict)
+              and x.get("code") != "partial_verification"]
     if verify.get("verdict") == "fail":
         details = ["%s: %s" % (x.get("field") or "?", x.get("issue") or x.get("code") or "?") for x in issues]
         reasons.append({"code": "VERIFY_FAILED", "params": {"fields": "; ".join(details) or verify.get("summary") or "?"}})
+        if verify.get("applicant_action_required") and any(x.get("code") == "document_type_mismatch" for x in issues):
+            reasons[-1]["params"]["action_required"] = True
     important = [x for x in issues if x.get("field") in (
         "cert_no", "certificate_no", "nib", "business_reg_no", "factory_reg_no", "corporate_reg_no", "company_name",
         "expiry_date", "issuer", "material_names", "ingredients", "scope", "factory_address", "product_names", "document")
         and x.get("code") != "company_name_mismatch"]
-    # 이미 확인된 소유권 불일치는 기존 업체 보완 경로를 유지한다. AI 경고는 담당자가 먼저 검토한다.
-    if verify.get("verdict") != "fail" and (verify.get("doc_type_ok") is False or
+    # 소유권 불일치와 AI 경고는 담당자가 먼저 검토한다.
+    if verify.get("verdict") != "fail" and (verify.get("doc_type_ok") is False or verify.get("advisory") or
                                            (verify.get("verdict") == "warn" and important)):
         keys = (["doc_type"] if verify.get("doc_type_ok") is False else []) + [x["field"] for x in important]
+        keys += [x["field"] for x in verify.get("advisory", []) if isinstance(x, dict) and x.get("field")]
         reasons.append({"code": "VERIFY_WARN", "params": {"fields": ", ".join(dict.fromkeys(keys))}})
     ownership = ["%s: %s" % (x.get("field") or "company_name", x.get("issue") or x["code"])
                  for x in issues if x.get("code") == "company_name_mismatch"]
@@ -2019,8 +2026,11 @@ def _problem_documents_body(params, lang):
     lines = [copy["fallback"]] if params.get("fallback") else []
     lines.append(NOTIFY_MSG["problem.documents"][lang][0].format(**params))
     for d in params.get("documents", []):
+        reasons = [r for r in d["reasons"] if r.get("code") != "TRUNCATED"]
+        if not reasons:
+            continue
         lines.append("\n%s — %s: %s" % (d["filename"], copy["uploaded"], d["uploaded_at"]))
-        lines.extend("- " + _problem_document_explanation(r, lang) for r in d["reasons"])
+        lines.extend("- " + _problem_document_explanation(r, lang) for r in reasons)
     if params.get("staff_only"):
         lines.append("\n" + {"ko": "담당자 확인: {url}", "en": "Reviewer check: {url}",
                              "id": "Pemeriksaan petugas: {url}"}[lang].format(**params))
@@ -2090,14 +2100,33 @@ def _problem_documents_language(db, c, role):
 
 def _problem_documents_recipient(db, c, rows=None):
     auditor = _assigned_auditor_id(db, c.case_id)
-    if rows and all(r["code"] in ("VERIFY_ERROR", "VERIFY_WARN") for d in rows for r in d["reasons"]):
+    if rows and not any(_problem_requires_applicant(r) for d in rows for r in d["reasons"]):
         return ("auditor" if auditor else "operator"), auditor
     role = "applicant" if (c.email or "").strip() and c.notify_consent else ("auditor" if auditor else "operator")
     return role, auditor
 
 
-def _problem_documents_result(db, c, lang="ko"):
+APPLICANT_PROBLEM_CODES = frozenset({
+    "ENCRYPTED", "CORRUPT", "BOMB", "EMPTY_TEXT", "OCR_FAILED", "CERT_NOT_VALID",
+    "CERT_EXPIRED", "QUANT_FAIL", "EVIDENCE_SUPERSEDED", "ORIGINAL_NOT_STORED",
+})
+
+
+def _problem_requires_applicant(reason):
+    # 추출/AI의 불확실성은 업체 잘못이 아니다. 재제출·보완할 근거가 확정된 항목만 보낸다.
+    return reason["code"] in APPLICANT_PROBLEM_CODES or (
+        reason["code"] == "VERIFY_FAILED" and reason.get("params", {}).get("action_required") is True)
+
+
+def _problem_rows_for(rows, applicant):
+    return [{**d, "reasons": reasons} for d in rows
+            if (reasons := [r for r in d["reasons"] if _problem_requires_applicant(r) == applicant])]
+
+
+def _problem_documents_result(db, c, lang="ko", applicant_only=False):
     _, rows = _problem_documents_rows(db, c)
+    if applicant_only:
+        rows = _problem_rows_for(rows, True)
     for row in rows:
         row["reasons"] = [{**r, "explanation": _problem_document_explanation(r, lang)} for r in row["reasons"]]
     last = _problem_documents_latest(db, c.case_id, PROBLEM_DOC_EVENT)
@@ -2133,7 +2162,19 @@ def _queue_problem_documents(db, c, force, actor):
     import hashlib
     import json
     digest = lambda value: hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
-    fp = digest([c.case_id, sorted((d["document_id"], sorted(r["code"] for r in d["reasons"])) for d in rows)])
+    role, auditor = _problem_documents_recipient(db, c, rows)
+    applicant_rows, staff_rows = _problem_rows_for(rows, True), _problem_rows_for(rows, False)
+    staff_role = "auditor" if auditor else "operator"
+    groups = ([(role, applicant_rows, False)] if applicant_rows else []) + (
+             [(staff_role, staff_rows, True)] if staff_rows else [])
+    recipients = {(recipient, auditor if recipient == "auditor" else "")
+                  for recipient, _, _ in groups}
+    if role == "applicant" and auditor:
+        recipients.add(("auditor", auditor))
+    # 같은 VERIFY_FAILED라도 업체 조치로 바뀌거나 수신자가 바뀌면 새 안내다.
+    fp = digest([c.case_id, sorted((d["document_id"], sorted(
+        (r["code"], bool(r.get("params", {}).get("action_required"))) for r in d["reasons"]))
+        for d in rows), sorted(recipients)])
     busy = _problem_documents_busy(docs)
     now = _problem_documents_now()
     # 정상 서류의 새 업로드도 조용한 기간을 다시 시작한다. 검증 결과/본문 변경도 반영한다.
@@ -2154,19 +2195,19 @@ def _queue_problem_documents(db, c, force, actor):
     last = _problem_documents_latest(db, c.case_id, PROBLEM_DOC_EVENT)
     if not force and last and (last.payload or {}).get("fp") == fp:
         return {"notified": False, "reason": "unchanged"}
-    role, auditor = _problem_documents_recipient(db, c, rows)
-    staff_only = all(r["code"] in ("VERIFY_ERROR", "VERIFY_WARN") for d in rows for r in d["reasons"])
-    params = {"company": c.company_name or c.case_id, "case_id": c.case_id, "count": len(rows),
-              "documents": rows, "fallback": role != "applicant" and not staff_only, "staff_only": staff_only,
-              "url": os.environ.get("GLHAC_APP_URL", "https://glhac.co.kr").rstrip("/") + "/ui/v4/"}
-    n = _notify(db, c, "problem.documents", channels=["inapp", "email"], role=role,
-                msg=("problem.documents", params))
-    lang = _problem_documents_language(db, c, role)
-    n.title, n.body = notify_text(n, lang)
-    n.payload = {**n.payload, "auditor_id": auditor if role == "auditor" else None, "lang": lang}
+    for recipient, recipient_rows, staff_only in groups:
+        params = {"company": c.company_name or c.case_id, "case_id": c.case_id, "count": len(recipient_rows),
+                  "documents": recipient_rows, "fallback": recipient != "applicant" and not staff_only,
+                  "staff_only": staff_only,
+                  "url": os.environ.get("GLHAC_APP_URL", "https://glhac.co.kr").rstrip("/") + "/ui/v4/"}
+        n = _notify(db, c, "problem.documents", channels=["inapp", "email"], role=recipient,
+                    msg=("problem.documents", params))
+        lang = _problem_documents_language(db, c, recipient)
+        n.title, n.body = notify_text(n, lang)
+        n.payload = {**n.payload, "auditor_id": auditor if recipient == "auditor" else None, "lang": lang}
     if role == "applicant" and auditor:
         staff_note = _notify(db, c, "problem.documents.informed", channels=["inapp"], role="auditor",
-                             msg=("problem.documents.informed", {"company": params["company"], "count": len(rows)}))
+                             msg=("problem.documents.informed", {"company": c.company_name or c.case_id, "count": len(applicant_rows)}))
         staff_note.payload = {**staff_note.payload, "auditor_id": auditor}
     sm.record_event(db, c, c.status, c.status, PROBLEM_DOC_EVENT,
                     (actor or {}).get("role", "system"), (actor or {}).get("uid"),
@@ -2185,7 +2226,8 @@ def queue_problem_document_notifications(db):
 @app.get("/cases/{case_id}/problem-documents")
 def problem_documents(case_id: str, lang: str = Query("ko"), user=Depends(auth.get_current_user),
                       db: Session = Depends(get_db)):
-    return _problem_documents_result(db, _get_case(db, case_id, user), lang)
+    return _problem_documents_result(db, _get_case(db, case_id, user), lang,
+                                     applicant_only=user["role"] not in STAFF_ROLES)
 
 
 @app.post("/cases/{case_id}/problem-documents/notify")
@@ -2983,174 +3025,80 @@ def logout(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     return {"ok": True, "revoked": True}
 
 
-def _parse_biz_doc(text):
-    """사업자/공장 등록증 텍스트 → 프로필 필드 추출 (Rizky #1).
+from .biz_doc import _parse_biz_doc
 
-    한국 양식만 알던 파서다. 실제 신청자는 인도네시아 업체이고 그쪽 서류는
-    'Nama Perusahaan / Nomor Induk Berusaha / Nama Pimpinan / Alamat Perusahaan' 으로
-    적힌다(실측: CV. CITRA PRATAMA 등록증). 인니 양식을 먼저 보고, 없으면 한국 양식을 본다.
-    NIB는 13자리 숫자, 한국 사업자번호는 000-00-00000 로 서로 형태가 달라 섞이지 않는다."""
-    import re
-    t = text or ""
-    def spaced(label):
-        return r"\s*".join(re.escape(ch) for ch in label if not ch.isspace())
 
-    # 한 줄로 합쳐진 OCR에서도 안내문 속 상호·대표자·주소를 항목으로 읽지 않는다.
-    t = re.sub(r"※.*?(?=※|접\s*수\s*번\s*호|" + spaced("Receipt") + r"|$)",
-               " ", t, flags=re.I | re.S)
-    out = {}
-    # ── 인도네시아 양식 ────────────────────────────────────────────────
-    m = re.search(r"Nomor\s+Induk\s+Berusaha\s*[:：]?\s*(\d[\d\s-]{10,20})", t, re.I)
-    if m:
-        out["nib"] = re.sub(r"[^\d]", "", m.group(1))
-    for pat, key in [(r"Nama\s+Perusahaan", "company_name"),
-                     (r"Nama\s+Pimpinan", "responsible_person"),
-                     (r"Nama\s+Penyelia\s+Halal", "halal_supervisor"),
-                     (r"Alamat\s+Perusahaan", "address"),
-                     (r"Alamat\s+Pabrik", "factory_address"),
-                     (r"Jenis\s+Usaha", "business_type"),
-                     (r"Skala\s+Usaha", "business_scale")]:
-        mm = re.search(pat + r"\s*[:：]\s*([^\n]{1,120}?)(?=\s+(?:Nama|Nomor|Alamat|Jenis|Skala|Kode)\s|\n|$)",
-                       t, re.I)
-        if mm:
-            v = mm.group(1).strip(" :：·|*)")
-            if v and not out.get(key):
-                out[key] = v
-    # ── 한국 양식 ──────────────────────────────────────────────────────
-    m = re.search(r"\d{3}-\d{2}-\d{5}", t)                       # 사업자등록번호
-    if m and not out.get("nib"):
-        out["nib"] = m.group(0)
-    # 항목명은 글자 사이 공백을 허용하고, 값은 다음 한글·영문 라벨 앞에서 끊는다.
-    labels = {
-        "company_name": (r"(?:상\s*호|법\s*인\s*명)"
-                         r"(?:\s*\(\s*(?:법\s*인\s*명|단\s*체\s*명|상\s*호)\s*\))?"
-                         r"|단\s*체\s*명(?=\s*[:：])"),
-        "factory_name": spaced("공장명"),
-        "responsible_person": (r"성\s*명(?:\s*\(?\s*대\s*표\s*자\s*\)?)?|"
-                               r"대\s*표\s*자(?:\s*\(\s*성\s*명\s*\))?"),
-        "factory_address": r"공\s*장\s*(?:소\s*재\s*지|주\s*소)",
-        "head_office_address": spaced("본점소재지"),
-        "address": r"사\s*업\s*장\s*(?:소\s*재\s*지|주\s*소)|소\s*재\s*지|주\s*소|사\s*업\s*장",
-        "business_type": r"업\s*태|업\s*종|종\s*목",
-        "company_name_en": spaced("Name of Business"),
-        "address_en": spaced("Business Address"),
-    }
-    stops = [spaced(label) for label in (
-        "사업자등록번호", "사업자등록일", "사업자록일", "법인등록번호", "주민")]
-    field_stops = [spaced(label) for label in (
-        "개업연월일", "개업년월일", "개업일", "사업의종류", "발급사유", "공동사업자",
-        "전자우편주소")]
-    field_stops += [spaced("사업자단위과세") + r"(?:\s*" + spaced("적용사업자여부") + ")?",
-                    spaced("전자세금계산서") + r"(?:\s*" + spaced("전용전자우편주소") + ")?"]
-    other_stops = [spaced(label) for label in (
-        "Name of", "Business", "Taxpayer", "Resident", "Type of", "Date of",
-        "위와 같이", "접수번호", "Receipt")]
-    # 긴 라벨을 먼저 소비해 내부의 '주소/소재지'를 별도 항목으로 읽지 않는다.
-    pattern = "|".join(["(?P<stop>%s)" % "|".join(stops),
-                       "(?P<field_stop>%s)" % "|".join(field_stops)] +
-                       ["(?P<%s>%s)" % (key, pat) for key, pat in labels.items()] +
-                       ["(?:%s)" % "|".join(other_stops)])
-    # '도매업 종목'의 끝 글자부터 '업종'으로 붙여 읽지 않는다.
-    matches = []
-    for mm in re.finditer(r"(?<![가-힣A-Za-z0-9])(?:" + pattern + ")", t, re.I):
-        if mm.lastgroup == "field_stop":
-            tail = t[mm.end():]
-            label = re.sub(r"\s+", "", mm.group())
-            # 값도 줄바꿈될 수 있으므로 콜론이나 라벨 뒤의 구체 문맥으로만 구분한다.
-            context = None
-            if label in ("개업연월일", "개업년월일", "개업일"):
-                context = r"\s*(?:\d{4}\s*(?:년|[./-])|" + spaced("Date of") + ")"
-            elif label == "사업의종류":
-                context = r"\s+(?:업\s*태|종\s*목)(?=\s|[:：])"
-            elif label == "공동사업자":
-                context = r"\s+" + spaced("Joint Business Owner") + r"(?![A-Za-z])"
-            elif label == "발급사유":
-                # 기존 콜론 없는 재발급 행은 보존하되 '발급사유 재발급 연구소'는 값이다.
-                context = r"\s+" + spaced("재발급") + r"[ \t]*(?=\r?\n|$)"
-            elif label.endswith("전자우편주소"):
-                context = r"\s+[^\s@]+@[^\s@]+"
-            if not (re.match(r"\s*[:：]", tail)
-                    or (context and re.match(context, tail, re.I))):
-                continue
-        matches.append(mm)
-    head_office_address = None
-    for i, mm in enumerate(matches):
-        key = mm.lastgroup
-        if key not in labels or out.get(key):
-            continue
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(t)
-        value = t[mm.end():end].strip(" :：·|\r\n\t")
-        if len(value) < 2 or re.search(r"효력|실체적|증명합니다|임의기재|※|\[|\]", value):
-            continue
-        if key in ("address", "head_office_address") and re.search(r"\S+@\S+", value):
-            continue
-        if key == "company_name_en":
-            # 영문 상호 뒤 괄호 안 사업자번호는 회사명에 포함하지 않는다.
-            value = re.sub(r"\s*\(\s*\d{3}\s*[-–—]\s*\d{2}\s*[-–—]\s*\d{5}\s*\)\s*$", "", value)
-            if not re.fullmatch(r"[A-Z0-9&.,\-\s]{5,}", value):
-                continue
-        if key == "address_en" and (not re.search(r"[A-Za-z]", value) or re.search(r"[가-힣]", value)):
-            continue
-        if key == "head_office_address":
-            head_office_address = head_office_address or value
-        else:
-            out[key] = value
-    if not out.get("address") and head_office_address:
-        out["address"] = head_office_address
-    return out
+# 캐시는 워커 메모리에만 둔다. 원본 파일/전체 본문을 보관하지 않으며 크기와 TTL을 제한한다.
+from collections import OrderedDict
+from copy import deepcopy
+_OCR_EXTRACT_CACHE = OrderedDict()
+_OCR_EXTRACT_CACHE_LOCK = threading.Lock()
+_OCR_EXTRACT_FLIGHTS = [threading.Lock() for _ in range(16)]
+_OCR_EXTRACT_CACHE_TTL = 300
+_OCR_EXTRACT_CACHE_MAX = 32
 
 
 @app.post("/auth/ocr-extract")
 def auth_ocr_extract(body: schemas.OCRExtractReq, request: Request):
-    """회원가입 전 등록증 자동추출(공개) — 이미지·PDF 모두 수용.
-
-    예전에는 무엇이 오든 .png 로 저장해 OCR을 돌렸다. 화면은 PDF도 받는데
-    (accept="image/*,.pdf") 서버가 PDF를 이미지로 읽으려다 'Image read Error'로 죽었고,
-    화면에는 그게 'OCR 엔진 미설치'로 표시돼 원인을 감췄다(실측: 사업자등록증 PDF).
-    이제 intake.parse_file 에 맡긴다 — PDF는 본문 텍스트로, 스캔본·이미지는 OCR로 읽는다."""
-    import base64
-    import json
-    wanted = ("company_name", "nib", "responsible_person", "address", "company_name_en")
-    # 공개 엔드포인트 — 크기 상한 강제(DoS 방지). 포맷은 파서가 가린다.
+    """공개 자동채움: AI 전체 추출 → 원문/규칙 검산. AI 불가 시에만 규칙 후보 사용."""
+    import hashlib
+    import time
     raw = base64.b64decode(_validate_upload(body.image_b64, None))
-    from .intake import parse_file
+    provider = ai_local.provider()
+    digest = hashlib.sha256(raw).hexdigest()
+    key = (digest, provider, ai_local.OPENAI_MODEL if provider == "openai" else ai_local.MODEL)
+    # 같은 파일의 동시 요청도 OCR/AI를 한 번만 실행한다. 서로 다른 파일은 병렬 가능.
+    with _OCR_EXTRACT_FLIGHTS[int(digest[:8], 16) % len(_OCR_EXTRACT_FLIGHTS)]:
+        now = time.monotonic()
+        with _OCR_EXTRACT_CACHE_LOCK:
+            for stale in [k for k, (at, _) in _OCR_EXTRACT_CACHE.items() if now - at > _OCR_EXTRACT_CACHE_TTL]:
+                _OCR_EXTRACT_CACHE.pop(stale, None)
+            cached = _OCR_EXTRACT_CACHE.get(key)
+            if cached:
+                _OCR_EXTRACT_CACHE.move_to_end(key)
+                return {**deepcopy(cached[1]), "cached": True}
+        ip = _extract_real_ip(request)
+        with _OCR_EXTRACT_CACHE_LOCK:
+            allow_ai = not auth.check_username_rate_limited(ip)
+            if allow_ai:
+                auth.record_username_check(ip)
+        result = _auth_ocr_extract_file(raw, allow_ai)
+        if result.get("ocr_available") and allow_ai and not result.get("llm_error"):
+            with _OCR_EXTRACT_CACHE_LOCK:
+                _OCR_EXTRACT_CACHE[key] = (time.monotonic(), deepcopy(result))
+                while len(_OCR_EXTRACT_CACHE) > _OCR_EXTRACT_CACHE_MAX:
+                    _OCR_EXTRACT_CACHE.popitem(last=False)
+        return {**result, "cached": False}
+
+
+def _auth_ocr_extract_file(raw, allow_ai):
+    wanted = ("company_name", "nib", "responsible_person", "address", "company_name_en")
     name = "upload.pdf" if raw[:5] == b"%PDF-" else "upload.png"
     try:
-        text = parse_file(name, raw) or ""
-    except Exception as e:  # noqa: BLE001
+        text = intake.parse_file(name, raw) or ""
+    except Exception as exc:
         return {"ocr_available": False, "fields": {}, "missing": list(wanted), "filled": [],
-                "error": "%s: %s" % (type(e).__name__, str(e)[:160])}
+                "error": "%s: %s" % (type(exc).__name__, str(exc)[:160])}
     if not text.strip():
         return {"ocr_available": False, "fields": {}, "missing": list(wanted), "filled": [],
                 "error": "문서에서 읽어낼 글자가 없습니다 (빈 파일이거나 해상도가 너무 낮습니다)"}
-    fields = _parse_biz_doc(text)
-    missing = [k for k in wanted if k != "nib" and not fields.get(k)]
-    # 공개 엔드포인트라 AI 보충 호출은 IP당 분당 제한을 공유한다(비용·남용 방지). 초과면 규칙 결과만 준다.
-    _ip = _extract_real_ip(request)
-    _llm_ok = not auth.check_username_rate_limited(_ip)
-    if missing and _llm_ok:
-        auth.record_username_check(_ip)
-    if missing and _llm_ok and ai_local.provider() != "none":
-        system = ("사업자등록증 원문에서 요청한 필드만 JSON으로 추출하세요. "
-                  "원문에 없는 값은 null로 두세요. 안내문은 값이 아닙니다. "
-                  "요청 필드: " + json.dumps({k: None for k in missing}, ensure_ascii=False))
-        extra = ai_local.llm_json(system, text)
-        # 모델은 빈 항목만 보충하며, 원문에 실제 있는 문자열만 받아들인다.
-        norm_text = re.sub(r"\s+", "", text).casefold()
-        for key in missing:
-            value = extra.get(key) if isinstance(extra, dict) else None
-            if not isinstance(value, str):
-                continue
-            value = value.strip()
-            if len(value) < 2 or re.search(r"효력|실체적|증명합니다|임의기재|※|\[|\]", value):
-                continue
-            if key == "company_name_en" and not re.fullmatch(r"[A-Z0-9&.,\-\s]{5,}", value):
-                continue
-            if re.sub(r"\s+", "", value).casefold() in norm_text:
-                fields[key] = value
-    return {"ocr_available": True, "fields": fields,
+    extracted = intake._extract_ai_document(name, text, doc_type="nib_business_license", stage="signup",
+                                            rules=_parse_biz_doc(text), allow_ai=allow_ai)
+    data = extracted["fields"]
+    fields = {k: v for k, v in data.items() if not k.startswith("_")}
+    # 가입에는 사업자·공장 서류의 업체 정보만 사용한다.
+    if extracted["doc_type"] not in intake._APPLICANT_DOCS:
+        fields = {}
+    meta = data.get("_field_meta", {})
+    from .document_extraction import extraction_receipt
+    return {"ocr_available": True, "fields": fields, "field_meta": meta,
+            "extraction_receipt": extraction_receipt(fields, meta, auth.SECRET),
+            "field_sources": {k: v["source"] for k, v in meta.items()},
+            "review": [k for k, v in meta.items() if v.get("review")],
+            "doc_type": extracted["doc_type"],
             "missing": [k for k in wanted if not fields.get(k)], "filled": list(fields),
             "source": "pdf_text" if name.endswith(".pdf") else "ocr",
+            **({"llm_error": extracted["llm_error"]} if extracted.get("llm_error") else {}),
             "raw": text[:1500]}
 
 
@@ -3291,6 +3239,10 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         # 가입 폼도 기존 업체 프로필과 같은 키를 쓴다. 선택 담당자의 빈 값은 남기지 않는다.
         _profile = {"sector": _reg_sectors[0], "sectors": _reg_sectors} if _reg_sectors else {}
         _profile["email_consent"] = email_consent
+        from .document_extraction import receipt_metadata
+        extraction_meta = receipt_metadata(body.extraction_receipt, body.model_dump(), auth.SECRET)
+        if extraction_meta:
+            _profile["_registration_extraction"] = extraction_meta
         if (body.company_name_en or "").strip():
             _profile["company_name_en"] = body.company_name_en.strip()
         for prefix in ("pic", "cp"):
@@ -7902,12 +7854,7 @@ def _autofill_key(value, field=""):
 
 
 def _autofill_company_key(value):
-    import unicodedata
-    name = unicodedata.normalize("NFKC", str(value or "")).casefold()
-    name = re.sub(r"주식회사|\(\s*주\s*\)", " ", name)
-    name = re.sub(r"\b(?:p[.\s]*t|c[.\s]*v|tbk|inc)\b\.?", " ", name)
-    name = re.sub(r"\bco[.,\s]+ltd\b\.?", " ", name)
-    return _autofill_key(name)
+    return intake.company_key(value)
 
 
 def _autofill_references(db, c):
@@ -8420,16 +8367,20 @@ def _verify_doc(db, d, c):
         db.rollback()
         return
     fl = dict(d.fields or {})
-    # 업로드 때 기록한 상호 경고는 비동기 검증이 ok여도 지우지 않는다.
+    # 실제 상호 불일치는 보존하되, 법인 형태 차이로 생긴 이전 오경고는 제거한다.
     previous = intake.normalise_verification(fl.get("_verify"), internal=True)
+    current_name = _autofill_company_key(fl.get("company_name"))
+    same_company = bool(current_name and current_name == _autofill_company_key(c.company_name))
     name_issues = [issue for issue in previous["field_issues"]
-                   if isinstance(issue, dict) and issue.get("code") == "company_name_mismatch"]
+                   if isinstance(issue, dict) and issue.get("code") == "company_name_mismatch" and not same_company]
     if name_issues:
         issues = list(res.get("field_issues") or [])
         issues.extend(issue for issue in name_issues if issue not in issues)
         res = {**res, "field_issues": issues,
                "verdict": "warn" if res.get("verdict") in ("ok", "unknown") else res.get("verdict")}
     fl["_verify"] = {**res, "at": datetime.utcnow().isoformat(timespec="seconds")}
+    if res.get("_ai_budget"):
+        fl["_ai_budget"] = res["_ai_budget"]
     intake._clear_truncation(fl, "verify_input")
     for marker in res.get("_truncations", [res.get("_truncated")]):
         if isinstance(marker, dict) and marker.get("kind") == "verify_input":
@@ -8502,6 +8453,7 @@ def doc_verify_status(user=Depends(auth.get_current_user)):
             **{k: v for k, v in _verify_state.items()}}
 
 
+@document_budget
 def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id="auto",
                    keep_doc_type=False):
     """문서 1건 재추출·재분류 — 사람이 누른 재처리와 자동 큐가 같은 코드를 쓴다.
@@ -8509,17 +8461,25 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
 
     keep_doc_type=True 면 유형은 그대로 두고 본문·필드만 갱신한다(사용자 지정 존중)."""
     from .intake import aggregate_fields, classify, parse_file
-    d.filename = intake._nfc(d.filename)
+    doc_id, case_id = d.document_id, c.case_id
+    filename, doc_type = intake._nfc(d.filename), d.doc_type
     data = base64.b64decode(d.content_b64.split(",")[-1])
-    text = parse_file(d.filename, data, dpi=dpi)
-    r = classify(d.filename, text)
-    prev = d.doc_type
-    if not keep_doc_type:
-        d.doc_type = r.get("doc_type", "other")
-    d.confidence = float(r.get("confidence") or 0)
+    # 모델/OCR 대기 중 종결·수동 확인이 가능하도록 쓰기와 잠금은 뒤로 미룬다.
+    db.rollback()
+    text = parse_file(filename, data, dpi=dpi)
+    r = classify(filename, text)
+    reference = (r.get("doc_type") == "other" and
+                 (r.get("fields") or {}).get("_classification", {}).get("source") == "rule")
+    if not keep_doc_type or reference:
+        doc_type = r.get("doc_type", "other")
     # 유형별 추출 규칙이 있으면 그 규칙으로 필드를 뽑는다 — 범용 분류 필드로는 성적서의 원료명이 빠졌다.
-    if d.doc_type in intake._FIELD_SPEC:
-        typed = intake.parse_typed_text(d.doc_type, d.filename, text)
+    if doc_type in intake._FIELD_SPEC and current_budget().remaining > 1:
+        typed = intake.parse_typed_text(doc_type, filename, text)
+        if typed.get("doc_type") in intake.DOC_TYPES and typed["doc_type"] != doc_type:
+            if not keep_doc_type:
+                doc_type = typed["doc_type"]
+            else:
+                typed.setdefault("fields", {}).setdefault("_classification", {})["review"] = True
         if typed.get("fields"):
             # 구조 파서의 '목록 아님' 판정은 후속 LLM 추출로 풀리지 않는다.
             sources = dict(typed.get("field_sources") or {})
@@ -8539,13 +8499,29 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     # 없는 서류'와 구분되지 않아, 사람이 다시 돌려야 한다는 걸 알 방법이 없다.
     if r.get("llm_error"):
         fl["_llm_error"] = r["llm_error"]
-    for key in ("_autofill", "_scope_pending", "_counts_as_evidence"):
+    # 검증 큐와 같은 잠금·종결 판정으로 최신 상태를 확인한 뒤에만 저장한다.
+    c = _lock_case(db, case_id)
+    if c is None or sm.is_terminal(c.status):
+        db.rollback()
+        return {"document_id": doc_id, "skipped": "case_closed"}
+    _guard_case_mutation(db, case_id)
+    d = db.get(models.DocumentAsset, doc_id, populate_existing=True, with_for_update=True)
+    if d is None:
+        db.rollback()
+        return {"document_id": doc_id, "skipped": "document_missing"}
+    prev = d.doc_type
+    d.filename, d.doc_type = filename, doc_type
+    d.confidence = float(r.get("confidence") or 0)
+    for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id"):
         if key in (d.fields or {}):
             fl[key] = d.fields[key]   # 재처리로 동결대기·검토 이력을 지우지 않는다.
     d.fields = fl
     d.text_excerpt = (text or "")[:300]
     d.text_full = text or ""
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
+    # 저장 요청에서 OCR하지 않는다. 큐가 이미 추출한 본문으로만 편철한다.
+    if apply:
+        _autofile_evidence(db, c.case_id, d, allow_parse=False)
     applied = (_apply_agg_to_case(db, c, aggregate_fields([{"doc_type": d.doc_type,
                                                             "fields": d.fields}]), documents=[d])
                if apply else {"skipped": True})
@@ -8674,7 +8650,7 @@ def intake_view(case_id: str, user=Depends(auth.get_current_user), db: Session =
     result = build(db, c, list_pending_extractions(case_id, user, db),
                    _problem_document_reasons, _problem_document_explanation)
     _audit(db, user, "intake.viewed", "case", case_id, case_id)
-    return result
+    return _document_visible_fields(result, user["role"])
 
 
 @app.get("/cases/{case_id}/pending-extractions")
@@ -8765,8 +8741,8 @@ def reprocess_document(document_id: str, dpi: int = None, apply: bool = True,
     c = _get_case(db, d.case_id, user)
     if not d.content_b64:
         raise HTTPException(422, {"code": "NO_CONTENT", "detail": "원본 미보관 문서는 재처리 불가"})
-    return _reprocess_doc(db, d, c, dpi=dpi, apply=apply,
-                          actor_role=user["role"], actor_id=user["uid"])
+    return _document_visible_fields(_reprocess_doc(db, d, c, dpi=dpi, apply=apply,
+                          actor_role=user["role"], actor_id=user["uid"]), user["role"])
 
 
 _LANG_NAME = {"id": "인도네시아어(Bahasa Indonesia)", "en": "영어(English)"}
@@ -9056,7 +9032,8 @@ def _process_doc(db, c, d, applied):
               "monitoring": flds.get("has_monitoring")}
         _cnt = 0
         for _el, _ok in _m.items():
-            if _ok:
+            meta = flds.get("_field_meta", {}).get("has_" + _el, {})
+            if _ok and not meta.get("review") and meta.get("accepted", True):
                 _set_hpas(db, c.case_id, _el, "ok", "SJPH 매뉴얼에서 감지")
                 _cnt += 1
         if _cnt:
@@ -9097,7 +9074,7 @@ def _apply_intake_autofill(db, c, res):
         if doc is not None:
             dup_skipped += 1
             # 같은 원본 재업로드도 새 파서 결과는 반영하되 문서 식별자는 유지한다.
-            for key in ("_autofill", "_scope_pending", "_counts_as_evidence"):
+            for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id"):
                 if key in (doc.fields or {}):
                     fields[key] = doc.fields[key]
             doc.doc_type = d["doc_type"]
@@ -9181,8 +9158,8 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     # ZIP 파일 검증
     from .intake import intake_zip, ArchiveError
     try:
-        _validate_archive_upload(raw)
-        res = intake_zip(raw)
+        files = _validate_archive_upload(raw)
+        res = intake_zip(raw, files=files)
     except ArchiveError as e:
         raise HTTPException(400, {"code": "BAD_ARCHIVE",
                                   "message": str(e)})
@@ -9193,7 +9170,53 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     db.commit()
     for document_id in res.pop("_verify_ids", []):
         verify_enqueue(document_id)
-    return res
+    return _document_visible_fields(res, user["role"])
+
+
+_INTAKE_HEARTBEAT_SECONDS = 10
+
+
+def _intake_zip_events(raw, files):
+    """한 파일의 OCR이 길어져도 SSE 연결을 유지한다. 파싱 스레드는 DB를 만지지 않는다."""
+    import queue
+    import threading
+    events, stopped = queue.Queue(maxsize=1), threading.Event()
+
+    def put(event):
+        while not stopped.is_set():
+            try:
+                events.put(event, timeout=0.1)
+                return True
+            except queue.Full:
+                continue
+        return False
+
+    def parse():
+        try:
+            for event in intake.intake_zip_iter(raw, files=files):
+                if not put(event):
+                    break
+        except Exception as exc:  # 오류도 소비자에게 전달하여 완료로 표시하지 않는다.
+            put(exc)
+        finally:
+            put(None)
+
+    threading.Thread(target=parse, name="intake-parse", daemon=True).start()
+    try:
+        while True:
+            try:
+                event = events.get(timeout=_INTAKE_HEARTBEAT_SECONDS)
+            except queue.Empty:
+                yield "heartbeat", {}
+                continue
+            if event is None:
+                return
+            if isinstance(event, Exception):
+                raise event
+            yield event
+    finally:
+        # 연결 종료 후 현재 OCR이 끝나면 다음 문서를 처리하지 않는다.
+        stopped.set()
 
 
 @app.post("/cases/{case_id}/intake-zip-stream")
@@ -9203,7 +9226,6 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
     """스트리밍 인테이크 — 파일별 진행률(NDJSON) + 마지막에 자동채움/임시저장 결과."""
     import json as _json
     from fastapi.responses import StreamingResponse
-    from .intake import intake_zip_iter
     c = _get_case(db, case_id, user)
     _b64 = body.zip_b64.split(",")[-1]
     if len(_b64) > _UPLOAD_MAX_BYTES * 4 // 3 + 4:   # base64 는 원본보다 ~33% 크다
@@ -9216,12 +9238,13 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
     if archive_kind(raw) is None:
         raise HTTPException(422, {"code": "NOT_AN_ARCHIVE",
                                   "message": "압축 파일이 아닙니다 (ZIP·RAR·7z 만 지원합니다)"})
+    files, archive_error = None, None
     try:
-        _validate_archive_upload(raw)
-    except ArchiveError:
+        files = _validate_archive_upload(raw)
+    except ArchiveError as exc:
         # 압축 자체 오류는 아래 생성기의 기존 error 이벤트 계약을 유지한다.
         # 파일 시그니처 오류(HTTPException)는 여기서 415로 반환한다.
-        pass
+        archive_error = str(exc)
 
     def gen():
         """진행상황은 파일이 끝나는 즉시 흘려보낸다.
@@ -9236,10 +9259,13 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
             # 몰려 도착 / SSE 는 0.1·1.2·2.3·3.4·4.5초로 정상). 본문 형식은 그대로 JSON.
             return "data: " + _json.dumps(obj, ensure_ascii=False) + "\n\n"
 
+        if archive_error:
+            yield ev({"type": "error", "message": archive_error})
+            return
         res = None
         try:
-            for kind, payload in intake_zip_iter(raw):
-                if kind in ("start", "progress"):
+            for kind, payload in _intake_zip_events(raw, files):
+                if kind in ("start", "progress", "heartbeat"):
                     yield ev({"type": kind, **payload})
                 elif kind == "result":
                     res = payload
@@ -9256,7 +9282,7 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
         db.commit()
         for document_id in res.pop("_verify_ids", []):
             verify_enqueue(document_id)
-        yield ev({"type": "result", **res})
+        yield ev(_document_visible_fields({"type": "result", **res}, user["role"]))
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
@@ -9267,7 +9293,10 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
 def package_check(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
     """업체·제품·성분·공장 묶음 점검 + 판독 불가 서류 — 화면의 '인증 패키지 점검' 패널."""
     c = _get_case(db, case_id, user)
-    return _package_check(db, c)
+    result = _package_check(db, c)
+    if user["role"] not in STAFF_ROLES:
+        result["warnings"] = []
+    return result
 
 
 @app.post("/cases/{case_id}/package-check/request")
@@ -9541,6 +9570,8 @@ def autofill_profile(case_id: str, force: bool = False,
                     fields = dict(r["fields"])
                     if (d.fields or {}).get("_autofill"):
                         fields["_autofill"] = d.fields["_autofill"]
+                    if (d.fields or {}).get("_upload_id"):
+                        fields["_upload_id"] = d.fields["_upload_id"]
                     d.fields = fields
                     d.doc_type = r.get("doc_type", d.doc_type)
                     d.text_excerpt = (text or "")[:300]
@@ -9721,6 +9752,7 @@ def _normalize_phone(p):
 
 
 @app.post("/cases/{case_id}/parse-file")
+@document_budget
 def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                   user=Depends(auth.require_roles("applicant", "consultant")),
                   db: Session = Depends(get_db)):
@@ -9735,7 +9767,13 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     text = r.pop("text", "")
     det, why = intake.refine_doctype_reason(body.filename, None, text)
     eff_type, mismatch = body.doc_type, None
-    if (det in intake.DOC_TYPES and det != body.doc_type and
+    ai_decision = r.get("decided_by") in ("ai", "fallback") or bool((r.get("fields") or {}).get("_classification"))
+    if ai_decision and r.get("doc_type") in intake.DOC_TYPES:
+        eff_type = r["doc_type"]
+        if eff_type != body.doc_type:
+            mismatch = {"selected": body.doc_type, "detected": eff_type,
+                        "reason": r.get("reason") or "전체 원문 판정"}
+    elif (det in intake.DOC_TYPES and det != body.doc_type and
             (det != "other" or (body.doc_type in ("halal_certificate", "quality_cert")
                                 and r.get("doc_type") == "other"))):
         mismatch = {"selected": body.doc_type, "detected": det, "reason": why}
@@ -9790,8 +9828,25 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
     db.commit()
     verify_enqueue(doc.document_id)
-    return {"doc_type": eff_type, "extracted": f, "applied": applied,
-            "confidence": r.get("confidence", 0), "mismatch": mismatch, "conflicts": conflicts}
+    return _document_visible_fields({"doc_type": eff_type, "extracted": f, "applied": applied,
+            "confidence": r.get("confidence", 0), "mismatch": mismatch, "conflicts": conflicts}, user["role"])
+
+
+def _document_file_size(d):
+    # base64를 전부 디코드하지 않고 원본 바이트 길이를 돌려준다(끊긴 업로드 대조).
+    value = (d.content_b64 or "").rsplit(",", 1)[-1]
+    return len(value) * 3 // 4 - (len(value) - len(value.rstrip("=")))
+
+
+def _document_visible_fields(fields, role):
+    """문서 응답 전체에 공통 적용한다. 중첩 verify·이력·추출 결과도 같은 역할 정책."""
+    if isinstance(fields, dict):
+        return {k: _document_visible_fields(v, role) for k, v in fields.items()
+                if k != "_upload_id" and (role in STAFF_ROLES or k not in (
+                    "advisory", "_analysis", "_measurement_excluded", "measurement_excluded"))}
+    if isinstance(fields, (list, tuple)):
+        return [_document_visible_fields(v, role) for v in fields]
+    return fields
 
 
 @app.get("/cases/{case_id}/documents")
@@ -9801,10 +9856,13 @@ def list_documents(case_id: str, lang: str = Query("ko"),
     DOC_KO = _intake_doc_names(lang)   # 표는 있는데 늘 한국어를 골랐다 — 읽는 사람 언어로
     rows = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
     return [{"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
+             "upload_id": (d.fields or {}).get("_upload_id") if d.uploaded_by == user["uid"] else None,
+             "file_size": _document_file_size(d),
+             "autoparse_queued": d.document_id in _autoparse_inflight,
              "doc_type_ko": DOC_KO.get(d.doc_type, d.doc_type),
-             "confidence": d.confidence, "fields": d.fields, "excerpt": d.text_excerpt,
-             "warnings": _document_parse_warnings(d),
-             "verify": (d.fields or {}).get("_verify"),
+             "confidence": d.confidence, "fields": _document_visible_fields(d.fields, user["role"]), "excerpt": d.text_excerpt,
+             "warnings": _document_parse_warnings(d) if user["role"] in STAFF_ROLES else [],
+             "verify": (_document_visible_fields(d.fields, user["role"]) or {}).get("_verify"),
              "review_status": d.review_status, "has_file": bool(d.content_b64),
              "created_at": d.created_at.isoformat() if d.created_at else None,
              "lat": d.lat, "lng": d.lng, "geo_source": d.geo_source,
@@ -13967,10 +14025,29 @@ def upload_case_document(case_id: str, body: dict = None,
     if not b64:
         raise HTTPException(400, {"code": "NO_FILE"})
     b64 = _validate_upload(b64, fn)
+    upload_id = b.get("upload_id")
+    if upload_id is not None:
+        if not isinstance(upload_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{16,128}", upload_id):
+            raise HTTPException(422, {"code": "INVALID_UPLOAD_ID"})
+        c = _lock_case(db, case_id)
+        _assert_case_open(c)
+        # 같은 케이스의 동시 재전송도 직렬화한다. 타 업로더의 키는 복구에 사용하지 않는다.
+        existing = (db.query(models.DocumentAsset).options(load_only(
+                        models.DocumentAsset.document_id, models.DocumentAsset.fields,
+                        models.DocumentAsset.filename, models.DocumentAsset.file_hash, models.DocumentAsset.doc_type))
+                    .filter_by(case_id=case_id, uploaded_by=user["uid"]).all())
+        for stored in existing:
+            if (stored.fields or {}).get("_upload_id") == upload_id:
+                if stored.filename != fn or stored.file_hash != _sha256_b64(b64):
+                    raise HTTPException(409, {"code": "UPLOAD_ID_CONFLICT"})
+                return {"document_id": stored.document_id, "upload_id": upload_id,
+                        "filename": stored.filename, "doc_type": stored.doc_type,
+                        "autoparse_queued": stored.document_id in _autoparse_inflight}
     doc_type = b.get("doc_type") or "other"
     d = models.DocumentAsset(case_id=case_id, filename=fn, filename_en=_fn_en(fn), doc_type=doc_type,
                              content_b64=b64, content_type=_ctype(fn),
-                             file_hash=_sha256_b64(b64))
+                             file_hash=_sha256_b64(b64), uploaded_by=user["uid"], uploader_role=user["role"],
+                             fields={"_upload_id": upload_id} if upload_id else {})
     # A08 증거 귀속 메타 — 모의/현장 증거(사진·영상)에 누가·언제·어디서·무결성 기록
     if doc_type.startswith("mock_evidence_") or doc_type.startswith("onsite_evidence_"):
         import hashlib as _hl
@@ -13993,7 +14070,7 @@ def upload_case_document(case_id: str, body: dict = None,
     db.flush()
     _audit(db, user, "document.upload", "document", d.document_id)
     # 증빙 항목에 제자리가 있으면 바로 편철 — 올려두고 어디에도 안 걸리는 문서를 없앤다
-    filed = _autofile_evidence(db, case_id, d, user)
+    filed = _autofile_evidence(db, case_id, d, user, allow_parse=False)
     db.commit()
     # 저장이 끝난 뒤에 큐에 넣는다 — 커밋 전에 넣으면 워커가 아직 없는 행을 찾는다.
     # 사용자가 doc_type 을 직접 지정해 올린 경우에도 본문 추출(회사명·원재료 등)은
@@ -14002,7 +14079,7 @@ def upload_case_document(case_id: str, body: dict = None,
     # 올린 사람이 안다(모의심사 증거·입금증처럼 본문으로는 알 수 없는 것도 있다).
     # 본문 추출(회사명·원재료)은 그대로 하고, 유형만 보존한다.
     queued = autoparse_enqueue(d.document_id, keep_doc_type=bool(b.get("doc_type")))
-    return {"document_id": d.document_id, "filename": fn, "doc_type": d.doc_type,
+    return {"document_id": d.document_id, "upload_id": upload_id, "filename": fn, "doc_type": d.doc_type,
             "sjph_evidence": filed, "autoparse_queued": queued}
 
 
@@ -21467,7 +21544,7 @@ def get_preassess_dossier(case_id: str, lang: str = Query("ko"),
 
     lang 을 안 받으면 성분 판정문이 한국어로 나간다 — 오디터가 읽는 핵심 내용이다."""
     c = _get_case(db, case_id, user)
-    return _preassess_dossier(db, c, lang=lang)
+    return _document_visible_fields(_preassess_dossier(db, c, lang=lang), user["role"])
 
 
 def _fn_en(name):
@@ -22058,7 +22135,7 @@ _BODY_PARSE_TYPES = {"other", "sjph_manual", "sjph_evidence"}
 _BODY_PARSE_MAX_B64 = 3_000_000     # 앞머리 400자 보려고 큰 파일을 통째로 열지 않는다
 
 
-def _evidence_key_for_doc(d):
+def _evidence_key_for_doc(d, allow_parse=True):
     """이 문서가 채울 SJPH 증빙 항목 — 파일명 우선, 없으면 본문 앞머리.
 
     파일명만 보면 놓친다. 'Halal_Team.pdf'는 이름만으로는 팀 소개서인지 지정서(SK)인지
@@ -22076,8 +22153,8 @@ def _evidence_key_for_doc(d):
     # 22MB를 통째로 파싱하다 편철 한 번에 2분이 넘는다(질경이 실측).
     if (d.doc_type or "other") not in _BODY_PARSE_TYPES:
         return None, None
-    head = (d.text_excerpt or "")[:400]
-    if not head and d.content_b64 and len(d.content_b64) <= _BODY_PARSE_MAX_B64:
+    head = (d.text_full or d.text_excerpt or "")[:400]
+    if allow_parse and not head and d.content_b64 and len(d.content_b64) <= _BODY_PARSE_MAX_B64:
         # 범용 업로드 경로는 본문을 추출하지 않는다(text_excerpt가 비어 있다).
         # 편철 판단에 필요한 앞머리만 여기서 읽는다 — 이미지는 위에서 이미 걸렀다.
         try:
@@ -22089,10 +22166,10 @@ def _evidence_key_for_doc(d):
     return (dd.evidence_key_of(head), "본문") if head else (None, None)
 
 
-def _autofile_evidence(db, case_id, d, user=None):
+def _autofile_evidence(db, case_id, d, user=None, *, allow_parse=True):
     """문서를 비어 있는 SJPH 증빙 항목에 편철. 이미 채워진 항목은 건드리지 않는다
     (사람이 고른 증빙을 자동 판단이 덮으면 안 된다). 무엇을 근거로 넣었는지 남긴다."""
-    key, how = _evidence_key_for_doc(d)
+    key, how = _evidence_key_for_doc(d, allow_parse=allow_parse)
     if not key or key not in {k for k, _ in SJPH_EVIDENCE_ITEMS}:
         return None
     if db.query(models.SjphEvidence).filter_by(case_id=case_id, item_key=key).first():
@@ -22640,7 +22717,7 @@ def list_ai_extractions(case_id: str, user=Depends(auth.get_current_user), db: S
             .order_by(models.AiExtraction.created_at.desc()).limit(100).all())
     return [{"id": r.id, "source": r.source, "model_name": r.model_name,
              "model_version": r.model_version, "confidence": r.confidence,
-             "extracted": r.extracted_json, "evidence": r.evidence,
+             "extracted": _document_visible_fields(r.extracted_json, user["role"]), "evidence": r.evidence,
              "reviewer_status": r.reviewer_status, "reviewer_id": r.reviewer_id,
              "reviewer_note": r.reviewer_note, "created_at": str(r.created_at)} for r in rows]
 

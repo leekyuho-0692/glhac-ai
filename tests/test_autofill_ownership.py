@@ -62,6 +62,16 @@ def ai(monkeypatch):
     _drain()
 
 
+def _confirmed_failure(document_id, db=None):
+    """구버전 추출기가 원문에 없는 값을 저장한 상태. 실제 검산이 fail을 생성해야 한다."""
+    if db is None:
+        with m.SessionLocal() as session:
+            return _confirmed_failure(document_id, session)
+    doc = db.get(models.DocumentAsset, document_id)
+    doc.fields = {**doc.fields, "legacy_value": "Made up"}
+    db.commit()
+
+
 @pytest.fixture
 def client(ai):
     with TestClient(m.app) as client:
@@ -228,11 +238,15 @@ def test_h2_기존_공장값은_유지하고_새_값은_충돌에_남긴다(clie
 
 @pytest.mark.parametrize("route", ["single", "zip"])
 @pytest.mark.parametrize("bad", ["verify_fail", "number_absent", "address_absent", "other_company"])
-def test_h2_검증실패나_원문근거_소유권이_없는_공장은_반영하지_않는다(client, case, ai, route, bad):
+def test_h2_검증실패나_원문근거_소유권이_없는_공장은_반영하지_않는다(client, case, ai, monkeypatch, route, bad):
     fields = {"company_name": OWNER, "factory_reg_no": "OWN-001", "factory_address": FACTORY_ADDRESS}
     text = _factory_text()
     if bad == "verify_fail":
-        ai["verdict"] = "fail"
+        enqueue = m.verify_enqueue
+        def with_legacy_value(did):
+            _confirmed_failure(did)
+            return enqueue(did)
+        monkeypatch.setattr(m, "verify_enqueue", with_legacy_value)
     elif bad == "number_absent":
         fields["factory_reg_no"] = "GHOST-999"
     elif bad == "address_absent":
@@ -338,7 +352,7 @@ def test_기존_번호와_일치하면_등록증_상호_주소_번호표기가_�
         assert changes["address"]["before"] == "Manual address"
     assert not _conflicts(client, case)
     _drain()
-    ai["verdict"] = "fail"
+    _confirmed_failure(did)
     assert m.verify_enqueue(did)
     _drain()
     with m.SessionLocal() as db:
@@ -475,7 +489,7 @@ def test_번호가_비면_같은_업체의_빈칸_반영값만_검증실패로_�
         verify = db.get(models.DocumentAsset, queued[0]).fields["_verify"]
         assert verify["verdict"] == "ok"
         assert not any(i.get("code") == "company_name_mismatch" for i in verify["field_issues"])
-    ai["verdict"] = "fail"
+    _confirmed_failure(queued[0])
     assert enqueue(queued[0])
     _drain()
     with m.SessionLocal() as db:
@@ -510,6 +524,8 @@ def test_번호가_비면_다른_업체_등록증은_검증결과와_무관하�
     for verdict in (None, "ok", "fail"):
         if verdict is not None:
             ai["verdict"] = verdict
+            if verdict == "fail":
+                _confirmed_failure(queued[0])
             assert enqueue(queued[0])
             _drain()
         with m.SessionLocal() as db:
@@ -518,9 +534,12 @@ def test_번호가_비면_다른_업체_등록증은_검증결과와_무관하�
             fields = db.get(models.DocumentAsset, queued[0]).fields
             assert not fields["_autofill"]["changes"]
             if verdict is not None:
-                assert fields["_verify"]["verdict"] == verdict
+                assert fields["_verify"]["verdict"] == ("warn" if verdict == "ok" and company else verdict)
+                if verdict == "ok" and company:
+                    assert any(i.get("code") == "company_name_mismatch" for i in fields["_verify"]["field_issues"])
         assert _conflicts(client, case) == pending
-        problems = client.get(f"/cases/{case[1]}/problem-documents", headers=case[0]).json()
+        staff = client.post("/auth/login", json={"username":"operator1", "password":"pw"}).json()
+        problems = client.get(f"/cases/{case[1]}/problem-documents", headers={"Authorization":"Bearer " + staff["token"]}).json()
         assert "OWNERSHIP_MISMATCH" in {r["code"] for d in problems["documents"] for r in d["reasons"]}
 
 
@@ -582,7 +601,7 @@ def test_비동기_fail은_같은_문서의_자동반영만_되돌리고_중복�
     with m.SessionLocal() as db:
         c = db.get(models.CaseApplication, case[1])
         assert c.nib == NIB and c.address == ADDRESS and c.profile_ext["company_name_en"] == OWNER
-    ai["verdict"] = "fail"
+    _confirmed_failure(queued[0])
     assert enqueue(queued[0])
     _drain()
     with m.SessionLocal() as db:
@@ -615,6 +634,7 @@ def test_검증_대기_중_사람이_저장한_값은_같은값_확인과_삭제
     _upload(client, case, ai, {"company_name": OWNER, "nib": NIB, "address": ADDRESS}, _nib_text())
     with m.SessionLocal() as db:
         d, c = db.get(models.DocumentAsset, queued[0]), db.get(models.CaseApplication, case[1])
+        _confirmed_failure(d.document_id, db)
 
         def verify(*args):
             assert not db.in_transaction()
@@ -622,7 +642,7 @@ def test_검증_대기_중_사람이_저장한_값은_같은값_확인과_삭제
             assert response.status_code == 200, response.text
             return {"verdict": "fail", "summary": "검증 실패"}
 
-        monkeypatch.setattr(intake, "verify_extraction", verify)
+        monkeypatch.setattr(intake.ai_local, "llm_json", verify)
         m._verify_doc(db, d, c)
     with m.SessionLocal() as db:
         c = db.get(models.CaseApplication, case[1])
@@ -650,6 +670,7 @@ def test_다른_문서의_충돌에서_기존값을_확인하면_원본_검증�
         d, c = db.get(models.DocumentAsset, queued[0]), db.get(models.CaseApplication, case[1])
         if reprocess == "document":
             m._reprocess_doc(db, d, c)
+        _confirmed_failure(d.document_id, db)
         m._verify_doc(db, d, c)
     with m.SessionLocal() as db:
         assert db.get(models.CaseApplication, case[1]).nib == NIB
@@ -667,7 +688,7 @@ def test_시설과_확장프로필도_사람이_확인한_필드만_검증실패
     response = client.patch(f"/facilities/{fid}", headers=case[0],
                             json={"address": FACTORY_ADDRESS, "phone": "021-5551234"})
     assert response.status_code == 200, response.text
-    ai["verdict"] = "fail"
+    _confirmed_failure(queued[0])
     with m.SessionLocal() as db:
         m._verify_doc(db, db.get(models.DocumentAsset, queued[0]), db.get(models.CaseApplication, case[1]))
     with m.SessionLocal() as db:
@@ -685,7 +706,7 @@ def test_자동반영_출처가_아닌_같은값_문서의_fail은_기존값을_
     fields = {"company_name": OWNER, "nib": NIB, "address": ADDRESS}
     _upload(client, case, ai, fields, _nib_text())
     _upload(client, case, ai, fields, _nib_text(), filename="same.pdf")
-    ai["verdict"] = "fail"
+    _confirmed_failure(queued[1])
     with m.SessionLocal() as db:
         m._verify_doc(db, db.get(models.DocumentAsset, queued[1]), db.get(models.CaseApplication, case[1]))
     with m.SessionLocal() as db:
@@ -701,7 +722,7 @@ def test_출처기록이_남아도_이후_다른값으로_수정됐으면_되돌
     with m.SessionLocal() as db:
         db.get(models.CaseApplication, case[1]).address = "사람이 바꾼 주소"
         db.commit()
-    ai["verdict"] = "fail"
+    _confirmed_failure(queued[0])
     with m.SessionLocal() as db:
         m._verify_doc(db, db.get(models.DocumentAsset, queued[0]), db.get(models.CaseApplication, case[1]))
     with m.SessionLocal() as db:
@@ -714,6 +735,7 @@ def test_검증_대기_중_재추출된_문서에_이전_실패로_롤백하지_
     queued = []
     monkeypatch.setattr(m, "verify_enqueue", lambda did: queued.append(did) or True)
     _upload(client, case, ai, {"company_name": OWNER, "nib": NIB, "address": ADDRESS}, _nib_text())
+    _confirmed_failure(queued[0])
 
     def verify(*args):
         with m.SessionLocal() as db:
@@ -722,7 +744,7 @@ def test_검증_대기_중_재추출된_문서에_이전_실패로_롤백하지_
             db.commit()
         return {"verdict": "fail"}
 
-    monkeypatch.setattr(intake, "verify_extraction", verify)
+    monkeypatch.setattr(intake.ai_local, "llm_json", verify)
     with m.SessionLocal() as db:
         m._verify_doc(db, db.get(models.DocumentAsset, queued[0]), db.get(models.CaseApplication, case[1]))
     with m.SessionLocal() as db:
@@ -745,6 +767,7 @@ def test_문서_승인은_당시_반영값만_보호하고_이후_재추출_값�
         d, c = db.get(models.DocumentAsset, queued[0]), db.get(models.CaseApplication, case[1])
         m._reprocess_doc(db, d, c)
         assert c.address == ADDRESS
+        _confirmed_failure(d.document_id, db)
         m._verify_doc(db, d, c)
     with m.SessionLocal() as db:
         c = db.get(models.CaseApplication, case[1])

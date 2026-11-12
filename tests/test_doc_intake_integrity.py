@@ -258,7 +258,7 @@ def test_사업자번호를_숫자로_대조하고_일치하거나_비었을_때
         fake_llm["company_name"] = "PT Integrity"
     text = PLAIN_TEXT.replace("BIO-FD&C Co., Ltd.", fake_llm["company_name"])
     res = _upload(client, case, "사업자등록증.pdf",
-                  f"NOMOR INDUK BERUSAHA (NIB)\nNIB: {extracted}\n{text}")
+                  f"Certificate of Business Registration\nBusiness Taxpayer ID Number: {extracted}\n{text}")
     assert res["doc_type"] == "nib_business_license" and res["mismatch"] is None
     saved = client.get(f"/cases/{cid}", headers=h).json()
     if skip:
@@ -542,8 +542,8 @@ def test_전문이_없으면_발췌로_GPT를_부르지_않는다(client, case, 
         assert d.fields["_verify"]["summary"] == "전문 없음 — 재처리 필요"
 
 
-@pytest.mark.parametrize("llm_verdict,expected", [("ok", "warn"), ("fail", "fail"), (None, "warn")])
-def test_원문에_없는_값은_규칙과_GPT_지적을_합쳐_최소_warn이다(monkeypatch, llm_verdict, expected):
+@pytest.mark.parametrize("llm_verdict", ["ok", "fail", None])
+def test_확정_원문_불일치는_항상_fail이고_GPT_의견은_참고로_남긴다(monkeypatch, llm_verdict):
     text = "Ac me\nCO WATER " + "본문 " * 3000 + "Tail Material"
     fields = {"company_name": "ACME CO", "material_names": ["Water", "가짜원료", "없는성분"],
               "address": "가짜주소", "short": "ab", "count": 20, "tail": "Tail Material",
@@ -560,16 +560,14 @@ def test_원문에_없는_값은_규칙과_GPT_지적을_합쳐_최소_warn이�
 
     monkeypatch.setattr(intake.ai_local, "llm_json", verify)
     res = intake.verify_extraction("other", "scan.pdf", text, fields)
-    assert res["verdict"] == expected
-    issues = [{"field": "material_names", "issue": "원문에 없는 값"},
-              {"field": "address", "issue": "원문에 없는 값"},
-              {"field": "short", "issue": "원문에 없는 값"},
-              {"field": "count", "issue": "원문에 없는 값"},
-              {"field": "document", "code": "partial_verification",
-               "issue": "검증 입력 한도 초과 — 전체 원문·추출값의 담당자 검토 필요"}]
-    if llm_verdict is not None:
-        issues.append({"field": "company_name", "issue": "업체 대조 필요"})
-    assert res["field_issues"] == issues
+    assert res["verdict"] == "fail"
+    assert res["field_issues"] == [
+        *[{"field": key, "code": "ungrounded_value", "issue": "원문 값·역할·형식 대조 불일치"}
+          for key in ("material_names", "address", "short", "count")],
+        {"field": "document", "code": "partial_verification",
+         "issue": "검증 입력 한도 초과 — 전체 원문·추출값의 담당자 검토 필요"}]
+    assert [x for x in res["advisory"] if x.get("code") != "partial_analysis"] == (
+        [{"field": "company_name", "issue": "업체 대조 필요"}] if llm_verdict else [])
     assert len(calls) == 1 and calls[0].split("원문:\n", 1)[1] == text[:8000]
 
 
@@ -598,7 +596,7 @@ def test_케이스_사업자번호가_비어도_사용자_입력은_보존한다
         candidates = [x for x in pending if x["field"] == "nib"]
         assert len(candidates) == 1 and candidates[0]["proposed"] == "597-19-01669"
         assert candidates[0]["filename"] == "사업자등록증.pdf"
-        problems = client.get(f"/cases/{cid}/problem-documents", headers=h).json()
+        problems = client.get(f"/cases/{cid}/problem-documents", headers=_tok(client, "operator1")).json()
         assert "OWNERSHIP_MISMATCH" in {r["code"] for d in problems["documents"] for r in d["reasons"]}
 
 

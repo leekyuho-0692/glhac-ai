@@ -493,7 +493,8 @@ def _verification_race(api, monkeypatch, target, state):
         return {"verdict": "fail", "doc_type_ok": True,
                 "field_issues": [{"field": field, "issue": "Controlled verification failure"}], "summary": "E1 verification"}
 
-    monkeypatch.setattr(ai_local, "llm_json", llm)
+    # 원시 AI 의견이 아닌 검산 완료 후의 fail을 큐 경계에 주입한다.
+    monkeypatch.setattr(m.intake, "verify_extraction", llm)
     monkeypatch.setattr(m, "_DOC_VERIFY", True)
     m._verify_start()
     failed = m._verify_state["failed"]

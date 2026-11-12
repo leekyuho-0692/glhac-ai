@@ -110,8 +110,9 @@ def test_onsite_evidence_attribution_no_exif():
         assert d["captured_at"] is None and d["lat"] is None and d["lng"] is None
 
 
-def test_non_evidence_upload_skips_attribution():
-    """비증거 doc_type('other')은 귀속 메타를 채우지 않음(범위 최소화 — 증거만)."""
+def test_non_evidence_upload_records_uploader_without_capture_metadata():
+    """일반 서류도 요청 복구용 업로더는 저장하며 촬영 메타는 증거 업로드에 한정한다."""
+    from app import auth
     with TestClient(app) as c:
         adm = _tok(c, "admin", "admin")
         cid = c.post("/cases", json={"company_name": "EvMeta Other Co", "org_id": "org_demo"},
@@ -121,14 +122,16 @@ def test_non_evidence_upload_skips_attribution():
                headers=_h(adm))
         docs = c.get(f"/cases/{cid}/documents", headers=_h(adm)).json()
         d = next(x for x in docs if x["doc_type"] == "other")
-        assert d["uploaded_by"] is None  # A08 귀속(촬영자)은 증거 전용 · file_hash는 이제 전 문서 기록(무결성·중복방지)
+        assert d["uploaded_by"] == auth.verify_token(adm)["uid"]
+        assert d["uploader_role"] == "admin"
+        assert d["captured_at"] is None and d["lat"] is None and d["lng"] is None
 
 
 if __name__ == "__main__":
     tests = [test_helper_parses_exif_gps_and_datetime,
              test_mock_evidence_attribution_metadata,
              test_onsite_evidence_attribution_no_exif,
-             test_non_evidence_upload_skips_attribution]
+             test_non_evidence_upload_records_uploader_without_capture_metadata]
     passed = 0
     for t in tests:
         try:

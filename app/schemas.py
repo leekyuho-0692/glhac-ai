@@ -713,6 +713,7 @@ class RegisterReq(BaseModel):
     password: str = Field(max_length=256)
     company_email: str = Field(max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     email_consent: bool
+    extraction_receipt: Optional[str] = Field(default=None, max_length=65536)
 
     @field_validator("company_email", mode="before")
     @classmethod

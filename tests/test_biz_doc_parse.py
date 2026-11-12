@@ -23,6 +23,8 @@ KOREAN_TEXT = ("상호 : 가나다식품 사업자등록번호 : 120-81-00000 �
 
 @pytest.fixture(autouse=True)
 def no_llm(monkeypatch):
+    monkeypatch.setattr(m, "_OCR_EXTRACT_CACHE", m.OrderedDict())
+    monkeypatch.setattr(m.auth, "_USERNAME_CHECK_ATTEMPTS", {})
     monkeypatch.setattr(m.ai_local, "provider", lambda: "none")
 
     def unexpected(*args, **kw):
@@ -332,6 +334,8 @@ def test_인도네시아_등록증_추출은_유지한다():
 @pytest.mark.parametrize("provider", ["none", "ollama"])
 def test_OCR_API가_실측_문자열의_filled와_missing을_알린다(client, monkeypatch, provider):
     monkeypatch.setattr(m.ai_local, "provider", lambda: provider)
+    if provider != "none":
+        monkeypatch.setattr(m.ai_local, "llm_json", lambda *a, **k: {"fields": m._parse_biz_doc(OCR_TEXT)})
     res = _ocr(client, monkeypatch, OCR_TEXT)
     assert res["ocr_available"] is True and res["source"] == "pdf_text"
     assert res["fields"] == m._parse_biz_doc(OCR_TEXT)
@@ -347,7 +351,7 @@ def test_OCR_API는_국문_전용이면_영문_미판독을_알린다(client, mo
     assert {"company_name", "responsible_person", "address", "nib"} <= set(res["filled"])
 
 
-def test_LLM은_누락값만_한번_보충하고_원문에_없는_값은_거부한다(client, monkeypatch):
+def test_LLM은_전체필드를_결정하고_원문에_없는_값은_거부한다(client, monkeypatch):
     original = m._parse_biz_doc
 
     def partial(text):
@@ -360,10 +364,8 @@ def test_LLM은_누락값만_한번_보충하고_원문에_없는_값은_거부�
 
     def supplement(system, text):
         calls.append((system, text))
-        assert json.loads(system.split("요청 필드: ", 1)[1]) == {
-            "responsible_person": None, "address": None, "company_name_en": None}
-        assert text == OCR_TEXT
-        return {"company_name": "기존값을 덮으면 안 됨", "responsible_person": "김 태호",
+        assert "evidence" in system and OCR_TEXT in text
+        return {"company_name": "더마앤에스테틱코리아", "nib": "597-19-01669", "responsible_person": "김 태호",
                 "address": "서울특별시 강남구 원문에 없는 주소", "company_name_en": "DA K0REA"}
 
     monkeypatch.setattr(m, "_parse_biz_doc", partial)
@@ -378,9 +380,8 @@ def test_LLM은_누락값만_한번_보충하고_원문에_없는_값은_거부�
     assert res["missing"] == ["address"]
 
 
-@pytest.mark.parametrize("extra", [{"company_name_en": "MADE UP COMPANY"},
-                                   {"company_name_en": None}, {"error": "timeout"}, None])
-def test_LLM이_보충하지_못해도_규칙값과_누락_안내는_유지한다(client, monkeypatch, extra):
+@pytest.mark.parametrize("extra", [{"error": "timeout"}, None])
+def test_LLM_실패시만_규칙값과_누락_안내는_유지한다(client, monkeypatch, extra):
     calls = []
 
     def supplement(system, text):

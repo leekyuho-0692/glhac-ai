@@ -95,3 +95,18 @@ def test_가입시_물류_분야를_바로_초기_케이스에_적용한다(clie
     assert c["profile_ext"]["sectors"] == ["warehouse"]
     assert c["scheme"] == "logistics"
     assert c["logistics_scope"] == ["penyimpanan", "pengemasan"]
+
+
+def test_서명된_자동추출_출처만_가입케이스에_저장한다(client):
+    from app import auth
+    from app.document_extraction import extraction_receipt
+    name = '가입 테스트 업체'
+    metadata = {'company_name': {'source': 'ai', 'review': True, 'evidence': name,
+                                 'checks': {'in_source': True, 'rule_match': False}}}
+    receipt = extraction_receipt({'company_name': name}, metadata, auth.SECRET)
+    c = _register(client, extraction_receipt=receipt)
+    assert c['profile_ext']['_registration_extraction'] == metadata
+    c = _register(client, extraction_receipt=receipt + 'tampered')
+    assert '_registration_extraction' not in c['profile_ext']
+    c = _register(client, extraction_receipt=receipt, company_name='직접 수정한 업체')
+    assert '_registration_extraction' not in c['profile_ext']
