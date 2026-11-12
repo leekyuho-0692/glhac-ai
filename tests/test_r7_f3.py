@@ -237,8 +237,12 @@ def prepare_issue_evidence(cid, invoice_id, auditor, checker):
             version=1, status='approved', content='Local reviewed scope for certificate number control')
         db.add(report)
         db.flush()
+        # 현재 HEAD의 생성·서명·심의 이력은 같은 심사 범위를 참조해야 한다.
+        subject = m.sm.review_subject(db, c)
+        m.sm.record_event(db, c, c.status, c.status, 'audit_report.generated', 'auditor', auditor,
+                          {**m._report_version(report), 'review_subject': subject})
         m.sm.record_event(db, c, c.status, c.status, 'audit_report.sign', 'auditor', auditor,
-                          {'name': 'Local reviewer', **m._report_version(report)})
+                          {'name': 'Local reviewer', **m._report_version(report), 'review_subject': subject})
         missing, context = m._fatwa_gate_check(db, c)
         assert not missing, missing
         ar = models.ApprovalRequest(case_id=cid, org_id=c.org_id, action_type='audit_report.send_fatwa',
@@ -248,6 +252,10 @@ def prepare_issue_evidence(cid, invoice_id, auditor, checker):
         db.flush()
         m.sm.record_event(db, c, c.status, 'fatwa_review', 'audit_report.send_fatwa', 'auditor', auditor,
             {'approval_id': ar.id, 'review_basis': context['review_basis'], 'gate': 'passed'})
+        m.sm.record_event(db, c, c.status, c.status, 'fatwa.provisional', 'fatwa_liaison', None,
+                          {'decision': 'approved', 'review_basis': context['review_basis']})
+        m.sm.record_event(db, c, c.status, c.status, 'fatwa.final_approve', 'operator', checker,
+                          {'review_basis': context['review_basis']})
         db.commit()
 
 
@@ -442,6 +450,8 @@ def test_certificate_review_downgrade_invalidates_cached_promotion(client, world
     did = add(models.DocumentAsset(case_id=cid, material_id=mid if linked else None,
         filename='certificate.txt', doc_type='halal_certificate', review_status='approved',
         fields={'cert_no': number, 'expiry_date': '2099-01-01'},
+        text_full='HALAL CERTIFICATE\nCertificate No: ' + number,
+        text_excerpt='HALAL CERTIFICATE\nCertificate No: ' + number,
         content_b64=b64(('HALAL CERTIFICATE\nCertificate No: ' + number).encode()))).document_id
     r = expect(request(client, 'PATCH', f'/materials/{mid}', a['owner'], json={'cert_no': number}), 200)
     assert r.json()['screen']['cert_promoted']
@@ -677,7 +687,8 @@ def test_current_consultant_can_write_but_former_cannot_use_indirect_ids(client,
 
 @pytest.mark.parametrize('expiry', [None, 'not-a-date'])
 def test_verifier_unknown_expiry_is_not_verified(expiry):
-    doc = {'doc_type': 'halal_certificate', 'fields': {'cert_no': NUMBER, 'expiry_date': expiry}}
+    doc = {'doc_type': 'halal_certificate', 'fields': {'cert_no': NUMBER, 'expiry_date': expiry},
+           'text_full': 'HALAL CERTIFICATE\nCertificate No: ' + NUMBER}
     result = cert_verify.verify(NUMBER, [doc])
     assert result['verdict'] == 'UNVERIFIED_EXPIRY'
     assert not cert_verify.promotes(result)
@@ -685,6 +696,7 @@ def test_verifier_unknown_expiry_is_not_verified(expiry):
 
 def test_verifier_selects_valid_document_among_same_number_copies():
     docs = [{'document_id': str(i), 'doc_type': 'halal_certificate',
+             'text_full': 'HALAL CERTIFICATE\nCertificate No: ' + NUMBER,
              'fields': {'cert_no': NUMBER, 'expiry_date': expiry}}
             for i, expiry in enumerate(['2000-01-01', '2099-01-01'])]
     result = cert_verify.verify(NUMBER, docs)
