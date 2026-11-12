@@ -312,7 +312,7 @@ def test_missing_zip_original_is_reported(client, case, monkeypatch):
 @pytest.mark.parametrize("route", ["intake-zip", "reprocess"])
 def test_ocr_recovery_replaces_all_old_diagnostics(client, case, monkeypatch, route):
     cid, headers = case
-    raw = pdf("SERTIFIKAT HALAL\nID00110012345678")
+    raw = pdf("SERTIFIKAT HALAL\nCertificate No: ID00110012345678\nValid until: 2099-01-01")
     filename = "Sertifikat Halal.pdf"
     old = {"_ocr_error": "TIMEOUT", "_llm_error": "TIMEOUT", "_empty": True,
            "_truncated": {"kind": "pages", "limit": 40}, "_truncations": [{"kind": "pages", "limit": 40}],
@@ -325,7 +325,8 @@ def test_ocr_recovery_replaces_all_old_diagnostics(client, case, monkeypatch, ro
         db.add(doc)
         db.commit()
         did = doc.document_id
-    fresh = {"doc_type": "halal_certificate", "confidence": .9, "fields": {"certificate_no": "ID00110012345678"}}
+    fresh = {"doc_type": "halal_certificate", "confidence": .9,
+             "fields": {"certificate_no": "ID00110012345678", "expiry_date": "2099-01-01"}}
     monkeypatch.setattr(intake, "classify", lambda *a, **k: copy.deepcopy(fresh))
     monkeypatch.setattr(intake, "parse_typed_text", lambda *a, **k: copy.deepcopy(fresh))
     if route == "intake-zip":

@@ -146,7 +146,7 @@ def normalize_material_name(name):
         else:
             # 괄호 안 성분 구분자와 숫자 범위는 의미가 있다. 단어 사이 하이픈은 기존대로 접는다.
             if depth:
-                parts[i] = re.sub(r"(?<!\d)-|-(?!\d)", "", re.sub(r"[\s_#]", "", part))
+                parts[i] = re.sub(r"(?<!\d)-|-(?!\d)", "", re.sub(r"\s", "", part))
             else:
                 parts[i] = re.sub(r"[\s\-_,#]|중국산|국내산|수입", "", part)
     return "".join(parts)

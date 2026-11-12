@@ -15,10 +15,10 @@ from app import cert_verify as cv          # noqa: E402
 from app import screening                  # noqa: E402
 
 
-def _doc(cert_no="ID00410000500391022", expiry="2030-01-01", text="Sertifikat Halal"):
+def _doc(cert_no="ID00410000500391022", expiry="2030-01-01", text=None):
     return {"doc_type": "halal_certificate",
             "fields": {"cert_no": cert_no, "expiry_date": expiry},
-            "text": text}
+            "text": text if text is not None else "Sertifikat Halal\nCertificate No: " + cert_no + "\nValid until: " + expiry}
 
 
 def _with_flag(value, fn):
@@ -110,8 +110,8 @@ def test_유효기간이_지나면_EXPIRED():
 
 
 def test_본문에서_번호를_찾는다():
-    """fields 추출이 비어도 본문에서 번호를 찾는다. 만료일이 없으면 만료로 보지 않는다."""
-    doc = {"doc_type": "halal_certificate", "fields": {},
+    """번호 필드가 비어도 원문의 명시 라벨로 찾는다. 유효기간은 별도로 확인돼야 한다."""
+    doc = {"doc_type": "halal_certificate", "fields": {"expiry_date": "2030-01-01"},
            "text": "Sertifikat Halal Nomor ID00410000500391022 berlaku"}
     res = cv.verify("ID00410000500391022", docs=[doc], today=date(2026, 9, 28))
     assert res["verdict"] == "VERIFIED"

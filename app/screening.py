@@ -143,7 +143,7 @@ def _negation_pattern():
               r"\s+(?:(?:is|are)\s+)?(?:not\s+(?:present|contained|included)|absent)(?!\w)|"
               r"(?:[이가은는을를])?\s*(?:전혀\s*)?(?:무첨가|불포함|미함유|"
               r"(?:함유하|포함하|들어\s*있)지\s*않(?:는다|음|는|다)|"
-              r"없(?:지\s*않(?:은|다|음)|음|는|다))(?!\w)")
+              r"없(?:지\s*않(?:은|다|음)|다는|음|는|다))(?!\w)")
     return re.compile(
         r"(?<!\w)(?:(?P<narrow>non[\s-]*|[무無][\s-]*)(?P<narrow_risk>" + short + r")(?!\w)|"
         r"(?P<prefix>" + prefix + r")(?P<risks>" + listed + r")|"
@@ -151,8 +151,9 @@ def _negation_pattern():
 
 
 _OUTER_NEGATION = re.compile(r"(?<!\w)(?:(?:not|never|tidak|bukan)[\s-]+"
-                             r"(?:(?:entirely|completely|fully|totally|always|guaranteed|sepenuhnya)\s+)?|"
-                             r"(?:cannot|can't|can\s+not)\s+guarantee\s+)$")
+                             r"(?:(?:entirely|completely|fully|totally|always|necessarily|guaranteed|sepenuhnya)\s+|"
+                             r"assured\s+to\s+be\s+)?|"
+                             r"(?:cannot|can't|can\s+not)\s+(?:guarantee|certify|confirm)\s+)$")
 
 
 def _without_negated_risks(key):
@@ -165,7 +166,7 @@ def _without_negated_risks(key):
         if (_OUTER_NEGATION.search(key[:match.start()])
                 or re.search(r"없지\s*않", match.group("suffix") or "")
                 or ((match.group("suffix") or "") and re.match(
-                    r"\s*(?:것(?:은|이)?\s*아(?:님|니)|(?:다고|다고는|다는)\s*(?:말|할)|"
+                    r"\s*(?:뜻(?:은|이)?\s*아니|것(?:은|이)?\s*아(?:님|니)|(?:다고|다고는|다는)\s*(?:말|할|뜻)|"
                     r"(?:것이라고|것이\s*아니라고)\s*할\s*수\s*없)", key[match.end():]))):
             return (match.group("narrow_risk") or match.group("risks")
                     or match.group("suffix_risk"))

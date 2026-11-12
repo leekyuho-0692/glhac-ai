@@ -59,10 +59,43 @@ def _is_halal_cert(doc):
     return dt is not None and str(dt).strip().lower() == "halal_certificate"
 
 
+def certificate_evidence_issues(doc, today=None, *, check_expiry=True):
+    """추출 필드의 존재와 증빙 적격성을 구분하는 공통 판정(승격·문서 안내)."""
+    from .intake import certificate_invalid_marker, _deterministic_fields
+    fields = doc.get("fields") or {}
+    text = doc.get("text_full") or doc.get("text") or doc.get("text_excerpt") or ""
+    issues = []
+    if fields.get("_cert_not_valid") or certificate_invalid_marker(doc.get("filename"), text):
+        issues.append("invalid_status")
+    if fields.get("_counts_as_evidence") is False:
+        issues.append("excluded")
+    if fields.get("_ocr_error") or fields.get("_empty") or fields.get("_llm_error"):
+        issues.append("unreadable")
+    if doc.get("review_status") not in (None, "approved"):
+        issues.append("unapproved")
+    verification = fields.get("_verify") or {}
+    if (verification.get("llm_error") or verification.get("verdict") in ("warn", "fail", "unknown")
+            or verification.get("doc_type_ok") is False or verification.get("field_issues")):
+        issues.append("verification")
+    if _is_halal_cert(doc):
+        labelled = _deterministic_fields("halal_certificate", text, explicit_only=True).get("cert_no")
+        candidate = fields.get("cert_no") or labelled
+        if (not isinstance(candidate, str) or not labelled
+                or normalize(candidate) != normalize(labelled)):
+            issues.append("identifier")
+    if check_expiry and (_is_halal_cert(doc) or fields.get("expiry_date")):
+        expiry = _expiry_of(doc)
+        if expiry is None:
+            issues.append("expiry_unknown")
+        elif expiry < (today or date.today()):
+            issues.append("expired")
+    return issues
+
+
 def _doc_numbers(docs):
     """할랄 인증서 문서에서 후보 번호를 모아 (정규화 번호, 문서) 쌍으로 돌려준다."""
-    from .intake import _deterministic_fields, certificate_invalid_marker
-    pairs, seen = [], set()
+    from .intake import _deterministic_fields
+    pairs = []
     for doc in docs or []:
         if not isinstance(doc, dict) or not _is_halal_cert(doc):
             continue
@@ -71,21 +104,21 @@ def _doc_numbers(docs):
         if not isinstance(fields, dict):
             continue
         text = doc.get("text") or doc.get("text_full") or doc.get("text_excerpt") or ""
-        if (fields.get("_cert_not_valid") or fields.get("_ocr_error")
-                or certificate_invalid_marker(doc.get("filename"), text)):
+        if certificate_evidence_issues(doc, check_expiry=False):
             continue
         labelled = _deterministic_fields("halal_certificate", str(text), explicit_only=True).get("cert_no")
+        if not labelled:
+            continue
         if isinstance(fields, dict):
             value = fields.get("cert_no")
             if value is not None and str(value).strip():
-                if not labelled or normalize(value) == normalize(labelled):
+                if isinstance(value, str) and normalize(value) == normalize(labelled):
                     candidates.append(value)
             elif labelled:
                 candidates.append(labelled)
         for candidate in candidates:
             n = normalize(candidate)
-            if n and n not in seen:
-                seen.add(n)
+            if n:
                 pairs.append((n, doc))
     return pairs
 
@@ -149,6 +182,10 @@ def verify(cert_no, docs=None, today=None):
 
     result["matched_document"] = matched
     expiry = _expiry_of(matched)
+    if expiry is None:
+        result["verdict"] = "UNVERIFIED_NO_DOCUMENT"
+        result["reason"] = "인증서 만료일을 확인할 수 없어 검토가 필요하다"
+        return result
     if expiry is not None:
         result["expiry"] = expiry.isoformat()
         if expiry < today:

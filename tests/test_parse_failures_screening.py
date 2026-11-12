@@ -283,7 +283,7 @@ def test_alcohol_category_cannot_clear_with_only_a_verified_certificate(monkeypa
     monkeypatch.setenv("GLHAC_CERT_VERIFY", mode)
     number = "ID00410000500391022"
     docs = [{"doc_type": "halal_certificate", "fields": {"cert_no": number, "expiry_date": "2099-01-01"},
-             "text": "Sertifikat Halal"}]
+             "text": "Sertifikat Halal\nCertificate No: " + number + "\nValid until: 2099-01-01"}]
     result = screening.screen_merged("Ethanol", cert_no=number, docs=docs)
     assert result["cert_verification"]["verdict"] == "VERIFIED"
     assert result["result"] == "NEEDS_EVIDENCE" and result["cert_promoted"] is False
