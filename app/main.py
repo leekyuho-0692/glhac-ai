@@ -118,6 +118,7 @@ def _recheck_bulk_case_writes(state):
 def _clear_case_closures(db, transaction):
     if transaction.parent is None:
         db.info.pop("case_closures", None)
+        db.info.pop("certificate_changes", None)
 
 
 def _case_write_guard_sync(request, db, body):
@@ -160,6 +161,7 @@ def _case_write_guard_sync(request, db, body):
         if c is None:  # 404·역할 검사는 해당 엔드포인트의 계약을 유지한다.
             continue
         _assert_case_access(db, user, c)
+        _assert_case_write_access(db, user, c)
         if not allow_closed:
             _assert_case_open(c)
             # OCR/LLM 대기에는 쓰기 잠금을 잡지 않는다. 첫 저장부터 커밋까지
@@ -482,52 +484,234 @@ def _upload_kind(raw):
 
 
 def _valid_ooxml(raw, ext):
-    """ZIP 표식만으로 Office 문서를 신뢰하지 않는다. 타입 선언·본문 XML을 함께 확인한다."""
+    """압축 한도 안에서 패키지 관계·모든 XML·실제 Office 파서를 확인한다."""
+    import posixpath
     import zipfile
-    import zlib
+    from urllib.parse import unquote, urlsplit
     from xml.etree import ElementTree as ET
     part, content_type = {
         "docx": ("word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
         "xlsx": ("xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"),
     }[ext]
+    rel_ns = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+    ref_ns = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             infos = archive.infolist()
-            names = [info.filename for info in infos]
-            if (len(infos) > 4096 or len(set(names)) != len(names)
-                    or sum(info.file_size for info in infos) > 5 * _UPLOAD_MAX_BYTES):
+            names = {info.filename for info in infos}
+            if (len(infos) > 4096 or len(names) != len(infos)
+                    or sum(info.file_size for info in infos) > 5 * _UPLOAD_MAX_BYTES
+                    or any(info.file_size > _UPLOAD_MAX_BYTES or info.flag_bits & 1 for info in infos)
+                    or any(n.startswith("/") or "\\" in n or ".." in n.split("/") for n in names)):
                 return False
-            types = archive.getinfo("[Content_Types].xml")
-            main = archive.getinfo(part)
-            if types.file_size > 1024 * 1024:
+            # CRC도 본문 전체를 읽어야 확인된다. 큰 파일의 앞부분만 통과시키지 않는다.
+            if archive.testzip() is not None:
                 return False
-            root = ET.fromstring(archive.read(types))
+            types = ET.fromstring(archive.read("[Content_Types].xml"))
             ns = "{http://schemas.openxmlformats.org/package/2006/content-types}"
-            if root.tag != ns + "Types" or not any(
+            if types.tag != ns + "Types" or not any(
                     node.get("PartName") == "/" + part and node.get("ContentType") == content_type
-                    for node in root.findall(ns + "Override")):
+                    for node in types.findall(ns + "Override")):
                 return False
-            namespace, tag, child = {
-                "docx": ("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "document", "body"),
-                "xlsx": ("http://schemas.openxmlformats.org/spreadsheetml/2006/main", "workbook", "sheets"),
-            }[ext]
-            if main.file_size > _UPLOAD_MAX_BYTES:
-                # 큰 압축 본문은 기존 intake의 BOMB 격리로 보낸다. 헤더만 제한적으로
-                # 읽어 Office 루트/주 파트를 검증하고 본문 전체는 팽창시키지 않는다.
-                parser = ET.XMLPullParser(events=("start",))
-                with archive.open(main) as stream:
-                    parser.feed(stream.read(65536))
-                tags = [node.tag for _, node in parser.read_events()]
-                return bool(tags and tags[0] == "{" + namespace + "}" + tag
-                            and "{" + namespace + "}" + child in tags)
-            body = ET.fromstring(archive.read(main))
-            return body.tag == "{" + namespace + "}" + tag and body.find("{" + namespace + "}" + child) is not None
-    except (ValueError, KeyError, OSError, RuntimeError, zipfile.BadZipFile, zlib.error, ET.ParseError):
+            relationships = {}
+            for name in names:
+                if not name.endswith(".rels"):
+                    continue
+                if archive.getinfo(name).file_size > 1024 * 1024:
+                    return False
+                parent, base = posixpath.split(name)
+                if posixpath.basename(parent) != "_rels":
+                    return False
+                source = "" if name == "_rels/.rels" else posixpath.join(posixpath.dirname(parent), base[:-5])
+                if source and source not in names:
+                    return False
+                root = ET.fromstring(archive.read(name))
+                if root.tag != rel_ns + "Relationships":
+                    return False
+                rels = relationships[source] = {}
+                for node in root:
+                    rid, target = node.get("Id"), node.get("Target")
+                    if node.tag != rel_ns + "Relationship" or not rid or rid in rels or not target:
+                        return False
+                    if node.get("TargetMode") == "External":
+                        rels[rid] = (node.get("Type"), None)  # 외부 관계는 읽거나 요청하지 않는다.
+                        continue
+                    url = urlsplit(target)
+                    if url.scheme or url.netloc or "\\" in target:
+                        return False
+                    path = unquote(url.path)
+                    dest = posixpath.normpath(path.lstrip("/") if path.startswith("/") else
+                                             posixpath.join(posixpath.dirname(source), path))
+                    if dest not in names or dest.startswith("../"):
+                        return False
+                    rels[rid] = (node.get("Type"), dest)
+            office_type = ref_ns[1:-1] + "/officeDocument"
+            if (office_type, part) not in relationships.get("", {}).values():
+                return False
+            for name in names:
+                if not name.endswith(".xml"):
+                    continue
+                # 스트리밍 검사: XML entity 팽창은 ElementTree 제한이 거부하며,
+                # 모든 본문 관계 참조가 그 파트의 관계 테이블에 있어야 한다.
+                with archive.open(name) as stream:
+                    for _, node in ET.iterparse(stream, events=("end",)):
+                        for key, value in node.attrib.items():
+                            if key in {ref_ns + "id", ref_ns + "embed", ref_ns + "link"}:
+                                if value not in relationships.get(name, {}):
+                                    return False
+                        node.clear()
+        if ext == "docx":
+            from docx import Document
+            document = Document(io.BytesIO(raw))
+            return document.element.body is not None
+        from openpyxl import load_workbook
+        workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True, keep_links=False)
+        try:
+            if not workbook.worksheets:
+                return False
+            cells = 0
+            for sheet in workbook.worksheets:
+                sheet.reset_dimensions()
+                for row in sheet.iter_rows():
+                    cells += len(row)
+                    if cells > 1_000_000:
+                        return False
+            return True
+        finally:
+            workbook.close()
+    except Exception:  # 손상된 외부 포맷/파서 오류는 업로드 성공으로 바꾸지 않는다.
+        return False
+
+
+def _valid_ole(raw, ext):
+    """CFB의 FAT/miniFAT·디렉터리·필수 스트림을 크기 제한 안에서 전수 검사한다."""
+    import struct
+    FREE, END, FAT, DIF = 0xffffffff, 0xfffffffe, 0xfffffffd, 0xfffffffc
+    try:
+        if len(raw) < 512 or raw[:8] != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+            return False
+        u16 = lambda offset: struct.unpack_from("<H", raw, offset)[0]
+        u32 = lambda offset: struct.unpack_from("<I", raw, offset)[0]
+        version, shift = u16(26), u16(30)
+        if (u16(28) != 0xfffe or (version, shift) not in {(3, 9), (4, 12)}
+                or u16(32) != 6 or u32(56) != 4096):
+            return False
+        size = 1 << shift
+        if len(raw) % size:
+            return False
+        count = len(raw) // size - 1
+        def sector(sid):
+            if not 0 <= sid < count:
+                raise ValueError("CFB sector outside file")
+            return raw[(sid + 1) * size:(sid + 2) * size]
+        def words(data):
+            return struct.unpack("<%dI" % (len(data) // 4), data)
+        fat_ids = [v for v in words(raw[76:512]) if v != FREE]
+        dif_ids, sid = set(), u32(68)
+        if u32(72) > count:
+            return False
+        for _ in range(u32(72)):
+            if sid in dif_ids:
+                return False
+            dif_ids.add(sid)
+            entries = words(sector(sid))
+            fat_ids.extend(v for v in entries[:-1] if v != FREE)
+            sid = entries[-1]
+        if sid not in (END, FREE) or len(fat_ids) != u32(44) or len(set(fat_ids)) != len(fat_ids):
+            return False
+        fat = [v for sid in fat_ids for v in words(sector(sid))]
+        if len(fat) < count or any(fat[sid] != FAT for sid in fat_ids) or any(fat[sid] != DIF for sid in dif_ids):
+            return False
+        used = set(fat_ids) | dif_ids
+        def chain(start, table, total, occupied):
+            out = []
+            while start != END:
+                if not 0 <= start < total or start >= len(table) or start in occupied:
+                    raise ValueError("CFB broken or overlapping chain")
+                occupied.add(start)
+                out.append(start)
+                start = table[start]
+            return out
+        def stream(start, length):
+            ids = chain(start, fat, count, used)
+            if length > _UPLOAD_MAX_BYTES or len(ids) != (length + size - 1) // size:
+                raise ValueError("CFB stream length mismatch")
+            return b"".join(sector(sid) for sid in ids)[:length]
+        directory = b"".join(sector(sid) for sid in chain(u32(48), fat, count, used))
+        entries = []
+        for offset in range(0, len(directory), 128):
+            entry = directory[offset:offset + 128]
+            kind, nlen = entry[66], struct.unpack_from("<H", entry, 64)[0]
+            name = ""
+            if kind:
+                if kind not in (1, 2, 5) or nlen < 2 or nlen > 64 or nlen % 2 or entry[nlen-2:nlen] != b"\0\0":
+                    return False
+                name = entry[:nlen - 2].decode("utf-16le")
+            entries.append((name, kind, struct.unpack_from("<III", entry, 68),
+                            struct.unpack_from("<I", entry, 116)[0], struct.unpack_from("<Q", entry, 120)[0]))
+        if not entries or entries[0][1] != 5:
+            return False
+        mini = stream(entries[0][3], entries[0][4]) if entries[0][4] else b""
+        mini_fat = words(stream(u32(60), u32(64) * size)) if u32(64) else ()
+        mini_used, visited, streams = set(), {0}, {}
+        pending = [(entries[0][2][2], "")]
+        while pending:
+            index, parent = pending.pop()
+            if index == FREE:
+                continue
+            if index >= len(entries) or index in visited:
+                return False
+            visited.add(index)
+            name, kind, (left, right, child), start, length = entries[index]
+            if not name or kind not in (1, 2):
+                return False
+            pending.extend(((left, parent), (right, parent)))
+            path = parent + name
+            if kind == 1:
+                pending.append((child, path + "/"))
+                continue
+            if child != FREE or path in streams or length > _UPLOAD_MAX_BYTES:
+                return False
+            if length < 4096:
+                ids = chain(start, mini_fat, len(mini) // 64, mini_used) if length else []
+                if len(ids) != (length + 63) // 64:
+                    return False
+                data = b"".join(mini[sid*64:(sid+1)*64] for sid in ids)[:length]
+            else:
+                data = stream(start, length)
+            streams[path] = data
+        if any(entry[1] and index not in visited for index, entry in enumerate(entries)):
+            return False
+        if ext == "doc":
+            word = streams.get("WordDocument", b"")
+            if len(word) < 32 or word[:2] != b"\xec\xa5":
+                return False
+            flags = struct.unpack_from("<H", word, 10)[0]
+            return not flags & 0x8100 and bool(streams.get("1Table" if flags & 0x200 else "0Table"))
+        if ext == "xls":
+            book = streams.get("Workbook", streams.get("Book", b""))
+            if len(book) < 8 or book[:2] not in (b"\x09\x08", b"\x09\x04", b"\x09\x02", b"\x09\x00"):
+                return False
+            offset, ended = 0, False
+            while offset < len(book):
+                if not any(book[offset:]):
+                    break
+                record, length = struct.unpack_from("<HH", book, offset)
+                offset += 4 + length
+                if offset > len(book) or record == 0x2f:  # 암호화된 스트림은 검증 불가
+                    return False
+                ended = record == 0xa and length == 0
+            return ended
+        header = streams.get("FileHeader", b"")
+        return (ext == "hwp" and len(header) >= 256 and header.startswith(b"HWP Document File\0")
+                and header[35] == 5 and not struct.unpack_from("<I", header, 36)[0] & 2
+                and bool(streams.get("DocInfo")) and bool(streams.get("BodyText/Section0")))
+    except (ValueError, IndexError, KeyError, struct.error, UnicodeError):
         return False
 
 
 def _valid_upload_structure(raw, kind):
-    """원본 저장 전 공통 구조 가드. 판독 단계의 CORRUPT 문서는 계속 격리한다."""
+    """픽셀을 실제 디코딩하되 프레임 수·누적 픽셀로 CPU/메모리를 제한한다."""
     from PIL import Image
     try:
         if kind == "pdf":
@@ -538,25 +722,18 @@ def _valid_upload_structure(raw, kind):
             with Image.open(io.BytesIO(raw)) as picture:
                 if picture.format != {"png": "PNG", "jpg": "JPEG", "gif": "GIF", "webp": "WEBP"}[kind]:
                     return False
-                if min(picture.size) <= 0:
+                picture.verify()
+            with Image.open(io.BytesIO(raw)) as picture:
+                frames, pixels = getattr(picture, "n_frames", 1), 0
+                if frames > 256:
                     return False
-            if kind == "png":
-                # IHDR/IDAT/IEND와 청크 경계. 픽셀 디코딩/OCR 비용을 업로드에 얹지 않는다.
-                offset, chunks = 8, []
-                while offset + 12 <= len(raw):
-                    length = int.from_bytes(raw[offset:offset + 4], "big")
-                    tag = raw[offset + 4:offset + 8]
-                    if offset + 12 + length > len(raw):
+                for frame in range(frames):
+                    picture.seek(frame)
+                    pixels += picture.width * picture.height
+                    if min(picture.size) <= 0 or pixels > 40_000_000:
                         return False
-                    chunks.append(tag)
-                    if len(chunks) == 1 and (tag != b"IHDR" or length != 13):
-                        return False
-                    offset += 12 + length
-                    if tag == b"IEND":
-                        return length == 0 and b"IDAT" in chunks and offset == len(raw)
-                return False
+                    picture.load()
             if kind == "jpg":
-                # Pillow는 SOF/SOS를 읽어 크기를 정한다. 종료 마커도 있어야 한다.
                 return raw.rstrip().endswith(b"\xff\xd9")
         return True
     except (ValueError, OSError, RuntimeError, SyntaxError, Image.DecompressionBombError):
@@ -577,6 +754,8 @@ def _validate_upload_type(raw, filename):
     valid = kind == expect[ext] if ext in expect else kind is None
     if ext in {"docx", "xlsx"} and valid:
         valid = _valid_ooxml(raw, ext)
+    if ext in {"doc", "xls", "hwp"} and valid:
+        valid = _valid_ole(raw, ext)
     if not ext:
         # 파일명이 없는 공개 OCR 요청도 식별 가능한 PDF/이미지만 허용한다.
         valid = kind in {"pdf", "png", "jpg", "gif", "webp"}
@@ -891,6 +1070,22 @@ def _assigned_staff(db, case_id):
     return out
 
 
+def _assert_case_write_access(db, user, case):
+    """과거 배정은 조회 근거이며 현재 담당자만 그 배정으로 변경할 수 있다."""
+    if user.get("role") != "consultant":
+        return
+    if case.org_id == user.get("org_id") or _is_my_client_org(db, user, case.org_id):
+        return  # 현재 조직/영업 소유 관계는 배정 이력과 독립된 접근 근거다.
+    current = (db.query(models.WorkflowEvent).filter_by(
+        case_id=case.case_id, action=CONSULTANT_ASSIGN_ACTION).order_by(
+            models.WorkflowEvent.created_at.desc(), models.WorkflowEvent.event_id.desc()).first())
+    payload = (current.payload or {}) if current else {}
+    uid = next((payload[k] for k in ("consultant_id", "user_id", "uid") if payload.get(k)), None)
+    if str(uid) != str(user.get("uid")):
+        raise HTTPException(403, {"code": "CURRENT_ASSIGNMENT_REQUIRED",
+                                  "message": "교체된 담당자는 과거 케이스를 조회만 할 수 있습니다"})
+
+
 def _is_my_client_org(db, user, org_id):
     """내가 영업으로 데려온 업체인가 — 컨설턴트 전용.
 
@@ -1069,9 +1264,22 @@ def _assert_materials_safe(db, c):
         raise HTTPException(409, blockers[0])
 
 
-def _screen_reviewed_material(db, material):
+def _screen_reviewed_material(db, material, *, persist=True):
+    old = material.cert_no
+    docs = None
+    if old:
+        declared = _material_certificate_declarations(db, material.case_id).get(material.material_id)
+        trusted, declared, docs = _material_certificate_input(
+            db, material.case_id, old, declared, material.material_id, revalidate=True)
+        material.cert_no = trusted
+        if persist and old != trusted:
+            case = db.get(models.CaseApplication, material.case_id)
+            _record_material_certificate(db, case, {"role": "system", "uid": "certificate-revalidation"},
+                                         material.material_id, trusted, declared, docs)
     material.evidence_provided = sm.approved_material_evidence(db, material)
-    return screening.apply_screen(material)
+    result = screening.apply_screen(material, docs=docs)
+    material.cert, material.v1_risk = result.get("v1_cert"), result.get("v1_risk")
+    return result
 
 
 def _assert_case_open(c):
@@ -6374,7 +6582,7 @@ def _mat_type_label(raw, lang="ko"):
     return str(raw)
 
 
-def _material_certificate_input(db, case_id, cert_no, declared_cert_no=None, material_id=None):
+def _material_certificate_input(db, case_id, cert_no, declared_cert_no=None, material_id=None, *, revalidate=False):
     """번호의 형식이 아니라 같은 케이스의 검토 완료 인증서 참조를 검증한다.
 
     기존 클라이언트의 cert_no 자유 입력은 버리지 않고 declared_cert_no로 격리한다.
@@ -6384,20 +6592,43 @@ def _material_certificate_input(db, case_id, cert_no, declared_cert_no=None, mat
     candidate = (cert_no or "").strip()
     declared = (declared_cert_no or "").strip() or None
     if candidate:
-        docs = db.query(models.DocumentAsset).filter_by(
-            case_id=case_id, doc_type="halal_certificate", review_status="approved")
-        docs = docs.filter(or_(models.DocumentAsset.material_id.is_(None),
-                               models.DocumentAsset.material_id == material_id))
+        docs = db.query(models.DocumentAsset).filter_by(case_id=case_id).all()
+        linked = {v.document_id for v in db.query(models.MaterialEvidenceLink).filter_by(
+            case_id=case_id, material_id=material_id)} if material_id else set()
+        latest = {}
+        for ev in (db.query(models.WorkflowEvent).filter(
+                models.WorkflowEvent.case_id == case_id,
+                models.WorkflowEvent.action.in_(("documents.review", "documents.reprocess")))
+                .order_by(models.WorkflowEvent.created_at.desc(), models.WorkflowEvent.event_id.desc())):
+            latest.setdefault((ev.payload or {}).get("document_id"), ev)
+        candidates = []
         for d in docs:
-            doc = {"document_id": d.document_id, "doc_type": d.doc_type,
-                   "fields": d.fields or {}, "text": d.text_excerpt or ""}
-            verification = cert_verify.verify(candidate, [doc])
-            if cert_verify.promotes(verification):
-                return verification["normalized"], declared, [doc]
-        if declared and declared != candidate:
+            if (d.doc_type != "halal_certificate" or d.review_status != "approved" or not d.content_b64
+                    or d.material_id not in (None, material_id) and d.document_id not in linked):
+                continue
+            recent = latest.get(d.document_id)
+            if recent and (recent.action != "documents.review" or recent.actor_type not in sm.REVIEWER_ROLES
+                           or (recent.payload or {}).get("review_status") != "approved"):
+                continue
+            # 새 사본 제출로 옛 승인본을 계속 참조하지 않는다. 문서 버전 자체의
+            # 업무 판정은 state_machine이 담당하고, 번호 입력도 최신 원본만 신뢰한다.
+            if any(other.document_id != d.document_id and other.created_at >= d.created_at
+                   and (intake._nfc(other.filename or "").casefold() == intake._nfc(d.filename or "").casefold()
+                        or other.doc_type == d.doc_type and (other.fields or {}).get("cert_no")
+                        and cert_verify.normalize(other.fields["cert_no"]) == cert_verify.normalize((d.fields or {}).get("cert_no")))
+                   for other in docs):
+                continue
+            candidates.append({"document_id": d.document_id, "doc_type": d.doc_type,
+                               "filename": d.filename, "review_status": d.review_status,
+                               "fields": d.fields or {}, "text_excerpt": d.text_excerpt or "",
+                               "text_full": d.text_full or ""})
+        verification = cert_verify.verify(candidate, candidates)
+        if cert_verify.promotes(verification):
+            return verification["normalized"], declared, [verification["matched_document"]]
+        if declared and declared != candidate and not revalidate:
             raise HTTPException(422, {"code": "CONFLICTING_CERTIFICATE_INPUT",
                                       "message": "미검증 번호는 declared_cert_no 하나로 입력하세요"})
-        declared = candidate
+        declared = declared or candidate
     return None, declared, []
 
 
@@ -6410,9 +6641,60 @@ def _material_certificate_declarations(db, case_id):
 
 
 def _record_material_certificate(db, case, user, material_id, cert_no, declared, docs):
+    # 이벤트뿐 아니라 기존 N:M 관계에도 저장하여 검토·재처리의 대상이 같게 한다.
+    selected = {doc["document_id"] for doc in docs}
+    for link in db.query(models.MaterialEvidenceLink).filter_by(
+            case_id=case.case_id, material_id=material_id, match_basis="certificate_number"):
+        if link.document_id not in selected:
+            db.delete(link)
+    for document_id in selected:
+        if not db.query(models.MaterialEvidenceLink).filter_by(
+                case_id=case.case_id, material_id=material_id, document_id=document_id).first():
+            db.add(models.MaterialEvidenceLink(case_id=case.case_id, material_id=material_id,
+                document_id=document_id, link_type="DIRECT", match_basis="certificate_number",
+                link_reason="검토 완료 인증서의 검증 번호 참조", created_by=user["uid"]))
     sm.record_event(db, case, case.status, case.status, "material.certificate", user["role"], user["uid"],
                     {"material_id": material_id, "cert_no": cert_no, "declared_cert_no": declared,
                      "document_id": docs[0]["document_id"] if docs else None})
+
+
+def _certificate_material_ids(db, case_id, document_id):
+    ids = {v.material_id for v in db.query(models.MaterialEvidenceLink).filter_by(
+        case_id=case_id, document_id=document_id)}
+    document = db.get(models.DocumentAsset, document_id)
+    if document and document.material_id:
+        ids.add(document.material_id)
+    # 배포 전 공용 인증서 참조는 이벤트만 있다. 마이그레이션 없이 함께 재검증한다.
+    for ev in db.query(models.WorkflowEvent).filter_by(case_id=case_id, action="material.certificate"):
+        if (ev.payload or {}).get("document_id") == document_id:
+            ids.add(ev.payload.get("material_id"))
+    return ids
+
+
+@event.listens_for(SessionLocal, "before_flush")
+def _collect_certificate_changes(db, flush_context, instances):
+    """검토·재처리·워커·교체·삭제의 저장 경계를 공통으로 잡는다."""
+    for row in list(db.new) + list(db.dirty) + list(db.deleted):
+        if isinstance(row, models.DocumentAsset):
+            previous = inspect(row).attrs.doc_type.history.deleted
+            if row.doc_type == "halal_certificate" or "halal_certificate" in previous:
+                db.info.setdefault("certificate_changes", set()).add(row.case_id)
+        elif isinstance(row, models.WorkflowEvent) and row.action == "documents.reprocess":
+            db.info.setdefault("certificate_changes", set()).add(row.case_id)
+
+
+@event.listens_for(SessionLocal, "before_commit")
+def _revalidate_certificate_changes(db):
+    # flush 후 현재 원본·이력으로 계산한다. 새 재처리 이력/교체본도 포함되며,
+    # 판정과 번호 회수는 같은 트랜잭션에 저장되어 중간 승격 상태가 노출되지 않는다.
+    db.flush()
+    for case_id in db.info.pop("certificate_changes", set()):
+        case = db.get(models.CaseApplication, case_id)
+        if case is None or case.status in sm.TERMINAL_STATES:
+            continue
+        for material in db.query(models.Material).filter(
+                models.Material.case_id == case_id, models.Material.cert_no.isnot(None)):
+            _screen_reviewed_material(db, material)
 
 
 @app.get("/cases/{case_id}/materials")
@@ -6421,6 +6703,16 @@ def list_materials(case_id: str, lang: str = Query("ko"),
     _get_case(db, case_id, user)
     rows = db.query(models.Material).filter_by(case_id=case_id).all()
     declarations = _material_certificate_declarations(db, case_id)
+    # 시간 경과에 의한 만료는 DB 쓰기 이벤트가 없다. 조회는 사본에 현재 신뢰를
+    # 투영하여 종결 기록을 변경하지 않고도 낡은 CLEARED/검증 번호를 표시하지 않는다.
+    from types import SimpleNamespace
+    for index, material in enumerate(rows):
+        if material.cert_no:
+            view = SimpleNamespace(**{col.name: getattr(material, col.name) for col in models.Material.__table__.columns})
+            _screen_reviewed_material(db, view, persist=False)
+            if not view.cert_no:
+                declarations[material.material_id] = declarations.get(material.material_id) or material.cert_no
+            rows[index] = view
     ev = {}
     for d in (db.query(models.DocumentAsset)
               .filter(models.DocumentAsset.case_id == case_id,
@@ -9423,10 +9715,7 @@ def review_document(document_id: str, body: schemas.DocReviewReq,
                            for k, v in meta.get("changes", {}).items()}
         fields["_autofill"] = meta
         d.fields = fields
-    linked_ids = {v.material_id for v in db.query(models.MaterialEvidenceLink).filter_by(
-        case_id=c.case_id, document_id=document_id)}
-    if d.material_id:
-        linked_ids.add(d.material_id)
+    linked_ids = _certificate_material_ids(db, c.case_id, document_id)
     mats = db.query(models.Material).filter(models.Material.case_id == c.case_id,
                                             models.Material.material_id.in_(linked_ids)).all()
     sm.record_event(db, c, c.status, c.status, "documents.review", user["role"], user["uid"],
@@ -9442,14 +9731,17 @@ HPAS_ELEMENTS = ["commitment", "materials", "process", "product", "monitoring"]
 # HPAS 5요소 표기 — 사전에서. 전에는 여기와 사전에 같은 값이 따로 있었다.
 HPAS_KO = _dd_mod.code_labels("HPAS_ELEMENT", "hpas_element", "ko")
 
-def _ensure_hpas(db, case_id):
+def _ensure_hpas(db, case_id, *, persist=False):
+    """기본은 응답용 기본값이며 명시적 쓰기에서만 평가 행을 생성한다."""
+    if persist:
+        _assert_case_open(_get_case(db, case_id))
     have = {h.element: h for h in db.query(models.HpasEvaluation).filter_by(case_id=case_id)}
     for el in HPAS_ELEMENTS:
         if el not in have:
             h = models.HpasEvaluation(case_id=case_id, element=el, status="not_started")
-            db.add(h)
+            if persist:
+                db.add(h)
             have[el] = h
-    db.commit()
     return have
 
 
@@ -9470,7 +9762,7 @@ def patch_sjph(case_id: str, body: schemas.SjphElementReq,
                user=Depends(rbac.require_action("sjph.edit")),
                db: Session = Depends(get_db)):
     _get_case(db, case_id, user)
-    have = _ensure_hpas(db, case_id)
+    have = _ensure_hpas(db, case_id, persist=True)
     h = have.get(body.element)
     if not h:
         raise HTTPException(422, {"code": "BAD_ELEMENT"})

@@ -11,7 +11,7 @@ DB 에 들어간 뒤 한참 지나 다른 화면에서 터지거나, 아예 안 
 """
 import re
 from datetime import date as _date
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from . import domain_dict as _dd
@@ -348,7 +348,7 @@ class ZipIntakeReq(BaseModel):
 
 
 class DocReviewReq(BaseModel):
-    review_status: str   # approved|rejected|rework|pending
+    review_status: Literal["approved", "rejected", "rework", "pending"]
 
 
 class SjphElementReq(BaseModel):

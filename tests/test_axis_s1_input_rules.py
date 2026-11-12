@@ -874,8 +874,9 @@ def test_certificate_reference_requires_review_scope_and_validity(client, actors
     number = 'ID00410000500391022'
     doc_cid = new_case(actors['b']) if state == 'other_org' else cid
     doc_mid = add(models.Material(case_id=doc_cid, name='Different material')).material_id if state == 'other_material' else None
-    document = add(models.DocumentAsset(case_id=doc_cid, material_id=doc_mid, filename='cert.pdf',
+    document = add(models.DocumentAsset(case_id=doc_cid, material_id=doc_mid, filename='cert.txt',
         doc_type='halal_certificate', review_status=state if state in ('pending', 'rejected') else 'approved',
+        content_b64=b64(('Halal Certificate\nCertificate No: ' + number).encode()),
         fields={'cert_no': number, 'expiry_date': '2000-01-01' if state == 'expired' else '2099-01-01'}))
     result = expect(request(client, 'PATCH', f'/materials/{mid}', actors['a'], json={'cert_no': number}), 200).json()
     verified = state == 'approved'

@@ -110,8 +110,8 @@ def test_유효기간이_지나면_EXPIRED():
 
 
 def test_본문에서_번호를_찾는다():
-    """fields 추출이 비어도 본문에서 번호를 찾는다. 만료일이 없으면 만료로 보지 않는다."""
-    doc = {"doc_type": "halal_certificate", "fields": {},
+    """번호 필드가 비어도 본문에서 찾고, 확인된 유효기간 안에서만 승격한다."""
+    doc = {"doc_type": "halal_certificate", "fields": {"expiry_date": "2030-01-01"},
            "text": "Sertifikat Halal Nomor ID00410000500391022 berlaku"}
     res = cv.verify("ID00410000500391022", docs=[doc], today=date(2026, 9, 28))
     assert res["verdict"] == "VERIFIED"

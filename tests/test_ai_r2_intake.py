@@ -213,13 +213,19 @@ def test_office_limits_are_checked_before_library_load(monkeypatch, ext, limit):
 
 @pytest.mark.parametrize("route", ["parse-file", "intake-zip"])
 def test_128kb_docx_does_not_store_21m_characters(case, docx_bomb, route):
-    _upload(case, "docx_bomb.docx", docx_bomb, "quality_cert", route)
-    doc = _documents(case)[0]
-    with m.SessionLocal() as db:
-        stored = db.get(models.DocumentAsset, doc["document_id"])
-        assert stored.text_full == "" and stored.confidence == 0
-        assert stored.fields["_ocr_error"] == "BOMB"
-        reasons = m._problem_document_reasons(stored)
+    # R7: 부분 헤더만 검사한 거대 본문은 업로드 단계에서 거부한다.
+    # 기존 원본의 직접 재처리도 여전히 BOMB로 격리하고 설명을 제공해야 한다.
+    client, headers, cid = case
+    payload = ({"zip_b64": base64.b64encode(_archive({"docx_bomb.docx": docx_bomb})).decode()}
+               if route == "intake-zip" else
+               {"filename": "docx_bomb.docx", "file_b64": base64.b64encode(docx_bomb).decode(), "doc_type": "quality_cert"})
+    response = client.post(f"/cases/{cid}/{route}", headers=headers, json=payload)
+    assert response.status_code == 415, response.text
+    assert _documents(case) == []
+    text = intake.parse_file("docx_bomb.docx", docx_bomb)
+    assert text == "" and text.parse_fields["_ocr_error"] == "BOMB"
+    reasons = m._problem_document_reasons(models.DocumentAsset(
+        filename="docx_bomb.docx", fields=text.parse_fields, content_b64=base64.b64encode(docx_bomb).decode()))
     assert [r["code"] for r in reasons] == ["BOMB"]
     for lang in ("ko", "en", "id"):
         assert m._problem_document_explanation(reasons[0], lang)

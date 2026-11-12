@@ -13,6 +13,7 @@ VERDICTS = (
     "EXPIRED",
     "MISMATCH",
     "UNVERIFIED_NO_DOCUMENT",
+    "UNVERIFIED_EXPIRY",
     "INVALID_FORMAT",
     "ABSENT",
 )
@@ -59,21 +60,36 @@ def _is_halal_cert(doc):
     return dt is not None and str(dt).strip().lower() == "halal_certificate"
 
 
+def document_context_valid(doc):
+    """번호 검증의 모든 호출자가 같은 부정 문맥·증빙 제외 조건을 사용한다."""
+    from .intake import certificate_invalid_marker
+    if not isinstance(doc, dict) or not _is_halal_cert(doc):
+        return False
+    fields = doc.get("fields") or {}
+    if not isinstance(fields, dict):
+        return False
+    if (fields.get("_counts_as_evidence") is False or fields.get("_cert_not_valid")
+            or fields.get("_ocr_error")):
+        return False
+    if doc.get("review_status") not in (None, "approved"):
+        return False
+    # 발췌/별칭 text가 전문을 가리지 않게 모든 제공 문맥을 확인한다.
+    text = "\n".join(str(doc.get(k) or "") for k in ("text", "text_full", "text_excerpt"))
+    return not certificate_invalid_marker(doc.get("filename"), text)
+
+
 def _doc_numbers(docs):
     """할랄 인증서 문서에서 후보 번호를 모아 (정규화 번호, 문서) 쌍으로 돌려준다."""
-    from .intake import _deterministic_fields, certificate_invalid_marker
-    pairs, seen = [], set()
+    from .intake import _deterministic_fields
+    pairs = []
     for doc in docs or []:
-        if not isinstance(doc, dict) or not _is_halal_cert(doc):
+        if not document_context_valid(doc):
             continue
         candidates = []
         fields = doc.get("fields") or {}
         if not isinstance(fields, dict):
             continue
-        text = doc.get("text") or doc.get("text_full") or doc.get("text_excerpt") or ""
-        if (fields.get("_cert_not_valid") or fields.get("_ocr_error")
-                or certificate_invalid_marker(doc.get("filename"), text)):
-            continue
+        text = doc.get("text_full") or doc.get("text") or doc.get("text_excerpt") or ""
         labelled = _deterministic_fields("halal_certificate", str(text), explicit_only=True).get("cert_no")
         if isinstance(fields, dict):
             value = fields.get("cert_no")
@@ -84,8 +100,7 @@ def _doc_numbers(docs):
                 candidates.append(labelled)
         for candidate in candidates:
             n = normalize(candidate)
-            if n and n not in seen:
-                seen.add(n)
+            if n:
                 pairs.append((n, doc))
     return pairs
 
@@ -137,24 +152,26 @@ def verify(cert_no, docs=None, today=None):
         result["reason"] = "번호는 적혀 있으나 할랄 인증서 문서가 제출되지 않았다"
         return result
 
-    matched = None
-    for number, doc in pairs:
-        if number == n:
-            matched = doc
-            break
-    if matched is None:
+    matches = [doc for number, doc in pairs if number == n]
+    if not matches:
         result["verdict"] = "MISMATCH"
         result["reason"] = "제출된 할랄 인증서의 번호와 일치하지 않는다"
         return result
 
+    # 같은 번호의 여러 서류 중 현재 유효한 증빙을 선택한다. 앞선 만료/불명
+    # 사본이 뒤의 유효한 사본을 가리거나, 불명 만료일이 VERIFIED가 되지 않는다.
+    matched = next((doc for doc in matches if (_expiry_of(doc) or date.min) >= today), matches[0])
     result["matched_document"] = matched
     expiry = _expiry_of(matched)
-    if expiry is not None:
-        result["expiry"] = expiry.isoformat()
-        if expiry < today:
-            result["verdict"] = "EXPIRED"
-            result["reason"] = "인증서 유효기간이 지났다"
-            return result
+    if expiry is None:
+        result["verdict"] = "UNVERIFIED_EXPIRY"
+        result["reason"] = "인증서 유효기간 확인이 필요하다"
+        return result
+    result["expiry"] = expiry.isoformat()
+    if expiry < today:
+        result["verdict"] = "EXPIRED"
+        result["reason"] = "인증서 유효기간이 지났다"
+        return result
 
     result["verdict"] = "VERIFIED"
     result["reason"] = "할랄 인증서 문서로 번호가 확인됐다"
