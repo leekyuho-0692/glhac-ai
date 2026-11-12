@@ -222,16 +222,15 @@ def build(db, case, pending, problem_reasons, explain_reason):
                   "fields": public(content.get("fields") or {}), "pledge": content.get("pledge"),
                   "signed": bool(content.get("signature")), "submitted_at": content.get("submitted_at"),
                   "submitted_by": content.get("submitted_by"), "submitted_role": content.get("submitted_role")}
-    keys = set(px) | set(ox) | set(company)
-    for document in documents:
-        keys.update(document["fields"])
     labels, value_labels = {}, {}
     for lang in ("ko", "en", "id"):
         known = domain_dict.code_labels("EXTRACT_FIELD", "extract_field", lang)
-        labels[lang] = {k: known.get(k) or k.replace("_", " ").capitalize() for k in keys}
+        # Unknown keys are humanized and reported by the view, not mistaken for translations.
+        labels[lang] = known
         value_labels[lang] = {**domain_dict.code_labels("ENUM", "enum_code", lang),
                              **domain_dict.doc_labels(lang),
-                             **domain_dict.code_labels("SOURCE", "screen_source", lang)}
+                             **domain_dict.code_labels("SOURCE", "screen_source", lang),
+                             **domain_dict.code_labels("MATERIAL", "material_type", lang)}
     return {"case_id": cid, "company": company, "contacts": contacts, "consent": consent,
             "facilities": facilities, "products": products, "materials": materials, "documents": documents,
             "pending": public(pending), "history": history,

@@ -4,6 +4,8 @@
 .intake-page h2{margin:0 0 16px}
 .intake-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr));gap:14px;margin:14px 0}
 .intake-grid>div{min-width:0}
+.intake-grid>.intake-group{grid-column:1/-1}
+.intake-group>dd>.intake-grid{margin:8px 0 0;padding-left:12px;border-left:2px solid var(--line)}
 .intake-grid dt{color:var(--muted);font-size:12px;margin-bottom:5px}
 .intake-grid dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .intake-grid ul{padding-left:20px;white-space:normal}
