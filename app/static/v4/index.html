@@ -547,6 +547,7 @@ details.faq p{margin:8px 0 0;color:var(--ink-2)}
 @media (max-width:720px){ .tri{grid-template-columns:1fr} .cal-d{min-height:52px} .cal-d .ev,.cal-d>.muted{display:none} .cal-dots{display:flex} }
 .sl-head{flex-wrap:wrap;gap:12px}.sl-pagination{display:flex;flex-wrap:wrap;align-items:center;gap:12px;max-width:100%}.sl-count{line-height:1.5}
 </style>
+<link rel="stylesheet" href="css/aud-intake.css">
 </head>
 <body>
 
@@ -1158,7 +1159,183 @@ const UIV4_I18N = {
   "application.submit_hint": ["AI 사전심사를 신청하면 오디터 검토로 넘어갑니다.", "Requesting AI pre-assessment starts auditor review.", "Pengajuan pra-penilaian AI akan dilanjutkan ke peninjauan auditor."],
   "application.services_required": ["취급 서비스(보관·포장·유통)를 1개 이상 선택해야 신청할 수 있습니다.", "Select at least one service (storage, packing or distribution) to apply.", "Pilih minimal satu layanan (penyimpanan, pengemasan, atau distribusi) untuk mengajukan."],
   "application.product_required": ["품목을 1개 이상 등록해야 신청할 수 있습니다.", "Register at least one product to apply.", "Daftarkan minimal satu produk untuk mengajukan."],
-  "application.submit": ["AI 사전심사 신청", "Request AI pre-assessment", "Ajukan pra-penilaian AI"]
+  "application.submit": ["AI 사전심사 신청", "Request AI pre-assessment", "Ajukan pra-penilaian AI"],
+  "nav.aud-intake": ["접수 내용", "Intake details", "Rincian pengajuan"],
+  "intake.open": ["접수 내용 보기", "View intake details", "Lihat rincian pengajuan"],
+  "intake.empty": ["입력 없음", "Not provided", "Belum diisi"],
+  "intake.no_history": ["기록 없음", "No record", "Tidak ada catatan"],
+  "intake.back": ["이전 화면", "Back", "Kembali"],
+  "intake.reload": ["새로고침", "Refresh", "Muat ulang"],
+  "intake.print": ["인쇄", "Print", "Cetak"],
+  "intake.docx": ["사전심사 보고서 DOCX", "Pre-assessment report DOCX", "Laporan pra-penilaian DOCX"],
+  "intake.company": ["업체 정보", "Company information", "Informasi perusahaan"],
+  "intake.contacts": ["담당자 1·2", "Contacts 1 & 2", "Kontak 1 & 2"],
+  "intake.consent": ["수신동의", "Notification consent", "Persetujuan notifikasi"],
+  "intake.facilities": ["공장·시설", "Factories & facilities", "Pabrik & fasilitas"],
+  "intake.products": ["제품", "Products", "Produk"],
+  "intake.materials": ["원재료", "Materials", "Bahan"],
+  "intake.documents": ["제출 서류", "Submitted documents", "Dokumen yang diajukan"],
+  "intake.pending": ["확인 대기·충돌", "Pending review & conflicts", "Menunggu tinjauan & konflik"],
+  "intake.history": ["변경 이력", "Change history", "Riwayat perubahan"],
+  "intake.formal": ["정식 신청서", "Formal application", "Permohonan resmi"],
+  "intake.problem_count": ["문제 서류 수", "Documents with issues", "Dokumen bermasalah"],
+  "intake.pending_count": ["확인 대기 수", "Pending candidates", "Kandidat menunggu"],
+  "intake.conflict_count": ["충돌 수", "Conflicts", "Konflik"],
+  "intake.fields": ["추출값", "Extracted values", "Nilai hasil ekstraksi"],
+  "intake.source": ["출처", "Source", "Sumber"],
+  "intake.source.structural": ["구조", "Structured parser", "Parser terstruktur"],
+  "intake.source.structural_reject": ["구조 파서 거부", "Rejected by parser", "Ditolak parser"],
+  "intake.source.llm": ["AI", "AI", "AI"],
+  "intake.source.manual": ["직접", "Manual", "Manual"],
+  "intake.source.filename": ["파일명", "Filename", "Nama berkas"],
+  "intake.source.unknown": ["출처 기록 없음", "Source not recorded", "Sumber tidak tercatat"],
+  "intake.verify": ["검증 결과", "Verification", "Verifikasi"],
+  "intake.truncated": ["일부 내용이 잘렸습니다. 원본을 확인하세요.", "Some content was truncated. Check the original.", "Sebagian isi terpotong. Periksa dokumen asli."],
+  "intake.original": ["원본 열기", "Open original", "Buka dokumen asli"],
+  "intake.reviewer_notice": ["검토자가 확인합니다.", "A reviewer will check these candidates.", "Peninjau akan memeriksa kandidat ini."],
+  "intake.memo": ["검토자에게 메모 남기기", "Leave a note for the reviewer", "Tinggalkan catatan untuk peninjau"],
+  "intake.memo_hint": ["이 케이스의 기존 협의에 메모를 남깁니다.", "Leave a note in this case discussion.", "Tinggalkan catatan dalam diskusi kasus ini."],
+  "intake.send": ["메모 저장", "Save note", "Simpan catatan"],
+  "intake.cancel": ["취소", "Cancel", "Batal"],
+  "intake.saved": ["저장했습니다.", "Saved.", "Disimpan."],
+  "intake.error": ["불러오거나 저장하지 못했습니다.", "Could not load or save.", "Gagal memuat atau menyimpan."],
+  "intake.reason": ["검토 사유 (필수)", "Review reason (required)", "Alasan tinjauan (wajib)"],
+  "intake.reason_required": ["검토 사유를 입력해 주세요.", "Enter a review reason.", "Masukkan alasan tinjauan."],
+  "intake.select": ["선택", "Select", "Pilih"],
+  "intake.dismiss": ["제외", "Dismiss", "Kecualikan"],
+  "intake.apply": ["선택 항목 처리", "Apply selected", "Terapkan pilihan"],
+  "intake.apply_all": ["전체 반영", "Apply all", "Terapkan semua"],
+  "intake.select_required": ["처리할 항목을 선택해 주세요.", "Select candidates to process.", "Pilih kandidat untuk diproses."],
+  "intake.name_required": ["이름을 입력해 주세요.", "Enter a name.", "Masukkan nama."],
+  "intake.conflicts": ["자동채움 충돌", "Autofill conflicts", "Konflik pengisian otomatis"],
+  "intake.current": ["현재값", "Current value", "Nilai saat ini"],
+  "intake.proposed": ["제안값", "Proposed value", "Nilai usulan"],
+  "intake.before": ["이전", "Before", "Sebelum"],
+  "intake.after": ["이후", "After", "Sesudah"],
+  "intake.yes": ["예", "Yes", "Ya"],
+  "intake.no": ["아니요", "No", "Tidak"],
+  "intake.pending_material": ["원재료 확인 대기", "Materials pending review", "Bahan menunggu tinjauan"],
+  "intake.pending_product": ["제품 확인 대기", "Products pending review", "Produk menunggu tinjauan"],
+  "intake.evidence": ["연결 증빙·검토 상태", "Linked evidence & review status", "Bukti terkait & status tinjauan"],
+  "intake.stored_screen": ["저장된 판정", "Stored screening result", "Hasil pemeriksaan tersimpan"],
+  "intake.field.company_name": ["회사명", "Company name", "Nama perusahaan"],
+  "intake.field.company_email": ["가입 업체 이메일", "Registered company email", "Email perusahaan terdaftar"],
+  "intake.field.org_name": ["조직 회사명", "Organization name", "Nama organisasi"],
+  "intake.field.org_address": ["조직 주소", "Organization address", "Alamat organisasi"],
+  "intake.field.pic": ["담당자 1", "Contact 1", "Kontak 1"],
+  "intake.field.cp": ["담당자 2", "Contact 2", "Kontak 2"],
+  "intake.field.name": ["이름", "Name", "Nama"],
+  "intake.field.title": ["직책", "Title", "Jabatan"],
+  "intake.field.phone": ["전화", "Phone", "Telepon"],
+  "intake.field.email": ["이메일", "Email", "Email"],
+  "intake.field.profile_ext": ["확장 프로필", "Extended profile", "Profil tambahan"],
+  "intake.field.org_profile_ext": ["조직 확장 프로필", "Organization profile", "Profil organisasi"],
+  "intake.field.sector": ["분야", "Sector", "Sektor"],
+  "intake.field.sectors": ["분야 목록", "Sectors", "Daftar sektor"],
+  "intake.field.business_scale": ["사업 규모", "Business scale", "Skala usaha"],
+  "intake.field.notify_consent": ["알림 수신동의", "Notification consent", "Persetujuan notifikasi"],
+  "intake.field.email_consent": ["이메일 수신동의 증적", "Email consent evidence", "Bukti persetujuan email"],
+  "intake.field.org_email_consent": ["가입 수신동의 증적", "Signup consent evidence", "Bukti persetujuan pendaftaran"],
+  "intake.field.agreed": ["동의 여부", "Agreed", "Disetujui"],
+  "intake.field.at": ["기록 시각", "Recorded at", "Waktu pencatatan"],
+  "intake.field.version": ["문구 버전", "Wording version", "Versi teks"],
+  "intake.field.channel": ["채널", "Channel", "Saluran"],
+  "intake.field.label": ["표시 이름", "Label", "Label"],
+  "intake.field.reg_no": ["등록번호", "Registration number", "Nomor registrasi"],
+  "intake.field.manufacturer_name": ["제조업체명", "Manufacturer name", "Nama produsen"],
+  "intake.field.scope_frozen": ["범위 동결", "Scope frozen", "Lingkup dibekukan"],
+  "intake.field.in_frozen_snapshot": ["동결 스냅샷에 포함", "In frozen snapshot", "Dalam snapshot beku"],
+  "intake.field.frozen_snapshot": ["동결 당시 시설", "Facility at freezing", "Fasilitas saat pembekuan"],
+  "intake.field.category": ["분류", "Category", "Kategori"],
+  "intake.field.description": ["설명", "Description", "Deskripsi"],
+  "intake.field.material_count": ["연결 원재료 수", "Linked materials", "Jumlah bahan terkait"],
+  "intake.field.status": ["상태", "Status", "Status"],
+  "intake.field.draft_state": ["작성 상태", "Draft state", "Status draf"],
+  "intake.field.submitted_at": ["제출 시각", "Submitted at", "Waktu pengajuan"],
+  "intake.field.e_number": ["E번호", "E number", "Nomor E"],
+  "intake.field.mat_type": ["원재료 유형", "Material type", "Jenis bahan"],
+  "intake.field.source": ["원료 기원", "Material origin type", "Jenis asal bahan"],
+  "intake.field.supplier": ["공급사", "Supplier", "Pemasok"],
+  "intake.field.manufacturer": ["제조사", "Manufacturer", "Produsen"],
+  "intake.field.origin": ["원산지", "Country of origin", "Negara asal"],
+  "intake.field.note": ["비고", "Note", "Catatan"],
+  "intake.field.screen_result": ["판정", "Result", "Hasil"],
+  "intake.field.screen_status": ["판정 상태", "Screening status", "Status pemeriksaan"],
+  "intake.field.screen_severity": ["위험도", "Severity", "Tingkat risiko"],
+  "intake.field.cert_no": ["검증 인증번호", "Verified certificate number", "Nomor sertifikat terverifikasi"],
+  "intake.field.declared_cert_no": ["신고 인증번호", "Declared certificate number", "Nomor sertifikat dilaporkan"],
+  "intake.field.cert": ["인증 상태", "Certification status", "Status sertifikasi"],
+  "intake.field.evidence_provided": ["검토된 증빙", "Reviewed evidence", "Bukti ditinjau"],
+  "intake.field.uploaded_at": ["업로드 시각", "Uploaded at", "Waktu unggah"],
+  "intake.field.uploader_role": ["올린 사람 역할", "Uploader role", "Peran pengunggah"],
+  "intake.field.review_status": ["검토 상태", "Review status", "Status tinjauan"],
+  "intake.field.doc_type": ["서류 유형", "Document type", "Jenis dokumen"],
+  "intake.field.filename": ["파일명", "Filename", "Nama berkas"],
+  "intake.field.verdict": ["검증 판정", "Verdict", "Putusan"],
+  "intake.field.field_issues": ["필드별 문제", "Field issues", "Masalah per kolom"],
+  "intake.field.summary": ["요약", "Summary", "Ringkasan"],
+  "intake.field.field": ["항목", "Field", "Kolom"],
+  "intake.field.reason": ["사유", "Reason", "Alasan"],
+  "intake.field.issue": ["문제", "Issue", "Masalah"],
+  "intake.field.code": ["문제 코드", "Issue code", "Kode masalah"],
+  "intake.field.actor_name": ["처리자", "Actor", "Pelaku"],
+  "intake.field.actor_role": ["처리자 역할", "Actor role", "Peran pelaku"],
+  "intake.field.action": ["처리 내용", "Action", "Tindakan"],
+  "intake.field.process_summary": ["공정 요약", "Process summary", "Ringkasan proses"],
+  "intake.field.halal_management": ["할랄 관리", "Halal management", "Manajemen halal"],
+  "intake.field.non_halal_handling": ["비할랄 취급 여부", "Non-halal handling", "Penanganan nonhalal"],
+  "intake.field.non_halal_desc": ["비할랄 취급 설명", "Non-halal handling details", "Rincian penanganan nonhalal"],
+  "intake.field.preferred_audit_period": ["희망 심사 시기", "Preferred audit period", "Periode audit yang diinginkan"],
+  "intake.field.sales_channels": ["판매처", "Sales channels", "Saluran penjualan"],
+  "intake.field.signer_name": ["서명자명", "Signatory", "Penanda tangan"],
+  "intake.field.pledge": ["서약 동의", "Pledge consent", "Persetujuan ikrar"],
+  "intake.field.signed": ["서명 여부", "Signed", "Ditandatangani"],
+  "intake.field.submitted_by": ["제출자", "Submitted by", "Diajukan oleh"],
+  "intake.field.submitted_role": ["제출자 역할", "Submitter role", "Peran pengaju"],
+  "intake.field.product_names": ["제품명 목록", "Product names", "Nama produk"],
+  "intake.field.material_names": ["원재료명 목록", "Material names", "Nama bahan"],
+  "intake.field.ingredients": ["성분", "Ingredients", "Komposisi"],
+  "intake.field.scope": ["범위", "Scope", "Lingkup"],
+  "intake.field.is_msme": ["중소·영세 사업자", "MSME", "UMKM"],
+  "intake.field.scheme": ["인증 종류", "Certification scheme", "Skema sertifikasi"],
+  "intake.field.pathway": ["인증 경로", "Certification pathway", "Jalur sertifikasi"],
+  "intake.field.logistics_scope": ["물류 범위", "Logistics scope", "Lingkup logistik"],
+  "intake.field.risk_category": ["위험 분류", "Risk category", "Kategori risiko"],
+  "intake.field.registration_type": ["등록 유형", "Registration type", "Jenis pendaftaran"],
+  "intake.field.pic_name": ["담당자 1 이름", "Contact 1 Name", "Kontak 1 Nama"],
+  "intake.field.pic_title": ["담당자 1 직책", "Contact 1 Title", "Kontak 1 Jabatan"],
+  "intake.field.pic_phone": ["담당자 1 전화", "Contact 1 Phone", "Kontak 1 Telepon"],
+  "intake.field.pic_email": ["담당자 1 이메일", "Contact 1 Email", "Kontak 1 Email"],
+  "intake.field.cp_name": ["담당자 2 이름", "Contact 2 Name", "Kontak 2 Nama"],
+  "intake.field.cp_title": ["담당자 2 직책", "Contact 2 Title", "Kontak 2 Jabatan"],
+  "intake.field.cp_phone": ["담당자 2 전화", "Contact 2 Phone", "Kontak 2 Telepon"],
+  "intake.field.cp_email": ["담당자 2 이메일", "Contact 2 Email", "Kontak 2 Email"],
+  "intake.value.pending": ["검토 대기", "Pending review", "Menunggu tinjauan"],
+  "intake.value.approved": ["승인", "Approved", "Disetujui"],
+  "intake.value.rejected": ["반려", "Rejected", "Ditolak"],
+  "intake.value.rework": ["보완 필요", "Rework required", "Perlu perbaikan"],
+  "intake.value.draft": ["초안", "Draft", "Draf"],
+  "intake.value.under_review": ["검토 중", "Under review", "Dalam tinjauan"],
+  "intake.value.certified": ["인증됨", "Certified", "Tersertifikasi"],
+  "intake.value.expired": ["만료", "Expired", "Kedaluwarsa"],
+  "intake.value.halal": ["할랄", "Halal", "Halal"],
+  "intake.value.haram": ["하람", "Haram", "Haram"],
+  "intake.value.mushbooh": ["의심", "Doubtful", "Meragukan"],
+  "intake.value.high": ["높음", "High", "Tinggi"],
+  "intake.value.medium": ["중간", "Medium", "Sedang"],
+  "intake.value.low": ["낮음", "Low", "Rendah"],
+  "intake.value.BLOCK": ["차단", "Blocked", "Diblokir"],
+  "intake.value.NEEDS_EVIDENCE": ["증빙 필요", "Evidence required", "Perlu bukti"],
+  "intake.value.CLEARED": ["해소", "Cleared", "Diselesaikan"],
+  "intake.value.PASS": ["통과", "Pass", "Lulus"],
+  "intake.value.pass": ["일치", "Pass", "Lulus"],
+  "intake.value.warn": ["확인 필요", "Warning", "Perlu diperiksa"],
+  "intake.value.fail": ["불일치", "Failed", "Gagal"],
+  "intake.value.value_conflict": ["현재값과 다름", "Differs from current value", "Berbeda dari nilai saat ini"],
+  "intake.value.scope_frozen": ["범위 동결", "Scope frozen", "Lingkup dibekukan"],
+  "intake.value.ai_unconfirmed": ["AI 미확정", "AI, unconfirmed", "AI, belum dikonfirmasi"],
+  "intake.value.llm_confirmed": ["추출값 확정", "Extraction confirmed", "Ekstraksi dikonfirmasi"],
+  "intake.value.signup": ["가입", "Signup", "Pendaftaran"]
 };
 for(const [key,values] of Object.entries(UIV4_I18N)){ ['ko','en','id'].forEach((lang,i)=>{ I18N[lang][key]=values[i]; }); }
 function tf(key,params={}){ return t(key).replace(/\{(\w+)\}/g,(m,k)=>params[k]??m); }
@@ -1916,13 +2093,13 @@ VIEWS['aud-pre'] = () => {
   if(!list.length) return `<section class="panel"><p class="empty">검토할 사전심사가 없습니다.</p></section>`;
   let cur = (S.selPre && list.find(c=>c.case_id===S.selPre)) ? S.selPre : list[0].case_id;
   S.selPre = cur;
-  const nav = `<nav class="mlist" aria-label="사전심사 목록"><div class="mh">사전심사 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selPre('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>`).join('')}</nav>`;
+  const nav = `<nav class="mlist" aria-label="사전심사 목록"><div class="mh">사전심사 ${list.length}건</div>${list.map(c=>`<button class="mitem ${c.case_id===cur?'on':''}" onclick="App.selPre('${c.case_id}')"><span class="t"><span>${esc(c.company_name)}</span><span class="badge">${esc(_s8label(c))}</span></span><span class="muted mono" style="font-size:11px">${esc(c.status||'')}</span></button>${INTAKE_button(c.case_id)}`).join('')}</nav>`;
   const d = (RS.pre||{})[cur]; let body;
   if(!d){
     if(RS._preLoading!==cur){ RS._preLoading=cur; loadPre(cur).then(()=>{ RS._preLoading=null; render(); }); }
     body = '<section class="panel"><p class="empty">사전심사 자료를 불러오는 중…</p></section>';
   } else { body = _audPreDetail(cur, d); }
-  return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${body}</div></div>`;
+  return `<div class="md">${nav}<div style="display:flex;flex-direction:column;gap:22px;min-width:0">${INTAKE_button(cur)}${body}</div></div>`;
 };
 App.selPre = async function(id){ S.selPre=id; if(!(RS.pre||{})[id]) await loadPre(id); render(); };
 App.preReview = async function(cid, verdict){
@@ -3043,7 +3220,7 @@ VIEWS['adm-home'] = () => {
   </section>
   <section class="panel"><div class="panel-head"><h2>전체 인증기업</h2><button class="link" onclick="App.go('adm-assign')">배정 관리 →</button></div>
     ${all.length?`<div class="tbl-wrap"><table><thead><tr><th style="min-width:160px">기업</th><th>단계</th><th>다음 할 일</th><th>컨설턴트</th><th>심사원</th></tr></thead><tbody>
-    ${all.slice(start,start+pageSize).map(c=>`<tr><td><b>${esc(c.company_name)}</b>${c.hold?' <span class="badge attn">보완</span>':''}</td><td><span class="badge">${esc(_s8label(c))}</span></td><td class="muted">${esc(c.next_action||'-')}</td><td class="muted">${esc(c.consultant||'-')}</td><td class="muted">${esc(c.main_auditor||'-')}</td></tr>`).join('')}
+    ${all.slice(start,start+pageSize).map(c=>`<tr><td><b>${esc(c.company_name)}</b>${c.hold?' <span class="badge attn">보완</span>':''}</td><td><span class="badge">${esc(_s8label(c))}</span></td><td class="muted">${esc(c.next_action||'-')}</td><td class="muted">${esc(c.consultant||'-')}</td><td class="muted">${esc(c.main_auditor||'-')}${typeof INTAKE_button==='function'?INTAKE_button(c.case_id):''}</td></tr>`).join('')}
     </tbody></table></div><nav class="row-act" aria-label="전체 인증기업 페이지" style="margin-top:16px">
       <button class="btn btn-sm" ${page===1?'disabled':''} onclick="App.admCompanyPage(${page-1})">이전</button>
       <span aria-live="polite">${page} / ${pages} 페이지 · ${start+1}–${Math.min(start+pageSize,all.length)} / ${all.length}건</span>
@@ -3999,6 +4176,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <script src="js/mat-insight.js"></script>
 <script src="js/audit-chain.js"></script>
 <script src="js/case-tools.js"></script>
+<script src="js/aud-intake.js"></script>
 <script src="js/my-info.js"></script>
 <script src="js/nav-config.js"></script>
 <!--MODULES-->

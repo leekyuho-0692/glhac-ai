@@ -8628,6 +8628,17 @@ def _failed_analyses(db, case_id):
     return out
 
 
+@app.get("/cases/{case_id}/intake-view")
+def intake_view(case_id: str, user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
+    """접수 내용 읽기 전용 집계. 조회 감사 외 데이터 변경·외부 호출 없음."""
+    from .intake_view import build
+    c = _get_case(db, case_id, user)
+    result = build(db, c, list_pending_extractions(case_id, user, db),
+                   _problem_document_reasons, _problem_document_explanation)
+    _audit(db, user, "intake.viewed", "case", case_id, case_id)
+    return result
+
+
 @app.get("/cases/{case_id}/pending-extractions")
 def list_pending_extractions(case_id: str, user=Depends(auth.get_current_user),
                              db: Session = Depends(get_db)):
@@ -8645,6 +8656,18 @@ def list_pending_extractions(case_id: str, user=Depends(auth.get_current_user),
             "note": "AI 추출값입니다 — 원본 서류와 대조한 뒤 반영하세요."}
 
 
+def _extraction_review_reason(user, body):
+    """후보 변경·제외는 검토자만, 변경·제외와 오디터 확정은 사유를 남긴다."""
+    reviewer = user["role"] in sm.REVIEWER_ROLES
+    if (body.get("renames") or body.get("dismiss")) and not reviewer:
+        raise HTTPException(403, {"code": "REVIEWER_REQUIRED"})
+    reason = body.get("reason") or ""
+    required = user["role"] == "auditor" or body.get("renames") or body.get("dismiss")
+    if not isinstance(reason, str) or (required and not reason.strip()):
+        raise HTTPException(422, {"code": "REASON_REQUIRED"})
+    return reason.strip()
+
+
 @app.post("/cases/{case_id}/pending-extractions/apply")
 def apply_pending_extractions(case_id: str, body: dict = None,
                               user=Depends(auth.require_roles("applicant", "consultant", "penyelia_halal",
@@ -8658,6 +8681,7 @@ def apply_pending_extractions(case_id: str, body: dict = None,
     _assert_case_open(c)
     _assert_scope_open(c)
     b = body or {}
+    reason = _extraction_review_reason(user, b)
     choices = _confirm_autofill(db, c, b.get("autofill_choices", []), user)
     values, renames, dismiss = b.get("values") or [], b.get("renames") or {}, b.get("dismiss") or []
     if (not isinstance(values, list) or not all(isinstance(v, str) for v in values)
@@ -8665,12 +8689,6 @@ def apply_pending_extractions(case_id: str, body: dict = None,
             or not isinstance(renames, dict)
             or not all(isinstance(v, str) and v.strip() and _norm_material(v) for v in renames.values())):
         raise HTTPException(422, {"code": "INVALID_PENDING_SELECTION", "message": "values·renames·dismiss 입력을 확인해 주세요"})
-    reason = str(b.get("reason") or "").strip()
-    if renames or dismiss:
-        if user["role"] not in sm.REVIEWER_ROLES:
-            raise HTTPException(403, {"code": "REVIEWER_REQUIRED"})
-        if not reason:
-            raise HTTPException(422, {"code": "REASON_REQUIRED"})
     want = set(values)
     # 이름 수정·제외만 보낸 요청의 빈 values를 전량 등록으로 해석하지 않는다.
     apply_all = not want and "renames" not in b and "dismiss" not in b and "autofill_choices" not in b
@@ -8685,12 +8703,13 @@ def apply_pending_extractions(case_id: str, body: dict = None,
     pe["pending_handled"] = list(dict.fromkeys(
         (pe.get("pending_handled") or []) + [_norm_material(x["value"]) for x in items]))[-2000:]
     c.profile_ext = pe
-    if renames or dismiss:
+    if renames or dismiss or (reason and user["role"] in sm.REVIEWER_ROLES):
         sm.record_event(db, c, c.status, c.status, "extraction.review", user["role"], user["uid"],
                         {"items": items, "renames": renames, "dismiss": dismiss, "reason": reason})
     _audit(db, user, "extraction.apply", "case", case_id, case_id,
            {"products": agg["products"][:50], "materials": agg["materials"][:50],
-            "renames": renames, "dismiss": dismiss, "autofill_choices": choices, "source": "llm_confirmed"}, commit=False)
+            "renames": renames, "dismiss": dismiss, "reason": reason,
+            "autofill_choices": choices, "source": "llm_confirmed"}, commit=False)
     db.commit()
     return {"applied": applied, "count": len(items), "autofill_confirmed": choices}
 
@@ -13496,6 +13515,21 @@ def list_factories(case_id, user=Depends(auth.get_current_user), db=Depends(get_
     return {"factories": [_fac_dict(f) for f in _case_facilities(db, c)]}
 
 
+def _set_factory_fields(f, body):
+    """공장 최초 추가와 두 PATCH 경로가 같은 저장 필드를 사용한다."""
+    for col in ("name", "address", "city", "country", "zip", "reg_no"):
+        if col in body:
+            setattr(f, col, body[col])
+    pe = dict(f.profile_ext or {})
+    for key in ("label", "phone", "email", "pic_name", "pic_title", "pic_phone", "pic_email",
+                "cp_name", "cp_title", "cp_phone", "cp_email", "manufacturer_name"):
+        if key in body:
+            pe[key] = body[key]
+    if isinstance(body.get("profile_ext"), dict):
+        pe.update(body["profile_ext"])
+    f.profile_ext = pe
+
+
 @app.post("/cases/{case_id}/factories")
 def add_factory(case_id, body: dict = None, user=Depends(auth.get_current_user), db=Depends(get_db)):
     """빈 공장 수동 추가 — 리스트에 공장N 자동 라벨."""
@@ -13503,8 +13537,8 @@ def add_factory(case_id, body: dict = None, user=Depends(auth.get_current_user),
     _assert_facility_scope_open(db, case=c)
     ids = list(c.facility_ids or [])
     label = (body or {}).get("label") or ("공장%d" % (len(ids) + 1))
-    f = models.Facility(org_id=c.org_id, name=(body or {}).get("name"),
-                        profile_ext={"label": label, "source_docs": []})
+    f = models.Facility(org_id=c.org_id, profile_ext={"label": label, "source_docs": []})
+    _set_factory_fields(f, body or {})
     db.add(f)
     db.flush()
     ids.append(f.facility_id)
@@ -13523,17 +13557,9 @@ def update_factory(facility_id, body: dict = None, user=Depends(auth.get_current
     # 같은 조직만 허용하던 검사가 컨설턴트를 막았다(실측 403).
     if user["role"] != "admin" and not _org_access_ok(db, user, f.org_id):
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
+    _assert_facility_scope_open(db, facility_id)
     b = body or {}
-    for col in ["name", "address", "city", "country", "zip", "reg_no"]:
-        if col in b:
-            setattr(f, col, b[col])
-    pe = dict(f.profile_ext or {})
-    for k in ["label", "phone", "email", "pic_name", "pic_title", "cp_name", "cp_title", "manufacturer_name"]:
-        if k in b:
-            pe[k] = b[k]
-    if isinstance(b.get("profile_ext"), dict):
-        pe.update(b["profile_ext"])
-    f.profile_ext = pe
+    _set_factory_fields(f, b)
     profile_keys = set(b) | set(b["profile_ext"] if isinstance(b.get("profile_ext"), dict) else {})
     _protect_autofill(db, {"facility"} | {"facility." + k for k in b} |
                       {"facility_profile." + k for k in profile_keys},
@@ -24021,12 +24047,8 @@ def update_facility(facility_id: str, body: schemas.FacilityUpdateReq,
         raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
     # 같은 조직만 시설 편집 가능 (A6-3)
     _assert_org_access(db, user, f.org_id)
-    for k in ("name", "address", "city", "country", "zip", "reg_no"):
-        v = getattr(body, k)
-        if v is not None:
-            setattr(f, k, v)
-    if body.profile_ext is not None:
-        f.profile_ext = {**(f.profile_ext or {}), **body.profile_ext}
+    _assert_facility_scope_open(db, facility_id)
+    _set_factory_fields(f, body.model_dump(exclude_none=True))
     _protect_autofill(db, {"facility"} | {"facility." + k for k in body.model_fields_set} |
                       {"facility_profile." + k for k in (body.profile_ext or {})},
                       user["uid"], facility_id=facility_id)

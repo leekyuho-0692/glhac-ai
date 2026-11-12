@@ -66,21 +66,19 @@ function AUDD_aiqPanel(cid){
   else {
     const items = pend.items || [];
     const failed = pend.failed || [];
-    const rows = items.map((it,i) => `<li class="row"><label style="display:flex;gap:8px;align-items:center;flex:1">
-        ${canApply?`<input type="checkbox" class="audd-pick" value="${i}">`:''}
-        <span>${esc(it.value||'')} <span class="tag">${it.kind==='material_names'?'원재료':'제품'}</span>
-        ${it.filename?`<span class="muted" style="font-size:11px">${esc(it.filename)}</span>`:''}</span></label></li>`).join('');
-    const canRepro = canCall('POST','/documents/{}/reprocess');
-    // 추출값 반영은 material.add 매트릭스(applicant·consultant·penyelia) — 오디터는 조회만
     const canApply = canCall('POST','/cases/{}/pending-extractions/apply');
-    const failHtml = failed.length ? `<div class="note attn"><strong>AI 분석 실패 ${failed.length}건</strong><ul class="rows">${failed.map(f=>`<li class="row"><span>${esc(f.filename||'')}</span>${canRepro?`<button class="link" onclick="App.auddRepro('${cid}','${f.document_id}')">재처리</button>`:''}</li>`).join('')}</ul></div>` : '';
-    pendHtml = `${failHtml}
-      ${pend.note?`<p class="muted" style="font-size:12px">${esc(UIV4_systemText(pend.note))}</p>`:''}
-      ${items.length ? `<ul class="rows">${rows}</ul>
-      ${canApply?`<div class="inline" style="margin-top:8px">
-        <button class="btn btn-sm" onclick="App.auddApply('${cid}')">선택 반영</button>
-        <button class="btn btn-sm btn-primary" onclick="App.auddApplyAll('${cid}')">전체 반영</button>
-      </div>`:'<p class="muted" style="font-size:12px">반영은 인증기업·컨설턴트가 합니다.</p>'}` : (failed.length?'':'<p class="empty">확인 대기 중인 항목이 없습니다.</p>')}`;
+    const reviewer = ['auditor','consultant','operator','admin','fatwa_liaison'].includes(AUTH.role);
+    const rows = items.map((it,i) => `<li class="row"><label style="display:flex;gap:8px;align-items:center;flex:1;min-width:0">
+      ${canApply?`<input type="checkbox" class="audd-pick" value="${i}" aria-label="${t('intake.select')}">`:''}
+      <span>${reviewer&&canApply?`<input class="in" id="audd-name-${i}" value="${esc(it.value||'')}" aria-label="${t('intake.field.name')}">`:esc(it.value||'')}
+      <span class="tag">${t(it.kind==='material_names'?'intake.materials':'intake.products')}</span><span class="muted">${esc(it.filename||'')}</span></span></label>
+      ${reviewer&&canApply?`<label><input type="checkbox" id="audd-dismiss-${i}"> ${t('intake.dismiss')}</label>`:''}</li>`).join('');
+    const failHtml=failed.length?`<ul class="note attn">${failed.map(f=>`<li>${esc(f.filename||'')} — ${t('intake.error')}</li>`).join('')}</ul>`:'';
+    pendHtml = `${failHtml}${INTAKE_conflicts(pend.conflicts)}
+      ${items.length?`<ul class="rows">${rows}</ul>${canApply?`
+        ${reviewer?`<label class="field">${t('intake.reason')}<textarea id="audd-apply-reason" class="in" required></textarea></label>`:''}
+        <div class="row-act"><button class="btn btn-sm" onclick="App.auddApply('${cid}')">${t('intake.apply')}</button><button class="btn btn-sm" onclick="App.auddApplyAll('${cid}')">${t('intake.apply_all')}</button></div>`:''}`:`<p class="empty">${t('intake.empty')}</p>`}`;
+
   }
   return `<section class="panel"><div class="panel-head"><h2>문서 재처리</h2><span class="count">${docs.rows.length}건</span></div>
     ${AUDD_docTable(cid, docs.rows, 'aiq')}
@@ -144,20 +142,33 @@ App.auddReviewReasonOk = function(cid, did, status){
   App.auddReview(cid, did, status);
 };
 
+function AUDD_reason(){
+  const reviewer=['auditor','consultant','operator','admin','fatwa_liaison'].includes(AUTH.role);
+  const reason=($('#audd-apply-reason')?.value||'').trim();
+  if(reviewer&&!reason){ toast(t('intake.reason_required')); return null; }
+  return reason;
+}
 App.auddApply = async function(cid){
-  const idx = Array.prototype.slice.call(document.querySelectorAll('.audd-pick'))
-    .filter(x => x.checked).map(x => parseInt(x.value, 10));
-  if(!idx.length) return toast('반영할 항목을 선택해 주세요.');
-  const pend = RS.auddPend && RS.auddPend[cid];
-  const items = (pend && pend.items) || [];
-  const picked = idx.map(i => items[i]).filter(Boolean).map(it => it.value);
-  if(!picked.length) return toast('반영할 항목을 선택해 주세요.');
-  const res = await AUDD_fetchDoc(cid, `/cases/${cid}/pending-extractions/apply`, 'POST', { values: picked });
-  if(!res.ok){ return toast('반영에 실패했습니다.' + (res.code ? ' (' + res.code + ')' : '')); }
-  delete RS.auddPend[cid]; await AUDD_loadPend(cid); render(); toast('반영 완료');
+  const reason=AUDD_reason(); if(reason===null) return;
+  const pend=RS.auddPend?.[cid], items=pend?.items||[];
+  const idx=Array.from(document.querySelectorAll('.audd-pick')).filter(x=>x.checked).map(x=>Number(x.value));
+  const values=[],renames=Object.create(null),dismiss=[];
+  for(const i of idx){
+    const it=items[i]; if(!it) continue;
+    const name=($('#audd-name-'+i)?.value??it.value).trim();
+    if($('#audd-dismiss-'+i)?.checked) dismiss.push(it.value);
+    else if(!name) return toast(t('intake.name_required'));
+    else if(name!==it.value) renames[it.value]=name;
+    else values.push(it.value);
+  }
+  if(!idx.length) return toast(t('intake.select_required'));
+  const res=await AUDD_fetchDoc(cid,`/cases/${cid}/pending-extractions/apply`,'POST',{values,renames,dismiss,reason});
+  if(!res.ok) return toast(t('intake.error')+(res.code?' ('+res.code+')':''));
+  delete RS.auddPend[cid]; await AUDD_loadPend(cid); render(); toast(t('intake.saved'));
 };
 App.auddApplyAll = async function(cid){
-  const res = await AUDD_fetchDoc(cid, `/cases/${cid}/pending-extractions/apply`, 'POST', {});
-  if(!res.ok){ return toast('반영에 실패했습니다.' + (res.code ? ' (' + res.code + ')' : '')); }
-  delete RS.auddPend[cid]; await AUDD_loadPend(cid); render(); toast('반영 완료');
+  const reason=AUDD_reason(); if(reason===null) return;
+  const res=await AUDD_fetchDoc(cid,`/cases/${cid}/pending-extractions/apply`,'POST',{reason});
+  if(!res.ok) return toast(t('intake.error')+(res.code?' ('+res.code+')':''));
+  delete RS.auddPend[cid]; await AUDD_loadPend(cid); render(); toast(t('intake.saved'));
 };

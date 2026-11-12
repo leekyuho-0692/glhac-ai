@@ -34,7 +34,7 @@ const SERVER_ROLES_FOR = {
   'POST /documents/{}/reprocess':                ['consultant','operator'],                      // main.py:5318
   'POST /cases/{}/documents/verify':            ['consultant','operator','auditor'],            // 문서 AI 재검증
   'PATCH /documents/{}/reclassify':              ['applicant','consultant','operator'],          // main.py:5039
-  'POST /cases/{}/pending-extractions/apply':    'material.add',                                 // main.py:5295
+  'POST /cases/{}/pending-extractions/apply':    ['applicant','consultant','penyelia_halal','auditor','operator','fatwa_liaison'],                                 // main.py:5295
   'PATCH /documents/{}/review':                  'document.review',                              // main.py:6357
   'GET /cases/{}/evidence-bundle.zip':           ['operator'],                                   // main.py:2107
   // 계약

@@ -102,23 +102,27 @@ App.pkgSave = async function(cid, k){
 };
 
 /* 제품·원재료 모두 원래 추출값을 한 번에 처리해 이름 수정·제외 이력을 남긴다. */
+function PKG_pendingReviewer(){ return ['auditor','consultant','operator','admin','fatwa_liaison'].includes(AUTH.role); }
 function PKG_pendingTable(s, kind){
-  const product=kind==='product', label=product?'제품':'원재료', key=product?'pkgProduct':'pkgMaterial';
+  const product=kind==='product', key=product?'pkgProduct':'pkgMaterial';
   const edit=PKG_canEdit() && canCall('POST',product?'/cases/{}/products':'/cases/{}/materials') && canCall('POST','/cases/{}/pending-extractions/apply');
-  const pending=s.pending||[];
-  return `<h4>서류에서 읽은 ${label} — 확인 대기</h4>
-    ${s.loading?'<p class="muted">불러오는 중…</p>':s.error?`<p class="note attn">${esc(s.error)}</p>`:!pending.length?`<p class="muted">서류에서 읽은 ${label}${product?'이':'가'} 없습니다</p>`:`
-      <div class="tbl-wrap"><table><thead><tr><th>선택</th><th>${label}명</th><th>출처 파일명</th><th>등록 안 함</th><th>결과</th></tr></thead><tbody>
-      ${pending.map((it,i)=>`<tr><td><input type="checkbox" aria-label="${label} ${i+1} 선택" ${it.selected?'checked':''} ${!edit||s.busy||it.saved?'disabled':''} onchange="App.pkgPendingToggle('${kind}',${i},'selected',this.checked)"></td>
-        <td><input class="in" aria-label="서류 ${label}명 ${i+1}" value="${esc(it.name)}" ${!edit||s.busy||it.saved?'disabled':''} oninput="S.${key}.pending[${i}].name=this.value"></td>
-        <td>${esc(it.filename||'-')}</td><td><input type="checkbox" aria-label="${label} ${i+1} 등록 안 함" ${it.dismiss?'checked':''} ${!edit||s.busy||it.saved?'disabled':''} onchange="App.pkgPendingToggle('${kind}',${i},'dismiss',this.checked)"></td>
+  const reviewer=PKG_pendingReviewer(), pending=s.pending||[];
+  return `<h4>${t(product?'intake.pending_product':'intake.pending_material')}</h4>
+    ${!reviewer?`<p class="note">${t('intake.reviewer_notice')} <button class="btn btn-sm" onclick="App.intakeMemo('${jsq(s.cid)}')">${t('intake.memo')}</button></p>`:''}
+    ${s.loading?`<p class="muted">${t('members.loading')}</p>`:s.error?`<p class="note attn">${esc(s.error)}</p>`:!pending.length?`<p class="muted">${t('intake.empty')}</p>`:`
+      <div class="tbl-wrap"><table><thead><tr><th>${t('intake.select')}</th><th>${t('intake.field.name')}</th><th>${t('intake.field.filename')}</th>${reviewer?`<th>${t('intake.dismiss')}</th>`:''}<th>${t('intake.field.status')}</th></tr></thead><tbody>
+      ${pending.map((it,i)=>`<tr><td><input type="checkbox" aria-label="${t('intake.select')} ${i+1}" ${it.selected?'checked':''} ${!edit||s.busy||it.saved?'disabled':''} onchange="App.pkgPendingToggle('${kind}',${i},'selected',this.checked)"></td>
+        <td>${reviewer?`<input class="in" aria-label="${t('intake.field.name')} ${i+1}" value="${esc(it.name)}" ${!edit||s.busy||it.saved?'disabled':''} oninput="S.${key}.pending[${i}].name=this.value">`:esc(it.value)}</td>
+        <td>${esc(it.filename||t('intake.empty'))}</td>${reviewer?`<td><input type="checkbox" aria-label="${t('intake.dismiss')} ${i+1}" ${it.dismiss?'checked':''} ${!edit||s.busy||it.saved?'disabled':''} onchange="App.pkgPendingToggle('${kind}',${i},'dismiss',this.checked)"></td>`:''}
         <td>${esc(it.result||'')}</td></tr>`).join('')}</tbody></table></div>`}
-    <div class="row-act"><button class="btn btn-sm" ${s.busy?'disabled':''} onclick="App.${product?'pkgProductRefresh':'pkgMaterialRefresh'}()">목록 새로고침</button>
-      ${edit?`<button class="btn btn-primary" ${s.busy||s.loading||!pending.some(it=>!it.saved)?'disabled':''} onclick="App.${product?'pkgProductApply':'pkgMaterialApply'}()">선택 항목 처리</button>`:''}</div>`;
+    ${INTAKE_conflicts(s.conflicts)}
+    ${edit&&reviewer?`<label class="field">${t('intake.reason')}<textarea class="in" required oninput="S.${key}.reason=this.value">${esc(s.reason||'')}</textarea></label>`:''}
+    <div class="row-act"><button class="btn btn-sm" ${s.busy?'disabled':''} onclick="App.${product?'pkgProductRefresh':'pkgMaterialRefresh'}()">${t('intake.reload')}</button>
+      ${edit?`<button class="btn btn-primary" ${s.busy||s.loading||!pending.some(it=>!it.saved)?'disabled':''} onclick="App.${product?'pkgProductApply':'pkgMaterialApply'}()">${t('intake.apply')}</button>`:''}</div>`;
 }
 App.pkgPendingToggle = function(kind, i, field, checked){
   const s=kind==='product'?S.pkgProduct:S.pkgMaterial;
-  if(!s || s.busy) return;
+  if(!s || s.busy || (field==='dismiss'&&!PKG_pendingReviewer())) return;
   s.pending[i][field]=checked;
   if(checked) s.pending[i][field==='selected'?'dismiss':'selected']=false;
   (kind==='product'?PKG_productRender:PKG_materialRender)(s);
@@ -132,37 +136,42 @@ async function PKG_pendingLoad(s, kind){
   s.loading=true; s.error=''; redraw(s);
   try{
     const r=await apiFetch('/cases/'+s.cid+'/pending-extractions');
-    if(!r.ok){ s.error=await apiErr(r,'확인 대기 목록을 불러오지 못했습니다.'); return; }
+    if(!r.ok){ s.error=await apiErr(r,t('intake.error')); return; }
     const d=await r.json(), prev=s.pending||[];
     s.pending=(d.items||[]).filter(it=>it.kind===(kind==='product'?'product_names':'material_names')).map(it=>{
       const old=prev.find(p=>p.document_id===it.document_id && p.value===it.value);
       return old || {...it,name:it.value,selected:false,dismiss:false,result:''};
     });
     s.failed=d.failed||[];
-  }catch(e){ s.error='확인 대기 목록을 불러오지 못했습니다. 서버 연결을 확인해 주세요.'; }
+    s.conflicts=d.conflicts||[];
+  }catch(e){ s.error=t('intake.error'); }
   finally{ s.loading=false; redraw(s); }
 }
 async function PKG_pendingApply(s, kind){
   const product=kind==='product', redraw=product?PKG_productRender:PKG_materialRender;
   if(!s || s.busy || !PKG_canEdit() || !canCall('POST',product?'/cases/{}/products':'/cases/{}/materials') || !canCall('POST','/cases/{}/pending-extractions/apply')) return;
-  const selected=s.pending.filter(it=>(it.selected||it.dismiss)&&!it.saved);
-  if(!selected.length){ s.notice='처리할 항목을 선택해 주세요.'; return redraw(s); }
-  if(selected.some(it=>!it.dismiss&&!it.name.trim())){ s.notice=(product?'제품명':'원재료명')+'을 입력해 주세요.'; return redraw(s); }
+  const reviewer=PKG_pendingReviewer();
+  const reason=(s.reason||'').trim();
+  if(reviewer&&!reason){ s.notice=t('intake.reason_required'); return redraw(s); }
+  const selected=s.pending.filter(it=>(it.selected||(reviewer&&it.dismiss))&&!it.saved);
+  if(!selected.length){ s.notice=t('intake.select_required'); return redraw(s); }
+  if(reviewer&&selected.some(it=>!it.dismiss&&!it.name.trim())){ s.notice=t('intake.name_required'); return redraw(s); }
   const values=[], renames=Object.create(null), dismiss=[];
   for(const it of selected){
-    if(it.dismiss) dismiss.push(it.value);
+    if(!reviewer) values.push(it.value);
+    else if(it.dismiss) dismiss.push(it.value);
     else if(it.name.trim()===it.value) values.push(it.value);
     else renames[it.value]=it.name.trim();
   }
   s.busy=true; s.notice=''; redraw(s);
   try{
-    const r=await apiFetch('/cases/'+s.cid+'/pending-extractions/apply', {method:'POST',body:JSON.stringify({values,renames,dismiss})});
-    if(!r.ok){ s.notice='실패: '+await apiErr(r,'처리하지 못했습니다.'); return; }
+    const r=await apiFetch('/cases/'+s.cid+'/pending-extractions/apply', {method:'POST',body:JSON.stringify(reviewer?{values,renames,dismiss,reason}:{values})});
+    if(!r.ok){ s.notice=await apiErr(r,t('intake.error')); return; }
     selected.forEach(it=>{it.saved=true; it.selected=false;});
-    s.notice=`선택 항목 ${selected.length}건 처리`;
+    s.notice=t('intake.saved');
     await PKG_pendingLoad(s,kind);
     await PKG_load(s.cid); render();
-  }catch(e){ s.notice='실패: 서버 연결을 확인해 주세요.'; }
+  }catch(e){ s.notice=t('intake.error'); }
   finally{ s.busy=false; redraw(s); }
 }
 App.pkgProductRefresh = async function(){
