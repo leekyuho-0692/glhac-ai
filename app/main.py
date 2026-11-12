@@ -3022,27 +3022,58 @@ def _parse_biz_doc(text):
         out["nib"] = m.group(0)
     # 항목명은 글자 사이 공백을 허용하고, 값은 다음 한글·영문 라벨 앞에서 끊는다.
     labels = {
-        "company_name": r"상\s*호(?:\s*\(\s*법\s*인\s*명\s*\))?|법\s*인\s*명",
+        "company_name": (r"(?:상\s*호|법\s*인\s*명)"
+                         r"(?:\s*\(\s*(?:법\s*인\s*명|단\s*체\s*명|상\s*호)\s*\))?"
+                         r"|단\s*체\s*명(?=\s*[:：])"),
         "factory_name": spaced("공장명"),
         "responsible_person": (r"성\s*명(?:\s*\(?\s*대\s*표\s*자\s*\)?)?|"
                                r"대\s*표\s*자(?:\s*\(\s*성\s*명\s*\))?"),
         "factory_address": r"공\s*장\s*(?:소\s*재\s*지|주\s*소)",
+        "head_office_address": spaced("본점소재지"),
         "address": r"사\s*업\s*장\s*(?:소\s*재\s*지|주\s*소)|소\s*재\s*지|주\s*소|사\s*업\s*장",
         "business_type": r"업\s*태|업\s*종|종\s*목",
         "company_name_en": spaced("Name of Business"),
         "address_en": spaced("Business Address"),
     }
     stops = [spaced(label) for label in (
-        "사업자등록번호", "사업자등록일", "사업자록일", "법인등록번호", "주민", "개업일")]
+        "사업자등록번호", "사업자등록일", "사업자록일", "법인등록번호", "주민")]
+    field_stops = [spaced(label) for label in (
+        "개업연월일", "개업년월일", "개업일", "사업의종류", "발급사유", "공동사업자",
+        "전자우편주소")]
+    field_stops += [spaced("사업자단위과세") + r"(?:\s*" + spaced("적용사업자여부") + ")?",
+                    spaced("전자세금계산서") + r"(?:\s*" + spaced("전용전자우편주소") + ")?"]
     other_stops = [spaced(label) for label in (
         "Name of", "Business", "Taxpayer", "Resident", "Type of", "Date of",
         "위와 같이", "접수번호", "Receipt")]
-    # 긴 종료 라벨(법인등록번호 등)을 먼저 보아 짧은 항목명과 섞이지 않게 한다.
-    pattern = "|".join(["(?P<stop>%s)" % "|".join(stops)] +
+    # 긴 라벨을 먼저 소비해 내부의 '주소/소재지'를 별도 항목으로 읽지 않는다.
+    pattern = "|".join(["(?P<stop>%s)" % "|".join(stops),
+                       "(?P<field_stop>%s)" % "|".join(field_stops)] +
                        ["(?P<%s>%s)" % (key, pat) for key, pat in labels.items()] +
                        ["(?:%s)" % "|".join(other_stops)])
     # '도매업 종목'의 끝 글자부터 '업종'으로 붙여 읽지 않는다.
-    matches = list(re.finditer(r"(?<![가-힣A-Za-z0-9])(?:" + pattern + ")", t, re.I))
+    matches = []
+    for mm in re.finditer(r"(?<![가-힣A-Za-z0-9])(?:" + pattern + ")", t, re.I):
+        if mm.lastgroup == "field_stop":
+            tail = t[mm.end():]
+            label = re.sub(r"\s+", "", mm.group())
+            # 값도 줄바꿈될 수 있으므로 콜론이나 라벨 뒤의 구체 문맥으로만 구분한다.
+            context = None
+            if label in ("개업연월일", "개업년월일", "개업일"):
+                context = r"\s*(?:\d{4}\s*(?:년|[./-])|" + spaced("Date of") + ")"
+            elif label == "사업의종류":
+                context = r"\s+(?:업\s*태|종\s*목)(?=\s|[:：])"
+            elif label == "공동사업자":
+                context = r"\s+" + spaced("Joint Business Owner") + r"(?![A-Za-z])"
+            elif label == "발급사유":
+                # 기존 콜론 없는 재발급 행은 보존하되 '발급사유 재발급 연구소'는 값이다.
+                context = r"\s+" + spaced("재발급") + r"[ \t]*(?=\r?\n|$)"
+            elif label.endswith("전자우편주소"):
+                context = r"\s+[^\s@]+@[^\s@]+"
+            if not (re.match(r"\s*[:：]", tail)
+                    or (context and re.match(context, tail, re.I))):
+                continue
+        matches.append(mm)
+    head_office_address = None
     for i, mm in enumerate(matches):
         key = mm.lastgroup
         if key not in labels or out.get(key):
@@ -3051,6 +3082,8 @@ def _parse_biz_doc(text):
         value = t[mm.end():end].strip(" :：·|\r\n\t")
         if len(value) < 2 or re.search(r"효력|실체적|증명합니다|임의기재|※|\[|\]", value):
             continue
+        if key in ("address", "head_office_address") and re.search(r"\S+@\S+", value):
+            continue
         if key == "company_name_en":
             # 영문 상호 뒤 괄호 안 사업자번호는 회사명에 포함하지 않는다.
             value = re.sub(r"\s*\(\s*\d{3}\s*[-–—]\s*\d{2}\s*[-–—]\s*\d{5}\s*\)\s*$", "", value)
@@ -3058,7 +3091,12 @@ def _parse_biz_doc(text):
                 continue
         if key == "address_en" and (not re.search(r"[A-Za-z]", value) or re.search(r"[가-힣]", value)):
             continue
-        out[key] = value
+        if key == "head_office_address":
+            head_office_address = head_office_address or value
+        else:
+            out[key] = value
+    if not out.get("address") and head_office_address:
+        out["address"] = head_office_address
     return out
 
 
