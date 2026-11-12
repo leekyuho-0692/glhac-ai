@@ -562,7 +562,11 @@ def test_원문에_없는_값은_규칙과_GPT_지적을_합쳐_최소_warn이�
     res = intake.verify_extraction("other", "scan.pdf", text, fields)
     assert res["verdict"] == expected
     issues = [{"field": "material_names", "issue": "원문에 없는 값"},
-              {"field": "address", "issue": "원문에 없는 값"}]
+              {"field": "address", "issue": "원문에 없는 값"},
+              {"field": "short", "issue": "원문에 없는 값"},
+              {"field": "count", "issue": "원문에 없는 값"},
+              {"field": "document", "code": "partial_verification",
+               "issue": "검증 입력 한도 초과 — 전체 원문·추출값의 담당자 검토 필요"}]
     if llm_verdict is not None:
         issues.append({"field": "company_name", "issue": "업체 대조 필요"})
     assert res["field_issues"] == issues

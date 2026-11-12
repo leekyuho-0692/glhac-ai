@@ -458,10 +458,11 @@ def test_r504_explicit_number_preserves_raw_candidate(number):
 
 
 def approved_evidence(client, headers, cid, mid, *, expiry="2099-01-01", names=None):
+    certificate_text = CERT_BODY.replace("HC987", "HC-111111")
     with m.SessionLocal() as db:
         doc = models.DocumentAsset(case_id=cid, material_id=mid, filename="Halal Certificate.txt",
-                                   doc_type="halal_certificate", content_b64=base64.b64encode(CERT_BODY.encode()).decode(),
-                                   text_full=CERT_BODY, fields={"cert_no": "HC-111111", "expiry_date": expiry,
+                                   doc_type="halal_certificate", content_b64=base64.b64encode(certificate_text.encode()).decode(),
+                                   text_full=certificate_text, fields={"cert_no": "HC-111111", "expiry_date": expiry,
                                                                 "material_names": names or ["Gelatin"]})
         db.add(doc)
         db.commit()

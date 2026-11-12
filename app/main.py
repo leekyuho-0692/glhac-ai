@@ -1386,6 +1386,21 @@ NOTIFY_MSG = {
 
 # 각 사유는 문제 / 영향 / 조치의 세 문장. 원문 필드명·검증 메모는 번역하지 않는다.
 PROBLEM_DOC_MSG = {
+    "CERT_EXPIRED": {
+        "ko": ("인증서 유효기간이 지났습니다.", "현재 인증 발급의 증빙으로 사용할 수 없습니다.", "갱신된 인증서를 제출하고 담당자 검토를 받아 주세요."),
+        "en": ("The certificate has expired.", "It cannot support current certificate issuance.", "Submit a renewed certificate for review."),
+        "id": ("Sertifikat telah kedaluwarsa.", "Dokumen tidak dapat mendukung penerbitan sertifikat saat ini.", "Kirim sertifikat yang diperbarui untuk ditinjau."),
+    },
+    "CERT_EXPIRY_UNKNOWN": {
+        "ko": ("인증서 만료일을 확인할 수 없습니다.", "현재 유효한 증빙인지 판단할 수 없습니다.", "유효기간이 명시된 인증서를 제출해 주세요."),
+        "en": ("The certificate expiry date cannot be confirmed.", "Its current validity is unknown.", "Submit a certificate with a readable validity period."),
+        "id": ("Tanggal kedaluwarsa sertifikat tidak dapat dipastikan.", "Masa berlaku saat ini belum diketahui.", "Kirim sertifikat dengan masa berlaku yang dapat dibaca."),
+    },
+    "EVIDENCE_SUPERSEDED": {
+        "ko": ("같은 원재료에 새 증빙이 제출되었습니다({files}).", "이전 승인만으로는 발급할 수 없습니다.", "담당자가 최신 증빙의 범위와 유효성을 검토해야 합니다."),
+        "en": ("New evidence was submitted for the same material ({files}).", "The previous approval alone cannot support issuance.", "A reviewer must check the latest evidence scope and validity."),
+        "id": ("Bukti baru dikirim untuk bahan yang sama ({files}).", "Persetujuan sebelumnya saja tidak cukup untuk penerbitan.", "Petugas harus memeriksa cakupan dan keabsahan bukti terbaru."),
+    },
     "CERT_NOT_VALID": {
         "ko": ("인증서에 미발급·견본·무효 또는 취소 표지가 있습니다.", "유효한 인증 증빙으로 인정할 수 없습니다.", "정식 발급된 유효한 인증서를 다시 올려 주세요."),
         "en": ("The certificate is marked as draft, specimen, void or cancelled.", "It cannot be accepted as valid certification evidence.", "Upload a formally issued, valid certificate."),
@@ -1662,7 +1677,7 @@ _problem_doc_notify_lock = threading.Lock()
 
 
 def _problem_document_reasons(document, measurements=()):
-    """순수 판정: 저장된 문서·출처 측정값 → 사유 목록. DB/LLM/시간 조회나 입력 변경 없음."""
+    """저장 문서·출처 측정값·현재 유효기간 → 안내 사유. DB/LLM 호출이나 입력 변경 없음."""
     fields = document.fields or {}
     reasons = []
     error = fields.get("_ocr_error")
@@ -1677,8 +1692,18 @@ def _problem_document_reasons(document, measurements=()):
         reasons.append({"code": primary, "params": {}})
     if fields.get("_missing_fields"):
         reasons.append({"code": "FIELDS_MISSING", "params": {"fields": ", ".join(fields["_missing_fields"])}})
-    if fields.get("_cert_not_valid") or intake.certificate_invalid_marker(getattr(document, "filename", ""), text):
+    from .cert_verify import certificate_evidence_issues
+    cert_issues = certificate_evidence_issues({"fields": fields, "text": text,
+        "filename": getattr(document, "filename", ""), "doc_type": getattr(document, "doc_type", None)})
+    if "invalid_status" in cert_issues:
         reasons.append({"code": "CERT_NOT_VALID", "params": {}})
+    for issue, code in (("expired", "CERT_EXPIRED"), ("expiry_unknown", "CERT_EXPIRY_UNKNOWN")):
+        if issue in cert_issues:
+            reasons.append({"code": code, "params": {}})
+    if "identifier" in cert_issues:
+        reasons.append({"code": "VERIFY_WARN", "params": {"fields": "cert_no"}})
+    if fields.get("_scope_pending"):
+        reasons.append({"code": "VERIFY_WARN", "params": {"fields": "material_names / product_names (scope pending)"}})
     if fields.get("_truncated"):
         markers = fields.get("_truncations") or [fields["_truncated"]]
         reasons.append({"code": "TRUNCATED", "params": {"limits": [dict(x) for x in markers if isinstance(x, dict)]}})
@@ -1691,7 +1716,7 @@ def _problem_document_reasons(document, measurements=()):
         reasons.append({"code": "VERIFY_FAILED", "params": {"fields": "; ".join(details) or verify.get("summary") or "?"}})
     important = [x for x in issues if x.get("field") in (
         "cert_no", "certificate_no", "nib", "business_reg_no", "factory_reg_no", "corporate_reg_no", "company_name",
-        "expiry_date", "issuer", "material_names", "ingredients", "scope")
+        "expiry_date", "issuer", "material_names", "ingredients", "scope", "factory_address", "product_names", "document")
         and x.get("code") != "company_name_mismatch"]
     # 이미 확인된 소유권 불일치는 기존 업체 보완 경로를 유지한다. AI 경고는 담당자가 먼저 검토한다.
     if verify.get("verdict") != "fail" and (verify.get("doc_type_ok") is False or
@@ -1765,6 +1790,15 @@ def _problem_documents_rows(db, c):
     rows = []
     for d in docs:
         reasons = _problem_document_reasons(d, measurements)
+        replacements = sm.superseding_evidence(db, d, docs)
+        affected = ({d.material_id} if d.material_id else set()) | {
+            link.material_id for link in db.query(models.MaterialEvidenceLink).filter_by(document_id=d.document_id)
+        } if replacements else set()
+        resolved = bool(affected) and all(sm.approved_material_evidence(db, material)
+            for mid in affected if (material := db.get(models.Material, mid)) is not None)
+        if replacements and d.review_status == "approved" and not resolved:
+            reasons.append({"code": "EVIDENCE_SUPERSEDED", "params": {"files":
+                ", ".join(x.filename or x.document_id for x in replacements)}})
         if reasons:
             rows.append({"document_id": d.document_id, "filename": d.filename, "doc_type": d.doc_type,
                          "uploaded_at": d.created_at.isoformat() + "Z" if d.created_at else "-", "reasons": reasons})

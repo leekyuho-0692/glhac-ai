@@ -47,6 +47,8 @@ def _approved_certificate(cid, mid, number):
         db.add(models.DocumentAsset(case_id=cid, material_id=mid, filename="approved.pdf",
                doc_type="halal_certificate", review_status="approved",
                fields={"cert_no": number, "expiry_date": "2099-01-01"},
+               text_full="HALAL CERTIFICATE\nCertificate No: " + number,
+               text_excerpt="HALAL CERTIFICATE\nCertificate No: " + number,
                content_b64=base64.b64encode(_pdf_bytes()).decode()))
         db.commit()
 

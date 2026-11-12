@@ -192,13 +192,43 @@ def frozen_scope(db, case):
     return (row.payload or {}).get("snapshot") if row else None
 
 
+def superseding_evidence(db, document, all_docs=None):
+    """증빙 버전은 연결된 원료의 교체 이력이다. 파일명은 식별자가 아니다."""
+    from .models import DocumentAsset, MaterialEvidenceLink
+    from .cert_verify import normalize
+    docs = all_docs if all_docs is not None else db.query(DocumentAsset).filter_by(case_id=document.case_id).all()
+    owners = {}
+    for link in db.query(MaterialEvidenceLink).filter_by(case_id=document.case_id):
+        owners.setdefault(link.document_id, set()).add(link.material_id)
+    for row in docs:
+        if row.material_id:
+            owners.setdefault(row.document_id, set()).add(row.material_id)
+    def same_family(other):
+        if (document.doc_type != other.doc_type and not
+                (document.doc_type in ("halal_certificate", "quality_cert") and
+                 (other.fields or {}).get("_cert_not_valid"))):
+            return False
+        left, right = owners.get(document.document_id, set()), owners.get(other.document_id, set())
+        if left or right:
+            # 원료 일부만 겹친 인증서를 전체 인증서의 교체본으로 오인하지 않는다.
+            return bool(left and left == right)
+        a, b = document.fields or {}, other.fields or {}
+        # 연결 전 문서는 인증번호와 소유자까지 일치할 때만 같은 계열로 본다.
+        owner_keys = ("company_name", "manufacturer", "supplier", "owner")
+        owner_a = next((a[k] for k in owner_keys if a.get(k)), None)
+        owner_b = next((b[k] for k in owner_keys if b.get(k)), None)
+        return bool(a.get("cert_no") and owner_a and owner_b and
+                    normalize(a["cert_no"]) == normalize(b.get("cert_no")) and
+                    normalize(owner_a) == normalize(owner_b))
+    return [other for other in docs if other.document_id != document.document_id
+            and other.created_at > document.created_at and same_family(other)]
+
+
 def approved_material_evidence(db, material, today=None):
     """발급 요청/승인 공통: 현 원료·최신 문서·현재 유효기간으로 승인 증빙을 재검증."""
     from .models import DocumentAsset, MaterialEvidenceLink, CertificateScopeItem, normalize_material_name
-    from .cert_verify import _expiry_of, normalize
-    from .intake import certificate_invalid_marker
+    from .cert_verify import certificate_evidence_issues
     import re
-    import unicodedata
     today = today or _date.today()
     linked = [v.document_id for v in db.query(MaterialEvidenceLink).filter_by(
         case_id=material.case_id, material_id=material.material_id)]
@@ -215,26 +245,14 @@ def approved_material_evidence(db, material, today=None):
         did = (ev.payload or {}).get("document_id")
         target = latest_reviews if ev.action == "documents.review" else reprocessed
         target.setdefault(did, ev)
-    def filename(d):
-        return unicodedata.normalize("NFC", d.filename or "").casefold()
-    def same_version_family(left, right):
-        return filename(left) == filename(right) or (left.doc_type == right.doc_type and
-            (left.fields or {}).get("cert_no") and
-            normalize(left.fields["cert_no"]) == normalize((right.fields or {}).get("cert_no")))
     identity = material_identity(material)
     for d in docs:
         fields = d.fields or {}
-        if (d.review_status != "approved" or not d.content_b64 or fields.get("_counts_as_evidence") is False
-                or fields.get("_ocr_error") or fields.get("_cert_not_valid")
-                or certificate_invalid_marker(d.filename, d.text_full or d.text_excerpt)):
+        if (d.review_status != "approved" or not d.content_b64 or certificate_evidence_issues({
+                "doc_type": d.doc_type, "filename": d.filename, "fields": fields,
+                "text": d.text_full or d.text_excerpt, "review_status": d.review_status}, today=today)):
             continue
-        expiry = _expiry_of({"fields": fields})
-        # 인증서는 만료일이 읽혀야 한다. 날짜를 갖는 다른 증빙도 같은 현재시점 검사를 적용한다.
-        if ((d.doc_type == "halal_certificate" or fields.get("expiry_date")) and expiry is None
-                or expiry is not None and expiry < today):
-            continue
-        if any(other.document_id != d.document_id and same_version_family(d, other)
-               and other.created_at >= d.created_at for other in all_docs):
+        if superseding_evidence(db, d, all_docs):
             continue
         scope_matches = True
         for names in (fields.get("material_names"), fields.get("scope")):

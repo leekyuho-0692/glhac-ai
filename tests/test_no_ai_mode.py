@@ -169,6 +169,8 @@ def test_공급사_인증번호가_있어도_체크리스트가_열린다():
         with m.SessionLocal() as db:
             db.add(models.DocumentAsset(case_id=cid, material_id=mid, filename="supplier.pdf",
                    doc_type="halal_certificate", review_status="approved",
+                   text_full="HALAL CERTIFICATE\nCertificate No: ID00410000001",
+                   text_excerpt="HALAL CERTIFICATE\nCertificate No: ID00410000001",
                    fields={"cert_no": "ID00410000001", "expiry_date": "2099-01-01"}))
             db.commit()
         c.patch(f"/materials/{mid}", json={"cert_no": "ID00410000001"}, headers=h)
