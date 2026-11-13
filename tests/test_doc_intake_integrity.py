@@ -112,6 +112,7 @@ def test_MSDS는_올바른_칸으로_저장하고_업체를_보존한다(client,
     assert res["mismatch"]["detected"] == res["doc_type"] == "coa_msds"
     assert res["mismatch"]["reason"]
     assert res["extracted"]["material_names"] == ["Oligopeptide-1"]
+    # 제목에만 있고 스크리닝도 미확정인 MSDS 이름은 보류한다. 공급사 업체 정보도 보호한다.
     assert res["applied"]["materials_added"] == 0
     assert res["applied"]["materials_pending"] == 1
     _drain()
@@ -128,6 +129,7 @@ def test_MSDS는_올바른_칸으로_저장하고_업체를_보존한다(client,
         event = db.query(models.WorkflowEvent).filter_by(case_id=cid, action="documents.parse_file").one()
         assert event.payload["doc_type"] == "coa_msds"
         assert db.query(models.Material).filter_by(case_id=cid, name="Oligopeptide-1").count() == 0
+        assert "Oligopeptide-1" in {x["value"] for x in m._pending_extractions(db, cid)}
 
 
 @pytest.mark.parametrize("doc_type,field,value,model,bucket", [

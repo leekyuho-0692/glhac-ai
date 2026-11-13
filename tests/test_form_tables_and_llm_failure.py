@@ -187,6 +187,7 @@ def test_pending_list_drops_values_already_in_the_case(monkeypatch):
     class _Q:
         def __init__(self, rows): self._rows = rows
         def filter_by(self, **kw): return self
+        def filter(self, *criteria): return self
         def all(self): return self._rows
         def __iter__(self): return iter(self._rows)
 
@@ -198,8 +199,8 @@ def test_pending_list_drops_values_already_in_the_case(monkeypatch):
             return model(case_id=case_id, profile_ext={})
 
         def query(self, model):
-            if model is m.models.WorkflowEvent:
-                return _Q([])  # 검토자가 제외한 후보 이력 없음
+            if model in (m.models.WorkflowEvent, m.models.AuditLog):
+                return _Q([])  # 검토·삭제·이름 교정 이력 없음
             if model is m.models.DocumentAsset:
                 return _Q([doc])
             if model is m.models.Product:

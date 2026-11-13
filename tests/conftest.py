@@ -75,6 +75,9 @@ def fresh_db_per_module():
     from app.db import engine, Base
     import app.models  # noqa: F401  — Base.metadata 채우기
     import app.screening as _screening
+    from app import ai_local
+    # 공급자 테스트에서 만든 가짜 Ollama 캐시가 다음 파일의 추출 경로를 바꾸지 않는다.
+    ai_local._provider_cache.update(value=None, at=0.0)
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     # 온톨로지 캐시는 지워진 행을 붙들고 있다 — 아래 기동의 load_ontology가 다시 채운다.

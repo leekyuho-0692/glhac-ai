@@ -309,13 +309,76 @@ def material_risk(m):
                                    m.source_known is not False, m.note or "")
 
 
+def _rejected_autofill_names(db, case_id, entity):
+    """같은 케이스의 삭제·이름 교정·검토 결정을 자동등록보다 우선한다."""
+    from .models import AuditLog, normalize_material_name as norm
+    kind = entity + "_names"
+    rejected = set()
+    events = db.query(WorkflowEvent).filter(WorkflowEvent.case_id == case_id,
+        WorkflowEvent.action.in_(("extraction.review", entity + ".rename")))
+    for event in events:
+        payload = event.payload or {}
+        if event.action == entity + ".rename" and event.actor_type != "system":
+            rejected.add(norm(payload.get("from") or ""))
+            if entity == "product":
+                rejected.update(norm(n) for n in payload.get("aliases", []))
+        elif event.action == "extraction.review" and event.actor_type in REVIEWER_ROLES:
+            decisions = {norm(n) for n in list(payload.get("dismiss") or []) + list(payload.get("renames") or {})}
+            rejected.update(norm(item["value"]) for item in payload.get("items", [])
+                            if item["kind"] == kind and
+                            (entity == "material" or norm(item["value"]) in decisions))
+    c = db.get(CaseApplication, case_id) if entity == "product" else None
+    aliases = (c.profile_ext or {}).get("product_aliases", {}) if c else {}
+    for log in db.query(AuditLog).filter_by(case_id=case_id, action=entity + ".delete", resource_type=entity):
+        rejected.add(norm((log.meta or {}).get("name") or ""))
+        if entity == "product":
+            # 구 삭제 로그에는 별칭 스냅샷이 없으므로 남아 있는 ID별 별칭도 읽는다.
+            rejected.update(norm(n) for n in (log.meta or {}).get("aliases", []))
+            rejected.update(norm(n) for n in aliases.get(log.resource_id, []))
+    return rejected - {""}
+
+
+def rejected_material_autofill_names(db, case_id):
+    """일반 원재료 삭제는 위험 후보를 심의 확인대기에서 숨기지 않는다."""
+    return _rejected_autofill_names(db, case_id, "material")
+
+
+def rejected_product_autofill_names(db, case_id):
+    """거부된 제품 표기는 대표명·별칭·확인대기 모두에서 사용하지 않는다."""
+    return _rejected_autofill_names(db, case_id, "product")
+
+
+def product_alias_conflicts(products, aliases, documents, rejected_names=()):
+    from . import intake
+    from .models import normalize_material_name as norm
+    groups = []
+    for product in products:
+        names = [n for n in [product.name] + aliases.get(product.product_id, []) if norm(n) not in rejected_names]
+        if names:
+            groups.append({"name": names[0], "aliases": names[1:]})
+    for doc in documents:
+        if doc.doc_type in intake._PRODUCT_SRC or doc.doc_type is None:
+            groups += intake._product_alias_groups(doc.fields or {}, getattr(doc, "text_full", None) or "",
+                                                   rejected_names)
+    return intake._product_alias_conflicts(groups)
+
+
 def pending_extractions(db, case_id):
     from . import intake, screening
     from .models import DocumentAsset, Product, normalize_material_name as norm
     c = db.get(CaseApplication, case_id)
-    have = {"product_names": {norm(p.name) for p in db.query(Product).filter_by(case_id=case_id)},
+    products = db.query(Product).filter_by(case_id=case_id).all()
+    documents = db.query(DocumentAsset).filter_by(case_id=case_id).all()
+    aliases = (c.profile_ext or {}).get("product_aliases", {}) if c else {}
+    rejected_products = rejected_product_autofill_names(db, case_id)
+    conflicts = product_alias_conflicts(products, aliases, documents, rejected_products)
+    have = {"product_names": {norm(p.name) for p in products},
             "material_names": {norm(m.name) for m in materials(db, case_id)}}
-    handled = set()
+    if c:
+        product_ids = {p.product_id for p in products}
+        have["product_names"].update(norm(name) for pid, names in aliases.items()
+                                     if pid in product_ids for name in names)
+    handled = {("product_names", name) for name in rejected_products}
     for ev in db.query(WorkflowEvent).filter_by(case_id=case_id, action="extraction.review"):
         if ev.actor_type in REVIEWER_ROLES:
             for item in (ev.payload or {}).get("items", []):
@@ -323,13 +386,29 @@ def pending_extractions(db, case_id):
     out, seen, risk_uids = [], set(), {}
     def risk_uid(name):
         if name not in risk_uids:
-            risk_uids[name] = screening.screen_merged(name).get("matched_uid")
+            try:
+                risk_uids[name] = screening.screen_merged(name).get("matched_uid")
+            except Exception:
+                # 스크리너 장애 중에도 확인대기 원문/위험 히트는 표시한다.
+                risk_uids[name] = None
         return risk_uids[name]
-    for doc in db.query(DocumentAsset).filter_by(case_id=case_id):
-        fields = doc.fields or {}
-        scope_fields = {k: fields[k] for k in ("product_names", "material_names", "_sources", "_rule_omissions") if k in fields}
-        agg = intake.aggregate_fields([{"doc_type": doc.doc_type, "fields": scope_fields}])
-        candidates = list(agg.get("pending") or []) + list(fields.get("_scope_pending") or [])
+    for doc in documents:
+        fields = intake._prune_product_pending(doc.fields or {})
+        scope_fields = {k: fields[k] for k in ("product_names", "product_name_ko", "product_name_en",
+                                               "material_names", "_sources", "_rule_omissions") if k in fields}
+        agg = intake.aggregate_fields([{"doc_type": doc.doc_type, "fields": scope_fields,
+                                         "text_full": getattr(doc, "text_full", None)}],
+                                      rejected_product_names=rejected_products)
+        candidates = (list(fields.get("_autofill", {}).get("product_pending") or []) +
+                      list(agg.get("pending") or []) + list(fields.get("_scope_pending") or []))
+        # apply=False/구 업로드는 아직 미등록일 수 있다. 제품의 양쪽 표기와 성분 모두
+        # DB에 실제 반영되기 전에는 확인 목록에서 사라지지 않는다.
+        for bucket, kind in (("products", "product_names"), ("materials", "material_names")):
+            candidates += [{"kind": kind, "value": name, "source": "llm"}
+                           for name in agg.get(bucket, [])]
+        candidates += [{"kind": "product_names", "value": name, "source": "llm"}
+                       for group in agg.get("product_aliases", [])
+                       for name in [group["name"]] + group["aliases"]]
         scan = fields.get("_tail_screening") or {}
         risks = scan.get("risk_hits", scan.get("haram_hits", []))
         # 사전 표준명과 원문 별칭(Pork/Pork (swine))을 별도 확인 건으로 중복시키지 않는다.
@@ -344,10 +423,25 @@ def pending_extractions(db, case_id):
             for bucket, kind in (("products", "product_names"), ("materials", "material_names")):
                 candidates += [{"kind": kind, "value": name, "reason": "scope_frozen"}
                                for name in agg.get(bucket, [])]
+        doc_products = {norm(name) for name in intake._product_candidate_names(fields)}
         for item in candidates:
             key = (item["kind"], norm(item["value"]))
-            if key in seen or key in handled or key[1] in have.get(item["kind"], set()):
+            ambiguous = item["kind"] == "product_names" and key[1] in conflicts
+            if key in seen or key in handled or (not ambiguous and key[1] in have.get(item["kind"], set())):
                 continue
+            if ambiguous:
+                item = {**item, "reason": "possible_same_product", "possible_product_ids": [
+                    p.product_id for p in products if conflicts & {
+                        norm(n) for n in [p.name] + aliases.get(p.product_id, [])}]}
+            # MSDS 후보가 먼저 들어온 경우에도 나중에 등록한 다른 언어의 제품을 확인한다.
+            if item["kind"] == "product_names" and not item.get("reason"):
+                script = intake._product_name_script(item["value"])
+                possible = [p.product_id for p in products if script and
+                            intake._product_name_script(p.name) and
+                            script != intake._product_name_script(p.name) and
+                            not doc_products & {norm(n) for n in [p.name] + aliases.get(p.product_id, [])}]
+                if possible:
+                    item = {**item, "reason": "possible_same_product", "possible_product_ids": possible}
             seen.add(key)
             out.append({**item, "document_id": doc.document_id, "filename": doc.filename,
                         "requires_scope_unlock": bool(c and c.scope_frozen)})

@@ -48,7 +48,7 @@ function PKG_panel(cid){
     : `<span class="badge attn">확인 필요 ${(d.gaps||[]).length + (un.length?1:0) + (up.length?1:0)}건</span>`;
   return `<section class="panel"><div class="panel-head"><h2>${d.scheme==='logistics' ? '인증 패키지 점검 · 업체·취급 서비스·차량·시설·세척 SOP' : '인증 패키지 점검 · 업체·제품·성분·공장'}</h2>
       <div class="row-act">${head}${PKG_canAudit() && !d.complete ? `<button class="btn btn-sm" onclick="App.pkgRequest('${cid}')">업체·컨설턴트에 보완 요청</button>`:''}
-      <button class="btn btn-sm btn-ghost" onclick="App.pkgRefresh('${cid}')">다시 점검</button></div></div>
+      <button class="btn btn-sm btn-ghost" onclick="App.pkgRefresh('${cid}')" ${RS._pkgRefreshing?.[cid]?'disabled aria-busy="true"':''}>${t(RS._pkgRefreshing?.[cid]?'pkg.checking':'pkg.refresh')}</button></div></div>
     <div class="tbl-wrap"><table><thead><tr><th>항목</th><th>상태</th><th>내용</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
     ${up.length?`<div class="note"><b>미판독 서류 ${up.length}건 — 판독 전</b><p>판독 기능이 돌지 않은 서류입니다(예전 업로드 등). 재처리하면 내용을 읽어 빠진 항목을 자동으로 채웁니다. 끝나면 다시 점검해 통보합니다.</p>
       ${canReproc?`<div class="row-act"><button class="btn btn-sm btn-primary" onclick="App.pkgReproc('${cid}')">미판독 서류 일괄 재처리</button></div>`:''}</div>`:''}
@@ -56,7 +56,43 @@ function PKG_panel(cid){
       <div class="tbl-wrap"><table><thead><tr><th>서류</th><th>신뢰도</th><th></th></tr></thead><tbody>${unRows}</tbody></table></div>`:''}
   </section>`;
 }
-App.pkgRefresh = async function(cid){ await PKG_load(cid); render(); };
+function PKG_resultKey(d){
+  // JSON의 키·목록 순서 차이는 점검 결과의 변경이 아니다.
+  const stable=v=>Array.isArray(v)?v.map(stable).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b))):
+    v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,stable(v[k])])):v;
+  return JSON.stringify(stable(d));
+}
+function PKG_resultNotice(d){
+  if(d.complete) return t('pkg.complete');
+  const labels=(d.gaps||[]).map(k=>{
+    let label=t('pkg.item.'+k);
+    if(k==='company'){
+      const missing=(d.items?.company?.missing||[]).map(f=>t('pkg.company.'+f));
+      if(missing.length) label+=' ('+missing.join(', ')+')';
+    }
+    return label;
+  });
+  if(d.unreadable?.length) labels.push(t('pkg.unreadable'));
+  if(d.unprocessed?.length) labels.push(t('pkg.unprocessed'));
+  return tf('pkg.needs_review',{n:labels.length,items:labels.join('·')});
+}
+App.pkgRefresh = async function(cid){
+  RS._pkgRefreshing=RS._pkgRefreshing||{};
+  if(RS._pkgRefreshing[cid]) return;
+  RS.pkg=RS.pkg||{};
+  const previous=RS.pkg[cid];
+  RS._pkgRefreshing[cid]=true; render();
+  try{
+    const r=await apiFetch('/cases/'+cid+'/package-check');
+    if(!r.ok) return toast(await apiErr(r,t('pkg.error')));
+    const d=await r.clone().json();
+    if(!d || d.error) return toast(await apiErr(r,t('pkg.error')));
+    RS.pkg[cid]=d;
+    const unchanged=previous&&!previous.error&&PKG_resultKey(previous)===PKG_resultKey(d);
+    toast(PKG_resultNotice(d)+(unchanged?' '+t('pkg.unchanged'):''));
+  }catch(e){ toast(t('pkg.error')); }
+  finally{ delete RS._pkgRefreshing[cid]; render(); }
+};
 App.pkgReproc = async function(cid){
   const r = await apiFetch('/cases/'+cid+'/documents/reprocess-pending', {method:'POST', body:'{}'});
   if(!r.ok) return toast(await apiErr(r, '재처리를 시작하지 못했습니다.'));
@@ -114,7 +150,7 @@ function PKG_pendingTable(s, kind){
       ${pending.map((it,i)=>`<tr><td><input type="checkbox" aria-label="${t('intake.select')} ${i+1}" ${it.selected?'checked':''} ${!edit||s.busy||it.saved?'disabled':''} onchange="App.pkgPendingToggle('${kind}',${i},'selected',this.checked)"></td>
         <td>${reviewer?`<input class="in" aria-label="${t('intake.field.name')} ${i+1}" value="${esc(it.name)}" ${!edit||s.busy||it.saved?'disabled':''} oninput="S.${key}.pending[${i}].name=this.value">`:esc(it.value)}</td>
         <td>${esc(it.filename||t('intake.empty'))}</td>${reviewer?`<td><input type="checkbox" aria-label="${t('intake.dismiss')} ${i+1}" ${it.dismiss?'checked':''} ${!edit||s.busy||it.saved?'disabled':''} onchange="App.pkgPendingToggle('${kind}',${i},'dismiss',this.checked)"></td>`:''}
-        <td>${esc(it.result||'')}</td></tr>`).join('')}</tbody></table></div>`}
+        <td>${esc(it.result||(it.reason==='possible_same_product'?t('intake.reason.possible_same_product'):''))}</td></tr>`).join('')}</tbody></table></div>`}
     ${INTAKE_conflicts(s.conflicts)}
     ${edit&&reviewer?`<label class="field">${t('intake.reason')}<textarea class="in" required oninput="S.${key}.reason=this.value">${esc(s.reason||'')}</textarea></label>`:''}
     <div class="row-act"><button class="btn btn-sm" ${s.busy?'disabled':''} onclick="App.${product?'pkgProductRefresh':'pkgMaterialRefresh'}()">${t('intake.reload')}</button>

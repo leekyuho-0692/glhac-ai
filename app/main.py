@@ -7590,9 +7590,13 @@ def delete_product(case_id: str, product_id: str, force: bool = False,
         flag_modified(ct, "frozen_product_ids")   # JSON 컬럼 in-place 변경 감지
     _audit(db, user, "product.delete", "product", product_id, case_id,
            {"name": p.name, "description": p.description,
+            "aliases": list((c.profile_ext or {}).get("product_aliases", {}).get(product_id, [])),
             "material_links": db.query(models.ProductMaterial)
                                 .filter_by(product_id=product_id).count(),
             "removed_from_certificates": [ct.certificate_no for ct in certs]}, commit=False)
+    if product_id in (c.profile_ext or {}).get("product_aliases", {}):
+        c.profile_ext = {**c.profile_ext, "product_aliases": {
+            pid: names for pid, names in c.profile_ext["product_aliases"].items() if pid != product_id}}
     db.query(models.ProductMaterial).filter_by(product_id=product_id).delete()
     db.delete(p)
     db.commit()
@@ -8164,11 +8168,129 @@ def _revert_failed_autofill(db, c, doc):
         doc.fields = fields
 
 
+def _autofill_products(db, c, agg, documents, rejected_names=()):
+    """명시적 병기만 별칭으로 저장한다. 문서 간 언어 차이는 기존 확인대기로 보낸다."""
+    products = db.query(models.Product).filter_by(case_id=c.case_id).all()
+    product_ids = {p.product_id for p in products}
+    # 구 삭제 로그의 별칭 근거인 고아 ID는 보존한다. 새 삭제는 감사로그에 스냅샷을 남긴다.
+    aliases = {pid: [n for n in values if _norm_material(n) not in rejected_names]
+               if pid in product_ids else list(values)
+               for pid, values in (c.profile_ext or {}).get("product_aliases", {}).items()}
+    groups = {_norm_material(g["name"]): g for g in agg.get("product_aliases", [])}
+    docs = (db.query(models.DocumentAsset).options(load_only(models.DocumentAsset.document_id,
+            models.DocumentAsset.fields, models.DocumentAsset.doc_type,
+            models.DocumentAsset.text_full)).filter_by(case_id=c.case_id).all()) if documents else []
+    docs += [d for d in documents if all(d.document_id != old.document_id for old in docs)]
+    for doc in documents:
+        doc.fields = intake._prune_product_pending(doc.fields or {})
+        if rejected_names:
+            fields = dict(doc.fields)
+            meta = dict(fields.get("_autofill") or {})
+            if "product_pending" in meta:
+                meta["product_pending"] = [x for x in meta["product_pending"]
+                                           if _norm_material(x["value"]) not in rejected_names]
+                fields["_autofill"] = meta
+            doc.fields = fields
+    conflicts = sm.product_alias_conflicts(products, aliases, docs, rejected_names) if documents else set()
+
+    def doc_names(doc):
+        return {_norm_material(n) for n in intake._product_candidate_names(doc.fields or {})} - set(rejected_names)
+
+    sources = {d.document_id: doc_names(d) for d in docs}
+    def keys(product):
+        return {_norm_material(n) for n in [product.name] + aliases.get(product.product_id, [])}
+
+    def uncertain(name, known_keys):
+        incoming = {did for did, values in sources.items() if _norm_material(name) in values}
+        return [p for p in products if intake._product_name_script(name) and
+                intake._product_name_script(p.name) and
+                intake._product_name_script(name) != intake._product_name_script(p.name) and
+                not keys(p) & known_keys and not any(
+                    did in incoming and values & keys(p) for did, values in sources.items())]
+
+    def defer(name, matches):
+        if _norm_material(name) in rejected_names:
+            return
+        for doc in documents:
+            if _norm_material(name) not in doc_names(doc):
+                continue
+            f = dict(doc.fields or {})
+            meta = dict(f.get("_autofill") or {})
+            pending = [x for x in meta.get("product_pending", [])
+                       if _norm_material(x["value"]) != _norm_material(name)]
+            pending.append({"kind": "product_names", "value": name, "source": "llm",
+                            "reason": "possible_same_product",
+                            "possible_product_ids": [p.product_id for p in matches]})
+            meta["product_pending"] = pending
+            f["_autofill"] = meta
+            doc.fields = f
+
+    added, deferred = 0, 0
+    material_keys = {_norm_material(n) for n in agg.get("materials", [])}
+    for name in agg.get("products", []):
+        nk = _norm_material(name)
+        if not nk or nk in material_keys or nk in rejected_names:
+            continue
+        group = groups.get(nk, {"name": name, "aliases": []})
+        spellings = [group["name"]] + group["aliases"]
+        known_keys = {_norm_material(n) for n in spellings}
+        matches = [p for p in products if keys(p) & known_keys]
+        if known_keys & conflicts:
+            # 등록된 제품의 별칭과도 대조한다. 새 문서의 다른 짝을 기존 제품에 붙이지 않는다.
+            for spelling in spellings:
+                defer(spelling, matches)
+            deferred += len(spellings)
+            continue
+        if len(matches) > 1:
+            # 이미 존재하는 두 제품을 자동으로 합치거나 별칭으로 서로 연결하지 않는다.
+            if documents:
+                defer(name, matches)
+            continue
+        possible = uncertain(name, known_keys) if documents and not matches else []
+        if possible:
+            defer(name, possible)
+            deferred += 1
+            continue
+        product = matches[0] if matches else models.Product(product_id=models.uid(), case_id=c.case_id, name=name)
+        if not matches:
+            db.add(product); products.append(product); added += 1
+        if group["aliases"]:
+            aliases[product.product_id] = list(dict.fromkeys(aliases.get(product.product_id, []) +
+                [n for n in spellings if _norm_material(n) != _norm_material(product.name)
+                 and _norm_material(n) not in rejected_names]))
+    if aliases != (c.profile_ext or {}).get("product_aliases", {}):
+        c.profile_ext = {**(c.profile_ext or {}), "product_aliases": aliases}
+    for item in agg.get("pending", []):
+        if item["kind"] == "product_names" and documents:
+            known = {_norm_material(item["value"])}
+            if known & conflicts:
+                defer(item["value"], [p for p in products if keys(p) & conflicts])
+            elif not any(keys(p) & known for p in products):
+                possible = uncertain(item["value"], known)
+                if possible:
+                    defer(item["value"], possible)
+    return added, deferred
+
+
 def _apply_agg_to_case(db, c, agg, documents=()):
     """목록 집계만 직접 반영한다. 업체·공장은 원문 문서별 소유권 게이트를 통과해야 한다."""
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0,
                "profile": [], "pending": len(agg.get("pending") or [])}
     _assert_case_open(c)
+    rejected_products = sm.rejected_product_autofill_names(db, c.case_id) if documents else set()
+    if rejected_products:
+        # 별칭으로 승격된 집계 결과를 사후 필터하면 남은 이름도 쌍의 자격을 물려받는다.
+        # 원문 후보에서 거부 이름을 먼저 빼고 단독 제품의 등록 요건을 다시 판정한다.
+        product_agg = intake.aggregate_fields([{
+            "doc_type": doc.doc_type, "text_full": doc.text_full,
+            "fields": {k: v for k, v in (doc.fields or {}).items()
+                       if k in ("product_names", "product_name_ko", "product_name_en", "_sources", "_rule_omissions")}
+        } for doc in documents], rejected_product_names=rejected_products)
+        # HTTP 응답의 집계·대기 건수도 실제 저장에 사용한 후보와 일치시킨다.
+        agg.update(products=product_agg["products"], product_aliases=product_agg["product_aliases"],
+                   pending=[x for x in agg.get("pending", []) if x["kind"] != "product_names"] +
+                           [x for x in product_agg["pending"] if x["kind"] == "product_names"])
+        applied["pending"] = len(agg["pending"])
     try:
         _assert_scope_open(c, lock=False)
     except HTTPException as exc:
@@ -8176,12 +8298,15 @@ def _apply_agg_to_case(db, c, agg, documents=()):
             raise
         for doc in documents:
             fields = dict(doc.fields or {})
-            extracted = intake.aggregate_fields([{"doc_type": doc.doc_type, "fields": fields}])
+            extracted = intake.aggregate_fields([{"doc_type": doc.doc_type, "fields": fields,
+                                                  "text_full": doc.text_full}],
+                                                 rejected_product_names=rejected_products)
             deferred = list(fields.get("_scope_pending") or []) + list(extracted.get("pending") or [])
             for bucket, kind in (("products", "product_names"), ("materials", "material_names")):
                 deferred += [{"kind": kind, "value": value, "reason": "scope_frozen"}
                              for value in extracted.get(bucket, [])]
-            fields["_scope_pending"] = list({(x["kind"], x["value"]): x for x in deferred}.values())
+            fields["_scope_pending"] = list({(x["kind"], x["value"]): x for x in deferred
+                if x["kind"] != "product_names" or _norm_material(x["value"]) not in rejected_products}.values())
             doc.fields = fields
         applied.update(scope_frozen=True, requires_scope_unlock=True,
                        pending=sum(len((d.fields or {}).get("_scope_pending") or []) for d in documents))
@@ -8199,8 +8324,12 @@ def _apply_agg_to_case(db, c, agg, documents=()):
             applied["nib_conflict"] = True
         if own.get("facility"):
             applied["facility"] = own["facility"]
-    have_p = {_norm_material(p.name) for p in db.query(models.Product).filter_by(case_id=c.case_id)}
-    _mat_norms = {_norm_material(m) for m in (agg.get("materials") or []) if m}
+    if documents:
+        # 사람이 이름을 수정하거나 제외한 원래 추출값은 재처리로 되살리지 않는다.
+        handled = {"product_names": rejected_products,
+                   "material_names": sm.rejected_material_autofill_names(db, c.case_id)}
+        agg = {**agg, **{bucket: [n for n in agg.get(bucket, []) if _norm_material(n) not in handled[kind]]
+                       for bucket, kind in (("products", "product_names"), ("materials", "material_names"))}}
     if agg.get("products"):
         try:
             _assert_scope_open(c)
@@ -8208,19 +8337,36 @@ def _apply_agg_to_case(db, c, agg, documents=()):
             if exc.detail.get("code") != "SCOPE_FROZEN" or not documents:
                 raise
             return _apply_agg_to_case(db, c, agg, documents=documents)
-    for pn in agg.get("products", []):
-        pk = _norm_material(pn)
-        if pn and pk and pk not in have_p and pk not in _mat_norms:
-            db.add(models.Product(case_id=c.case_id, name=pn)); applied["products"] += 1; have_p.add(pk)
+    applied["products"], deferred = _autofill_products(db, c, agg, documents, rejected_products)
+    applied["pending"] += deferred
     have_m = {_norm_material(m.name) for m in db.query(models.Material).filter_by(case_id=c.case_id)}
+    structural_materials = {_norm_material(name) for doc in documents
+                            if ((doc.fields or {}).get("_sources") or {}).get("material_names") == "structural"
+                            for name in intake._normalise_names((doc.fields or {}).get("material_names"))}
     materials = []
     for mn in agg.get("materials", []):
         nk = _norm_material(mn)
         if mn and nk and nk not in have_m:
-            enum = screening.extract_e_number(mn)
-            sc = screening.screen_merged(mn, enum, None, None, False, True, "")
-            materials.append(models.Material(case_id=c.case_id, name=mn, e_number=enum, screen_result=sc["result"],
-                                   screen_status=sc["status"], screen_severity=sc["severity"],
+            try:
+                enum = screening.extract_e_number(mn)
+                sc = screening.screen_merged(mn, enum, None, None, False, True, "")
+                # 집계 후 스크리너가 실패해도 문서 후보를 잃거나 임의 등록하지 않는다.
+                if not intake._material_screening_valid(sc):
+                    raise ValueError("Invalid material screening response")
+                # 구조 파서는 정상 위험 판정도 저장해 기존 심의 차단을 유지한다.
+                if documents and nk not in structural_materials and not intake._material_screening_safe(sc):
+                    raise ValueError("AI material screening requires review")
+                sc_result, sc_status, sc_severity = (sc[key] for key in ("result", "status", "severity"))
+            except Exception:
+                if not documents:
+                    raise
+                log.warning("Material registration screening unavailable; candidate kept pending", exc_info=True)
+                applied["pending"] += 1
+                agg.setdefault("pending", []).append({"kind": "material_names", "value": mn,
+                                                      "source": "llm", "reason": "screening_review"})
+                continue
+            materials.append(models.Material(case_id=c.case_id, name=mn, e_number=enum, screen_result=sc_result,
+                                   screen_status=sc_status, screen_severity=sc_severity,
                                    matched_uid=sc.get("matched_uid"), v1_risk=sc.get("v1_risk"),
                                    cert=sc.get("v1_cert")))
             have_m.add(nk)
@@ -8233,6 +8379,10 @@ def _apply_agg_to_case(db, c, agg, documents=()):
                 raise
             return _apply_agg_to_case(db, c, agg, documents=documents)
         applied["materials"] += int(created)
+    if documents and (applied["materials"] or applied["products"]):
+        db.flush()
+        if db.query(models.Product).filter_by(case_id=c.case_id).count() == 1:
+            applied["links"] = _auto_link_pm(db, c.case_id)
     return applied
 
 
@@ -8515,7 +8665,7 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id"):
         if key in (d.fields or {}):
             fl[key] = d.fields[key]   # 재처리로 동결대기·검토 이력을 지우지 않는다.
-    d.fields = fl
+    d.fields = intake._prune_product_pending(fl)
     d.text_excerpt = (text or "")[:300]
     d.text_full = text or ""
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
@@ -8523,7 +8673,7 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     if apply:
         _autofile_evidence(db, c.case_id, d, allow_parse=False)
     applied = (_apply_agg_to_case(db, c, aggregate_fields([{"doc_type": d.doc_type,
-                                                            "fields": d.fields}]), documents=[d])
+                                                            "fields": d.fields, "text_full": d.text_full}]), documents=[d])
                if apply else {"skipped": True})
     if apply:
         count = _apply_document_measurements(db, c, d)
@@ -9079,7 +9229,7 @@ def _apply_intake_autofill(db, c, res):
                     fields[key] = doc.fields[key]
             doc.doc_type = d["doc_type"]
             doc.confidence = float(d.get("confidence") or 0)
-            doc.fields = fields
+            doc.fields = intake._prune_product_pending(fields)
             doc.text_full = d.get("text_full") or ""
             doc.text_excerpt = d.get("excerpt") or ""
             doc.ocr_lines = d.get("ocr_lines")
@@ -9107,8 +9257,7 @@ def _apply_intake_autofill(db, c, res):
     db.flush()
     # 회사·공장 정보는 원문이 있는 개별 문서로만 반영한다. 무출처 집계는 목록에만 사용한다.
     agg = res.get("extracted", {})
-    applied = _apply_agg_to_case(db, c, {k: agg.get(k, []) for k in ("products", "materials", "pending")},
-                                 documents=saved)
+    applied = _apply_agg_to_case(db, c, agg, documents=saved)
     applied["dup_skipped"] = dup_skipped
     res["_verify_ids"] = [d.document_id for d in saved]
     # 제품·원재료 자동 연결(매트릭스) — 아코디언에 원재료가 붙도록
@@ -9788,23 +9937,23 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     if r.get("llm_error"):
         f["_llm_error"] = r["llm_error"]
     applied = {}
-    if eff_type in intake._MATERIAL_SRC | intake._PRODUCT_SRC:
-        # 제품 목록 문서와 구조 파서 목록은 즉시 반영하고, 나머지는 확인 절차를 거친다.
-        agg = intake.aggregate_fields([{"doc_type": eff_type, "fields": f}])
-        added = _apply_agg_to_case(db, c, {"materials": agg["materials"], "products": agg["products"]})
-        for bucket, kind, allowed in (("materials", "material_names", intake._MATERIAL_SRC),
-                                      ("products", "product_names", intake._PRODUCT_SRC)):
-            if eff_type in allowed:
-                applied[bucket + "_added"] = added[bucket]
-                applied[bucket + "_pending"] = sum(x["kind"] == kind for x in agg["pending"])
     from .intake import _ctype
     _b64 = _validate_upload(body.file_b64, body.filename)
-    doc = models.DocumentAsset(case_id=case_id, filename=body.filename,
+    doc = models.DocumentAsset(document_id=models.uid(), case_id=case_id, filename=body.filename,
                                filename_en=_fn_en(body.filename), doc_type=eff_type,
                                confidence=float(r.get("confidence") or 0), fields=f,
                                text_excerpt=r.get("excerpt"), text_full=text,
                                content_b64=_b64,
                                content_type=_ctype(body.filename))
+    if eff_type in intake._MATERIAL_SRC | intake._PRODUCT_SRC:
+        agg = intake.aggregate_fields([{"doc_type": eff_type, "fields": f, "text_full": text}])
+        added = _apply_agg_to_case(db, c, agg, documents=[doc])
+        for bucket, kind, allowed in (("materials", "material_names", intake._MATERIAL_SRC),
+                                      ("products", "product_names", intake._PRODUCT_SRC)):
+            if eff_type in allowed:
+                applied[bucket + "_added"] = added[bucket]
+                applied[bucket + "_pending"] = sum(x["kind"] == kind for x in agg["pending"])
+    # 원재료 스크리닝 전에 문서를 flush하면 동시 업로드 전체를 쓰기 잠금으로 막는다.
     db.add(doc)
     db.flush()
     own = _apply_owned_autofill(db, c, doc)

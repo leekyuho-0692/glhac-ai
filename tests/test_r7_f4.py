@@ -18,13 +18,11 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("GLHAC_DEV", "1")
 os.environ.setdefault("GLHAC_RATE_LIMIT_PER_MIN", "0")
 os.environ.setdefault("GLHAC_NOTIFY_WORKER", "0")
-os.environ.setdefault("GLHAC_AUTOPARSE", "0")
-os.environ.setdefault("GLHAC_DOC_VERIFY", "0")
 
 from fastapi.testclient import TestClient
 from app.main import app
 from app.db import SessionLocal
-from app import models
+from app import main as m, models
 
 
 def login(client, username="operator1", password="pw"):
@@ -34,7 +32,10 @@ def login(client, username="operator1", password="pw"):
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    # 수집 시 전역 환경을 바꾸면 app.main 재로딩 뒤 다른 파일의 큐까지 꺼진다.
+    monkeypatch.setattr(m, "_AUTOPARSE", False)
+    monkeypatch.setattr(m, "_DOC_VERIFY", False)
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
 

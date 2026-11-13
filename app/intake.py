@@ -588,9 +588,104 @@ def _clear_truncation(fields, kind):
         fields.pop("_tail_screening", None)
 
 
-def _material_scan_text(text, measurement_excluded=None, *, char_offset=0, line_offset=0, context=None):
-    """성분표를 우선 보존하고, 명시적인 시험 행의 항목명만 가린다."""
+_AUTOFILL_SECTION_PREFIX = re.compile(
+    r"^(?:section[ \t]*)?(?:(?:\d+(?:\.\d+)*|[IVXLCDM]+)(?:[.)：:-][ \t]*|[ \t]+)|"
+    r"\(\d+\)[ \t]*|\[\d+\][ \t]*)", re.I)
+_AUTOFILL_MATERIAL_LABEL = (
+    r"(?:ingredients?(?:[ \t]+(?:name|list))?|composition(?:[ \t]*/[ \t]*information[ \t]+on[ \t]+ingredients)?|"
+    r"formula|INCI(?:[ \t]+name)?|raw[ \t]+materials?|chemical[ \t]+name|komposisi|bahan(?:[ \t]+baku)?|"
+    r"원재료명?|원료명?|전성분|성분명?|조성|배합)")
+_AUTOFILL_MATERIAL_HEADING = re.compile(
+    _AUTOFILL_MATERIAL_LABEL + r"(?:[ \t]*/[ \t]*" + _AUTOFILL_MATERIAL_LABEL +
+    r")*[ \t]*(?:[:：][ \t]*(?P<ingredients>.*))?", re.I)
+_AUTOFILL_COLUMN_LABEL = re.compile(
+    r"(?:no\.?|number|name|ingredients?|components?|chemical[ \t]+name|성분명|원료명|"
+    r"CAS(?:[ \t]*(?:no\.?|number))?|%|wt\.?[ \t]*%|"
+    r"concentration|content|quantity|amount|weight|함량|농도|이름|번호)(?:[ \t]*\([^)]*\))?", re.I)
+_AUTOFILL_NEW_HEADING = re.compile(
+    r"\b(?:section|heading|information|instructions?|properties|measures|handling|storage|"
+    r"identification|hazards?|exposure|controls?|protection|stability|reactivity|toxicological|"
+    r"ecological|disposal|transport|regulatory|notes?|details?|procedures?|results?|specifications?|"
+    r"reports?|appearance|cleaning|solubility|first[ \t-]+aid|tests?|pertolongan|sifat[ \t]+fisik)\b|"
+    r"응급|조치|취급|저장|보관|주의|정보|특성|물성|결과|시험|항목|제목", re.I)
+_AUTOFILL_ROW_METADATA = re.compile(
+    r"(?:(?:CAS(?:[ \t]*(?:no\.?|number))?[ \t:：]*)?\d{2,7}-\d{2}-\d|"
+    r"[<>≤≥]?[ \t]*\d+(?:\.\d+)?(?:[ \t]*[-–][ \t]*\d+(?:\.\d+)?)?[ \t]*%?|"
+    r"w/w|w/v|v/v|wt\.?[ \t]*%)(?:[ \t]+|$)", re.I)
+
+
+def _autofill_material_row(line):
+    """함량·CAS 또는 쉼표 목록이 있는 행의 성분명만 반환한다. 구분자만으로는 부족하다."""
+    line = re.sub(r"^[-*•][ \t]+", "", line.lstrip().rstrip(" \r\n"))
+    if (not line or _AUTOFILL_NEW_HEADING.search(line)
+            or re.search(r"\b(?:is|are|was|were|use[ds]?|using|contains?|for|with|and|shall|should|must|suppliers?)\b", line, re.I)
+            or (re.search(r"[.!?。！？]$", line) and not re.search(r"\bdenat\.$", line, re.I))):
+        return []
+    # 1,2-Hexanediol의 숫자 사이 쉼표는 성분 나열 구분자가 아니다.
+    parts = re.split(r"(?<!\d),|,(?!\d)", line)
+    names, evidence = [], len(parts) >= 2
+    for part in parts:
+        cells = [cell.strip() for cell in _table_cells(part.replace("｜", "|"))]
+        is_table_row = len(cells) > 1
+        if is_table_row and cells[0].isdigit():
+            cells.pop(0)
+        name_and_amount = re.split(r"[ \t]+(?=CAS\b|[<>≤≥]?\d)", cells[0], maxsplit=1, flags=re.I)
+        name = name_and_amount[0]
+        if (not re.search(r"[^\W\d_]", name) or len(name) > 100 or len(name.split()) > 8
+                or not re.fullmatch(r"[\w()'’&.,/+ -]+", name)
+                or _AUTOFILL_COLUMN_LABEL.fullmatch(name) or _TEST_TABLE_HEADER.fullmatch(name.replace(" ", ""))):
+            return []
+        metadata = " ".join(name_and_amount[1:] + cells[1:]).strip()
+        if _AUTOFILL_ROW_METADATA.sub("", metadata).strip():
+            return []
+        # 표는 이름 셀 바깥의 실제 수치가 필요하다. 단위·빈 셀·행 번호는 근거가 아니다.
+        evidence_metadata = " ".join(cells[1:]) if is_table_row else metadata
+        evidence |= bool(re.search(r"\d", evidence_metadata))
+        names.append(name)
+    return names if evidence else []
+
+
+def _autofill_material_text(text):
+    """AI 자동등록 근거만 좁힌다. R1~R5 위험 검색의 문맥/제외 기록과 독립적이다."""
+    rows, in_materials, awaiting_columns = [], False, False
+    for raw in text.splitlines():
+        line = raw.lstrip().rstrip(" \r\n")
+        if not line:
+            in_materials = awaiting_columns = False
+            continue
+        title = re.sub(r"^[#*•-]+[ \t]*", "", line)
+        title = _AUTOFILL_SECTION_PREFIX.sub("", title, count=1)
+        cells = [cell.strip() for cell in _table_cells(title.replace("｜", "|"))]
+        header = _AUTOFILL_MATERIAL_HEADING.fullmatch(cells[0])
+        if header and all(_AUTOFILL_COLUMN_LABEL.fullmatch(cell) for cell in cells[1:]):
+            inline = header["ingredients"]
+            names = _autofill_material_row(inline) if inline else []
+            in_materials = not inline or bool(names)
+            awaiting_columns = not inline
+            rows.extend(names)
+            continue
+        if (in_materials and awaiting_columns and len(cells) >= 2
+                and all(_AUTOFILL_COLUMN_LABEL.fullmatch(cell) for cell in cells)):
+            awaiting_columns = False
+            continue
+        awaiting_columns = False
+        # 모르는 줄은 즉시 종료한다. 다음 성분 머리줄 전까지 다시 열지 않는다.
+        names = _autofill_material_row(line)
+        if (_AUTOFILL_SECTION_PREFIX.match(line) or re.match(r"^[#*]", line)
+                or not names):
+            in_materials = False
+        elif in_materials:
+            rows.extend(names)
+    return "\n".join(rows)
+
+
+def _material_scan_text(text, measurement_excluded=None, *, char_offset=0, line_offset=0, context=None,
+                        material_only=False):
+    """위험 검색은 시험 항목을 가리고, 자동등록은 명시적인 성분 문맥만 돌려준다."""
+    if material_only:
+        return _autofill_material_text(text)
     lines = text.splitlines(keepends=True)
+    material_lines = []
     context = context if context is not None else {}
     table_context = context.get("test_table", False)
     material_context = context.get("material", False)
@@ -602,10 +697,15 @@ def _material_scan_text(text, measurement_excluded=None, *, char_offset=0, line_
         if not stripped:
             table_context = material_context = False
             continue
-        if _MATERIAL_HEADER.search(line):
+        if header := _MATERIAL_HEADER.search(line):
             # 같은 머리줄/행에 시험 머리말이 겹쳐도 성분표를 우선한다(R3).
-            material_context = True
+            # 자동등록 근거는 제목/표 머리말이어야 한다. 일반 문장 속 ingredient는 제외한다.
+            material_context = not material_only or bool(re.fullmatch(
+                r"[\W\d_]*(?:(?:section|no|number|item|nama|daftar|product|[ivxlcdm]+)[\W\d_]*)*",
+                line[:header.start()], re.I))
             table_context = False
+            if material_context:
+                material_lines.append(line)
             continue
         if _MATERIAL_SECTION_END.fullmatch(stripped):
             table_context = material_context = False
@@ -623,6 +723,7 @@ def _material_scan_text(text, measurement_excluded=None, *, char_offset=0, line_
         # 성분명에는 &, 번호, 구두점 등이 올 수 있다. 행 모양으로 목록을 끝내지
         # 않고 빈 줄·새 표 머리줄·명시적인 제목에서만 성분 문맥을 종료한다(R3).
         if material_context:
+            material_lines.append(line)
             continue
 
         def mask(match):
@@ -647,8 +748,12 @@ def _material_scan_text(text, measurement_excluded=None, *, char_offset=0, line_
 
         lines[index] = _TEST_ANALYTE.sub(mask, line)
     context.update(test_table=table_context, material=material_context)
+    if material_only:
+        return "".join(material_lines)
     # 가린 원료명만 있던 행을 빈 줄로 오인하여 성분표 문맥을 끊지 않는다.
-    return _NON_ETHANOL_ALCOHOL.sub(lambda m: " " * len(m[0]), "".join(lines))
+    scanned = "".join(lines)
+    # 세틸/벤질알코올은 에탄올 위험 검색에서만 가린다. 실제 성분명은 보존한다.
+    return _NON_ETHANOL_ALCOHOL.sub(lambda m: " " * len(m[0]), scanned)
 
 
 def _scan_tail(fields, text, *, risks_only=False, measurement_excluded=None, char_offset=0, line_offset=0,
@@ -1665,7 +1770,7 @@ _MATERIAL_SECTION_END = re.compile(
     r"(?:시험|분석)[ \t]*(?:성적서|결과)|"
     r"the[ \t]+following[ \t]+section[ \t]+reports[ \t]+measurements\.)[ \t:：]*", re.I)
 _TEST_TABLE_HEADER = re.compile(
-    r"parameter|testitem|test|item|analysis|result|specification|spec|method|limit|unit|"
+    r"parameters?|testitems?|tests?|items?|analys(?:is|es)|results?|specifications?|specs?|methods?|limits?|units?|"
     r"시험항목|검사항목|결과|기준|단위", re.I)
 _TEST_CONTEXT = re.compile(r"\b(?:result|test|PCR|assay|content|limit)\b", re.I)
 _TEST_ANALYTE = re.compile(
@@ -2174,6 +2279,8 @@ _EXTRACTION_RULES = (
     "상호/단체명/개업연월일/본점 등 항목 라벨을 값에 포함하지 마세요. "
     "한국 사업자번호는 10자리(000-00-00000), 법인번호는 13자리(000000-0000000), 인니 NIB는 13자리입니다. "
     "추측하지 말고 원문에 없는 값은 null로 두세요. 각 필드의 근거 원문 구절을 evidence에 함께 넣으세요. "
+    "원문이 한 제품의 국문명과 영문명을 명시적으로 병기하면 product_name_ko와 product_name_en에 "
+    "각 표기를 넣고 product_names에도 포함하세요. 서로 다른 제품이나 문서의 이름을 번역·추측해 짝짓지 마세요. "
     '응답: {"doc_type":"유형", "confidence":0.9, "fields":{"필드":"값"}, '
     '"evidence":{"필드":"라벨과 값을 포함한 원문 구절 (목록은 구절 배열)"}}. '
 )
@@ -2943,12 +3050,115 @@ _PRODUCT_SRC = {"product_list", "sjph_manual", "material_list", "coa_msds", "pro
 _MATERIAL_SRC = {"material_list", "coa_msds", "product_label", "quality_cert", "supplier_declaration"}
 
 
-def aggregate_fields(docs):
+def _product_name_script(name):
+    if re.search(r"[가-힣]", name or ""):
+        return "ko"
+    return "latin" if re.search(r"[A-Za-z]", name or "") else None
+
+
+def _product_candidate_names(fields):
+    return list(dict.fromkeys(_normalise_names(fields.get("product_names")) + [
+        fields[k] for k in ("product_name_ko", "product_name_en")
+        if isinstance(fields.get(k), str) and fields[k].strip()]))
+
+
+def _prune_product_pending(fields):
+    """이전 자동등록 보류값 중 최신 추출에서 사라진 제품명만 정리한다."""
+    from .models import normalize_material_name as norm
+    meta = fields.get("_autofill") or {}
+    if not meta.get("product_pending"):
+        return fields
+    current = {norm(n) for n in _product_candidate_names(fields) +
+               _normalise_names((fields.get("_rule_omissions") or {}).get("product_names"))}
+    pending = [item for item in meta["product_pending"] if norm(item["value"]) in current]
+    return {**fields, "_autofill": {**meta, "product_pending": pending}}
+
+
+def _product_alias_conflicts(groups):
+    """문서/기존 제품 전체에서 한 표기가 서로 다른 두 짝에 대응하면 관련 쌍을 보류한다."""
+    from .models import normalize_material_name as norm
+    pairs, partners = [], {}
+    for group in groups:
+        keys = {norm(n) for n in [group["name"]] + group["aliases"] if norm(n)}
+        pairs.append(keys)
+        for key in keys:
+            partners.setdefault(key, set()).update(keys - {key})
+    return {key for keys in pairs if any(len(partners[k]) > 1 for k in keys) for key in keys}
+
+
+def _product_alias_groups(fields, text, rejected_names=()):
+    """언어 차이가 아니라 같은 원문 제품명 라벨의 명시적 병기만 동의명 근거다."""
+    from .models import normalize_material_name as norm
+    if (fields.get("_sources") or {}).get("product_names") == "structural_reject":
+        return []
+    names = [n for n in _product_candidate_names(fields) if norm(n) not in rejected_names]
+    names = [n for n in names if _field_value_grounded("product_names", [n], text)]
+    # 정확한 두 표기와 라벨을 대조한다. 한 문서에 단순 나열된 두 제품은 합치지 않는다.
+    label = r"(?:제품명|product\s*name|nama\s*produk)"
+    ko_label = r"(?:제품명\s*\(?\s*(?:국문|한글)\s*\)?|(?:국문|한글)\s*(?:제품명|명)|product\s*name\s*\(\s*Korean\s*\))"
+    en_label = r"(?:제품명\s*\(?\s*영문\s*\)?|영문\s*(?:제품명|명)|product\s*name\s*\(\s*English\s*\))"
+    def line(lbl, name):
+        return r"[ \t]*" + lbl + r"[ \t:：]*" + re.escape(name) + r"[ \t]*"
+    # 연속된 KO-A/EN-A/KO-B/EN-B에서 가운데 EN-A/KO-B를 새 쌍으로 읽지 않는다.
+    labelled = lambda lbl: r"[ \t]*" + lbl + r"[ \t:：]*[^\r\n]+"
+    pair_pattern = "|".join(r"^" + labelled(a) + r"\r?\n" + labelled(b) + r"$"
+                            for a, b in ((ko_label, en_label), (en_label, ko_label)))
+    paired_source = "\n\n".join(m[0] for m in re.finditer(pair_pattern, text, re.I | re.M))
+    groups = []
+    for ko in (n for n in names if _product_name_script(n) == "ko"):
+        for en in (n for n in names if _product_name_script(n) == "latin"):
+            paired = any(re.search(r"^" + a + r"\r?\n" + b + r"$", paired_source, re.I | re.M)
+                         for a, b in ((line(ko_label, ko), line(en_label, en)),
+                                      (line(en_label, en), line(ko_label, ko))))
+            inline = any(re.search(r"^" + line(label, first) + r"(?:\(\s*" + re.escape(second) +
+                                  r"\s*\)|/\s*" + re.escape(second) + r")[ \t]*$", text, re.I | re.M)
+                         for first, second in ((ko, en), (en, ko)))
+            if paired or inline:
+                groups.append({"name": ko, "aliases": [en]})
+    # 원래 쌍을 보존해야 다른 문서의 쌍과 충돌하는지도 검사할 수 있다.
+    return groups
+
+
+def _material_in_source(name, text):
+    # 일반 필드 검산의 부분 문자열 일치만으로는 Glycerin을
+    # Ethylhexylglycerin의 별도 성분으로 오인한다. 이름의 단어 경계도 확인한다.
+    words = re.findall(r"\w+", unicodedata.normalize("NFKC", name))
+    pattern = r"(?<!\w)" + r"[\W_]*".join(re.escape(word) for word in words) + r"(?!\w)"
+    return bool(words and _field_value_grounded("material_names", [name], text)
+                and re.search(pattern, unicodedata.normalize("NFKC", text), re.I))
+
+
+def _material_screening_valid(risk):
+    """집계·저장 공통 응답 검증. error는 값이 비어 있어도 실패 표시다."""
+    allowed = {"result": {"PASS", "CLEARED", "NEEDS_EVIDENCE", "BLOCK"},
+               "status": {"halal", "mushbooh", "haram"}, "severity": {"low", "medium", "high"}}
+    return (isinstance(risk, dict) and "error" not in risk
+            and all(isinstance(risk.get(key), str) and risk[key] in values for key, values in allowed.items()))
+
+
+def _material_screening_safe(risk):
+    return (_material_screening_valid(risk) and risk["result"] in {"PASS", "CLEARED"}
+            and risk["status"] == "halal" and risk["severity"] == "low"
+            and risk.get("decision_by") in ("ontology", "v1_rule") and risk.get("v1_risk", "low") == "low")
+
+
+def _material_autofill_allowed(name):
+    """사전이 명시적으로 안전하다고 판정한 성분만 AI 자동등록한다."""
+    from . import screening
+    try:
+        return _material_screening_safe(screening.screen_merged(name))
+    except Exception:
+        log.warning("Material autofill screening unavailable; candidate kept pending", exc_info=True)
+        return False
+
+
+def aggregate_fields(docs, *, rejected_product_names=()):
     """분류 문서들의 추출 필드를 신청서용으로 집계.
     회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외).
 
-    제품 목록 문서의 제품명과 구조 파서의 목록은 즉시 반영한다.
-    그 밖의 LLM 제품·원재료명은 원본 대조를 위해 확인 대기로 남긴다."""
+    제품 목록의 제품명과 구조 파서 목록은 즉시 반영한다.
+    AI 단독 성분은 성분 문맥의 원문 대조와 위험 판정을 통과해야 반영한다."""
+    from .models import normalize_material_name as norm
     agg = {"company_name": None, "company_name_ko": None, "company_name_en": None,
            "nib": None, "address": None, "factory_address": None,
            "city": None, "province": None, "country": None, "zip": None,
@@ -2957,14 +3167,15 @@ def aggregate_fields(docs):
            "phone": None, "factory_phone": None,
            "business_type": None, "employee_count": None,
            "establishment_date": None, "corporate_reg_no": None,
-           "factory_reg_no": None, "products": [], "materials": [], "certificates": [],
-           # LLM 만 뽑은 목록 — 자동 반영하지 않고 사람 확인을 기다린다
+           "factory_reg_no": None, "products": [], "materials": [], "certificates": [], "product_aliases": [],
+           # 원문 대조가 없거나 위험한 후보는 사람 확인을 기다린다.
            "pending": []}
     _pk = set()   # 제품 중복 판정 키(대소문자 무시)
     _mk = set()   # 원재료 중복 판정 키
     _pend_pk, _pend_mk = set(), set()
     for d in docs:
         f = d.get("fields") or {}
+        text = d.get("text_full") or d.get("text") or ""
         applicant = d.get("doc_type") in _APPLICANT_DOCS or d.get("doc_type") is None
         if applicant:
             # 회사명 국문/영문 분리 — 한글 포함이면 국문(정식상호), 아니면 영문. 주 필드는 국문 우선.
@@ -3021,6 +3232,8 @@ def aggregate_fields(docs):
         _dt = d.get("doc_type")
         for key, seen in (("material_names", _pend_mk), ("product_names", _pend_pk)):
             for value in f.get("_rule_omissions", {}).get(key, []):
+                if key == "product_names" and norm(value) in rejected_product_names:
+                    continue
                 identity = _norm_key(value)
                 if identity not in seen:
                     seen.add(identity)
@@ -3028,12 +3241,15 @@ def aggregate_fields(docs):
                                            "source": "rule", "reason": "ai_omission"})
         # 출처는 분류 결과(field_sources) 또는 문서에 저장된 fields._sources 에서 온다.
         _src = (d.get("field_sources") or (f.get("_sources") if isinstance(f, dict) else None) or {})
+        material_text = _material_scan_text(text, material_only=True) if text else ""
 
         def _take(key, bucket, seenset, srcset):
-            """구조 파서 값과 제품 목록 문서의 제품명은 즉시 반영하고 나머지는 확인한다."""
+            """구조 파서/제품 목록은 즉시 반영하고 AI 단독 성분만 추가 검산한다."""
             from .models import normalize_material_name
             key_of = normalize_material_name if key == "material_names" else _norm_key
-            vals = [v for v in (f.get(key) or []) if v and key_of(v)]
+            values = _product_candidate_names(f) if key == "product_names" else _normalise_names(f.get(key))
+            vals = [v for v in values if key_of(v) and
+                    (key != "product_names" or normalize_material_name(v) not in rejected_product_names)]
             if not vals:
                 return
             if (_src.get(key) == "structural"
@@ -3044,6 +3260,15 @@ def aggregate_fields(docs):
                         seenset.add(key_of(v)); bucket.append(v)
             elif _src.get(key) == "structural_reject":
                 return                      # 구조 파서가 '목록 아님'이라 판정한 문서
+            elif key == "material_names":
+                for v in vals:
+                    if _material_in_source(v, material_text) and _material_autofill_allowed(v):
+                        if key_of(v) not in seenset:
+                            seenset.add(key_of(v)); bucket.append(v)
+                    elif key_of(v) not in srcset:
+                        srcset.add(key_of(v))
+                        agg["pending"].append({"kind": key, "value": v,
+                                               "doc_type": _dt, "source": "llm"})
             else:
                 for v in vals:
                     if key_of(v) not in srcset:
@@ -3053,6 +3278,8 @@ def aggregate_fields(docs):
 
         if _dt in _PRODUCT_SRC or _dt is None:
             _take("product_names", agg["products"], _pk, _pend_pk)
+            if _src.get("product_names") != "structural_reject":
+                agg["product_aliases"].extend(_product_alias_groups(f, text, rejected_product_names))
         if _dt in _MATERIAL_SRC or _dt is None:
             _take("material_names", agg["materials"], _mk, _pend_mk)
         if f.get("cert_no"):
@@ -3061,6 +3288,21 @@ def aggregate_fields(docs):
     # 회사명·대표자 주 필드 = 국문 우선(없으면 영문)
     agg["company_name"] = agg["company_name_ko"] or agg["company_name_en"]
     agg["responsible_person"] = agg["responsible_person_ko"] or agg["responsible_person_en"]
+    conflicts = _product_alias_conflicts(agg["product_aliases"])
+    aliases = []
+    for group in agg["product_aliases"]:
+        spellings = [group["name"]] + group["aliases"]
+        keys = {_norm_key(n) for n in spellings}
+        agg["products"] = [n for n in agg["products"] if _norm_key(n) not in keys]
+        agg["pending"] = [x for x in agg["pending"]
+                          if x["kind"] != "product_names" or _norm_key(x["value"]) not in keys]
+        if any(norm(n) in conflicts for n in spellings):
+            agg["pending"] += [{"kind": "product_names", "value": n, "source": "llm",
+                                "reason": "possible_same_product"} for n in spellings]
+        else:
+            agg["products"].append(group["name"])
+            aliases.append(group)
+    agg["product_aliases"] = aliases
     # 주소 절단 보강: LLM이 주소 뒷부분(시·도·국가)을 자른 경우 도시→도→국가 순으로 이어붙여 완성.
     agg["address"] = _complete_address(agg["address"], agg["city"], agg["province"], agg["country"])
     agg["factory_address"] = _complete_address(agg["factory_address"], agg["factory_city"], agg["factory_province"], agg["factory_country"])
