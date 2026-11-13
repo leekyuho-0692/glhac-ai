@@ -449,7 +449,7 @@ def pending_extractions(db, case_id):
 
 
 def material_safety_blockers(db, case):
-    from . import screening
+    from . import intake
     haram, unresolved = [], []
     for m in materials(db, case.case_id):
         risk = material_risk(m)
@@ -459,10 +459,9 @@ def material_safety_blockers(db, case):
             unresolved.append(m.name)
     pending = []
     for item in pending_extractions(db, case.case_id):
-        if item["kind"] == "material_names":
-            risk = screening.screen_merged(item["value"])
-            if risk["status"] == "haram" or risk["severity"] == "high":
-                pending.append(item["value"])
+        # 자동등록과 같은 사전 확정 기준을 쓴다. 미확인·응답 누락·장애도 확인 전에는 차단한다.
+        if item["kind"] == "material_names" and not intake._material_autofill_allowed(item["value"]):
+            pending.append(item["value"])
     return ([{"code": "HARAM_MATERIAL", "materials": haram}] if haram else []) + (
         [{"code": "CRITICAL_MATERIAL_NO_EVIDENCE", "materials": unresolved}] if unresolved else []) + (
         [{"code": "PENDING_CRITICAL_MATERIAL", "materials": pending}] if pending else [])

@@ -598,6 +598,15 @@ _AUTOFILL_MATERIAL_LABEL = (
 _AUTOFILL_MATERIAL_HEADING = re.compile(
     _AUTOFILL_MATERIAL_LABEL + r"(?:[ \t]*/[ \t]*" + _AUTOFILL_MATERIAL_LABEL +
     r")*[ \t]*(?:[:：][ \t]*(?P<ingredients>.*))?", re.I)
+# 첫 콜론까지의 후보를 고정 길이로 제한한다. / 뒤마다 긴 꼬리를 재탐색하지 않는다.
+_AUTOFILL_INLINE_LABEL_START = r"(?<!\w)(?=[^:：\r\n]{1,120}[:：])"
+_AUTOFILL_MAX_MATERIAL_CHARS = 20000
+_AUTOFILL_INLINE_MATERIAL_HEADING = re.compile(
+    _AUTOFILL_INLINE_LABEL_START + _AUTOFILL_MATERIAL_LABEL + r"(?:[ \t]*/[ \t]*" + _AUTOFILL_MATERIAL_LABEL +
+    r")*[ \t]*[:：][ \t]*", re.I)
+_AUTOFILL_INLINE_END = re.compile(
+    r"(?<!\w)(?:(?i:section)[ \t]+\d+\b|\d+\.[ \t]+(?=[A-Z]))|" +
+    _AUTOFILL_INLINE_LABEL_START + r"[^\W\d_][\w/-]{0,39}(?:[ \t]+[^\W\d_][\w/-]{0,39}){0,7}[ \t]*[:：]")
 _AUTOFILL_COLUMN_LABEL = re.compile(
     r"(?:no\.?|number|name|ingredients?|components?|chemical[ \t]+name|성분명|원료명|"
     r"CAS(?:[ \t]*(?:no\.?|number))?|%|wt\.?[ \t]*%|"
@@ -648,10 +657,32 @@ def _autofill_material_row(line):
 def _autofill_material_text(text):
     """AI 자동등록 근거만 좁힌다. R1~R5 위험 검색의 문맥/제외 기록과 독립적이다."""
     rows, in_materials, awaiting_columns = [], False, False
+    material_chars = 0
     for raw in text.splitlines():
         line = raw.lstrip().rstrip(" \r\n")
         if not line:
             in_materials = awaiting_columns = False
+            continue
+        inline_spans = []
+        for header in _AUTOFILL_INLINE_MATERIAL_HEADING.finditer(line):
+            start = header.end()
+            # 경계 라벨의 120자까지 확인하되, 상한 밖의 본문을 반복해서 훑지 않는다.
+            end = _AUTOFILL_INLINE_END.search(line, start, start + _AUTOFILL_MAX_MATERIAL_CHARS + 121)
+            stop = end.start() if end else len(line)
+            if stop - start > _AUTOFILL_MAX_MATERIAL_CHARS:
+                return ""  # 앞서 찾은 행도 포함해 이 문서는 자동등록 근거로 쓰지 않는다.
+            inline_spans.append((start, stop, end is None))
+        if inline_spans and re.search(r"(?<!\d),|,(?!\d)", line[inline_spans[0][0]:]):
+            in_materials = awaiting_columns = False
+            for start, stop, open_section in inline_spans:
+                material_chars = stop - start
+                # PDF에서 줄바꿈이 사라져도 절 번호부터 자른다(Citral 3 오염 방지).
+                # 다음 라벨과 마지막 성분의 경계가 모호하면 그 꼬리는 근거로 쓰지 않는다.
+                value = line[start:stop].rstrip(" \t,;")
+                names = _autofill_material_row(value)
+                if len(names) >= 2:
+                    rows.extend(names)
+                    in_materials = open_section
             continue
         title = re.sub(r"^[#*•-]+[ \t]*", "", line)
         title = _AUTOFILL_SECTION_PREFIX.sub("", title, count=1)
@@ -659,6 +690,9 @@ def _autofill_material_text(text):
         header = _AUTOFILL_MATERIAL_HEADING.fullmatch(cells[0])
         if header and all(_AUTOFILL_COLUMN_LABEL.fullmatch(cell) for cell in cells[1:]):
             inline = header["ingredients"]
+            material_chars = len(inline or "")
+            if material_chars > _AUTOFILL_MAX_MATERIAL_CHARS:
+                return ""
             names = _autofill_material_row(inline) if inline else []
             in_materials = not inline or bool(names)
             awaiting_columns = not inline
@@ -669,12 +703,20 @@ def _autofill_material_text(text):
             awaiting_columns = False
             continue
         awaiting_columns = False
+        if not in_materials:
+            continue
         # 모르는 줄은 즉시 종료한다. 다음 성분 머리줄 전까지 다시 열지 않는다.
-        names = _autofill_material_row(line)
-        if (_AUTOFILL_SECTION_PREFIX.match(line) or re.match(r"^[#*]", line)
-                or not names):
+        if _AUTOFILL_SECTION_PREFIX.match(line) or re.match(r"^[#*]", line):
             in_materials = False
-        elif in_materials:
+            continue
+        names = _autofill_material_row(line)
+        if not names:
+            in_materials = False
+        else:
+            # 종료 행의 비성분 본문은 제외하고, 인정된 성분 행만 누적한다.
+            material_chars += len(line) + 1
+            if material_chars > _AUTOFILL_MAX_MATERIAL_CHARS:
+                return ""
             rows.extend(names)
     return "\n".join(rows)
 

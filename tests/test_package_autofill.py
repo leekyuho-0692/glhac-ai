@@ -3,6 +3,7 @@ import base64
 import copy
 import io
 import json
+from time import perf_counter
 import zipfile
 
 import pytest
@@ -1250,3 +1251,159 @@ def test_round5_separate_column_header_registers_cas_row_over_http(case, monkeyp
     assert response.status_code == 200, response.text
     assert names(db, c, models.Material) == ['Water']
     assert m._pending_extractions(db, c.case_id) == []
+
+
+FLAT_MSDS_NAMES = ['Lactobacillus Ferment Lysate', 'Water', 'Olive Oil PEG-8 Esters',
+                   'Alcohol Denat.', 'Glycerin', 'Niacinamide', 'Limonene', 'Citral']
+FLAT_MSDS = (
+    'Material Safety Data Sheet 1. PRODUCT IDENTIFICATION Product name : Face Serum '
+    '2. COMPOSITION/INFORMATION ON INGREDIENTS Ingredients : ' + ', '.join(FLAT_MSDS_NAMES) +
+    ' 3. HAZARDS IDENTIFICATION Main Hazards : None '
+    '4. First-AID MEASURES Eye contact : Rins immediately with plenty of water. '
+    'INGESTION : Give to drink water. 9. PHYSICAL AND CHEMICAL PROPERTIES Solubility : water.'
+)
+
+
+@pytest.mark.parametrize('route', ['aggregate', 'parse-file', 'reprocess'])
+def test_flat_msds_registers_only_dictionary_safe_ingredients(case, monkeypatch, route):
+    db, c = case
+    assert intake._material_scan_text(FLAT_MSDS, material_only=True).splitlines() == FLAT_MSDS_NAMES
+    applied = _round3_ingest(case, monkeypatch, route, FLAT_MSDS, FLAT_MSDS_NAMES + ['Citral 3'])
+    assert set(names(db, c, models.Material)) == {'Water', 'Niacinamide'}
+    assert applied['materials'] == 2
+    pending = {item['value'] for item in m._pending_extractions(db, c.case_id)}
+    assert {'Alcohol Denat.', 'Glycerin', 'Citral'} <= pending
+    assert not {'Water', 'Niacinamide'} & pending
+    assert 'Citral 3' not in names(db, c, models.Material)
+
+
+@pytest.mark.parametrize('route', ['aggregate', 'parse-file', 'reprocess'])
+def test_flat_msds_first_aid_water_is_not_ingredient_evidence(case, monkeypatch, route):
+    db, c = case
+    text = FLAT_MSDS.replace('Lysate, Water,', 'Lysate,')
+    evidence = intake._material_scan_text(text, material_only=True).splitlines()
+    assert evidence == [name for name in FLAT_MSDS_NAMES if name != 'Water']
+    applied = _round3_ingest(case, monkeypatch, route, text, FLAT_MSDS_NAMES)
+    assert names(db, c, models.Material) == ['Niacinamide']
+    assert applied['materials'] == 1
+    assert 'Water' in {item['value'] for item in m._pending_extractions(db, c.case_id)}
+
+
+@pytest.mark.parametrize('heading', ['Ingredients', 'Composition', '전성분', '성분', 'Komposisi', 'Bahan',
+                                    'Bahan baku', 'Composition / Ingredients'])
+@pytest.mark.parametrize('boundary', ['3. HAZARDS IDENTIFICATION', 'SECTION 4', 'SECTION 4: FIRST AID'])
+def test_flat_msds_labels_end_before_section_number(heading, boundary):
+    text = f'2. COMPOSITION {heading} : Salt, Citral, 1,2-Hexanediol {boundary} Eye contact : water.'
+    text += '\nWater | 100%'
+    assert intake._material_scan_text(text, material_only=True).splitlines() == [
+        'Salt', 'Citral', '1,2-Hexanediol']
+
+
+@pytest.mark.parametrize('label', ['Eye contact', 'Main Hazards', 'INGESTION', 'Solubility',
+                                  'Custom label', '응급조치', 'Sifat fisik'])
+def test_flat_msds_other_labels_end_ingredient_context(label):
+    text = f'Ingredients: Salt, Citral; {label} : Water, Niacinamide\nWater | 100%'
+    assert intake._material_scan_text(text, material_only=True) == 'Salt\nCitral'
+
+
+def test_flat_msds_later_explicit_ingredient_label_can_reopen_context():
+    text = 'Ingredients: Salt, Citral SECTION 4 Eye contact: water. Komposisi: Water, Niacinamide'
+    assert intake._material_scan_text(text, material_only=True) == 'Salt\nCitral\nWater\nNiacinamide'
+
+
+@pytest.mark.parametrize('text', [
+    'FIRST AID Eye contact: Rinse with water, then consult a physician.',
+    '9. PHYSICAL PROPERTIES Solubility: Water, alcohol.',
+    'Ingredient suppliers use Water, Salt for cleaning equipment.',
+    'Ingredients: 1,2-Hexanediol 4. FIRST AID Eye contact: Water, Salt',
+])
+def test_flat_msds_prose_and_numeric_comma_are_not_ingredient_lists(text):
+    assert intake._material_scan_text(text, material_only=True) == ''
+
+
+@pytest.mark.parametrize('route', ['aggregate', 'reprocess'])
+@pytest.mark.parametrize('prefix', [
+    pytest.param('Ingredients\nWater | 90%\nSalt | 10%\nDisclaimer: ', id='table-label'),
+    pytest.param('Ingredients\nWater | 90%\nSalt | 10%\n', id='table-nonmaterial-row'),
+    pytest.param('Ingredients\nWater | 90%\nSalt | 10%\n3. HAZARDS ', id='table-section'),
+    pytest.param('Ingredients : Water 90%, Salt 10% 3. HAZARDS ', id='inline-section'),
+    pytest.param('Ingredients : Water 90%, Salt 10%; Disclaimer: ', id='inline-label'),
+])
+def test_autofill_long_nonmaterial_tail_preserves_ingredient_evidence(case, monkeypatch, route, prefix):
+    db, c = case
+    text = prefix + 'x' * 20100
+    assert intake._material_scan_text(text, material_only=True) == 'Water\nSalt'
+    applied = _round3_ingest(case, monkeypatch, route, text, ['Water', 'Salt'])
+    assert set(names(db, c, models.Material)) == {'Water', 'Salt'}
+    assert applied['materials'] == 2
+    assert applied['pending'] == 0
+    assert m._pending_extractions(db, c.case_id) == []
+
+
+@pytest.mark.parametrize('repeat', ['A/', 'A-', 'A ', '가/', '가-', '가 '])
+@pytest.mark.parametrize('route', ['aggregate', 'reprocess'])
+def test_flat_msds_long_repeated_tail_stays_pending_within_time_limit(case, monkeypatch, repeat, route):
+    db, c = case
+    text = ('Ingredients: Water, Salt, ' + repeat * 100000)[:200000]
+    started = perf_counter()
+    applied = _round3_ingest(case, monkeypatch, route, text, ['Water', 'Salt'])
+    elapsed = perf_counter() - started
+    assert elapsed < 3.0, (route, repeat, elapsed)
+    assert applied['materials'] == 0
+    assert names(db, c, models.Material) == []
+    assert {item['value'] for item in m._pending_extractions(db, c.case_id)} == {'Water', 'Salt'}
+
+
+@pytest.mark.parametrize('repeat', ['A/', 'A-', 'A ', '가/', '가-', '가 '])
+@pytest.mark.parametrize('size', [10000, 20000, 40000, 200000])
+def test_flat_msds_end_label_search_has_bounded_candidates(repeat, size):
+    text = (repeat * 100000)[:size]
+    started = perf_counter()
+    boundary = intake._AUTOFILL_INLINE_END.search(text)
+    elapsed = perf_counter() - started
+    assert boundary is None
+    assert elapsed < 3.0, (repeat, size, elapsed)
+
+
+@pytest.mark.parametrize('repeat', ['Ingredients/', 'Ingredients / ', 'Composition/Ingredients/', '전성분/'])
+def test_flat_msds_repeated_heading_without_colon_has_bounded_candidates(repeat):
+    text = (repeat * 100000)[:200000]
+    started = perf_counter()
+    headers = list(intake._AUTOFILL_INLINE_MATERIAL_HEADING.finditer(text))
+    evidence = intake._material_scan_text(text, material_only=True)
+    elapsed = perf_counter() - started
+    assert headers == []
+    assert evidence == ''
+    assert elapsed < 3.0, (repeat, elapsed)
+
+
+@pytest.mark.parametrize('size', [19999, 20000, 20001])
+@pytest.mark.parametrize('boundary', ['', '3. HAZARDS IDENTIFICATION Eye contact: Water'])
+def test_flat_msds_oversized_section_discards_all_document_evidence(size, boundary):
+    value = 'Water,' + ' ' * (size - len('Water,Salt;')) + 'Salt;'
+    text = 'Ingredients: Niacinamide, Salt\n\nIngredients:' + value + boundary
+    evidence = intake._material_scan_text(text, material_only=True)
+    assert evidence == ('Niacinamide\nSalt\nWater\nSalt' if size <= 20000 else '')
+
+
+@pytest.mark.parametrize('route', ['aggregate', 'reprocess'])
+@pytest.mark.parametrize('tail', ['A/' * 10001, 'Water' + ' ' * 20000 + '100%'], ids=['slashes', 'spaces'])
+def test_flat_msds_oversized_later_section_keeps_earlier_candidates_pending(case, monkeypatch, route, tail):
+    db, c = case
+    text = 'Ingredients: Water, Salt\n\nIngredients: ' + tail
+    applied = _round3_ingest(case, monkeypatch, route, text, ['Water', 'Salt'])
+    assert applied['materials'] == 0
+    assert names(db, c, models.Material) == []
+    assert {item['value'] for item in m._pending_extractions(db, c.case_id)} == {'Water', 'Salt'}
+
+
+@pytest.mark.parametrize('count', [2000, 2001])
+def test_flat_msds_multiline_section_obeys_material_length_limit(count):
+    text = 'Ingredients\n' + '\n'.join(['Water 90%'] * count)
+    evidence = intake._material_scan_text(text, material_only=True)
+    assert evidence == ('\n'.join(['Water'] * count) if count <= 2000 else '')
+
+
+def test_flat_msds_short_section_in_long_document_remains_evidence():
+    text = 'A/' * 100000 + '\nIngredients: Water, Salt SECTION 4\n' + 'A/' * 100000
+    assert intake._material_scan_text(text, material_only=True) == 'Water\nSalt'
