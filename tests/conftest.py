@@ -59,6 +59,17 @@ def app_db_file():
     return engine.url.database
 
 
+@pytest.fixture
+def without_kma_catalogue(monkeypatch):
+    """기존 미등재 성분 회귀는 공식 목록 부재 조건에서 assert를 그대로 보존한다.
+
+    실제 목록이 있는 운영 경로(등록·심의·발급)는 test_kma1360에서 별도 검증한다.
+    """
+    from app import screening
+    monkeypatch.setattr(screening, "_KMA1360_NAMES", {})
+    monkeypatch.setattr(screening, "_KMA1360_CAS", {})
+
+
 @pytest.fixture(autouse=True, scope="module")
 def fresh_db_per_module():
     """테스트 '파일' 경계마다 앱 DB를 비운다 — 한 프로세스 실행을 파일별 실행과 같게.

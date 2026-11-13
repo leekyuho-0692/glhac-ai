@@ -3259,11 +3259,11 @@ def _material_screening_valid(risk):
 def _material_screening_safe(risk):
     return (_material_screening_valid(risk) and risk["result"] in {"PASS", "CLEARED"}
             and risk["status"] == "halal" and risk["severity"] == "low"
-            and risk.get("decision_by") in ("ontology", "v1_rule") and risk.get("v1_risk", "low") == "low")
+            and risk.get("decision_by") in ("ontology", "v1_rule", "kma1360") and risk.get("v1_risk", "low") == "low")
 
 
 def _material_autofill_allowed(name):
-    """사전이 명시적으로 안전하다고 판정한 성분만 AI 자동등록한다."""
+    """사전 또는 KMA 공식 목록에서 halal/low로 확정한 성분만 AI 자동등록한다."""
     from . import screening
     try:
         return _material_screening_safe(screening.screen_merged(name))

@@ -7,6 +7,9 @@ __pycache__/
 glhac_*_test.db
 data/
 /data
+!/app/data/
+/app/data/*
+!/app/data/kma1360.json
 demo_shots/
 *.log
 # 테스트/커버리지 산출물

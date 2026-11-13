@@ -9,5 +9,7 @@ tests/
 demo_shots/
 docs/
 data/
+!app/data/
+!app/data/kma1360.json
 *.md
 .env

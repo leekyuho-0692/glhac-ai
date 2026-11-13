@@ -34,6 +34,7 @@ def assert_pending_blocked(response, name):
 @pytest.mark.parametrize('phase', ['entry', 'decision', 'issue', 'checker'])
 @pytest.mark.parametrize('name', ['1,2-Hexanediol', 'Glycerin', 'Allantoin', 'Unknown cosmetic ingredient',
                                  'lard', 'gelatin'])
+@pytest.mark.usefixtures('without_kma_catalogue')
 def test_unverified_pending_material_blocks_every_existing_gate(api, phase, name):
     cid, route, body, role = prepare(api, phase)
     pending(cid, name)
@@ -78,6 +79,7 @@ def test_empty_or_dictionary_safe_pending_materials_allow_normal_flow(api, phase
 
 
 @pytest.mark.parametrize('phase', ['entry', 'decision'])
+@pytest.mark.usefixtures('without_kma_catalogue')
 def test_auditor_dismissal_resolves_pending_material_blocker(api, phase):
     cid, route, body, role = prepare(api, phase)
     pending(cid, '1,2-Hexanediol')
@@ -91,6 +93,7 @@ def test_auditor_dismissal_resolves_pending_material_blocker(api, phase):
 
 
 @pytest.mark.parametrize('phase', ['entry', 'decision'])
+@pytest.mark.usefixtures('without_kma_catalogue')
 def test_auditor_application_resolves_pending_but_preserves_evidence_requirement(api, phase):
     cid, route, body, role = prepare(api, phase)
     pending(cid, '1,2-Hexanediol')

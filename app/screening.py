@@ -1,14 +1,27 @@
 """원재료 스크리닝 — 설계 24.13.5 결정 로직."""
+import json
+import logging
 import os
+from pathlib import Path
 import re
 import unicodedata
 from .models import IngredientOntology
+from .kma1360 import name_exclusion_reasons, normalize_name as _kma_key
 
 _CACHE = {"by_e": {}, "by_alias": {}, "alias_tok": [], "negated": None}
 
 
+def _kma_name_only_allowed(*, e_number=None, source=None, cert_no=None, note="", docs=None,
+                           source_known=True):
+    """모든 KMA 파생 경로가 공유하는 이름 단독 조건."""
+    return (source_known and not docs
+            and not any(str(value).strip() for value in (note, source, e_number, cert_no)
+                        if value is not None))
+
+
 def load_ontology(db):
     _CACHE["by_e"], _CACHE["by_alias"], _CACHE["alias_tok"] = {}, {}, []
+    _CACHE["by_kma_name"] = {}
     for it in db.query(IngredientOntology).all():
         if it.e_number:
             _CACHE["by_e"][extract_e_number(it.e_number)] = it
@@ -17,6 +30,10 @@ def load_ontology(db):
             names += v if isinstance(v, list) else [v]
         for n in names:
             if n:
+                identity = _kma_key(n)
+                previous = _CACHE["by_kma_name"].get(identity)
+                if previous is None or _item_rank(it) < _item_rank(previous):
+                    _CACHE["by_kma_name"][identity] = it
                 key = _norm_key(n)
                 previous = _CACHE["by_alias"].get(key)
                 if previous is None or _item_rank(it) < _item_rank(previous):
@@ -230,8 +247,27 @@ def _contains_alias(key, alias, it):
     return re.search(left + re.escape(alias) + right, key) is not None
 
 
-def _match(name, e_number):
+def _match(name, e_number, *, kma_name_only=True):
     cands = []
+    kma_name_only = kma_name_only and _kma_name_only_allowed(e_number=e_number)
+    # Benzyl Alcohol 같은 공식 목록의 정확한 물질명은 ethanol의 일반 별칭
+    # 'alcohol'과 다른 성분이다. 물질 자체의 위험 별칭/E 번호는 계속 우선한다.
+    specific_kma_name = _kma_identity_key(name) if kma_name_only else None
+    generic_alcohol = _CACHE["by_alias"].get("alcohol")
+    if not (specific_kma_name and generic_alcohol
+            and generic_alcohol.ingredient_uid == "ing.ethanol" and generic_alcohol.default_status == "mushbooh"):
+        generic_alcohol = None
+    # KMA와 동일한 정규화로 원래 사전 이름/별칭을 조회한다. _norm_key의
+    # 숫자 치환을 거치지 않는다. 동일 CAS를 공유하는 모든 행의 이름과 CAS를 대조하며,
+    # 이름 색인에서 제외된 OCR 문자열도 사전 충돌 조회에서는 빠뜨리지 않는다.
+    # 이 연결도 KMA에서 파생된 판단이다. 부가 문맥이 있으면 사전의 안전한
+    # 이름으로 우회 연결해 v1 위험을 지워서는 안 된다.
+    for row in _kma_related_rows(name) if kma_name_only else ():
+        for candidate in (row.get("name_id"), row.get("name_en"), *row["cas"]):
+            alias = _kma_key(candidate)
+            it = _CACHE.get("by_kma_name", {}).get(alias)
+            if it:
+                cands.append((*_item_rank(it), 0, -len(alias), it))
     for number in extract_e_numbers(e_number) + extract_e_numbers(_without_negated_risks(_norm_key(name))):
         it = _CACHE["by_e"].get(number)
         if it:
@@ -239,7 +275,8 @@ def _match(name, e_number):
     for key in _name_keys(name):
         if key in _CACHE["by_alias"]:
             it = _CACHE["by_alias"][key]
-            cands.append((*_item_rank(it), 0, -len(key), it))
+            if not (key == "alcohol" and it is generic_alcohol):
+                cands.append((*_item_rank(it), 0, -len(key), it))
         # 토큰 매칭(어순·복수형 흡수)과 부분 문자열 매칭을 하나의 후보 풀로 합쳐
         # '안전측 우선'으로 고른다. 단계를 나눠 먼저 걸린 쪽을 반환하면,
         # 단일 토큰 별칭(flavor 등)이 경쟁에서 빠져 위험 성분이 할랄로 통과한다.
@@ -253,6 +290,8 @@ def _match(name, e_number):
         # 'san'이 인도네시아어 별칭 'pisang'(바나나)·'santan'(코코넛밀크) 안에 우연히 들어가
         # 플라스틱 SAN이 바나나로 판정됐다. 짧은 약어는 정확·토큰 매칭으로만 잡아야 한다.
         for alias, it in _CACHE["by_alias"].items():
+            if alias == "alcohol" and it is generic_alcohol:
+                continue
             if (len(alias) >= 4 or it.default_status == "haram") and _contains_alias(key, alias, it):
                 cands.append((*_item_rank(it), 2, -len(alias), it))
     if cands:
@@ -260,8 +299,12 @@ def _match(name, e_number):
     return None
 
 
-def screen(material):
-    it = _match(material.name, material.e_number)
+def screen(material, *, kma_name_only=True):
+    kma_name_only = kma_name_only and _kma_name_only_allowed(
+        e_number=material.e_number, source=getattr(material, "source", None),
+        cert_no=getattr(material, "cert_no", None), note=getattr(material, "note", ""),
+        docs=getattr(material, "docs", None), source_known=getattr(material, "source_known", True))
+    it = _match(material.name, material.e_number, kma_name_only=kma_name_only)
     if not it:
         return {"result": "UNKNOWN", "status": None, "severity": "medium",
                 "matched_uid": None, "carrier_check": None, "sources": [],
@@ -317,7 +360,7 @@ def document_evidence(material, docs, content_check="strict"):
         from . import evidence_map as em
     except Exception:
         return None
-    required = list(screen(material).get("required_evidence") or [])
+    required = list(screen(material, kma_name_only=not docs).get("required_evidence") or [])
     if not required:
         return None
     try:
@@ -401,35 +444,139 @@ _RE_HIGH2 = re.compile("|".join(_HIGH2_WORDS))
 _RE_MED = re.compile(r"enzyme|microbial|fermentation|flavo[u]?r|glycerin|glycerol|emulsifier|mono|diglyceride|e471|ethanol|alcohol|solvent|oleic|stearic|polysorbate|lecithin|colou?r|carmine|cochineal|코치닐|카민")
 
 
-def analyze_text_risk(text):
+_CAS_NUMBER = re.compile(r"(?<![\w.-])([1-9][0-9]{1,6}-[0-9]{2}-[0-9])(?![\w-]|\.[0-9])")
+
+
+def _valid_cas(value):
+    if not re.fullmatch(r"[1-9][0-9]{1,6}-[0-9]{2}-[0-9]", value):
+        return False
+    digits = value.replace("-", "")
+    return sum(i * int(d) for i, d in enumerate(reversed(digits[:-1]), 1)) % 10 == int(digits[-1])
+
+
+def _load_kma1360(path=None):
+    """범주·원료 조건 설명(a/b)은 보관만 하고 화학물질(c)만 색인한다."""
+    names, cas_numbers = {}, {}
+    try:
+        rows = json.loads((Path(path) if path else Path(__file__).with_name("data") / "kma1360.json")
+                          .read_text(encoding="utf-8"))
+        for row in rows:
+            if (not isinstance(row["cas"], list) or not isinstance(row["name_id"], str)
+                    or not row["name_id"].strip() or (row.get("name_en") is not None
+                    and not isinstance(row["name_en"], str))):
+                raise ValueError("Malformed KMA ingredient")
+            if (row["section"] not in {"c.1", "c.2"} or not isinstance(row["no"], int)
+                    or row["no"] <= 0 or not isinstance(row["page"], int)):
+                continue
+            for field in ("name_id", "name_en"):
+                metadata = row.get("name_index", {}).get(field, {})
+                if (row.get(field) and not name_exclusion_reasons(row[field])
+                        and metadata.get("indexable", True) is True):
+                    names.setdefault(_kma_key(row[field]), []).append(row)
+            for cas in row["cas"]:
+                if _valid_cas(cas):
+                    cas_numbers.setdefault(cas, []).append(row)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        logging.getLogger(__name__).warning("KMA1360 catalogue unavailable or invalid; keeping candidates pending")
+        return {}, {}
+    return names, cas_numbers
+
+
+_KMA1360_NAMES, _KMA1360_CAS = _load_kma1360()
+
+
+def _kma_query(text):
+    """전체 입력을 하나의 이름과 선택적 CAS 하나로만 해석한다."""
+    text = unicodedata.normalize("NFKC", text or "")
+    if name_exclusion_reasons(text):
+        return None
+    numbers = _CAS_NUMBER.findall(text)
+    if not numbers:
+        return _kma_key(text), None
+    # 같은 CAS를 반복한 경우도 단일 물질이라는 추측으로 합치지 않는다.
+    if len(numbers) != 1 or not _valid_cas(numbers[0]):
+        return None
+    # CAS 표지는 번호 바로 앞에서만 제거한다. 다른 성분/설명은 남겨서 거절한다.
+    identity = re.sub(r"\bCAS(?:\s+(?:No\.?|Number|RN))?\s*[:#]?\s*(?="
+                      + re.escape(numbers[0]) + r")", "", text, flags=re.I)
+    identity = _CAS_NUMBER.sub("", identity)
+    return _kma_key(identity), numbers[0]
+
+
+def _match_kma1360(text):
+    """이름과 CAS가 있으면 같은 행에 속해야 한다. 혼합물/주석은 매칭하지 않는다."""
+    query = _kma_query(text)
+    if query is None:
+        return []
+    key, cas = query
+    if cas:
+        matches = _KMA1360_CAS.get(cas, [])
+        if key:
+            named = {(row["section"], row["no"]) for row in _KMA1360_NAMES.get(key, [])}
+            matches = [row for row in matches if (row["section"], row["no"]) in named]
+    else:
+        matches = _KMA1360_NAMES.get(key, [])
+    return list({(row["section"], row["no"]): row for row in matches}.values())
+
+
+def _kma_identity_key(text):
+    """일반 alcohol 키워드와 구분할 수 있는 검증된 물질 전체 이름만 반환."""
+    query = _kma_query(text)
+    return query[0] if query and query[0] and _match_kma1360(text) else None
+
+
+def _kma_related_rows(text):
+    """사전 충돌 조회용: 매칭 행과 CAS 하나 이상을 직접 공유하는 모든 행.
+
+    여러 CAS가 있는 행을 통해 관계를 재귀적으로 확장하지 않는다. 이 확장은
+    사전 조회에만 쓰며, 원래 입력의 이름/CAS 일치 조건을 완화하지 않는다.
+    """
+    matched = _match_kma1360(text)
+    related = {(row["section"], row["no"]): row for row in matched}
+    for row in matched:
+        for cas in row["cas"]:
+            for other in _KMA1360_CAS.get(cas, ()):
+                related.setdefault((other["section"], other["no"]), other)
+    return list(related.values())
+
+
+def analyze_text_risk(text, *, kma_name_only=True):
     """v1 analyzeMaterialTextRisk 이식 — 키워드 기반 high/medium/low."""
     keys = _name_keys(text)
     if any(_RE_HIGH1.search(t) or _RE_HIGH2.search(t) for t in keys):
         return "high"
-    if any(_RE_MED.search(t) for t in keys):
+    # Benzyl Alcohol 등의 정확한 물질명에 들어간 alcohol은 ethanol의 별칭이
+    # 아니다. 부가 텍스트가 있거나 이름/CAS가 불일치하면 이 구분을 적용하지 않는다.
+    specific_name = _kma_identity_key(text) if kma_name_only else None
+    if any(match.group() != "alcohol" or not specific_name
+           for key in keys for match in _RE_MED.finditer(key)):
         return "medium"
     return "low"
 
 
 def is_kma1360(text):
-    """v1 isKMA1360Listed 이식 — 단어경계 매칭(부분문자열 오탐 방지: mica∈chemical 등)."""
-    t = (text or "").lower()
-    return any(re.search(r"\b" + re.escape(term) + r"\b", t) for term in KMA1360_EXEMPT)
+    """기존 면제어도 전체 이름 일치만 허용한다."""
+    return (not name_exclusion_reasons(text) and
+            (_kma_key(text) in {_kma_key(term) for term in KMA1360_EXEMPT}
+             or bool(_match_kma1360(text))))
 
 
-def v1_rule(name, source, cert_no, note=""):
+def v1_rule(name, source, cert_no, note="", *, kma_name_only=True):
     """v1 applyMaterialRules 이식 → (cert, risk)."""
+    kma_name_only = kma_name_only and _kma_name_only_allowed(source=source, cert_no=cert_no, note=note)
     blob = " ".join([name or "", note or ""]).strip()
     if source in ("plant", "mineral"):
         return ("exempt", "low")
     if source == "animal":
         return ("certified", "low") if cert_no else ("unknown", "high")
     if source in ("synthetic", "chemical"):
-        if is_kma1360(blob):
+        # 새 공식 목록에 의한 승격은 screen_merged의 unmatched_default에서만 한다.
+        if (not name_exclusion_reasons(blob)
+                and _kma_key(blob) in {_kma_key(term) for term in KMA1360_EXEMPT}):
             return ("exempt", "low")
-        r = analyze_text_risk(blob)
+        r = analyze_text_risk(blob, kma_name_only=kma_name_only)
         return ("unknown", "high" if r == "high" else "medium")
-    r = analyze_text_risk(blob)
+    r = analyze_text_risk(blob, kma_name_only=kma_name_only)
     return (("certified" if (cert_no and r == "low") else "unknown"), r)
 
 
@@ -437,8 +584,12 @@ def screen_merged(name, e_number=None, source=None, cert_no=None,
                   evidence_provided=False, source_known=True, note="", docs=None):
     """병합 스크리닝: ontology와 위험 키워드 중 더 엄격한 결과를 선택한다.
     docs 를 주면 인증번호를 제출된 할랄 인증서 문서와 대조한다(REQ-CERT-001)."""
-    onto = screen(_Shim(name, e_number, evidence_provided, source_known))
-    cert, v1risk = v1_rule(name, source, cert_no, note)
+    kma_name_only = _kma_name_only_allowed(e_number=e_number, source=source, cert_no=cert_no,
+                                          note=note, docs=docs, source_known=source_known)
+    onto = screen(_Shim(name, e_number, evidence_provided, source_known), kma_name_only=kma_name_only)
+    cert, v1risk = v1_rule(name, source, cert_no, note, kma_name_only=kma_name_only)
+    blob = " ".join([name or "", note or ""])
+    kma = _match_kma1360(name) if kma_name_only else []
     if onto.get("matched_uid"):
         out = dict(onto)
         out["decision_by"] = "ontology"
@@ -462,18 +613,24 @@ def screen_merged(name, e_number=None, source=None, cert_no=None,
                "decision_by": "v1_rule" if v1risk in ("high", "medium") or cert == "exempt"
                else "unmatched_default"}
     # 이름/주석의 명백한 금지 성분은 안전한 E 번호·유래·일반 성분 매칭으로 덮지 못한다.
-    blob = " ".join([name or "", note or ""])
     if any(_RE_HIGH1.search(key) for key in _name_keys(blob)):
         v1risk = "high"
         out.update(result="BLOCK", status="haram", severity="high",
                    required_evidence=["reformulation"], decision_by="v1_high")
-    elif analyze_text_risk(blob) == "high":
+    elif analyze_text_risk(blob, kma_name_only=kma_name_only) == "high":
         v1risk = "high"
         out["severity"] = "high"
         if out["status"] == "halal":
             out.update(result="NEEDS_EVIDENCE", status="mushbooh", decision_by="v1_high")
             out["required_evidence"] = list(dict.fromkeys(
                 out["required_evidence"] + ["source_declaration"]))
+    # 이름 단독이라는 확실한 입력에만 적용한다. 부가 텍스트의 의미가 불분명해도
+    # 추정으로 지우지 않는다. 사전·v1 판정과 기존 위험도는 절대로 덮어쓰지 않는다.
+    if (kma and kma_name_only
+            and out["decision_by"] == "unmatched_default" and v1risk == "low"):
+        out.update(result="PASS", status="halal", required_evidence=[], decision_by="kma1360",
+                   sources=[f"KMA 1360/2021 Lampiran {row['section']} No.{row['no']}" for row in kma])
+        cert = "exempt"
     # 할랄 인증서 번호가 적혀 있으면 의심(mushbooh)을 할랄로 올린다.
     # 위험도(severity)는 건드리지 않는다 — 무엇을 근거로 올렸는지, 원래 얼마나 위험한
     # 성분인지는 그대로 남아야 오디터가 인증서 진위를 대조할 수 있다.
@@ -579,11 +736,14 @@ def explain(name, e_number=None, source=None, cert_no=None, note="", lang="ko"):
     lang=ko|en|id. 서술은 항목별 원고가 아니라 템플릿 문장 + 조회표로 조립되므로,
     언어를 바꿔도 판정 자체는 동일한 온톨로지 값에서 나온다(번역이 판정을 바꾸지 않는다)."""
     sc = screen_merged(name, e_number, source, cert_no, False, True, note or "")
-    it = _match(name, e_number)
+    it = _match(name, e_number, kma_name_only=_kma_name_only_allowed(
+        e_number=e_number, source=source, cert_no=cert_no, note=note))
     verdict = sc["result"]
     S, CAT, STAT, SRC, EVID, ALT = _explain_l10n(lang)
     lines = []
-    if it:
+    if sc.get("decision_by") == "kma1360":
+        lines.extend(sc["sources"])
+    elif it:
         cat = CAT.get(it.category, it.category)
         st = STAT.get(it.default_status, it.default_status)
         srcs = ", ".join(SRC.get(s, s) for s in (it.sources or [])) or S("미상")
@@ -614,8 +774,8 @@ def explain(name, e_number=None, source=None, cert_no=None, note="", lang="ko"):
     return {"name": name, "verdict": verdict, "severity": sc.get("severity"),
             "matched_uid": sc.get("matched_uid"),
             "category": it.category if it else None,
-            "status": it.default_status if it else None,
-            "sources": (it.sources if it else []) or [],
+            "status": sc["status"] if sc.get("decision_by") == "kma1360" else it.default_status if it else None,
+            "sources": sc["sources"] if sc.get("decision_by") == "kma1360" else (it.sources if it else []) or [],
             "najis": bool(it and it.najis_risk),
             "required_evidence": (it.required_evidence if it else []) or [],
             "alternatives": (it.alternatives if it else []) or [],

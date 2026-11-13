@@ -64,6 +64,7 @@ def names(db, c, model):
 
 
 @pytest.mark.parametrize('source_name', [None, EN], ids=['missing-product', 'matching-product'])
+@pytest.mark.usefixtures('without_kma_catalogue')
 def test_msds_30_registers_12_and_defers_18_with_explicit_unmatched_names(case, monkeypatch, source_name):
     db, c = case
     db.add(models.Product(case_id=c.case_id, name=EN))
@@ -611,6 +612,7 @@ def test_structural_xlsx_registers_47_and_keeps_existing_review_blockers(case, m
                for blocker in m.sm.material_safety_blockers(db, c))
 
 
+@pytest.mark.usefixtures('without_kma_catalogue')
 def test_unregistered_ai_ingredient_stays_pending_with_existing_review_status(case, monkeypatch):
     db, c = case
     name = '1,2-Hexanediol'
@@ -765,6 +767,7 @@ def test_round3_qualified_rows_and_comma_lists_remain_ingredient_evidence(text):
 
 
 @pytest.mark.parametrize('route', ['aggregate', 'parse-file', 'reprocess'])
+@pytest.mark.usefixtures('without_kma_catalogue')
 def test_round3_real_unmatched_hexanediol_never_autoregisters(case, monkeypatch, route):
     db, c = case
     risk = m.screening.screen_merged('1,2-Hexanediol')
@@ -1270,6 +1273,7 @@ FLAT_MSDS = (
 
 
 @pytest.mark.parametrize('route', ['aggregate', 'parse-file', 'reprocess'])
+@pytest.mark.usefixtures('without_kma_catalogue')
 def test_flat_msds_registers_only_dictionary_safe_ingredients(case, monkeypatch, route):
     db, c = case
     assert intake._material_scan_text(FLAT_MSDS, material_only=True).splitlines() == FLAT_MSDS_NAMES
@@ -1283,6 +1287,7 @@ def test_flat_msds_registers_only_dictionary_safe_ingredients(case, monkeypatch,
 
 
 @pytest.mark.parametrize('route', ['aggregate', 'parse-file', 'reprocess'])
+@pytest.mark.usefixtures('without_kma_catalogue')
 def test_flat_msds_first_aid_water_is_not_ingredient_evidence(case, monkeypatch, route):
     db, c = case
     text = FLAT_MSDS.replace('Lysate, Water,', 'Lysate,')
@@ -1399,6 +1404,7 @@ def test_flat_msds_oversized_section_preserves_prior_evidence_and_excludes_overs
 
 @pytest.mark.parametrize('route', ['aggregate', 'reprocess'])
 @pytest.mark.parametrize('tail', ['A/' * 10001, 'Water' + ' ' * 20000 + '100%'], ids=['slashes', 'spaces'])
+@pytest.mark.usefixtures('without_kma_catalogue')
 def test_flat_msds_oversized_later_section_registers_only_safe_prior_candidates(case, monkeypatch, route, tail):
     db, c = case
     prior = ['Water', 'Salt', 'Alcohol Denat.', 'Glycerin', '1,2-Hexanediol']
@@ -1962,6 +1968,7 @@ INCI_60 = NAMES + [
 
 @pytest.mark.parametrize('route', P1_ROUTES[:-1])
 @pytest.mark.parametrize('salt_tail', [False, True])
+@pytest.mark.usefixtures('without_kma_catalogue')
 def test_r3_1182_character_inci_list_registers_twelve_and_preserves_salt(
         case, monkeypatch, round4_http, route, salt_tail):
     db, c = case
