@@ -8272,7 +8272,7 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
     return added, deferred
 
 
-def _apply_agg_to_case(db, c, agg, documents=()):
+def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None):
     """목록 집계만 직접 반영한다. 업체·공장은 원문 문서별 소유권 게이트를 통과해야 한다."""
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0,
                "profile": [], "pending": len(agg.get("pending") or [])}
@@ -8336,7 +8336,7 @@ def _apply_agg_to_case(db, c, agg, documents=()):
         except HTTPException as exc:
             if exc.detail.get("code") != "SCOPE_FROZEN" or not documents:
                 raise
-            return _apply_agg_to_case(db, c, agg, documents=documents)
+            return _apply_agg_to_case(db, c, agg, documents=documents, material_sources=material_sources)
     applied["products"], deferred = _autofill_products(db, c, agg, documents, rejected_products)
     applied["pending"] += deferred
     have_m = {_norm_material(m.name) for m in db.query(models.Material).filter_by(case_id=c.case_id)}
@@ -8371,18 +8371,27 @@ def _apply_agg_to_case(db, c, agg, documents=()):
                                    cert=sc.get("v1_cert")))
             have_m.add(nk)
     # 스크리닝을 모두 끝낸 뒤 짧게 쓰기 트랜잭션을 잡는다(SQLite 동시 업로드 대기 제한).
+    created_material_ids = []
     for material in materials:
         try:
-            _, created = _upsert_material(db, material)
+            saved_material, created = _upsert_material(db, material)
         except HTTPException as exc:
             if exc.detail.get("code") != "SCOPE_FROZEN" or not documents:
                 raise
-            return _apply_agg_to_case(db, c, agg, documents=documents)
+            return _apply_agg_to_case(db, c, agg, documents=documents, material_sources=material_sources)
         applied["materials"] += int(created)
-    if documents and (applied["materials"] or applied["products"]):
-        db.flush()
-        if db.query(models.Product).filter_by(case_id=c.case_id).count() == 1:
-            applied["links"] = _auto_link_pm(db, c.case_id)
+        if created:
+            created_material_ids.append(saved_material.material_id)
+    if created_material_ids:
+        if material_sources is None:
+            material_sources = {}
+            for doc in documents:
+                fields = doc.fields or {}
+                source_products = intake._source_product_names(fields, doc.text_full)
+                for name in intake._normalise_names(fields.get("material_names")):
+                    material_sources.setdefault(_norm_material(name), set()).update(source_products)
+        applied["links"] = _auto_link_pm(db, c.case_id, single_product=True,
+            material_ids=created_material_ids, material_sources=material_sources)
     return applied
 
 
@@ -8861,7 +8870,27 @@ def apply_pending_extractions(case_id: str, body: dict = None,
     agg = {bucket: [renames.get(x["value"], x["value"]).strip() for x in items
                     if x["kind"] == kind and x["value"] not in dismiss]
            for bucket, kind in (("products", "product_names"), ("materials", "material_names"))}
-    applied = _apply_agg_to_case(db, c, agg)
+    # 확인·이름 수정 후에도 원래 후보의 문서 귀속을 자동 연결에 전달한다.
+    source_ids = {x["document_id"] for x in items if x["kind"] == "material_names"}
+    source_products, original_sources = {}, {}
+    source_docs = db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields,
+                           models.DocumentAsset.text_full).filter_by(case_id=case_id) if source_ids else ()
+    for did, fields, text in source_docs:
+        fields = fields or {}
+        source_products[did] = intake._source_product_names(fields, text)
+        # 확인대기 화면의 이름 중복 제거로 다른 출처의 미확정/불일치가 사라지면 안 된다.
+        for name in (intake._normalise_names(fields.get("material_names")) +
+                     intake._normalise_names((fields.get("_rule_omissions") or {}).get("material_names"))):
+            original_sources.setdefault(_norm_material(name), set()).update(source_products[did])
+    material_sources = {}
+    for item in items:
+        if item["kind"] != "material_names" or item["value"] in dismiss:
+            continue
+        name = renames.get(item["value"], item["value"])
+        material_sources.setdefault(_norm_material(name), set()).update(
+            original_sources.get(_norm_material(item["value"]), set()) |
+            source_products.get(item["document_id"], {""}))
+    applied = _apply_agg_to_case(db, c, agg, material_sources=material_sources)
     pe = dict(c.profile_ext or {})
     # 원래 추출값을 기억해야 이름을 고치거나 등록하지 않은 항목도 다시 나타나지 않는다.
     pe["pending_handled"] = list(dict.fromkeys(
@@ -9044,32 +9073,63 @@ def matrix_link(case_id: str, body: schemas.MatrixLinkReq,
             db.commit()
         except IntegrityError:   # 동시 더블서밋 — 유니크 인덱스가 중복 차단, 이미 링크됨으로 취급
             db.rollback()
-    elif not body.linked and existing:
-        db.delete(existing)
+    elif not body.linked:
+        if existing:
+            db.delete(existing)
+        # 이미 연결이 없어도 명시적인 해제 의사를 남겨 자동등록이 되살리지 않게 한다.
+        _audit(db, user, "matrix.link", "case", case_id, case_id,
+               {"product_id": body.product_id, "material_id": body.material_id, "linked": False},
+               commit=False)
         db.commit()
     else:
         db.commit()
     return {"product_id": body.product_id, "material_id": body.material_id, "linked": body.linked}
 
 
-def _auto_link_pm(db, case_id, max_pairs=2000):
-    """제품-원재료 자동 연결. 기존 링크는 보존하고 미연결 (제품,원재료) 쌍만 추가.
+def _auto_link_pm(db, case_id, max_pairs=2000, *, single_product=False,
+                  material_ids=(), material_sources=None):
+    """기존 링크·사람의 해제를 보존하고 미연결 쌍만 추가. 자동등록은 단일 제품만 허용.
     과적재(제품×원재료>max_pairs) 케이스는 폭발 방지로 스킵."""
     c = _get_case(db, case_id)
     _assert_case_open(c)
     _assert_scope_open(c)
     db.flush()
     prods = db.query(models.Product).filter_by(case_id=case_id).all()
-    mats = db.query(models.Material).filter_by(case_id=case_id).all()
+    mats = db.query(models.Material).filter_by(case_id=case_id)
+    if single_product:
+        # 배포 전 연결 해제는 기록이 없다. 이번 호출이 실제 생성한 원료만 대상이다.
+        if (len(prods) != 1 or not material_ids or db.query(models.AuditLog).filter_by(
+                case_id=case_id, action="product.delete").first() is not None):
+            return 0
+        mats = mats.filter(models.Material.material_id.in_(material_ids))
+        product_names = {_norm_material(n) for n in [prods[0].name] +
+                         (c.profile_ext or {}).get("product_aliases", {}).get(prods[0].product_id, [])}
+        matched = []
+        for material in mats:
+            source_names = {_norm_material(n) for n in
+                            (material_sources or {}).get(_norm_material(material.name), ())}
+            if source_names and "" not in source_names and source_names <= product_names:
+                matched.append(material)
+        mats = matched
+    else:
+        mats = mats.all()
     if not prods or not mats or len(prods) * len(mats) > max_pairs:
         return 0
     existing = {(lk.product_id, lk.material_id) for lk in
                 db.query(models.ProductMaterial).filter_by(case_id=case_id).all()}
+    unlinked = set()
+    for model, payload_column, actor_column in (
+            (models.AuditLog, models.AuditLog.meta, models.AuditLog.actor_role),
+            (models.WorkflowEvent, models.WorkflowEvent.payload, models.WorkflowEvent.actor_type)):
+        for payload, actor in db.query(payload_column, actor_column).filter(
+                model.case_id == case_id, model.action.in_(("matrix.link", "matrix/link"))):
+            if actor != "system" and (payload or {}).get("linked") is False:
+                unlinked.add((payload.get("product_id"), payload.get("material_id")))
     added = 0
     for p in prods:
         for m in mats:
             key = (p.product_id, m.material_id)
-            if key in existing:
+            if key in existing or key in unlinked:
                 continue
             db.add(models.ProductMaterial(case_id=case_id, product_id=p.product_id,
                                           material_id=m.material_id))
@@ -9260,8 +9320,8 @@ def _apply_intake_autofill(db, c, res):
     applied = _apply_agg_to_case(db, c, agg, documents=saved)
     applied["dup_skipped"] = dup_skipped
     res["_verify_ids"] = [d.document_id for d in saved]
-    # 제품·원재료 자동 연결(매트릭스) — 아코디언에 원재료가 붙도록
-    applied["links"] = 0 if applied.get("scope_frozen") else _auto_link_pm(db, c.case_id)
+    # 집계 단계에서 이번에 생성한 원료만 연결했다. 기존 원료를 다시 훑지 않는다.
+    applied.setdefault("links", 0)
     # 문서 타입별 개별 프로세서 — 공정흐름도/할랄인증서/SJPH매뉴얼을 각 엔티티로 매핑
     for _d in res.get("classified", []):
         _process_doc(db, c, _d, applied)

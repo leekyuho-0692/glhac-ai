@@ -601,11 +601,13 @@ _AUTOFILL_MATERIAL_HEADING = re.compile(
 # 첫 콜론까지의 후보를 고정 길이로 제한한다. / 뒤마다 긴 꼬리를 재탐색하지 않는다.
 _AUTOFILL_INLINE_LABEL_START = r"(?<!\w)(?=[^:：\r\n]{1,120}[:：])"
 _AUTOFILL_MAX_MATERIAL_CHARS = 20000
+_AUTOFILL_MAX_ROW_CHARS = 20000
+_AUTOFILL_MAX_CELL_CHARS = 300
 _AUTOFILL_INLINE_MATERIAL_HEADING = re.compile(
     _AUTOFILL_INLINE_LABEL_START + _AUTOFILL_MATERIAL_LABEL + r"(?:[ \t]*/[ \t]*" + _AUTOFILL_MATERIAL_LABEL +
-    r")*[ \t]*[:：][ \t]*", re.I)
+    r")*[ \t]*[:：]", re.I)
 _AUTOFILL_INLINE_END = re.compile(
-    r"(?<!\w)(?:(?i:section)[ \t]+\d+\b|\d+\.[ \t]+(?=[A-Z]))|" +
+    r"(?<!\w)(?:(?i:section)[ \t]+\d+\b|\d+\.[ \t]+(?=[^\W\d_]))|" +
     _AUTOFILL_INLINE_LABEL_START + r"[^\W\d_][\w/-]{0,39}(?:[ \t]+[^\W\d_][\w/-]{0,39}){0,7}[ \t]*[:：]")
 _AUTOFILL_COLUMN_LABEL = re.compile(
     r"(?:no\.?|number|name|ingredients?|components?|chemical[ \t]+name|성분명|원료명|"
@@ -615,43 +617,91 @@ _AUTOFILL_NEW_HEADING = re.compile(
     r"\b(?:section|heading|information|instructions?|properties|measures|handling|storage|"
     r"identification|hazards?|exposure|controls?|protection|stability|reactivity|toxicological|"
     r"ecological|disposal|transport|regulatory|notes?|details?|procedures?|results?|specifications?|"
-    r"reports?|appearance|cleaning|solubility|first[ \t-]+aid|tests?|pertolongan|sifat[ \t]+fisik)\b|"
-    r"응급|조치|취급|저장|보관|주의|정보|특성|물성|결과|시험|항목|제목", re.I)
+    r"reports?|appearance|cleaning|solubility|first[ \t-]+aid|tests?|pertolongan|sifat[ \t]+fisik|cara[ \t]+pakai)\b|"
+    r"응급|조치|취급|저장|보관|주의|정보|특성|물성|결과|시험|항목|제목|사용법", re.I)
 _AUTOFILL_ROW_METADATA = re.compile(
-    r"(?:(?:CAS(?:[ \t]*(?:no\.?|number))?[ \t:：]*)?\d{2,7}-\d{2}-\d|"
-    r"[<>≤≥]?[ \t]*\d+(?:\.\d+)?(?:[ \t]*[-–][ \t]*\d+(?:\.\d+)?)?[ \t]*%?|"
-    r"w/w|w/v|v/v|wt\.?[ \t]*%)(?:[ \t]+|$)", re.I)
+    r"(?:(?:CAS(?:[ \t]*+(?:no\.?|number))?[ \t:：]*+)?\d{2,7}-\d{2}-\d|"
+    r"[<>≤≥]?[ \t]*+\d++(?:\.\d++)?(?:[ \t]*+[-–][ \t]*+\d++(?:\.\d++)?)?(?:[ \t]*+%)?|"
+    r"w/w|w/v|v/v|wt\.?[ \t]*+%)(?:[ \t]+|$)", re.I)
 
 
 def _autofill_material_row(line):
     """함량·CAS 또는 쉼표 목록이 있는 행의 성분명만 반환한다. 구분자만으로는 부족하다."""
+    return _autofill_material_row_evidence(line)[0]
+
+
+def _autofill_non_material_row(line):
+    """길이 제한과 무관한 구간 경계. 성분 라벨과 CAS 메타데이터는 허용한다."""
+    line = line.strip()
+    label = re.match(r"(?P<label>[^:：\r\n]{1,120})[:：]", line)
+    if label:
+        title = label["label"].strip(" |｜\t")
+        if _AUTOFILL_MATERIAL_HEADING.fullmatch(title):
+            line = line[label.end():]
+        elif not re.search(r"\bCAS(?:[ \t]*(?:no\.?|number))?[ \t]*$", title, re.I):
+            return True
+    return bool(re.match(r"^[#*]", line)
+                or _AUTOFILL_NEW_HEADING.search(line)
+                or re.search(r"\b(?:is|are|was|were|use[ds]?|using|contains?|for|with|and|shall|should|must|suppliers?)\b", line, re.I)
+                or (re.search(r"[.!?。！？]$", line.rstrip())
+                    and not re.search(r"\bdenat\.$", line.rstrip(), re.I)))
+
+
+def _autofill_material_row_evidence(line):
+    """성분명과 길이 제한에 의한 제외 여부. 비성분은 길이와 무관하게 구간을 닫는다."""
+    # 행 상한은 비정상 입력의 안전장치다. 정상 목록은 분할한 셀별로 검산한다.
+    if len(line) > _AUTOFILL_MAX_ROW_CHARS:
+        return [], not (_AUTOFILL_SECTION_PREFIX.match(line.lstrip()) or _autofill_non_material_row(line))
     line = re.sub(r"^[-*•][ \t]+", "", line.lstrip().rstrip(" \r\n"))
-    if (not line or _AUTOFILL_NEW_HEADING.search(line)
-            or re.search(r"\b(?:is|are|was|were|use[ds]?|using|contains?|for|with|and|shall|should|must|suppliers?)\b", line, re.I)
-            or (re.search(r"[.!?。！？]$", line) and not re.search(r"\bdenat\.$", line, re.I))):
-        return []
     # 1,2-Hexanediol의 숫자 사이 쉼표는 성분 나열 구분자가 아니다.
     parts = re.split(r"(?<!\d),|,(?!\d)", line)
     names, evidence = [], len(parts) >= 2
+    limited = False
     for part in parts:
-        cells = [cell.strip() for cell in _table_cells(part.replace("｜", "|"))]
+        if not part.strip() or _autofill_non_material_row(part):
+            return [], False
+        cells = _table_cells(part.replace("｜", "|"))
+        if any(len(cell) > _AUTOFILL_MAX_CELL_CHARS for cell in cells):
+            limited = True
+            continue
+        cells = [cell.strip() for cell in cells]
         is_table_row = len(cells) > 1
         if is_table_row and cells[0].isdigit():
             cells.pop(0)
-        name_and_amount = re.split(r"[ \t]+(?=CAS\b|[<>≤≥]?\d)", cells[0], maxsplit=1, flags=re.I)
+        name_and_amount = re.split(r"(?<![ \t])[ \t]+(?=CAS\b|[<>≤≥]?\d)",
+                                   cells[0], maxsplit=1, flags=re.I)
         name = name_and_amount[0]
         if (not re.search(r"[^\W\d_]", name) or len(name) > 100 or len(name.split()) > 8
                 or not re.fullmatch(r"[\w()'’&.,/+ -]+", name)
                 or _AUTOFILL_COLUMN_LABEL.fullmatch(name) or _TEST_TABLE_HEADER.fullmatch(name.replace(" ", ""))):
-            return []
+            return [], False
         metadata = " ".join(name_and_amount[1:] + cells[1:]).strip()
-        if _AUTOFILL_ROW_METADATA.sub("", metadata).strip():
-            return []
+        # search/sub는 실패한 숫자의 매 위치에서 다시 시도한다. 토큰 시작에서만
+        # match하고 숫자·공백은 소유 수량자로 소비해 역추적/재탐색을 막는다(Python 3.11).
+        position = 0
+        while position < len(metadata):
+            token = _AUTOFILL_ROW_METADATA.match(metadata, position)
+            if token is None:
+                return [], False
+            position = token.end()
         # 표는 이름 셀 바깥의 실제 수치가 필요하다. 단위·빈 셀·행 번호는 근거가 아니다.
         evidence_metadata = " ".join(cells[1:]) if is_table_row else metadata
         evidence |= bool(re.search(r"\d", evidence_metadata))
         names.append(name)
-    return names if evidence else []
+    return (names if evidence else []), limited
+
+
+def _autofill_inline_headers(line):
+    """콜론 사이를 한 번만 훑고 제목 정규식에는 최대 120자 후보만 넘긴다."""
+    previous = 0
+    for position, char in enumerate(line):
+        if char not in ":：":
+            continue
+        header = _AUTOFILL_INLINE_MATERIAL_HEADING.search(
+            line, max(previous, position - 120), position + 1)
+        if header:
+            yield header
+        previous = position + 1
 
 
 def _autofill_material_text(text):
@@ -659,46 +709,54 @@ def _autofill_material_text(text):
     rows, in_materials, awaiting_columns = [], False, False
     material_chars = 0
     for raw in text.splitlines():
-        line = raw.lstrip().rstrip(" \r\n")
-        if not line:
+        line = raw
+        if not line.strip():
             in_materials = awaiting_columns = False
             continue
-        inline_spans = []
-        for header in _AUTOFILL_INLINE_MATERIAL_HEADING.finditer(line):
+        inline_section = False
+        for header in _autofill_inline_headers(line):
             start = header.end()
-            # 경계 라벨의 120자까지 확인하되, 상한 밖의 본문을 반복해서 훑지 않는다.
-            end = _AUTOFILL_INLINE_END.search(line, start, start + _AUTOFILL_MAX_MATERIAL_CHARS + 121)
+            # 라벨 탐색은 120자 후보, 행 검산은 경계 앞 20,000자로 제한한다.
+            end = _AUTOFILL_INLINE_END.search(line, start, start + _AUTOFILL_MAX_ROW_CHARS + 121)
             stop = end.start() if end else len(line)
-            if stop - start > _AUTOFILL_MAX_MATERIAL_CHARS:
-                return ""  # 앞서 찾은 행도 포함해 이 문서는 자동등록 근거로 쓰지 않는다.
-            inline_spans.append((start, stop, end is None))
-        if inline_spans and re.search(r"(?<!\d),|,(?!\d)", line[inline_spans[0][0]:]):
-            in_materials = awaiting_columns = False
-            for start, stop, open_section in inline_spans:
+            if stop - start > _AUTOFILL_MAX_ROW_CHARS:
+                continue
+            value = line[start:stop]
+            # 문장 속 ingredients:는 콜론 뒤가 실제 쉼표 성분 목록일 때만 구간이다.
+            if not re.search(r"(?<!\d),|,(?!\d)", value):
+                continue
+            inline_section = True
+            names, limited = _autofill_material_row_evidence(value.rstrip(" \t,;"))
+            if names:
                 material_chars = stop - start
-                # PDF에서 줄바꿈이 사라져도 절 번호부터 자른다(Citral 3 오염 방지).
-                # 다음 라벨과 마지막 성분의 경계가 모호하면 그 꼬리는 근거로 쓰지 않는다.
-                value = line[start:stop].rstrip(" \t,;")
-                names = _autofill_material_row(value)
-                if len(names) >= 2:
-                    rows.extend(names)
-                    in_materials = open_section
+                rows.extend(names)
+                in_materials = end is None
+                awaiting_columns = False
+            elif not limited:
+                in_materials = awaiting_columns = False
+        if inline_section:
             continue
+        # 앞서 인정한 성분은 보존하되, 긴 비성분 설명도 이후 성분 구간은 닫는다.
+        if len(raw) > _AUTOFILL_MAX_ROW_CHARS:
+            if _AUTOFILL_SECTION_PREFIX.match(raw.lstrip()) or _autofill_non_material_row(raw):
+                in_materials = awaiting_columns = False
+            continue
+        line = raw.lstrip().rstrip(" \r\n")
         title = re.sub(r"^[#*•-]+[ \t]*", "", line)
         title = _AUTOFILL_SECTION_PREFIX.sub("", title, count=1)
-        cells = [cell.strip() for cell in _table_cells(title.replace("｜", "|"))]
-        header = _AUTOFILL_MATERIAL_HEADING.fullmatch(cells[0])
+        cells = _table_cells(title.replace("｜", "|"))
+        bounded_cells = all(len(cell) <= _AUTOFILL_MAX_CELL_CHARS for cell in cells)
+        cells = [cell.strip() for cell in cells]
+        header = _AUTOFILL_MATERIAL_HEADING.fullmatch(cells[0]) if bounded_cells else None
         if header and all(_AUTOFILL_COLUMN_LABEL.fullmatch(cell) for cell in cells[1:]):
             inline = header["ingredients"]
             material_chars = len(inline or "")
-            if material_chars > _AUTOFILL_MAX_MATERIAL_CHARS:
-                return ""
             names = _autofill_material_row(inline) if inline else []
             in_materials = not inline or bool(names)
             awaiting_columns = not inline
             rows.extend(names)
             continue
-        if (in_materials and awaiting_columns and len(cells) >= 2
+        if (in_materials and awaiting_columns and bounded_cells and len(cells) >= 2
                 and all(_AUTOFILL_COLUMN_LABEL.fullmatch(cell) for cell in cells)):
             awaiting_columns = False
             continue
@@ -709,14 +767,14 @@ def _autofill_material_text(text):
         if _AUTOFILL_SECTION_PREFIX.match(line) or re.match(r"^[#*]", line):
             in_materials = False
             continue
-        names = _autofill_material_row(line)
-        if not names:
+        names, limited = _autofill_material_row_evidence(line)
+        if not names and not limited:
             in_materials = False
-        else:
+        elif names:
+            if material_chars + len(raw) + 1 > _AUTOFILL_MAX_MATERIAL_CHARS:
+                break  # 상한까지 인정된 행만 유지하고 이후 구간은 근거에서 제외한다.
             # 종료 행의 비성분 본문은 제외하고, 인정된 성분 행만 누적한다.
-            material_chars += len(line) + 1
-            if material_chars > _AUTOFILL_MAX_MATERIAL_CHARS:
-                return ""
+            material_chars += len(raw) + 1
             rows.extend(names)
     return "\n".join(rows)
 
@@ -3102,6 +3160,26 @@ def _product_candidate_names(fields):
     return list(dict.fromkeys(_normalise_names(fields.get("product_names")) + [
         fields[k] for k in ("product_name_ko", "product_name_en")
         if isinstance(fields.get(k), str) and fields[k].strip()]))
+
+
+_SOURCE_PRODUCT_LABEL = re.compile(
+    r"^[ \t]*(?:[|｜][ \t]*)?(?:product[ \t_]*name|(?:(?:국문|영문|한글)[ \t]*)?제품명|"
+    r"제품[ \t]+이름|상품명|nama[ \t]+produk)"
+    r"(?:[ \t]*\([ \t]*(?:English|Korean|국문|영문|한글|EN|KO|ID)[ \t]*\))?"
+    r"[ \t]*(?:[:：|｜]|\t)[ \t]*(?P<name>[^\r\n]*)\r?$", re.I | re.M)
+
+
+def _source_product_names(fields, text):
+    """자동 연결의 문서 귀속. AI 추출값과 원문의 명시적 제품명 라벨을 모두 대조한다."""
+    from .models import normalize_material_name as norm
+    names = _product_candidate_names(fields) + _normalise_names(
+        (fields.get("_rule_omissions") or {}).get("product_names"))
+    if not any(norm(name) for name in names):
+        names = []
+    names.extend(match["name"].strip().strip("|｜").strip()
+                 for match in _SOURCE_PRODUCT_LABEL.finditer(text or ""))
+    # 미확정 출처가 다른 문서의 확정 출처와 합쳐져 사라지지 않게 보존한다.
+    return {norm(name) for name in names} or {""}
 
 
 def _prune_product_pending(fields):

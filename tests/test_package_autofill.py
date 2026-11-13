@@ -63,11 +63,14 @@ def names(db, c, model):
     return [row.name for row in db.query(model).filter_by(case_id=c.case_id)]
 
 
-def test_msds_30_registers_12_and_defers_18_with_explicit_unmatched_names(case, monkeypatch):
+@pytest.mark.parametrize('source_name', [None, EN], ids=['missing-product', 'matching-product'])
+def test_msds_30_registers_12_and_defers_18_with_explicit_unmatched_names(case, monkeypatch, source_name):
     db, c = case
     db.add(models.Product(case_id=c.case_id, name=EN))
     db.commit()
     text = 'Material Safety Data Sheet\nComposition / Ingredients\n'+'\n'.join(name + ' | 1%' for name in NAMES)
+    if source_name:
+        text = f'Product name: {source_name}\n' + text
     doc, result = reprocess(case, monkeypatch, text, {'material_names': NAMES})
     meta = doc.fields['_field_meta']['material_names']
     assert meta['accepted'] and meta['checks']['in_source']
@@ -92,12 +95,14 @@ def test_msds_30_registers_12_and_defers_18_with_explicit_unmatched_names(case, 
     } | newly_pending
     assert {x['value'] for x in pending
             if m.screening.screen_merged(x['value'])['decision_by'] == 'unmatched_default'} == newly_pending
-    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == 12
+    expected_links = 12 if source_name else 0
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == expected_links
     assert m._package_check(db,c)['items']['material']['ok']
     before = {x.material_id for x in db.query(models.Material).filter_by(case_id=c.case_id)}
     _, again = reprocess(case,monkeypatch,text,{'material_names':NAMES},doc=doc)
     assert again['applied']['materials'] == 0
     assert {x.material_id for x in db.query(models.Material).filter_by(case_id=c.case_id)} == before
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == expected_links
 
 
 @pytest.mark.parametrize('kind',['coa_msds','material_list'])
@@ -1379,31 +1384,721 @@ def test_flat_msds_repeated_heading_without_colon_has_bounded_candidates(repeat)
 
 @pytest.mark.parametrize('size', [19999, 20000, 20001])
 @pytest.mark.parametrize('boundary', ['', '3. HAZARDS IDENTIFICATION Eye contact: Water'])
-def test_flat_msds_oversized_section_discards_all_document_evidence(size, boundary):
+def test_flat_msds_oversized_section_preserves_prior_evidence_and_excludes_oversized_rows(size, boundary):
     value = 'Water,' + ' ' * (size - len('Water,Salt;')) + 'Salt;'
-    text = 'Ingredients: Niacinamide, Salt\n\nIngredients:' + value + boundary
-    evidence = intake._material_scan_text(text, material_only=True)
-    assert evidence == ('Niacinamide\nSalt\nWater\nSalt' if size <= 20000 else '')
+    assert len(value) == size
+    text = 'Ingredients: Niacinamide, Salt\n\nIngredients:' + value + boundary + '\nPanthenol 100%'
+    evidence = intake._material_scan_text(text, material_only=True).splitlines()
+    # 20,000자 행 안전 상한 이내면 공백으로 구분된 짧은 Water·Salt 항목은 보존한다.
+    # 그 뒤 Panthenol은 누적 상한 또는 명시적인 섹션 경계 이후이므로 근거가 아니다.
+    assert evidence == ['Niacinamide', 'Salt'] + (['Water', 'Salt'] if size <= 20000 else [])
+    assert 'Panthenol' not in evidence
+    if size > 20000:
+        assert 'Water' not in evidence
 
 
 @pytest.mark.parametrize('route', ['aggregate', 'reprocess'])
 @pytest.mark.parametrize('tail', ['A/' * 10001, 'Water' + ' ' * 20000 + '100%'], ids=['slashes', 'spaces'])
-def test_flat_msds_oversized_later_section_keeps_earlier_candidates_pending(case, monkeypatch, route, tail):
+def test_flat_msds_oversized_later_section_registers_only_safe_prior_candidates(case, monkeypatch, route, tail):
     db, c = case
-    text = 'Ingredients: Water, Salt\n\nIngredients: ' + tail
-    applied = _round3_ingest(case, monkeypatch, route, text, ['Water', 'Salt'])
-    assert applied['materials'] == 0
-    assert names(db, c, models.Material) == []
-    assert {item['value'] for item in m._pending_extractions(db, c.case_id)} == {'Water', 'Salt'}
+    prior = ['Water', 'Salt', 'Alcohol Denat.', 'Glycerin', '1,2-Hexanediol']
+    beyond_limit = ['Niacinamide', 'Panthenol']
+    text = ('Ingredients: ' + ', '.join(prior) + '\n\nIngredients: ' + tail +
+            ', Niacinamide\nPanthenol 100%')
+    evidence = intake._material_scan_text(text, material_only=True).splitlines()
+    assert evidence == prior
+    assert not set(beyond_limit) & set(evidence)
+    applied = _round3_ingest(case, monkeypatch, route, text, prior + beyond_limit)
+    assert applied['materials'] == 2
+    assert set(names(db, c, models.Material)) == {'Water', 'Salt'}
+    # 앞 구간의 위험·미확정 원료와 초과 구간에만 있는 안전 원료는 모두 미등록·확인 대기다.
+    assert m.screening.screen_merged('1,2-Hexanediol')['decision_by'] == 'unmatched_default'
+    assert {item['value'] for item in m._pending_extractions(db, c.case_id)} == {
+        'Alcohol Denat.', 'Glycerin', '1,2-Hexanediol', 'Niacinamide', 'Panthenol'}
 
 
 @pytest.mark.parametrize('count', [2000, 2001])
-def test_flat_msds_multiline_section_obeys_material_length_limit(count):
+def test_flat_msds_multiline_limit_preserves_accepted_prefix_and_excludes_later_sections(count):
     text = 'Ingredients\n' + '\n'.join(['Water 90%'] * count)
-    evidence = intake._material_scan_text(text, material_only=True)
-    assert evidence == ('\n'.join(['Water'] * count) if count <= 2000 else '')
+    text += '\nSalt 10%\nIngredients: Niacinamide, Panthenol'
+    evidence = intake._material_scan_text(text, material_only=True).splitlines()
+    # 행과 개행을 합쳐 20,000자까지 보존하며, 이후 행이나 새 성분 머리줄로 재개하지 않는다.
+    assert evidence == ['Water'] * 2000
+    assert not {'Salt', 'Niacinamide', 'Panthenol'} & set(evidence)
 
 
 def test_flat_msds_short_section_in_long_document_remains_evidence():
     text = 'A/' * 100000 + '\nIngredients: Water, Salt SECTION 4\n' + 'A/' * 100000
     assert intake._material_scan_text(text, material_only=True) == 'Water\nSalt'
+
+
+@pytest.mark.parametrize('heading,boundary', [
+    ('전성분', '3. 유해성·위험성'),
+    ('전성분', '4. 응급조치요령'),
+    ('성분', '5. 폭발·화재시 대처방법'),
+    ('성분', '9. 물리화학적 특성'),
+    ('Bahan', '3. Identifikasi bahaya'),
+    ('Komposisi', '3. identifikasi bahaya'),
+    ('Bahan/Komposisi', '4. Pertolongan pertama'),
+    ('Ingredients', '3. hazards identification'),
+])
+def test_inline_multilingual_sections_preserve_numeric_ingredients_and_amounts(heading, boundary):
+    text = (f'{heading} : 정제수 90%, 글리세린 3.5%, 1,2-헥산다이올 1%, '
+            f'부틸렌글라이콜 5.5% {boundary} 물로 씻으세요.\n물 | 100%')
+    assert intake._material_scan_text(text, material_only=True).splitlines() == [
+        '정제수', '글리세린', '1,2-헥산다이올', '부틸렌글라이콜']
+    assert intake._AUTOFILL_INLINE_END.search('1,2-헥산다이올 3.5%') is None
+
+
+@pytest.mark.parametrize('route', ['aggregate', 'parse-file', 'reprocess'])
+@pytest.mark.parametrize('text,candidates,registered', [
+    ('전성분 : 정제수, 글리세린, 부틸렌글라이콜 3. 유해성·위험성 '
+     '4. 응급조치요령 물로 씻으세요.',
+     ['정제수', '글리세린', '부틸렌글라이콜', '물'], {'정제수', '부틸렌글라이콜'}),
+    ('Bahan/Komposisi : Niacinamide, Glycerin, Salt 3. Identifikasi bahaya '
+     '4. Pertolongan pertama Bilas dengan Water.',
+     ['Niacinamide', 'Glycerin', 'Salt', 'Water'], {'Niacinamide', 'Salt'}),
+    ('Komposisi : Niacinamide 3.5%, Glycerin 1%, Salt 95.5% 3. identifikasi bahaya '
+     '4. pertolongan pertama Bilas dengan Water.',
+     ['Niacinamide', 'Glycerin', 'Salt', 'Water'], {'Niacinamide', 'Salt'}),
+])
+def test_inline_multilingual_autofill_keeps_review_and_first_aid_candidates_pending(
+        case, monkeypatch, route, text, candidates, registered):
+    db, c = case
+    applied = _round3_ingest(case, monkeypatch, route, text, candidates)
+    assert set(names(db, c, models.Material)) == registered
+    assert applied['materials'] == len(registered)
+    assert {item['value'] for item in m._pending_extractions(db, c.case_id)} == set(candidates) - registered
+
+
+def _single_product_ingest(case, monkeypatch, http, route, candidates, *, source_name=None):
+    text = 'Ingredients: ' + ', '.join(candidates) + ' 3. HAZARDS IDENTIFICATION'
+    if source_name:
+        text = f'Product name: {source_name}\n' + text
+    if route in ('aggregate', 'parse-file', 'reprocess'):
+        return _round3_ingest(case, monkeypatch, route, text, candidates)
+    if route != 'apply':
+        return _round4_product_request(case, monkeypatch, http, route, text, {'material_names': candidates})
+    db, c = case
+    reprocess(case, monkeypatch, text, {'material_names': candidates}, apply=False)
+    client, headers = http
+    response = client.post(f'/cases/{c.case_id}/pending-extractions/apply',
+        headers=headers['applicant'], json={'values': candidates})
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    return response.json()['applied']
+
+
+@pytest.mark.parametrize('product_count', [0, 1, 2])
+@pytest.mark.parametrize('route', [
+    'aggregate', 'parse-file', 'reprocess', 'intake-zip', 'intake-zip-stream', 'apply',
+])
+@pytest.mark.parametrize('source_name', [None, 'Serum 0'], ids=['missing-product', 'matching-product'])
+def test_material_registration_links_only_the_single_case_product(
+        case, monkeypatch, round4_http, route, product_count, source_name):
+    db, c = case
+    products = [models.Product(case_id=c.case_id, name=f'Serum {i}') for i in range(product_count)]
+    other = models.CaseApplication(org_id='org_demo', company_name='Other product case')
+    db.add(other)
+    db.flush()
+    db.add_all(products + [models.Product(case_id=other.case_id, name='Other serum')])
+    db.commit()
+    _single_product_ingest(case, monkeypatch, round4_http, route, ['Water', 'Salt'], source_name=source_name)
+    materials = db.query(models.Material).filter_by(case_id=c.case_id).all()
+    assert {row.name for row in materials} == {'Water', 'Salt'}
+    links = db.query(models.ProductMaterial).filter_by(case_id=c.case_id).all()
+    should_link = product_count == 1 and source_name is not None
+    expected = {(products[0].product_id, row.material_id) for row in materials} if should_link else set()
+    assert {(row.product_id, row.material_id) for row in links} == expected
+    assert m._package_check(db, c)['items']['material']['unlinked_products'] == (
+        [] if should_link else [row.name for row in products])
+    _single_product_ingest(case, monkeypatch, round4_http, route, ['Water', 'Salt'], source_name=source_name)
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == len(expected)
+    assert db.query(models.ProductMaterial).filter_by(case_id=other.case_id).count() == 0
+
+
+@pytest.mark.parametrize('initially_linked', [False, True])
+@pytest.mark.parametrize('route', [
+    'aggregate', 'parse-file', 'reprocess', 'intake-zip', 'intake-zip-stream', 'apply',
+])
+@pytest.mark.parametrize('source_name', [None, 'Face Serum'], ids=['missing-product', 'matching-product'])
+def test_manual_matrix_unlink_survives_material_registration(
+        case, monkeypatch, round4_http, route, initially_linked, source_name):
+    db, c = case
+    product = models.Product(case_id=c.case_id, name='Face Serum')
+    water = models.Material(case_id=c.case_id, name='Water')
+    db.add_all([product, water])
+    db.flush()
+    pid, mid = product.product_id, water.material_id
+    if initially_linked:
+        db.add(models.ProductMaterial(case_id=c.case_id, product_id=pid, material_id=mid))
+    db.commit()
+    client, headers = round4_http
+    response = client.post(f'/cases/{c.case_id}/matrix/link', headers=headers['applicant'],
+        json={'product_id': pid, 'material_id': mid, 'linked': False})
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    audit = db.query(models.AuditLog).filter_by(case_id=c.case_id, action='matrix.link').one()
+    assert (audit.meta['product_id'], audit.meta['material_id'], audit.meta['linked']) == (pid, mid, False)
+    assert audit.actor_role == 'applicant'
+    _single_product_ingest(case, monkeypatch, round4_http, route, ['Water', 'Salt'], source_name=source_name)
+    salt = db.query(models.Material).filter_by(case_id=c.case_id, name='Salt').one()
+    expected = {(pid, salt.material_id)} if source_name else set()
+    assert {(row.product_id, row.material_id) for row in
+            db.query(models.ProductMaterial).filter_by(case_id=c.case_id)} == expected
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id, material_id=mid).count() == 0
+    # 사람이 명시적으로 다시 잇는 동작과 기존 연결은 자동 연결의 제외 이력에 막히지 않는다.
+    response = client.post(f'/cases/{c.case_id}/matrix/link', headers=headers['applicant'],
+        json={'product_id': pid, 'material_id': mid, 'linked': True})
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    _single_product_ingest(case, monkeypatch, round4_http, route, ['Water', 'Salt'], source_name=source_name)
+    assert {(row.product_id, row.material_id) for row in
+            db.query(models.ProductMaterial).filter_by(case_id=c.case_id)} == expected | {(pid, mid)}
+
+
+@pytest.mark.parametrize('history', ['audit', 'event'])
+@pytest.mark.parametrize('action', ['matrix.link', 'matrix/link'])
+@pytest.mark.parametrize('scope', ['same-case-human', 'other-case-human', 'same-case-system'])
+@pytest.mark.parametrize('source_name', [None, 'Face Serum'], ids=['missing-product', 'matching-product'])
+def test_auto_link_only_new_materials_and_respects_case_scoped_human_history(
+        case, monkeypatch, history, action, scope, source_name):
+    db, c = case
+    other = models.CaseApplication(org_id='org_demo', company_name='Other history case')
+    product = models.Product(case_id=c.case_id, name='Face Serum')
+    water = models.Material(case_id=c.case_id, name='Water')
+    db.add_all([other, product, water])
+    db.flush()
+    owner = other if scope == 'other-case-human' else c
+    actor = 'system' if scope == 'same-case-system' else 'applicant'
+
+    def record_unlink(material_id):
+        payload = {'product_id': product.product_id, 'material_id': material_id, 'linked': False}
+        if history == 'audit':
+            m._audit(db, {'uid': 'applicant1', 'role': actor, 'org_id': 'org_demo'}, action,
+                     'case', owner.case_id, owner.case_id, payload, commit=False)
+        else:
+            m.sm.record_event(db, owner, owner.status, owner.status, action, actor, 'applicant1', payload)
+
+    record_unlink(water.material_id)
+    db.commit()
+    text = (f'Product name: {source_name}\n' if source_name else '') + 'Ingredients: Water, Salt'
+    applied = _round3_ingest(case, monkeypatch, 'aggregate', text, ['Water', 'Salt'])
+    salt = db.query(models.Material).filter_by(case_id=c.case_id, name='Salt').one()
+    assert applied['materials'] == 1
+    assert applied['links'] == int(source_name is not None)
+    assert set(names(db, c, models.Material)) == {'Water', 'Salt'}
+    # 기존 미연결 Water는 소급 연결하지 않고 출처가 확정된 새 Salt만 연결한다.
+    expected = {(product.product_id, salt.material_id)} if source_name else set()
+    assert {(row.product_id, row.material_id) for row in
+            db.query(models.ProductMaterial).filter_by(case_id=c.case_id)} == expected
+
+    # 신규 생성 ID를 실제 연결 후보로 넘겨 이력 범위 검사가 생략되어도 통과하는 것을 막는다.
+    niacinamide = models.Material(case_id=c.case_id, name='Niacinamide')
+    db.add(niacinamide)
+    db.flush()
+    record_unlink(niacinamide.material_id)
+    added = m._auto_link_pm(db, c.case_id, single_product=True, material_ids=[niacinamide.material_id],
+        material_sources={'niacinamide': {source_name}} if source_name else None)
+    db.flush()
+    should_link = source_name is not None and scope != 'same-case-human'
+    if should_link:
+        expected.add((product.product_id, niacinamide.material_id))
+    assert added == int(should_link)
+    assert {(row.product_id, row.material_id) for row in
+            db.query(models.ProductMaterial).filter_by(case_id=c.case_id)} == expected
+    assert db.query(models.ProductMaterial).filter_by(case_id=other.case_id).count() == 0
+
+
+P1_ROUTES = ['aggregate', 'parse-file', 'reprocess', 'intake-zip', 'intake-zip-stream', 'apply']
+
+
+def _p1_ingest(case, monkeypatch, http, route, text, fields):
+    db, c = case
+    if route == 'aggregate':
+        doc = {'doc_type': 'coa_msds', 'filename': 'MSDS.txt', 'text_full': text, 'fields': fields}
+        result = m._apply_intake_autofill(db, c, {
+            'classified': [doc], 'extracted': intake.aggregate_fields([doc])})
+        db.commit()
+        return result
+    if route == 'reprocess':
+        return reprocess(case, monkeypatch, text, fields)[1]['applied']
+    if route == 'apply':
+        reprocess(case, monkeypatch, text, fields, apply=False)
+        client, headers = http
+        response = client.post(f'/cases/{c.case_id}/pending-extractions/apply',
+            headers=headers['applicant'], json={'values': fields['material_names']})
+        assert response.status_code == 200, response.text
+        db.expire_all()
+        return response.json()['applied']
+    return _round4_product_request(case, monkeypatch, http, route, text, fields)
+
+
+@pytest.mark.parametrize('route', P1_ROUTES)
+@pytest.mark.parametrize('legacy_unlink', [False, True])
+@pytest.mark.parametrize('source_name', [None, 'Face Serum'], ids=['missing-product', 'matching-product'])
+def test_p1_registration_never_links_existing_material_without_unlink_audit(
+        case, monkeypatch, round4_http, route, legacy_unlink, source_name):
+    db, c = case
+    product = models.Product(case_id=c.case_id, name='Face Serum')
+    water = models.Material(case_id=c.case_id, name='Water')
+    db.add_all([product, water])
+    db.flush()
+    if legacy_unlink:
+        link = models.ProductMaterial(case_id=c.case_id, product_id=product.product_id,
+                                      material_id=water.material_id)
+        db.add(link)
+        db.commit()
+        # b9f4aa4의 linked=False와 동일하게 연결만 삭제하며 감사기록은 없다.
+        db.delete(link)
+    db.commit()
+    assert db.query(models.AuditLog).filter_by(case_id=c.case_id, action='matrix.link').count() == 0
+    text = (f'Product name: {source_name}\n' if source_name else '') + 'Ingredients\nSalt 100%'
+    _p1_ingest(case, monkeypatch, round4_http, route, text, {'material_names': ['Salt']})
+    salt = db.query(models.Material).filter_by(case_id=c.case_id, name='Salt').one()
+    expected = {(product.product_id, salt.material_id)} if source_name else set()
+    assert {(row.product_id, row.material_id) for row in
+            db.query(models.ProductMaterial).filter_by(case_id=c.case_id)} == expected
+
+
+@pytest.mark.parametrize('route', P1_ROUTES)
+@pytest.mark.parametrize('source_name', ['Face Serum', 'Body Serum', None])
+def test_p1_deleted_product_blocks_links_to_remaining_product(
+        case, monkeypatch, round4_http, route, source_name):
+    db, c = case
+    face = models.Product(case_id=c.case_id, name='Face Serum')
+    body = models.Product(case_id=c.case_id, name='Body Serum')
+    water = models.Material(case_id=c.case_id, name='Water')
+    db.add_all([face, body, water])
+    db.flush()
+    db.add(models.ProductMaterial(case_id=c.case_id, product_id=face.product_id,
+                                  material_id=water.material_id))
+    db.commit()
+    client, headers = round4_http
+    response = client.delete(f'/cases/{c.case_id}/products/{face.product_id}', headers=headers['applicant'])
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    fields = {'material_names': ['Water', 'Salt']}
+    if source_name:
+        fields['product_names'] = [source_name]
+    _p1_ingest(case, monkeypatch, round4_http, route,
+               (f'Product name: {source_name}\n' if source_name else '') +
+               'Ingredients\nWater 90%\nSalt 10%', fields)
+    assert names(db, c, models.Product) == ['Body Serum']
+    assert set(names(db, c, models.Material)) == {'Water', 'Salt'}
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == 0
+
+
+@pytest.mark.parametrize('route', P1_ROUTES)
+@pytest.mark.parametrize('source_names,expected', [
+    ([], False), ([' FACE-SERUM '], True), (['얼굴 세럼'], True),
+    (['Body Serum'], False), (['Face Serum', 'Body Serum'], False),
+])
+def test_p1_links_require_source_product_name_or_alias_match(
+        case, monkeypatch, round4_http, route, source_names, expected):
+    db, c = case
+    product = models.Product(case_id=c.case_id, name='Face Serum')
+    db.add(product)
+    db.flush()
+    c.profile_ext = {'product_aliases': {product.product_id: ['얼굴 세럼']}}
+    db.commit()
+    text = ''.join(f'Product name: {name}\n' for name in source_names) + 'Ingredients\nSalt 100%'
+    _p1_ingest(case, monkeypatch, round4_http, route, text,
+               {'material_names': ['Salt'], 'product_names': source_names})
+    assert names(db, c, models.Material) == ['Salt']
+    assert db.query(models.Product).filter_by(case_id=c.case_id).count() == 1
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == int(expected)
+
+
+@pytest.mark.parametrize('source_name,expected', [('Face Serum', 1), ('Body Serum', 0)])
+def test_p1_pending_rename_keeps_original_document_product(case, monkeypatch, round4_http, source_name, expected):
+    db, c = case
+    db.add(models.Product(case_id=c.case_id, name='Face Serum'))
+    db.commit()
+    reprocess(case, monkeypatch, f'Product name: {source_name}\nIngredients\nSalt 100%',
+              {'product_names': [source_name], 'material_names': ['Salt']}, apply=False)
+    client, headers = round4_http
+    response = client.post(f'/cases/{c.case_id}/pending-extractions/apply', headers=headers['operator'],
+                           json={'renames': {'Salt': 'Sea Salt'}, 'reason': '원문 이름 확인'})
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    assert names(db, c, models.Material) == ['Sea Salt']
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == expected
+
+
+def test_p1_new_product_does_not_link_preexisting_material(case):
+    db, c = case
+    db.add(models.Material(case_id=c.case_id, name='Water'))
+    db.commit()
+    applied = m._apply_agg_to_case(db, c, {'products': ['Face Serum'], 'materials': ['Water']})
+    db.flush()
+    assert applied['products'] == 1
+    assert applied['materials'] == 0
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == 0
+
+
+def test_p1_conflicting_upsert_does_not_count_existing_row_as_created(case, monkeypatch):
+    db, c = case
+    db.add(models.Product(case_id=c.case_id, name='Face Serum'))
+    db.commit()
+    upsert = m._upsert_material
+
+    def concurrent_insert(db, material):
+        upsert(db, material)
+        return upsert(db, material)
+
+    monkeypatch.setattr(m, '_upsert_material', concurrent_insert)
+    applied = m._apply_agg_to_case(db, c, {'materials': ['Water']})
+    db.flush()
+    assert names(db, c, models.Material) == ['Water']
+    assert applied['materials'] == 0
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == 0
+
+
+@pytest.mark.parametrize('route', ['aggregate', 'reprocess'])
+@pytest.mark.parametrize('repeat', ['1', ' ', ',', '%', '1 ', '1,', '1%', '1 % ', ', % '])
+def test_p1_200k_numeric_metadata_is_pending_within_three_seconds(case, monkeypatch, route, repeat):
+    db, c = case
+    prefix = 'Ingredients\nWater | '
+    text = prefix + (repeat * 200000)[:199999 - len(prefix)] + 'x'
+    assert len(text) == 200000
+    started = perf_counter()
+    applied = _round3_ingest(case, monkeypatch, route, text, ['Water'])
+    elapsed = perf_counter() - started
+    assert elapsed < 3.0, (route, repeat, elapsed)
+    assert applied['materials'] == 0
+    assert names(db, c, models.Material) == []
+    assert {item['value'] for item in m._pending_extractions(db, c.case_id)} == {'Water'}
+
+
+@pytest.mark.parametrize('metadata', ['100%', '90.5 %', '< 0.5%', '10 - 20 %',
+                                     '10–20%', '7732-18-5', 'CAS No: 7732-18-5', '95% w/w'])
+def test_p1_linear_numeric_metadata_preserves_valid_rows(metadata):
+    assert intake._autofill_material_row('Water | ' + metadata) == ['Water']
+
+
+def test_p1_row_and_cell_limits_apply_before_trimming_or_numeric_validation():
+    assert intake._autofill_material_row('Water 100%'.ljust(1000)) == ['Water']
+    assert intake._autofill_material_row('Water 100%'.ljust(1001)) == ['Water']
+    # 공백 포함 행의 안전 상한은 20,000자이고, 내부 항목·수치 셀은 각각 300자다.
+    assert intake._autofill_material_row('Water 100%'.ljust(20000)) == ['Water']
+    assert intake._autofill_material_row('Water 100%'.ljust(20001)) == []
+    assert intake._autofill_material_row('Water ' + '1' * 294) == ['Water']
+    assert intake._autofill_material_row('Water ' + '1' * 295) == []
+    assert intake._autofill_material_row('Water | ' + '1' * 300) == ['Water']
+    assert intake._autofill_material_row('Water | ' + '1' * 301) == []
+
+
+@pytest.mark.parametrize('route', ['aggregate', 'reprocess'])
+@pytest.mark.parametrize('tail', [
+    'For details of ingredients: ' + 'x' * 20100,
+    'Ingredients: ' + 'Water' + ' ' * 20000 + '100%',
+    'Water | ' + '1' * 199979 + 'x',
+], ids=['prose-label', 'oversized-section', 'numeric-row'])
+def test_p1_oversized_later_rows_preserve_previously_accepted_materials(case, monkeypatch, route, tail):
+    db, c = case
+    text = 'Ingredients\nWater 90%\nSalt 10%\n' + tail
+    applied = _round3_ingest(case, monkeypatch, route, text, ['Water', 'Salt'])
+    assert intake._material_scan_text(text, material_only=True) == 'Water\nSalt'
+    assert set(names(db, c, models.Material)) == {'Water', 'Salt'}
+    assert applied['materials'] == 2
+    assert m._pending_extractions(db, c.case_id) == []
+
+
+@pytest.mark.parametrize('suffix', ['Water 100%', 'x', '1,2-Hexanediol'])
+def test_p1_prose_ingredient_label_without_list_never_opens_section(suffix):
+    text = f'For details of ingredients: {suffix}\nWater 90%\nSalt 10%'
+    assert intake._material_scan_text(text, material_only=True) == ''
+
+
+def test_p1_material_budget_preserves_only_the_accepted_prefix():
+    text = 'Ingredients\n' + 'Water 90%\n' * 2000 + 'Salt 10%\nIngredients\nNiacinamide 100%'
+    assert intake._material_scan_text(text, material_only=True).splitlines() == ['Water'] * 2000
+
+
+def test_p1_inline_row_limit_counts_trailing_whitespace():
+    text = 'Ingredients: Water, Salt' + ' ' * 200000
+    assert intake._material_scan_text(text, material_only=True) == ''
+
+
+def test_p1_comma_list_checks_individual_cells_within_row_limit():
+    values = ['Water', 'Salt'] * 40
+    text = 'Ingredients\n' + ', '.join(values)
+    assert intake._material_scan_text(text, material_only=True).splitlines() == values
+
+
+def test_p1_each_material_uses_its_own_document_product(case):
+    db, c = case
+    product = models.Product(case_id=c.case_id, name='Face Serum')
+    db.add(product)
+    db.commit()
+    docs = [{'doc_type': 'coa_msds', 'filename': name + '.txt',
+             'text_full': f'Product name: {product_name}\nIngredients\n{name} 100%',
+             'fields': {'material_names': [name], 'product_names': [product_name]}}
+            for name, product_name in [('Water', 'Face Serum'), ('Salt', 'Body Serum')]]
+    applied = m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+    db.flush()
+    water = db.query(models.Material).filter_by(case_id=c.case_id, name='Water').one()
+    assert applied['materials'] == 2
+    assert {(row.product_id, row.material_id) for row in
+            db.query(models.ProductMaterial).filter_by(case_id=c.case_id)} == {
+                (product.product_id, water.material_id)}
+
+
+@pytest.mark.parametrize('same_case', [False, True])
+@pytest.mark.parametrize('source_name', [None, 'Face Serum'], ids=['missing-product', 'matching-product'])
+def test_p1_product_deletion_gate_uses_case_not_actor(case, same_case, source_name):
+    db, c = case
+    other = models.CaseApplication(org_id='org_demo', company_name='Other deletion case')
+    db.add_all([other, models.Product(case_id=c.case_id, name='Face Serum')])
+    db.flush()
+    owner = c if same_case else other
+    m._audit(db, {'uid': 'auto', 'role': 'system', 'org_id': 'org_demo'}, 'product.delete',
+             'product', 'old-product', owner.case_id, {}, commit=False)
+    db.commit()
+    applied = m._apply_agg_to_case(db, c, {'materials': ['Water']},
+        material_sources={'water': {source_name}} if source_name else None)
+    db.flush()
+    assert applied['materials'] == 1
+    expected_links = int(source_name is not None and not same_case)
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == expected_links
+
+
+@pytest.mark.parametrize('route', P1_ROUTES)
+@pytest.mark.parametrize('product_text,product_fields,expected', [
+    ('Product name: Body Serum\n', {}, 0),
+    ('제품명: Body Serum\n', {'product_names': []}, 0),
+    ('Nama produk: Body Serum\n', {'product_names': ['   ']}, 0),
+    ('', {}, 0),
+    ('Body Serum\n', {}, 0),
+    ('Product name:\n', {}, 0),
+    ('Product name: FACE-SERUM\n', {}, 1),
+    ('제품명: 얼굴 세럼\n', {}, 1),
+    ('Nama produk: Face Serum\n', {'product_names': []}, 1),
+    ('Product name (English): Face Serum\n', {}, 1),
+    ('Product name: Face Serum\nProduct name: Body Serum\n', {}, 0),
+    ('Product name: Face Serum\nProduct name:\n', {}, 0),
+    ('Product name: Face Serum\nReference: Body Serum\n', {'product_names': ['Body Serum']}, 0),
+])
+def test_r3_missing_product_extraction_requires_explicit_matching_label(
+        case, monkeypatch, round4_http, route, product_text, product_fields, expected):
+    db, c = case
+    product = models.Product(case_id=c.case_id, name='Face Serum')
+    db.add(product)
+    db.flush()
+    c.profile_ext = {'product_aliases': {product.product_id: ['얼굴 세럼']}}
+    db.commit()
+    _p1_ingest(case, monkeypatch, round4_http, route,
+               product_text + 'Ingredients\nSalt 100%',
+               {'material_names': ['Salt'], **product_fields})
+    assert names(db, c, models.Material) == ['Salt']
+    assert names(db, c, models.Product) == ['Face Serum']
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == expected
+
+
+@pytest.mark.parametrize('rename', [False, True])
+def test_r3_pending_uncertain_product_preserves_operating_zero_links(
+        case, monkeypatch, round4_http, rename):
+    db, c = case
+    db.add(models.Product(case_id=c.case_id, name='Face Serum'))
+    db.commit()
+    reprocess(case, monkeypatch, 'Ingredients\nSalt 100%', {'material_names': ['Salt']}, apply=False)
+    before = db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count()
+    assert before == 0
+    client, headers = round4_http
+    body = ({'renames': {'Salt': 'Sea Salt'}, 'reason': '원료명 확인'} if rename else {'values': ['Salt']})
+    response = client.post(f'/cases/{c.case_id}/pending-extractions/apply',
+                           headers=headers['operator'], json=body)
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    assert response.json()['applied']['materials'] == 1
+    assert names(db, c, models.Material) == ['Sea Salt' if rename else 'Salt']
+    # 운영 b9f4aa4와 같이, 원료 확인만으로 제품 귀속을 추측하여 연결하지 않는다.
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == before
+
+
+@pytest.mark.parametrize('unknown_text', ['', 'Product name: Body Serum\n'])
+@pytest.mark.parametrize('route', ['aggregate', 'apply'])
+@pytest.mark.parametrize('reverse', [False, True])
+def test_r3_shared_material_keeps_each_documents_uncertain_or_conflicting_product(
+        case, monkeypatch, round4_http, unknown_text, route, reverse):
+    db, c = case
+    db.add(models.Product(case_id=c.case_id, name='Face Serum'))
+    db.commit()
+    product_texts = ['Product name: Face Serum\n', unknown_text]
+    if reverse:
+        product_texts.reverse()
+    docs = [{'doc_type': 'coa_msds', 'filename': f'MSDS-{index}.txt',
+             'text_full': product_text + 'Ingredients\nSalt 100%', 'fields': {'material_names': ['Salt']}}
+            for index, product_text in enumerate(product_texts)]
+    if route == 'aggregate':
+        m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+    else:
+        for doc in docs:
+            reprocess(case, monkeypatch, doc['text_full'], doc['fields'], apply=False)
+        client, headers = round4_http
+        response = client.post(f'/cases/{c.case_id}/pending-extractions/apply',
+                               headers=headers['applicant'], json={'values': ['Salt']})
+        assert response.status_code == 200, response.text
+        db.expire_all()
+    db.flush()
+    assert names(db, c, models.Material) == ['Salt']
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == 0
+
+
+INCI_60 = NAMES + [
+    'Camellia Sinensis Leaf Extract', 'Centella Asiatica Extract', 'Chamomilla Recutita Flower Extract',
+    'Ceramide NP', 'Aloe Barbadensis Extract', 'Sodium Acetylated Hyaluronate',
+    'Glycyrrhiza Glabra Root Extract', 'Ceramide AP', 'Polygonum Cuspidatum Root Extract',
+    'Portulaca Oleracea Extract', 'Houttuynia Cordata Extract', 'Ceramide EOP',
+    'Lavandula Angustifolia Oil', 'Palmitoyl Tripeptide-1', 'Sodium Hyaluronate Crosspolymer',
+    'Acrylates/C10-30 Alkyl Acrylate', 'Saccharomyces Ferment Filtrate', 'Bifida Ferment Lysate',
+    'Galactomyces Ferment Filtrate', 'Hydrolyzed Hyaluronic Acid', 'Hydrolyzed Collagen',
+    'Cetearyl Ethylhexanoate', 'Caprylic/Capric Triglyceride', 'Polyglyceryl-10 Laurate',
+    'Polyglyceryl-10 Myristate', 'PEG-60 Hydrogenated Castor Oil', 'Acrylates Copolymer',
+    'Sodium Polyacrylate', 'Cyclomethicone', 'Chlorphenesin',
+]
+
+
+@pytest.mark.parametrize('route', P1_ROUTES[:-1])
+@pytest.mark.parametrize('salt_tail', [False, True])
+def test_r3_1182_character_inci_list_registers_twelve_and_preserves_salt(
+        case, monkeypatch, round4_http, route, salt_tail):
+    db, c = case
+    line = ', '.join(INCI_60)
+    assert len(INCI_60) == len(set(INCI_60)) == 60
+    assert len(line) == 1182
+    assert max(map(len, INCI_60)) <= 36
+    candidates = INCI_60 + (['Salt'] if salt_tail else [])
+    text = 'Ingredients\n' + line + ('\nSalt 10%' if salt_tail else '')
+    assert intake._material_scan_text(text, material_only=True).splitlines() == candidates
+    _p1_ingest(case, monkeypatch, round4_http, route, text, {'material_names': candidates})
+    registered = set(names(db, c, models.Material))
+    assert registered == {
+        'Water', 'Butylene Glycol', 'Niacinamide', 'Panthenol', 'Arginine', 'Citric Acid',
+        'Sodium Citrate', 'Glucose', 'Fructose', 'Sucrose', 'Sodium Lactate', 'Lactic Acid',
+    } | ({'Salt'} if salt_tail else set())
+    assert len(registered) == 12 + int(salt_tail)
+    pending = {item['value'] for item in m._pending_extractions(db, c.case_id)}
+    assert pending == set(INCI_60) - registered
+    assert len(pending) == 48
+
+
+@pytest.mark.parametrize('heading', ['Ingredients\n', 'Ingredients: '])
+@pytest.mark.parametrize('oversized', ['x' * 301, 'Water | ' + '1' * 301], ids=['name', 'metadata'])
+def test_r3_oversized_item_does_not_discard_other_comma_items_or_following_rows(heading, oversized):
+    text = heading + 'Niacinamide 1%, ' + oversized + ', Salt 10%\nWater 89%'
+    assert intake._material_scan_text(text, material_only=True).splitlines() == ['Niacinamide', 'Salt', 'Water']
+
+
+@pytest.mark.parametrize('route', ['aggregate', 'reprocess'])
+@pytest.mark.parametrize('oversized', [
+    'Niacinamide ' + 'x' * 20001, 'Ingredients: Niacinamide ' + 'x' * 20001,
+    'Niacinamide | ' + '1' * 301, 'Niacinamide ' + '1' * 301,
+    'Niacinamide ' + 'x' * 19980,
+], ids=['row', 'inline-row', 'metadata-cell', 'item', 'cell-near-section-limit'])
+def test_r3_oversized_row_or_cell_preserves_open_ingredient_section(case, monkeypatch, route, oversized):
+    db, c = case
+    text = 'Ingredients\nWater 90%\n' + oversized + '\nSalt 10%'
+    assert intake._material_scan_text(text, material_only=True) == 'Water\nSalt'
+    applied = _round3_ingest(case, monkeypatch, route, text, ['Water', 'Salt', 'Niacinamide'])
+    assert applied['materials'] == 2
+    assert set(names(db, c, models.Material)) == {'Water', 'Salt'}
+    assert {item['value'] for item in m._pending_extractions(db, c.case_id)} == {'Niacinamide'}
+
+
+@pytest.mark.parametrize('route', P1_ROUTES)
+@pytest.mark.parametrize('product_text', [
+    pytest.param('Product name: Body Serum\n', id='review-counterexample'),
+    pytest.param('제품명: Body Serum\n', id='korean-label'),
+    pytest.param('Nama produk: Body Serum\n', id='indonesian-label'),
+    pytest.param('Product name: Face Serum\nProduct name: Body Serum\n', id='second-label-conflicts'),
+    pytest.param('Product name: Body Serum\nProduct name: Face Serum\n', id='first-label-conflicts'),
+])
+def test_r4_explicit_product_label_conflict_blocks_ai_link_on_all_routes(
+        case, monkeypatch, round4_http, route, product_text):
+    db, c = case
+    db.add(models.Product(case_id=c.case_id, name='Face Serum'))
+    db.commit()
+    text = product_text + 'Reference: Face Serum\nIngredients\nSalt 100%'
+    _p1_ingest(case, monkeypatch, round4_http, route, text,
+               {'material_names': ['Salt'], 'product_names': ['Face Serum']})
+    assert names(db, c, models.Material) == ['Salt']
+    assert names(db, c, models.Product) == ['Face Serum']
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == 0
+
+
+@pytest.mark.parametrize('route', P1_ROUTES)
+@pytest.mark.parametrize('product_text,product_fields,expected', [
+    pytest.param('Product name: Face Serum\nReference: Body Serum\n',
+                 {'product_names': ['Face Serum']}, 1, id='reference-is-not-product-label'),
+    pytest.param('Product name: Face Serum\nProduct name: FACE-SERUM\n',
+                 {'product_names': ['Face Serum']}, 1, id='matching-labels'),
+    pytest.param('Product name: Face Serum\n제품명: 얼굴 세럼\n',
+                 {'product_names': ['Face Serum']}, 1, id='matching-alias-labels'),
+    pytest.param('Product name: Face Serum\nProduct name:\n',
+                 {'product_names': ['Face Serum']}, 0, id='empty-second-label'),
+    pytest.param('Reference: Face Serum\n',
+                 {'product_names': ['Face Serum']}, 1, id='no-label-ai-match'),
+    pytest.param('Reference: Body Serum\n',
+                 {'product_names': ['Body Serum']}, 0, id='no-label-ai-conflict'),
+    pytest.param('Reference: Face Serum\n', {}, 0, id='no-label-no-ai-product'),
+])
+def test_r4_matching_product_labels_and_unlabelled_documents_keep_existing_behavior(
+        case, monkeypatch, round4_http, route, product_text, product_fields, expected):
+    db, c = case
+    product = models.Product(case_id=c.case_id, name='Face Serum')
+    db.add(product)
+    db.flush()
+    c.profile_ext = {'product_aliases': {product.product_id: ['얼굴 세럼']}}
+    db.commit()
+    _p1_ingest(case, monkeypatch, round4_http, route,
+               product_text + 'Ingredients\nSalt 100%',
+               {'material_names': ['Salt'], **product_fields})
+    assert names(db, c, models.Material) == ['Salt']
+    assert names(db, c, models.Product) == ['Face Serum']
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == expected
+
+
+@pytest.mark.parametrize('route', P1_ROUTES[:-1])
+@pytest.mark.parametrize('label', ['Cleaning instructions:', 'Instructions:', '사용법:', 'Cara pakai:'])
+def test_r4_long_instructions_close_ingredient_section_on_all_automatic_routes(
+        case, monkeypatch, round4_http, route, label):
+    db, c = case
+    product = models.Product(case_id=c.case_id, name='Face Serum')
+    db.add(product)
+    db.commit()
+    instructions = label + ' ' + 'Use potable water for rinsing the equipment after every production batch. ' * 5
+    assert len(instructions) > 300
+    if label == 'Cleaning instructions:':
+        assert len(instructions) == 393
+    text = f'Product name: Face Serum\nIngredients\nSalt 100%\n{instructions}\nWater | 100%'
+    _p1_ingest(case, monkeypatch, round4_http, route, text,
+               {'material_names': ['Salt', 'Water'], 'product_names': ['Face Serum']})
+    assert names(db, c, models.Material) == ['Salt']
+    salt = db.query(models.Material).filter_by(case_id=c.case_id, name='Salt').one()
+    assert {(row.product_id, row.material_id) for row in
+            db.query(models.ProductMaterial).filter_by(case_id=c.case_id)} == {
+                (product.product_id, salt.material_id)}
+    assert {item['value'] for item in m._pending_extractions(db, c.case_id)
+            if item['kind'] == 'material_names'} == {'Water'}
+
+
+@pytest.mark.parametrize('size', [20, 400, 21000])
+@pytest.mark.parametrize('boundary', [
+    'Cleaning instructions: {body}', 'Instructions: {body}', '사용법: {body}',
+    'Cara pakai: {body}', 'Directions: {body}', '비고: {body}', 'Catatan: {body}',
+    'Use {body} for rinsing', '{body}.',
+])
+def test_r4_nonmaterial_labels_and_prose_close_section_regardless_of_length(size, boundary):
+    line = boundary.format(body='x' * size)
+    text = f'Ingredients\nSalt 100%\n{line}\nWater | 100%'
+    assert intake._material_scan_text(text, material_only=True) == 'Salt'
+    assert intake._autofill_material_row_evidence(line) == ([], False)
+
+
+@pytest.mark.parametrize('heading', ['Ingredients\n', 'Ingredients: '])
+@pytest.mark.parametrize('compound', ['D-Panthenol', 'L-Arginine'])
+def test_r4_compound_initials_in_ingredient_lists_are_not_section_numbers(heading, compound):
+    text = heading + f'Water, {compound}\nSalt 10%'
+    assert intake._material_scan_text(text, material_only=True).splitlines() == ['Water', compound, 'Salt']
