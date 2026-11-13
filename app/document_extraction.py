@@ -7,13 +7,73 @@ import hashlib
 import hmac
 import json
 import time
+import threading
 from contextvars import ContextVar
 from functools import wraps
+from concurrent.futures import CancelledError
+from contextlib import contextmanager
 
 DOCUMENT_AI_MAX_CALLS = max(2, int(os.getenv("GLHAC_DOCUMENT_AI_MAX_CALLS", "8")))
 PUBLIC_AI_MAX_CALLS = max(1, min(DOCUMENT_AI_MAX_CALLS - 1,
                                int(os.getenv("GLHAC_PUBLIC_AI_MAX_CALLS", "2"))))
 _ACTIVE_BUDGET = ContextVar("document_ai_budget", default=None)
+_ACTIVE_STOPPED = ContextVar("document_stopped", default=None)
+_AI_SLOT_HELD = ContextVar("document_ai_slot_held", default=False)
+
+
+def _ai_concurrency():
+    try:
+        value = int(os.getenv("GLHAC_AI_CONCURRENCY", "3"))
+        return value if value > 0 else 3
+    except ValueError:
+        return 3
+
+
+# 프로세스 시작 때 한 번 만든다. 요청마다 생성하면 서버 전체 상한이 되지 않는다.
+AI_CONCURRENCY = _ai_concurrency()
+_AI_SLOTS = threading.BoundedSemaphore(AI_CONCURRENCY)
+
+
+def check_document_stopped():
+    stopped = _ACTIVE_STOPPED.get()
+    if stopped is not None and stopped.is_set():
+        raise CancelledError()
+
+
+@contextmanager
+def document_lock(lock, *, check=None):
+    """취소된 문서는 다른 문서의 긴 OCR 락 대기에서도 빠져나온다."""
+    while True:
+        check_document_stopped()
+        if check is not None:
+            check()
+        if lock.acquire(timeout=0.1):
+            break
+    try:
+        check_document_stopped()
+        if check is not None:
+            check()
+        yield
+    finally:
+        lock.release()
+
+
+def ai_concurrency(fn):
+    """문서 AI 작업과 단일 업로드/검증의 직접 LLM 호출이 같은 상한을 공유한다."""
+    @wraps(fn)
+    def limited(*args, **kwargs):
+        if _AI_SLOT_HELD.get():
+            check_document_stopped()
+            return fn(*args, **kwargs)
+        with document_lock(_AI_SLOTS):
+            token = _AI_SLOT_HELD.set(True)
+            try:
+                result = fn(*args, **kwargs)
+                check_document_stopped()
+                return result
+            finally:
+                _AI_SLOT_HELD.reset(token)
+    return limited
 
 
 class DocumentBudget:
@@ -29,6 +89,7 @@ class DocumentBudget:
         return max(0, self.limit - self.used)
 
     def take(self):
+        check_document_stopped()
         if not self.remaining:
             self.partial = True
             return False

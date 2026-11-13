@@ -715,7 +715,7 @@ def _valid_upload_structure(raw, kind):
     try:
         if kind == "pdf":
             import fitz
-            with fitz.open(stream=raw, filetype="pdf") as document:
+            with intake.pdf_access(), fitz.open(stream=raw, filetype="pdf") as document:
                 return document.page_count > 0
         if kind in {"png", "jpg", "gif", "webp"}:
             with Image.open(io.BytesIO(raw)) as picture:
@@ -783,10 +783,10 @@ def _validate_upload(file_b64, filename, max_bytes=_UPLOAD_MAX_BYTES):
     return b64
 
 
-def _validate_archive_upload(raw):
+def _validate_archive_upload(raw, **options):
     # 스트림/저장 전에 전체 검사. 같은 해제 결과를 처리 단계에 넘겨 이중 해제를 막는다.
     try:
-        return intake.extract_zip(raw, validator=_validate_upload_type)
+        return intake.extract_zip(raw, validator=_validate_upload_type, **options)
     except intake.ArchiveContentMismatch as exc:
         raise HTTPException(415, {"code": "CONTENT_MISMATCH", "message": str(exc)}) from exc
 
@@ -9357,6 +9357,7 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
                   user=Depends(auth.require_roles("applicant", "consultant")),
                   db: Session = Depends(get_db)):
     """압축파일 업로드 → 파일 전수 파싱 → AI 분류 → 필수서류 라우팅 (Document Intake AI)."""
+    deadline = intake.archive_deadline()
     c = _get_case(db, case_id, user)
     # ZIP 크기 검증 — 업로드 상한과 동일하게 적용
     b64_str = body.zip_b64.split(",")[-1]
@@ -9367,8 +9368,8 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     # ZIP 파일 검증
     from .intake import intake_zip, ArchiveError
     try:
-        files = _validate_archive_upload(raw)
-        res = intake_zip(raw, files=files)
+        files = _validate_archive_upload(raw, deadline=deadline)
+        res = intake_zip(raw, files=files, deadline=deadline)
     except ArchiveError as e:
         raise HTTPException(400, {"code": "BAD_ARCHIVE",
                                   "message": str(e)})
@@ -9385,11 +9386,13 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
 _INTAKE_HEARTBEAT_SECONDS = 10
 
 
-def _intake_zip_events(raw, files):
-    """한 파일의 OCR이 길어져도 SSE 연결을 유지한다. 파싱 스레드는 DB를 만지지 않는다."""
+def _intake_zip_events(raw, files=None, stopped=None, *, deadline=None):
+    """목록 검사/압축 해제부터 heartbeat·취소·전체 기한을 감시한다. DB는 소비자만 접근."""
     import queue
     import threading
-    events, stopped = queue.Queue(maxsize=1), threading.Event()
+    events = queue.Queue(maxsize=1)
+    stopped = stopped if stopped is not None else threading.Event()
+    deadline = intake.archive_deadline() if deadline is None else deadline
 
     def put(event):
         while not stopped.is_set():
@@ -9401,31 +9404,45 @@ def _intake_zip_events(raw, files):
         return False
 
     def parse():
+        parser = None
         try:
-            for event in intake.intake_zip_iter(raw, files=files):
+            validated = (_validate_archive_upload(raw, stopped=stopped, deadline=deadline)
+                         if files is None else files)
+            parser = intake.intake_zip_iter(raw, files=validated, stopped=stopped, deadline=deadline)
+            for event in parser:
                 if not put(event):
                     break
         except Exception as exc:  # 오류도 소비자에게 전달하여 완료로 표시하지 않는다.
             put(exc)
         finally:
+            if parser is not None:
+                parser.close()
             put(None)
 
     threading.Thread(target=parse, name="intake-parse", daemon=True).start()
+    last_event = time.monotonic()
+    completed = False
     try:
-        while True:
+        while not stopped.is_set():
+            intake.check_archive_work(stopped, deadline)
             try:
-                event = events.get(timeout=_INTAKE_HEARTBEAT_SECONDS)
+                event = events.get(timeout=min(0.1, _INTAKE_HEARTBEAT_SECONDS))
             except queue.Empty:
-                yield "heartbeat", {}
+                if time.monotonic() - last_event >= _INTAKE_HEARTBEAT_SECONDS:
+                    last_event = time.monotonic()
+                    yield "heartbeat", {}
                 continue
             if event is None:
+                completed = True
                 return
             if isinstance(event, Exception):
                 raise event
+            last_event = time.monotonic()
             yield event
     finally:
-        # 연결 종료 후 현재 OCR이 끝나면 다음 문서를 처리하지 않는다.
-        stopped.set()
+        # 대기 future 취소 + 실행 중 파싱의 다음 단계 진입 차단.
+        if not completed:
+            stopped.set()
 
 
 @app.post("/cases/{case_id}/intake-zip-stream")
@@ -9435,6 +9452,22 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
     """스트리밍 인테이크 — 파일별 진행률(NDJSON) + 마지막에 자동채움/임시저장 결과."""
     import json as _json
     from fastapi.responses import StreamingResponse
+    deadline = intake.archive_deadline()
+    stopped = threading.Event()
+
+    class IntakeResponse(StreamingResponse):
+        async def listen_for_disconnect(self, receive):
+            try:
+                await super().listen_for_disconnect(receive)
+            finally:
+                stopped.set()
+
+        async def __call__(self, scope, receive, send):
+            try:
+                await super().__call__(scope, receive, send)
+            finally:
+                # ASGI 2.4의 send 실패 및 서버 취소에서도 반드시 전파한다.
+                stopped.set()
     c = _get_case(db, case_id, user)
     _b64 = body.zip_b64.split(",")[-1]
     if len(_b64) > _UPLOAD_MAX_BYTES * 4 // 3 + 4:   # base64 는 원본보다 ~33% 크다
@@ -9449,7 +9482,11 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
                                   "message": "압축 파일이 아닙니다 (ZIP·RAR·7z 만 지원합니다)"})
     files, archive_error = None, None
     try:
-        files = _validate_archive_upload(raw)
+        # 순수 ZIP의 기존 415 응답 계약은 유지한다. RAR/7z가 나오면 여기서는
+        # libarchive/7-Zip을 실행하지 않고 생성기의 감시 스레드로 전체 해제를 넘긴다.
+        files = _validate_archive_upload(raw, deadline=deadline, defer_native=True)
+    except intake.DeferredArchiveExtraction:
+        pass
     except ArchiveError as exc:
         # 압축 자체 오류는 아래 생성기의 기존 error 이벤트 계약을 유지한다.
         # 파일 시그니처 오류(HTTPException)는 여기서 415로 반환한다.
@@ -9473,13 +9510,19 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
             return
         res = None
         try:
-            for kind, payload in _intake_zip_events(raw, files):
+            for kind, payload in _intake_zip_events(raw, files, stopped, deadline=deadline):
                 if kind in ("start", "progress", "heartbeat"):
                     yield ev({"type": kind, **payload})
                 elif kind == "result":
                     res = payload
         except ArchiveError as e:
             yield ev({"type": "error", "message": str(e)})
+            return
+        except HTTPException as e:
+            yield ev({"type": "error", "status": e.status_code,
+                      "message": "압축 내부 파일 형식이 올바르지 않습니다", "detail": e.detail})
+            return
+        if stopped.is_set():
             return
         if res is None:
             yield ev({"type": "error", "message": "인테이크 결과가 없습니다"})
@@ -9493,7 +9536,7 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
             verify_enqueue(document_id)
         yield ev(_document_visible_fields({"type": "result", **res}, user["role"]))
 
-    return StreamingResponse(gen(), media_type="text/event-stream",
+    return IntakeResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no"})
 
@@ -13233,7 +13276,9 @@ def _doc_image_bytes(d):
     if (d.content_type or "") == "application/pdf" or (d.filename or "").lower().endswith(".pdf"):
         try:
             import fitz
-            return fitz.open(stream=raw, filetype="pdf")[0].get_pixmap(dpi=150).tobytes("png")
+            with intake.pdf_access(), fitz.open(stream=raw, filetype="pdf") as pdf:
+                dpi = intake.pdf_render_dpi(pdf[0], 150)
+                return pdf[0].get_pixmap(dpi=dpi).tobytes("png") if dpi is not None else None
         except Exception:  # noqa: BLE001
             return None
     return None

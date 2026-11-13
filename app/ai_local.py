@@ -4,12 +4,27 @@ import os
 import sys
 import json
 import httpx
+import threading
+from functools import wraps
+from concurrent.futures import CancelledError
+from .document_extraction import document_lock, ai_concurrency, check_document_stopped
 
 OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # gemma3:12b — 한국어 성분명 garble 내성 우수(추출 정확도), 다국어 140+ (vs qwen2.5:7b 비교 결과)
 MODEL = os.environ.get("GLHAC_LLM", "gemma3:12b")
 _ocr = None
 _ocr_lang = None   # 현재 _ocr 엔진의 언어 — 언어가 바뀌면 엔진을 교체한다(메모리는 1개만 유지)
+_ocr_lock = threading.Lock()
+
+
+def _serialized_ocr(fn):
+    @wraps(fn)
+    def locked(*args, **kwargs):
+        from .intake import _check_archive_work
+        # 생성·언어 교체·predict의 지연 결과 순회까지 같은 락으로 보호한다.
+        with document_lock(_ocr_lock, check=_check_archive_work):
+            return fn(*args, **kwargs)
+    return locked
 
 # 홍익AI/CHU-1 장기기억(장기 컨텍스트) — RAG 연동. 장애 시 로컬 폴백(차단 없음).
 CHU1_URL = os.environ.get("CHU1_URL", "http://localhost:7600")
@@ -168,6 +183,7 @@ def ocr_available():
     return bool(ocr_status()["ready"])
 
 
+@ai_concurrency
 def llm_json(system, user, timeout=90):
     """구조화 출력(JSON) — 설계 C.4 계약. 실패 시 {'error':...}.
 
@@ -189,6 +205,7 @@ def llm_json(system, user, timeout=90):
         return {"error": str(e)}
 
 
+@ai_concurrency
 def llm_text_result(system, user, timeout=120, model=None):
     """평문(prose) 응답 — {'text': str, 'error': str|None}.
 
@@ -222,10 +239,72 @@ def llm_text(system, user, timeout=120, model=None):
     return llm_text_result(system, user, timeout, model)["text"]
 
 
+def _pdf_ocr(path, recognize, *, multi=False):
+    """경로 기반 OCR(조직도/라벨)도 PDF 원본을 Paddle에 넘기지 않고 상한 내 PNG만 보낸다."""
+    try:
+        with open(path, "rb") as source:
+            if source.read(5) != b"%PDF-":
+                return None
+    except (OSError, TypeError):
+        return None
+    import tempfile
+    from . import intake
+
+    lines, texts, langs, fields = [], [], [], {}
+    error, any_ok = None, False
+    try:
+        with intake.pdf_document(path) as pdf:
+            with intake.pdf_access():
+                encrypted, repaired, page_count = pdf.needs_pass, pdf.is_repaired, len(pdf)
+            if encrypted:
+                return {"ok": False, "error": "ENCRYPTED"}
+            if repaired:
+                error = "CORRUPT"
+            for index in range(page_count):
+                check_document_stopped()
+                intake._check_archive_work()
+                if index >= intake.PDF_MAX_PAGES:
+                    error = error or "PAGES_LIMIT"
+                    break
+                with intake.pdf_access():
+                    page = pdf[index]
+                    dpi = intake.pdf_render_dpi(page, intake._OCR_DPI)
+                    png = page.get_pixmap(dpi=dpi).tobytes("png") if dpi is not None else None
+                intake.record_pdf_render_limit(fields, index + 1, intake._OCR_DPI, dpi)
+                if dpi is None:
+                    error = "PIXEL_LIMIT"
+                    continue
+                with tempfile.NamedTemporaryFile(suffix=".png") as image:
+                    image.write(png)
+                    del png
+                    image.flush()
+                    value = recognize(image.name)
+                any_ok = any_ok or bool(value.get("ok"))
+                if not value.get("ok"):
+                    error = error or value.get("error") or "ERROR"
+                lines.extend(value.get("lines") or [])
+                # 다국어 조직도 OCR의 중복 제거 계약도 유지한다.
+                texts.extend(t for t in (value.get("text") or "").splitlines() if t not in texts)
+                langs.extend(lang for lang in value.get("langs_used", []) if lang not in langs)
+    except Exception as exc:
+        if isinstance(exc, (CancelledError, intake.ArchiveError)):
+            raise
+        error = "CORRUPT"
+    output = ({"text": "\n".join(texts), "langs_used": langs} if multi else {"lines": lines})
+    output["ok"] = any_ok and not error
+    if error:
+        output["error"] = error
+    output.update(fields)
+    return output
+
+
 def ocr_image(path, lang="korean"):
     """PaddleOCR 추출. 기본은 워커 프로세스에서 돈다(웹이 모델을 이고 있지 않게).
 
     인테이크(서류 접수)가 이 함수를 쓴다 — 여기가 워커를 안 타면 분리한 의미가 없다."""
+    pdf = _pdf_ocr(path, lambda image: ocr_image(image, lang))
+    if pdf is not None:
+        return pdf
     if OCR_MODE == "inproc":
         return _ocr_image_inproc(path, lang)
     r = _worker_call({"op": "ocr_lines", "path": path, "lang": lang})
@@ -252,6 +331,7 @@ def _ocr_kwargs(lang):
                 enable_mkldnn=_OCR_MKLDNN)
 
 
+@_serialized_ocr
 def _ocr_image_inproc(path, lang="korean"):
     """워커 안에서 실제로 도는 본체(그리고 GLHAC_OCR_MODE=inproc 경로)."""
     global _ocr, _ocr_lang
@@ -297,6 +377,7 @@ def _ocr_image_inproc(path, lang="korean"):
 _ocr_engines = {}
 
 
+@_serialized_ocr
 def ocr_image_lang(path, lang):
     """언어별 엔진 캐시로 OCR(전역 _ocr 미오염). 미설치/실패 시 graceful.
     워커 프로세스 안에서 호출된다 — 여기서 다시 워커를 부르면 무한 재귀다."""
@@ -333,14 +414,10 @@ OCR_IDLE_SEC = float(os.environ.get("GLHAC_OCR_IDLE_SEC", "180"))
 OCR_TIMEOUT = float(os.environ.get("GLHAC_OCR_TIMEOUT", "180"))
 
 _w = {"proc": None, "last": 0.0, "reaper": None}
-_w_lock = None
+_w_lock = threading.Lock()
 
 
 def _wlock():
-    global _w_lock
-    if _w_lock is None:
-        import threading
-        _w_lock = threading.Lock()
     return _w_lock
 
 
@@ -376,19 +453,36 @@ def _worker_start():
         _w["reaper"].start()
 
 
-def _worker_stop():
+def _worker_stop(*, force=False):
+    import subprocess
     p = _w["proc"]
     _w["proc"] = None
-    if p is None or p.poll() is not None:
+    if p is None:
         return
     try:
-        p.stdin.close()
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        p.wait(timeout=5)
-    except Exception:  # noqa: BLE001
-        p.kill()
+        # 취소/기한 초과 시 진행 중인 OCR과 늦은 응답을 함께 폐기한다.
+        if force and p.poll() is None:
+            try:
+                p.kill()
+            except ProcessLookupError:
+                pass
+        if p.stdin:
+            try:
+                p.stdin.close()
+            except OSError:
+                pass
+        try:
+            p.wait(timeout=0.2 if force else 5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+    finally:
+        for pipe in (p.stdin, p.stdout):
+            if pipe:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
 
 
 def ocr_worker_status():
@@ -404,26 +498,41 @@ def _worker_call(req):
     import json as _j
     import time as _t
     import select
-    with _wlock():
+    from .intake import ArchiveError, _check_archive_work
+    with document_lock(_wlock(), check=_check_archive_work):
         if not _worker_alive():
             _worker_start()
         p = _w["proc"]
         try:
+            check_document_stopped()
+            _check_archive_work()
             p.stdin.write(_j.dumps(req, ensure_ascii=False) + "\n")
             p.stdin.flush()
-            # select를 사용해 타임아웃 구현 — 응답 없으면 OCR_TIMEOUT 초 후 실패
-            readable, _, _ = select.select([p.stdout], [], [], OCR_TIMEOUT)
-            if not readable:
-                # 타임아웃 발생 — 워커 프로세스 강제 종료
-                _worker_stop()
-                return {"ok": False, "error": "WORKER_TIMEOUT"}
-            line = p.stdout.readline()
-            if not line:
-                raise RuntimeError("worker closed")
+            deadline = _t.monotonic() + OCR_TIMEOUT
+            line = bytearray()
+            while b"\n" not in line:
+                check_document_stopped()
+                _check_archive_work()
+                remaining = deadline - _t.monotonic()
+                if remaining <= 0:
+                    _worker_stop(force=True)
+                    return {"ok": False, "error": "WORKER_TIMEOUT"}
+                if not select.select([p.stdout], [], [], min(0.2, remaining))[0]:
+                    continue
+                # readline()은 일부 JSON만 온 경우 개행까지 다시 무기한 막힐 수 있다.
+                chunk = os.read(p.stdout.fileno(), 65536)
+                if not chunk:
+                    raise RuntimeError("worker closed")
+                line.extend(chunk)
+            check_document_stopped()
+            _check_archive_work()
             _w["last"] = _t.time()
-            return _j.loads(line)
+            return _j.loads(line.partition(b"\n")[0])
+        except (CancelledError, ArchiveError):
+            _worker_stop(force=True)
+            raise
         except Exception as e:  # noqa: BLE001
-            _worker_stop()
+            _worker_stop(force=True)
             return {"ok": False, "error": "WORKER_FAILED: %s" % type(e).__name__}
 
 
@@ -449,6 +558,9 @@ def ocr_text_multi(path, langs):
     웹 프로세스가 모델을 이고 있지 않게 하려는 것이다(실측 2.4~7.8GB).
     워커가 죽거나 못 뜨면 in-process 로 떨어진다 — 서류 접수가 멈추는 것보다 낫다.
     단, 타임아웃 실패는 폴백하지 않음 — OOM 위험."""
+    pdf = _pdf_ocr(path, lambda image: ocr_text_multi(image, langs), multi=True)
+    if pdf is not None:
+        return pdf
     if OCR_MODE == "inproc":
         return _ocr_text_multi_inproc(path, langs)
     r = _worker_call({"op": "ocr", "path": path, "langs": list(langs or [])})

@@ -8,19 +8,34 @@ import logging
 import math
 import zipfile
 import zlib
+import threading
+import time
+import queue
+from concurrent.futures import CancelledError, ThreadPoolExecutor, TimeoutError as FutureTimeout
+from contextvars import ContextVar
+from contextlib import contextmanager
 from xml.etree.ElementTree import ParseError
 from . import ai_local
 from .document_extraction import (company_key, document_chunks, input_limit,
                                   issuer_phone, normalized_text, suspect_value,
-                                  DocumentBudget, current_budget)
+                                  DocumentBudget, current_budget, document_budget,
+                                  document_lock, ai_concurrency, AI_CONCURRENCY,
+                                  _ACTIVE_STOPPED as _INTAKE_STOPPED,
+                                  check_document_stopped as _check_intake_stopped)
 
 log = logging.getLogger(__name__)
+
+# 업로드 검증/단일 업로드/재처리도 같은 PDF 락을 사용한다.
+PDF_LOCK = threading.RLock()
+_ARCHIVE_CONTROL = ContextVar("archive_control", default=(None, None))
 
 # ZIP 추출 상한 — 압축폭탄 방어
 # 업로드 1건 상한 20MB (SRS NFR-05) — main.py 의 _UPLOAD_MAX_BYTES 와 원본 보관(content_b64) 상한이 같은 상수를 쓴다.
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 PDF_MAX_PAGES = 40          # PDF OCR/LLM 최대 처리 쪽수(native text 사전 스캔은 전체)
 PDF_MAX_TEXT_CHARS = 200000  # PDF 추출 텍스트 상한(20만 자)
+PDF_MAX_RENDER_PIXELS = 100_000_000
+PDF_MIN_OCR_DPI = 50
 OFFICE_MAX_TEXT_CHARS = PDF_MAX_TEXT_CHARS
 ZIP_MAX_ENTRIES = 200   # 압축 묶음 1건에서 처리할 최대 파일 수
 ARCHIVE_MAX_DEPTH = 2   # 바깥 압축 + 내부 압축 한 단계
@@ -293,6 +308,35 @@ class ArchiveContentMismatch(ArchiveError):
     """중첩 압축의 확장자와 시그니처가 다름(415로 반환)."""
 
 
+class _NativeArchiveError(ArchiveError):
+    """libarchive 부재/형식/읽기 실패만 폴백한다. 안전 가드 거부는 해당하지 않는다."""
+
+
+class DeferredArchiveExtraction(Exception):
+    """RAR/7z(중첩 포함)는 스트림 시작 후 검사/해제한다."""
+
+
+def archive_deadline():
+    try:
+        seconds = float(os.getenv("GLHAC_ARCHIVE_DEADLINE", "300"))
+        if not math.isfinite(seconds) or seconds <= 0:
+            seconds = 300
+    except ValueError:
+        seconds = 300
+    return time.monotonic() + seconds
+
+
+def check_archive_work(stopped=None, deadline=None):
+    if stopped is not None and stopped.is_set():
+        raise CancelledError()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise ArchiveError("압축 요청 전체 처리 시간이 초과되었습니다")
+
+
+def _check_archive_work():
+    check_archive_work(*_ARCHIVE_CONTROL.get())
+
+
 def _check_zip_limits(infos, max_entries=None):
     """중앙 디렉터리만 읽어 검사한다. Office도 XML을 해제하기 전에 같은 상한을 쓴다."""
     if max_entries is not None and len(infos) > max_entries:
@@ -343,13 +387,16 @@ def _native_archive_entries(data):
     import stat
     library = ct.util.find_library("archive")
     if not library:
-        raise ArchiveError("RAR·7z 해제 라이브러리(libarchive)가 없습니다")
+        raise _NativeArchiveError("RAR·7z 해제 라이브러리(libarchive)가 없습니다")
     try:
         lib = ct.CDLL(library)
     except OSError as exc:
-        raise ArchiveError("RAR·7z 해제 라이브러리를 열 수 없습니다") from exc
+        raise _NativeArchiveError("RAR·7z 해제 라이브러리를 열 수 없습니다") from exc
     def bind(name, result, *args):
-        fn = getattr(lib, name)
+        try:
+            fn = getattr(lib, name)
+        except AttributeError as exc:
+            raise _NativeArchiveError("RAR·7z 해제 라이브러리를 열 수 없습니다") from exc
         fn.restype, fn.argtypes = result, list(args)
         return fn
     ptr = ct.c_void_p
@@ -367,14 +414,15 @@ def _native_archive_entries(data):
     archive, source = new(), ct.create_string_buffer(data)
     try:
         if not archive or filters(archive) < 0 or formats(archive) < 0 or opening(archive, source, len(data)) < 0:
-            raise ArchiveError("압축을 열 수 없습니다")
+            raise _NativeArchiveError("압축을 열 수 없습니다")
         entry = ptr()
         while True:
+            _check_archive_work()
             status = header(archive, ct.byref(entry))
             if status == 1:  # ARCHIVE_EOF
                 break
             if status < 0:
-                raise ArchiveError("압축 헤더가 손상되었습니다")
+                raise _NativeArchiveError("압축 헤더가 손상되었습니다")
             name = _decode_text(path(entry) or b"")
             kind = mode(entry)
             if kind not in (stat.S_IFREG, stat.S_IFDIR) or link(entry):
@@ -382,10 +430,11 @@ def _native_archive_entries(data):
             def content(expected):
                 chunks, count = [], 0
                 while True:
+                    _check_archive_work()
                     buf = ct.create_string_buffer(min(65536, max(1, expected - count + 1)))
                     n = read(archive, buf, len(buf))
                     if n < 0:
-                        raise ArchiveError("압축 내용을 읽을 수 없습니다: " + name)
+                        raise _NativeArchiveError("압축 내용을 읽을 수 없습니다: " + name)
                     if n == 0:
                         break
                     count += n
@@ -399,6 +448,148 @@ def _native_archive_entries(data):
     finally:
         if archive:
             free(archive)
+
+
+_SEVEN_ZIP_TIMEOUT = 30
+_SEVEN_ZIP_LIST_LIMIT = 4 * 1024 * 1024
+
+
+def _seven_zip_binary():
+    import shutil
+    configured = os.getenv("GLHAC_7Z_BIN", "").strip()
+    return (shutil.which(configured) if configured else
+            shutil.which("7zz") or shutil.which("7z"))
+
+
+def _seven_zip_run(args, limit):
+    """stdout을 상한까지만 읽는다. communicate(capture_output)는 폭탄을 전량 적재한다."""
+    import select
+    import subprocess
+    import time
+    _check_archive_work()
+    try:
+        proc = subprocess.Popen(args, shell=False, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        raise ArchiveError("7-Zip을 실행할 수 없습니다") from exc
+    call_deadline = time.monotonic() + _SEVEN_ZIP_TIMEOUT
+    chunks, count = [], 0
+    try:
+        while True:
+            _check_archive_work()
+            remaining = call_deadline - time.monotonic()
+            if remaining <= 0:
+                raise ArchiveError("7-Zip 압축 처리 시간이 초과되었습니다")
+            if not select.select([proc.stdout], [], [], min(remaining, 0.1))[0]:
+                continue
+            chunk = os.read(proc.stdout.fileno(), min(65536, limit - count + 1))
+            if not chunk:
+                break
+            count += len(chunk)
+            if count > limit:
+                raise ArchiveError("7-Zip 출력이 선언된 크기/상한을 초과했습니다")
+            chunks.append(chunk)
+        # stdout을 닫은 뒤 계속 실행하는 자식도 취소/전체 기한을 감시한다.
+        while proc.poll() is None:
+            _check_archive_work()
+            remaining = call_deadline - time.monotonic()
+            if remaining <= 0:
+                raise ArchiveError("7-Zip 압축 처리 시간이 초과되었습니다")
+            try:
+                proc.wait(timeout=min(remaining, 0.1))
+            except subprocess.TimeoutExpired:
+                continue
+        _check_archive_work()
+        code = proc.returncode
+        if code != 0:
+            raise ArchiveError("7-Zip으로 압축을 읽을 수 없습니다 (손상/암호/미지원)")
+        return b"".join(chunks)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait()
+        proc.stdout.close()
+
+
+def _seven_zip_listing(raw):
+    """-slt 헤더와 항목을 분리한다. 모호한/중복 메타데이터는 해제 전에 거부한다."""
+    try:
+        text = raw.decode("utf-8", "strict").replace("\r\n", "\n")
+    except UnicodeError as exc:
+        raise ArchiveError("7-Zip 목록을 읽을 수 없습니다") from exc
+    _, separator, body = text.partition("\n----------\n")
+    if not separator:
+        raise ArchiveError("7-Zip 목록 형식이 올바르지 않습니다")
+    records, record = [], {}
+    for line in body.split("\n") + [""]:
+        if not line:
+            if record:
+                records.append(record)
+                record = {}
+            continue
+        key, delimiter, value = line.partition(" = ")
+        if not delimiter or key in record:
+            raise ArchiveError("7-Zip 목록 항목이 모호합니다")
+        record[key] = value
+    entries, names = [], set()
+    for record in records:
+        name = record.get("Path", "")
+        normalized = _archive_path(name)
+        if (not normalized or normalized in names or any(c in name for c in "\r\n:")
+                or name.startswith("@")):
+            raise ArchiveError("안전하지 않거나 중복된 압축 경로: " + name)
+        names.add(normalized)
+        attributes = record.get("Attributes", "")
+        modes = re.findall(r"(?:^|\s)([?bcdlps-])[rwxStTs-]{9}(?=\s|$)",
+                           attributes + " " + record.get("Mode", ""))
+        win_attributes = attributes.split(" ", 1)[0].rstrip("_")
+        if re.fullmatch(r"[?bcdlps-][rwxStTs-]{9}", win_attributes):
+            win_attributes = ""
+        if (any(record.get(key) for key in ("Symbolic Link", "Hard Link", "Copy Link", "Link"))
+                or any(record.get(key) not in (None, "", "-", "0") for key in
+                       ("Reparse", "Reparse Point", "Alternate Stream"))
+                or any(mode not in ("-", "d") for mode in modes)
+                or "L" in win_attributes or "d" in win_attributes
+                or record.get("Anti") == "+"):
+            raise ArchiveError("압축 링크/특수 파일은 허용하지 않습니다: " + name)
+        if record.get("Encrypted") == "+":
+            raise ArchiveError("암호화된 압축은 허용하지 않습니다")
+        is_dir = record.get("Folder") == "+" or "D" in win_attributes or "d" in modes
+        size_text = record.get("Size", "") or ("0" if is_dir else "")
+        packed_text = record.get("Packed Size", "")
+        if not size_text.isascii() or not size_text.isdecimal() or len(size_text) > 20 or (
+                packed_text and (not packed_text.isascii() or not packed_text.isdecimal() or len(packed_text) > 20)):
+            raise ArchiveError("7-Zip 파일 크기가 올바르지 않습니다")
+        size = int(size_text)
+        if is_dir and size:
+            raise ArchiveError("7-Zip 디렉터리 크기가 올바르지 않습니다")
+        if not is_dir and packed_text and size / max(1, int(packed_text)) > ZIP_MAX_COMPRESSION_RATIO:
+            raise ArchiveError("압축폭탄 의심 (7-Zip 항목 압축비 초과)")
+        entries.append((name, size, is_dir))
+    return entries
+
+
+@contextmanager
+def _seven_zip_entries(data, binary):
+    import tempfile
+    # 디스크에는 업로드 원본만 쓴다. 항목은 검증 후 x -so로 제한해서 읽는다.
+    with tempfile.TemporaryDirectory(prefix="glhac_7z_") as directory:
+        path = os.path.join(directory, "source." + archive_kind(data))
+        with open(path, "wb") as source:
+            source.write(data)
+        options = ["-p", "-y", "-bd", "-sccUTF-8"]
+        entries = _seven_zip_listing(_seven_zip_run(
+            [binary, "l", "-slt", *options, "--", path], _SEVEN_ZIP_LIST_LIMIT))
+        readers = []
+        for name, size, is_dir in entries:
+            def read(expected, member=name):
+                content = _seven_zip_run(
+                    [binary, "x", "-so", "-spd", "-r-", *options, "--", path, member], expected)
+                if len(content) != expected:
+                    raise ArchiveError("압축 파일 크기가 일치하지 않습니다: " + member)
+                return content
+            readers.append((name, size, is_dir, read))
+        yield readers
 
 
 class _ExtractedFiles(list):
@@ -415,7 +606,17 @@ class _ExtractedFiles(list):
         self.skipped_files.append({"filename": filename, "reason": reason})
 
 
-def extract_zip(data, validator=None):
+def extract_zip(data, validator=None, *, stopped=None, deadline=None, defer_native=False):
+    deadline = archive_deadline() if deadline is None else deadline
+    token = _ARCHIVE_CONTROL.set((stopped, deadline))
+    try:
+        _check_archive_work()
+        return _extract_archive(data, validator, defer_native=defer_native)
+    finally:
+        _ARCHIVE_CONTROL.reset(token)
+
+
+def _extract_archive(data, validator, *, defer_native):
     """ZIP/RAR/7z 두 단계. 한 요청의 모든 컨테이너가 개수/크기 예산을 공유한다.
 
     건너뛴 파일과 내부 압축 바이트도 해제 크기에 합산한다. ZIP 헤더 사전 검사,
@@ -433,7 +634,8 @@ def extract_zip(data, validator=None):
         if budget["bytes"] / max(1, len(data)) > ZIP_MAX_COMPRESSION_RATIO:
             raise ArchiveError("압축폭탄 의심 (중첩 전체 압축비 초과)")
 
-    def consume(name, size, is_dir, read, prefix, depth):
+    def consume(name, size, is_dir, read, prefix, depth, *, preflight=False):
+        _check_archive_work()
         name = _archive_path(name)
         full = prefix + name
         if is_dir:
@@ -451,7 +653,11 @@ def extract_zip(data, validator=None):
         if ext not in UPLOAD_EXT_ALLOW and ext not in {"zip", "rar", "7z"}:
             out.skip(full, "UNSUPPORTED_TYPE")
             return
+        if preflight and ext in {"zip", "rar", "7z"} and depth >= ARCHIVE_MAX_DEPTH:
+            out.skip(full, "DEPTH_LIMIT")
+            return
         raw = read(size)
+        _check_archive_work()
         if ext in {"zip", "rar", "7z"}:
             if archive_kind(raw) != ext:
                 raise ArchiveContentMismatch("압축 확장자와 내용이 다릅니다: " + full)
@@ -465,24 +671,58 @@ def extract_zip(data, validator=None):
             out.append((full, raw))
 
     def visit(raw, prefix, depth):
+        _check_archive_work()
         kind = archive_kind(raw)
         if kind is None:
             raise ArchiveError("압축 파일이 아닙니다 (ZIP·RAR·7z 만 지원합니다)")
         if kind != "zip":
-            expanded = 0
-            for name, size, is_dir, read in _native_archive_entries(raw):
-                if not is_dir:
-                    reserve(prefix + name, size)
-                    expanded += size
+            if defer_native:
+                raise DeferredArchiveExtraction()
+            saved_budget, saved_files, saved_skips = dict(budget), len(out), out.skipped
+            entries = None
+            try:
+                entries = _native_archive_entries(raw)
+                expanded = 0
+                for name, size, is_dir, read in entries:
+                    if not is_dir:
+                        reserve(prefix + name, size)
+                        expanded += size
+                        if expanded / max(1, len(raw)) > ZIP_MAX_COMPRESSION_RATIO:
+                            raise ArchiveError("압축폭탄 의심 (RAR/7z 압축비 초과)")
+                    consume(name, size, is_dir, read, prefix, depth)
+            except _NativeArchiveError:
+                binary = _seven_zip_binary()
+                if not binary:
+                    raise  # 설치되지 않았으면 기존 ArchiveError 문구 그대로.
+                # 헤더/본문 중간에 실패했더라도 파일·skip·중첩 예산을 이중 합산하지 않는다.
+                budget.update(saved_budget)
+                del out[saved_files:]
+                del out.skipped_files[saved_skips:]
+                with _seven_zip_entries(raw, binary) as fallback:
+                    if budget["entries"] + len(fallback) > ZIP_MAX_ENTRIES:
+                        raise ArchiveError("압축 엔트리 수가 너무 많습니다")
+                    expanded = 0
+                    # 전체 목록에 가드를 적용한 뒤에만 첫 x -so를 실행한다.
+                    for name, size, is_dir, _ in fallback:
+                        _check_archive_work()
+                        if not is_dir:
+                            reserve(prefix + name, size)
+                            expanded += size
                     if expanded / max(1, len(raw)) > ZIP_MAX_COMPRESSION_RATIO:
                         raise ArchiveError("압축폭탄 의심 (RAR/7z 압축비 초과)")
-                consume(name, size, is_dir, read, prefix, depth)
+                    for name, size, is_dir, read in fallback:
+                        consume(name, size, is_dir, read, prefix, depth, preflight=True)
+            finally:
+                close = getattr(entries, "close", None)
+                if close:
+                    close()
             return
         try:
             with zipfile.ZipFile(io.BytesIO(raw)) as z:
                 infos = z.infolist()
                 _check_zip_limits(infos)
                 for zi in infos:
+                    _check_archive_work()
                     if not zi.is_dir():
                         reserve(prefix + _zip_name(zi), zi.file_size)
                 for zi in infos:
@@ -492,7 +732,17 @@ def extract_zip(data, validator=None):
                         raise ArchiveError("압축 링크/특수 파일은 허용하지 않습니다: " + _zip_name(zi))
                     def read(size):
                         with z.open(zi) as stream:
-                            content = stream.read(min(size, ZIP_MAX_SINGLE_FILE) + 1)
+                            chunks, count = [], 0
+                            while True:
+                                _check_archive_work()
+                                chunk = stream.read(min(65536, size - count + 1))
+                                if not chunk:
+                                    break
+                                chunks.append(chunk)
+                                count += len(chunk)
+                                if count > size:
+                                    raise ArchiveError("압축 파일 크기가 일치하지 않습니다")
+                            content = b"".join(chunks)
                             if len(content) != size:
                                 raise ArchiveError("압축 파일 크기가 일치하지 않습니다")
                             return content
@@ -961,6 +1211,7 @@ def _ocr_bytes(data, ext, sink=None):
     path = None
     failures = []
     def recognize(lang=None):
+        _check_intake_stopped()
         try:
             result = ai_local.ocr_image(path, **({"lang": lang} if lang else {}))
             if not isinstance(result, dict) or result.get("ok") is False or result.get("error"):
@@ -968,6 +1219,8 @@ def _ocr_bytes(data, ext, sink=None):
                 failures.append("TIMEOUT" if "TIMEOUT" in reason.upper() else "ERROR")
                 return []
             return result.get("lines") or []
+        except (CancelledError, ArchiveError):
+            raise
         except Exception as exc:  # OCR 프로세스/통신 예외도 실패로 남긴다.
             failures.append("TIMEOUT" if isinstance(exc, TimeoutError) else "ERROR")
             return []
@@ -995,6 +1248,8 @@ def _ocr_bytes(data, ext, sink=None):
         if failures and not text.strip():
             fields["_ocr_error"] = "TIMEOUT" if "TIMEOUT" in failures else "ERROR"
         return _ParsedText(text, fields)
+    except (CancelledError, ArchiveError):
+        raise
     except Exception:  # noqa: BLE001
         return _ParsedText("", {"_ocr_error": "ERROR"})
     finally:
@@ -1213,6 +1468,64 @@ def _office_corrupt(exc):
             or (type(exc).__module__ == "lxml.etree" and type(exc).__name__ == "XMLSyntaxError"))
 
 
+def pdf_access():
+    return document_lock(PDF_LOCK, check=_check_archive_work)
+
+
+@contextmanager
+def pdf_document(*args, **kwargs):
+    """문서 수명과 native 호출 락을 분리해 OCR 대기 중 다른 PDF도 처리한다."""
+    import fitz
+    with pdf_access():
+        document = fitz.open(*args, **kwargs)
+    try:
+        yield document
+    finally:
+        # 취소/기한 초과 뒤에도 native 자원 해제는 반드시 실행한다.
+        with PDF_LOCK:
+            document.close()
+
+
+def pdf_render_dpi(page, requested_dpi):
+    """픽셀 버퍼를 만들기 전에 반올림된 가로×세로 크기로 안전한 정수 dpi를 찾는다."""
+    width, height = page.rect.width, page.rect.height
+    if not all(math.isfinite(v) and v > 0 for v in (width, height)):
+        return None
+
+    def fits(dpi):
+        return math.ceil(width * dpi / 72) * math.ceil(height * dpi / 72) <= PDF_MAX_RENDER_PIXELS
+
+    if not fits(PDF_MIN_OCR_DPI):
+        return None
+    low, high = PDF_MIN_OCR_DPI, max(PDF_MIN_OCR_DPI, min(600, int(requested_dpi)))
+    while low < high:
+        mid = (low + high + 1) // 2
+        if fits(mid):
+            low = mid
+        else:
+            high = mid - 1
+    return low
+
+
+def record_pdf_render_limit(fields, page_number, requested_dpi, render_dpi):
+    """정상 DPI는 그대로 두고 픽셀 상한 때문에 축소/생략한 페이지만 기록한다."""
+    if render_dpi is not None and render_dpi >= requested_dpi:
+        return
+    marker = {"page": page_number, "requested_dpi": requested_dpi,
+              "rendered_dpi": render_dpi, "max_pixels": PDF_MAX_RENDER_PIXELS}
+    if render_dpi is None:
+        fields["_ocr_error"] = "PIXEL_LIMIT"
+        marker.update(reason="판독 불가: 최소 dpi에서도 PDF 렌더 픽셀 상한 초과",
+                      min_dpi=PDF_MIN_OCR_DPI)
+        key = "_ocr_skipped_pages"
+    else:
+        marker["reason"] = (f"PDF 렌더 픽셀 상한 {PDF_MAX_RENDER_PIXELS:,} 초과: "
+                            f"{requested_dpi}dpi에서 {render_dpi}dpi로 축소")
+        key = "_ocr_reduced_pages"
+    fields.setdefault(key, []).append(marker)
+    log.warning("PDF %d쪽: %s", page_number, marker["reason"])
+
+
 def parse_file(name, data, dpi=None, ocr_sink=None):
     """확장자별 텍스트 추출 — OS 독립. 이미지/스캔PDF=OCR, PDF=fitz, docx/xlsx/txt.
     dpi 지정 시 스캔 렌더 해상도 오버라이드(고해상도 재처리용, 기본 _OCR_DPI).
@@ -1233,24 +1546,38 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
         if ext in _IMG:
             return _ocr_bytes(data, ext, ocr_sink)
         if ext == "pdf":
-            import fitz
             fields, parts, used, total_chars, line_offset = {}, [], 0, 0, 0
             context = {}
-            with fitz.open(stream=data, filetype="pdf") as doc:
-                if doc.needs_pass:
+            with pdf_document(stream=data, filetype="pdf") as doc:
+                with pdf_access():
+                    encrypted, repaired, page_count = doc.needs_pass, doc.is_repaired, len(doc)
+                if encrypted:
                     return _ParsedText("", {"_ocr_error": "ENCRYPTED"})
-                if doc.is_repaired:
+                if repaired:
                     fields["_ocr_error"] = "CORRUPT"
-                if len(doc) > PDF_MAX_PAGES:
-                    _record_truncation(fields, "pages", PDF_MAX_PAGES, len(doc))
-                for index, pg in enumerate(doc):
-                    t = pg.get_text()
+                if page_count > PDF_MAX_PAGES:
+                    _record_truncation(fields, "pages", PDF_MAX_PAGES, page_count)
+                for index in range(page_count):
+                    _check_intake_stopped()
+                    _check_archive_work()
                     remaining = max(0, PDF_MAX_TEXT_CHARS - used)
                     within_limit = index < PDF_MAX_PAGES and remaining > 0
-                    if within_limit and len(t.strip()) < 20:
-                        ocr = _ocr_bytes(pg.get_pixmap(dpi=_dpi).tobytes("png"), "png")
-                        fields.update(getattr(ocr, "parse_fields", {}))
-                        t = str(ocr) or t
+                    png = None
+                    with pdf_access():
+                        pg = doc[index]
+                        t = pg.get_text()
+                        needs_ocr = within_limit and len(t.strip()) < 20
+                        if needs_ocr:
+                            render_dpi = pdf_render_dpi(pg, _dpi)
+                            if render_dpi is not None:
+                                png = pg.get_pixmap(dpi=render_dpi).tobytes("png")
+                    if needs_ocr:
+                        record_pdf_render_limit(fields, index + 1, _dpi, render_dpi)
+                        if png is not None:
+                            ocr = _ocr_bytes(png, "png")
+                            fields.update(getattr(ocr, "parse_fields", {}))
+                            t = str(ocr) or t
+                    del png
                     t += "\n"
                     total_chars += len(t)
                     if within_limit:
@@ -1294,6 +1621,8 @@ def parse_file(name, data, dpi=None, ocr_sink=None):
                                             min(20000, OFFICE_MAX_TEXT_CHARS))
             finally:
                 wb.close()
+    except (CancelledError, ArchiveError):
+        raise
     except Exception as e:  # noqa: BLE001
         log.warning("파일 파싱 실패 %s: %s", name, e)
         corrupt = ext == "pdf" or (ext in ("docx", "xlsx") and _office_corrupt(e))
@@ -3434,42 +3763,167 @@ def aggregate_fields(docs, *, rejected_product_names=()):
     return agg
 
 
-def intake_zip_iter(data, limit=200, *, files=None):
-    """ZIP → 파일별 파싱+분류를 진행하며 진행상황을 yield (스트리밍용).
+def _extract_document(name, raw):
+    """한 추출 스레드에서 PDF 텍스트·렌더·OCR을 파일 순서대로 끝낸다."""
+    _lines = []                       # 여기서 읽은 OCR을 버리지 않고 넘긴다
+    _check_intake_stopped()
+    try:
+        text = parse_file(name, raw, ocr_sink=_lines)
+    except (CancelledError, ArchiveError):
+        raise
+    except Exception:
+        log.exception("인테이크 파일 파싱 실패: %s", name)
+        text = _ParsedText("", {"_ocr_error": "ERROR"})
+    _check_intake_stopped()
+    _check_archive_work()
+    return text, _lines
 
-    yield ("progress", {...})  파일 처리할 때마다
-    yield ("result", {...})    마지막에 전체 결과(라우팅·집계)
-    """
-    files = extract_zip(data) if files is None else files
+
+@document_budget
+@ai_concurrency
+def _intake_document(name, raw, text, _lines):
+    """추출 완료된 텍스트의 AI 분류/필드 추출만 병렬 실행한다. DB는 만지지 않는다."""
+    _check_intake_stopped()
+    try:
+        cl = classify(name, text)
+    except CancelledError:
+        raise
+    except Exception:
+        log.exception("인테이크 파일 분류 실패: %s", name)
+        cl = {"doc_type": "other", "confidence": 0.0,
+              "fields": dict(getattr(text, "parse_fields", {})), "llm_error": "ERROR"}
+    _check_intake_stopped()
+    fields = dict(cl.get("fields") or {})
+    if cl.get("field_sources"):
+        fields["_sources"] = cl["field_sources"]
+    if cl.get("llm_error"):
+        fields["_llm_error"] = cl["llm_error"]
+    # content_b64는 업로드 상한과 같은 값으로 제한 (20MB)
+    # main.py 의 _UPLOAD_MAX_BYTES 와 같은 상수(UPLOAD_MAX_BYTES)를 공유한다 (SRS NFR-05)
+    d = {"filename": os.path.basename(name), "doc_type": cl["doc_type"],
+         "ocr_lines": _lines or None,
+         "doc_type_ko": DOC_KO.get(cl["doc_type"], cl["doc_type"]),
+         "confidence": cl.get("confidence", 0.0), "fields": fields,
+         "text_len": len(text), "excerpt": text[:300], "text_full": text or "",
+         "content_b64": base64.b64encode(raw).decode() if len(raw) <= UPLOAD_MAX_BYTES else None,
+         "llm_error": cl.get("llm_error"),
+         "content_type": _ctype(name)}
+    if cl.get("field_sources"):
+        d["fields"]["_sources"] = cl["field_sources"]
+    if cl.get("llm_error"):
+        d["fields"]["_llm_error"] = cl["llm_error"]
+    return d
+
+
+def _intake_concurrency():
+    try:
+        value = int(os.getenv("GLHAC_INTAKE_CONCURRENCY", "3"))
+        return value if value > 0 else 3
+    except ValueError:
+        return 3
+
+
+def _intake_documents(files, stopped, deadline=None):
+    """추출 생산자 1개 → AI 풀. 진행/결과는 입력 순서, 대기 문서도 N개 이내."""
+    if not files:
+        return
+    concurrency = min(_intake_concurrency(), AI_CONCURRENCY, len(files))
+    pool = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="intake-ai")
+    pending = queue.Queue(maxsize=concurrency)
+    slots = threading.BoundedSemaphore(concurrency)
+
+    def put(item):
+        while not stopped.is_set():
+            try:
+                pending.put(item, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
+    def classify_text(item, text, lines):
+        token = _INTAKE_STOPPED.set(stopped)
+        try:
+            check_archive_work(stopped, deadline)
+            return _intake_document(*item, text, lines)
+        finally:
+            _INTAKE_STOPPED.reset(token)
+
+    def extract():
+        token = _INTAKE_STOPPED.set(stopped)
+        archive_token = _ARCHIVE_CONTROL.set((stopped, deadline))
+        try:
+            for item in files:
+                while True:
+                    check_archive_work(stopped, deadline)
+                    if slots.acquire(timeout=0.1):
+                        break
+                text, lines = _extract_document(*item)
+                check_archive_work(stopped, deadline)
+                put(pool.submit(classify_text, item, text, lines))
+        except Exception as exc:
+            put(exc)
+        finally:
+            _ARCHIVE_CONTROL.reset(archive_token)
+            _INTAKE_STOPPED.reset(token)
+            put(None)
+
+    producer = threading.Thread(target=extract, name="intake-file-extract", daemon=True)
+    producer.start()
+    finished = False
+    try:
+        while not stopped.is_set():
+            check_archive_work(stopped, deadline)
+            try:
+                future = pending.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if future is None:
+                finished = True
+                return
+            if isinstance(future, Exception):
+                raise future
+            while True:
+                check_archive_work(stopped, deadline)
+                try:
+                    document = future.result(timeout=0.1)
+                    break
+                except FutureTimeout:
+                    continue
+            check_archive_work(stopped, deadline)
+            slots.release()
+            yield document
+    except CancelledError:
+        return
+    finally:
+        if not finished:
+            stopped.set()
+        # 실행 중 호출은 기존 timeout까지 정리된다. 다음 추출/AI 진입은 차단한다.
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def intake_zip_iter(data, limit=200, *, files=None, stopped=None, deadline=None):
+    """추출은 순차, AI만 병렬. progress/집계/DB는 기존 파일 순서로 소비한다."""
+    stopped = stopped if stopped is not None else threading.Event()
+    deadline = archive_deadline() if deadline is None else deadline
+    if stopped.is_set():
+        return
+    files = extract_zip(data, stopped=stopped, deadline=deadline) if files is None else files
+    check_archive_work(stopped, deadline)
     total = len(files[:limit])
     docs = []
+    if stopped.is_set():
+        return
     yield ("start", {"total": total})
-    for i, (name, raw) in enumerate(files[:limit], 1):
-        _lines = []                       # 여기서 읽은 OCR을 버리지 않고 넘긴다
-        text = parse_file(name, raw, ocr_sink=_lines)
-        cl = classify(name, text)
-        fields = dict(cl.get("fields") or {})
-        if cl.get("field_sources"):
-            fields["_sources"] = cl["field_sources"]
-        if cl.get("llm_error"):
-            fields["_llm_error"] = cl["llm_error"]
-        # content_b64는 업로드 상한과 같은 값으로 제한 (20MB)
-        # main.py 의 _UPLOAD_MAX_BYTES 와 같은 상수(UPLOAD_MAX_BYTES)를 공유한다 (SRS NFR-05)
-        d = {"filename": os.path.basename(name), "doc_type": cl["doc_type"],
-             "ocr_lines": _lines or None,
-             "doc_type_ko": DOC_KO.get(cl["doc_type"], cl["doc_type"]),
-             "confidence": cl.get("confidence", 0.0), "fields": fields,
-             "text_len": len(text), "excerpt": text[:300], "text_full": text or "",
-             "content_b64": base64.b64encode(raw).decode() if len(raw) <= UPLOAD_MAX_BYTES else None,
-             "llm_error": cl.get("llm_error"),
-             "content_type": _ctype(name)}
-        if cl.get("field_sources"):
-            d["fields"]["_sources"] = cl["field_sources"]
-        if cl.get("llm_error"):
-            d["fields"]["_llm_error"] = cl["llm_error"]
-        docs.append(d)
-        yield ("progress", {"done": i, "total": total, "file": d["filename"],
-                            "doc_type_ko": d["doc_type_ko"]})
+    documents = _intake_documents(files[:limit], stopped, deadline)
+    try:
+        for i, d in enumerate(documents, 1):
+            docs.append(d)
+            yield ("progress", {"done": i, "total": total, "file": d["filename"],
+                                "doc_type_ko": d["doc_type_ko"]})
+    finally:
+        documents.close()
+    if stopped.is_set():
+        return
     found = {d["doc_type"] for d in docs if d["text_len"] and not
              any(d["fields"].get(k) for k in ("_empty", "_ocr_error", "_llm_error"))}
     checklist = [{"doc_type": dt, "doc_type_ko": DOC_KO[dt], "satisfied": dt in found,
@@ -3481,15 +3935,19 @@ def intake_zip_iter(data, limit=200, *, files=None):
         log.warning("인테이크 대상 초과: %d개 건너뜀", skipped)
     skipped_files = list(getattr(files, "skipped_files", []))
     skipped_files.extend({"filename": name, "reason": "ENTRY_LIMIT"} for name, _ in files[limit:])
+    extracted = aggregate_fields(docs)
+    if stopped.is_set():
+        return
+    check_archive_work(stopped, deadline)
     yield ("result", {"file_count": len(files), "skipped_entries": skipped, "skipped_files": skipped_files, "classified": docs, "checklist": checklist,
                       "missing": missing, "complete": len(missing) == 0,
-                      "extracted": aggregate_fields(docs)})
+                      "extracted": extracted})
 
 
-def intake_zip(data, *, files=None):
+def intake_zip(data, *, files=None, deadline=None):
     """동기 래퍼 — 진행 이벤트를 소진하고 최종 결과만 반환."""
     res = None
-    for kind, payload in intake_zip_iter(data, files=files):
+    for kind, payload in intake_zip_iter(data, files=files, deadline=deadline):
         if kind == "result":
             res = payload
     return res
