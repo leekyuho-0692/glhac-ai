@@ -7579,6 +7579,8 @@ def delete_product(case_id: str, product_id: str, force: bool = False, merge_int
     c = _get_case(db, case_id, user)
     _assert_case_open(c)
     _assert_scope_open(c)
+    # 합치기·일반 삭제 모두 잠금 후 최신 별칭을 읽는다. 아직 변경 전이므로 재조회해도 안전하다.
+    c = _lock_case(db, case_id)
     p = db.get(models.Product, product_id)
     if not p or p.case_id != case_id:
         raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
@@ -7603,9 +7605,6 @@ def delete_product(case_id: str, product_id: str, force: bool = False, merge_int
     for ct in certs:
         ct.frozen_product_ids = [x for x in (ct.frozen_product_ids or []) if x != product_id]
         flag_modified(ct, "frozen_product_ids")   # JSON 컬럼 in-place 변경 감지
-    if target:
-        # _assert_scope_open의 케이스 잠금 이후, 먼저 끝난 합치기의 별칭까지 읽는다.
-        db.refresh(c, ["profile_ext"])
     aliases = dict((c.profile_ext or {}).get("product_aliases", {}))
     source_links = db.query(models.ProductMaterial).filter_by(product_id=product_id).all()
     _audit(db, user, "product.delete", "product", product_id, case_id,
@@ -7971,6 +7970,17 @@ def _apply_owned_autofill(db, c, doc):
     """
     if doc.doc_type not in intake._APPLICANT_DOCS:
         return {}
+    # 재진입 시 앞서 반영한 변경은 먼저 저장하고, 문서 JSON도 잠금 이후 다시 읽는다.
+    lock_chain_tail(db, "wf:" + c.case_id)
+    db.flush()
+    c = _lock_case(db, c.case_id)
+    _assert_case_open(c)
+    if inspect(doc).persistent:
+        doc = db.get(models.DocumentAsset, doc.document_id, populate_existing=True, with_for_update=True)
+        if doc is None:
+            return {"skipped": "document_missing"}
+        if doc.doc_type not in intake._APPLICANT_DOCS:
+            return {}
     f, text = dict(doc.fields or {}), doc.text_full or ""
     is_nib = doc.doc_type == "nib_business_license"
     candidates = ({k: f.get(k) for k in ("company_name", "nib", "address", "responsible_person")}
@@ -7995,12 +8005,6 @@ def _apply_owned_autofill(db, c, doc):
     profile = {k: v for k, v in profile.items() if v not in (None, "")}
     if not candidates and not profile:
         return {"skipped": "no_nib"} if is_nib else {}
-
-    # 분석 대기 중 합치기·프로필 저장이 끝날 수 있다. 판정 전에 잠그고 최신값을 읽는다.
-    lock_chain_tail(db, "wf:" + c.case_id)
-    db.flush()  # 같은 트랜잭션에서 앞서 반영한 문서·프로필 변경은 보존한다.
-    c = _lock_case(db, c.case_id)
-    _assert_case_open(c)
 
     # 요청 경로에서는 원문 규칙만 쓴다. LLM 검증은 커밋 뒤 verify_enqueue에서 수행한다.
     confirmed_type, _ = intake.refine_doctype_reason("", None, text)
@@ -8150,35 +8154,56 @@ def _apply_owned_autofill(db, c, doc):
     return applied
 
 
+def _lock_autofill_org_cases(db, org_id):
+    """시설 확인은 조직 문서 전체를 갱신하므로 최초 케이스 잠금부터 순서를 맞춘다."""
+    if db.get_bind().dialect.name != "postgresql":
+        return  # SQLite의 기존 BEGIN IMMEDIATE 경로는 그대로 둔다.
+    for cid, in (db.query(models.CaseApplication.case_id).filter_by(org_id=org_id)
+                 .order_by(models.CaseApplication.case_id)):
+        lock_chain_tail(db, "wf:" + cid)
+
+
+def _mark_autofill_confirmed(doc, keys, user_id, obj, *, facility_id=None):
+    """이미 최신 조회한 문서에 확인 이력만 병합한다. 재조회·flush는 호출자가 맡는다."""
+    fields = dict(doc.fields or {})
+    meta = dict(fields.get("_autofill") or {})
+    changes = {k: dict(v) for k, v in meta.get("changes", {}).items()}
+    touched = False
+    for key, change in changes.items():
+        if key in keys and (not facility_id or change.get("facility_id") == facility_id):
+            if change["scope"] == "facility_link":
+                selected = change["value"]
+            elif change["scope"] in ("profile", "facility_profile"):
+                selected = (obj.profile_ext or {}).get(change["field"])
+            else:
+                selected = getattr(obj, change["field"])
+            change.update(status="confirmed", confirmed_by=user_id, selected=selected)
+            touched = True
+    if touched:
+        fields["_autofill"] = {**meta, "changes": changes}
+        _set_document_fields(doc, fields)
+
+
 def _protect_autofill(db, keys, user_id, *, case_id=None, facility_id=None):
     """같은 값을 다시 저장한 경우도 사람의 확인이다. 원본 문서 JSON에 보호 표시를 남긴다."""
     docs = db.query(models.DocumentAsset).options(
         load_only(models.DocumentAsset.document_id, models.DocumentAsset.fields))
     if facility_id:
         fac = db.get(models.Facility, facility_id)
+        _lock_autofill_org_cases(db, fac.org_id)
         docs = docs.join(models.CaseApplication).filter(models.CaseApplication.org_id == fac.org_id)
         obj = fac
     else:
         docs = docs.filter(models.DocumentAsset.case_id == case_id)
         obj = db.get(models.CaseApplication, case_id)
-    for doc in docs:
-        fields = dict(doc.fields or {})
-        meta = dict(fields.get("_autofill") or {})
-        changes = {k: dict(v) for k, v in meta.get("changes", {}).items()}
-        touched = False
-        for key, change in changes.items():
-            if key in keys and (not facility_id or change.get("facility_id") == facility_id):
-                if change["scope"] == "facility_link":
-                    selected = change["value"]
-                elif change["scope"] in ("profile", "facility_profile"):
-                    selected = (obj.profile_ext or {}).get(change["field"])
-                else:
-                    selected = getattr(obj, change["field"])
-                change.update(status="confirmed", confirmed_by=user_id, selected=selected)
-                touched = True
-        if touched:
-            fields["_autofill"] = {**meta, "changes": changes}
-            _set_document_fields(doc, fields)
+    case_ids = sorted({row.case_id for row in docs.with_entities(models.DocumentAsset.case_id)})
+    for cid in case_ids:
+        lock_chain_tail(db, "wf:" + cid)
+    db.flush()  # 수동 편집을 refresh로 지우지 않는다.
+    for cid in case_ids:
+        _lock_case(db, cid)
+    for doc in docs.populate_existing():
+        _mark_autofill_confirmed(doc, keys, user_id, obj, facility_id=facility_id)
 
 
 def _revert_failed_autofill(db, c, doc):
@@ -8844,13 +8869,40 @@ def _pending_autofill(db, case_id):
     return out
 
 
+def _lock_autofill_choice_cases(db, c, choices):
+    """엔드포인트의 범위 잠금보다 먼저 시설 후보가 보호할 케이스 집합을 확보한다."""
+    if db.get_bind().dialect.name != "postgresql" or not isinstance(choices, list):
+        return
+    selected = {x["conflict_id"] for x in choices
+                if isinstance(x, dict) and isinstance(x.get("conflict_id"), str)}
+    if any(x["conflict_id"] in selected and x["scope"] in ("facility", "facility_profile")
+           for x in _pending_autofill(db, c.case_id)):
+        _lock_autofill_org_cases(db, c.org_id)
+
+
 def _confirm_autofill(db, c, choices, user):
     """확인 대기 API에서 두 후보 중 하나를 선택한다. 오래된 선택·조직 밖 시설은 거부."""
     if not isinstance(choices, list) or not all(isinstance(x, dict) for x in choices):
         raise HTTPException(422, {"code": "INVALID_AUTOFILL_SELECTION"})
     if choices and user["role"] not in ("applicant", "consultant"):
         raise HTTPException(403, {"code": "AUTOFILL_PROFILE_FORBIDDEN"})
+    if choices:
+        _lock_autofill_choice_cases(db, c, choices)
+        lock_chain_tail(db, "wf:" + c.case_id)
+        db.flush()
+        c = _lock_case(db, c.case_id)
     pending = {x["conflict_id"]: x for x in _pending_autofill(db, c.case_id)}
+    docs = db.query(models.DocumentAsset).options(load_only(
+        models.DocumentAsset.document_id, models.DocumentAsset.case_id, models.DocumentAsset.fields))
+    if any(pending.get(x.get("conflict_id"), {}).get("scope") in ("facility", "facility_profile")
+           for x in choices if isinstance(x.get("conflict_id"), str)):
+        docs = docs.join(models.CaseApplication).filter(models.CaseApplication.org_id == c.org_id)
+    else:
+        docs = docs.filter(models.DocumentAsset.case_id == c.case_id)
+    # 한 문서의 여러 선택이 앞선 확인 이력을 refresh로 지우지 않도록 한 번만 읽는다.
+    documents = {d.document_id: d for d in docs.order_by(models.DocumentAsset.document_id)
+                 .populate_existing().with_for_update()} if choices else {}
+    facilities, protections = {}, {}
     changed, targets = [], set()
     allowed = {"case": {"company_name", "nib", "address", "responsible_person", "factory_reg_no", "factory_address"},
                "profile": {"city", "country", "zip", "office_phone", "business_type", "establishment_date",
@@ -8869,7 +8921,10 @@ def _confirm_autofill(db, c, choices, user):
         targets.add(target)
         obj = c
         if scope in ("facility", "facility_profile"):
-            obj = db.get(models.Facility, conflict.get("facility_id"))
+            fid = conflict.get("facility_id")
+            if fid not in facilities:
+                facilities[fid] = db.get(models.Facility, fid, populate_existing=True, with_for_update=True)
+            obj = facilities[fid]
             if obj is None or obj.org_id != c.org_id:
                 raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
         current = (obj.profile_ext or {}).get(field) if scope in ("profile", "facility_profile") else getattr(obj, field)
@@ -8887,7 +8942,7 @@ def _confirm_autofill(db, c, choices, user):
             obj.profile_ext = {**(obj.profile_ext or {}), field: value}
         else:
             setattr(obj, field, value)
-        d = db.get(models.DocumentAsset, conflict["document_id"])
+        d = documents[conflict["document_id"]]
         fields = dict(d.fields or {})
         meta = dict(fields["_autofill"])
         records = [dict(x) for x in meta["conflicts"]]
@@ -8897,10 +8952,17 @@ def _confirm_autofill(db, c, choices, user):
         fields["_autofill"] = meta
         _set_document_fields(d, fields)
         key = (scope + "." if scope != "case" else "") + field
-        _protect_autofill(db, {key, "facility"} if scope.startswith("facility") else {key}, user["uid"],
-                          case_id=c.case_id, facility_id=conflict.get("facility_id"))
+        protections.setdefault(conflict.get("facility_id"), set()).update(
+            {key, "facility"} if scope.startswith("facility") else {key})
         changed.append({"conflict_id": choice["conflict_id"], "field": field, "scope": scope,
                         "before": current, "value": value})
+    for fid, keys in protections.items():
+        for doc in documents.values():
+            if fid or doc.case_id == c.case_id:
+                _mark_autofill_confirmed(doc, keys, user["uid"], facilities[fid] if fid else c,
+                                         facility_id=fid)
+    if choices:
+        db.flush()  # 최종 회사명+NIB와 모든 선택 이력을 함께 검증·저장한다.
     return changed
 
 
@@ -8972,8 +9034,9 @@ def apply_pending_extractions(case_id: str, body: dict = None,
     나중에 '이 원재료가 어디서 왔나'를 되짚을 수 있어야 한다."""
     c = _get_case(db, case_id, user)
     _assert_case_open(c)
-    _assert_scope_open(c)
     b = body or {}
+    _lock_autofill_choice_cases(db, c, b.get("autofill_choices", []))
+    _assert_scope_open(c)
     reason = _extraction_review_reason(user, b)
     choices = _confirm_autofill(db, c, b.get("autofill_choices", []), user)
     values, renames, dismiss = b.get("values") or [], b.get("renames") or {}, b.get("dismiss") or []
@@ -9957,23 +10020,49 @@ def autofill_profile(case_id: str, force: bool = False,
     docs = (db.query(models.DocumentAsset).filter_by(case_id=case_id)
             .filter(models.DocumentAsset.doc_type.in_(
                 ["nib_business_license", "factory_registration"])).all())
-    classified, reprocessed = [], []
+    analyses, classified = {}, []
     for d in docs:
         fields = d.fields or {}
+        doc_type = d.doc_type
         # 구 추출본에 주소가 없으면 원본 재추출·재분류로 보강
         if d.content_b64 and not fields.get("address"):
             try:
                 text = parse_file(d.filename, base64.b64decode(d.content_b64.split(",")[-1]))
             except Exception:  # noqa: BLE001
-                fields = _set_document_fields(d, fields, analysis={"ocr_error": "ERROR"})
+                analyses[d.document_id] = ({"ocr_error": "ERROR"}, None)
             else:
                 try:
                     r = classify(d.filename, text)
                 except Exception:  # noqa: BLE001
                     r = {"llm_error": "ERROR"}
+                analyses[d.document_id] = (r, text)
+                if r.get("fields"):
+                    fields = r["fields"]
+                    doc_type = r.get("doc_type", doc_type)
+        classified.append({"fields": fields, "doc_type": doc_type})
+    # 집계의 Nominatim 주소 조회까지 잠금 밖에서 끝낸다. 이후에는 최신 DB와 병합만 한다.
+    agg = aggregate_fields(classified)
+    lock_chain_tail(db, "wf:" + case_id)
+    db.flush()
+    c = _lock_case(db, case_id)
+    _assert_case_open(c)
+    fresh_docs = []
+    for d in docs:
+        current = db.get(models.DocumentAsset, d.document_id, populate_existing=True, with_for_update=True)
+        if current is not None:
+            fresh_docs.append(current)
+    docs = fresh_docs
+    reprocessed = []
+    for d in docs:
+        fields = d.fields or {}
+        if d.document_id in analyses:
+            r, text = analyses[d.document_id]
+            if text is None:
+                fields = _set_document_fields(d, fields, analysis=r)
+            else:
                 updated = (dict(r["fields"]) if r.get("fields") else
                            {k: v for k, v in fields.items() if k not in ("_llm_error", "_ocr_error")})
-                for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id"):
+                for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id", "_verify"):
                     if key in fields:
                         updated[key] = fields[key]
                 fields = _set_document_fields(d, updated, analysis=r, text=text)
@@ -9983,8 +10072,6 @@ def autofill_profile(case_id: str, force: bool = False,
                     d.text_excerpt = (text or "")[:300]
                     d.text_full = text or ""
                     reprocessed.append(d.document_id)
-        classified.append({"fields": fields, "doc_type": d.doc_type})
-    agg = aggregate_fields(classified)
     applied = []
     for d in docs:
         own = _apply_owned_autofill(db, c, d)
@@ -10304,6 +10391,9 @@ def review_document(document_id: str, body: schemas.DocReviewReq,
         raise HTTPException(404, {"code": "DOC_NOT_FOUND"})
     c = _get_case(db, d.case_id, user)
     sm.lock_scope(db, c)
+    d = db.get(models.DocumentAsset, document_id, populate_existing=True, with_for_update=True)
+    if d is None:
+        raise HTTPException(404, {"code": "DOC_NOT_FOUND"})
     d.review_status = body.review_status
     if body.review_status == "approved" and (d.fields or {}).get("_autofill"):
         fields = dict(d.fields)
@@ -14058,6 +14148,7 @@ def update_factory(facility_id, body: dict = None, user=Depends(auth.get_current
     # 같은 조직만 허용하던 검사가 컨설턴트를 막았다(실측 403).
     if user["role"] != "admin" and not _org_access_ok(db, user, f.org_id):
         raise HTTPException(403, {"code": "ORG_FORBIDDEN"})
+    _lock_autofill_org_cases(db, f.org_id)
     _assert_facility_scope_open(db, facility_id)
     b = body or {}
     _set_factory_fields(f, b)
@@ -24568,6 +24659,7 @@ def update_facility(facility_id: str, body: schemas.FacilityUpdateReq,
         raise HTTPException(404, {"code": "FACILITY_NOT_FOUND"})
     # 같은 조직만 시설 편집 가능 (A6-3)
     _assert_org_access(db, user, f.org_id)
+    _lock_autofill_org_cases(db, f.org_id)
     _assert_facility_scope_open(db, facility_id)
     _set_factory_fields(f, body.model_dump(exclude_none=True))
     _protect_autofill(db, {"facility"} | {"facility." + k for k in body.model_fields_set} |
