@@ -2368,6 +2368,12 @@ def drain_notifications(db, batch=50, max_attempts=3):
         succeeded = any(value["status"] == "sent" for value in states.values())
         failed = any(value["status"] == "failed" for value in states.values())
         n.status = ("partial" if succeeded else "failed") if failed else ("sent" if succeeded else "skipped")
+        # 외부 성공 없이 설정·연락처 누락으로 건너뛴 경우만 inapp 성공을 부분 발송으로 표시한다.
+        external = [ch for ch in requested if ch != "inapp"]
+        if (n.status == "sent" and not any(states[ch]["status"] == "sent" for ch in external)
+                and any(states[ch]["status"] == "skipped"
+                        and states[ch].get("reason") in ("no_credentials", "no_contact") for ch in external)):
+            n.status = "partial"
         n.last_error = ";".join(ch + ":" + str(value.get("reason")) for ch, value in states.items()
                                 if value["status"] != "sent") or None
         n.claimed_at = None
@@ -14498,6 +14504,7 @@ def formal_application_submit(case_id: str, body: dict = None,
     희망 심사 시기·판매처·서약·대표자 서명 → D-06 저장 → 관리자 접수 대기."""
     import json as _json
     c = _get_case(db, case_id, user)
+    c = _lock_case(db, case_id)  # 상태 확인부터 D-06·제출 이벤트 커밋까지 직렬화한다.
     if nav8.eligibility_state(db, case_id) != "eligible":
         raise HTTPException(409, {"code": "ELIGIBILITY_REQUIRED", "hint": "인증 가능 판정 후 작성할 수 있습니다."})
     st = nav8.formal_state(db, case_id)
@@ -16342,8 +16349,8 @@ def _two_person_gate(db, c, user, action_type, payload):
     strict = _two_person_strict() or action_type == "audit_report.send_fatwa"
     if user["role"] == "auditor" and user["uid"] in cos:
         raise HTTPException(403, {"code": "NOT_MAIN_AUDITOR", "hint": "서브 오디터는 열람·확인만 할 수 있습니다."})
-    # strict 에서는 operator/admin 도 우회하지 못한다(감사 지적) — 비 strict 는 종전처럼 즉시 실행.
-    if user["role"] != "auditor" and not (strict and user["role"] in ("operator", "admin")):
+    # strict 에서는 역할과 무관하게 2인 확인한다 — 비 strict 는 종전처럼 즉시 실행.
+    if user["role"] != "auditor" and not strict:
         return None
     if not cos:
         if strict:
