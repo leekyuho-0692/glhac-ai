@@ -3526,12 +3526,19 @@ def _prune_product_pending(fields):
 def _product_alias_conflicts(groups):
     """문서/기존 제품 전체에서 한 표기가 서로 다른 두 짝에 대응하면 관련 쌍을 보류한다."""
     from .models import normalize_material_name as norm
-    pairs, partners = [], {}
+    pairs, owners, partners = [], {}, {}
     for group in groups:
         keys = {norm(n) for n in [group["name"]] + group["aliases"] if norm(n)}
         pairs.append(keys)
+        if group.get("product_id"):
+            for key in keys:
+                owners.setdefault(key, set()).add(("product", group["product_id"]))
+    owners = {key: next(iter(ids)) for key, ids in owners.items() if len(ids) == 1}
+    for keys in pairs:
         for key in keys:
-            partners.setdefault(key, set()).update(keys - {key})
+            # 같은 제품의 여러 별칭은 한 짝이다. 다른 제품·미확정 이름은 구분한다.
+            partners.setdefault(key, set()).update(
+                owners.get(name, ("name", name)) for name in keys - {key})
     return {key for keys in pairs if any(len(partners[k]) > 1 for k in keys) for key in keys}
 
 

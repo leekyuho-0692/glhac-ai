@@ -188,13 +188,14 @@ def test_pending_list_drops_values_already_in_the_case(monkeypatch):
         def __init__(self, rows): self._rows = rows
         def filter_by(self, **kw): return self
         def filter(self, *criteria): return self
+        def execution_options(self, **kw): return self
         def all(self): return self._rows
         def __iter__(self): return iter(self._rows)
 
     doc = _Doc({"material_names": ["설탕", "정제수"]})     # 구조 출처 표시 없음 → LLM 취급
 
     class _DB:
-        def get(self, model, case_id):
+        def get(self, model, case_id, **kwargs):
             assert model is m.models.CaseApplication
             return model(case_id=case_id, profile_ext={})
 

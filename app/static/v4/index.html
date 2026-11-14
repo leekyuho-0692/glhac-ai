@@ -1159,6 +1159,14 @@ const UIV4_I18N = {
   "application.product_name": ["제품명", "Product name", "Nama produk"],
   "application.category": ["분류", "Category", "Kategori"],
   "application.delete": ["삭제", "Delete", "Hapus"],
+  "application.delete_product": ["품목 삭제", "Delete product", "Hapus produk"],
+  "application.delete_confirm": ["이 품목을 삭제할까요?", "Delete this product?", "Hapus produk ini?"],
+  "application.merge_into": ["합칠 제품(선택)", "Merge into product (optional)", "Gabungkan ke produk (opsional)"],
+  "application.delete_only": ["합치지 않고 삭제", "Delete without merging", "Hapus tanpa menggabungkan"],
+  "application.merge_hint": ["합치면 이름·별칭과 원재료 연결을 선택한 제품에 보존합니다.", "Merging preserves the name, aliases and material links on the selected product.", "Penggabungan menyimpan nama, alias, dan tautan bahan pada produk yang dipilih."],
+  "application.delete_failed": ["삭제에 실패했습니다.", "Failed to delete product.", "Gagal menghapus produk."],
+  "application.deleted": ["품목을 삭제했습니다.", "Product deleted.", "Produk dihapus."],
+  "application.merged": ["품목을 합쳤습니다.", "Products merged.", "Produk digabungkan."],
   "application.empty_products": ["등록된 품목이 없습니다.", "No products registered.", "Belum ada produk terdaftar."],
   "application.product_placeholder": ["제품명 (예: 프리미엄 홍삼 스틱)", "Product name (e.g. premium red ginseng stick)", "Nama produk (mis. stik ginseng merah premium)"],
   "application.category_optional": ["분류(선택)", "Category (optional)", "Kategori (opsional)"],
@@ -3283,9 +3291,26 @@ App.entAddProduct = async function(cid){
   await loadEntProd(cid); render(); toast('품목을 추가했습니다.');
 };
 App.entDelProduct = async function(cid, pid){
-  const r=await apiFetch('/cases/'+cid+'/products/'+pid,{method:'DELETE'});
-  if(!r.ok) return toast(await apiErr(r, '삭제에 실패했습니다.'));
-  await loadEntProd(cid); render(); toast('품목을 삭제했습니다.');
+  if(!(RS.entProd||{})[cid]) await loadEntProd(cid);
+  const products=(RS.entProd||{})[cid]||[], product=products.find(p=>p.product_id===pid);
+  const others=products.filter(p=>p.product_id!==pid);
+  openModal(t('application.delete_product'),
+    `<p>${t('application.delete_confirm')} <b>${esc(product?.name||'')}</b></p>`+
+    (others.length?`<div class="field"><label for="pr-merge-into">${t('application.merge_into')}</label>
+      <select class="in" id="pr-merge-into"><option value="">${t('application.delete_only')}</option>
+      ${others.map(p=>`<option value="${esc(p.product_id)}">${esc(p.name)}</option>`).join('')}</select>
+      <p class="muted">${t('application.merge_hint')}</p></div>`:''),
+    `<button class="btn" onclick="App.closeModal()">${t('intake.cancel')}</button>
+     <button class="btn btn-primary" onclick="App.entConfirmDelProduct('${esc(jsq(cid))}','${esc(jsq(pid))}')">${t('application.delete')}</button>`);
+};
+App.entConfirmDelProduct = async function(cid, pid){
+  const mergeInto=($('#pr-merge-into')||{}).value||'';
+  try{
+    const query=mergeInto?'?merge_into='+encodeURIComponent(mergeInto):'';
+    const r=await apiFetch('/cases/'+encodeURIComponent(cid)+'/products/'+encodeURIComponent(pid)+query,{method:'DELETE'});
+    if(!r.ok) return toast(await apiErr(r, t('application.delete_failed')));
+    closeModal(); await loadEntProd(cid); render(); toast(t(mergeInto?'application.merged':'application.deleted'));
+  }catch(e){ toast(t('application.delete_failed')); }
 };
 const BLOCK_KO = {NIB_MISSING:'사업자등록번호(NIB) 누락 — 사업자등록증을 문서함에 올리면 자동 입력됩니다',
   NO_PRODUCT:'인증 품목 미등록', COMPANY_NAME_MISSING:'기업명 누락', NO_JASA:'물류 서비스 범위 미선택'};

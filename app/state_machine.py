@@ -311,7 +311,7 @@ def material_risk(m):
 
 def _rejected_autofill_names(db, case_id, entity):
     """같은 케이스의 삭제·이름 교정·검토 결정을 자동등록보다 우선한다."""
-    from .models import AuditLog, normalize_material_name as norm
+    from .models import AuditLog, Product, normalize_material_name as norm
     kind = entity + "_names"
     rejected = set()
     events = db.query(WorkflowEvent).filter(WorkflowEvent.case_id == case_id,
@@ -329,7 +329,27 @@ def _rejected_autofill_names(db, case_id, entity):
                             (entity == "material" or norm(item["value"]) in decisions))
     c = db.get(CaseApplication, case_id) if entity == "product" else None
     aliases = (c.profile_ext or {}).get("product_aliases", {}) if c else {}
-    for log in db.query(AuditLog).filter_by(case_id=case_id, action=entity + ".delete", resource_type=entity):
+    product_ids = {p.product_id for p in db.query(Product).filter_by(case_id=case_id)} if c else set()
+    deletions = db.query(AuditLog).filter_by(case_id=case_id, action=entity + ".delete",
+                                            resource_type=entity).all()
+    merge_targets = {log.resource_id: (log.meta or {}).get("merged_into") for log in deletions
+                     if norm((log.meta or {}).get("name"))} if entity == "product" else {}
+
+    def merged_product_survives(log):
+        target_id = (log.meta or {}).get("merged_into")
+        seen = {log.resource_id}
+        while target_id and target_id not in seen:
+            if target_id in product_ids:
+                return True
+            seen.add(target_id)
+            target_id = merge_targets.get(target_id)
+        return False
+
+    for log in deletions:
+        # 같은 케이스의 합치기를 끝까지 따라간다. 순환·일반 삭제·없는 대상은 이름 거부로 남긴다.
+        if (entity == "product" and merged_product_survives(log)
+                and norm((log.meta or {}).get("name"))):
+            continue
         rejected.add(norm((log.meta or {}).get("name") or ""))
         if entity == "product":
             # 구 삭제 로그에는 별칭 스냅샷이 없으므로 남아 있는 ID별 별칭도 읽는다.
@@ -355,7 +375,7 @@ def product_alias_conflicts(products, aliases, documents, rejected_names=()):
     for product in products:
         names = [n for n in [product.name] + aliases.get(product.product_id, []) if norm(n) not in rejected_names]
         if names:
-            groups.append({"name": names[0], "aliases": names[1:]})
+            groups.append({"name": names[0], "aliases": names[1:], "product_id": product.product_id})
     for doc in documents:
         if doc.doc_type in intake._PRODUCT_SRC or doc.doc_type is None:
             groups += intake._product_alias_groups(doc.fields or {}, getattr(doc, "text_full", None) or "",

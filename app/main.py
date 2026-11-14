@@ -7566,11 +7566,12 @@ def delete_product_photo(case_id: str, product_id: str, document_id: str,
 
 
 @app.delete("/cases/{case_id}/products/{product_id}")
-def delete_product(case_id: str, product_id: str, force: bool = False,
+def delete_product(case_id: str, product_id: str, force: bool = False, merge_into: str = None,
                    user=Depends(auth.require_roles("applicant", "consultant", "operator", "admin")),
                    db: Session = Depends(get_db)):
     """제품 삭제(오분류·중복 정리) — 제품 + 원재료 연결(ProductMaterial) 제거. 조직격리.
 
+    merge_into 지정 시 연결과 이름·별칭을 같은 케이스의 대상 제품에 보존한다.
     발급된 인증서의 동결 범위(frozen_product_ids)에 든 제품은 그냥 지우지 않는다.
     인증서는 '이 제품들을 인증한다'는 문서다. 제품 행만 사라지면 인증서가 없는 것을
     가리키고, 그 사실이 아무 데도 남지 않는다. force=true 로 지울 때는 동결 목록에서도
@@ -7581,29 +7582,57 @@ def delete_product(case_id: str, product_id: str, force: bool = False,
     p = db.get(models.Product, product_id)
     if not p or p.case_id != case_id:
         raise HTTPException(404, {"code": "PRODUCT_NOT_FOUND"})
-    certs = [ct for ct in db.query(models.HalalCertificate).filter_by(case_id=case_id).all()
-             if product_id in (ct.frozen_product_ids or [])]
-    if certs and not force:
+    target = None
+    if merge_into is not None:
+        target = db.get(models.Product, merge_into)
+        if not target or target.case_id != case_id or target.product_id == product_id:
+            raise HTTPException(422, {"code": "INVALID_MERGE_TARGET"})
+    protected_ids = {product_id, target.product_id} if target else {product_id}
+    guarded_certs = [ct for ct in db.query(models.HalalCertificate).filter_by(case_id=case_id).all()
+                     if protected_ids.intersection(ct.frozen_product_ids or [])]
+    if guarded_certs and not force:
         raise HTTPException(409, {"code": "CERT_SCOPE_FROZEN",
-                                  "certificates": [ct.certificate_no for ct in certs],
+                                  "certificates": [ct.certificate_no for ct in guarded_certs],
                                   "hint": "인증서 동결 범위에 든 제품입니다. "
-                                          "force=true 로 지우면 동결 목록에서도 빠집니다."})
-    if certs and user["role"] not in ("operator", "admin"):
+                                          "운영자·관리자가 force=true 로 삭제 또는 합치기를 수행해야 하며, "
+                                          "삭제되는 제품만 동결 목록에서 빠집니다."})
+    if guarded_certs and user["role"] not in ("operator", "admin"):
         raise HTTPException(403, {"code": "NOT_AUTHORIZED",
                                   "need": ["operator", "admin"], "have": user["role"]})
+    certs = [ct for ct in guarded_certs if product_id in (ct.frozen_product_ids or [])]
     for ct in certs:
         ct.frozen_product_ids = [x for x in (ct.frozen_product_ids or []) if x != product_id]
         flag_modified(ct, "frozen_product_ids")   # JSON 컬럼 in-place 변경 감지
+    if target:
+        # _assert_scope_open의 케이스 잠금 이후, 먼저 끝난 합치기의 별칭까지 읽는다.
+        db.refresh(c, ["profile_ext"])
+    aliases = dict((c.profile_ext or {}).get("product_aliases", {}))
+    source_links = db.query(models.ProductMaterial).filter_by(product_id=product_id).all()
     _audit(db, user, "product.delete", "product", product_id, case_id,
            {"name": p.name, "description": p.description,
-            "aliases": list((c.profile_ext or {}).get("product_aliases", {}).get(product_id, [])),
-            "material_links": db.query(models.ProductMaterial)
-                                .filter_by(product_id=product_id).count(),
-            "removed_from_certificates": [ct.certificate_no for ct in certs]}, commit=False)
-    if product_id in (c.profile_ext or {}).get("product_aliases", {}):
-        c.profile_ext = {**c.profile_ext, "product_aliases": {
-            pid: names for pid, names in c.profile_ext["product_aliases"].items() if pid != product_id}}
-    db.query(models.ProductMaterial).filter_by(product_id=product_id).delete()
+            "aliases": list(aliases.get(product_id, [])),
+            "material_links": len(source_links),
+            "removed_from_certificates": [ct.certificate_no for ct in certs],
+            **({"merged_into": merge_into} if target else {})}, commit=False)
+    if target:
+        existing = {lk.material_id for lk in db.query(models.ProductMaterial).filter_by(
+            case_id=case_id, product_id=merge_into)}
+        for link in source_links:
+            if link.material_id in existing:
+                db.delete(link)
+            else:
+                link.product_id = merge_into
+                existing.add(link.material_id)
+        aliases[merge_into] = list(dict.fromkeys(aliases.get(merge_into, []) + [
+            name for name in [p.name] + aliases.get(product_id, [])
+            if _norm_material(name) and _norm_material(name) != _norm_material(target.name)]))
+        # 제품 CASCADE 삭제 전에 이전·중복 제거를 확정한다(커밋은 아래에서 한 번만).
+        db.flush()
+    else:
+        db.query(models.ProductMaterial).filter_by(product_id=product_id).delete()
+    if target or product_id in aliases:
+        aliases.pop(product_id, None)
+        c.profile_ext = {**(c.profile_ext or {}), "product_aliases": aliases}
     db.delete(p)
     db.commit()
     return {"deleted": product_id,
@@ -7859,6 +7888,27 @@ def reclassify_document(document_id: str, body: schemas.DocTypeReq,
     return {"document_id": document_id, "doc_type": d.doc_type}
 
 
+def _set_document_fields(doc, fields, *, analysis=None, text=None):
+    """필드 교체·검토 갱신은 오류를 보존하고, 성공한 재분석만 이전 오류를 해제한다."""
+    fields = dict(fields or {})
+    errors = {key: fields[key] for key in ("_llm_error", "_ocr_error") if key in fields}
+    if analysis is not None:
+        for source in (analysis.get("fields") or {}, getattr(text, "parse_fields", {})):
+            errors.update({key: source[key] for key in ("_llm_error", "_ocr_error") if key in source})
+        for key in ("llm_error", "ocr_error"):
+            if analysis.get(key) is not None:
+                errors["_" + key] = analysis[key]
+    succeeded = (analysis is not None and bool((text or "").strip()) and not errors
+                 and not fields.get("_empty") and not (fields.get("_analysis") or {}).get("partial"))
+    for key in ("_llm_error", "_ocr_error"):
+        if key in errors:
+            fields[key] = errors[key]
+        elif not succeeded and key in (doc.fields or {}):
+            fields[key] = doc.fields[key]
+    doc.fields = fields
+    return fields
+
+
 def _autofill_key(value, field=""):
     return re.sub(r"\D" if field == "nib" else r"[\W_]+", "", str(value or "")).casefold()
 
@@ -7945,6 +7995,12 @@ def _apply_owned_autofill(db, c, doc):
     profile = {k: v for k, v in profile.items() if v not in (None, "")}
     if not candidates and not profile:
         return {"skipped": "no_nib"} if is_nib else {}
+
+    # 분석 대기 중 합치기·프로필 저장이 끝날 수 있다. 판정 전에 잠그고 최신값을 읽는다.
+    lock_chain_tail(db, "wf:" + c.case_id)
+    db.flush()  # 같은 트랜잭션에서 앞서 반영한 문서·프로필 변경은 보존한다.
+    c = _lock_case(db, c.case_id)
+    _assert_case_open(c)
 
     # 요청 경로에서는 원문 규칙만 쓴다. LLM 검증은 커밋 뒤 verify_enqueue에서 수행한다.
     confirmed_type, _ = intake.refine_doctype_reason("", None, text)
@@ -8046,8 +8102,9 @@ def _apply_owned_autofill(db, c, doc):
         fill(c, k, v)
     for k, v in profile.items():
         fill(pe, k, v, scope="profile", source_field=dict(profile_keys)[k])
-    if pe != (c.profile_ext or {}):
-        c.profile_ext = pe
+    profile_updates = {k: pe[k] for k in profile if "profile." + k in applied}
+    if profile_updates:
+        c.profile_ext = {**(c.profile_ext or {}), **profile_updates}
 
     # 신청 업체와 일치하는 공장만 조직 자산으로 등록한다. OEM 등은 사람이 선택한다.
     if not is_nib and reason in (None, "factory_conflict") and candidates and company_matches:
@@ -8085,7 +8142,7 @@ def _apply_owned_autofill(db, c, doc):
     confirmed = [x for x in previous.get("conflicts", []) if x.get("status") == "confirmed"]
     f["_autofill"] = {**previous, "applied": {**(previous.get("applied") or {}), **applied},
                       "changes": changes, "conflicts": confirmed + conflicts}
-    doc.fields = f
+    _set_document_fields(doc, f)
     if reason:
         applied["skipped"] = reason
     if conflicts:
@@ -8121,7 +8178,7 @@ def _protect_autofill(db, keys, user_id, *, case_id=None, facility_id=None):
                 touched = True
         if touched:
             fields["_autofill"] = {**meta, "changes": changes}
-            doc.fields = fields
+            _set_document_fields(doc, fields)
 
 
 def _revert_failed_autofill(db, c, doc):
@@ -8171,24 +8228,13 @@ def _revert_failed_autofill(db, c, doc):
         change["status"] = "reverted"
     if changes:
         fields["_autofill"] = {**meta, "changes": changes, "conflicts": conflicts}
-        doc.fields = fields
+        _set_document_fields(doc, fields)
 
 
 def _autofill_products(db, c, agg, documents, rejected_names=()):
     """명시적 병기만 별칭으로 저장한다. 문서 간 언어 차이는 기존 확인대기로 보낸다."""
-    products = db.query(models.Product).filter_by(case_id=c.case_id).all()
-    product_ids = {p.product_id for p in products}
-    # 구 삭제 로그의 별칭 근거인 고아 ID는 보존한다. 새 삭제는 감사로그에 스냅샷을 남긴다.
-    aliases = {pid: [n for n in values if _norm_material(n) not in rejected_names]
-               if pid in product_ids else list(values)
-               for pid, values in (c.profile_ext or {}).get("product_aliases", {}).items()}
-    groups = {_norm_material(g["name"]): g for g in agg.get("product_aliases", [])}
-    docs = (db.query(models.DocumentAsset).options(load_only(models.DocumentAsset.document_id,
-            models.DocumentAsset.fields, models.DocumentAsset.doc_type,
-            models.DocumentAsset.text_full)).filter_by(case_id=c.case_id).all()) if documents else []
-    docs += [d for d in documents if all(d.document_id != old.document_id for old in docs)]
     for doc in documents:
-        doc.fields = intake._prune_product_pending(doc.fields or {})
+        _set_document_fields(doc, intake._prune_product_pending(doc.fields or {}))
         if rejected_names:
             fields = dict(doc.fields)
             meta = dict(fields.get("_autofill") or {})
@@ -8196,7 +8242,48 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
                 meta["product_pending"] = [x for x in meta["product_pending"]
                                            if _norm_material(x["value"]) not in rejected_names]
                 fields["_autofill"] = meta
-            doc.fields = fields
+            _set_document_fields(doc, fields)
+    if not (agg.get("products") or agg.get("product_aliases") or rejected_names or
+            any(x["kind"] == "product_names" for x in agg.get("pending", []))):
+        return 0, 0
+    # 공통 반영부의 케이스 잠금 뒤 조회한다. identity map에도 삭제 전 제품을 남기지 않는다.
+    products = db.query(models.Product).filter_by(case_id=c.case_id).populate_existing().all()
+    product_ids = {p.product_id for p in products}
+    # 수동 합치기로 생존 제품에 보존한 이름·별칭은 과거 검토 거부로 지우지 않는다.
+    deletions = db.query(models.AuditLog).filter_by(case_id=c.case_id, action="product.delete",
+                                                   resource_type="product").all()
+    targets = {entry.resource_id: (entry.meta or {}).get("merged_into") for entry in deletions
+               if _norm_material((entry.meta or {}).get("name"))}
+    merged_aliases, merged_ids = {}, set()
+    current_aliases = (c.profile_ext or {}).get("product_aliases", {})
+    for entry in deletions:
+        meta = entry.meta or {}
+        target_id, seen = targets.get(entry.resource_id), {entry.resource_id}
+        while target_id and target_id not in seen and target_id not in product_ids:
+            seen.add(target_id)
+            target_id = targets.get(target_id)
+        if target_id in product_ids and target_id not in seen:
+            merged_ids.add(entry.resource_id)
+            merged_aliases.setdefault(target_id, []).extend(
+                [meta["name"]] + list(meta.get("aliases") or []) + current_aliases.get(entry.resource_id, []))
+
+    def retained(pid, values):
+        merged_keys = {_norm_material(n) for n in merged_aliases.get(pid, [])}
+        return [n for n in values if pid not in product_ids or _norm_material(n) not in rejected_names
+                or _norm_material(n) in merged_keys]
+
+    # 구 삭제 로그의 별칭 근거인 고아 ID는 보존한다. 새 삭제는 감사로그에 스냅샷을 남긴다.
+    aliases = {pid: retained(pid, values) for pid, values in current_aliases.items() if pid not in merged_ids}
+    for product in products:
+        if product.product_id in merged_aliases:
+            aliases[product.product_id] = list(dict.fromkeys(aliases.get(product.product_id, []) +
+                [n for n in merged_aliases[product.product_id] if _norm_material(n)
+                 and _norm_material(n) != _norm_material(product.name)]))
+    groups = {_norm_material(g["name"]): g for g in agg.get("product_aliases", [])}
+    docs = (db.query(models.DocumentAsset).options(load_only(models.DocumentAsset.document_id,
+            models.DocumentAsset.fields, models.DocumentAsset.doc_type,
+            models.DocumentAsset.text_full)).filter_by(case_id=c.case_id).all()) if documents else []
+    docs += [d for d in documents if all(d.document_id != old.document_id for old in docs)]
     conflicts = sm.product_alias_conflicts(products, aliases, docs, rejected_names) if documents else set()
 
     def doc_names(doc):
@@ -8229,7 +8316,7 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
                             "possible_product_ids": [p.product_id for p in matches]})
             meta["product_pending"] = pending
             f["_autofill"] = meta
-            doc.fields = f
+            _set_document_fields(doc, f)
 
     added, deferred = 0, 0
     material_keys = {_norm_material(n) for n in agg.get("materials", [])}
@@ -8264,8 +8351,14 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
             aliases[product.product_id] = list(dict.fromkeys(aliases.get(product.product_id, []) +
                 [n for n in spellings if _norm_material(n) != _norm_material(product.name)
                  and _norm_material(n) not in rejected_names]))
-    if aliases != (c.profile_ext or {}).get("product_aliases", {}):
-        c.profile_ext = {**(c.profile_ext or {}), "product_aliases": aliases}
+    # 잠금 이후의 최신 프로필에 추가 별칭만 병합한다. 다른 프로필 자동채움도 보존한다.
+    profile = dict(c.profile_ext or {})
+    latest_aliases = {pid: retained(pid, values) for pid, values in
+                      profile.get("product_aliases", {}).items() if pid not in merged_ids}
+    for pid, values in aliases.items():
+        latest_aliases[pid] = list(dict.fromkeys(latest_aliases.get(pid, []) + values))
+    if latest_aliases != profile.get("product_aliases", {}):
+        c.profile_ext = {**profile, "product_aliases": latest_aliases}
     for item in agg.get("pending", []):
         if item["kind"] == "product_names" and documents:
             known = {_norm_material(item["value"])}
@@ -8278,12 +8371,28 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
     return added, deferred
 
 
+def _material_source_names(fields):
+    """현재 추출·규칙 누락·동결 보류 모두 원료의 문서 출처로 보존한다."""
+    return (intake._normalise_names(fields.get("material_names")) +
+            intake._normalise_names((fields.get("_rule_omissions") or {}).get("material_names")) +
+            [item["value"] for item in fields.get("_scope_pending") or []
+             if item["kind"] == "material_names"])
+
+
 def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None):
     """목록 집계만 직접 반영한다. 업체·공장은 원문 문서별 소유권 게이트를 통과해야 한다."""
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0,
                "profile": [], "pending": len(agg.get("pending") or [])}
-    _assert_case_open(c)
     rejected_products = sm.rejected_product_autofill_names(db, c.case_id) if documents else set()
+    if (agg.get("products") or agg.get("product_aliases") or rejected_products or
+            any(x["kind"] == "product_names" for x in agg.get("pending", []))):
+        # 분석 대기 중 끝난 합치기·프로필 저장을 제품 판정 전에 읽는다.
+        # 제품 작업이 없는 원료 전용 업로드는 기존처럼 스크리닝 이후에 잠근다.
+        lock_chain_tail(db, "wf:" + c.case_id)
+        db.flush()  # 같은 트랜잭션의 수동 확인·문서 갱신을 refresh로 잃지 않는다.
+        c = _lock_case(db, c.case_id)
+        rejected_products = sm.rejected_product_autofill_names(db, c.case_id) if documents else set()
+    _assert_case_open(c)
     if rejected_products:
         # 별칭으로 승격된 집계 결과를 사후 필터하면 남은 이름도 쌍의 자격을 물려받는다.
         # 원문 후보에서 거부 이름을 먼저 빼고 단독 제품의 등록 요건을 다시 판정한다.
@@ -8313,7 +8422,7 @@ def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None):
                              for value in extracted.get(bucket, [])]
             fields["_scope_pending"] = list({(x["kind"], x["value"]): x for x in deferred
                 if x["kind"] != "product_names" or _norm_material(x["value"]) not in rejected_products}.values())
-            doc.fields = fields
+            _set_document_fields(doc, fields)
         applied.update(scope_frozen=True, requires_scope_unlock=True,
                        pending=sum(len((d.fields or {}).get("_scope_pending") or []) for d in documents))
         return applied
@@ -8391,11 +8500,18 @@ def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None):
     if created_material_ids:
         if material_sources is None:
             material_sources = {}
-            for doc in documents:
-                fields = doc.fields or {}
-                source_products = intake._source_product_names(fields, doc.text_full)
-                for name in intake._normalise_names(fields.get("material_names")):
-                    material_sources.setdefault(_norm_material(name), set()).update(source_products)
+            # 한 문서만 재분석해도 다른 저장 문서의 불명·보류 출처를 잃지 않는다.
+            # 개별 업로드는 스크리닝까지 저장을 미룬 문서도 여기서 케이스 검사에 포함한다.
+            db.add_all(documents)
+            db.flush()  # autoflush=False 세션에서도 이번 재분석 필드·원문을 먼저 반영한다.
+            source_docs = db.query(models.DocumentAsset.fields, models.DocumentAsset.text_full).filter_by(
+                case_id=c.case_id) if documents else ()
+            for fields, text in source_docs:
+                fields = fields or {}
+                source_products = intake._source_product_names(fields, text)
+                for name in _material_source_names(fields):
+                    key = _norm_material(name)
+                    material_sources.setdefault(key, []).append(source_products)
         applied["links"] = _auto_link_pm(db, c.case_id, single_product=True,
             material_ids=created_material_ids, material_sources=material_sources)
     return applied
@@ -8550,7 +8666,7 @@ def _verify_doc(db, d, c):
     for marker in res.get("_truncations", [res.get("_truncated")]):
         if isinstance(marker, dict) and marker.get("kind") == "verify_input":
             intake._record_truncation(fl, **marker)
-    d.fields = fl   # JSON 변경 감지를 위해 새 dict 를 대입한다
+    _set_document_fields(d, fl)   # JSON 변경 감지를 위해 새 dict 를 대입한다
     unchanged = (d.doc_type == doc_type and (d.text_full or "") == text and
                  {k: v for k, v in fl.items() if not k.startswith("_")} ==
                  {k: v for k, v in fields.items() if not k.startswith("_")})
@@ -8662,8 +8778,6 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
         fl["_sources"] = _fs
     # AI 호출이 실패했으면 그 사실을 문서에 남긴다. 남기지 않으면 '분석했는데 아무것도
     # 없는 서류'와 구분되지 않아, 사람이 다시 돌려야 한다는 걸 알 방법이 없다.
-    if r.get("llm_error"):
-        fl["_llm_error"] = r["llm_error"]
     # 검증 큐와 같은 잠금·종결 판정으로 최신 상태를 확인한 뒤에만 저장한다.
     c = _lock_case(db, case_id)
     if c is None or sm.is_terminal(c.status):
@@ -8680,7 +8794,7 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id"):
         if key in (d.fields or {}):
             fl[key] = d.fields[key]   # 재처리로 동결대기·검토 이력을 지우지 않는다.
-    d.fields = intake._prune_product_pending(fl)
+    _set_document_fields(d, intake._prune_product_pending(fl), analysis=r, text=text)
     d.text_excerpt = (text or "")[:300]
     d.text_full = text or ""
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
@@ -8781,7 +8895,7 @@ def _confirm_autofill(db, c, choices, user):
         records[index].update(status="confirmed", selected=value, confirmed_by=user["uid"])
         meta["conflicts"] = records
         fields["_autofill"] = meta
-        d.fields = fields
+        _set_document_fields(d, fields)
         key = (scope + "." if scope != "case" else "") + field
         _protect_autofill(db, {key, "facility"} if scope.startswith("facility") else {key}, user["uid"],
                           case_id=c.case_id, facility_id=conflict.get("facility_id"))
@@ -8871,31 +8985,32 @@ def apply_pending_extractions(case_id: str, body: dict = None,
     want = set(values)
     # 이름 수정·제외만 보낸 요청의 빈 values를 전량 등록으로 해석하지 않는다.
     apply_all = not want and "renames" not in b and "dismiss" not in b and "autofill_choices" not in b
+    # 확인대기 정본이 이름을 중복 제거하기 전에 모든 문서의 추출·보류 출처를 수집한다.
+    source_products, original_sources = {}, {}
+    source_docs = db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields,
+                           models.DocumentAsset.text_full).filter_by(case_id=case_id)
+    for did, fields, text in source_docs:
+        fields = fields or {}
+        source_products[did] = intake._source_product_names(fields, text)
+        for name in _material_source_names(fields):
+            key = _norm_material(name)
+            original_sources.setdefault(key, {})[did] = source_products[did]
     items = [x for x in _pending_extractions(db, case_id)
              if apply_all or x["value"] in want or x["value"] in renames or x["value"] in dismiss]
     agg = {bucket: [renames.get(x["value"], x["value"]).strip() for x in items
                     if x["kind"] == kind and x["value"] not in dismiss]
            for bucket, kind in (("products", "product_names"), ("materials", "material_names"))}
     # 확인·이름 수정 후에도 원래 후보의 문서 귀속을 자동 연결에 전달한다.
-    source_ids = {x["document_id"] for x in items if x["kind"] == "material_names"}
-    source_products, original_sources = {}, {}
-    source_docs = db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields,
-                           models.DocumentAsset.text_full).filter_by(case_id=case_id) if source_ids else ()
-    for did, fields, text in source_docs:
-        fields = fields or {}
-        source_products[did] = intake._source_product_names(fields, text)
-        # 확인대기 화면의 이름 중복 제거로 다른 출처의 미확정/불일치가 사라지면 안 된다.
-        for name in (intake._normalise_names(fields.get("material_names")) +
-                     intake._normalise_names((fields.get("_rule_omissions") or {}).get("material_names"))):
-            original_sources.setdefault(_norm_material(name), set()).update(source_products[did])
     material_sources = {}
     for item in items:
         if item["kind"] != "material_names" or item["value"] in dismiss:
             continue
         name = renames.get(item["value"], item["value"])
-        material_sources.setdefault(_norm_material(name), set()).update(
-            original_sources.get(_norm_material(item["value"]), set()) |
-            source_products.get(item["document_id"], {""}))
+        key, original_key = _norm_material(name), _norm_material(item["value"])
+        sources = dict(original_sources.get(original_key, {}))
+        # 위험/동결 보류 후보는 material_names에 없을 수 있다. 선택한 원문도 항상 보존한다.
+        sources.setdefault(item["document_id"], source_products.get(item["document_id"], {""}))
+        material_sources.setdefault(key, []).extend(sources.values())
     applied = _apply_agg_to_case(db, c, agg, material_sources=material_sources)
     pe = dict(c.profile_ext or {})
     # 원래 추출값을 기억해야 이름을 고치거나 등록하지 않은 항목도 다시 나타나지 않는다.
@@ -9100,21 +9215,42 @@ def _auto_link_pm(db, case_id, max_pairs=2000, *, single_product=False,
     _assert_case_open(c)
     _assert_scope_open(c)
     db.flush()
-    prods = db.query(models.Product).filter_by(case_id=case_id).all()
+    if single_product:
+        # _assert_scope_open이 같은 트랜잭션의 wf·scope 잠금을 이미 보유한다.
+        # _lock_case 재호출 없이, 이번 변경을 flush한 뒤 케이스·제품을 새로 읽는다.
+        c = db.get(models.CaseApplication, case_id, populate_existing=True)
+        _assert_case_open(c)
+    prods = (db.query(models.Product).filter_by(case_id=case_id)
+             .execution_options(populate_existing=single_product).all())
     mats = db.query(models.Material).filter_by(case_id=case_id)
     if single_product:
         # 배포 전 연결 해제는 기록이 없다. 이번 호출이 실제 생성한 원료만 대상이다.
-        if (len(prods) != 1 or not material_ids or db.query(models.AuditLog).filter_by(
-                case_id=case_id, action="product.delete").first() is not None):
+        if len(prods) != 1 or not material_ids:
+            return 0
+        # 일반 삭제·이름 불명 기록은 계속 차단한다. 현재 제품으로 명시적으로 합친 경우만 허용.
+        deletions = db.query(models.AuditLog).filter_by(case_id=case_id, action="product.delete")
+        if any((entry.meta or {}).get("merged_into") != prods[0].product_id or
+               not _norm_material((entry.meta or {}).get("name")) for entry in deletions):
             return 0
         mats = mats.filter(models.Material.material_id.in_(material_ids))
         product_names = {_norm_material(n) for n in [prods[0].name] +
                          (c.profile_ext or {}).get("product_aliases", {}).get(prods[0].product_id, [])}
+        def source_groups(sources, key):
+            groups = (sources or {}).get(key, ())
+            # 구 내부 호출의 집합은 한 문서다. 새 호출은 문서별 집합 목록을 전달한다.
+            if isinstance(groups, (set, frozenset)):
+                groups = [groups]
+            return [{_norm_material(n) for n in group} for group in groups]
+
+        def matches(names):
+            return bool(names) and "" not in names and names <= product_names
+
         matched = []
         for material in mats:
-            source_names = {_norm_material(n) for n in
-                            (material_sources or {}).get(_norm_material(material.name), ())}
-            if source_names and "" not in source_names and source_names <= product_names:
+            key = _norm_material(material.name)
+            groups = source_groups(material_sources, key)
+            # 모든 문서별 출처가 비어 있지 않고 현재 제품명·별칭에만 속해야 한다.
+            if groups and all(matches(names) for names in groups):
                 matched.append(material)
         mats = matched
     else:
@@ -9272,8 +9408,10 @@ def _apply_intake_autofill(db, c, res):
     """분류 결과 → DocumentAsset 저장 + 신청서 자동채움(회사/NIB/제품/원재료). 임시저장(commit은 호출측).
     중복 방지: 같은 케이스에 동일 내용(file_hash) 또는 동일 파일명(내용없는 문서)은 재저장하지 않는다."""
     from sqlalchemy.orm import defer
+    c = _lock_case(db, c.case_id)
+    _assert_case_open(c)
     _ex = (db.query(models.DocumentAsset).options(defer(models.DocumentAsset.content_b64))
-           .filter_by(case_id=c.case_id).all())
+           .filter_by(case_id=c.case_id).populate_existing().all())
     _seen_h = {d.file_hash: d for d in _ex if d.file_hash}
     _seen_n = {d.filename: d for d in _ex if not d.file_hash and d.filename}
     dup_skipped, saved, saved_rows = 0, [], []
@@ -9281,13 +9419,14 @@ def _apply_intake_autofill(db, c, res):
         fields = dict(d.get("fields") or {})
         if not d.get("content_b64"):
             fields["_original_not_stored"] = True
-        if d.get("llm_error"):
-            fields["_llm_error"] = d["llm_error"]
         d["fields"] = fields
         _h = _sha256_b64(d.get("content_b64"))
         _nm = d["filename"]
         doc = _seen_h.get(_h) if _h else _seen_n.get(_nm)
         if doc is not None:
+            # 재진입·같은 묶음의 중복 문서도 미저장 변경을 잃지 않게 먼저 반영한다.
+            db.flush()
+            doc = db.get(models.DocumentAsset, doc.document_id, populate_existing=True)
             dup_skipped += 1
             # 같은 원본 재업로드도 새 파서 결과는 반영하되 문서 식별자는 유지한다.
             for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id"):
@@ -9295,7 +9434,8 @@ def _apply_intake_autofill(db, c, res):
                     fields[key] = doc.fields[key]
             doc.doc_type = d["doc_type"]
             doc.confidence = float(d.get("confidence") or 0)
-            doc.fields = intake._prune_product_pending(fields)
+            _set_document_fields(doc, intake._prune_product_pending(fields), analysis=d,
+                                 text=d.get("text_full"))
             doc.text_full = d.get("text_full") or ""
             doc.text_excerpt = d.get("excerpt") or ""
             doc.ocr_lines = d.get("ocr_lines")
@@ -9313,6 +9453,7 @@ def _apply_intake_autofill(db, c, res):
                                    text_excerpt=d.get("excerpt"), text_full=d.get("text_full") or "",
                                    ocr_lines=d.get("ocr_lines"), content_b64=d.get("content_b64"),
                                    content_type=d.get("content_type"), file_hash=_h)
+        _set_document_fields(doc, fields, analysis=d, text=d.get("text_full"))
         db.add(doc)
         saved.append(doc)
         saved_rows.append((d, doc))
@@ -9823,20 +9964,25 @@ def autofill_profile(case_id: str, force: bool = False,
         if d.content_b64 and not fields.get("address"):
             try:
                 text = parse_file(d.filename, base64.b64decode(d.content_b64.split(",")[-1]))
-                r = classify(d.filename, text)
+            except Exception:  # noqa: BLE001
+                fields = _set_document_fields(d, fields, analysis={"ocr_error": "ERROR"})
+            else:
+                try:
+                    r = classify(d.filename, text)
+                except Exception:  # noqa: BLE001
+                    r = {"llm_error": "ERROR"}
+                updated = (dict(r["fields"]) if r.get("fields") else
+                           {k: v for k, v in fields.items() if k not in ("_llm_error", "_ocr_error")})
+                for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id"):
+                    if key in fields:
+                        updated[key] = fields[key]
+                fields = _set_document_fields(d, updated, analysis=r, text=text)
                 if r.get("fields"):
-                    fields = dict(r["fields"])
-                    if (d.fields or {}).get("_autofill"):
-                        fields["_autofill"] = d.fields["_autofill"]
-                    if (d.fields or {}).get("_upload_id"):
-                        fields["_upload_id"] = d.fields["_upload_id"]
-                    d.fields = fields
                     d.doc_type = r.get("doc_type", d.doc_type)
+                    d.confidence = float(r.get("confidence") or 0)
                     d.text_excerpt = (text or "")[:300]
                     d.text_full = text or ""
                     reprocessed.append(d.document_id)
-            except Exception:  # noqa: BLE001
-                pass
         classified.append({"fields": fields, "doc_type": d.doc_type})
     agg = aggregate_fields(classified)
     applied = []
@@ -10043,8 +10189,6 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     sources = r.get("field_sources") or {}
     if sources:
         f["_sources"] = sources
-    if r.get("llm_error"):
-        f["_llm_error"] = r["llm_error"]
     applied = {}
     from .intake import _ctype
     _b64 = _validate_upload(body.file_b64, body.filename)
@@ -10054,6 +10198,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                text_excerpt=r.get("excerpt"), text_full=text,
                                content_b64=_b64,
                                content_type=_ctype(body.filename))
+    f = _set_document_fields(doc, f, analysis=r, text=text)
     if eff_type in intake._MATERIAL_SRC | intake._PRODUCT_SRC:
         agg = intake.aggregate_fields([{"doc_type": eff_type, "fields": f, "text_full": text}])
         added = _apply_agg_to_case(db, c, agg, documents=[doc])
@@ -10166,7 +10311,7 @@ def review_document(document_id: str, body: schemas.DocReviewReq,
         meta["changes"] = {k: {**v, "status": "confirmed", "confirmed_by": user["uid"]}
                            for k, v in meta.get("changes", {}).items()}
         fields["_autofill"] = meta
-        d.fields = fields
+        _set_document_fields(d, fields)
     linked_ids = _certificate_material_ids(db, c.case_id, document_id)
     mats = db.query(models.Material).filter(models.Material.case_id == c.case_id,
                                             models.Material.material_id.in_(linked_ids)).all()
