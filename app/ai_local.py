@@ -4,6 +4,7 @@ import os
 import sys
 import json
 import gc
+import logging
 import httpx
 import threading
 from functools import wraps
@@ -18,6 +19,7 @@ _ocr = None
 _ocr_lang = None
 _ocr_engines = {}  # 삽입 순서가 LRU 순서(오래된 언어 → 최근 사용 언어).
 _ocr_lock = threading.Lock()
+_logger = logging.getLogger(__name__)
 
 
 def _serialized_ocr(fn):
@@ -331,12 +333,41 @@ def ocr_image(path, lang="korean"):
 # 끄면 조금 느려지지만 읽기는 된다. 속도보다 되는 게 먼저다.
 # 다른 장비에서 켜고 싶으면 GLHAC_OCR_MKLDNN=1 로 되돌린다.
 _OCR_MKLDNN = os.environ.get("GLHAC_OCR_MKLDNN", "0") == "1"
+# 프로세스 시작 시 고정한다. 언어별 엔진 캐시 키에는 모델명을 넣지 않는다.
+_OCR_DET_MODEL = (os.environ.get("GLHAC_OCR_DET_MODEL") or "").strip()
+
+
+def _ocr_recognition_model(lang):
+    """설치 버전의 lang 기본 인식 모델을 엔진 생성·다운로드 없이 결정한다."""
+    from paddleocr import PaddleOCR
+    try:
+        # PaddleOCR 3.x의 순수 선택 함수. self 상태는 쓰지 않으며, 버전을
+        # None으로 두어 lang만 전달한 생성자와 같은 버전·모델을 고른다.
+        _, model = PaddleOCR._get_ocr_model_names(None, lang, None)
+        if not isinstance(model, str) or not model:
+            raise ValueError("no recognition model for this language")
+        return model
+    except (AttributeError, TypeError, ValueError) as exc:
+        # 내부 API 변경/미지원 언어에서 인식 모델을 추측하면 언어가 바뀐다.
+        _logger.warning(
+            "Ignoring GLHAC_OCR_DET_MODEL=%r for lang=%r: cannot resolve the "
+            "default recognition model (%s); keeping PaddleOCR language defaults",
+            _OCR_DET_MODEL, lang, exc,
+        )
+        return None
 
 
 def _ocr_kwargs(lang):
-    return dict(lang=lang, use_doc_orientation_classify=False,
-                use_doc_unwarping=False, use_textline_orientation=False,
-                enable_mkldnn=_OCR_MKLDNN)
+    kwargs = dict(lang=lang, use_doc_orientation_classify=False,
+                  use_doc_unwarping=False, use_textline_orientation=False,
+                  enable_mkldnn=_OCR_MKLDNN)
+    if _OCR_DET_MODEL:
+        rec_model = _ocr_recognition_model(lang)
+        if rec_model is not None:
+            # 명시적 모델명이 하나라도 있으면 PaddleOCR은 lang을 무시한다.
+            kwargs["text_detection_model_name"] = _OCR_DET_MODEL
+            kwargs["text_recognition_model_name"] = rec_model
+    return kwargs
 
 
 def _ocr_engine_cache_size():
@@ -364,10 +395,16 @@ def _get_ocr_engine(lang):
         _discard_ocr_engine(next(iter(_ocr_engines)))
     if eng is None:
         from paddleocr import PaddleOCR
+        kwargs = _ocr_kwargs(lang)
         try:
-            eng = PaddleOCR(**_ocr_kwargs(lang))
-        except TypeError:
-            # 옛 버전은 일부 인자를 모른다 — 언어만 주고 간다.
+            eng = PaddleOCR(**kwargs)
+        except TypeError as exc:
+            # 검출 모델명 등 일부 인자를 모르는 옛 버전은 기존처럼 언어만 준다.
+            _logger.warning(
+                "PaddleOCR constructor TypeError for lang=%r (%s); retrying "
+                "with lang only, discarding options: %r",
+                lang, exc, {key: value for key, value in kwargs.items() if key != "lang"},
+            )
             eng = PaddleOCR(lang=lang)
     # 생성 성공 후에만 저장한다. ru 요청에 korean 엔진을 재사용하면 키릴을 오독한다.
     _ocr_engines[lang] = eng
