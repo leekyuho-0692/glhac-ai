@@ -7,6 +7,19 @@ import re
 import unicodedata
 
 
+def has_merged_chemical_names(value):
+    """A completed chemical name followed by a fresh locanted name is suspect.
+
+    Require a terminal ester or locanted functional suffix, not an alkyl
+    substituent. Commas and hyphenated continuations belong to one name:
+    'Acid, 2-Methyl-, ... Ester' and '-Yl 3-Methylbutanoate' are not merges.
+    """
+    text = unicodedata.normalize("NFKC", value or "")
+    return bool(re.search(
+        r"(?:\bester|\b\d+(?:,\d+)*-(?:di|tri)?(?:ol|one|al|thiol|amine))"
+        r"(?:\s+|\s*;\s*)\d+(?:,\s*\d+)*-\s*(?=[A-Za-z(\[])", text, re.I))
+
+
 def normalize_name(value):
     """Shared ontology/KMA identity key; preserve words, order and digits."""
     text = "".join(char for char in unicodedata.normalize("NFKD", value or "")
@@ -50,6 +63,11 @@ def name_exclusion_reasons(value):
     # Carbon-chain ranges such as C12-15 also have no letter after the digits.
     if re.search(r"[A-Za-z][0-9]+[A-Za-z]", text):
         reasons.append("ocr_intraword_digit")
+    # In -ol/-yl, a final 1 or capital I is not a locant. Check before
+    # lowercasing so an intraword I cannot silently become a valid name key.
+    # C12, CI 77002, Vitamin B1 and separated locants (-1-yl) remain valid.
+    if re.search(r"[oOyY][1I]\b|[a-z]I[a-z]", text):
+        reasons.append("ocr_letter_confusion")
     # Bracket nesting and bracket/hyphen combinations are chemical notation.
     if re.search(r"[^\w\s()\[\]{}]{2,}", text):
         reasons.append("repeated_special_characters")
@@ -58,6 +76,10 @@ def name_exclusion_reasons(value):
     if (re.search(r"\d", text) and not re.fullmatch(r"C[1-9][0-9]*", text)
             and re.fullmatch(r"(?:[A-Z][a-z]{0,2}[0-9]*)+", text)):
         reasons.append("formula_like")
+    # Preserve established reasons on already excluded source text. This extra
+    # gate prevents an otherwise clean OCR correction from promoting a merge.
+    if not reasons and has_merged_chemical_names(text):
+        reasons.append("merged_chemical_names")
     return reasons
 
 

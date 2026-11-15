@@ -2139,3 +2139,50 @@ def test_r4_nonmaterial_labels_and_prose_close_section_regardless_of_length(size
 def test_r4_compound_initials_in_ingredient_lists_are_not_section_numbers(heading, compound):
     text = heading + f'Water, {compound}\nSalt 10%'
     assert intake._material_scan_text(text, material_only=True).splitlines() == ['Water', compound, 'Salt']
+
+
+@pytest.mark.parametrize('route', P1_ROUTES)
+@pytest.mark.parametrize('label', [
+    '# Product name: {name}', '## 제품명: {name}', '### Nama produk: {name}',
+    '**Product name:** {name}', '**Product name**: {name}',
+    '*제품명:* {name}', '__Nama produk:__ {name}',
+    '## **Product name (English):** **{name}**',
+])
+@pytest.mark.parametrize('source_name,expected_links', [('Body Serum', 0), ('Face Serum', 1)])
+def test_polish_markdown_product_labels_keep_source_ownership_on_all_routes(
+        case, monkeypatch, round4_http, route, label, source_name, expected_links):
+    db, c = case
+    db.add(models.Product(case_id=c.case_id, name='Face Serum'))
+    db.commit()
+    text = label.format(name=source_name) + '\nReference: Face Serum\nIngredients\nSalt 100%'
+    _p1_ingest(case, monkeypatch, round4_http, route, text,
+               {'material_names': ['Salt'], 'product_names': ['Face Serum']})
+    assert names(db, c, models.Material) == ['Salt']
+    assert names(db, c, models.Product) == ['Face Serum']
+    assert db.query(models.ProductMaterial).filter_by(case_id=c.case_id).count() == expected_links
+
+
+@pytest.mark.parametrize('route', P1_ROUTES[:-1])
+@pytest.mark.parametrize('repeats', [0, 1, 4], ids=['table-only', 'short-prose', '492-char-prose'])
+def test_polish_indonesian_prose_closes_material_context_on_all_automatic_routes(
+        case, monkeypatch, round4_http, route, repeats):
+    db, c = case
+    product = models.Product(case_id=c.case_id, name='Face Serum')
+    db.add(product)
+    db.commit()
+    sentence = ('Bilas peralatan produksi dengan air bersih setelah setiap batch lalu '
+                'keringkan seluruh permukaan sebelum digunakan kembali ')
+    instructions = sentence * repeats
+    if repeats == 4:
+        assert len(instructions) == 492
+    text = ('Product name: Face Serum\nIngredients\nSalt 100%\n'
+            + (instructions + '\n' if instructions else '') + 'Water | 100%')
+    _p1_ingest(case, monkeypatch, round4_http, route, text,
+               {'material_names': ['Salt', 'Water'], 'product_names': ['Face Serum']})
+    materials = db.query(models.Material).filter_by(case_id=c.case_id).all()
+    assert {row.name for row in materials} == ({'Salt'} if repeats else {'Salt', 'Water'})
+    assert {(row.product_id, row.material_id) for row in
+            db.query(models.ProductMaterial).filter_by(case_id=c.case_id)} == {
+                (product.product_id, row.material_id) for row in materials}
+    assert {item['value'] for item in m._pending_extractions(db, c.case_id)
+            if item['kind'] == 'material_names'} == ({'Water'} if repeats else set())

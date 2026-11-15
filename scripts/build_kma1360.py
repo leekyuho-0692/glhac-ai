@@ -8,9 +8,12 @@ Original numbering (including gaps) is preserved; page is the 1-based PDF page.
 cas is a list because one printed row can contain several registry numbers.
 Invalid CAS values are omitted, never repaired by guessing a digit. --audit
 optionally writes their original text and locations for review.
+The CLI then applies the reviewed OCR correction table; extract_document keeps
+returning the original text layer for provenance checks and synthetic fixtures.
 """
 import argparse
 from collections import Counter
+import csv
 import hashlib
 import json
 from pathlib import Path
@@ -21,10 +24,11 @@ import unicodedata
 import fitz
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app.kma1360 import excluded_name_metadata, name_exclusion_reasons
+from app.kma1360 import excluded_name_metadata, has_merged_chemical_names, name_exclusion_reasons
 
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parents[1] / "app/data/kma1360.json"
+DEFAULT_OCR_FIXES = DEFAULT_OUTPUT.with_name("kma1360_ocr_fixes.tsv")
 CAS_FORMAT = re.compile(r"[1-9][0-9]{1,6}-[0-9]{2}-[0-9]")
 CAS_IN_CELL = re.compile(r"(?<![\w.~:'\"-])([1-9](?:[ \t]*[0-9]){1,6})\s*-\s*([0-9]{2})\s*-\s*([0-9])(?![\w~:'\"-])")
 SECTIONS = ("a.1", "a.2", "a.3", "a.4", "b", "c.1", "c.2")
@@ -259,11 +263,87 @@ def extract_document(document):
     return entries, audit
 
 
+def apply_ocr_fixes(entries, fixes_path=DEFAULT_OCR_FIXES, *, audit=None):
+    """Apply only frozen, reviewed corrections to their exact source records.
+
+    Excluded proposals stay in the table as evidence, never as runtime aliases.
+    Validate every record before changing anything so a stale table fails closed.
+    Reapplying the same table is safe only when both corrected and raw text agree.
+    """
+    with Path(fixes_path).open(encoding="utf-8", newline="") as stream:
+        fixes = list(csv.DictReader(stream, delimiter="\t"))
+    by_key = {(row["section"], row["no"], row["page"]): row for row in entries}
+    if len(by_key) != len(entries):
+        raise ValueError("Duplicate catalogue rows in OCR correction input")
+    seen, pending = set(), []
+    for fix in fixes:
+        key = (fix["section"], int(fix["no"]), int(fix["page"]))
+        field = fix["field"]
+        identity = (*key, field)
+        if field not in {"name_id", "name_en"} or identity in seen:
+            raise ValueError(f"Invalid or duplicate OCR correction: {identity}")
+        seen.add(identity)
+        row = by_key.get(key)
+        if row is None or "; ".join(row["cas"]) != fix["cas"]:
+            raise ValueError(f"OCR correction source/CAS mismatch: {identity}")
+        if (fix["status"] not in {"applied", "excluded"}
+                or bool(fix["exclusion_reasons"]) != (fix["status"] == "excluded")
+                or not all(fix[name] for name in ("original", "corrected", "evidence", "crop_path"))
+                or fix["original"] == fix["corrected"]):
+            raise ValueError(f"Invalid OCR correction decision: {identity}")
+        if fix["status"] == "applied" and (len(row["cas"]) > 1
+                                            or has_merged_chemical_names(fix["corrected"])):
+            raise ValueError(f"Unsafe merged OCR correction: {identity}")
+        raw_field = f"{field}_ocr_raw"
+        already_applied = (fix["status"] == "applied"
+                           and row.get(field) == fix["corrected"]
+                           and row.get(raw_field) == fix["original"])
+        # The current extractor keeps a leading-dot English alias in name_id.
+        # Two reviewed aliases predate that rule. Recover their exact stored
+        # field boundary only after the corrected alias passes the existing gate.
+        joined_alias = (fix["status"] == "applied" and field == "name_en"
+                        and row.get(field) is None and raw_field not in row
+                        and bool(fix.get("other_name"))
+                        and row["name_id"] == f"{fix['other_name']} ({fix['original']})"
+                        and not translation_exclusion_reasons(fix["corrected"]))
+        if not (already_applied or joined_alias) and (row.get(field) != fix["original"] or raw_field in row):
+            raise ValueError(f"OCR correction original text mismatch: {identity}")
+        if fix["status"] == "applied":
+            pending.append((row, field, fix, joined_alias))
+    for row, field, fix, joined_alias in pending:
+        if joined_alias:
+            row["name_id"] = fix["other_name"]
+        row[f"{field}_ocr_raw"] = fix["original"]
+        row[field] = fix["corrected"]
+    for row in entries:
+        # Corrections do not relax any existing exclusion rule or split aliases.
+        excluded = excluded_name_metadata(row)
+        if excluded:
+            row["name_index"] = excluded
+        else:
+            row.pop("name_index", None)
+    if audit is not None:
+        audit["ocr_corrections"] = {
+            "table": str(fixes_path),
+            "table_sha256": hashlib.sha256(Path(fixes_path).read_bytes()).hexdigest(),
+            "applied": len(pending), "excluded": len(fixes) - len(pending),
+            "exclusion_reasons": dict(Counter(reason for fix in fixes
+                for reason in fix["exclusion_reasons"].split("; ") if reason)),
+        }
+        audit["excluded_names"] = [
+            {key: row[key] for key in ("section", "no", "page")}
+            | {"field": field, "name": row[field], **metadata}
+            for row in entries for field, metadata in row.get("name_index", {}).items()]
+    return entries
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pdf", type=Path)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--audit", type=Path, help="Optional extraction diagnostics JSON")
+    parser.add_argument("--ocr-fixes", type=Path, default=DEFAULT_OCR_FIXES,
+                        help="Reviewed OCR corrections (including excluded proposals)")
     args = parser.parse_args()
     if any(path and path.resolve() == args.pdf.resolve() for path in (args.output, args.audit)):
         parser.error("The source PDF must remain read-only")
@@ -274,6 +354,7 @@ def main():
     counts = Counter(row["section"] for row in entries)
     if set(counts) != set(SECTIONS) or counts["c.2"] < 4000:
         raise ValueError(f"Incomplete annex: {dict(counts)}")
+    apply_ocr_fixes(entries, args.ocr_fixes, audit=audit)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     audit["source_sha256"] = hashlib.sha256(args.pdf.read_bytes()).hexdigest()
@@ -287,6 +368,8 @@ def main():
     print(f"Page continuations: {len(audit['page_continuations'])}")
     print(f"Unbalanced names (preserved): {len(audit['unbalanced_names'])}")
     print(f"Names excluded from index (preserved): {len(audit['excluded_names'])}")
+    print(f"OCR corrections applied: {audit['ocr_corrections']['applied']}")
+    print(f"OCR proposals excluded: {audit['ocr_corrections']['excluded']}")
     print(f"Parenthetical aliases accepted: {sum(v['accepted'] for v in audit['translation_candidates'])}")
     print(f"Parenthetical aliases rejected: {sum(not v['accepted'] for v in audit['translation_candidates'])}")
     print(f"Concentration/ratio/note parentheses: {len(audit['parenthetical_annotations'])}")

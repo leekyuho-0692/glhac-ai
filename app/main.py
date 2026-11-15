@@ -2250,6 +2250,10 @@ def notify_problem_documents(case_id: str, lang: str = Query("ko"),
 
 
 _NOTIFY_NONRETRY = ("no_credentials", "no_contact", "not_implemented", "consent_skipped")
+# last_error 원문을 일반 알림에 추가하지 않도록 고정 사유 코드만 공개한다.
+_NOTIFY_DELIVERY_REASONS = frozenset(_NOTIFY_NONRETRY + (
+    "case_closed", "no_result", "smtp_tls_failed", "send_error",
+))
 _USER_CHANNELS = {"sms", "whatsapp", "email", "kakao"}   # 수신동의 필요(사용자 대상)
 
 
@@ -4531,6 +4535,8 @@ def list_notifications(lang: str = Query("ko"), user=Depends(auth.get_current_us
         out.append({"id": n.notification_id, "case_id": n.case_id, "event_type": n.event_type,
                     "title": title, "body": body, "read": bool(n.read), "status": n.status,
                     "channels": n.channels, "channel_status": n.channel_status or {},
+                    "delivery_reason": (n.last_error if n.last_error in _NOTIFY_DELIVERY_REASONS
+                                        else "error") if n.last_error else None,
                     "retry_pending": bool(n.retry_pending), "created_at": str(n.created_at)})
     return out
 

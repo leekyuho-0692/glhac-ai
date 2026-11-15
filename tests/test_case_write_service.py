@@ -200,9 +200,11 @@ def test_case_writers_wait_until_transaction_finishes(tmp_path, monkeypatch, fin
 
 def _record_case_locks(monkeypatch, *, postgres=False):
     records = []
+    owner = threading.current_thread()
     raw = database.lock_chain_tail
     def record(db, key):
-        if key.startswith("wf:"):
+        # 이전 테스트의 비동기 검증은 현재 명령의 잠금 순서에 섞지 않는다.
+        if key.startswith("wf:") and threading.current_thread() is owner:
             records.append((db.get_transaction(), key[3:]))
         if postgres:
             conn = db.connection()
@@ -223,6 +225,20 @@ def _assert_ordered(records):
     for tx in transactions:
         ids = [cid for transaction, cid in records if transaction is tx]
         assert ids == sorted(set(ids)), ids
+
+
+def test_case_lock_recorder_isolates_background_workers_without_filtering_case_ids(monkeypatch):
+    records = _record_case_locks(monkeypatch, postgres=True)
+    def background():
+        with m.SessionLocal() as db:
+            database.lock_chain_tail(db, "wf:background-case")
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(background).result(timeout=5)
+    with m.SessionLocal() as db:
+        database.lock_chain_tail(db, "wf:target-case")
+        database.lock_chain_tail(db, "wf:unexpected-case")
+    # 현재 명령이 잘못 잠근 케이스도 빠짐없이 남겨 기존 잠금 순서 검사를 유지한다.
+    assert [cid for _, cid in records] == ["target-case", "unexpected-case"]
 
 
 def test_lock_helper_rejects_unsorted_extension_before_sql(case_doc, monkeypatch):

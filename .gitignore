@@ -10,6 +10,7 @@ data/
 !/app/data/
 /app/data/*
 !/app/data/kma1360.json
+!/app/data/kma1360_ocr_fixes.tsv
 demo_shots/
 *.log
 # 테스트/커버리지 산출물

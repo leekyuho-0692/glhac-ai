@@ -1,5 +1,9 @@
 # KMA 1360 P1 3차 수정 및 전수 점검
 
+최신 작업은 `/Users/dany/glhac-wt-residual`의 `fix/polish-notify-parse`에서 진행했다.
+아래 기존 절의 집계·검증·승인 대기 문구는 당시 기록이며, 현재 결과는 문서 끝의
+**검수 2차 반려 후 병합 보정·설명문 재감사** 절을 따른다.
+
 작업 위치: `/Users/dany/glhac-wt-bizparse` · HEAD: `bceba9c` · 미커밋 유지. 이 보고서는 2차 수정 보고서를 대체한다.
 
 ## 판정 경로 수정
@@ -553,3 +557,492 @@
 | 180 | c.2 | 3996 | name_id | E340c triPotassium Orthophosphate | ocr_intraword_digit |  |
 | 181 | c.2 | 4009 | name_id | E440b Amidated Pectin | ocr_intraword_digit |  |
 | 181 | c.2 | 4011 | name_id | E450a,b,c Sodium and Potassium Phosphates and Polyphosphates | ocr_intraword_digit |  |
+
+## OCR 재판독 보정
+
+2026-11-15, `/Users/dany/glhac-wt-residual`의 `fix/polish-notify-parse`에서 수행했다.
+앞 절의 수치·제외 표는 당시 기록으로 유지하며, 이번 보정 이후 집계는 이 절을 따른다.
+
+입력은 다음 디렉터리의 `candidates.tsv`, `crops/`, `audit/manifest.json`, `audit/ocr/`다.
+
+`/private/tmp/claude-501/-Users-dany-IdeaProjects-llmdev/c9e702da-a2c7-4fd5-bf64-d8685f495f89/scratchpad/kma_ocr/`
+
+오케스트레이터가 likely_fix 표본 48건을 원본 이미지와 대조해 정확함을 확인했다는
+검토 결과를 사용했다. 283건 전체를 사람이 시각 검수했다는 의미는 아니다.
+이번에는 전체 후보의 원래 필드·PDF 텍스트 레이어·크롭 높이·OCR 줄수 및 경계 여백을
+비교하고, 이름 조각·길이 단축·괄호와 정규화 충돌을 추가 점검했다.
+경계 점검 대상인 No.298, 2210과 이름 조각 No.1866 등의 크롭을 직접 확인했다.
+No.2210의 두 번째 텍스트 레이어 줄은 잡음이며, 크롭에는 완전한 한 줄 이름이 보인다.
+
+고정 보정표는 [`app/data/kma1360_ocr_fixes.tsv`](../app/data/kma1360_ocr_fixes.tsv)다.
+likely_fix **283건 전부**에 section/no/page/field, 원래값(`original`), 보정 후보(`corrected`),
+CAS, 반영 여부, 제외 사유, `OCR 재판독` 근거, 크롭 절대경로·SHA256·크기,
+원시 OCR JSON 경로 및 검토 메모를 남겼다. 임시 입력 이미지가 없어져도 보정표만으로
+JSON 재생성이 가능하다. 원본 이미지 재검토에는 위 입력 디렉터리가 필요하다.
+
+| 처리 | 이름 필드 수 |
+| --- | ---: |
+| likely_fix 반영 | 269 |
+| likely_fix 제외 | 14 |
+| unclear, 미반영 | 88 |
+| same, 미반영 | 66 |
+
+제외 사유는 다음과 같으며 이번 집계에서 중복은 없다.
+
+| 사유 | 수 | 대상 및 판단 |
+| --- | ---: | --- |
+| `multiline_fragment` | 1 | c.2 No.1866: `-Dimethyl-…`로 시작하는 이름 조각. 완전한 이름 확인 전 미반영 |
+| `different_cas_collision` | 12 | CI 42090, 45380, 77007, 77492, 77510, 77742의 각 두 행. 정규화 이름은 같으나 CAS 집합이 다름 |
+| `unknown_cas_collision` | 1 | c.2 No.2986의 후보가 No.3776과 정규화 충돌. 전자는 CAS 15716-30-0, 후자는 CAS 없음이므로 동일성 확인 불가 |
+
+CAS 충돌 검사는 기존 두 이름 필드와 모든 likely_fix 보정 후보를 함께 비교했다.
+따라서 두 후보끼리 충돌하는 경우도 양쪽을 제외한다. CAS 집합이 일부 겹치더라도
+서로 같지 않으면 보수적으로 제외했다. 충돌 쌍은 No.3684/3868, 3694/3869,
+3722/3872, 3732/3874, 3733/3876, 3734/3877이다.
+나머지 후보에서 닫는 괄호·소문자로 시작하는 조각, 괄호 불균형,
+공백 제거 후 원래 필드 대비 90% 미만으로 짧아진 이름은 없었다.
+기존 name_en을 포함해 크롭한 경우에는 그 별칭을 제외한 동일 필드끼리 길이를 비교했다.
+추가로 윗줄이 잘린 것으로 판정한 후보는 없었다.
+
+반영한 필드는 후보 문자열 그대로 저장하고, 이전 값을 `name_id_ocr_raw` 또는
+`name_en_ocr_raw`로 보존한다. 보정표에 없는 필드와 제외한 14건은 그대로 유지했다.
+모든 `name_index`는 기존 `excluded_name_metadata()`로 다시 계산하며, 보정 후에도
+기존 제외 규칙에 걸리는 이름을 허용하지 않는다. a/b 범주 설명 5건도 보정했지만
+화학물질 이름 색인에는 포함하지 않는다.
+
+| 집계 | 보정 전 | 보정 후 | 증감 |
+| --- | ---: | ---: | ---: |
+| 전체 이름 필드 | 4,619 | 4,619 | 0 |
+| 기존 이름 규칙을 통과한 필드(a/b 포함) | 4,182 | 4,451 | +269 |
+| `name_index` 제외 이름 | 437 | 168 | -269 |
+| 실제 화학물질 색인 이름(c.1/c.2, 별칭 포함) | 4,104 | 4,368 | +264 |
+| 실제 화학물질 색인 고유 정규화 키 | 3,990 | 4,252 | +262 |
+| 유효 CAS 연결 | 3,905 | 3,905 | 0 |
+| 고유 CAS | 3,591 | 3,591 | 0 |
+
+[`scripts/build_kma1360.py`](../scripts/build_kma1360.py)는 CLI 재생성 시 고정 보정표를
+기본 적용한다. 모든 대상의 위치·CAS·원래값·중복 여부를 먼저 검증하고 한 건이라도
+맞지 않으면 변경 전에 실패한다. 이미 적용된 행은 보정값과 원문 보존값이 모두 같아야
+재적용을 허용한다. `extract_document()` 자체는 원문 추출과 기존 별칭 분리 규칙을
+유지한다. 현재 분리 규칙이 `.Pure …`를 원문 이름에 합쳐 두는 No.1184/1185는
+보정표의 기존 다른 이름(`other_name`)과 원래 별칭이 정확히 일치하고, 보정된 영문명이
+기존 영문 별칭 검사를 통과할 때만 이전 필드 경계를 복원한다. 다른 이름은 재분리하지 않는다.
+
+원본 PDF 182쪽에서 CLI로 재생성한 결과와 저장 JSON이 바이트 단위로 일치한다.
+4,112행의 no/section/page/CAS는 모두 유지했다. 원문 보존 필드로 복원한 보정 전
+JSON도 아래 기존 SHA256과 일치하며, unclear 88건·same 66건을 포함한 모든 원문을 검증한다.
+
+- 보정 전 JSON SHA256: `047d7ef613eb64b54a5c723ae88173c4783624790eee84c27967d0e5ba4c878a`
+- 보정 후 JSON SHA256: `97157fbbc95b22bf510626950d554af6d61b30592b02636fa9603e282ec43261`
+- 보정표 SHA256: `316722ccabb82d4095811622b688a907e1d1ee0d91487bc20bf8695268cb6af3`
+- 원문 PDF SHA256: `fa3562bbd86256a09f91ad18014421fe62914a20cff5055c2b6a714d790f531b`
+
+런타임 `app/screening.py`, `app/kma1360.py`와 기존 알림·파싱 미커밋 변경은 수정하지 않았다.
+신규 [`tests/test_kma1360_ocr_fixes.py`](../tests/test_kma1360_ocr_fixes.py)는 원문 추적·재생성,
+전수 색인 일관성·CAS 보존, 미반영 충돌, 옛 오독 문자열 차단을 검증한다.
+`2-Hepten-4-One`, `Klobetasol Propionat (Clobetasol Propionate)`, `CI 77002`,
+`Pure Myrrh Gum`의 매칭과 CAS 일치, `unmatched_default`만 승격, 사전 우선,
+주석·부가 문맥 차단도 검증한다. `NaaP04`, `2-Ethylbutyra).dehyde`,
+`Hydroxyphenyllf'ropionate`와 보정 전 269개 문자열은 런타임 별칭으로 등록되지 않는다.
+
+검증 명령과 결과:
+
+```sh
+GLHAC_DEV=1 GLHAC_NOTIFY_WORKER=0 GLHAC_RATE_LIMIT_PER_MIN=0 .venv/bin/python -m pytest -q -p no:cacheprovider tests/
+for f in tests/*.test.cjs; do node "$f" >/dev/null || echo FAIL $f; done
+```
+
+- Python: **10,699 passed, 2 failed**, 22 warnings, 767.84초. 신규 OCR 테스트 313개는 모두 통과했다.
+- Node: **4개 파일 통과, 실패 0**.
+- PDF 재생성 바이트 일치, 보정표 283건의 크롭 해시·OCR 근거 경로, 원문 PDF 해시 검증 통과.
+- 기존 알림·파싱 변경과 런타임 안전 규칙 파일의 작업 전후 해시가 동일하다.
+- 기존 KMA 테스트 4개 파일을 변경하지 않았다. 운영 접속·배포·커밋·브랜치 변경은 하지 않았다.
+
+실패 2건은 기존 데이터 계약과 이번 데이터 보정의 충돌이다.
+
+| 기존 테스트 | 실패 지점 | 충돌 |
+| --- | --- | --- |
+| `test_kma1360.py::test_catalogue_completeness_provenance_and_all_cas_digits` | 176행 | 정확히 6필드만 허용하는 검증이 요청된 `*_ocr_raw` 필드 추가를 거절 |
+| `test_kma1360_p1_round3.py::test_current_catalogue_all_exclusions_aliases_and_cas_are_consistent` | 179행 | 보정 전 제외 437개를 고정 검증하나 보정 후에는 168개 |
+
+기존 안전 반례의 추가 실패는 없다. 기존 테스트 기대값 및 수정 범위 제한을 유지했으므로
+**전체 실패 0 조건은 아직 충족하지 못했다**. 두 데이터 검증의 기대값을 유지하면서
+보정 전 원문 스냅샷을 대상으로 실행하도록 바꾸려면 기존 테스트 수정 범위의 승인이 필요하다.
+
+보정표 파일은 생성되어 있으나 `.gitignore:11`의 `/app/data/*` 규칙으로 Git 변경 목록에는
+나타나지 않는다. 지정 범위 밖의 `.gitignore` 및 Git 인덱스는 변경하지 않았다.
+보정표를 버전 관리에 포함하려면 `!/app/data/kma1360_ocr_fixes.tsv` 예외 또는 별도 강제 추가가 필요하다.
+
+
+## 검수 1차 반려 후 혼동문자 재감사 (2026-11-15)
+
+이 절은 위 OCR 재판독 보정 절의 최초 집계·검증 결과를 갱신한다. 최초 기록은 이력으로
+남긴다. cli-v2는 Port 1에서 API 호스트 이름 조회 실패로 REJECT하여 지침의 fallback을
+사용했다. 작업 전 미커밋 내용은 `/private/tmp/polish-fix1-baseline/`에 보존했다.
+
+### 지적된 재오독 5건의 처리
+
+5건 모두 같은 원본 크롭과 `audit/ocr/` 원시 OCR을 대조했다. 원시 OCR의 대문자 I/숫자 1과
+달리 인쇄된 글자는 소문자 l이다. 따라서 보정 제외 없이 이름을 바로잡았다. 아래 원시 OCR은
+수정하지 않았으며, `*_ocr_raw`는 PDF 텍스트 레이어의 원래값을 그대로 보존한다.
+
+| No. / 쪽 | 검수 전 보정·원시 OCR의 오류 | 크롭 판독 및 최종 보정값 | 처리 |
+| --- | --- | --- | --- |
+| 1238 / 65 | `-YI` | `1-(3,3-Dimethylbicyclo[2.2.1]Hept-2-Yl) Ethane-1-One` | 소문자 l로 수정·반영 유지 |
+| 1578 / 80 | `-O1` | `(2E,4E)-Octa-2,4-Dien-1-Ol` | 소문자 l로 수정·반영 유지 |
+| 1579 / 80 | `-O1` | `2,4-Nonadien-1-Ol` | 소문자 l로 수정·반영 유지 |
+| 1580 / 80 | `-O1` | `(2E,4E)-Deca-2,4-Dien-1-Ol` | 소문자 l로 수정·반영 유지 |
+| 3463 / 156 | `-O1` | `4-Methyl-8-Methylene Tricyclo(3.3.1.1 3.7)Decan-2-Ol` | 소문자 l로 수정·반영 유지 |
+
+### 269건 전수 선별 및 크롭 판정
+
+적용 중이던 269건 모두에 대해 원래값과 검수 전 보정값에서 공백만 제거하고,
+`{l,1,I,|}`와 `{O,o,0}`를 각각 같은 비교 문자로 바꾼 후 `SequenceMatcher(autojunk=False)`로
+정렬했다. 같은 비교 구간 내 실제 문자가 달라진 항목을 전부 후보로 삼았다. 이 방법은
+괄호·잡음 제거와 동시에 일어난 혼동도 포착한다(예: No.493의 `:0ne→One`).
+보정값의 `O1/OI/Y1/YI` 토큰 말미·소문자 사이 대문자 I도 별도로 전수 검색했다.
+화학 접미·단어 내부에 한정하지 않고 위치 번호·CI 코드까지 후보에 포함해 대조했다.
+공백만 달라진 행은 혼동문자 교체 건수에서 제외했다.
+
+| 구분 | 수 | 판정 |
+| --- | ---: | --- |
+| 전수 비교한 적용 보정 | 269 | 원래값·보정값·원시 OCR 확인, 크롭 해시 모두 일치 |
+| 공백 제외 시 혼동문자만 다른 후보 | 111 | 아래 표에서 대조 |
+| 다른 수정과 혼동문자 교체가 섞인 후보 | 25 | 아래 표에서 대조 |
+| 재대조 후보 합계 | 136 | 136개 크롭과 원시 OCR 직접 대조 |
+| 후보 중 기존 보정 유지 | 131 | 혼동문자 위치의 인쇄 글자와 보정값 일치 |
+| 후보 중 재보정 | 5 | 위 1238·1578·1579·1580·3463 |
+| 후보 중 추가 보정 제외 | 0 | 해당 없음 |
+| 혼동문자 교체 후보가 아닌 적용 보정 | 133 | 이 재감사의 크롭 직접 대조 대상은 아님 |
+
+이 감사는 지정 혼동문자의 위치와 판독에 대한 검증이며 모든 이름의 화학적 적합성을 새로
+인증하는 것은 아니다. 전체 283건의 보정 상태는 **반영 269 / 제외 14**로 유지된다.
+아래 항목은 모두 c.2, name_id이며, 근거 경로는 앞 절의 `kma_ocr/` 아래
+`crops/{No.}_name_id.png`와 `audit/ocr/{No.}_name_id.json`이다.
+원래값은 PDF 텍스트 레이어, 화살표 오른쪽은 이번 재검수 **직전** 보정값이다.
+'유지'는 크롭·원시 OCR의 해당 혼동문자와 일치한다는 판정이다.
+
+| No. / 쪽 | 원래값 → 검수 전 보정값 | 크롭 대조 판정 |
+| --- | --- | --- |
+| 296 / 24 | `Salbutamol Su1fat` → `Salbutamol Sulfat` | 유지 |
+| 361 / 26 | `((3a,4,5,6,7,7a.:.Hexahydro-4,7- Methano -lh-Inden-5(0r 6)- Yl)Oxy)` → `((3a,4,5,6,7,7a-Hexahydro-4,7- Methano -1h-Inden-5(Or 6)- Yl)Oxy)` | 유지 |
+| 366 / 27 | `1-(1,2,3,5,6, 7,8,8a-Octahydro- 2,3,8,8-Tetramethyl-2-Naphthyl)Ethan-1-0ne` → `1-(1,2,3,5,6,7,8,8a-Octahydro-2,3,8,8-Tetramethyl-2-Naphthyl)Ethan-1-One` | 유지 |
+| 367 / 27 | `1-(2,4,4-Trimethyl-1-Cyclohex- 2-Enyl)But-2-En-1-0ne` → `1-(2,4,4-Trimethyl-1-Cyclohex- 2-Enyl)But-2-En-1-One` | 유지 |
+| 368 / 27 | `1-(2,4-Dimethylcyclohex-3-En- 1-Yl)- 2,2-Dimethylpropan-1-0ne` → `1-(2,4-Dimethylcyclohex-3-En- 1-Yl)- 2,2-Dimethylpropan-1-One` | 유지 |
+| 372 / 27 | `2-Cyclohexylhepta-1,6-Dien-3-0ne` → `2-Cyclohexylhepta-1,6-Dien-3-One` | 유지 |
+| 438 / 29 | `3-Methyl-4-Phenyl-3-Buten-2-0ne` → `3-Methyl-4-Phenyl-3-Buten-2-One` | 유지 |
+| 449 / 30 | `(E)-1-(2,6,6-Trimethylcyclohex- 2-En- 1-Yl)Pent-1-En-3-0ne` → `(E)-1-(2,6,6-Trimethylcyclohex- 2-En- 1-Yl)Pent-1-En-3-One` | 유지 |
+| 460 / 30 | `3-Ethyl-2-Hydroxycyclopent-2- En-1-0ne` → `3-Ethyl-2-Hydroxycyclopent-2- En-1-One` | 유지 |
+| 475 / 31 | `2,6-0ctadienoic Acid, 3,7- Dimethyl, Ethyl Ester 2-Hexylcyclopent-2-En-1-0ne` → `2,6-Octadienoic Acid, 3,7- Dimethyl, Ethyl Ester 2-Hexylcyclopent-2-En-1-One` | 유지 |
+| 479 / 31 | `(E)-1-(2,6,6-Trimethyl-1- Cyclohexenyl) But-2-En-1-0ne` → `(E)-1-(2,6,6-Trimethyl-1- Cyclohexenyl) But-2-En-1-One` | 유지 |
+| 493 / 32 | `(E)-1-(2,6,6-Trimethyl-1- Cyclohexa- 1,3-Dienyl)But-2- En-1-:0ne` → `(E)-1-(2,6,6-Trimethyl-1- Cyclohexa- 1,3-Dienyl)But-2- En-1-One` | 유지 |
+| 509 / 32 | `(2e)-2-Heptylidenecyclopentan-1-0ne` → `(2e)-2-Heptylidenecyclopentan-1-One` | 유지 |
+| 564 / 35 | `1-( 1,2,3,4,6, 7 ,8,8a-Octahydro-2,3,8,8 -Tetramethyl-2- Naphthyl] Ethan-1-0ne` → `1-(1,2,3,4,6,7,8,8a-Octahydro-2,3,8,8 -Tetramethyl-2- Naphthyl) Ethan-1-One` | 유지 |
+| 566 / 35 | `8,8-Dimethyl-2,3.,4,5,6, 7- Hexahydro -lH-Naphthalene-2- Carbaldehyde` → `8,8-Dimethyl-2,3,4,5,6,7- Hexahydro -1H-Naphthalene-2- Carbaldehyde` | 유지 |
+| 661 / 39 | `2 ,4,4, 7 -Tetramethyloct-6-En-3-0ne` → `2,4,4,7-Tetramethyloct-6-En-3-One` | 유지 |
+| 665 / 39 | `4-Phenylbutan-2-0ne` → `4-Phenylbutan-2-One` | 유지 |
+| 680 / 40 | `3-Methyl-2-Pentylcyclopentan-1-0ne` → `3-Methyl-2-Pentylcyclopentan-1-One` | 유지 |
+| 688 / 40 | `(E)-3-Methyl-4-(2 ,4 ,6-Trimethylcyclohex -3-En-1- Yl)But-3- En-2-0ne` → `(E)-3-Methyl-4-(2,4,6-Trimethylcyclohex -3-En-1- Yl)But-3- En-2-One` | 유지 |
+| 691 / 40 | `2-Hexylidenecyclohexan-1-0ne` → `2-Hexylidenecyclohexan-1-One` | 유지 |
+| 697 / 40 | `1-Hydroxydecan-3-0ne` → `1-Hydroxydecan-3-One` | 유지 |
+| 711 / 41 | `8-Cyclohexadecen-1-0ne` → `8-Cyclohexadecen-1-One` | 유지 |
+| 717 / 41 | `Cedr-8-En-10-0ne` → `Cedr-8-En-10-One` | 유지 |
+| 730 / 42 | `4,6,6-Trimethylbicyclo[3.1. l]Hept-3- En-2-0ne` → `4,6,6-Trimethylbicyclo[3.1.1]Hept-3-En-2-One` | 유지 |
+| 733 / 42 | `(E)-1-(2,2-Dimethyl-6 Methylidenecyclohexyl) But-2- En-1-0ne` → `(E)-1-(2,2-Dimethyl-6 Methylidenecyclohexyl) But-2- En-1-One` | 유지 |
+| 770 / 43 | `6-Undecyloxan-2-0ne` → `6-Undecyloxan-2-One` | 유지 |
+| 804 / 45 | `2-[[(ls,4s,6s)-1,7,7-Trimethyl-6- Bicyclo [2.2.1 ]Heptanyl)Oxy)Eth anol` → `2-[[(1s,4s,6s)-1,7,7-Trimethyl-6- Bicyclo [2.2.1]Heptanyl]Oxy]Eth anol` | 유지 |
+| 868 / 48 | `2-(2-(4-Methylcyclohex-3-En-1-Yl)Propyl]Cyclopentan-1-0ne` → `2-[2-(4-Methylcyclohex-3-En-1-Yl)Propyl]Cyclopentan-1-One` | 유지 |
+| 880 / 48 | `2 ,6-Dimethyloct- 7 -En-4-0ne` → `2,6-Dimethyloct-7-En-4-One` | 유지 |
+| 894 / 49 | `1, 7 -Dioxacycloheptadecan-8-0ne` → `1,7-Dioxacycloheptadecan-8-One` | 유지 |
+| 896 / 49 | `1,8-Dioxacycloheptadecan-9-0ne` → `1,8-Dioxacycloheptadecan-9-One` | 유지 |
+| 906 / 49 | `(E)-4-(2,5,6,6- Tetramethylcyclohexen-1-Yl)But-3- En-2-0ne` → `(E)-4-(2,5,6,6- Tetramethylcyclohexen-1-Yl)But-3- En-2-One` | 유지 |
+| 915 / 50 | `1, 1,2,3,3-Pentamethyl-2,5,6, 7-Tetrahydroinden-4-0ne` → `1,1,2,3,3-Pentamethyl-2,5,6,7-Tetrahydroinden-4-One` | 유지 |
+| 992 / 53 | `4, 7 -Dimethyloct-6-En-3-0ne` → `4,7-Dimethyloct-6-En-3-One` | 유지 |
+| 1033 / 55 | `14h-Benz[4,5]Isoquino[2, 1- A]Perimidin-14-0ne` → `14h-Benz[4,5]Isoquino[2,1- A]Perimidin-14-One` | 유지 |
+| 1058 / 56 | `N-(l,5-Dimethyl-8- Bicyclo(3.2.1] Octanylidene)Hydroxyl Amine` → `N-(1,5-Dimethyl-8- Bicyclo[3.2.1] Octanylidene)Hydroxyl Amine` | 유지 |
+| 1071 / 57 | `4-( 1-Ethoxyethenyl)-3,3,5,5-Tetramethylcyclohexan-1-0ne` → `4-(1-Ethoxyethenyl)-3,3,5,5-Tetramethylcyclohexan-1-One` | 유지 |
+| 1072 / 57 | `(3e)-Oxacyclohexadec-3-En-2-0ne` → `(3e)-Oxacyclohexadec-3-En-2-One` | 유지 |
+| 1082 / 57 | `(Z)-1-(2 ,6,6-Trimethylcycl~hexen-1-Yl)But- 2-En-1-0ne` → `(Z)-1-(2,6,6-Trimethylcyclohexen-1-Yl)But-2-En-1-One` | 유지 |
+| 1096 / 58 | `1-(2-Methyl-5-Propan-2- Ylcyclohex- 2-En-1-Yl)Propan-1-0ne` → `1-(2-Methyl-5-Propan-2- Ylcyclohex- 2-En-1-Yl)Propan-1-One` | 유지 |
+| 1120 / 59 | `3-Methyl-3-Penten-2-0ne` → `3-Methyl-3-Penten-2-One` | 유지 |
+| 1131 / 60 | `5-Cyclohexadecen-1-0ne` → `5-Cyclohexadecen-1-One` | 유지 |
+| 1134 / 60 | `2 ,6,8-Trimethylnonan-4-0ne` → `2,6,8-Trimethylnonan-4-One` | 유지 |
+| 1138 / 60 | `(Z)-1-(2,6,6-Trimethylcyclohex- 2-En- 1-Yl)But-2-En-1-0ne` → `(Z)-1-(2,6,6-Trimethylcyclohex- 2-En- 1-Yl)But-2-En-1-One` | 유지 |
+| 1200 / 63 | `Trans-P-Menthan-3-0ne` → `Trans-P-Menthan-3-One` | 유지 |
+| 1232 / 64 | `4,8-Dimethyl-2-Propan-2- Ylidene-3,3a,4,5,6,8a-Hexahydro-lh-Azulen-6-0l` → `4,8-Dimethyl-2-Propan-2- Ylidene-3,3a,4,5,6,8a-Hexahydro-1h-Azulen-6-Ol` | 유지 |
+| 1238 / 65 | `1-{3,3-Dimethylbicyclo[2.2.1 ]Hept-2-Yl) Ethane-1-0ne` → `1-(3,3-Dimethylbicyclo[2.2.1]Hept-2-YI) Ethane-1-One` | `-Yl`로 재보정 |
+| 1246 / 65 | `1-( 1,2 ,3, 4-Tetrahydro-4, 4- Dimethyl- 1-Naphthyl)Propan-1-0ne` → `1-(1,2,3,4-Tetrahydro-4,4- Dimethyl- 1-Naphthyl)Propan-1-One` | 유지 |
+| 1326 / 68 | `10-Dodecen-3-0ne, 5-Hydroxy- 7,11-Dimethyl-` → `10-Dodecen-3-One, 5-Hydroxy- 7,11-Dimethyl-` | 유지 |
+| 1329 / 69 | `lh-Inden-1-0ne, 3A,4,5,6, 7, 7 A-Hexahydro-3,3A, 7, 7-Tetramethyl-` → `1h-Inden-1-One, 3A,4,5,6,7,7A-Hexahydro-3,3A,7,7-Tetramethyl-` | 유지 |
+| 1342 / 69 | `2-(3-Heptyl}- l ,3-Dioxolane` → `2-(3-Heptyl)-1,3-Dioxolane` | 유지 |
+| 1351 / 70 | `2, 7 -Dimethyloct-5-En-4-0ne` → `2,7-Dimethyloct-5-En-4-One` | 유지 |
+| 1352 / 70 | `2-[(3,3,5-Trimethylcyclohexyl)Acetyl]Cyc lopen Tan-1-0ne` → `2-[(3,3,5-Trimethylcyclohexyl)Acetyl]Cyc lopen Tan-1-One` | 유지 |
+| 1356 / 70 | `1-Phenyl-4-Penten-1-0ne` → `1-Phenyl-4-Penten-1-One` | 유지 |
+| 1374 / 71 | `(E)-Oct-5-En-2-0ne` → `(E)-Oct-5-En-2-One` | 유지 |
+| 1387 / 71 | `5-Phenylhex-3-En-2-0ne` → `5-Phenylhex-3-En-2-One` | 유지 |
+| 1389 / 71 | `7 -Cyclohexadecen-1-0ne` → `7-Cyclohexadecen-1-One` | 유지 |
+| 1399 / 72 | `4-Methyl-1-0~aspiro[5.5]Undecene` → `4-Methyl-1-Oxaspiro[5.5]Undecene` | 유지 |
+| 1409 / 72 | `4,9, 12, 12-Tetramethyl-5-0xatricyclo (8.2.0.04,6] Dodecane` → `4,9,12,12-Tetramethyl-5-Oxatricyclo [8.2.0.04,6] Dodecane` | 유지 |
+| 1423 / 73 | `2-Cyclopenten-1-0ne, 2- Hydroxy-3,4-Dimethyl-` → `2-Cyclopenten-1-One, 2- Hydroxy-3,4-Dimethyl-` | 유지 |
+| 1433 / 74 | `2-Ethyl-4,4- Dimethylcyclohexan-1-0ne` → `2-Ethyl-4,4- Dimethylcyclohexan-1-One` | 유지 |
+| 1441 / 74 | `6,6,6a-Trimethyl-3,3a,4,5-Tetrahydrocyclopenta[B]Furan- 2-0ne` → `6,6,6a-Trimethyl-3,3a,4,5-Tetrahydrocyclopenta[B]Furan- 2-One` | 유지 |
+| 1475 / 76 | `Indan-2-0ne` → `Indan-2-One` | 유지 |
+| 1481 / 76 | `(4z)-Cyclopentadec-4-En-1-0ne` → `(4z)-Cyclopentadec-4-En-1-One` | 유지 |
+| 1485 / 76 | `l-(l,2,8,8-Te'f:!a.II1ethyl-l,3,4,5,6,7-Hexahydronaphthalen-2- Yl)Ethanone` → `1-(1,2,8,8-Tetramethyl-1,3,4,5,6,7-Hexahydronaphthalen-2- Yl)Ethanone` | 유지 |
+| 1498 / 77 | `5,6, 7 -Trimethylocta-2 ,5-Dien-4-0ne` → `5,6,7-Trimethylocta-2,5-Dien-4-One` | 유지 |
+| 1573 / 80 | `P-Mentha-1,4(8)-Dien-3-0ne, (2,4- Dinitrophenyl)Hydrazone (En)` → `P-Mentha-1,4(8)-Dien-3-One, (2,4- Dinitrophenyl)Hydrazone (En)` | 유지 |
+| 1578 / 80 | `(2E,4E)-Octa-2,4-Dien-1-0l` → `(2E,4E)-Octa-2,4-Dien-1-O1` | `-Ol`로 재보정 |
+| 1579 / 80 | `2,4~Nonadien-1-0l` → `2,4-Nonadien-1-O1` | `-Ol`로 재보정 |
+| 1580 / 80 | `(2E,4E)-Deca-2,4-Dien-1-0l` → `(2E,4E)-Deca-2,4-Dien-1-O1` | `-Ol`로 재보정 |
+| 1792 / 88 | `2-Hydroxy-2-Cyclohexen-1-0ne` → `2-Hydroxy-2-Cyclohexen-1-One` | 유지 |
+| 1793 / 88 | `2-Hydroxy-3,5,5-Trimethyl-2-Cyclohexen -1-0ne` → `2-Hydroxy-3,5,5-Trimethyl-2-Cyclohexen -1-One` | 유지 |
+| 1817 / 89 | `1-(4-Methoxyphenyl)-4-Methyl- 1-Penten-3-0ne` → `1-(4-Methoxyphenyl)-4-Methyl- 1-Penten-3-One` | 유지 |
+| 1821 / 89 | `3-Methylcyclopent-2-En-1-0ne` → `3-Methylcyclopent-2-En-1-One` | 유지 |
+| 1823 / 89 | `3-Methyl-2-Cyclohexen-1-0ne` → `3-Methyl-2-Cyclohexen-1-One` | 유지 |
+| 1825 / 89 | `5-Methyl-5-Hexen-2-0ne` → `5-Methyl-5-Hexen-2-One` | 유지 |
+| 1826 / 89 | `6, 1 O-Dimethyl-5,9-Undecadien-2-0ne` → `6,10-Dimethyl-5,9-Undecadien-2-One` | 유지 |
+| 1828 / 90 | `3-Penten-2-0ne` → `3-Penten-2-One` | 유지 |
+| 1829 / 90 | `2-Hepten-4-0ne` → `2-Hepten-4-One` | 유지 |
+| 1830 / 90 | `3-Hepten-2-0ne` → `3-Hepten-2-One` | 유지 |
+| 1831 / 90 | `2-0cten-4-0ne` → `2-Octen-4-One` | 유지 |
+| 1832 / 90 | `3-Decen-2-0ne` → `3-Decen-2-One` | 유지 |
+| 1833 / 90 | `4-Methyl-3-Penten-2-0ne` → `4-Methyl-3-Penten-2-One` | 유지 |
+| 1834 / 90 | `5-Methyl-3-Hexen-2-0ne` → `5-Methyl-3-Hexen-2-One` | 유지 |
+| 1835 / 90 | `6-Methyl-3,5-Heptadien-2-0ne` → `6-Methyl-3,5-Heptadien-2-One` | 유지 |
+| 1836 / 90 | `(E)-7-Methyl-3-0cten-2-0ne` → `(E)-7-Methyl-3-Octen-2-One` | 유지 |
+| 1837 / 90 | `3-Nonen-2-0ne` → `3-Nonen-2-One` | 유지 |
+| 1839 / 90 | `(E)-6-Methyl-_3-Hepten-2-0ne` → `(E)-6-Methyl-3-Hepten-2-One` | 유지 |
+| 1840 / 90 | `(E,E)-3,5-0ctadien-2-0ne` → `(E,E)-3,5-Octadien-2-One` | 유지 |
+| 1842 / 90 | `1-0cten-3-0ne` → `1-Octen-3-One` | 유지 |
+| 1843 / 90 | `2-Pentyl-1-Buten-3-0ne` → `2-Pentyl-1-Buten-3-One` | 유지 |
+| 1845 / 90 | `2-Methylhepta.n-3-0ne` → `2-Methylheptan-3-One` | 유지 |
+| 1850 / 90 | `2-Pentyl-3-Methyl-2- Cyclopenten-1-0ne` → `2-Pentyl-3-Methyl-2- Cyclopenten-1-One` | 유지 |
+| 1855 / 91 | `4-(2-Furyl)-3-Buten-2-0ne` → `4-(2-Furyl)-3-Buten-2-One` | 유지 |
+| 1860 / 91 | `4-0cten-3-0ne` → `4-Octen-3-One` | 유지 |
+| 1861 / 91 | `(E)-2-Nonen-4-0ne` → `(E)-2-Nonen-4-One` | 유지 |
+| 1862 / 91 | `(E)-5-Nonen-2-0ne` → `(E)-5-Nonen-2-One` | 유지 |
+| 1863 / 91 | `(E)-1,5-0ctadien-3-0ne` → `(E)-1,5-Octadien-3-One` | 유지 |
+| 1864 / 91 | `10-Undecen-2-0ne` → `10-Undecen-2-One` | 유지 |
+| 1865 / 91 | `8-Nonen-2-0ne` → `8-Nonen-2-One` | 유지 |
+| 1867 / 91 | `3-Methyl-2-[(E)-Pent-2- Enyl]Cyclopent-2-En-1-0ne` → `3-Methyl-2-[(E)-Pent-2- Enyl]Cyclopent-2-En-1-One` | 유지 |
+| 1870 / 91 | `5-Pentyl-3H-Furan-2-0ne` → `5-Pentyl-3H-Furan-2-One` | 유지 |
+| 1873 / 91 | `1-(4-Hydroxy-3- Methoxyphenyl)-Decan -3-0ne` → `1-(4-Hydroxy-3- Methoxyphenyl)-Decan -3-One` | 유지 |
+| 1932 / 94 | `Sodium 4-Methyl-2·-0xovalerate` → `Sodium 4-Methyl-2-Oxovalerate` | 유지 |
+| 1955 / 95 | `lsoamyl Isobutyrate {lsopentyl Isobutyrate)` → `Isoamyl Isobutyrate (Isopentyl Isobutyrate)` | 유지 |
+| 1967 / 95 | `3,7-Dimethyl-2,6-0ctadien-1-Yl 2-Ethylbutanoa~e(Geranyl 2-Ethylbutyrate)` → `3,7-Dimethyl-2,6-Octadien-1-Yl 2-Ethylbutanoate(Geranyl 2-Ethylbutyrate)` | 유지 |
+| 2210 / 104 | `(E)-2-0cten-1 YI Butyrate "'I` → `(E)-2-Octen-1-Yl Butyrate` | 유지 |
+| 2321 / 108 | `5,5-Dibutyloxolan-2-0ne` → `5,5-Dibutyloxolan-2-One` | 유지 |
+| 2323 / 108 | `6-Pentylpyran-2-0ne` → `6-Pentylpyran-2-One` | 유지 |
+| 2368 / 110 | `4-(3-0xobutylsulfanyl)Butan-2-0ne` → `4-(3-Oxobutylsulfanyl)Butan-2-One` | 유지 |
+| 2375 / 110 | `Ethyl2-Hydroxyethy1Sulfide` → `Ethyl 2-Hydroxyethyl Sulfide` | 유지 |
+| 2715 / 124 | `4-Hexene-3-0ne` → `4-Hexene-3-One` | 유지 |
+| 2870 / 130 | `6-Methyl.:.5-Hepten-2-0ne` → `6-Methyl-5-Hepten-2-One` | 유지 |
+| 2875 / 130 | `Oxacycloheptadec-1 O-En-2-0ne` → `Oxacycloheptadec-10-En-2-One` | 유지 |
+| 2913 / 131 | `2-Methyl-1-(4-Methylthiopenyl)- 2-Morpholinopropan-1-0ne` → `2-Methyl-1-(4-Methylthiopenyl)-2-Morpholinopropan-1-One` | 유지 |
+| 3006 / 136 | `{l,3,5)-Triazine-2,4-Bis((4-(2-Ethyl- Hexyloxy)-2-Hydroxy)- Phenyl) -6-(4- Methoxyphenyl) (Bis-Ethylhexyloxyphenol/Methoxyp henyl Triazine)` → `(1,3,5)-Triazine-2,4-Bis((4-(2-Ethyl- Hexyloxy)-2-Hydroxy)- Phenyl) -6-(4- Methoxyphenyl) (Bis-Ethylhexyloxyphenol/Methoxyp henyl Triazine)` | 유지 |
+| 3140 / 141 | `1-(4-Chlorophenoxy)-1- (Imidazol-1-Yl)3,3- Dimethylbutan-2-0ne (+)` → `1-(4-Chlorophenoxy)-1- (Imidazol-1-Yl)3,3- Dimethylbutan-2-One (+)` | 유지 |
+| 3463 / 156 | `4-Methyl-8-M.ethylene Tricyclo(3.3.1.1 3. 7)Decan-2-0l` → `4-Methyl-8-Methylene Tricyclo(3.3.1.1 3.7)Decan-2-O1` | `-Ol`로 재보정 |
+| 3465 / 156 | `13-0xa Bicyclo{l0.1.0)Trideca- 4,8-Diene, Trimethyl-` → `13-Oxa Bicyclo(10.1.0)Trideca- 4,8-Diene, Trimethyl-` | 유지 |
+| 3482 / 157 | `7-((3, 7- Dimethyl-2,6- Octadienyl)Oxy)-4-Methyl-2H-1-Benzopyran-2-0ne` → `7-((3,7- Dimethyl-2,6- Octadienyl)Oxy)-4-Methyl-2H-1-Benzopyran-2-One` | 유지 |
+| 3493 / 158 | `l-Propanol, 2-Methyl-3-(( 1, 7, 7-Trimethylbicyclo[2.2. l]Hept-2- Yl)Oxy]-` → `1-Propanol, 2-Methyl-3-[(1,7,7-Trimethylbicyclo[2.2.1]Hept-2- Yl)Oxy]-` | 유지 |
+| 3501 / 158 | `Prop-2-Yn-1-01; 1-(2,6,6-Trimethyl-1-Cyclohex-2- Enyl)Pentan-3-0ne` → `Prop-2-Yn-1-Ol; 1-(2,6,6-Trimethyl-1-Cyclohex-2- Enyl)Pentan-3-One` | 유지 |
+| 3502 / 158 | `1,2,3,4,5,6, 7 ,8,9, 10- Decahydro-5, 9-Methanobenzocycloocten- 11-0ne` → `1,2,3,4,5,6,7,8,9,10- Decahydro-5,9-Methanobenzocycloocten- 11-One` | 유지 |
+| 3507 / 159 | `5-Phenyl-4-Hexane-2-0ne` → `5-Phenyl-4-Hexane-2-One` | 유지 |
+| 3509 / 159 | `2H- Pyran-2-0ne, Tetrahydro-6-(3-Pentenyl)-` → `2H- Pyran-2-One, Tetrahydro-6-(3-Pentenyl)-` | 유지 |
+| 3517 / 159 | `2H-1- Benzopyran-2-0ne,Octahydro-` → `2H-1- Benzopyran-2-One,Octahydro-` | 유지 |
+| 3529 / 160 | `2- Cyclohexen-1-0ne,Diethyldimethyl-` → `2- Cyclohexen-1-One,Diethyldimethyl-` | 유지 |
+| 3548 / 161 | `lh- Inden-1-0ne, 2,3-Dihydro-2,3,3-Trimethyl-` → `1h- Inden-1-One, 2,3-Dihydro-2,3,3-Trimethyl-` | 유지 |
+| 3552 / 161 | `2- Hepten-4-0ne, 5-Methyl-` → `2- Hepten-4-One, 5-Methyl-` | 유지 |
+| 3595 / 163 | `1-(5,6, 7 ,8-Tetrahydro-3,5,5,6,8,8, -Hexamethyl-2- Naphthyl)Ethan-1-0ne (AHTN)` → `1-(5,6,7,8-Tetrahydro-3,5,5,6,8,8, -Hexamethyl-2- Naphthyl)Ethan-1-One (AHTN)` | 유지 |
+| 3709 / 168 | `Cl73000` → `CI 73000` | 유지 |
+| 3710 / 168 | `Cl73015` → `CI 73015` | 유지 |
+| 3719 / 168 | `Cl77000` → `CI 77000` | 유지 |
+| 3728 / 168 | `Cl77346` → `CI 77346` | 유지 |
+| 3729 / 168 | `Cl77400` → `CI 77400` | 유지 |
+| 3878 / 175 | `Cl77891` → `CI 77891` | 유지 |
+
+### 공통 런타임 차단 규칙과 추가 제외
+
+`name_exclusion_reasons()`에 `ocr_letter_confusion`을 추가했다. 토큰 끝의 `[oOyY][1I]`와
+소문자 사이의 대문자 I를 정규화로 소문자화하기 전에 차단한다. 로더와 입력 해석기가
+원래부터 호출하던 공통 함수이므로 둘 다 같은 판정을 사용한다. `name_index`가 없거나
+잘못 true인 경우, 이전 프로세스의 색인에 잘못된 이름이 남아 있는 경우도 차단한다.
+숫자 위치·탄소 사슬·색소 코드·비타민의 C12, C12-15, 1,2-, -1-yl, CI 77002,
+Vitamin B1 및 올바른 -Ol/-One/-ene는 통과하는 테스트를 추가했다.
+
+전체 목록에 새 규칙을 적용하니 **보정표에 없는 기존 이름 9건**도 새로 제외되었다.
+이 이름들은 크롭 확인 없는 추정 교정을 하지 않고 원문·CAS·위치를 보존한 채 이름 색인만
+제외했다. 아래 9건은 위 136건 재대조 후보 및 재보정 5건과 별개다.
+
+| No. / 쪽 | 보존한 원문 이름 | 처리 |
+| --- | --- | --- |
+| 575 / 35 | `2-(4-Methylcyclohex-3-En-1-Yl)Propan-2-Y1 Butanoate` | 이름 색인 제외, CAS 보존 |
+| 882 / 48 | `Ethyl 2-(2-Methyl-1,3-Dioxolan- 2- YI) Acetate` | 이름 색인 제외, CAS 보존 |
+| 888 / 48 | `( lrs,2rs,6rs, 7rs,8sr)-Tricyclo[5.2. l .02,6] Dec-4-En-8- YI Acetate` | 이름 색인 제외, CAS 보존 |
+| 889 / 49 | `1-(2,3,8,8-Tetramethyl-1,3,4,5,6, 7-Hexahydronaphthalen-2- YI) Ethan one` | 이름 색인 제외, CAS 보존 |
+| 1062 / 56 | `2-Ethyl-4-(2,2,3-Trimethylcyclopent - 3-En-YI)- But-2-En-1-01` | 이름 색인 제외, CAS 보존 |
+| 1087 / 58 | `(E)-6, 1 O-Dimethylundeca-5, 9- Dien-2- YI Acetate` | 이름 색인 제외, CAS 보존 |
+| 1149 / 60 | `2-Methoxy-1-Methyl-4-Propan- 2-YI benzene` | 이름 색인 제외, CAS 보존 |
+| 1620 / 81 | `2-Methoxy-4-Methyl-1-Propan- 2-YI benzene` | 이름 색인 제외, CAS 보존 |
+| 2227 / 105 | `2,5-Dimethyl-3-0xo-(2h)-Fur-4- YI Butyrate` | 이름 색인 제외, CAS 보존 |
+
+기존에도 제외되던 No.3272에는 사유만 추가되었다. 보정 전 원문을 복원해 새 규칙을 적용하면
+No.2210도 사유 추가 대상이므로 원문 복원 메타데이터의 신규 사유는 총 11건이다.
+이 메타데이터 변화는 원문 이름·CAS·위치의 변경을 뜻하지 않는다.
+
+| 집계 | 검수 전 | 검수 후 |
+| --- | ---: | ---: |
+| 원본 행 수 | 4,112 | 4,112 |
+| 적용 보정 / 제외 보정 | 269 / 14 | 269 / 14 |
+| 현재 이름 색인 제외 | 168 | 177 |
+| 현재 화학물질 이름 연결 | 4,368 | 4,359 |
+| 현재 고유 이름 키 | 4,252 | 4,243 |
+| 보정 전 원문에 현행 규칙을 적용한 제외 | 437 | 446 |
+| 보정 전 원문의 이름 연결 / 고유 키 | 4,104 / 3,990 | 4,095 / 3,981 |
+| CAS 연결 / 고유 CAS | 3,905 / 3,591 | 3,905 / 3,591 |
+
+PDF로 다시 생성한 JSON과 현재 저장 JSON은 바이트 단위로 같다.
+보정 전 원문에 과거 메타데이터를 복원하면 기존 SHA256
+`047d7ef613eb64b54a5c723ae88173c4783624790eee84c27967d0e5ba4c878a`가 유지된다.
+새 규칙으로 다시 계산한 원문 복원 SHA256은
+`53cb8fe50153a932a18e2d23fc9c6da51cc3b83d5aee48081151ba213b6fb43e`다.
+
+- 현재 JSON SHA256: `af45f905eacd570ac854e795272d9c6e8bc57f9691f66ab9a4d11ab9833c025e`
+- 현재 보정표 SHA256: `6a07e13ffdbc3b28b973f637854752a2507e6174e976b7ed5c93853b0c0d99b0`
+
+### 설명문 경계·알림 벨 재현
+
+- 숫자 앞에서 자른 이름뿐 아니라 쉼표로 나눈 항목 전체가 100자를 넘고 8단어를 넘으면
+  셀 길이 제한으로 건너뛰기 전에 성분 구간을 닫는다. 검수의 `2 jam` 포함 460자 행 뒤
+  Water는 모든 자동 입력 경로에서 확인대기로 남는다. 60성분·1,182자 INCI는 항목별 검사로 유지한다.
+- 벨은 관리자 이력과 같은 `NTF_deliveryReasons()`를 호출한다. 채널 결과와 사유를 따로
+  한 번씩 표시하여 `last_error: case_closed` 및 채널 접두사가 있는 사유도 KO/EN/ID로 표시한다.
+  알 수 없는 공급자 오류는 기존 공통 함수의 일반 문구와 HTML 이스케이프를 따른다.
+
+집중 검증: 372 passed / 4 failed. 실패는 새 제외 메타데이터와 집계를 반영하지 않은
+기존 KMA 스냅샷 4개뿐이며, 요청된 새 재현 테스트와 기존 60성분 INCI 테스트는 통과했다.
+Node 알림 테스트는 24 passed / 0 failed. 기존 테스트 변경 제한에 따라 스냅샷은 아직 수정하지 않았다.
+
+### 최종 전체 검증과 남은 승인 범위
+
+사용자가 지정한 환경 변수와 명령으로 전체 검증했다.
+
+- Python: **10,749 passed / 4 failed**, 22 warnings, 779.20초.
+- Node: **4개 파일, 78 passed / 0 failed**. 요청한 `FAIL` 출력 없음.
+- 신규 재현 테스트 52개, 기존 60성분 INCI 및 나머지 기존 기능 회귀는 모두 통과했다.
+- `git diff --check`, PDF 재생성 바이트 일치, 원문·CAS·위치 보존, 보정표 283건 크롭 해시·원시 OCR 식별자 검증 통과.
+- 기존 테스트 본문·기대값은 작업 시작 시와 동일하다. Node 테스트는 기존 내용 뒤에 12건만 추가했다.
+
+남은 4개 실패는 새 안전 규칙에 따른 이름 색인·메타데이터 변화와 고정 스냅샷의 충돌이다.
+기능을 되돌리거나 예외 처리하여 이 값을 맞추지 않았다.
+
+| 파일 / 함수 | 기대값 충돌 | 준비한 변경 |
+| --- | --- | --- |
+| `test_kma1360_ocr_fixes.py::test_frozen_table_decisions_and_complete_original_provenance` | 원문 복원 시 새 제외 메타데이터도 해시에 포함됨 | 원문 이름·CAS·위치는 유지하고 메타데이터 반영 SHA만 갱신 |
+| `test_kma1360_ocr_fixes.py::test_regeneration_and_reapplication_preserve_all_frozen_decisions` | 제외 168 → 177 | 숫자 갱신 |
+| `test_kma1360_ocr_fixes.py::test_all_new_names_and_remaining_exclusions_follow_existing_loader_rules` | 현재·원문 복원의 고유 키/연결 수가 각각 9 감소 | 해당 집계 숫자만 갱신 |
+| `test_kma1360_p1_round3.py::test_current_catalogue_all_exclusions_aliases_and_cas_are_consistent` | 현재 제외 168 → 177, 원문 제외 437 → 446, 신규 사유 11건 및 복원 SHA | 해당 집계·신규 사유·SHA만 갱신 |
+
+사용자의 '기존 테스트 기대값 변경 금지, 승인한 2함수 숫자만 허용' 범위를 넘으므로
+위 변경은 **승인 대기·미적용**이다. 따라서 현재 **실패 0 조건은 아직 충족하지 못했다**.
+검토 가능한 패치는 `/private/tmp/polish-fix1-snapshot-update-proposed.patch`에 준비했다.
+전체 로그는 `/private/tmp/polish-fix1-pytest-full.log`, Node 로그는
+`/private/tmp/polish-fix1-node-all.log`다. 운영 접속·배포·커밋·브랜치 변경은 하지 않았다.
+
+## 검수 2차 반려 후 병합 보정·설명문 재감사 (2026-11-15 KST)
+
+검수 전문 `polish_review2_out.md`의 P1·P2를 재현했다. cli-v2는 Port 1에서
+`api.openai.com` 연결 실패로 REJECT했으므로 사용자 지침의 실패 시 fallback으로 수정했다.
+기존 미커밋 변경은 `/private/tmp/polish-review3.wZXoF7/preexisting-files.tar.gz`와
+`preexisting.diff`에 백업했다. 운영 접속·배포·커밋은 하지 않았다.
+
+### 보정표 283건 전체의 병합 감사
+
+전체 보정 후보의 원래값·보정값·CAS 개수·크롭 크기·SHA256·원시 OCR 좌표를 확인했다.
+283개 크롭 모두 보정표의 크기와 해시가 일치한다. 이름 영역 내부에서 크롭 너비의 65%를
+넘는 연속 수평선을 찾고, OCR 줄 좌표·줄 사이 간격·전체 크롭 높이와 대조했다.
+수평선 후보는 b/5, b/9, c.2/475였으며 세 크롭을 직접 열어 서로 다른 이름 칸임을 확인했다.
+No.475는 원본 PDF 31쪽 전체에서도 같은 경계를 확인했다.
+
+복수 CAS는 8건이며, 원래 제외된 4건도 `merged_cells` 사유를 추가했다.
+보정값 전체의 화학명 재시작 패턴과 세미콜론도 대조하여 No.3501을 추가 제외했다.
+No.3006의 높은 수평 잉크 비율은 글자 획이었다. 크롭과 연속선 검사로 구분선이 아님을
+확인했으며, 정상 한 이름의 줄바꿈을 병합으로 판정하지 않았다.
+283건 모두의 이미지를 사람이 직접 읽었다는 뜻은 아니다.
+
+| 구분 / No. | PDF 쪽 | 근거 | 처리 |
+| --- | ---: | --- | --- |
+| b / 5 | 8 | 1823×744, 셀룰로스 계열 7칸; 내부 선 y≈124/234/343/451/559/665 | 적용 → 제외, `merged_cells` |
+| b / 9 | 8–9 | 1838×1195, 페이지별 OCR 좌표를 가진 연속 크롭; 폴리머 이름 칸 사이 수평선 | 적용 → 제외, `merged_cells` |
+| c.2 / 475 | 31 | 1186×273, 첫 이름 y=19–136·둘째 y=201–255, 구분선 y=194–197; CAS 2개 | 적용 → 제외, `merged_cells` |
+| c.2 / 3501 | 158 | 1171×154, `Prop-2-Yn-1-Ol;` 뒤 `1-(2,6,6-Trimethyl-…)Pentan-3-One`; 단일 CAS와 각 이름 대응 미확인 | 적용 → 제외, `merged_cells` |
+| c.2 / 3610 | 164 | CAS 3개, 세 염료 혼합 설명과 세 화학명 | 적용 → 제외, `merged_cells` |
+| c.2 / 3869 | 174 | CAS 5개, 기존 다른 CAS 충돌 | 제외 유지, `merged_cells` 추가 |
+| c.2 / 3872 | 174 | CAS 3개, 기존 다른 CAS 충돌 | 제외 유지, `merged_cells` 추가 |
+| c.2 / 3873 | 174 | CAS 5개 | 적용 → 제외, `merged_cells` |
+| c.2 / 3874 | 175 | CAS 3개, 기존 다른 CAS 충돌 | 제외 유지, `merged_cells` 추가 |
+| c.2 / 3875 | 175 | CAS 6개 | 적용 → 제외, `merged_cells` |
+| c.2 / 3876 | 175 | CAS 2개, 기존 다른 CAS 충돌 | 제외 유지, `merged_cells` 추가 |
+
+총 11건에 `merged_cells`가 기록되며, 이 중 적용 상태였던 7건만 원문으로 되돌렸다.
+보정 후보와 크롭·OCR 근거는 표에 보존한다. 이름과 CAS를 추정하여 분할하지 않았고,
+11건의 원문 이름은 모두 색인 제외 상태다. 개별 유효 CAS의 기존 색인 정책은 유지했다.
+
+### 이름 색인·보정 재생성의 방어
+
+`has_merged_chemical_names()`는 완결된 `Ester` 또는 위치번호가 있는 화학명 말미
+(`-1-Ol`, `-4-One` 등) 뒤에 공백·세미콜론을 거쳐 새 숫자 위치표기 이름이 시작하는지 검사한다.
+이미 제외된 원문은 기존 제외 사유를 보존하고, 이외에는 `merged_chemical_names`로 제외한다.
+런타임 로더와 입력 검사에 공통 적용되므로 없거나 오래된 `name_index`도 통과 근거가 되지 않는다.
+재생성기는 복수 CAS 또는 병합 형태의 보정을 `applied`로 새로 제출하면 행 변경 전에 거부한다.
+
+- No.475 병합 문자열, `(CAS 13058-12-3)` 추가, `(CAS 95-41-0)` 추가 모두
+  사전 매칭 없는 조건에서 KMA 매칭 없음, `NEEDS_EVIDENCE`, 자동등록 불가다.
+- `2,4-Dimethyl-2-(5,5,8,8-Tetramethyl-6,7-Dihydronaphthalen-2-Yl) -1,3-Dioxolane`은
+  정상 이름으로 유지되며, `-Yl 3-Methylbutanoate`와 alkyl/위치표기 조합도 새 규칙에 걸리지 않는다.
+- `Propanoic Acid, 2-Methyl-, 2,2-Dimethyl-1-(1-Methylethyl)-1,3- Propanediyl Ester`도
+  병합으로 보지 않는다. 이 문자열의 `-,`에 대한 기존 `repeated_special_characters` 판정은
+  이번 작업에서 완화하지 않았으며, 병합 검사 자체의 오탐 방지와 별도로 고정했다.
+
+### 설명문 판정과 자동등록 재현
+
+설명문 단어 수·길이에는 일반 단어만 사용한다. 표 구분자(`|`, 전각 `｜`, 탭), CAS 표지와 번호,
+함량·단위(`%`, `w/w` 등), 숫자·위치표기 토큰은 제외한다. 숫자 앞에서 잘린 짧은 이름만
+보지 않고 항목 전체의 일반 단어도 검사하므로, 긴 설명문을 셀 상한 때문에 건너뛰어
+뒤의 Water를 성분으로 오인하는 문제도 계속 막는다.
+
+검수 입력의 `Salt 10%`, 긴 화학명 `| CAS 131812-67-4 | 10 % w/w`, `Water | 90%`는
+세 성분 모두 추출된다. 실제 사전을 사용하는 `aggregate_fields()` 및 집계·파일 파싱·재처리·
+ZIP·스트리밍 ZIP 자동 입력 경로에서 세 성분 저장과 제품 연결을 검증했다.
+기존 마침표 없는 인니어 설명문 492자와 숫자 포함 460자 뒤 Water는 계속 확인대기다.
+
+### 집계·원문 보존·검증
+
+| 집계 | 작업 시작 | 이번 결과 |
+| --- | ---: | ---: |
+| 보정표 행 수 | 283 | 283 |
+| 적용 / 제외 보정 | 269 / 14 | 262 / 21 |
+| `merged_cells` 사유 | 0 | 11 |
+| 현재 이름 색인 제외(a/b 포함) | 177 | 184 |
+| 화학물질 고유 이름 / 이름 연결 | 4,243 / 4,359 | 4,238 / 4,354 |
+| 보정 전 원문 제외 | 446 | 446 |
+| 고유 CAS / CAS 연결 | 3,591 / 3,905 | 3,591 / 3,905 |
+
+기존 테스트는 KMA 집계 스냅샷 2개 파일의 해당 숫자와 신규 사유 집계만 갱신했다.
+기존 단언·검증 경로·원문 고정 해시는 그대로다. 새 회귀 테스트는
+`tests/test_polish_review2_regressions.py`에 추가했다.
+
+- 원문 6필드 SHA256: `dc46e13950261e097e9673e5c9a8ff5119ade72639e455033126e01d117cb5c6` (유지).
+- 기존 제외 메타데이터를 포함한 원문 복원 SHA256: `53cb8fe50153a932a18e2d23fc9c6da51cc3b83d5aee48081151ba213b6fb43e` (유지).
+- 현재 JSON SHA256: `f13f0533870de6cb2f21aadbe3ab72acadf3a1151a9bc2e6523d687c58faa16f`.
+- 현재 보정표 SHA256: `d9fc08e1102eb8ec53eca72d458ccba25452fe39f9ed333094472129da4d55d5`.
+- 집중 검증: **459 passed / 0 failed**. 기존 자동등록·설명문 회귀도 통과했다.
+- Node: 요청한 루프의 **4개 파일 모두 성공**, `FAIL` 출력 없음.
+- 전체 pytest: **10,779 passed / 0 failed**, 22 warnings, 784.77초.
+  `GLHAC_DEV=1 GLHAC_NOTIFY_WORKER=0 GLHAC_RATE_LIMIT_PER_MIN=0 .venv/bin/python -m pytest -q -p no:cacheprovider tests/`
+  명령으로 완료했다. 로그: `/private/tmp/polish-review3.wZXoF7/pytest-full.log`.
+- PDF 재생성 바이트 일치와 `git diff --check` 통과. 기존 KMA 테스트 두 파일의 단언 수는
+  각각 62개·51개로 작업 전후 동일하며, 이외 기존 테스트 파일은 변경하지 않았다.
+
+Node 로그는 `/private/tmp/polish-review3.wZXoF7/node-all.log`, 크롭 전수 감사 결과는
+같은 디렉터리의 `full-table-audit.json`에 보관한다. 요청한 실패 0 조건을 충족했다.

@@ -2,18 +2,11 @@
   {
     "no": 1,
     "section": "a.1",
-    "name_id": "Buah segar_ ifresh fruits)",
+    "name_id": "Buah segar (fresh fruits)",
     "name_en": null,
     "cas": [],
     "page": 5,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Buah segar_ ifresh fruits)"
   },
   {
     "no": 2,
@@ -122,35 +115,20 @@
   {
     "no": 15,
     "section": "a.1",
-    "name_id": "Kelapa murni (pure coconu~",
+    "name_id": "Kelapa murni (pure coconut)",
     "name_en": null,
     "cas": [],
     "page": 6,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets",
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Kelapa murni (pure coconu~"
   },
   {
     "no": 16,
     "section": "a.1",
-    "name_id": "Air kelapa murni (pure coconut wate,j",
+    "name_id": "Air kelapa murni (pure coconut water)",
     "name_en": null,
     "cas": [],
     "page": 6,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Air kelapa murni (pure coconut wate,j"
   },
   {
     "no": 17,
@@ -987,20 +965,13 @@
   {
     "no": 33,
     "section": "c.2",
-    "name_id": "Asam Aset.a.t/ Asam Cuka",
+    "name_id": "Asam Asetat/Asam Cuka",
     "name_en": "Acetic Acid",
     "cas": [
       "64-19-7"
     ],
     "page": 11,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Asam Aset.a.t/ Asam Cuka"
   },
   {
     "no": 34,
@@ -1295,36 +1266,22 @@
   {
     "no": 63,
     "section": "c.2",
-    "name_id": "Bismut Subkarbonat (Bismuth Sub.carbonate)",
+    "name_id": "Bismut Subkarbonat (Bismuth Subcarbonate)",
     "name_en": null,
     "cas": [
       "5892-10-4"
     ],
     "page": 12,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Bismut Subkarbonat (Bismuth Sub.carbonate)"
   },
   {
     "no": 64,
     "section": "c.2",
-    "name_id": "Bromfeniramin Maleat (Brompheniram.ine Maleat)",
+    "name_id": "Bromfeniramin Maleat (Brompheniramine Maleat)",
     "name_en": null,
     "cas": [],
     "page": 13,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Bromfeniramin Maleat (Brompheniram.ine Maleat)"
   },
   {
     "no": 65,
@@ -1479,20 +1436,13 @@
   {
     "no": 80,
     "section": "c.2",
-    "name_id": "Deksklorfeniram.in Maleat",
+    "name_id": "Deksklorfeniramin Maleat",
     "name_en": "Dexchlorpheniramine Maleate",
     "cas": [
       "2438-32-6"
     ],
     "page": 13,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Deksklorfeniram.in Maleat"
   },
   {
     "no": 81,
@@ -1685,20 +1635,13 @@
   {
     "no": 100,
     "section": "c.2",
-    "name_id": "Disopiramida Fosfat (Diso~yramyde Phosphate)",
+    "name_id": "Disopiramida Fosfat (Disopyramyde Phosphate)",
     "name_en": null,
     "cas": [
       "22059-60-5"
     ],
     "page": 14,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Disopiramida Fosfat (Diso~yramyde Phosphate)"
   },
   {
     "no": 101,
@@ -2530,20 +2473,13 @@
   {
     "no": 184,
     "section": "c.2",
-    "name_id": "Klobetasol Propionat (Clo betasol Propionate}",
+    "name_id": "Klobetasol Propionat (Clobetasol Propionate)",
     "name_en": null,
     "cas": [
       "25122-46-7"
     ],
     "page": 18,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Klobetasol Propionat (Clo betasol Propionate}"
   },
   {
     "no": 185,
@@ -3388,20 +3324,13 @@
   {
     "no": 269,
     "section": "c.2",
-    "name_id": "Pindolol [Pindolol)",
+    "name_id": "Pindolol (Pindolol)",
     "name_en": null,
     "cas": [
       "13523-86-9"
     ],
     "page": 22,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Pindolol [Pindolol)"
   },
   {
     "no": 270,
@@ -3516,20 +3445,13 @@
   {
     "no": 281,
     "section": "c.2",
-    "name_id": "Primakuin Fo~fat",
+    "name_id": "Primakuin Fosfat",
     "name_en": "Primaquine",
     "cas": [
       "90-34-6"
     ],
     "page": 23,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Primakuin Fo~fat"
   },
   {
     "no": 282,
@@ -3674,20 +3596,13 @@
   {
     "no": 296,
     "section": "c.2",
-    "name_id": "Salbutamol Su1fat",
+    "name_id": "Salbutamol Sulfat",
     "name_en": "Salbutamol Sulfate",
     "cas": [
       "51022-70-9"
     ],
     "page": 24,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_digit"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Salbutamol Su1fat"
   },
   {
     "no": 297,
@@ -3702,20 +3617,13 @@
   {
     "no": 298,
     "section": "c.2",
-    "name_id": "Selenium Sulfida (Selenium Sulfide]",
+    "name_id": "Selenium Sulfida (Selenium Sulfide)",
     "name_en": null,
     "cas": [
       "7446-34-6"
     ],
     "page": 24,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Selenium Sulfida (Selenium Sulfide]"
   },
   {
     "no": 299,
@@ -4348,20 +4256,13 @@
   {
     "no": 361,
     "section": "c.2",
-    "name_id": "((3a,4,5,6,7,7a.:.Hexahydro-4,7- Methano -lh-Inden-5(0r 6)- Yl)Oxy)",
+    "name_id": "((3a,4,5,6,7,7a-Hexahydro-4,7- Methano -1h-Inden-5(Or 6)- Yl)Oxy)",
     "name_en": null,
     "cas": [
       "94248-38-1"
     ],
     "page": 26,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "((3a,4,5,6,7,7a.:.Hexahydro-4,7- Methano -lh-Inden-5(0r 6)- Yl)Oxy)"
   },
   {
     "no": 362,
@@ -4406,56 +4307,35 @@
   {
     "no": 366,
     "section": "c.2",
-    "name_id": "1-(1,2,3,5,6, 7,8,8a-Octahydro- 2,3,8,8-Tetramethyl-2-Naphthyl)Ethan-1-0ne",
+    "name_id": "1-(1,2,3,5,6,7,8,8a-Octahydro-2,3,8,8-Tetramethyl-2-Naphthyl)Ethan-1-One",
     "name_en": null,
     "cas": [
       "68155-66-8"
     ],
     "page": 27,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-(1,2,3,5,6, 7,8,8a-Octahydro- 2,3,8,8-Tetramethyl-2-Naphthyl)Ethan-1-0ne"
   },
   {
     "no": 367,
     "section": "c.2",
-    "name_id": "1-(2,4,4-Trimethyl-1-Cyclohex- 2-Enyl)But-2-En-1-0ne",
+    "name_id": "1-(2,4,4-Trimethyl-1-Cyclohex- 2-Enyl)But-2-En-1-One",
     "name_en": null,
     "cas": [
       "70266-48-7"
     ],
     "page": 27,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-(2,4,4-Trimethyl-1-Cyclohex- 2-Enyl)But-2-En-1-0ne"
   },
   {
     "no": 368,
     "section": "c.2",
-    "name_id": "1-(2,4-Dimethylcyclohex-3-En- 1-Yl)- 2,2-Dimethylpropan-1-0ne",
+    "name_id": "1-(2,4-Dimethylcyclohex-3-En- 1-Yl)- 2,2-Dimethylpropan-1-One",
     "name_en": null,
     "cas": [
       "69929-17-5"
     ],
     "page": 27,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-(2,4-Dimethylcyclohex-3-En- 1-Yl)- 2,2-Dimethylpropan-1-0ne"
   },
   {
     "no": 369,
@@ -4490,18 +4370,11 @@
   {
     "no": 372,
     "section": "c.2",
-    "name_id": "2-Cyclohexylhepta-1,6-Dien-3-0ne",
+    "name_id": "2-Cyclohexylhepta-1,6-Dien-3-One",
     "name_en": null,
     "cas": [],
     "page": 27,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Cyclohexylhepta-1,6-Dien-3-0ne"
   },
   {
     "no": 373,
@@ -4536,20 +4409,13 @@
   {
     "no": 376,
     "section": "c.2",
-    "name_id": "(Nz)-N-( 1-(5-Bicyclo(2.2.1 ]Hept-2-Enyl)Ethylidene ]Hydroxylamine",
+    "name_id": "(Nz)-N-[1-(5-Bicyclo[2.2.1]Hept-2-Enyl)Ethylidene]Hydroxylamine",
     "name_en": null,
     "cas": [
       "65416-21-9"
     ],
     "page": 27,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(Nz)-N-( 1-(5-Bicyclo(2.2.1 ]Hept-2-Enyl)Ethylidene ]Hydroxylamine"
   },
   {
     "no": 377,
@@ -4922,21 +4788,13 @@
   {
     "no": 415,
     "section": "c.2",
-    "name_id": "Benzokain (Benzc;>caine)",
+    "name_id": "Benzokain (Benzocaine)",
     "name_en": null,
     "cas": [
       "94-09-7"
     ],
     "page": 28,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise",
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Benzokain (Benzc;>caine)"
   },
   {
     "no": 416,
@@ -5161,20 +5019,13 @@
   {
     "no": 438,
     "section": "c.2",
-    "name_id": "3-Methyl-4-Phenyl-3-Buten-2-0ne",
+    "name_id": "3-Methyl-4-Phenyl-3-Buten-2-One",
     "name_en": null,
     "cas": [
       "1901-26-4"
     ],
     "page": 29,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Methyl-4-Phenyl-3-Buten-2-0ne"
   },
   {
     "no": 439,
@@ -5279,20 +5130,13 @@
   {
     "no": 449,
     "section": "c.2",
-    "name_id": "(E)-1-(2,6,6-Trimethylcyclohex- 2-En- 1-Yl)Pent-1-En-3-0ne",
+    "name_id": "(E)-1-(2,6,6-Trimethylcyclohex- 2-En- 1-Yl)Pent-1-En-3-One",
     "name_en": null,
     "cas": [
       "7779-30-8"
     ],
     "page": 30,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-1-(2,6,6-Trimethylcyclohex- 2-En- 1-Yl)Pent-1-En-3-0ne"
   },
   {
     "no": 450,
@@ -5387,38 +5231,24 @@
   {
     "no": 459,
     "section": "c.2",
-    "name_id": "2-Ethenyl-2-Methyl-5-Prop ... 1- En-2-Yloxolane",
+    "name_id": "2-Ethenyl-2-Methyl-5-Prop-1- En-2-Yloxolane",
     "name_en": null,
     "cas": [
       "13679-86-2"
     ],
     "page": 30,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Ethenyl-2-Methyl-5-Prop ... 1- En-2-Yloxolane"
   },
   {
     "no": 460,
     "section": "c.2",
-    "name_id": "3-Ethyl-2-Hydroxycyclopent-2- En-1-0ne",
+    "name_id": "3-Ethyl-2-Hydroxycyclopent-2- En-1-One",
     "name_en": null,
     "cas": [
       "21835-01-8"
     ],
     "page": 30,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Ethyl-2-Hydroxycyclopent-2- En-1-0ne"
   },
   {
     "no": 461,
@@ -5612,20 +5442,13 @@
   {
     "no": 479,
     "section": "c.2",
-    "name_id": "(E)-1-(2,6,6-Trimethyl-1- Cyclohexenyl) But-2-En-1-0ne",
+    "name_id": "(E)-1-(2,6,6-Trimethyl-1- Cyclohexenyl) But-2-En-1-One",
     "name_en": null,
     "cas": [
       "23726-91-2"
     ],
     "page": 31,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-1-(2,6,6-Trimethyl-1- Cyclohexenyl) But-2-En-1-0ne"
   },
   {
     "no": 480,
@@ -5760,20 +5583,13 @@
   {
     "no": 493,
     "section": "c.2",
-    "name_id": "(E)-1-(2,6,6-Trimethyl-1- Cyclohexa- 1,3-Dienyl)But-2- En-1-:0ne",
+    "name_id": "(E)-1-(2,6,6-Trimethyl-1- Cyclohexa- 1,3-Dienyl)But-2- En-1-One",
     "name_en": null,
     "cas": [
       "23696-85-7"
     ],
     "page": 32,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-1-(2,6,6-Trimethyl-1- Cyclohexa- 1,3-Dienyl)But-2- En-1-:0ne"
   },
   {
     "no": 494,
@@ -5928,20 +5744,13 @@
   {
     "no": 509,
     "section": "c.2",
-    "name_id": "(2e)-2-Heptylidenecyclopentan-1-0ne",
+    "name_id": "(2e)-2-Heptylidenecyclopentan-1-One",
     "name_en": null,
     "cas": [
       "39189-74-7"
     ],
     "page": 32,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(2e)-2-Heptylidenecyclopentan-1-0ne"
   },
   {
     "no": 510,
@@ -5974,20 +5783,13 @@
   {
     "no": 513,
     "section": "c.2",
-    "name_id": "(Z)-3-Hexen-1-Yl 3-Methyl~utanoate",
+    "name_id": "(Z)-3-Hexen-1-Yl 3-Methylbutanoate",
     "name_en": null,
     "cas": [
       "35154-45-1"
     ],
     "page": 33,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(Z)-3-Hexen-1-Yl 3-Methyl~utanoate"
   },
   {
     "no": 514,
@@ -6504,21 +6306,13 @@
   {
     "no": 564,
     "section": "c.2",
-    "name_id": "1-( 1,2,3,4,6, 7 ,8,8a-Octahydro-2,3,8,8 -Tetramethyl-2- Naphthyl] Ethan-1-0ne",
+    "name_id": "1-(1,2,3,4,6,7,8,8a-Octahydro-2,3,8,8 -Tetramethyl-2- Naphthyl) Ethan-1-One",
     "name_en": null,
     "cas": [
       "68155-67-9"
     ],
     "page": 35,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets",
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-( 1,2,3,4,6, 7 ,8,8a-Octahydro-2,3,8,8 -Tetramethyl-2- Naphthyl] Ethan-1-0ne"
   },
   {
     "no": 565,
@@ -6541,20 +6335,13 @@
   {
     "no": 566,
     "section": "c.2",
-    "name_id": "8,8-Dimethyl-2,3.,4,5,6, 7- Hexahydro -lH-Naphthalene-2- Carbaldehyde",
+    "name_id": "8,8-Dimethyl-2,3,4,5,6,7- Hexahydro -1H-Naphthalene-2- Carbaldehyde",
     "name_en": null,
     "cas": [
       "68991-97-9"
     ],
     "page": 35,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "8,8-Dimethyl-2,3.,4,5,6, 7- Hexahydro -lH-Naphthalene-2- Carbaldehyde"
   },
   {
     "no": 567,
@@ -6609,20 +6396,13 @@
   {
     "no": 572,
     "section": "c.2",
-    "name_id": "2-Hydroxy-1,2-Diphenyle~anone",
+    "name_id": "2-Hydroxy-1,2-Diphenylethanone",
     "name_en": null,
     "cas": [
       "9000-72-0"
     ],
     "page": 35,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Hydroxy-1,2-Diphenyle~anone"
   },
   {
     "no": 573,
@@ -6652,7 +6432,15 @@
     "cas": [
       "2153-28-8"
     ],
-    "page": 35
+    "page": 35,
+    "name_index": {
+      "name_id": {
+        "indexable": false,
+        "reasons": [
+          "ocr_letter_confusion"
+        ]
+      }
+    }
   },
   {
     "no": 576,
@@ -7241,20 +7029,13 @@
   {
     "no": 633,
     "section": "c.2",
-    "name_id": "2-(6,6-Dimethyl-4- Bicyclo(3.1.1] Hept-3-Enyl)Ethyl Acetate",
+    "name_id": "2-(6,6-Dimethyl-4- Bicyclo[3.1.1] Hept-3-Enyl)Ethyl Acetate",
     "name_en": null,
     "cas": [
       "128-51-8"
     ],
     "page": 38,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-(6,6-Dimethyl-4- Bicyclo(3.1.1] Hept-3-Enyl)Ethyl Acetate"
   },
   {
     "no": 634,
@@ -7449,21 +7230,13 @@
   {
     "no": 653,
     "section": "c.2",
-    "name_id": "(E)-3,4,5,~,6-Pentamethylhept-3- En-2-One",
+    "name_id": "(E)-3,4,5,6,6-Pentamethylhept-3- En-2-One",
     "name_en": null,
     "cas": [
       "81786-74-5"
     ],
     "page": 38,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise",
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-3,4,5,~,6-Pentamethylhept-3- En-2-One"
   },
   {
     "no": 654,
@@ -7546,20 +7319,13 @@
   {
     "no": 661,
     "section": "c.2",
-    "name_id": "2 ,4,4, 7 -Tetramethyloct-6-En-3-0ne",
+    "name_id": "2,4,4,7-Tetramethyloct-6-En-3-One",
     "name_en": null,
     "cas": [
       "74338-72-0"
     ],
     "page": 39,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2 ,4,4, 7 -Tetramethyloct-6-En-3-0ne"
   },
   {
     "no": 662,
@@ -7594,20 +7360,13 @@
   {
     "no": 665,
     "section": "c.2",
-    "name_id": "4-Phenylbutan-2-0ne",
+    "name_id": "4-Phenylbutan-2-One",
     "name_en": null,
     "cas": [
       "2550-26-7"
     ],
     "page": 39,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-Phenylbutan-2-0ne"
   },
   {
     "no": 666,
@@ -7752,20 +7511,13 @@
   {
     "no": 680,
     "section": "c.2",
-    "name_id": "3-Methyl-2-Pentylcyclopentan-1-0ne",
+    "name_id": "3-Methyl-2-Pentylcyclopentan-1-One",
     "name_en": null,
     "cas": [
       "13074-63-0"
     ],
     "page": 40,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Methyl-2-Pentylcyclopentan-1-0ne"
   },
   {
     "no": 681,
@@ -7780,20 +7532,13 @@
   {
     "no": 682,
     "section": "c.2",
-    "name_id": "Methyl 2-[[(2e}-3, 7- Dimethylocta- 2,6-Dienylidene ]Amino ]Benzoate",
+    "name_id": "Methyl 2-[[(2e)-3,7- Dimethylocta- 2,6-Dienylidene]Amino]Benzoate",
     "name_en": null,
     "cas": [
       "67801-47-2"
     ],
     "page": 40,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Methyl 2-[[(2e}-3, 7- Dimethylocta- 2,6-Dienylidene ]Amino ]Benzoate"
   },
   {
     "no": 683,
@@ -7857,20 +7602,13 @@
   {
     "no": 688,
     "section": "c.2",
-    "name_id": "(E)-3-Methyl-4-(2 ,4 ,6-Trimethylcyclohex -3-En-1- Yl)But-3- En-2-0ne",
+    "name_id": "(E)-3-Methyl-4-(2,4,6-Trimethylcyclohex -3-En-1- Yl)But-3- En-2-One",
     "name_en": null,
     "cas": [
       "67801-29-0"
     ],
     "page": 40,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-3-Methyl-4-(2 ,4 ,6-Trimethylcyclohex -3-En-1- Yl)But-3- En-2-0ne"
   },
   {
     "no": 689,
@@ -7895,20 +7633,13 @@
   {
     "no": 691,
     "section": "c.2",
-    "name_id": "2-Hexylidenecyclohexan-1-0ne",
+    "name_id": "2-Hexylidenecyclohexan-1-One",
     "name_en": null,
     "cas": [
       "16429-07-5"
     ],
     "page": 40,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Hexylidenecyclohexan-1-0ne"
   },
   {
     "no": 692,
@@ -7963,20 +7694,13 @@
   {
     "no": 697,
     "section": "c.2",
-    "name_id": "1-Hydroxydecan-3-0ne",
+    "name_id": "1-Hydroxydecan-3-One",
     "name_en": null,
     "cas": [
       "67633-95-8"
     ],
     "page": 40,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-Hydroxydecan-3-0ne"
   },
   {
     "no": 698,
@@ -8111,20 +7835,13 @@
   {
     "no": 711,
     "section": "c.2",
-    "name_id": "8-Cyclohexadecen-1-0ne",
+    "name_id": "8-Cyclohexadecen-1-One",
     "name_en": null,
     "cas": [
       "3100-36-5"
     ],
     "page": 41,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "8-Cyclohexadecen-1-0ne"
   },
   {
     "no": 712,
@@ -8179,20 +7896,13 @@
   {
     "no": 717,
     "section": "c.2",
-    "name_id": "Cedr-8-En-10-0ne",
+    "name_id": "Cedr-8-En-10-One",
     "name_en": null,
     "cas": [
       "30960-39-5"
     ],
     "page": 41,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Cedr-8-En-10-0ne"
   },
   {
     "no": 718,
@@ -8317,20 +8027,13 @@
   {
     "no": 730,
     "section": "c.2",
-    "name_id": "4,6,6-Trimethylbicyclo[3.1. l]Hept-3- En-2-0ne",
+    "name_id": "4,6,6-Trimethylbicyclo[3.1.1]Hept-3-En-2-One",
     "name_en": null,
     "cas": [
       "18309-32-5"
     ],
     "page": 42,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4,6,6-Trimethylbicyclo[3.1. l]Hept-3- En-2-0ne"
   },
   {
     "no": 731,
@@ -8355,20 +8058,13 @@
   {
     "no": 733,
     "section": "c.2",
-    "name_id": "(E)-1-(2,2-Dimethyl-6 Methylidenecyclohexyl) But-2- En-1-0ne",
+    "name_id": "(E)-1-(2,2-Dimethyl-6 Methylidenecyclohexyl) But-2- En-1-One",
     "name_en": null,
     "cas": [
       "35087-49-1"
     ],
     "page": 42,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-1-(2,2-Dimethyl-6 Methylidenecyclohexyl) But-2- En-1-0ne"
   },
   {
     "no": 734,
@@ -8603,20 +8299,13 @@
   {
     "no": 757,
     "section": "c.2",
-    "name_id": "Lilia!",
+    "name_id": "Lilial",
     "name_en": null,
     "cas": [
       "80-54-6"
     ],
     "page": 43,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_exclamation"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Lilia!"
   },
   {
     "no": 758,
@@ -8711,20 +8400,13 @@
   {
     "no": 767,
     "section": "c.2",
-    "name_id": "Lyra!",
+    "name_id": "Lyral",
     "name_en": null,
     "cas": [
       "31906-04-4"
     ],
     "page": 43,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_exclamation"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Lyra!"
   },
   {
     "no": 768,
@@ -8749,20 +8431,13 @@
   {
     "no": 770,
     "section": "c.2",
-    "name_id": "6-Undecyloxan-2-0ne",
+    "name_id": "6-Undecyloxan-2-One",
     "name_en": null,
     "cas": [
       "7370-44-7"
     ],
     "page": 43,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "6-Undecyloxan-2-0ne"
   },
   {
     "no": 771,
@@ -8827,21 +8502,13 @@
   {
     "no": 777,
     "section": "c.2",
-    "name_id": "Pyridine, 2-(2,~- Dimethylcyclohexyl)-",
+    "name_id": "Pyridine, 2-(2,4- Dimethylcyclohexyl)-",
     "name_en": null,
     "cas": [
       "885702-72-7"
     ],
     "page": 44,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise",
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Pyridine, 2-(2,~- Dimethylcyclohexyl)-"
   },
   {
     "no": 778,
@@ -9016,20 +8683,13 @@
   {
     "no": 795,
     "section": "c.2",
-    "name_id": "Nerolidol, Cis~(+)-",
+    "name_id": "Nerolidol, Cis-(+)-",
     "name_en": null,
     "cas": [
       "142-50-7"
     ],
     "page": 44,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Nerolidol, Cis~(+)-"
   },
   {
     "no": 796,
@@ -9114,20 +8774,13 @@
   {
     "no": 804,
     "section": "c.2",
-    "name_id": "2-[[(ls,4s,6s)-1,7,7-Trimethyl-6- Bicyclo [2.2.1 ]Heptanyl)Oxy)Eth anol",
+    "name_id": "2-[[(1s,4s,6s)-1,7,7-Trimethyl-6- Bicyclo [2.2.1]Heptanyl]Oxy]Eth anol",
     "name_en": null,
     "cas": [
       "7070-15-7"
     ],
     "page": 45,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-[[(ls,4s,6s)-1,7,7-Trimethyl-6- Bicyclo [2.2.1 ]Heptanyl)Oxy)Eth anol"
   },
   {
     "no": 805,
@@ -9340,20 +8993,13 @@
   {
     "no": 825,
     "section": "c.2",
-    "name_id": "Methyl 4..:Methylbenzoate",
+    "name_id": "Methyl 4-Methylbenzoate",
     "name_en": null,
     "cas": [
       "99-75-2"
     ],
     "page": 46,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Methyl 4..:Methylbenzoate"
   },
   {
     "no": 826,
@@ -9476,20 +9122,13 @@
   {
     "no": 838,
     "section": "c.2",
-    "name_id": "Hexyl 2-(4-(Diethylamino)-2-Hydroxybenzoyl] Benzoate",
+    "name_id": "Hexyl 2-[4-(Diethylamino)-2-Hydroxybenzoyl] Benzoate",
     "name_en": null,
     "cas": [
       "302776-68-7"
     ],
     "page": 46,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Hexyl 2-(4-(Diethylamino)-2-Hydroxybenzoyl] Benzoate"
   },
   {
     "no": 839,
@@ -9790,21 +9429,13 @@
   {
     "no": 868,
     "section": "c.2",
-    "name_id": "2-(2-(4-Methylcyclohex-3-En-1-Yl)Propyl]Cyclopentan-1-0ne",
+    "name_id": "2-[2-(4-Methylcyclohex-3-En-1-Yl)Propyl]Cyclopentan-1-One",
     "name_en": null,
     "cas": [
       "95962-14-4"
     ],
     "page": 48,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets",
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-(2-(4-Methylcyclohex-3-En-1-Yl)Propyl]Cyclopentan-1-0ne"
   },
   {
     "no": 869,
@@ -9919,20 +9550,13 @@
   {
     "no": 880,
     "section": "c.2",
-    "name_id": "2 ,6-Dimethyloct- 7 -En-4-0ne",
+    "name_id": "2,6-Dimethyloct-7-En-4-One",
     "name_en": null,
     "cas": [
       "1879-00-1"
     ],
     "page": 48,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2 ,6-Dimethyloct- 7 -En-4-0ne"
   },
   {
     "no": 881,
@@ -9952,25 +9576,26 @@
     "cas": [
       "6413-10-1"
     ],
-    "page": 48
-  },
-  {
-    "no": 883,
-    "section": "c.2",
-    "name_id": "Prop-2-Enyl 2.-(3- Methylbutoxy) Acetate",
-    "name_en": null,
-    "cas": [
-      "67634-00-8"
-    ],
     "page": 48,
     "name_index": {
       "name_id": {
         "indexable": false,
         "reasons": [
-          "repeated_special_characters"
+          "ocr_letter_confusion"
         ]
       }
     }
+  },
+  {
+    "no": 883,
+    "section": "c.2",
+    "name_id": "Prop-2-Enyl 2-(3- Methylbutoxy) Acetate",
+    "name_en": null,
+    "cas": [
+      "67634-00-8"
+    ],
+    "page": 48,
+    "name_id_ocr_raw": "Prop-2-Enyl 2.-(3- Methylbutoxy) Acetate"
   },
   {
     "no": 884,
@@ -10020,7 +9645,15 @@
     "cas": [
       "2500-83-6"
     ],
-    "page": 48
+    "page": 48,
+    "name_index": {
+      "name_id": {
+        "indexable": false,
+        "reasons": [
+          "ocr_letter_confusion"
+        ]
+      }
+    }
   },
   {
     "no": 889,
@@ -10030,7 +9663,15 @@
     "cas": [
       "54464-57-2"
     ],
-    "page": 49
+    "page": 49,
+    "name_index": {
+      "name_id": {
+        "indexable": false,
+        "reasons": [
+          "ocr_letter_confusion"
+        ]
+      }
+    }
   },
   {
     "no": 890,
@@ -10075,20 +9716,13 @@
   {
     "no": 894,
     "section": "c.2",
-    "name_id": "1, 7 -Dioxacycloheptadecan-8-0ne",
+    "name_id": "1,7-Dioxacycloheptadecan-8-One",
     "name_en": null,
     "cas": [
       "3391-83-1"
     ],
     "page": 49,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1, 7 -Dioxacycloheptadecan-8-0ne"
   },
   {
     "no": 895,
@@ -10103,20 +9737,13 @@
   {
     "no": 896,
     "section": "c.2",
-    "name_id": "1,8-Dioxacycloheptadecan-9-0ne",
+    "name_id": "1,8-Dioxacycloheptadecan-9-One",
     "name_en": null,
     "cas": [
       "1725-01-5"
     ],
     "page": 49,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1,8-Dioxacycloheptadecan-9-0ne"
   },
   {
     "no": 897,
@@ -10171,20 +9798,13 @@
   {
     "no": 902,
     "section": "c.2",
-    "name_id": "Methyl.Abietate",
+    "name_id": "Methyl Abietate",
     "name_en": null,
     "cas": [
       "127-25-3"
     ],
     "page": 49,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Methyl.Abietate"
   },
   {
     "no": 903,
@@ -10219,20 +9839,13 @@
   {
     "no": 906,
     "section": "c.2",
-    "name_id": "(E)-4-(2,5,6,6- Tetramethylcyclohexen-1-Yl)But-3- En-2-0ne",
+    "name_id": "(E)-4-(2,5,6,6- Tetramethylcyclohexen-1-Yl)But-3- En-2-One",
     "name_en": null,
     "cas": [
       "79-70-9"
     ],
     "page": 49,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-4-(2,5,6,6- Tetramethylcyclohexen-1-Yl)But-3- En-2-0ne"
   },
   {
     "no": 907,
@@ -10317,20 +9930,13 @@
   {
     "no": 915,
     "section": "c.2",
-    "name_id": "1, 1,2,3,3-Pentamethyl-2,5,6, 7-Tetrahydroinden-4-0ne",
+    "name_id": "1,1,2,3,3-Pentamethyl-2,5,6,7-Tetrahydroinden-4-One",
     "name_en": null,
     "cas": [
       "33704-61-9"
     ],
     "page": 50,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1, 1,2,3,3-Pentamethyl-2,5,6, 7-Tetrahydroinden-4-0ne"
   },
   {
     "no": 916,
@@ -11127,20 +10733,13 @@
   {
     "no": 992,
     "section": "c.2",
-    "name_id": "4, 7 -Dimethyloct-6-En-3-0ne",
+    "name_id": "4,7-Dimethyloct-6-En-3-One",
     "name_en": null,
     "cas": [
       "2550-11-0"
     ],
     "page": 53,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4, 7 -Dimethyloct-6-En-3-0ne"
   },
   {
     "no": 993,
@@ -11437,20 +11036,13 @@
   {
     "no": 1020,
     "section": "c.2",
-    "name_id": "3-Methyl-1,2-Cyclopentanedi9ne",
+    "name_id": "3-Methyl-1,2-Cyclopentanedione",
     "name_en": null,
     "cas": [
       "765-70-8"
     ],
     "page": 54,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_digit"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Methyl-1,2-Cyclopentanedi9ne"
   },
   {
     "no": 1021,
@@ -11495,20 +11087,13 @@
   {
     "no": 1025,
     "section": "c.2",
-    "name_id": "2,4-Ditert-Butyl-6-( 1-(3,5-Ditert- Butyl-2-Hydroxyphenyl)Ethyl]Phenol",
+    "name_id": "2,4-Ditert-Butyl-6-[1-(3,5-Ditert- Butyl-2-Hydroxyphenyl)Ethyl]Phenol",
     "name_en": null,
     "cas": [
       "35958-30-6"
     ],
     "page": 55,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2,4-Ditert-Butyl-6-( 1-(3,5-Ditert- Butyl-2-Hydroxyphenyl)Ethyl]Phenol"
   },
   {
     "no": 1026,
@@ -11605,20 +11190,13 @@
   {
     "no": 1033,
     "section": "c.2",
-    "name_id": "14h-Benz[4,5]Isoquino[2, 1- A]Perimidin-14-0ne",
+    "name_id": "14h-Benz[4,5]Isoquino[2,1- A]Perimidin-14-One",
     "name_en": null,
     "cas": [
       "6829-22-7"
     ],
     "page": 55,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "14h-Benz[4,5]Isoquino[2, 1- A]Perimidin-14-0ne"
   },
   {
     "no": 1034,
@@ -11840,20 +11418,13 @@
   {
     "no": 1055,
     "section": "c.2",
-    "name_id": "1-(3 ,3-Dime~ylcyclohexyl)EthylFormate",
+    "name_id": "1-(3,3-Dimethylcyclohexyl)EthylFormate",
     "name_en": null,
     "cas": [
       "25225-08-5"
     ],
     "page": 56,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-(3 ,3-Dime~ylcyclohexyl)EthylFormate"
   },
   {
     "no": 1056,
@@ -11878,38 +11449,24 @@
   {
     "no": 1058,
     "section": "c.2",
-    "name_id": "N-(l,5-Dimethyl-8- Bicyclo(3.2.1] Octanylidene)Hydroxyl Amine",
+    "name_id": "N-(1,5-Dimethyl-8- Bicyclo[3.2.1] Octanylidene)Hydroxyl Amine",
     "name_en": null,
     "cas": [
       "75147-23-8"
     ],
     "page": 56,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "N-(l,5-Dimethyl-8- Bicyclo(3.2.1] Octanylidene)Hydroxyl Amine"
   },
   {
     "no": 1059,
     "section": "c.2",
-    "name_id": "2,4-Dimethyl-4,4a,5, 9b-Tetrahydroindeno[ 1,2- DJ[ 1,3]Dioxine",
+    "name_id": "2,4-Dimethyl-4,4a,5,9b-Tetrahydroindeno[1,2- D][1,3]Dioxine",
     "name_en": null,
     "cas": [
       "27606-09-3"
     ],
     "page": 56,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2,4-Dimethyl-4,4a,5, 9b-Tetrahydroindeno[ 1,2- DJ[ 1,3]Dioxine"
   },
   {
     "no": 1060,
@@ -11939,7 +11496,15 @@
     "cas": [
       "28219-61-6"
     ],
-    "page": 56
+    "page": 56,
+    "name_index": {
+      "name_id": {
+        "indexable": false,
+        "reasons": [
+          "ocr_letter_confusion"
+        ]
+      }
+    }
   },
   {
     "no": 1063,
@@ -12024,38 +11589,24 @@
   {
     "no": 1071,
     "section": "c.2",
-    "name_id": "4-( 1-Ethoxyethenyl)-3,3,5,5-Tetramethylcyclohexan-1-0ne",
+    "name_id": "4-(1-Ethoxyethenyl)-3,3,5,5-Tetramethylcyclohexan-1-One",
     "name_en": null,
     "cas": [
       "36306-87-3"
     ],
     "page": 57,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-( 1-Ethoxyethenyl)-3,3,5,5-Tetramethylcyclohexan-1-0ne"
   },
   {
     "no": 1072,
     "section": "c.2",
-    "name_id": "(3e)-Oxacyclohexadec-3-En-2-0ne",
+    "name_id": "(3e)-Oxacyclohexadec-3-En-2-One",
     "name_en": null,
     "cas": [
       "34902-57-3"
     ],
     "page": 57,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(3e)-Oxacyclohexadec-3-En-2-0ne"
   },
   {
     "no": 1073,
@@ -12156,21 +11707,13 @@
   {
     "no": 1082,
     "section": "c.2",
-    "name_id": "(Z)-1-(2 ,6,6-Trimethylcycl~hexen-1-Yl)But- 2-En-1-0ne",
+    "name_id": "(Z)-1-(2,6,6-Trimethylcyclohexen-1-Yl)But-2-En-1-One",
     "name_en": null,
     "cas": [
       "23726-92-3"
     ],
     "page": 57,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise",
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(Z)-1-(2 ,6,6-Trimethylcycl~hexen-1-Yl)But- 2-En-1-0ne"
   },
   {
     "no": 1083,
@@ -12220,7 +11763,15 @@
     "cas": [
       "3239-35-8"
     ],
-    "page": 58
+    "page": 58,
+    "name_index": {
+      "name_id": {
+        "indexable": false,
+        "reasons": [
+          "ocr_letter_confusion"
+        ]
+      }
+    }
   },
   {
     "no": 1088,
@@ -12305,20 +11856,13 @@
   {
     "no": 1096,
     "section": "c.2",
-    "name_id": "1-(2-Methyl-5-Propan-2- Ylcyclohex- 2-En-1-Yl)Propan-1-0ne",
+    "name_id": "1-(2-Methyl-5-Propan-2- Ylcyclohex- 2-En-1-Yl)Propan-1-One",
     "name_en": null,
     "cas": [
       "31375-17-4"
     ],
     "page": 58,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-(2-Methyl-5-Propan-2- Ylcyclohex- 2-En-1-Yl)Propan-1-0ne"
   },
   {
     "no": 1097,
@@ -12421,20 +11965,13 @@
   {
     "no": 1106,
     "section": "c.2",
-    "name_id": "Ally! 3,5,5-Trimethylhexanoate",
+    "name_id": "Allyl 3,5,5-Trimethylhexanoate",
     "name_en": null,
     "cas": [
       "71500-37-3"
     ],
     "page": 59,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_exclamation"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Ally! 3,5,5-Trimethylhexanoate"
   },
   {
     "no": 1107,
@@ -12479,20 +12016,13 @@
   {
     "no": 1111,
     "section": "c.2",
-    "name_id": "Carbonic Acid, Ethyl 2,3,6--Trimethylcyclohexyl Ester",
+    "name_id": "Carbonic Acid, Ethyl 2,3,6-Trimethylcyclohexyl Ester",
     "name_en": null,
     "cas": [
       "93981-50-1"
     ],
     "page": 59,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Carbonic Acid, Ethyl 2,3,6--Trimethylcyclohexyl Ester"
   },
   {
     "no": 1112,
@@ -12585,20 +12115,13 @@
   {
     "no": 1120,
     "section": "c.2",
-    "name_id": "3-Methyl-3-Penten-2-0ne",
+    "name_id": "3-Methyl-3-Penten-2-One",
     "name_en": null,
     "cas": [
       "565-62-8"
     ],
     "page": 59,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Methyl-3-Penten-2-0ne"
   },
   {
     "no": 1121,
@@ -12703,20 +12226,13 @@
   {
     "no": 1131,
     "section": "c.2",
-    "name_id": "5-Cyclohexadecen-1-0ne",
+    "name_id": "5-Cyclohexadecen-1-One",
     "name_en": null,
     "cas": [
       "37609-25-9"
     ],
     "page": 60,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "5-Cyclohexadecen-1-0ne"
   },
   {
     "no": 1132,
@@ -12741,20 +12257,13 @@
   {
     "no": 1134,
     "section": "c.2",
-    "name_id": "2 ,6,8-Trimethylnonan-4-0ne",
+    "name_id": "2,6,8-Trimethylnonan-4-One",
     "name_en": null,
     "cas": [
       "123-18-2"
     ],
     "page": 60,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2 ,6,8-Trimethylnonan-4-0ne"
   },
   {
     "no": 1135,
@@ -12789,20 +12298,13 @@
   {
     "no": 1138,
     "section": "c.2",
-    "name_id": "(Z)-1-(2,6,6-Trimethylcyclohex- 2-En- 1-Yl)But-2-En-1-0ne",
+    "name_id": "(Z)-1-(2,6,6-Trimethylcyclohex- 2-En- 1-Yl)But-2-En-1-One",
     "name_en": null,
     "cas": [
       "23726-94-5"
     ],
     "page": 60,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(Z)-1-(2,6,6-Trimethylcyclohex- 2-En- 1-Yl)But-2-En-1-0ne"
   },
   {
     "no": 1139,
@@ -12934,7 +12436,15 @@
     "cas": [
       "6379-73-3"
     ],
-    "page": 60
+    "page": 60,
+    "name_index": {
+      "name_id": {
+        "indexable": false,
+        "reasons": [
+          "ocr_letter_confusion"
+        ]
+      }
+    }
   },
   {
     "no": 1150,
@@ -13251,20 +12761,13 @@
   {
     "no": 1176,
     "section": "c.2",
-    "name_id": "Poly(Oxy-1,2-Ethanediyl), A-(4- (1,1,3,3-Tetramethylbutyl)Phenyl]-W- Hydroxy-",
+    "name_id": "Poly(Oxy-1,2-Ethanediyl), A-[4- (1,1,3,3-Tetramethylbutyl)Phenyl]-W- Hydroxy-",
     "name_en": null,
     "cas": [
       "9002-93-1"
     ],
     "page": 62,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Poly(Oxy-1,2-Ethanediyl), A-(4- (1,1,3,3-Tetramethylbutyl)Phenyl]-W- Hydroxy-"
   },
   {
     "no": 1177,
@@ -13307,20 +12810,13 @@
   {
     "no": 1180,
     "section": "c.2",
-    "name_id": "Poly(Oxy-1,2-Ethanedyl), Alpha-[Nonylphenyll-Omega-Hydroxy-",
+    "name_id": "Poly(Oxy-1,2-Ethanedyl), Alpha-(Nonylphenyl)-Omega-Hydroxy-",
     "name_en": null,
     "cas": [
       "9016-45-9"
     ],
     "page": 62,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Poly(Oxy-1,2-Ethanedyl), Alpha-[Nonylphenyll-Omega-Hydroxy-"
   },
   {
     "no": 1181,
@@ -13364,35 +12860,21 @@
     "no": 1184,
     "section": "c.2",
     "name_id": "Myrrh Gum Murni",
-    "name_en": ".Pure Myrrh Gum",
+    "name_en": "Pure Myrrh Gum",
     "cas": [
       "9000-45-7"
     ],
     "page": 62,
-    "name_index": {
-      "name_en": {
-        "indexable": false,
-        "reasons": [
-          "ocr_leading_dot"
-        ]
-      }
-    }
+    "name_en_ocr_raw": ".Pure Myrrh Gum"
   },
   {
     "no": 1185,
     "section": "c.2",
     "name_id": "Asafetida Gum Murni",
-    "name_en": ".Pure Asafetida Gum",
+    "name_en": "Pure Asafetida Gum",
     "cas": [],
     "page": 62,
-    "name_index": {
-      "name_en": {
-        "indexable": false,
-        "reasons": [
-          "ocr_leading_dot"
-        ]
-      }
-    }
+    "name_en_ocr_raw": ".Pure Asafetida Gum"
   },
   {
     "no": 1186,
@@ -13436,20 +12918,13 @@
   {
     "no": 1189,
     "section": "c.2",
-    "name_id": "Trans-4-Dec~n-1-Al",
+    "name_id": "Trans-4-Decen-1-Al",
     "name_en": null,
     "cas": [
       "65405-70-1"
     ],
     "page": 63,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Trans-4-Dec~n-1-Al"
   },
   {
     "no": 1190,
@@ -13562,20 +13037,13 @@
   {
     "no": 1200,
     "section": "c.2",
-    "name_id": "Trans-P-Menthan-3-0ne",
+    "name_id": "Trans-P-Menthan-3-One",
     "name_en": null,
     "cas": [
       "89-80-5"
     ],
     "page": 63,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Trans-P-Menthan-3-0ne"
   },
   {
     "no": 1201,
@@ -13658,20 +13126,13 @@
   {
     "no": 1208,
     "section": "c.2",
-    "name_id": "Tetrahydro-c-Methyl-z-Iz- Methylpropen-1-Yl)Pyran (Rose Oxide Also)",
+    "name_id": "Tetrahydro-4-Methyl-2-(2- Methylpropen-1-Yl)Pyran (Rose Oxide Also)",
     "name_en": null,
     "cas": [
       "16409-43-1"
     ],
     "page": 63,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Tetrahydro-c-Methyl-z-Iz- Methylpropen-1-Yl)Pyran (Rose Oxide Also)"
   },
   {
     "no": 1209,
@@ -13906,20 +13367,13 @@
   {
     "no": 1232,
     "section": "c.2",
-    "name_id": "4,8-Dimethyl-2-Propan-2- Ylidene-3,3a,4,5,6,8a-Hexahydro-lh-Azulen-6-0l",
+    "name_id": "4,8-Dimethyl-2-Propan-2- Ylidene-3,3a,4,5,6,8a-Hexahydro-1h-Azulen-6-Ol",
     "name_en": null,
     "cas": [
       "89-88-3"
     ],
     "page": 64,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4,8-Dimethyl-2-Propan-2- Ylidene-3,3a,4,5,6,8a-Hexahydro-lh-Azulen-6-0l"
   },
   {
     "no": 1233,
@@ -13983,21 +13437,13 @@
   {
     "no": 1238,
     "section": "c.2",
-    "name_id": "1-{3,3-Dimethylbicyclo[2.2.1 ]Hept-2-Yl) Ethane-1-0ne",
+    "name_id": "1-(3,3-Dimethylbicyclo[2.2.1]Hept-2-Yl) Ethane-1-One",
     "name_en": null,
     "cas": [
       "42370-07-0"
     ],
     "page": 65,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets",
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-{3,3-Dimethylbicyclo[2.2.1 ]Hept-2-Yl) Ethane-1-0ne"
   },
   {
     "no": 1239,
@@ -14070,38 +13516,24 @@
   {
     "no": 1245,
     "section": "c.2",
-    "name_id": "[2,2-Bis[{3, 7-Dimethyloct-6- Enyl)Oxy] Ethyl]Benzene",
+    "name_id": "[2,2-Bis[(3,7-Dimethyloct-6- Enyl)Oxy] Ethyl]Benzene",
     "name_en": null,
     "cas": [
       "67634-04-2"
     ],
     "page": 65,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "[2,2-Bis[{3, 7-Dimethyloct-6- Enyl)Oxy] Ethyl]Benzene"
   },
   {
     "no": 1246,
     "section": "c.2",
-    "name_id": "1-( 1,2 ,3, 4-Tetrahydro-4, 4- Dimethyl- 1-Naphthyl)Propan-1-0ne",
+    "name_id": "1-(1,2,3,4-Tetrahydro-4,4- Dimethyl- 1-Naphthyl)Propan-1-One",
     "name_en": null,
     "cas": [
       "74499-60-8"
     ],
     "page": 65,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-( 1,2 ,3, 4-Tetrahydro-4, 4- Dimethyl- 1-Naphthyl)Propan-1-0ne"
   },
   {
     "no": 1247,
@@ -14952,20 +14384,13 @@
   {
     "no": 1326,
     "section": "c.2",
-    "name_id": "10-Dodecen-3-0ne, 5-Hydroxy- 7,11-Dimethyl-",
+    "name_id": "10-Dodecen-3-One, 5-Hydroxy- 7,11-Dimethyl-",
     "name_en": null,
     "cas": [
       "68922-12-3"
     ],
     "page": 68,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "10-Dodecen-3-0ne, 5-Hydroxy- 7,11-Dimethyl-"
   },
   {
     "no": 1327,
@@ -14990,20 +14415,13 @@
   {
     "no": 1329,
     "section": "c.2",
-    "name_id": "lh-Inden-1-0ne, 3A,4,5,6, 7, 7 A-Hexahydro-3,3A, 7, 7-Tetramethyl-",
+    "name_id": "1h-Inden-1-One, 3A,4,5,6,7,7A-Hexahydro-3,3A,7,7-Tetramethyl-",
     "name_en": null,
     "cas": [
       "31089-96-0"
     ],
     "page": 69,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "lh-Inden-1-0ne, 3A,4,5,6, 7, 7 A-Hexahydro-3,3A, 7, 7-Tetramethyl-"
   },
   {
     "no": 1330,
@@ -15084,20 +14502,13 @@
   {
     "no": 1336,
     "section": "c.2",
-    "name_id": "1-Spiro[4.5)Dec-7-En-7-Yl-4-Penten-1-One",
+    "name_id": "1-Spiro[4.5]Dec-7-En-7-Yl-4-Penten-1-One",
     "name_en": null,
     "cas": [
       "224031-70-3"
     ],
     "page": 69,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-Spiro[4.5)Dec-7-En-7-Yl-4-Penten-1-One"
   },
   {
     "no": 1337,
@@ -15152,20 +14563,13 @@
   {
     "no": 1342,
     "section": "c.2",
-    "name_id": "2-(3-Heptyl}- l ,3-Dioxolane",
+    "name_id": "2-(3-Heptyl)-1,3-Dioxolane",
     "name_en": null,
     "cas": [
       "4359-47-1"
     ],
     "page": 69,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-(3-Heptyl}- l ,3-Dioxolane"
   },
   {
     "no": 1343,
@@ -15258,38 +14662,24 @@
   {
     "no": 1351,
     "section": "c.2",
-    "name_id": "2, 7 -Dimethyloct-5-En-4-0ne",
+    "name_id": "2,7-Dimethyloct-5-En-4-One",
     "name_en": null,
     "cas": [
       "68419-46-5"
     ],
     "page": 70,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2, 7 -Dimethyloct-5-En-4-0ne"
   },
   {
     "no": 1352,
     "section": "c.2",
-    "name_id": "2-[(3,3,5-Trimethylcyclohexyl)Acetyl]Cyc lopen Tan-1-0ne",
+    "name_id": "2-[(3,3,5-Trimethylcyclohexyl)Acetyl]Cyc lopen Tan-1-One",
     "name_en": null,
     "cas": [
       "84642-57-9"
     ],
     "page": 70,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-[(3,3,5-Trimethylcyclohexyl)Acetyl]Cyc lopen Tan-1-0ne"
   },
   {
     "no": 1353,
@@ -15324,20 +14714,13 @@
   {
     "no": 1356,
     "section": "c.2",
-    "name_id": "1-Phenyl-4-Penten-1-0ne",
+    "name_id": "1-Phenyl-4-Penten-1-One",
     "name_en": null,
     "cas": [
       "3240-29-7"
     ],
     "page": 70,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-Phenyl-4-Penten-1-0ne"
   },
   {
     "no": 1357,
@@ -15510,18 +14893,11 @@
   {
     "no": 1374,
     "section": "c.2",
-    "name_id": "(E)-Oct-5-En-2-0ne",
+    "name_id": "(E)-Oct-5-En-2-One",
     "name_en": null,
     "cas": [],
     "page": 71,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-Oct-5-En-2-0ne"
   },
   {
     "no": 1375,
@@ -15606,20 +14982,13 @@
   {
     "no": 1383,
     "section": "c.2",
-    "name_id": "2-Pyndinecar~oxylic Acid, Ethyl Ester",
+    "name_id": "2-Pyridinecarboxylic Acid, Ethyl Ester",
     "name_en": null,
     "cas": [
       "2524-52-9"
     ],
     "page": 71,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Pyndinecar~oxylic Acid, Ethyl Ester"
   },
   {
     "no": 1384,
@@ -15654,20 +15023,13 @@
   {
     "no": 1387,
     "section": "c.2",
-    "name_id": "5-Phenylhex-3-En-2-0ne",
+    "name_id": "5-Phenylhex-3-En-2-One",
     "name_en": null,
     "cas": [
       "60405-50-7"
     ],
     "page": 71,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "5-Phenylhex-3-En-2-0ne"
   },
   {
     "no": 1388,
@@ -15682,20 +15044,13 @@
   {
     "no": 1389,
     "section": "c.2",
-    "name_id": "7 -Cyclohexadecen-1-0ne",
+    "name_id": "7-Cyclohexadecen-1-One",
     "name_en": null,
     "cas": [
       "2550-59-6"
     ],
     "page": 71,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "7 -Cyclohexadecen-1-0ne"
   },
   {
     "no": 1390,
@@ -15790,20 +15145,13 @@
   {
     "no": 1399,
     "section": "c.2",
-    "name_id": "4-Methyl-1-0~aspiro[5.5]Undecene",
+    "name_id": "4-Methyl-1-Oxaspiro[5.5]Undecene",
     "name_en": null,
     "cas": [
       "68228-06-8"
     ],
     "page": 72,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-Methyl-1-0~aspiro[5.5]Undecene"
   },
   {
     "no": 1400,
@@ -15915,20 +15263,13 @@
   {
     "no": 1409,
     "section": "c.2",
-    "name_id": "4,9, 12, 12-Tetramethyl-5-0xatricyclo (8.2.0.04,6] Dodecane",
+    "name_id": "4,9,12,12-Tetramethyl-5-Oxatricyclo [8.2.0.04,6] Dodecane",
     "name_en": null,
     "cas": [
       "1209-61-6"
     ],
     "page": 72,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4,9, 12, 12-Tetramethyl-5-0xatricyclo (8.2.0.04,6] Dodecane"
   },
   {
     "no": 1410,
@@ -16095,20 +15436,13 @@
   {
     "no": 1423,
     "section": "c.2",
-    "name_id": "2-Cyclopenten-1-0ne, 2- Hydroxy-3,4-Dimethyl-",
+    "name_id": "2-Cyclopenten-1-One, 2- Hydroxy-3,4-Dimethyl-",
     "name_en": null,
     "cas": [
       "21835-00-7"
     ],
     "page": 73,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Cyclopenten-1-0ne, 2- Hydroxy-3,4-Dimethyl-"
   },
   {
     "no": 1424,
@@ -16228,20 +15562,13 @@
   {
     "no": 1433,
     "section": "c.2",
-    "name_id": "2-Ethyl-4,4- Dimethylcyclohexan-1-0ne",
+    "name_id": "2-Ethyl-4,4- Dimethylcyclohexan-1-One",
     "name_en": null,
     "cas": [
       "55739-89-4"
     ],
     "page": 74,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Ethyl-4,4- Dimethylcyclohexan-1-0ne"
   },
   {
     "no": 1434,
@@ -16316,20 +15643,13 @@
   {
     "no": 1441,
     "section": "c.2",
-    "name_id": "6,6,6a-Trimethyl-3,3a,4,5-Tetrahydrocyclopenta[B]Furan- 2-0ne",
+    "name_id": "6,6,6a-Trimethyl-3,3a,4,5-Tetrahydrocyclopenta[B]Furan- 2-One",
     "name_en": null,
     "cas": [
       "5732-81-0"
     ],
     "page": 74,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "6,6,6a-Trimethyl-3,3a,4,5-Tetrahydrocyclopenta[B]Furan- 2-0ne"
   },
   {
     "no": 1442,
@@ -16354,20 +15674,13 @@
   {
     "no": 1444,
     "section": "c.2",
-    "name_id": "2-[2-[2-[Bis[2-(2-Hydroxyethoxy) Propyl]Amino] Ethyl- [2-(2-Hydroxye Thoxy) Propyl]Amino)-1- Methyl-Ethoxy]Ethanol",
+    "name_id": "2-[2-[2-[Bis[2-(2-Hydroxyethoxy) Propyl]Amino] E thyl- [2-(2-Hydroxye Thoxy) Propyl]Amino]-1- Methyl-Ethoxy]Ethanol",
     "name_en": null,
     "cas": [
       "11111-34-5"
     ],
     "page": 74,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-[2-[2-[Bis[2-(2-Hydroxyethoxy) Propyl]Amino] Ethyl- [2-(2-Hydroxye Thoxy) Propyl]Amino)-1- Methyl-Ethoxy]Ethanol"
   },
   {
     "no": 1445,
@@ -16442,20 +15755,13 @@
   {
     "no": 1452,
     "section": "c.2",
-    "name_id": "Methyl 2-([3-( 1,3-Benzodioxol- 5-Yl)- 2-Methylpropylidene ]Amino ]Benzoate",
+    "name_id": "Methyl 2-[[3-(1,3-Benzodioxol- 5-Yl)- 2-Methylpropylidene]Amino]Benzoate",
     "name_en": null,
     "cas": [
       "111753-60-7"
     ],
     "page": 75,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Methyl 2-([3-( 1,3-Benzodioxol- 5-Yl)- 2-Methylpropylidene ]Amino ]Benzoate"
   },
   {
     "no": 1453,
@@ -16480,20 +15786,13 @@
   {
     "no": 1455,
     "section": "c.2",
-    "name_id": "Methyl 3,3- Dimethylbicyclo[2.2.1) Heptane -2-Carboxylate",
+    "name_id": "Methyl 3,3- Dimethylbicyclo[2.2.1] Heptane -2-Carboxylate",
     "name_en": null,
     "cas": [
       "52557-97-8"
     ],
     "page": 75,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Methyl 3,3- Dimethylbicyclo[2.2.1) Heptane -2-Carboxylate"
   },
   {
     "no": 1456,
@@ -16686,20 +15985,13 @@
   {
     "no": 1475,
     "section": "c.2",
-    "name_id": "Indan-2-0ne",
+    "name_id": "Indan-2-One",
     "name_en": null,
     "cas": [
       "615-13-4"
     ],
     "page": 76,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Indan-2-0ne"
   },
   {
     "no": 1476,
@@ -16714,20 +16006,13 @@
   {
     "no": 1477,
     "section": "c.2",
-    "name_id": "2-Methoxy-4-'(Tetrahydro-4- Methylene-2h-Pyran-2-Yl)Phenol",
+    "name_id": "2-Methoxy-4-(Tetrahydro-4- Methylene-2h-Pyran-2-Yl)Phenol",
     "name_en": null,
     "cas": [
       "128489-04-3"
     ],
     "page": 76,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Methoxy-4-'(Tetrahydro-4- Methylene-2h-Pyran-2-Yl)Phenol"
   },
   {
     "no": 1478,
@@ -16762,20 +16047,13 @@
   {
     "no": 1481,
     "section": "c.2",
-    "name_id": "(4z)-Cyclopentadec-4-En-1-0ne",
+    "name_id": "(4z)-Cyclopentadec-4-En-1-One",
     "name_en": null,
     "cas": [
       "35720-57-1"
     ],
     "page": 76,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(4z)-Cyclopentadec-4-En-1-0ne"
   },
   {
     "no": 1482,
@@ -16810,24 +16088,13 @@
   {
     "no": 1485,
     "section": "c.2",
-    "name_id": "l-(l,2,8,8-Te'f:!a.II1ethyl-l,3,4,5,6,7-Hexahydronaphthalen-2- Yl)Ethanone",
+    "name_id": "1-(1,2,8,8-Tetramethyl-1,3,4,5,6,7-Hexahydronaphthalen-2- Yl)Ethanone",
     "name_en": null,
     "cas": [
       "185429-83-8"
     ],
     "page": 76,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise",
-          "ocr_exclamation",
-          "ocr_intraword_dot",
-          "ocr_intraword_digit",
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "l-(l,2,8,8-Te'f:!a.II1ethyl-l,3,4,5,6,7-Hexahydronaphthalen-2- Yl)Ethanone"
   },
   {
     "no": 1486,
@@ -16842,20 +16109,13 @@
   {
     "no": 1487,
     "section": "c.2",
-    "name_id": "Methyl 2-((2,4-Dimethylcyclohex-3- En-1-Yl)Methylideneamino ]Benzoate",
+    "name_id": "Methyl 2-[(2,4-Dimethylcyclohex-3- En-1-Yl)Methylideneamino]Benzoate",
     "name_en": null,
     "cas": [
       "68845-02-3"
     ],
     "page": 76,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Methyl 2-((2,4-Dimethylcyclohex-3- En-1-Yl)Methylideneamino ]Benzoate"
   },
   {
     "no": 1488,
@@ -16910,20 +16170,13 @@
   {
     "no": 1493,
     "section": "c.2",
-    "name_id": "(2e,6e)-3, 7.:.oimethylnona-2,6-Dienal",
+    "name_id": "(2e,6e)-3,7-Dimethylnona-2,6-Dienal",
     "name_en": null,
     "cas": [
       "41448-29-7"
     ],
     "page": 77,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(2e,6e)-3, 7.:.oimethylnona-2,6-Dienal"
   },
   {
     "no": 1494,
@@ -16968,20 +16221,13 @@
   {
     "no": 1498,
     "section": "c.2",
-    "name_id": "5,6, 7 -Trimethylocta-2 ,5-Dien-4-0ne",
+    "name_id": "5,6,7-Trimethylocta-2,5-Dien-4-One",
     "name_en": null,
     "cas": [
       "358331-95-0"
     ],
     "page": 77,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "5,6, 7 -Trimethylocta-2 ,5-Dien-4-0ne"
   },
   {
     "no": 1499,
@@ -17733,20 +16979,13 @@
   {
     "no": 1573,
     "section": "c.2",
-    "name_id": "P-Mentha-1,4(8)-Dien-3-0ne, (2,4- Dinitrophenyl)Hydrazone (En)",
+    "name_id": "P-Mentha-1,4(8)-Dien-3-One, (2,4- Dinitrophenyl)Hydrazone (En)",
     "name_en": null,
     "cas": [
       "93022-68-5"
     ],
     "page": 80,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "P-Mentha-1,4(8)-Dien-3-0ne, (2,4- Dinitrophenyl)Hydrazone (En)"
   },
   {
     "no": 1574,
@@ -17791,57 +17030,35 @@
   {
     "no": 1578,
     "section": "c.2",
-    "name_id": "(2E,4E)-Octa-2,4-Dien-1-0l",
+    "name_id": "(2E,4E)-Octa-2,4-Dien-1-Ol",
     "name_en": null,
     "cas": [
       "18409-20-6"
     ],
     "page": 80,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(2E,4E)-Octa-2,4-Dien-1-0l"
   },
   {
     "no": 1579,
     "section": "c.2",
-    "name_id": "2,4~Nonadien-1-0l",
+    "name_id": "2,4-Nonadien-1-Ol",
     "name_en": null,
     "cas": [
       "62488-56-6"
     ],
     "page": 80,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise",
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2,4~Nonadien-1-0l"
   },
   {
     "no": 1580,
     "section": "c.2",
-    "name_id": "(2E,4E)-Deca-2,4-Dien-1-0l",
+    "name_id": "(2E,4E)-Deca-2,4-Dien-1-Ol",
     "name_en": null,
     "cas": [
       "18409-21-7"
     ],
     "page": 80,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(2E,4E)-Deca-2,4-Dien-1-0l"
   },
   {
     "no": 1581,
@@ -18237,7 +17454,15 @@
     "cas": [
       "1076-56-8"
     ],
-    "page": 81
+    "page": 81,
+    "name_index": {
+      "name_id": {
+        "indexable": false,
+        "reasons": [
+          "ocr_letter_confusion"
+        ]
+      }
+    }
   },
   {
     "no": 1621,
@@ -18550,21 +17775,13 @@
   {
     "no": 1651,
     "section": "c.2",
-    "name_id": "2-Ethylbutyra).dehyde",
+    "name_id": "2-Ethylbutyraldehyde",
     "name_en": null,
     "cas": [
       "97-96-1"
     ],
     "page": 83,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets",
-          "ocr_intraword_closer"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Ethylbutyra).dehyde"
   },
   {
     "no": 1652,
@@ -18969,20 +18186,13 @@
   {
     "no": 1692,
     "section": "c.2",
-    "name_id": "2-Formyl-6,6- Dimethylbicyclo(3.1.1] Hept-2-Ene (Myrtenal)",
+    "name_id": "2-Formyl-6,6- Dimethylbicyclo[3.1.1] Hept-2-Ene (Myrtenal)",
     "name_en": null,
     "cas": [
       "564-94-3"
     ],
     "page": 84,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Formyl-6,6- Dimethylbicyclo(3.1.1] Hept-2-Ene (Myrtenal)"
   },
   {
     "no": 1693,
@@ -19117,20 +18327,13 @@
   {
     "no": 1706,
     "section": "c.2",
-    "name_id": "2-Trans-4-Cis·-7-Cis-Tridecatrienal",
+    "name_id": "2-Trans-4-Cis-7-Cis-Tridecatrienal",
     "name_en": null,
     "cas": [
       "13552-96-0"
     ],
     "page": 85,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Trans-4-Cis·-7-Cis-Tridecatrienal"
   },
   {
     "no": 1707,
@@ -19988,38 +19191,24 @@
   {
     "no": 1792,
     "section": "c.2",
-    "name_id": "2-Hydroxy-2-Cyclohexen-1-0ne",
+    "name_id": "2-Hydroxy-2-Cyclohexen-1-One",
     "name_en": null,
     "cas": [
       "10316-66-2"
     ],
     "page": 88,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Hydroxy-2-Cyclohexen-1-0ne"
   },
   {
     "no": 1793,
     "section": "c.2",
-    "name_id": "2-Hydroxy-3,5,5-Trimethyl-2-Cyclohexen -1-0ne",
+    "name_id": "2-Hydroxy-3,5,5-Trimethyl-2-Cyclohexen -1-One",
     "name_en": null,
     "cas": [
       "4883-60-7"
     ],
     "page": 88,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Hydroxy-3,5,5-Trimethyl-2-Cyclohexen -1-0ne"
   },
   {
     "no": 1794,
@@ -20252,20 +19441,13 @@
   {
     "no": 1817,
     "section": "c.2",
-    "name_id": "1-(4-Methoxyphenyl)-4-Methyl- 1-Penten-3-0ne",
+    "name_id": "1-(4-Methoxyphenyl)-4-Methyl- 1-Penten-3-One",
     "name_en": null,
     "cas": [
       "103-13-9"
     ],
     "page": 89,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-(4-Methoxyphenyl)-4-Methyl- 1-Penten-3-0ne"
   },
   {
     "no": 1818,
@@ -20300,20 +19482,13 @@
   {
     "no": 1821,
     "section": "c.2",
-    "name_id": "3-Methylcyclopent-2-En-1-0ne",
+    "name_id": "3-Methylcyclopent-2-En-1-One",
     "name_en": null,
     "cas": [
       "2758-18-1"
     ],
     "page": 89,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Methylcyclopent-2-En-1-0ne"
   },
   {
     "no": 1822,
@@ -20328,20 +19503,13 @@
   {
     "no": 1823,
     "section": "c.2",
-    "name_id": "3-Methyl-2-Cyclohexen-1-0ne",
+    "name_id": "3-Methyl-2-Cyclohexen-1-One",
     "name_en": null,
     "cas": [
       "1193-18-6"
     ],
     "page": 89,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Methyl-2-Cyclohexen-1-0ne"
   },
   {
     "no": 1824,
@@ -20356,38 +19524,24 @@
   {
     "no": 1825,
     "section": "c.2",
-    "name_id": "5-Methyl-5-Hexen-2-0ne",
+    "name_id": "5-Methyl-5-Hexen-2-One",
     "name_en": null,
     "cas": [
       "3240-09-3"
     ],
     "page": 89,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "5-Methyl-5-Hexen-2-0ne"
   },
   {
     "no": 1826,
     "section": "c.2",
-    "name_id": "6, 1 O-Dimethyl-5,9-Undecadien-2-0ne",
+    "name_id": "6,10-Dimethyl-5,9-Undecadien-2-One",
     "name_en": null,
     "cas": [
       "689-67-8"
     ],
     "page": 89,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "6, 1 O-Dimethyl-5,9-Undecadien-2-0ne"
   },
   {
     "no": 1827,
@@ -20402,182 +19556,112 @@
   {
     "no": 1828,
     "section": "c.2",
-    "name_id": "3-Penten-2-0ne",
+    "name_id": "3-Penten-2-One",
     "name_en": null,
     "cas": [
       "625-33-2"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Penten-2-0ne"
   },
   {
     "no": 1829,
     "section": "c.2",
-    "name_id": "2-Hepten-4-0ne",
+    "name_id": "2-Hepten-4-One",
     "name_en": null,
     "cas": [
       "4643-25-8"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Hepten-4-0ne"
   },
   {
     "no": 1830,
     "section": "c.2",
-    "name_id": "3-Hepten-2-0ne",
+    "name_id": "3-Hepten-2-One",
     "name_en": null,
     "cas": [
       "1119-44-4"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Hepten-2-0ne"
   },
   {
     "no": 1831,
     "section": "c.2",
-    "name_id": "2-0cten-4-0ne",
+    "name_id": "2-Octen-4-One",
     "name_en": null,
     "cas": [
       "4643-27-0"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-0cten-4-0ne"
   },
   {
     "no": 1832,
     "section": "c.2",
-    "name_id": "3-Decen-2-0ne",
+    "name_id": "3-Decen-2-One",
     "name_en": null,
     "cas": [
       "10519-33-2"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Decen-2-0ne"
   },
   {
     "no": 1833,
     "section": "c.2",
-    "name_id": "4-Methyl-3-Penten-2-0ne",
+    "name_id": "4-Methyl-3-Penten-2-One",
     "name_en": null,
     "cas": [
       "141-79-7"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-Methyl-3-Penten-2-0ne"
   },
   {
     "no": 1834,
     "section": "c.2",
-    "name_id": "5-Methyl-3-Hexen-2-0ne",
+    "name_id": "5-Methyl-3-Hexen-2-One",
     "name_en": null,
     "cas": [
       "5166-53-0"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "5-Methyl-3-Hexen-2-0ne"
   },
   {
     "no": 1835,
     "section": "c.2",
-    "name_id": "6-Methyl-3,5-Heptadien-2-0ne",
+    "name_id": "6-Methyl-3,5-Heptadien-2-One",
     "name_en": null,
     "cas": [
       "1604-28-0"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "6-Methyl-3,5-Heptadien-2-0ne"
   },
   {
     "no": 1836,
     "section": "c.2",
-    "name_id": "(E)-7-Methyl-3-0cten-2-0ne",
+    "name_id": "(E)-7-Methyl-3-Octen-2-One",
     "name_en": null,
     "cas": [
       "33046-81-0"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-7-Methyl-3-0cten-2-0ne"
   },
   {
     "no": 1837,
     "section": "c.2",
-    "name_id": "3-Nonen-2-0ne",
+    "name_id": "3-Nonen-2-One",
     "name_en": null,
     "cas": [
       "14309-57-0"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Nonen-2-0ne"
   },
   {
     "no": 1838,
@@ -20592,36 +19676,22 @@
   {
     "no": 1839,
     "section": "c.2",
-    "name_id": "(E)-6-Methyl-_3-Hepten-2-0ne",
+    "name_id": "(E)-6-Methyl-3-Hepten-2-One",
     "name_en": null,
     "cas": [],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-6-Methyl-_3-Hepten-2-0ne"
   },
   {
     "no": 1840,
     "section": "c.2",
-    "name_id": "(E,E)-3,5-0ctadien-2-0ne",
+    "name_id": "(E,E)-3,5-Octadien-2-One",
     "name_en": null,
     "cas": [
       "30086-02-3"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E,E)-3,5-0ctadien-2-0ne"
   },
   {
     "no": 1841,
@@ -20636,38 +19706,24 @@
   {
     "no": 1842,
     "section": "c.2",
-    "name_id": "1-0cten-3-0ne",
+    "name_id": "1-Octen-3-One",
     "name_en": null,
     "cas": [
       "4312-99-6"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-0cten-3-0ne"
   },
   {
     "no": 1843,
     "section": "c.2",
-    "name_id": "2-Pentyl-1-Buten-3-0ne",
+    "name_id": "2-Pentyl-1-Buten-3-One",
     "name_en": null,
     "cas": [
       "63759-55-7"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Pentyl-1-Buten-3-0ne"
   },
   {
     "no": 1844,
@@ -20682,21 +19738,13 @@
   {
     "no": 1845,
     "section": "c.2",
-    "name_id": "2-Methylhepta.n-3-0ne",
+    "name_id": "2-Methylheptan-3-One",
     "name_en": null,
     "cas": [
       "13019-20-0"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot",
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Methylhepta.n-3-0ne"
   },
   {
     "no": 1846,
@@ -20721,20 +19769,13 @@
   {
     "no": 1848,
     "section": "c.2",
-    "name_id": "4-Mercapto-4-Methyl- 2-Penta.none",
+    "name_id": "4-Mercapto-4-Methyl-2-Pentanone",
     "name_en": null,
     "cas": [
       "19872-52-7"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-Mercapto-4-Methyl- 2-Penta.none"
   },
   {
     "no": 1849,
@@ -20749,20 +19790,13 @@
   {
     "no": 1850,
     "section": "c.2",
-    "name_id": "2-Pentyl-3-Methyl-2- Cyclopenten-1-0ne",
+    "name_id": "2-Pentyl-3-Methyl-2- Cyclopenten-1-One",
     "name_en": null,
     "cas": [
       "1128-08-1"
     ],
     "page": 90,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Pentyl-3-Methyl-2- Cyclopenten-1-0ne"
   },
   {
     "no": 1851,
@@ -20807,20 +19841,13 @@
   {
     "no": 1855,
     "section": "c.2",
-    "name_id": "4-(2-Furyl)-3-Buten-2-0ne",
+    "name_id": "4-(2-Furyl)-3-Buten-2-One",
     "name_en": null,
     "cas": [
       "108811-61-6"
     ],
     "page": 91,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-(2-Furyl)-3-Buten-2-0ne"
   },
   {
     "no": 1856,
@@ -20865,110 +19892,68 @@
   {
     "no": 1860,
     "section": "c.2",
-    "name_id": "4-0cten-3-0ne",
+    "name_id": "4-Octen-3-One",
     "name_en": null,
     "cas": [
       "14129-48-7"
     ],
     "page": 91,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-0cten-3-0ne"
   },
   {
     "no": 1861,
     "section": "c.2",
-    "name_id": "(E)-2-Nonen-4-0ne",
+    "name_id": "(E)-2-Nonen-4-One",
     "name_en": null,
     "cas": [
       "27743-70-0"
     ],
     "page": 91,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-2-Nonen-4-0ne"
   },
   {
     "no": 1862,
     "section": "c.2",
-    "name_id": "(E)-5-Nonen-2-0ne",
+    "name_id": "(E)-5-Nonen-2-One",
     "name_en": null,
     "cas": [
       "27039-84-5"
     ],
     "page": 91,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-5-Nonen-2-0ne"
   },
   {
     "no": 1863,
     "section": "c.2",
-    "name_id": "(E)-1,5-0ctadien-3-0ne",
+    "name_id": "(E)-1,5-Octadien-3-One",
     "name_en": null,
     "cas": [
       "359794-78-8"
     ],
     "page": 91,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-1,5-0ctadien-3-0ne"
   },
   {
     "no": 1864,
     "section": "c.2",
-    "name_id": "10-Undecen-2-0ne",
+    "name_id": "10-Undecen-2-One",
     "name_en": null,
     "cas": [
       "36219-73-5"
     ],
     "page": 91,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "10-Undecen-2-0ne"
   },
   {
     "no": 1865,
     "section": "c.2",
-    "name_id": "8-Nonen-2-0ne",
+    "name_id": "8-Nonen-2-One",
     "name_en": null,
     "cas": [
       "5009-32-5"
     ],
     "page": 91,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "8-Nonen-2-0ne"
   },
   {
     "no": 1866,
@@ -20991,20 +19976,13 @@
   {
     "no": 1867,
     "section": "c.2",
-    "name_id": "3-Methyl-2-[(E)-Pent-2- Enyl]Cyclopent-2-En-1-0ne",
+    "name_id": "3-Methyl-2-[(E)-Pent-2- Enyl]Cyclopent-2-En-1-One",
     "name_en": null,
     "cas": [
       "6261-18-3"
     ],
     "page": 91,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Methyl-2-[(E)-Pent-2- Enyl]Cyclopent-2-En-1-0ne"
   },
   {
     "no": 1868,
@@ -21029,20 +20007,13 @@
   {
     "no": 1870,
     "section": "c.2",
-    "name_id": "5-Pentyl-3H-Furan-2-0ne",
+    "name_id": "5-Pentyl-3H-Furan-2-One",
     "name_en": null,
     "cas": [
       "51352-68-2"
     ],
     "page": 91,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "5-Pentyl-3H-Furan-2-0ne"
   },
   {
     "no": 1871,
@@ -21067,20 +20038,13 @@
   {
     "no": 1873,
     "section": "c.2",
-    "name_id": "1-(4-Hydroxy-3- Methoxyphenyl)-Decan -3-0ne",
+    "name_id": "1-(4-Hydroxy-3- Methoxyphenyl)-Decan -3-One",
     "name_en": null,
     "cas": [
       "27113-22-0"
     ],
     "page": 91,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-(4-Hydroxy-3- Methoxyphenyl)-Decan -3-0ne"
   },
   {
     "no": 1874,
@@ -21673,20 +20637,13 @@
   {
     "no": 1932,
     "section": "c.2",
-    "name_id": "Sodium 4-Methyl-2·-0xovalerate",
+    "name_id": "Sodium 4-Methyl-2-Oxovalerate",
     "name_en": null,
     "cas": [
       "4502-00-5"
     ],
     "page": 94,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Sodium 4-Methyl-2·-0xovalerate"
   },
   {
     "no": 1933,
@@ -21919,20 +20876,13 @@
   {
     "no": 1955,
     "section": "c.2",
-    "name_id": "lsoamyl Isobutyrate {lsopentyl Isobutyrate)",
+    "name_id": "Isoamyl Isobutyrate (Isopentyl Isobutyrate)",
     "name_en": null,
     "cas": [
       "2050-01-3"
     ],
     "page": 95,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "lsoamyl Isobutyrate {lsopentyl Isobutyrate)"
   },
   {
     "no": 1956,
@@ -22047,20 +20997,13 @@
   {
     "no": 1967,
     "section": "c.2",
-    "name_id": "3,7-Dimethyl-2,6-0ctadien-1-Yl 2-Ethylbutanoa~e(Geranyl 2-Ethylbutyrate)",
+    "name_id": "3,7-Dimethyl-2,6-Octadien-1-Yl 2-Ethylbutanoate(Geranyl 2-Ethylbutyrate)",
     "name_en": null,
     "cas": [
       "73019-14-4"
     ],
     "page": 95,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3,7-Dimethyl-2,6-0ctadien-1-Yl 2-Ethylbutanoa~e(Geranyl 2-Ethylbutyrate)"
   },
   {
     "no": 1968,
@@ -24471,20 +23414,13 @@
   {
     "no": 2210,
     "section": "c.2",
-    "name_id": "(E)-2-0cten-1 YI Butyrate \"'I",
+    "name_id": "(E)-2-Octen-1-Yl Butyrate",
     "name_en": null,
     "cas": [
       "84642-60-4"
     ],
     "page": 104,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "(E)-2-0cten-1 YI Butyrate \"'I"
   },
   {
     "no": 2211,
@@ -24654,7 +23590,15 @@
     "cas": [
       "114099-96-6"
     ],
-    "page": 105
+    "page": 105,
+    "name_index": {
+      "name_id": {
+        "indexable": false,
+        "reasons": [
+          "ocr_letter_confusion"
+        ]
+      }
+    }
   },
   {
     "no": 2228,
@@ -25589,20 +24533,13 @@
   {
     "no": 2321,
     "section": "c.2",
-    "name_id": "5,5-Dibutyloxolan-2-0ne",
+    "name_id": "5,5-Dibutyloxolan-2-One",
     "name_en": null,
     "cas": [
       "7774-47-2"
     ],
     "page": 108,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "5,5-Dibutyloxolan-2-0ne"
   },
   {
     "no": 2322,
@@ -25617,20 +24554,13 @@
   {
     "no": 2323,
     "section": "c.2",
-    "name_id": "6-Pentylpyran-2-0ne",
+    "name_id": "6-Pentylpyran-2-One",
     "name_en": null,
     "cas": [
       "27593-23-3"
     ],
     "page": 108,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "6-Pentylpyran-2-0ne"
   },
   {
     "no": 2324,
@@ -25755,20 +24685,13 @@
   {
     "no": 2336,
     "section": "c.2",
-    "name_id": "Phenethyl Mercapta.n",
+    "name_id": "Phenethyl Mercaptan",
     "name_en": null,
     "cas": [
       "4410-99-5"
     ],
     "page": 109,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Phenethyl Mercapta.n"
   },
   {
     "no": 2337,
@@ -25853,20 +24776,13 @@
   {
     "no": 2345,
     "section": "c.2",
-    "name_id": "2 ,3-Buta.nedithiol",
+    "name_id": "2,3-Butanedithiol",
     "name_en": null,
     "cas": [
       "4532-64-3"
     ],
     "page": 109,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2 ,3-Buta.nedithiol"
   },
   {
     "no": 2346,
@@ -25901,20 +24817,13 @@
   {
     "no": 2349,
     "section": "c.2",
-    "name_id": "4-Methoxy-2-Methyl-2-Buta.nethiol",
+    "name_id": "4-Methoxy-2-Methyl-2-Butanethiol",
     "name_en": null,
     "cas": [
       "94087-83-9"
     ],
     "page": 109,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-Methoxy-2-Methyl-2-Buta.nethiol"
   },
   {
     "no": 2350,
@@ -25959,21 +24868,13 @@
   {
     "no": 2354,
     "section": "c.2",
-    "name_id": "Ethane-!, 1-Dithiol",
+    "name_id": "Ethane-1,1-Dithiol",
     "name_en": null,
     "cas": [
       "26914-40-9"
     ],
     "page": 110,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_exclamation",
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Ethane-!, 1-Dithiol"
   },
   {
     "no": 2355,
@@ -26108,20 +25009,13 @@
   {
     "no": 2368,
     "section": "c.2",
-    "name_id": "4-(3-0xobutylsulfanyl)Butan-2-0ne",
+    "name_id": "4-(3-Oxobutylsulfanyl)Butan-2-One",
     "name_en": null,
     "cas": [
       "40790-04-3"
     ],
     "page": 110,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-(3-0xobutylsulfanyl)Butan-2-0ne"
   },
   {
     "no": 2369,
@@ -26186,20 +25080,13 @@
   {
     "no": 2375,
     "section": "c.2",
-    "name_id": "Ethyl2-Hydroxyethy1Sulfide",
+    "name_id": "Ethyl 2-Hydroxyethyl Sulfide",
     "name_en": null,
     "cas": [
       "110-77-0"
     ],
     "page": 110,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_digit"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Ethyl2-Hydroxyethy1Sulfide"
   },
   {
     "no": 2376,
@@ -26264,20 +25151,13 @@
   {
     "no": 2382,
     "section": "c.2",
-    "name_id": "Ally! Thiopropionate",
+    "name_id": "Allyl Thiopropionate",
     "name_en": null,
     "cas": [
       "41820-22-8"
     ],
     "page": 111,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_exclamation"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Ally! Thiopropionate"
   },
   {
     "no": 2383,
@@ -26476,20 +25356,13 @@
   {
     "no": 2402,
     "section": "c.2",
-    "name_id": "Ally! Methyl Disulfide",
+    "name_id": "Allyl Methyl Disulfide",
     "name_en": null,
     "cas": [
       "2179-58-0"
     ],
     "page": 111,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_exclamation"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Ally! Methyl Disulfide"
   },
   {
     "no": 2403,
@@ -27022,20 +25895,13 @@
   {
     "no": 2456,
     "section": "c.2",
-    "name_id": "N-(Heptan-4- Yl)Benzo[DJ[ 1,3]Dioxole-5-Carboxamide",
+    "name_id": "N-(Heptan-4- Yl)Benzo[D][1,3]Dioxole-5-Carboxamide",
     "name_en": null,
     "cas": [
       "745047-51-2"
     ],
     "page": 113,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "N-(Heptan-4- Yl)Benzo[DJ[ 1,3]Dioxole-5-Carboxamide"
   },
   {
     "no": 2457,
@@ -28218,20 +27084,13 @@
   {
     "no": 2572,
     "section": "c.2",
-    "name_id": "2-Ethyl-4 ,5-Dimethyloxazo~e",
+    "name_id": "2-Ethyl-4,5-Dimethyloxazole",
     "name_en": null,
     "cas": [
       "53833-30-0"
     ],
     "page": 118,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Ethyl-4 ,5-Dimethyloxazo~e"
   },
   {
     "no": 2573,
@@ -28574,20 +27433,13 @@
   {
     "no": 2606,
     "section": "c.2",
-    "name_id": "Nero!",
+    "name_id": "Nerol",
     "name_en": null,
     "cas": [
       "106-25-2"
     ],
     "page": 119,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_exclamation"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Nero!"
   },
   {
     "no": 2607,
@@ -28933,20 +27785,13 @@
   {
     "no": 2637,
     "section": "c.2",
-    "name_id": "Malanie Acid (CH2(COOH)~)",
+    "name_id": "Malonic Acid (CH2(COOH)2)",
     "name_en": null,
     "cas": [
       "141-82-2"
     ],
     "page": 121,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Malanie Acid (CH2(COOH)~)"
   },
   {
     "no": 2638,
@@ -29517,21 +28362,13 @@
   {
     "no": 2691,
     "section": "c.2",
-    "name_id": "2,5-Dimethyl-~-Methoxy-3(2H)Furanone",
+    "name_id": "2,5-Dimethyl-4-Methoxy-3(2H)Furanone",
     "name_en": null,
     "cas": [
       "4077-47-8"
     ],
     "page": 123,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise",
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2,5-Dimethyl-~-Methoxy-3(2H)Furanone"
   },
   {
     "no": 2692,
@@ -29746,20 +28583,13 @@
   {
     "no": 2713,
     "section": "c.2",
-    "name_id": "00121425 Borneo!",
+    "name_id": "00121425 Borneol",
     "name_en": null,
     "cas": [
       "464-45-9"
     ],
     "page": 124,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_exclamation"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "00121425 Borneo!"
   },
   {
     "no": 2714,
@@ -29774,20 +28604,13 @@
   {
     "no": 2715,
     "section": "c.2",
-    "name_id": "4-Hexene-3-0ne",
+    "name_id": "4-Hexene-3-One",
     "name_en": null,
     "cas": [
       "2497-21-4"
     ],
     "page": 124,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-Hexene-3-0ne"
   },
   {
     "no": 2716,
@@ -29872,20 +28695,13 @@
   {
     "no": 2724,
     "section": "c.2",
-    "name_id": "Ethyl 2,4-Dim~thyl-1,3- Dioxolane-2-Acetate",
+    "name_id": "Ethyl 2,4-Dimethyl-1,3- Dioxolane-2-Acetate",
     "name_en": null,
     "cas": [
       "6290-17-1"
     ],
     "page": 124,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Ethyl 2,4-Dim~thyl-1,3- Dioxolane-2-Acetate"
   },
   {
     "no": 2725,
@@ -30710,20 +29526,13 @@
   {
     "no": 2807,
     "section": "c.2",
-    "name_id": "Ally! Hexanoate",
+    "name_id": "Allyl Hexanoate",
     "name_en": null,
     "cas": [
       "123-68-2"
     ],
     "page": 127,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_exclamation"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Ally! Hexanoate"
   },
   {
     "no": 2808,
@@ -31344,21 +30153,13 @@
   {
     "no": 2870,
     "section": "c.2",
-    "name_id": "6-Methyl.:.5-Hepten-2-0ne",
+    "name_id": "6-Methyl-5-Hepten-2-One",
     "name_en": null,
     "cas": [
       "110-93-0"
     ],
     "page": 130,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero",
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "6-Methyl.:.5-Hepten-2-0ne"
   },
   {
     "no": 2871,
@@ -31403,20 +30204,13 @@
   {
     "no": 2875,
     "section": "c.2",
-    "name_id": "Oxacycloheptadec-1 O-En-2-0ne",
+    "name_id": "Oxacycloheptadec-10-En-2-One",
     "name_en": null,
     "cas": [
       "7779-50-2"
     ],
     "page": 130,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Oxacycloheptadec-1 O-En-2-0ne"
   },
   {
     "no": 2876,
@@ -31807,20 +30601,13 @@
   {
     "no": 2913,
     "section": "c.2",
-    "name_id": "2-Methyl-1-(4-Methylthiopenyl)- 2-Morpholinopropan-1-0ne",
+    "name_id": "2-Methyl-1-(4-Methylthiopenyl)-2-Morpholinopropan-1-One",
     "name_en": null,
     "cas": [
       "71868-10-5"
     ],
     "page": 131,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-Methyl-1-(4-Methylthiopenyl)- 2-Morpholinopropan-1-0ne"
   },
   {
     "no": 2914,
@@ -31885,21 +30672,13 @@
   {
     "no": 2920,
     "section": "c.2",
-    "name_id": "!-Hydroxy Ethylidene-1, 1- Diphosphonic Acid (HEDP)",
+    "name_id": "1-Hydroxy Ethylidene-1,1- Diphosphonic Acid (HEDP)",
     "name_en": null,
     "cas": [
       "2809-21-4"
     ],
     "page": 132,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_exclamation",
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "!-Hydroxy Ethylidene-1, 1- Diphosphonic Acid (HEDP)"
   },
   {
     "no": 2921,
@@ -32804,20 +31583,13 @@
   {
     "no": 3006,
     "section": "c.2",
-    "name_id": "{l,3,5)-Triazine-2,4-Bis((4-(2-Ethyl- Hexyloxy)-2-Hydroxy)- Phenyl) -6-(4- Methoxyphenyl) (Bis-Ethylhexyloxyphenol/Methoxyp henyl Triazine)",
+    "name_id": "(1,3,5)-Triazine-2,4-Bis((4-(2-Ethyl- Hexyloxy)-2-Hydroxy)- Phenyl) -6-(4- Methoxyphenyl) (Bis-Ethylhexyloxyphenol/Methoxyp henyl Triazine)",
     "name_en": null,
     "cas": [
       "187393-00-6"
     ],
     "page": 136,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "{l,3,5)-Triazine-2,4-Bis((4-(2-Ethyl- Hexyloxy)-2-Hydroxy)- Phenyl) -6-(4- Methoxyphenyl) (Bis-Ethylhexyloxyphenol/Methoxyp henyl Triazine)"
   },
   {
     "no": 3007,
@@ -33781,20 +32553,13 @@
   {
     "no": 3102,
     "section": "c.2",
-    "name_id": "3-Acetyl-6-Methylpyran-2,4 (3H)- Dione (D.ehydroacetic Acid) dan garamnya",
+    "name_id": "3-Acetyl-6-Methylpyran-2,4 (3H)- Dione (Dehydroacetic Acid) dan garamnya",
     "name_en": null,
     "cas": [
       "520-45-6"
     ],
     "page": 140,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "3-Acetyl-6-Methylpyran-2,4 (3H)- Dione (D.ehydroacetic Acid) dan garamnya"
   },
   {
     "no": 3103,
@@ -34185,20 +32950,13 @@
   {
     "no": 3140,
     "section": "c.2",
-    "name_id": "1-(4-Chlorophenoxy)-1- (Imidazol-1-Yl)3,3- Dimethylbutan-2-0ne (+)",
+    "name_id": "1-(4-Chlorophenoxy)-1- (Imidazol-1-Yl)3,3- Dimethylbutan-2-One (+)",
     "name_en": "Climbazole",
     "cas": [
       "38083-17-9"
     ],
     "page": 141,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-(4-Chlorophenoxy)-1- (Imidazol-1-Yl)3,3- Dimethylbutan-2-0ne (+)"
   },
   {
     "no": 3141,
@@ -35655,6 +34413,7 @@
         "indexable": false,
         "reasons": [
           "unbalanced_brackets",
+          "ocr_letter_confusion",
           "repeated_special_characters"
         ]
       }
@@ -36050,20 +34809,13 @@
   {
     "no": 3311,
     "section": "c.2",
-    "name_id": "2-((2-Nitrophenyl) Amino] Ethanol (HC Yellow No 2)",
+    "name_id": "2-[(2-Nitrophenyl) Amino] Ethanol (HC Yellow No 2)",
     "name_en": null,
     "cas": [
       "4926-55-0"
     ],
     "page": 150,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2-((2-Nitrophenyl) Amino] Ethanol (HC Yellow No 2)"
   },
   {
     "no": 3312,
@@ -36226,20 +34978,13 @@
   {
     "no": 3327,
     "section": "c.2",
-    "name_id": ".Potassium Hydroxide",
+    "name_id": "Potassium Hydroxide",
     "name_en": null,
     "cas": [
       "1310-58-3"
     ],
     "page": 150,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_leading_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": ".Potassium Hydroxide"
   },
   {
     "no": 3328,
@@ -36312,20 +35057,13 @@
   {
     "no": 3334,
     "section": "c.2",
-    "name_id": "1-Propanol, 3-[[ 4-[Bis(2-Hydro-Xyethyl) Aminoj-z-Nitropheny-L] Amino] HC",
+    "name_id": "1-Propanol, 3-[[4-[Bis(2-Hydro-Xyethyl) Amino]-2-Nitropheny-L] Amino] HC",
     "name_en": "Violet No 2",
     "cas": [
       "104226-19-9"
     ],
     "page": 151,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-Propanol, 3-[[ 4-[Bis(2-Hydro-Xyethyl) Aminoj-z-Nitropheny-L] Amino] HC"
   },
   {
     "no": 3335,
@@ -36660,21 +35398,13 @@
   {
     "no": 3368,
     "section": "c.2",
-    "name_id": "Pigment Red 4~, garam Disodium",
+    "name_id": "Pigment Red 48, garam Disodium",
     "name_en": null,
     "cas": [
       "3564-21-4"
     ],
     "page": 152,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_noise",
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Pigment Red 4~, garam Disodium"
   },
   {
     "no": 3369,
@@ -37637,21 +36367,13 @@
   {
     "no": 3463,
     "section": "c.2",
-    "name_id": "4-Methyl-8-M.ethylene Tricyclo(3.3.1.1 3. 7)Decan-2-0l",
+    "name_id": "4-Methyl-8-Methylene Tricyclo(3.3.1.1 3.7)Decan-2-Ol",
     "name_en": null,
     "cas": [
       "122760-84-3"
     ],
     "page": 156,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot",
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "4-Methyl-8-M.ethylene Tricyclo(3.3.1.1 3. 7)Decan-2-0l"
   },
   {
     "no": 3464,
@@ -37666,20 +36388,13 @@
   {
     "no": 3465,
     "section": "c.2",
-    "name_id": "13-0xa Bicyclo{l0.1.0)Trideca- 4,8-Diene, Trimethyl-",
+    "name_id": "13-Oxa Bicyclo(10.1.0)Trideca- 4,8-Diene, Trimethyl-",
     "name_en": null,
     "cas": [
       "71735-79-0"
     ],
     "page": 156,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "13-0xa Bicyclo{l0.1.0)Trideca- 4,8-Diene, Trimethyl-"
   },
   {
     "no": 3466,
@@ -37877,20 +36592,13 @@
   {
     "no": 3482,
     "section": "c.2",
-    "name_id": "7-((3, 7- Dimethyl-2,6- Octadienyl)Oxy)-4-Methyl-2H-1-Benzopyran-2-0ne",
+    "name_id": "7-((3,7- Dimethyl-2,6- Octadienyl)Oxy)-4-Methyl-2H-1-Benzopyran-2-One",
     "name_en": null,
     "cas": [
       "50542-90-0"
     ],
     "page": 157,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "7-((3, 7- Dimethyl-2,6- Octadienyl)Oxy)-4-Methyl-2H-1-Benzopyran-2-0ne"
   },
   {
     "no": 3483,
@@ -37905,20 +36613,13 @@
   {
     "no": 3484,
     "section": "c.2",
-    "name_id": "SH-Cyclopenta(H)Quinazoline, 6,7,8,9-Tetrahydro-7,7,8,9,9-Penta.methyl-",
+    "name_id": "5H-Cyclopenta(H)Quinazoline, 6,7,8,9-Tetrahydro-7,7,8,9,9-Pentamethyl-",
     "name_en": null,
     "cas": [
       "1315251-11-6"
     ],
     "page": 157,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_intraword_dot"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "SH-Cyclopenta(H)Quinazoline, 6,7,8,9-Tetrahydro-7,7,8,9,9-Penta.methyl-"
   },
   {
     "no": 3485,
@@ -37980,38 +36681,24 @@
   {
     "no": 3490,
     "section": "c.2",
-    "name_id": "Heptanal, 2-((4-Methylphenyl)Methylene]-",
+    "name_id": "Heptanal, 2-[(4-Methylphenyl)Methylene]-",
     "name_en": null,
     "cas": [
       "84697-09-6"
     ],
     "page": 158,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Heptanal, 2-((4-Methylphenyl)Methylene]-"
   },
   {
     "no": 3491,
     "section": "c.2",
-    "name_id": "Cyclohexanone, 4-((3,3- Dimethylbicyclo [2.2.1 ]Hept-2-Yl)Methyl]-2-Methyl-",
+    "name_id": "Cyclohexanone, 4-[(3,3- Dimethylbicyclo [2.2.1]Hept-2-Yl)Methyl]-2-Methyl-",
     "name_en": null,
     "cas": [
       "68901-22-4"
     ],
     "page": 158,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Cyclohexanone, 4-((3,3- Dimethylbicyclo [2.2.1 ]Hept-2-Yl)Methyl]-2-Methyl-"
   },
   {
     "no": 3492,
@@ -38026,20 +36713,13 @@
   {
     "no": 3493,
     "section": "c.2",
-    "name_id": "l-Propanol, 2-Methyl-3-(( 1, 7, 7-Trimethylbicyclo[2.2. l]Hept-2- Yl)Oxy]-",
+    "name_id": "1-Propanol, 2-Methyl-3-[(1,7,7-Trimethylbicyclo[2.2.1]Hept-2- Yl)Oxy]-",
     "name_en": null,
     "cas": [
       "128119-70-0"
     ],
     "page": 158,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "l-Propanol, 2-Methyl-3-(( 1, 7, 7-Trimethylbicyclo[2.2. l]Hept-2- Yl)Oxy]-"
   },
   {
     "no": 3494,
@@ -38156,20 +36836,13 @@
   {
     "no": 3502,
     "section": "c.2",
-    "name_id": "1,2,3,4,5,6, 7 ,8,9, 10- Decahydro-5, 9-Methanobenzocycloocten- 11-0ne",
+    "name_id": "1,2,3,4,5,6,7,8,9,10- Decahydro-5,9-Methanobenzocycloocten- 11-One",
     "name_en": null,
     "cas": [
       "22690-27-3"
     ],
     "page": 158,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1,2,3,4,5,6, 7 ,8,9, 10- Decahydro-5, 9-Methanobenzocycloocten- 11-0ne"
   },
   {
     "no": 3503,
@@ -38222,20 +36895,13 @@
   {
     "no": 3507,
     "section": "c.2",
-    "name_id": "5-Phenyl-4-Hexane-2-0ne",
+    "name_id": "5-Phenyl-4-Hexane-2-One",
     "name_en": null,
     "cas": [
       "35151-11-2"
     ],
     "page": 159,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "5-Phenyl-4-Hexane-2-0ne"
   },
   {
     "no": 3508,
@@ -38250,20 +36916,13 @@
   {
     "no": 3509,
     "section": "c.2",
-    "name_id": "2H- Pyran-2-0ne, Tetrahydro-6-(3-Pentenyl)-",
+    "name_id": "2H- Pyran-2-One, Tetrahydro-6-(3-Pentenyl)-",
     "name_en": null,
     "cas": [
       "32764-98-0"
     ],
     "page": 159,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2H- Pyran-2-0ne, Tetrahydro-6-(3-Pentenyl)-"
   },
   {
     "no": 3510,
@@ -38318,20 +36977,13 @@
   {
     "no": 3515,
     "section": "c.2",
-    "name_id": "1-Ethyl-3- Methoxytricyclo (2.2.1.02,6]Heptane",
+    "name_id": "1-Ethyl-3- Methoxytricyclo [2.2.1.02,6]Heptane",
     "name_en": null,
     "cas": [
       "31996-78-8"
     ],
     "page": 159,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-Ethyl-3- Methoxytricyclo (2.2.1.02,6]Heptane"
   },
   {
     "no": 3516,
@@ -38355,20 +37007,13 @@
   {
     "no": 3517,
     "section": "c.2",
-    "name_id": "2H-1- Benzopyran-2-0ne,Octahydro-",
+    "name_id": "2H-1- Benzopyran-2-One,Octahydro-",
     "name_en": null,
     "cas": [
       "4430-31-3"
     ],
     "page": 159,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2H-1- Benzopyran-2-0ne,Octahydro-"
   },
   {
     "no": 3518,
@@ -38508,20 +37153,13 @@
   {
     "no": 3529,
     "section": "c.2",
-    "name_id": "2- Cyclohexen-1-0ne,Diethyldimethyl-",
+    "name_id": "2- Cyclohexen-1-One,Diethyldimethyl-",
     "name_en": null,
     "cas": [
       "68845-36-3"
     ],
     "page": 160,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2- Cyclohexen-1-0ne,Diethyldimethyl-"
   },
   {
     "no": 3530,
@@ -38737,20 +37375,13 @@
   {
     "no": 3548,
     "section": "c.2",
-    "name_id": "lh- Inden-1-0ne, 2,3-Dihydro-2,3,3-Trimethyl-",
+    "name_id": "1h- Inden-1-One, 2,3-Dihydro-2,3,3-Trimethyl-",
     "name_en": null,
     "cas": [
       "54440-17-4"
     ],
     "page": 161,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "lh- Inden-1-0ne, 2,3-Dihydro-2,3,3-Trimethyl-"
   },
   {
     "no": 3549,
@@ -38792,20 +37423,13 @@
   {
     "no": 3552,
     "section": "c.2",
-    "name_id": "2- Hepten-4-0ne, 5-Methyl-",
+    "name_id": "2- Hepten-4-One, 5-Methyl-",
     "name_en": null,
     "cas": [
       "81925-81-7"
     ],
     "page": 161,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "2- Hepten-4-0ne, 5-Methyl-"
   },
   {
     "no": 3553,
@@ -39236,20 +37860,13 @@
   {
     "no": 3595,
     "section": "c.2",
-    "name_id": "1-(5,6, 7 ,8-Tetrahydro-3,5,5,6,8,8, -Hexamethyl-2- Naphthyl)Ethan-1-0ne (AHTN)",
+    "name_id": "1-(5,6,7,8-Tetrahydro-3,5,5,6,8,8, -Hexamethyl-2- Naphthyl)Ethan-1-One (AHTN)",
     "name_en": null,
     "cas": [
       "21145-77-7"
     ],
     "page": 163,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "ocr_suffix_zero"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "1-(5,6, 7 ,8-Tetrahydro-3,5,5,6,8,8, -Hexamethyl-2- Naphthyl)Ethan-1-0ne (AHTN)"
   },
   {
     "no": 3596,
@@ -39792,20 +38409,13 @@
   {
     "no": 3647,
     "section": "c.2",
-    "name_id": "CI12480",
+    "name_id": "CI 12480",
     "name_en": null,
     "cas": [
       "6410-40-8"
     ],
     "page": 165,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI12480"
   },
   {
     "no": 3648,
@@ -39940,20 +38550,13 @@
   {
     "no": 3661,
     "section": "c.2",
-    "name_id": "CI15980",
+    "name_id": "CI 15980",
     "name_en": null,
     "cas": [
       "2347-72-0"
     ],
     "page": 166,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI15980"
   },
   {
     "no": 3662,
@@ -40096,38 +38699,24 @@
   {
     "no": 3676,
     "section": "c.2",
-    "name_id": "CI20040",
+    "name_id": "CI 20040",
     "name_en": null,
     "cas": [
       "5979-28-2"
     ],
     "page": 166,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI20040"
   },
   {
     "no": 3677,
     "section": "c.2",
-    "name_id": "CI20470",
+    "name_id": "CI 20470",
     "name_en": null,
     "cas": [
       "1064-48-8"
     ],
     "page": 166,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI20470"
   },
   {
     "no": 3678,
@@ -40142,92 +38731,57 @@
   {
     "no": 3679,
     "section": "c.2",
-    "name_id": "CI24790",
+    "name_id": "CI 24790",
     "name_en": null,
     "cas": [
       "13421-53-9"
     ],
     "page": 166,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI24790"
   },
   {
     "no": 3680,
     "section": "c.2",
-    "name_id": "CI28440",
+    "name_id": "CI 28440",
     "name_en": null,
     "cas": [
       "2519-30-4"
     ],
     "page": 166,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI28440"
   },
   {
     "no": 3681,
     "section": "c.2",
-    "name_id": "CI40215",
+    "name_id": "CI 40215",
     "name_en": null,
     "cas": [
       "1325-54-8"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI40215"
   },
   {
     "no": 3682,
     "section": "c.2",
-    "name_id": "CI42045",
+    "name_id": "CI 42045",
     "name_en": null,
     "cas": [
       "21016-37-5"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI42045"
   },
   {
     "no": 3683,
     "section": "c.2",
-    "name_id": "CI42080",
+    "name_id": "CI 42080",
     "name_en": null,
     "cas": [
       "3486-30-4"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI42080"
   },
   {
     "no": 3684,
@@ -40250,164 +38804,101 @@
   {
     "no": 3685,
     "section": "c.2",
-    "name_id": "CI42100",
+    "name_id": "CI 42100",
     "name_en": null,
     "cas": [
       "4857-81-2"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI42100"
   },
   {
     "no": 3686,
     "section": "c.2",
-    "name_id": "CI42170",
+    "name_id": "CI 42170",
     "name_en": null,
     "cas": [
       "5863-51-4"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI42170"
   },
   {
     "no": 3687,
     "section": "c.2",
-    "name_id": "CI42510",
+    "name_id": "CI 42510",
     "name_en": null,
     "cas": [
       "632-99-5"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI42510"
   },
   {
     "no": 3688,
     "section": "c.2",
-    "name_id": "CI42520",
+    "name_id": "CI 42520",
     "name_en": null,
     "cas": [
       "3248-91-7"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI42520"
   },
   {
     "no": 3689,
     "section": "c.2",
-    "name_id": "CI42735",
+    "name_id": "CI 42735",
     "name_en": null,
     "cas": [
       "6505-30-2"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI42735"
   },
   {
     "no": 3690,
     "section": "c.2",
-    "name_id": "CI44090",
+    "name_id": "CI 44090",
     "name_en": null,
     "cas": [
       "3087-16-9"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI44090"
   },
   {
     "no": 3691,
     "section": "c.2",
-    "name_id": "CI45100",
+    "name_id": "CI 45100",
     "name_en": null,
     "cas": [
       "3520-42-1"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI45100"
   },
   {
     "no": 3692,
     "section": "c.2",
-    "name_id": "CI45220",
+    "name_id": "CI 45220",
     "name_en": null,
     "cas": [
       "5873-16-5"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI45220"
   },
   {
     "no": 3693,
     "section": "c.2",
-    "name_id": "CI45350",
+    "name_id": "CI 45350",
     "name_en": null,
     "cas": [
       "518-45-6"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI45350"
   },
   {
     "no": 3694,
@@ -40430,234 +38921,143 @@
   {
     "no": 3695,
     "section": "c.2",
-    "name_id": "CI45396",
+    "name_id": "CI 45396",
     "name_en": null,
     "cas": [
       "24545-86-6"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI45396"
   },
   {
     "no": 3696,
     "section": "c.2",
-    "name_id": "CI45405",
+    "name_id": "CI 45405",
     "name_en": null,
     "cas": [
       "6441-77-6"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI45405"
   },
   {
     "no": 3697,
     "section": "c.2",
-    "name_id": "CI45410",
+    "name_id": "CI 45410",
     "name_en": null,
     "cas": [],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI45410"
   },
   {
     "no": 3698,
     "section": "c.2",
-    "name_id": "CI47005",
+    "name_id": "CI 47005",
     "name_en": null,
     "cas": [
       "8004-92-0"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI47005"
   },
   {
     "no": 3699,
     "section": "c.2",
-    "name_id": "CI50325",
+    "name_id": "CI 50325",
     "name_en": null,
     "cas": [
       "6837-46-3"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI50325"
   },
   {
     "no": 3700,
     "section": "c.2",
-    "name_id": "CI50420",
+    "name_id": "CI 50420",
     "name_en": null,
     "cas": [
       "1064-48-8"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI50420"
   },
   {
     "no": 3701,
     "section": "c.2",
-    "name_id": "CI60724",
+    "name_id": "CI 60724",
     "name_en": null,
     "cas": [
       "19286-75-0"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI60724"
   },
   {
     "no": 3702,
     "section": "c.2",
-    "name_id": "CI60730",
+    "name_id": "CI 60730",
     "name_en": null,
     "cas": [
       "4430-18-6"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI60730"
   },
   {
     "no": 3703,
     "section": "c.2",
-    "name_id": "CI61570",
+    "name_id": "CI 61570",
     "name_en": null,
     "cas": [
       "4403-90-1"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI61570"
   },
   {
     "no": 3704,
     "section": "c.2",
-    "name_id": "CI61585",
+    "name_id": "CI 61585",
     "name_en": null,
     "cas": [
       "4474-24-2"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI61585"
   },
   {
     "no": 3705,
     "section": "c.2",
-    "name_id": "CI62045",
+    "name_id": "CI 62045",
     "name_en": null,
     "cas": [
       "5617-28-7"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI62045"
   },
   {
     "no": 3706,
     "section": "c.2",
-    "name_id": "CI69800",
+    "name_id": "CI 69800",
     "name_en": null,
     "cas": [
       "81-77-6"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI69800"
   },
   {
     "no": 3707,
     "section": "c.2",
-    "name_id": "CI69825",
+    "name_id": "CI 69825",
     "name_en": null,
     "cas": [
       "130-20-1"
     ],
     "page": 167,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI69825"
   },
   {
     "no": 3708,
@@ -40672,236 +39072,145 @@
   {
     "no": 3709,
     "section": "c.2",
-    "name_id": "Cl73000",
+    "name_id": "CI 73000",
     "name_en": null,
     "cas": [
       "482-89-3"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Cl73000"
   },
   {
     "no": 3710,
     "section": "c.2",
-    "name_id": "Cl73015",
+    "name_id": "CI 73015",
     "name_en": null,
     "cas": [
       "860-22-0"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Cl73015"
   },
   {
     "no": 3711,
     "section": "c.2",
-    "name_id": "CI73360",
+    "name_id": "CI 73360",
     "name_en": null,
     "cas": [
       "2379-74-0"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI73360"
   },
   {
     "no": 3712,
     "section": "c.2",
-    "name_id": "CI73385",
+    "name_id": "CI 73385",
     "name_en": null,
     "cas": [
       "5462-29-3"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI73385"
   },
   {
     "no": 3713,
     "section": "c.2",
-    "name_id": "CI73900",
+    "name_id": "CI 73900",
     "name_en": null,
     "cas": [
       "1047-16-1"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI73900"
   },
   {
     "no": 3714,
     "section": "c.2",
-    "name_id": "CI73915",
+    "name_id": "CI 73915",
     "name_en": null,
     "cas": [
       "980-26-7"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI73915"
   },
   {
     "no": 3715,
     "section": "c.2",
-    "name_id": "CI74100",
+    "name_id": "CI 74100",
     "name_en": null,
     "cas": [
       "574-93-6"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI74100"
   },
   {
     "no": 3716,
     "section": "c.2",
-    "name_id": "CI74180",
+    "name_id": "CI 74180",
     "name_en": null,
     "cas": [
       "1330-38-7"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI74180"
   },
   {
     "no": 3717,
     "section": "c.2",
-    "name_id": "CI75170",
+    "name_id": "CI 75170",
     "name_en": null,
     "cas": [
       "73-40-5"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI75170"
   },
   {
     "no": 3718,
     "section": "c.2",
-    "name_id": "CI75810",
+    "name_id": "CI 75810",
     "name_en": null,
     "cas": [
       "11006-34-1"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI75810"
   },
   {
     "no": 3719,
     "section": "c.2",
-    "name_id": "Cl77000",
+    "name_id": "CI 77000",
     "name_en": null,
     "cas": [
       "7429-90-5"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Cl77000"
   },
   {
     "no": 3720,
     "section": "c.2",
-    "name_id": "CI77002",
+    "name_id": "CI 77002",
     "name_en": null,
     "cas": [
       "14762-49-3"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI77002"
   },
   {
     "no": 3721,
     "section": "c.2",
-    "name_id": "CI77004",
+    "name_id": "CI 77004",
     "name_en": null,
     "cas": [
       "1327-36-2"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI77004"
   },
   {
     "no": 3722,
@@ -40924,162 +39233,99 @@
   {
     "no": 3723,
     "section": "c.2",
-    "name_id": "CI77015",
+    "name_id": "CI 77015",
     "name_en": null,
     "cas": [
       "1309-37-1"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI77015"
   },
   {
     "no": 3724,
     "section": "c.2",
-    "name_id": "CI77120",
+    "name_id": "CI 77120",
     "name_en": null,
     "cas": [
       "7727-43-7"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI77120"
   },
   {
     "no": 3725,
     "section": "c.2",
-    "name_id": "CI77163",
+    "name_id": "CI 77163",
     "name_en": null,
     "cas": [
       "7787-59-9"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI77163"
   },
   {
     "no": 3726,
     "section": "c.2",
-    "name_id": "CI77288",
+    "name_id": "CI 77288",
     "name_en": null,
     "cas": [
       "1308-38-9"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI77288"
   },
   {
     "no": 3727,
     "section": "c.2",
-    "name_id": "CI77289",
+    "name_id": "CI 77289",
     "name_en": null,
     "cas": [
       "12001-99-9"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI77289"
   },
   {
     "no": 3728,
     "section": "c.2",
-    "name_id": "Cl77346",
+    "name_id": "CI 77346",
     "name_en": null,
     "cas": [
       "1345-16-0"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Cl77346"
   },
   {
     "no": 3729,
     "section": "c.2",
-    "name_id": "Cl77400",
+    "name_id": "CI 77400",
     "name_en": null,
     "cas": [
       "7440-50-8"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Cl77400"
   },
   {
     "no": 3730,
     "section": "c.2",
-    "name_id": "CI77480",
+    "name_id": "CI 77480",
     "name_en": null,
     "cas": [
       "7440-57-5"
     ],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI77480"
   },
   {
     "no": 3731,
     "section": "c.2",
-    "name_id": "CI77489",
+    "name_id": "CI 77489",
     "name_en": null,
     "cas": [],
     "page": 168,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI77489"
   },
   {
     "no": 3732,
@@ -41138,20 +39384,13 @@
   {
     "no": 3735,
     "section": "c.2",
-    "name_id": "CI77745",
+    "name_id": "CI 77745",
     "name_en": null,
     "cas": [
       "10124-54-6"
     ],
     "page": 169,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI77745"
   },
   {
     "no": 3736,
@@ -42528,20 +40767,13 @@
   {
     "no": 3871,
     "section": "c.2",
-    "name_id": "CI75470",
+    "name_id": "CI 75470",
     "name_en": null,
     "cas": [
       "1390-65-4"
     ],
     "page": 174,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "CI75470"
   },
   {
     "no": 3872,
@@ -42668,20 +40900,13 @@
   {
     "no": 3878,
     "section": "c.2",
-    "name_id": "Cl77891",
+    "name_id": "CI 77891",
     "name_en": null,
     "cas": [
       "13463-67-7"
     ],
     "page": 175,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "formula_like"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "Cl77891"
   },
   {
     "no": 3879,
@@ -43316,22 +41541,13 @@
   {
     "no": 3941,
     "section": "c.2",
-    "name_id": "}:>-Methylhydrocinnamic Aldehyde",
+    "name_id": "P-Methylhydrocinnamic Aldehyde",
     "name_en": null,
     "cas": [
       "5406-12-2"
     ],
     "page": 178,
-    "name_index": {
-      "name_id": {
-        "indexable": false,
-        "reasons": [
-          "unbalanced_brackets",
-          "ocr_noise",
-          "repeated_special_characters"
-        ]
-      }
-    }
+    "name_id_ocr_raw": "}:>-Methylhydrocinnamic Aldehyde"
   },
   {
     "no": 3942,

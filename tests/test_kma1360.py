@@ -164,16 +164,22 @@ def test_sensitive_pending_material_still_blocks_all_existing_gates(api, phase, 
 
 def test_catalogue_completeness_provenance_and_all_cas_digits():
     rows = json.loads(CATALOGUE.read_text(encoding="utf-8"))
-    # Keep the original six-field provenance contract/asserts intact. The new
-    # per-alias exclusion metadata is validated separately in test_kma1360_p1.
+    # Keep the six required provenance fields; corrected names may also retain
+    # their original OCR text. Per-alias exclusions are checked separately.
     for row in rows:
         row.pop("name_index", None)
+        for field in ("name_id", "name_en"):
+            raw_field = f"{field}_ocr_raw"
+            if raw_field in row:
+                assert isinstance(row[raw_field], str) and row[raw_field]
+                assert row[raw_field] != row[field]
     assert len(rows) >= 4100
     assert Counter(row["section"] for row in rows) == {
         "a.1": 33, "a.2": 8, "a.3": 5, "a.4": 3, "b": 6, "c.1": 19, "c.2": 4038}
     assert len({(row["section"], row["no"]) for row in rows}) == len(rows)
     assert rows == sorted(rows, key=lambda row: (build.SECTIONS.index(row["section"]), row["no"], row["page"]))
-    assert all(set(row) == {"no", "section", "name_id", "name_en", "cas", "page"} for row in rows)
+    assert all(set(row) - {"name_id_ocr_raw", "name_en_ocr_raw"}
+               == {"no", "section", "name_id", "name_en", "cas", "page"} for row in rows)
     assert all(5 <= row["page"] <= 182 and row["name_id"] for row in rows)
     assert sum(bool(row["cas"]) for row in rows) > 3800
     assert all(build.valid_cas(cas) and screening._valid_cas(cas) for row in rows for cas in row["cas"])

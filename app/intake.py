@@ -897,6 +897,17 @@ def _autofill_non_material_row(line):
                     and not re.search(r"\bdenat\.$", line.rstrip(), re.I)))
 
 
+def _autofill_prose_words(text):
+    """표 구분자·CAS·함량·위치표기를 빼고 설명문 길이에 쓰는 일반 단어만 센다."""
+    words = []
+    for token in re.split(r"[\s|｜]+", text):
+        word = token.strip("()[]{}.,;:")
+        if (re.fullmatch(r"[^\W\d_]+(?:[-'’][^\W\d_]+)*", word)
+                and not re.fullmatch(r"CAS|No|Number|RN|w|v|wt", word, re.I)):
+            words.append(word)
+    return words
+
+
 def _autofill_material_row_evidence(line):
     """성분명과 길이 제한에 의한 제외 여부. 비성분은 길이와 무관하게 구간을 닫는다."""
     # 행 상한은 비정상 입력의 안전장치다. 정상 목록은 분할한 셀별로 검산한다.
@@ -911,9 +922,7 @@ def _autofill_material_row_evidence(line):
         if not part.strip() or _autofill_non_material_row(part):
             return [], False
         cells = _table_cells(part.replace("｜", "|"))
-        if any(len(cell) > _AUTOFILL_MAX_CELL_CHARS for cell in cells):
-            limited = True
-            continue
+        bounded_cells = all(len(cell) <= _AUTOFILL_MAX_CELL_CHARS for cell in cells)
         cells = [cell.strip() for cell in cells]
         is_table_row = len(cells) > 1
         if is_table_row and cells[0].isdigit():
@@ -921,7 +930,17 @@ def _autofill_material_row_evidence(line):
         name_and_amount = re.split(r"(?<![ \t])[ \t]+(?=CAS\b|[<>≤≥]?\d)",
                                    cells[0], maxsplit=1, flags=re.I)
         name = name_and_amount[0]
-        if (not re.search(r"[^\W\d_]", name) or len(name) > 100 or len(name.split()) > 8
+        # 숫자 앞의 짧은 이름 뒤에도 긴 설명이 올 수 있다. 쉼표로 나눈
+        # 항목 전체의 문장 형태를 셀 상한보다 먼저 판정해 구간을 닫는다.
+        name_words = _autofill_prose_words(name)
+        part_words = _autofill_prose_words(part)
+        if (len(name_words) > 8
+                or (len(" ".join(part_words)) > 100 and len(part_words) > 8)):
+            return [], False
+        if not bounded_cells:
+            limited = True
+            continue
+        if (not re.search(r"[^\W\d_]", name) or len(name) > 100
                 or not re.fullmatch(r"[\w()'’&.,/+ -]+", name)
                 or _AUTOFILL_COLUMN_LABEL.fullmatch(name) or _TEST_TABLE_HEADER.fullmatch(name.replace(" ", ""))):
             return [], False
@@ -3492,10 +3511,12 @@ def _product_candidate_names(fields):
 
 
 _SOURCE_PRODUCT_LABEL = re.compile(
-    r"^[ \t]*(?:[|｜][ \t]*)?(?:product[ \t_]*name|(?:(?:국문|영문|한글)[ \t]*)?제품명|"
+    r"^[ \t]*(?:[|｜][ \t]*)?(?:\#{1,6}[ \t]+)?(?:\*{1,3}|_{1,3})?[ \t]*"
+    r"(?:product[ \t_]*name|(?:(?:국문|영문|한글)[ \t]*)?제품명|"
     r"제품[ \t]+이름|상품명|nama[ \t]+produk)"
     r"(?:[ \t]*\([ \t]*(?:English|Korean|국문|영문|한글|EN|KO|ID)[ \t]*\))?"
-    r"[ \t]*(?:[:：|｜]|\t)[ \t]*(?P<name>[^\r\n]*)\r?$", re.I | re.M)
+    r"(?:\*{1,3}|_{1,3})?[ \t]*(?:[:：|｜]|\t)[ \t]*"
+    r"(?:\*{1,3}|_{1,3})?[ \t]*(?P<name>[^\r\n]*)\r?$", re.I | re.M)
 
 
 def _source_product_names(fields, text):
@@ -3505,7 +3526,7 @@ def _source_product_names(fields, text):
         (fields.get("_rule_omissions") or {}).get("product_names"))
     if not any(norm(name) for name in names):
         names = []
-    names.extend(match["name"].strip().strip("|｜").strip()
+    names.extend(match["name"].strip().strip("|｜").strip().strip("*_").strip()
                  for match in _SOURCE_PRODUCT_LABEL.finditer(text or ""))
     # 미확정 출처가 다른 문서의 확정 출처와 합쳐져 사라지지 않게 보존한다.
     return {norm(name) for name in names} or {""}

@@ -353,6 +353,11 @@ td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabu
 .kpi .v{color:var(--brand-text)}
 .badge.attn{background:var(--brand);border-color:var(--brand);color:var(--on-brand)}
 .badge.strong{border-color:var(--brand);color:var(--brand-text)}
+.badge.ntf-sent{background:#ecfdf5;border-color:#86efac;color:#166534}
+.badge.ntf-partial{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+.badge.ntf-skipped,.badge.ntf-unknown{background:#f1f5f9;border-color:#cbd5e1;color:#475569}
+.badge.ntf-failed{background:#fef2f2;border-color:#fca5a5;color:#b91c1c}
+.ntf-channel-result{margin:4px 0}
 .note{border-radius:0 var(--r) var(--r) 0;background:var(--brand-soft);border-left-color:var(--brand-line)}
 .note.attn{border-left-color:var(--brand)}
 .st::before{background:var(--brand-line)}
@@ -602,6 +607,36 @@ const I18N = {
 
 /* uiv4 translations: KO / EN / ID. Values are UI text, never company data. */
 const UIV4_I18N = {
+  "notify.status.unsent": ["미발송", "Not sent", "Belum dikirim"],
+  "notify.status.sending": ["발송 중", "Sending", "Sedang dikirim"],
+  "notify.status.sent": ["발송됨", "Sent", "Terkirim"],
+  "notify.status.partial": ["일부만 발송", "Partially sent", "Terkirim sebagian"],
+  "notify.status.skipped": ["발송 건너뜀", "Skipped", "Dilewati"],
+  "notify.status.failed": ["발송 실패", "Failed", "Gagal dikirim"],
+  "notify.status.unknown": ["결과 기록 없음", "No result recorded", "Hasil belum tercatat"],
+  "notify.reason.no_credentials": ["설정 없음", "Not configured", "Belum dikonfigurasi"],
+  "notify.reason.no_contact": ["연락처 없음", "No contact details", "Kontak tidak tersedia"],
+  "notify.reason.not_implemented": ["지원하지 않는 채널", "Unsupported channel", "Kanal tidak didukung"],
+  "notify.reason.consent_skipped": ["수신 동의 없음", "No notification consent", "Tidak ada persetujuan notifikasi"],
+  "notify.reason.case_closed": ["종결된 케이스", "Case closed", "Kasus ditutup"],
+  "notify.reason.no_result": ["전송 결과를 받지 못함", "No delivery result received", "Hasil pengiriman tidak diterima"],
+  "notify.reason.smtp_tls_failed": ["메일 서버 보안 연결 실패", "Mail server secure connection failed", "Koneksi aman ke server email gagal"],
+  "notify.reason.smtp_error": ["메일 서버 전송 오류", "Mail server delivery error", "Kesalahan pengiriman server email"],
+  "notify.reason.twilio_error": ["메시지 서비스 전송 오류", "Messaging service delivery error", "Kesalahan pengiriman layanan pesan"],
+  "notify.reason.webhook_error": ["웹훅 전송 오류", "Webhook delivery error", "Kesalahan pengiriman webhook"],
+  "notify.reason.send_error": ["전송 시도 후 오류", "Error after delivery attempt", "Kesalahan setelah percobaan pengiriman"],
+  "notify.reason.unknown": ["상세 사유 없음", "No reason recorded", "Alasan tidak tercatat"],
+  "notify.channel.inapp": ["앱 내 알림", "In-app", "Dalam aplikasi"],
+  "notify.channel.email": ["이메일", "Email", "Email"],
+  "notify.channel.sms": ["SMS", "SMS", "SMS"],
+  "notify.channel.whatsapp": ["WhatsApp", "WhatsApp", "WhatsApp"],
+  "notify.channel.kakao": ["카카오 알림톡", "KakaoTalk", "KakaoTalk"],
+  "notify.channel.webhook": ["웹훅", "Webhook", "Webhook"],
+  "notify.config.connected": ["연결됨", "Connected", "Terhubung"],
+  "notify.config.connected_freeform_only": ["연결됨 (일반 메시지)", "Connected (free-form messages)", "Terhubung (pesan bebas)"],
+  "notify.config.stub": ["미구현", "Not implemented", "Belum diimplementasikan"],
+  "notify.delivery_reasons": ["발송 사유", "Delivery details", "Rincian pengiriman"],
+  "notify.drain_confirm": ["미발송 알림 큐를 즉시 발송합니다. 설정 또는 연락처가 없는 채널은 발송을 건너뛰며, 채널별 결과에 따라 일부만 발송될 수 있습니다. 계속할까요?", "Send queued notifications now? Channels without configuration or contact details will be skipped; delivery may be partial depending on each channel's result.", "Kirim antrean notifikasi sekarang? Kanal tanpa konfigurasi atau kontak akan dilewati; pengiriman dapat berhasil sebagian sesuai hasil tiap kanal."],
   "sector.food": ["식품", "Food", "Pangan"],
   "sector.cosmetics": ["화장품", "Cosmetics", "Kosmetik"],
   "sector.household": ["생활용품", "Household goods", "Barang rumah tangga"],
@@ -4336,6 +4371,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <script src="js/aud-sign.js"></script>
 <script src="js/cons-contract-actions.js"></script>
 <script src="js/adm-ops.js"></script>
+<script src="js/notify-status.js"></script>
 <script src="js/ops-audit.js"></script>
 <script src="js/ops-org.js"></script>
 <script src="js/ops-ref.js"></script>

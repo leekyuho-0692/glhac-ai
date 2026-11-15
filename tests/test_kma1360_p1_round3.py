@@ -160,6 +160,9 @@ def test_chemical_locants_and_carbon_chain_numbers_are_not_ocr_noise(name):
 
 
 def test_current_catalogue_all_exclusions_aliases_and_cas_are_consistent():
+    from copy import deepcopy
+    import hashlib
+
     rows = json.loads(CATALOGUE.read_text())
     names, cas_index = screening._load_kma1360()
     excluded = []
@@ -176,17 +179,45 @@ def test_current_catalogue_all_exclusions_aliases_and_cas_are_consistent():
             for cas in row["cas"]:
                 assert row in cas_index[cas]
     assert len(rows) == 4112
-    assert len(excluded) == 437
-    assert Counter(reason for row, field in excluded for reason in row["name_index"][field]["reasons"]) == {
+    assert len(excluded) == 184
+
+    # Freeze the full original catalogue independently of the correction table.
+    original_rows = deepcopy(rows)
+    original_excluded = []
+    for row in original_rows:
+        for field in ("name_id", "name_en"):
+            raw_field = f"{field}_ocr_raw"
+            if raw_field in row:
+                row[field] = row.pop(raw_field)
+        row.pop("name_index", None)
+        metadata = excluded_name_metadata(row)
+        if metadata:
+            row["name_index"] = metadata
+        original_excluded.extend((row, field) for field in metadata)
+    original = json.dumps(original_rows, ensure_ascii=False, indent=2) + "\n"
+    assert hashlib.sha256(original.encode("utf-8")).hexdigest() == (
+        "53cb8fe50153a932a18e2d23fc9c6da51cc3b83d5aee48081151ba213b6fb43e")
+    # Frozen from d007771:app/data/kma1360.json, independently of name_index.
+    # Preserve field/row order, Unicode, two-space indentation, and a final LF.
+    source_fields = ("no", "section", "name_id", "name_en", "cas", "page")
+    original_content = json.dumps(
+        [{field: row[field] for field in source_fields} for row in original_rows],
+        ensure_ascii=False, indent=2) + "\n"
+    assert hashlib.sha256(original_content.encode("utf-8")).hexdigest() == (
+        "dc46e13950261e097e9673e5c9a8ff5119ade72639e455033126e01d117cb5c6")
+    assert len(original_excluded) == 446
+    assert Counter(reason for row, field in original_excluded
+                   for reason in row["name_index"][field]["reasons"]) == {
         "unbalanced_brackets": 74, "ocr_intraword_closer": 3, "ocr_noise": 31,
         "repeated_special_characters": 131, "formula_like": 71, "ocr_exclamation": 12,
         "ocr_intraword_dot": 21, "ocr_intraword_digit": 24,
-        "ocr_leading_dot": 5, "ocr_suffix_zero": 119}
+        "ocr_leading_dot": 5, "ocr_suffix_zero": 119, "ocr_letter_confusion": 11}
     by_no = {row["no"]: row for row in rows if row["section"] == "c.2"}
     assert by_no[3420]["name_en"] is None
     assert by_no[3420]["name_id"].endswith("(Approx. 45%)")
+    original_by_no = {row["no"]: row for row in original_rows if row["section"] == "c.2"}
     for no in (63, 757, 1020):
-        assert by_no[no]["name_index"]["name_id"]["indexable"] is False
+        assert original_by_no[no]["name_index"]["name_id"]["indexable"] is False
 
 
 @pytest.mark.parametrize("name", OCR_NAMES + ["Approx. 45%"])

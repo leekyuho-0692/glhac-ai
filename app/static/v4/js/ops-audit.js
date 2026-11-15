@@ -156,9 +156,9 @@ async function OPSA_loadNotifs(){
 }
 function OPSA_channelBadge(ch){
   const state = ch.status || (ch.configured ? 'connected' : (ch.implemented ? 'unset' : 'stub'));
-  if(state==='connected') return '<span class="badge strong">연결됨</span>';
-  if(state==='unset') return '<span class="badge attn">미설정</span>';
-  if(state==='stub') return '<span class="badge">스텁</span>';
+  if(state==='connected' || state==='connected_freeform_only') return `<span class="badge strong" data-noi18n>${esc(t('notify.config.'+state))}</span>`;
+  if(state==='unset') return `<span class="badge ntf-skipped" data-noi18n>${esc(t('notify.reason.no_credentials'))}</span>`;
+  if(state==='stub') return `<span class="badge ntf-skipped" data-noi18n>${esc(t('notify.config.stub'))}</span>`;
   return `<span class="badge">${esc(state)}</span>`;
 }
 function OPSA_renderNotifs(){
@@ -191,24 +191,21 @@ function OPSA_renderNotifs(){
     const counts = n.counts || {};
     const items = (n.items || []).slice(0, OPSA_LIMIT);
     const summ = `<div class="summary">
-      <div><span class="k">미발송</span><span class="v mono">${counts.unsent||0}</span></div>
-      <div><span class="k">발송됨</span><span class="v mono">${counts.sent||0}</span></div>
-      <div><span class="k">실패</span><span class="v mono">${counts.failed||0}</span></div>
-      <div><span class="k">발송중</span><span class="v mono">${counts.sending||0}</span></div>
+      ${['unsent','sent','partial','skipped','failed','sending'].map(status=>`<div><span class="k" data-noi18n>${esc(t('notify.status.'+status))}</span><span class="v mono">${counts[status]||0}</span></div>`).join('')}
     </div>`;
     const rows = items.length
       ? items.map(x=>`<tr>
           <td data-noi18n>${esc(x.title||x.event_type||'')}<div class="muted mono" style="font-size:11px">${esc(x.event_type||'')}</div></td>
-          <td>${(x.channels||[]).map(ch=>`<span class="tag">${esc(ch)}</span>`).join(' ')}</td>
-          <td><span class="badge ${x.status==='sent'?'strong':(x.status==='failed'?'attn':'')}">${esc(x.status||'')}</span></td>
+          <td>${NTF_channelResults(x, false)}</td>
+          <td>${NTF_statusBadge(x.status)}</td>
           <td class="num mono">${x.attempts!=null?esc(x.attempts):''}</td>
-          <td>${x.last_error?`<span class="muted">${esc(x.last_error)}</span>`:'<span class="muted">—</span>'}</td>
+          <td>${NTF_deliveryReasons(x)}</td>
           <td class="mono" style="white-space:nowrap">${esc(x.created_at||'')}</td>
         </tr>`).join('')
       : '<tr><td colspan="6" class="empty">알림이 없습니다.</td></tr>';
     qHtml = `${summ}
       <div class="tbl-wrap"><table>
-        <thead><tr><th>제목/이벤트</th><th>채널</th><th>상태</th><th class="num">시도</th><th>마지막 오류</th><th>시각</th></tr></thead>
+        <thead><tr><th>제목/이벤트</th><th>채널</th><th>상태</th><th class="num">시도</th><th data-noi18n>${esc(t('notify.delivery_reasons'))}</th><th>시각</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
       ${n.total>items.length?`<p class="muted">외 ${n.total-items.length}건</p>`:''}`;
@@ -226,7 +223,7 @@ function OPSA_renderNotifs(){
   </section>`;
 }
 App.opsaDrainConfirm = function(){
-  openModal('큐 비우기(발송 실행)', '<p>미발송 알림 큐를 즉시 발송합니다.<br>크리덴셜 미설정 채널은 스텁 로그 후 <strong>sent</strong> 처리됩니다. 계속할까요?</p>',
+  openModal('큐 비우기(발송 실행)', `<p data-noi18n>${esc(t('notify.drain_confirm'))}</p>`,
     '<button class="btn" onclick="App.closeModal()">취소</button><button class="btn btn-primary" onclick="App.opsaDrain()">실행</button>');
 };
 App.opsaDrain = async function(){

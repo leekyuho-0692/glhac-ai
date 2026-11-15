@@ -34,6 +34,7 @@ const NTF_modalBody = () => {
         <span class="muted mono" style="font-size:11px;margin-left:auto">${NTF_esc(n.created_at)}</span>
       </div>
       ${n.body?`<div class="muted" data-noi18n style="font-size:13px;white-space:pre-wrap">${NTF_esc(n.body)}</div>`:''}
+      <div class="ntf-delivery">${NTF_statusBadge(n.status)}${NTF_channelResults(n, false)}${NTF_deliveryReasons(n)}</div>
       <div class="row-act" style="display:flex;gap:6px">
         ${read?'':`<button class="btn btn-sm" onclick="App.ntfRead('${i}')">읽음</button>`}
       </div>
