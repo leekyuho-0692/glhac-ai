@@ -184,6 +184,16 @@ def _remember_transaction_write(db, flush_context):
     db.info["transaction_write_started"] = True
 
 
+@event.listens_for(Session, "do_orm_execute")
+def _remember_bulk_write(execute_state):
+    # Query.update/delete, Session.execute(update/delete)는 flush를 거치지 않는다.
+    if execute_state.is_update or execute_state.is_delete:
+        db = execute_state.session
+        if db.get_transaction() is None:
+            db.begin()
+        db.info["transaction_write_started"] = True
+
+
 @event.listens_for(Session, "after_transaction_end")
 def _clear_case_locks(db, transaction):
     if transaction.parent is None:

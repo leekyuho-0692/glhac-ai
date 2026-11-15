@@ -32,7 +32,8 @@ from .case_write_service import case_snapshot, case_write_base, new_case, refres
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from . import nav8
 from . import intake
-from .intake_write_service import (aggregate_document_fields, normalize_document_fields,
+from .intake_write_service import (document_snapshot, document_snapshots,
+                                   aggregate_document_fields, normalize_document_fields,
                                    reanalysis_document_fields, verification_inputs, write_document_fields)
 from .document_extraction import document_budget, current_budget
 # 앱의 주소 외부 전송은 명시적으로 켠 환경에서만 허용한다(선행 import에도 적용).
@@ -110,6 +111,14 @@ event.listen(Session, "before_commit", _recheck_case_writes)
 def _recheck_bulk_case_writes(state):
     if state.is_update or state.is_delete:
         _recheck_case_writes(state.session)
+        row = state.execution_options.get("write_service_row")
+        # CAS는 flush를 거치지 않으므로 같은 불변 조건을 UPDATE 전에 검사한다.
+        # 아직 편집 중인 다른 객체는 flush하지도, 미리 검증하지도 않는다.
+        if isinstance(row, models.CaseApplication):
+            _guard_facility_and_eligibility_writes(state.session, None, None, rows=(row,))
+            _guard_case_identity_writes(state.session, None, None, rows=(row,))
+        elif isinstance(row, models.DocumentAsset):
+            _collect_certificate_changes(state.session, None, None, rows=(row,))
 
 
 @event.listens_for(Session, "after_transaction_end")
@@ -798,6 +807,7 @@ def _is_duplicate_column_error(e):
 def _migrate():
     """경량 마이그레이션 — 모델 정의와 기존 테이블을 대조해 누락 컬럼 idempotent 추가.
     create_all은 기존 테이블을 ALTER하지 않으므로, baseline 이후 추가된 전 컬럼을 자동 보강(P0-5).
+    row_version도 nullable INTEGER로 추가하며, 기존 NULL은 쓰기 서비스에서 0으로 취급한다.
 
     MA6: 이미 있는 컬럼(duplicate column)만 조용히 건너뛰고, 그 외 ALTER 오류는 테이블·컬럼·오류를
     log.error 로 남긴 뒤 부팅을 계속한다(예전에는 모든 예외를 삼켜 컬럼이 안 생겨도 알 수 없었다).
@@ -1224,9 +1234,9 @@ def _assert_facility_scope_open(db, facility_id=None, case=None):
 
 
 @event.listens_for(SessionLocal, "before_flush")
-def _guard_facility_and_eligibility_writes(db, flush_context, instances):
+def _guard_facility_and_eligibility_writes(db, flush_context, instances, *, rows=None):
     """수동 편집·분류·자동채움의 저장 경계에서 시설 동결과 적격 판정 무효화를 보장한다."""
-    for row in list(db.dirty) + list(db.deleted):
+    for row in (list(db.dirty) + list(db.deleted) if rows is None else rows):
         state = inspect(row)
         if isinstance(row, models.Facility) and (row in db.deleted or db.is_modified(row)):
             _assert_facility_scope_open(db, row.facility_id)
@@ -1315,10 +1325,12 @@ def _assert_unique_case_identity(db, c):
 
 
 @event.listens_for(SessionLocal, "before_flush")
-def _guard_case_identity_writes(db, flush_context, instances):
+def _guard_case_identity_writes(db, flush_context, instances, *, rows=None):
     """저장 경계에서 검사하여 프로필·등록·자동채움·후보 선택의 우회를 막는다."""
-    database.lock_cases(db, [c.case_id for c in db.dirty if isinstance(c, models.CaseApplication)])
-    for c in list(db.new) + list(db.dirty):
+    candidates = list(db.new) + list(db.dirty) if rows is None else rows
+    database.lock_cases(db, [c.case_id for c in candidates
+                            if isinstance(c, models.CaseApplication) and inspect(c).persistent])
+    for c in candidates:
         if not isinstance(c, models.CaseApplication):
             continue
         state = inspect(c)
@@ -6178,28 +6190,29 @@ def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("appli
         _scope = body.logistics_scope
     if _sector:
         oext = dict(oext, sector=_sector, sectors=_sectors)
-    c = new_case(db, source="create_case",
-        org_id=org, is_msme=bool(body.is_msme),
-        company_name=body.company_name or oext.get("company_name") or (org_row.name if org_row else None),
-        scheme=_scheme,
-        logistics_scope=_scope,
-        profile_ext=(oext or None))
+    company_name = body.company_name or oext.get("company_name") or (org_row.name if org_row else None)
     # 회사 프로필 상속 — 단, 상호가 다르면 '그 회사를 특정하는 값'은 물려받지 않는다.
     # org=회사가 전제지만 실제로는 한 org 에 여러 회사가 들어있다. 그대로 상속하면 인도네시아
     # 업체 신청서에 강원도 공장주소와 남의 사업자번호가 찍힌다(실측: CV. CITRA 에
     # 바이오로제트의 공장주소·등록번호 427302017384122 가 들어갔다).
     _org_company = ((org_row.name if org_row else "") or "").strip()
-    _same_company = (not _org_company) or (_org_company == (c.company_name or "").strip())
+    _same_company = (not _org_company) or (_org_company == (company_name or "").strip())
     _identity = {"nib", "responsible_person", "factory_reg_no", "factory_address", "address"}
+    inherited = {}
     for k in ("nib", "responsible_person", "halal_supervisor", "email", "phone",
               "address", "factory_reg_no", "factory_address"):
         if oext.get(k) is None:
             continue
         if not _same_company and k in _identity:
             continue          # 다른 회사의 신원값은 물려받지 않는다
-        write_case(db, c, base=case_snapshot(c), changes={k: oext[k]}, source="create_case_inherit")
-    if not c.email and oext.get("company_email"):
-        write_case(db, c, base=case_snapshot(c), changes={"email": oext["company_email"]}, source="create_case_email")
+        inherited[k] = oext[k]
+    inherit_company_email = not inherited.get("email") and bool(oext.get("company_email"))
+    if inherit_company_email:
+        inherited["email"] = oext["company_email"]
+    c = new_case(db, source="create_case",
+        org_id=org, is_msme=bool(body.is_msme), company_name=company_name,
+        scheme=_scheme, logistics_scope=_scope, profile_ext=(oext or None), **inherited)
+    if inherit_company_email:
         c.notify_consent = (oext.get("email_consent") or {}).get("agreed") is True
     # 공장도 org 자산 상속(오피스 1:N 공장) — 새 신청에 org 공장 자동 연결(회사프로필 상속과 대칭).
     # 단 다른 회사가 이미 쓰는 공장은 상속하지 않는다(_facilities_for_case 주석 참조).
@@ -6747,9 +6760,9 @@ def _certificate_material_ids(db, case_id, document_id):
 
 
 @event.listens_for(SessionLocal, "before_flush")
-def _collect_certificate_changes(db, flush_context, instances):
+def _collect_certificate_changes(db, flush_context, instances, *, rows=None):
     """검토·재처리·워커·교체·삭제의 저장 경계를 공통으로 잡는다."""
-    for row in list(db.new) + list(db.dirty) + list(db.deleted):
+    for row in (list(db.new) + list(db.dirty) + list(db.deleted) if rows is None else rows):
         if isinstance(row, models.DocumentAsset):
             previous = inspect(row).attrs.doc_type.history.deleted
             if row.doc_type == "halal_certificate" or "halal_certificate" in previous:
@@ -8023,6 +8036,7 @@ def _apply_owned_autofill(db, c, doc, *, base_case=None):
         reason = "ownership_unconfirmed"
 
     applied, conflicts = {}, []
+    case_changes = {}
     pe = dict(c.profile_ext or {})
     previous = dict(f.get("_autofill") or {})
     changes = {k: dict(v) for k, v in previous.get("changes", {}).items()}
@@ -8080,8 +8094,7 @@ def _apply_owned_autofill(db, c, doc, *, base_case=None):
         if isinstance(obj, dict):
             obj[field] = value
         elif isinstance(obj, models.CaseApplication):
-            write_case(db, obj, base=base_case if base_case is not None else case_snapshot(obj),
-                       changes={field: value}, source="owned_autofill")
+            case_changes[field] = value
         else:
             setattr(obj, field, value)
         applied[key] = value
@@ -8097,8 +8110,10 @@ def _apply_owned_autofill(db, c, doc, *, base_case=None):
         fill(pe, k, v, scope="profile", source_field=dict(profile_keys)[k])
     profile_updates = {k: pe[k] for k in profile if "profile." + k in applied}
     if profile_updates:
-        write_case(db, c, base=base_case if base_case is not None else case_snapshot(c), changes={"profile_ext": {
-            **(c.profile_ext or {}), **profile_updates}}, source="owned_autofill_profile")
+        case_changes["profile_ext"] = {**(c.profile_ext or {}), **profile_updates}
+    if case_changes:
+        write_case(db, c, base=base_case if base_case is not None else case_snapshot(c),
+                   changes=case_changes, source="owned_autofill")
 
     # 신청 업체와 일치하는 공장만 조직 자산으로 등록한다. OEM 등은 사람이 선택한다.
     if not is_nib and reason in (None, "factory_conflict") and candidates and company_matches:
@@ -8136,7 +8151,7 @@ def _apply_owned_autofill(db, c, doc, *, base_case=None):
     confirmed = [x for x in previous.get("conflicts", []) if x.get("status") == "confirmed"]
     f["_autofill"] = {**previous, "applied": {**(previous.get("applied") or {}), **applied},
                       "changes": changes, "conflicts": confirmed + conflicts}
-    write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=f, source="owned_autofill",
+    write_document_fields(db, doc, base_fields=document_snapshot(doc), new_fields=f, source="owned_autofill",
                           decision_keys=("_autofill.applied", "_autofill.changes", "_autofill.conflicts"))
     if reason:
         applied["skipped"] = reason
@@ -8188,14 +8203,14 @@ def _mark_autofill_confirmed(db, doc, keys, user_id, obj, *, facility_id=None):
             touched = True
     if touched:
         fields["_autofill"] = {**meta, "changes": changes}
-        write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=fields,
+        write_document_fields(db, doc, base_fields=document_snapshot(doc), new_fields=fields,
                               source="mark_autofill_confirmed", decision_keys=("_autofill.changes",))
 
 
 def _protect_autofill(db, keys, user_id, *, case_id=None, facility_id=None):
     """같은 값을 다시 저장한 경우도 사람의 확인이다. 원본 문서 JSON에 보호 표시를 남긴다."""
     docs = db.query(models.DocumentAsset).options(
-        load_only(models.DocumentAsset.document_id, models.DocumentAsset.fields))
+        load_only(models.DocumentAsset.document_id, models.DocumentAsset.fields, models.DocumentAsset.row_version))
     if facility_id:
         fac = db.get(models.Facility, facility_id)
         _lock_autofill_org_cases(db, fac.org_id)
@@ -8220,6 +8235,7 @@ def _revert_failed_autofill(db, c, doc):
     changes = {k: dict(v) for k, v in meta.get("changes", {}).items()}
     conflicts = list(meta.get("conflicts") or [])
     facilities = {}
+    case_base, case_changes = case_snapshot(c), {}
     for change in changes.values():
         if change.get("status") != "applied":
             continue
@@ -8243,18 +8259,19 @@ def _revert_failed_autofill(db, c, doc):
             continue
         before = change.get("before")
         if is_profile:
-            profile = dict(obj.profile_ext or {})
+            profile = dict(case_changes.get("profile_ext", c.profile_ext or {})
+                           if scope == "profile" else obj.profile_ext or {})
             if change.get("present"):
                 profile[field] = before
             else:
                 profile.pop(field, None)
             if isinstance(obj, models.CaseApplication):
-                write_case(db, obj, base=case_snapshot(obj), changes={"profile_ext": profile}, source="revert_failed_autofill")
+                case_changes["profile_ext"] = profile
             else:
                 obj.profile_ext = profile
         else:
             if isinstance(obj, models.CaseApplication):
-                write_case(db, obj, base=case_snapshot(obj), changes={field: before}, source="revert_failed_autofill")
+                case_changes[field] = before
             else:
                 setattr(obj, field, before)
         conflict = {"field": field, "scope": scope, "current": before, "proposed": value,
@@ -8264,9 +8281,12 @@ def _revert_failed_autofill(db, c, doc):
             conflict["facility_id"] = obj.facility_id
         conflicts.append(conflict)
         change["status"] = "reverted"
+    if case_changes:
+        # 회사명·NIB·프로필을 복구한 최종 조합으로 한 번만 신원 검사/CAS한다.
+        write_case(db, c, base=case_base, changes=case_changes, source="revert_failed_autofill")
     if changes:
         fields["_autofill"] = {**meta, "changes": changes, "conflicts": conflicts}
-        write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=fields, source="revert_failed_autofill",
+        write_document_fields(db, doc, base_fields=document_snapshot(doc), new_fields=fields, source="revert_failed_autofill",
                               decision_keys=("_autofill.changes", "_autofill.conflicts"))
 
 
@@ -8282,7 +8302,7 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
                 meta["product_pending"] = [x for x in meta["product_pending"]
                                            if _norm_material(x["value"]) not in rejected_names]
                 fields["_autofill"] = meta
-            write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=fields, source="reject_product_pending",
+            write_document_fields(db, doc, base_fields=document_snapshot(doc), new_fields=fields, source="reject_product_pending",
                                   decision_keys=("_autofill.product_pending",))
     if not (agg.get("products") or agg.get("product_aliases") or rejected_names or
             any(x["kind"] == "product_names" for x in agg.get("pending", []))):
@@ -8322,7 +8342,7 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
                  and _norm_material(n) != _norm_material(product.name)]))
     groups = {_norm_material(g["name"]): g for g in agg.get("product_aliases", [])}
     docs = (db.query(models.DocumentAsset).options(load_only(models.DocumentAsset.document_id,
-            models.DocumentAsset.fields, models.DocumentAsset.doc_type,
+            models.DocumentAsset.fields, models.DocumentAsset.row_version, models.DocumentAsset.doc_type,
             models.DocumentAsset.text_full)).filter_by(case_id=c.case_id).all()) if documents else []
     docs += [d for d in documents if all(d.document_id != old.document_id for old in docs)]
     conflicts = sm.product_alias_conflicts(products, aliases, docs, rejected_names) if documents else set()
@@ -8357,7 +8377,7 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
                             "possible_product_ids": [p.product_id for p in matches]})
             meta["product_pending"] = pending
             f["_autofill"] = meta
-            write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=f, source="defer_product",
+            write_document_fields(db, doc, base_fields=document_snapshot(doc), new_fields=f, source="defer_product",
                                   decision_keys=("_autofill.product_pending",))
 
     added, deferred = 0, 0
@@ -8471,7 +8491,7 @@ def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None, base_
                              for value in extracted.get(bucket, [])]
             fields["_scope_pending"] = list({(x["kind"], x["value"]): x for x in deferred
                 if x["kind"] != "product_names" or _norm_material(x["value"]) not in rejected_products}.values())
-            write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=fields, source="defer_scope",
+            write_document_fields(db, doc, base_fields=document_snapshot(doc), new_fields=fields, source="defer_scope",
                                   decision_keys=("_scope_pending",))
         applied.update(scope_frozen=True, requires_scope_unlock=True,
                        pending=sum(len((d.fields or {}).get("_scope_pending") or []) for d in documents))
@@ -8678,7 +8698,7 @@ def _verify_doc(db, d, c):
     doc_id, doc_type, filename = d.document_id, d.doc_type, d.filename
     case_id = c.case_id
     text, fields, company = d.text_full or "", deepcopy(d.fields or {}), c.company_name
-    base_fields = deepcopy(fields)
+    base_fields = document_snapshot(d)
     inputs = verification_inputs(doc_type, filename, text, fields, company)
     # 읽기 트랜잭션을 끝내고 모델을 기다린다. 300자 발췌는 전문 대신 쓸 수 없다.
     db.rollback()
@@ -8803,7 +8823,7 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     doc_id, case_id = d.document_id, c.case_id
     filename, doc_type = intake._nfc(d.filename), d.doc_type
     data = base64.b64decode(d.content_b64.split(",")[-1])
-    base_fields = deepcopy(d.fields or {})
+    base_fields = document_snapshot(d)
     base_case = case_snapshot(c)
     # 모델/OCR 대기 중 종결·수동 확인이 가능하도록 쓰기와 잠금은 뒤로 미룬다.
     db.rollback()
@@ -8939,7 +8959,8 @@ def _confirm_autofill(db, c, choices, user):
         c = _lock_case(db, c.case_id)
     pending = {x["conflict_id"]: x for x in _pending_autofill(db, c.case_id)}
     docs = db.query(models.DocumentAsset).options(load_only(
-        models.DocumentAsset.document_id, models.DocumentAsset.case_id, models.DocumentAsset.fields))
+        models.DocumentAsset.document_id, models.DocumentAsset.case_id,
+        models.DocumentAsset.fields, models.DocumentAsset.row_version))
     if any(pending.get(x.get("conflict_id"), {}).get("scope") in ("facility", "facility_profile")
            for x in choices if isinstance(x.get("conflict_id"), str)):
         docs = docs.join(models.CaseApplication).filter(models.CaseApplication.org_id == c.org_id)
@@ -8950,6 +8971,7 @@ def _confirm_autofill(db, c, choices, user):
                  .populate_existing().with_for_update()} if choices else {}
     facilities, protections = {}, {}
     changed, targets = [], set()
+    case_base, case_changes = case_snapshot(c), {}
     allowed = {"case": {"company_name", "nib", "address", "responsible_person", "factory_reg_no", "factory_address"},
                "profile": {"city", "country", "zip", "office_phone", "business_type", "establishment_date",
                            "corporate_reg_no", "company_name_ko", "company_name_en", "responsible_person_en", "total_employee"},
@@ -8985,10 +9007,10 @@ def _confirm_autofill(db, c, choices, user):
                 raise HTTPException(422, {"code": "INVALID_AUTOFILL_SELECTION"})
             # 중복·발급 후 동결 검사는 _guard_case_identity_writes가 모든 저장 경로에 적용한다.
         if scope == "profile":
-            write_case(db, obj, base=case_snapshot(obj), changes={"profile_ext": {
-                **(obj.profile_ext or {}), field: value}}, source="confirm_autofill")
+            case_changes["profile_ext"] = {
+                **case_changes.get("profile_ext", c.profile_ext or {}), field: value}
         elif scope == "case":
-            write_case(db, obj, base=case_snapshot(obj), changes={field: value}, source="confirm_autofill")
+            case_changes[field] = value
         elif scope == "facility_profile":
             obj.profile_ext = {**(obj.profile_ext or {}), field: value}
         else:
@@ -9001,13 +9023,16 @@ def _confirm_autofill(db, c, choices, user):
         records[index].update(status="confirmed", selected=value, confirmed_by=user["uid"])
         meta["conflicts"] = records
         fields["_autofill"] = meta
-        write_document_fields(db, d, base_fields=deepcopy(d.fields or {}), new_fields=fields,
+        write_document_fields(db, d, base_fields=document_snapshot(d), new_fields=fields,
                               source="confirm_autofill", decision_keys=("_autofill.conflicts",))
         key = (scope + "." if scope != "case" else "") + field
         protections.setdefault(conflict.get("facility_id"), set()).update(
             {key, "facility"} if scope.startswith("facility") else {key})
         changed.append({"conflict_id": choice["conflict_id"], "field": field, "scope": scope,
                         "before": current, "value": value})
+    if case_changes:
+        # 회사명과 NIB 등 함께 선택한 신원은 완성된 조합으로 한 번만 검사/CAS한다.
+        write_case(db, c, base=case_base, changes=case_changes, source="confirm_autofill")
     for fid, keys in protections.items():
         for doc in documents.values():
             if fid or doc.case_id == c.case_id:
@@ -9645,9 +9670,7 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     raw = base64.b64decode(b64_str)
     # ZIP 파일 검증
     from .intake import intake_zip, ArchiveError
-    base_fields_by_id = ({did: deepcopy(fields or {}) for did, fields in
-                         db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=case_id)}
-                        if db is not None else {})
+    base_fields_by_id = (document_snapshots(db, case_id) if db is not None else {})
     try:
         files = _validate_archive_upload(raw, deadline=deadline)
         res = intake_zip(raw, files=files, deadline=deadline)
@@ -9774,9 +9797,7 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
         # 파일 시그니처 오류(HTTPException)는 여기서 415로 반환한다.
         archive_error = str(exc)
 
-    base_fields_by_id = ({did: deepcopy(fields or {}) for did, fields in
-                         db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=case_id)}
-                        if db is not None else {})
+    base_fields_by_id = (document_snapshots(db, case_id) if db is not None else {})
 
     def gen():
         """진행상황은 파일이 끝나는 즉시 흘려보낸다.
@@ -10102,7 +10123,7 @@ def autofill_profile(case_id: str, force: bool = False,
             .filter(models.DocumentAsset.doc_type.in_(
                 ["nib_business_license", "factory_registration"])).all())
     analyses, classified = {}, []
-    base_fields_by_id = {d.document_id: deepcopy(d.fields or {}) for d in docs}
+    base_fields_by_id = {d.document_id: document_snapshot(d) for d in docs}
     document_ids = list(base_fields_by_id)
     for d in docs:
         fields = deepcopy(base_fields_by_id[d.document_id])
@@ -10492,7 +10513,7 @@ def review_document(document_id: str, body: schemas.DocReviewReq,
         meta["changes"] = {k: {**v, "status": "confirmed", "confirmed_by": user["uid"]}
                            for k, v in meta.get("changes", {}).items()}
         fields["_autofill"] = meta
-        write_document_fields(db, d, base_fields=deepcopy(d.fields or {}), new_fields=fields,
+        write_document_fields(db, d, base_fields=document_snapshot(d), new_fields=fields,
                               source="review_document", decision_keys=("_autofill.changes",))
     linked_ids = _certificate_material_ids(db, c.case_id, document_id)
     mats = db.query(models.Material).filter(models.Material.case_id == c.case_id,

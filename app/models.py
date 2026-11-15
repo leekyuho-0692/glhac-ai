@@ -15,6 +15,7 @@ def uid() -> str:
 class CaseApplication(Base):
     __tablename__ = "case_application"
     case_id = Column(String, primary_key=True, default=uid)
+    row_version = Column(Integer, nullable=True)  # NULL=0; 쓰기 서비스에서만 증가
     org_id = Column(String, nullable=False)
     company_name = Column(String)
     # 사업자 프로필 (v1 상속 — 파일 파싱 자동채움 대상)
@@ -376,6 +377,7 @@ class DocumentAsset(Base):
     """Document Intake AI 결과 — 설계 Part 5/9.2."""
     __tablename__ = "document_asset"
     document_id = Column(String, primary_key=True, default=uid)
+    row_version = Column(Integer, nullable=True)  # 기존 행 백필 없이 NULL=0
     case_id = Column(String, ForeignKey("case_application.case_id", ondelete="CASCADE"), nullable=False)
     filename = Column(String, nullable=False)
     filename_en = Column(String)   # 한글 파일명의 영문 표시명(결정적 용어사전) — 인니·영문 심사자용

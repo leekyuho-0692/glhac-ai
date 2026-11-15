@@ -40,7 +40,8 @@ def main():
             "supplementation_submitted",
         }
 
-        cases = db.query(models.CaseApplication).all()
+        # lock_cases의 Python 정렬과 일치시켜 DB collation에도 영향받지 않는다.
+        cases = sorted(db.query(models.CaseApplication).all(), key=lambda case: case.case_id)
 
         targets = []
         for c in cases:

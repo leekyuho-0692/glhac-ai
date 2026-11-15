@@ -4,13 +4,14 @@
 쓰기 의도를 병합한다. 즉시 명령은 base=None과 순수 changes 함수를 사용한다.
 """
 from copy import deepcopy
-from weakref import ref
 
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import NoResultFound
 
 from . import db as database, models
+from .write_version import (Snapshot, MAX_ATTEMPTS, compare_and_swap, same_version,
+                            observe_merge, retry_exhausted)
 
 
 CASE_COLUMNS = frozenset(("company_name", "nib", "responsible_person", "halal_supervisor",
@@ -24,13 +25,13 @@ PROFILE_POLICIES = {
                     "responsible_person_en", "total_employee", "product_aliases", "pending_handled",
                     "sector", "sectors", "halal_org", "email_consent", "pic_*", "cp_*"), "latest"),
 }
-_STAGED = "case_write_service.values"
 _BASE_WRITES = "case_write_service.base_writes"
 _MISSING = object()
 
 
 def case_snapshot(case):
-    return deepcopy({key: getattr(case, key) for key in CASE_COLUMNS | {"profile_ext"}})
+    return Snapshot({key: getattr(case, key) for key in CASE_COLUMNS | {"profile_ext"}},
+                    case.row_version or 0)
 
 
 def _advance_base(base, before, after):
@@ -56,9 +57,13 @@ def case_write_base(db, case_id, base):
     if base is None:
         return None
     result = deepcopy(base)
+    version = getattr(base, "row_version", None)
     for _, before, after in db.info.get(_BASE_WRITES, {}).get(case_id, ()):
         result = _advance_base(result, before, after)
-    return result
+        # 다른 writer의 변경을 포함하는 스냅샷은 빠른 경로로 승격하지 않는다.
+        if version == before.row_version:
+            version = after.row_version
+    return Snapshot(result, version)
 
 
 @event.listens_for(Session, "after_transaction_end")
@@ -114,7 +119,7 @@ def merge_profile(base, latest, mine):
 
 
 def refresh_case(db, case_or_id):
-    """잠금 뒤 populate_existing. 같은 트랜잭션의 서비스 쓰기만 이어받는다."""
+    """잠금 뒤 populate_existing. 서비스 쓰기는 이미 같은 트랜잭션에 저장돼 있다."""
     with db.no_autoflush:
         if isinstance(case_or_id, str):
             database.lock_cases(db, [case_or_id])
@@ -135,29 +140,16 @@ def refresh_case(db, case_or_id):
             return case
         case_id = case.case_id
         database.lock_cases(db, [case_id])
-        transaction = db.get_nested_transaction() or db.get_transaction()
-        staged = state.info.get(_STAGED)
-        pending = ({key: deepcopy(value) for key, value in staged[1].items()
-                    if state.dict.get(key, _MISSING) is value}
-                   if staged and staged[0]() is transaction else {})
         local = {attr.key: deepcopy(attr.value) for attr in state.attrs
-                 if attr.key not in CASE_COLUMNS | {"profile_ext"} and attr.history.has_changes()}
+                 if attr.key not in CASE_COLUMNS | {"profile_ext", "row_version"} and attr.history.has_changes()}
         # lock_cases가 이미 행 잠금을 확보했다. 계보 종결의 재귀에서도
         # 확보한 잠금으로 최신값만 읽고 FOR UPDATE를 다시 요청하지 않는다.
         case = db.get(models.CaseApplication, case_id, populate_existing=True)
         if case is None:
             return None
-        for key, value in {**local, **pending}.items():
+        for key, value in local.items():
             setattr(case, key, value)
-        _remember(db, case)
         return case
-
-
-def _remember(db, case):
-    transaction = db.get_nested_transaction() or db.get_transaction()
-    if transaction is not None:
-        inspect(case).info[_STAGED] = (ref(transaction),
-            {key: getattr(case, key) for key in CASE_COLUMNS | {"profile_ext"}})
 
 
 def write_case(db, case_or_id, *, base, changes, source):
@@ -168,28 +160,46 @@ def write_case(db, case_or_id, *, base, changes, source):
     original = deepcopy(base)
     incoming = changes if callable(changes) else deepcopy(changes)
     with db.no_autoflush:
-        case = refresh_case(db, case_or_id)
-        if case is None:
-            raise NoResultFound("Case not found")
-        original = case_write_base(db, case.case_id, original)
-        latest = case_snapshot(case)
-        if callable(incoming):
-            original = latest if original is None else original
-            incoming = incoming(deepcopy(latest))
-        if incoming.keys() - (CASE_COLUMNS | {"profile_ext"}):
-            raise ValueError("Unsupported case write column")
-        for key, mine in incoming.items():
-            if key == "profile_ext":
-                value = merge_profile(original.get(key), latest.get(key), mine)
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            case = refresh_case(db, case_or_id)
+            if case is None:
+                raise NoResultFound("Case not found")
+            before = case_write_base(db, case.case_id, original)
+            latest = case_snapshot(case)
+            version = case.row_version
+            if callable(incoming):
+                before = latest if before is None else before
+                mine = incoming(deepcopy(latest))
             else:
-                value = _merge(original.get(key), latest.get(key), mine)
-            setattr(case, key, deepcopy(value))
-        _remember(db, case)
-        after = case_snapshot(case)
-        if case.case_id and after != latest:
-            owner = db.get_nested_transaction() or db.get_transaction()
-            db.info.setdefault(_BASE_WRITES, {}).setdefault(case.case_id, []).append((owner, latest, after))
-        return case
+                mine = incoming
+            if mine.keys() - (CASE_COLUMNS | {"profile_ext"}):
+                raise ValueError("Unsupported case write column")
+            fast = same_version(before, latest, version)
+            if not fast:
+                observe_merge("CaseApplication", source, before, version, attempt)
+            values = {}
+            for key, value in mine.items():
+                if fast and key == "profile_ext" and not all(
+                        item is None or isinstance(item, dict)
+                        for item in (before.get(key), latest.get(key), value)):
+                    raise ValueError("Case profile must be a dict or None")
+                if not fast:
+                    merge = merge_profile if key == "profile_ext" else _merge
+                    value = merge(before.get(key), latest.get(key), value)
+                values[key] = deepcopy(value)
+            if inspect(case).persistent:
+                if not compare_and_swap(db, case, version, values):
+                    continue
+            else:
+                for key, value in values.items():
+                    setattr(case, key, value)
+                case.row_version = (version or 0) + 1
+            after = case_snapshot(case)
+            if case.case_id:
+                owner = db.get_nested_transaction() or db.get_transaction()
+                db.info.setdefault(_BASE_WRITES, {}).setdefault(case.case_id, []).append((owner, latest, after))
+            return case
+    retry_exhausted(db)
 
 
 def new_case(db, *, source, **values):

@@ -327,7 +327,8 @@ def test_candidate_regeneration_expands_set_by_rollback_then_sorted_retry(monkey
                 doc.fields = {"_autofill": {"conflicts": [{"scope": "facility", "field": "address",
                     "facility_id": fid, "current": "Seoul", "proposed": "Busan", "status": "pending"}]}}
                 other.commit()
-        if key.startswith("wf:"):
+        # 이전 테스트의 검증 워커가 전역 패치에 진입해도 이 케이스들의 잠금만 기록한다.
+        if key.startswith("wf:") and key[3:] in (a, b):
             records.append((db.get_transaction(), key[3:]))
         conn = db.connection()
         if not conn.connection.driver_connection.in_transaction:
@@ -514,48 +515,7 @@ def _case_write_violations(tree, *, main=False):
         return False
     class Writes(ast.NodeVisitor):
         def __init__(self):
-            self.aliases, self.lines, self.copies = set(), set(), set()
-            self.bindings = {}
-        def mapping_keys(self, node, seen=frozenset()):
-            if isinstance(node, ast.Name) and node.id in self.bindings and node.id not in seen:
-                return self.mapping_keys(self.bindings[node.id], seen | {node.id})
-            keys, unknown = set(), False
-            if isinstance(node, ast.Dict):
-                for key, value in zip(node.keys, node.values):
-                    if key is None:
-                        more, dynamic = self.mapping_keys(value, seen)
-                        keys.update(more)
-                        unknown |= dynamic
-                    elif isinstance(key, ast.Constant):
-                        keys.add(key.value)
-                    elif isinstance(key, ast.Attribute):
-                        keys.add(key.attr)
-                    else:
-                        unknown = True
-                return keys, unknown
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict":
-                for value in node.args:
-                    more, dynamic = self.mapping_keys(value, seen)
-                    keys.update(more)
-                    unknown |= dynamic
-                for kw in node.keywords:
-                    if kw.arg is None:
-                        more, dynamic = self.mapping_keys(kw.value, seen)
-                        keys.update(more)
-                        unknown |= dynamic
-                    else:
-                        keys.add(kw.arg)
-                return keys, unknown
-            return set(), True
-        def case_target(self, node, seen=frozenset()):
-            if isinstance(node, ast.Name):
-                return node.id == "CaseApplication" or (node.id in self.bindings and node.id not in seen
-                    and self.case_target(self.bindings[node.id], seen | {node.id}))
-            if isinstance(node, ast.Attribute):
-                return node.attr == "CaseApplication" or self.case_target(node.value, seen)
-            if isinstance(node, ast.Call):
-                return self.case_target(node.func, seen) or any(self.case_target(arg, seen) for arg in node.args)
-            return False
+            self.aliases, self.lines = set(), set()
         def target(self, node):
             if isinstance(node, ast.Name):
                 return node.id in self.aliases
@@ -570,31 +530,19 @@ def _case_write_violations(tree, *, main=False):
             return False
         def visit_FunctionDef(self, node):
             outer, self.aliases = self.aliases, set()
-            copies, self.copies = self.copies, set()
-            bindings, self.bindings = self.bindings, dict(self.bindings)
             self.generic_visit(node)
             self.aliases = outer
-            self.copies = copies
-            self.bindings = bindings
         visit_AsyncFunctionDef = visit_FunctionDef
         def visit_Assign(self, node):
             self.generic_visit(node)
             for target in node.targets:
                 if isinstance(target, ast.Name):
-                    self.bindings[target.id] = node.value
-                    if (isinstance(node.value, (ast.Dict, ast.DictComp)) or isinstance(node.value, ast.Call)
-                            and isinstance(node.value.func, ast.Name) and node.value.func.id in ("dict", "deepcopy", "pick")):
-                        self.copies.add(target.id)
-                    else:
-                        self.copies.discard(target.id)
                     if self.target(node.value):
                         self.aliases.add(target.id)
                     else:
                         self.aliases.discard(target.id)
         def visit_AnnAssign(self, node):
             self.generic_visit(node)
-            if isinstance(node.target, ast.Name):
-                self.bindings[node.target.id] = node.value
             if isinstance(node.target, ast.Name) and self.target(node.value):
                 self.aliases.add(node.target.id)
         def visit_AugAssign(self, node):
@@ -625,29 +573,16 @@ def _case_write_violations(tree, *, main=False):
                         isinstance(key, ast.Name) and key.id != "_col"):
                         self.lines.add(node.lineno)
             if isinstance(node.func, ast.Attribute):
-                if name in ("bulk_update_mappings", "bulk_insert_mappings"):
-                    targets = node.args[:1] + [kw.value for kw in node.keywords if kw.arg == "mapper"]
-                    if any(self.case_target(target) for target in targets):
-                        self.lines.add(node.lineno)
                 if self.target(node.func.value) and name in (
                         "update", "pop", "popitem", "clear", "setdefault", "__setitem__", "__delitem__",
                         "append", "extend", "insert", "remove", "sort", "reverse"):
                     self.lines.add(node.lineno)
-                if (name in ("update", "values") and not
-                        (isinstance(node.func.value, ast.Name) and node.func.value.id in self.copies)):
-                    keys = {kw.arg for kw in node.keywords if kw.arg is not None}
-                    unknown = False
-                    for value in node.args + [kw.value for kw in node.keywords if kw.arg is None]:
-                        more, dynamic = self.mapping_keys(value)
-                        keys.update(more)
-                        unknown |= dynamic
-                    if (keys & (service.CASE_COLUMNS | {"profile_ext"}) or
-                            unknown and self.case_target(node.func.value)):
-                        self.lines.add(node.lineno)
             self.generic_visit(node)
     visitor = Writes()
     visitor.visit(tree)
-    return sorted(visitor.lines)
+    from scripts.write_guard import bulk_write_violations
+    return sorted(visitor.lines | set(bulk_write_violations(
+        tree, "CaseApplication", service.CASE_COLUMNS | {"profile_ext"})))
 
 
 def _audit_case_sources(root):
@@ -969,7 +904,7 @@ def test_verification_compares_all_inputs_and_ignores_sources(case_doc, monkeypa
     "CaseApplication(**values)", "models.CaseApplication(org_id='x', **values)",
 ])
 def test_static_case_guard_catches_identity_aliases_bulk_and_dynamic_initializers(statement):
-    assert _case_write_violations(ast.parse(statement))
+    assert _case_write_violations(ast.parse("query = db.query(CaseApplication)\n" + statement))
 
 
 def test_encryption_backfill_has_explicit_value_preserving_maintenance_exception(tmp_path):
@@ -1193,7 +1128,7 @@ def test_sqlite_read_transaction_is_upgraded_and_cache_checks_actual_connection(
     "db.bulk_update_mappings(CaseApplication, [{'case_id': cid, 'status': 'onboarding'}])",
 ])
 def test_static_case_guard_catches_variable_mappings_and_unknown_case_bulk_writes(statement):
-    assert _case_write_violations(ast.parse(statement))
+    assert _case_write_violations(ast.parse("query = db.query(CaseApplication)\n" + statement))
 
 
 def test_static_bulk_guard_preserves_plain_dicts_other_models_and_backfill_exception(tmp_path):

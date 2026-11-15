@@ -1,16 +1,17 @@
 """DocumentAsset.fields의 유일한 저장 경계. flush/commit은 호출자가 소유한다.
 
-OCR/LLM/주소 조회 전에 깊은 복사한 base_fields와 저장할 new_fields를 전달한다.
+OCR/LLM/주소 조회 전에 document_snapshot으로 잡은 base_fields와 new_fields를 전달한다.
 잠금 뒤 최신값과 3-way 병합하며 같은 트랜잭션의 앞선 미커밋 결정도 읽는다.
 """
 from copy import deepcopy
-from weakref import ref
 
 from sqlalchemy import inspect
 from sqlalchemy.orm.exc import NoResultFound
 
 from . import db as database, models
 from .intake import aggregate_fields
+from .write_version import (Snapshot, MAX_ATTEMPTS, compare_and_swap, same_version,
+                            observe_merge, retry_exhausted)
 
 
 # 양쪽이 바꾼 키의 충돌 정책. '*'와 표에 없는 예약 키는 새 추출값을 쓴다.
@@ -45,9 +46,18 @@ FIELD_POLICIES = {
     "_counts_as_evidence": "evidence",  # 원본 문서의 증빙 지정: 같은 원본의 재추출에서도 보존
     "_upload_id": "preserve",
 }
-_STAGED_FIELDS = "intake_write_service.fields"
 _MISSING = object()
 _DECISION_POLICIES = {"decision", "verification", "preserve", "evidence"}
+
+
+def document_snapshot(doc):
+    return Snapshot(doc.fields or {}, doc.row_version or 0)
+
+
+def document_snapshots(db, case_id):
+    return {did: Snapshot(fields or {}, version or 0) for did, fields, version in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields,
+                     models.DocumentAsset.row_version).filter_by(case_id=case_id)}
 
 
 def aggregate_document_fields(documents, *, lookup_result=None):
@@ -181,7 +191,7 @@ def _merge_autofill(base, latest, mine, *, entries=False, replacements=()):
 def normalize_document_fields(new_fields, *, base_fields=None, current_fields=None, analysis=None, text=None,
                               decision_keys=(),
                               clear_verification=False, inputs_changed=False,
-                              prune_product_pending=False):
+                              prune_product_pending=False, merge=True):
     """쓰기 의도 정규화 → 3-way 병합. 누락과 None은 구분하고 입력을 바꾸지 않는다."""
     if current_fields is not None and base_fields is None:
         raise ValueError("A base_fields snapshot is required for existing documents")
@@ -209,6 +219,15 @@ def normalize_document_fields(new_fields, *, base_fields=None, current_fields=No
     if prune_product_pending:
         from .intake import _prune_product_pending
         incoming = _prune_product_pending(incoming)
+    if not merge:
+        # 버전이 같아도 오류 수명·검증 무효화 등 쓰기 의도 정규화는 필요하다.
+        for key in error_keys:
+            value = errors.get(key, _MISSING if succeeded else current.get(key, _MISSING))
+            if value is _MISSING:
+                incoming.pop(key, None)
+            else:
+                incoming[key] = deepcopy(value)
+        return incoming
     fields = {}
     for key in base.keys() | current.keys() | incoming.keys() | errors.keys():
         policy = FIELD_POLICIES.get(key, FIELD_POLICIES["*"])
@@ -228,7 +247,7 @@ def write_document_fields(db, doc_or_id, *, base_fields, new_fields, source, ana
                           decision_keys=(),
                           clear_verification=False, prune_product_pending=False,
                           next_doc_type=None, next_text=None):
-    """케이스 잠금 → 최신 문서 조회 → 정책 → 대입. 저장한 fields를 반환한다.
+    """케이스 잠금 → 최신 조회 → 버전 비교/정규화 → 조건부 UPDATE.
 
     new_fields는 dict 또는 최신 fields를 받아 dict를 만드는 순수 함수이다.
     함수 안에서 외부 호출하거나 ORM 객체를 수정하지 않는다. 이 서비스는
@@ -256,43 +275,45 @@ def write_document_fields(db, doc_or_id, *, base_fields, new_fields, source, ana
             state = inspect(doc)
         if state.persistent and state.session is not db:
             raise ValueError("Document belongs to a different session")
-        if state.persistent:
-            document_id, case_id = doc.document_id, doc.case_id
-            database.lock_cases(db, [case_id])
-            transaction = db.get_nested_transaction() or db.get_transaction()
-            staged = state.info.get(_STAGED_FIELDS)
-            pending = (deepcopy(doc.fields) if staged and staged[0]() is transaction
-                       and state.dict.get("fields") is staged[1] else None)
-            # populate_existing은 confidence/review_status 등의 변경 추적도 지운다.
-            # fields 이외의 명시적 로컬 변경만 재적용하고 오래된 JSON은 가져오지 않는다.
-            local = {attr.key: deepcopy(attr.value) for attr in state.attrs
-                     if attr.key != "fields" and attr.history.has_changes()}
-            doc = db.get(models.DocumentAsset, document_id,
-                         populate_existing=True, with_for_update=True)
-            if doc is None:
-                raise NoResultFound("Document not found")
-            current = pending if pending is not None else deepcopy(doc.fields or {})
-            previous_input = (doc.doc_type, doc.filename, doc.text_full or "")
-            for key, value in local.items():
-                setattr(doc, key, value)
-        else:
-            # 아직 INSERT하지 않은 문서에는 잠글 행이 없다(생성자와 같은 정책).
-            current = deepcopy(doc.fields or {})
-            previous_input = (doc.doc_type, doc.filename, doc.text_full or "")
-        if callable(incoming):
-            if base is None:
-                base = deepcopy(current)
-            incoming = incoming(deepcopy(current))
-        inputs_changed = previous_input != (
-            next_doc_type if next_doc_type is not None else doc.doc_type,
-            doc.filename, next_text if next_text is not None else (doc.text_full or ""))
-        fields = normalize_document_fields(
-            incoming, base_fields=base, current_fields=current, analysis=analysis, text=text,
-            decision_keys=decision_keys,
-            clear_verification=clear_verification, inputs_changed=inputs_changed,
-            prune_product_pending=prune_product_pending)
-        doc.fields = fields
-        transaction = db.get_nested_transaction() or db.get_transaction()
-        if transaction is not None:
-            inspect(doc).info[_STAGED_FIELDS] = (ref(transaction), fields)
-        return fields
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            state = inspect(doc)
+            if state.persistent:
+                document_id, case_id = doc.document_id, doc.case_id
+                database.lock_cases(db, [case_id])
+                # 보호 대상 외 명시적 로컬 변경만 유지한다. 서비스 쓰기는 이미
+                # DB에 있으므로 staged JSON으로 최신 조회를 가리지 않는다.
+                local = {attr.key: deepcopy(attr.value) for attr in state.attrs
+                         if attr.key not in ("fields", "row_version") and attr.history.has_changes()}
+                doc = db.get(models.DocumentAsset, document_id,
+                             populate_existing=True, with_for_update=True)
+                if doc is None:
+                    raise NoResultFound("Document not found")
+                current = document_snapshot(doc)
+                previous_input = (doc.doc_type, doc.filename, doc.text_full or "")
+                for key, value in local.items():
+                    setattr(doc, key, value)
+            else:
+                current = document_snapshot(doc)
+                previous_input = (doc.doc_type, doc.filename, doc.text_full or "")
+            version = doc.row_version
+            before = current if base is None else base
+            mine = incoming(deepcopy(current)) if callable(incoming) else incoming
+            fast = same_version(before, current, version)
+            if not fast:
+                observe_merge("DocumentAsset", source, before, version, attempt)
+            inputs_changed = previous_input != (
+                next_doc_type if next_doc_type is not None else doc.doc_type,
+                doc.filename, next_text if next_text is not None else (doc.text_full or ""))
+            fields = normalize_document_fields(
+                mine, base_fields=before, current_fields=current, analysis=analysis, text=text,
+                decision_keys=decision_keys, merge=not fast,
+                clear_verification=clear_verification, inputs_changed=inputs_changed,
+                prune_product_pending=prune_product_pending)
+            if state.persistent:
+                if not compare_and_swap(db, doc, version, {"fields": fields}):
+                    continue
+            else:
+                doc.fields = fields
+                doc.row_version = (version or 0) + 1
+            return fields
+    retry_exhausted(db)

@@ -87,17 +87,12 @@ def _direct_writes(tree):
                         "update", "pop", "popitem", "clear", "setdefault", "__setitem__",
                         "__delitem__", "append", "extend", "insert", "remove", "sort", "reverse")):
                     self.lines.add(node.lineno)
-                if name in ("update", "values"):
-                    keys = [key for arg in node.args if isinstance(arg, ast.Dict) for key in arg.keys]
-                    if (any(kw.arg == "fields" for kw in node.keywords) or any(
-                            isinstance(key, ast.Constant) and key.value == "fields" or
-                            isinstance(key, ast.Attribute) and key.attr == "fields" for key in keys)):
-                        self.lines.add(node.lineno)
             self.generic_visit(node)
 
     visitor = Writes()
     visitor.visit(tree)
-    return sorted(visitor.lines)
+    from scripts.write_guard import bulk_write_violations
+    return sorted(visitor.lines | set(bulk_write_violations(tree, "DocumentAsset", {"fields"})))
 
 
 def _python_sources(root):
