@@ -50,7 +50,7 @@ _MISSING = object()
 _DECISION_POLICIES = {"decision", "verification", "preserve", "evidence"}
 
 
-def aggregate_document_fields(documents):
+def aggregate_document_fields(documents, *, lookup_result=None):
     """저장된 문서만 집계한다. 잠금 중에는 주소의 외부 우편번호 조회를 하지 않는다.
 
     집계기의 조회 옵션이 없으므로 주소를 제외한 목록·식별값을 먼저 계산하고,
@@ -74,6 +74,11 @@ def aggregate_document_fields(documents):
     for key, prefix in (("address", ""), ("factory_address", "factory_")):
         agg[key] = intake._complete_address(addresses[key], agg[prefix + "city"],
                                             agg[prefix + "province"], agg[prefix + "country"])
+        # 잠금 전에 얻은 우편번호는 같은 주소에 대해서만 재사용한다.
+        # 병합으로 주소가 바뀌었다면 과거 주소의 조회값을 옮기지 않는다.
+        if (lookup_result and agg[key] and agg[key] == lookup_result.get(key)
+                and not agg.get(prefix + "zip")):
+            agg[prefix + "zip"] = lookup_result.get(prefix + "zip")
     return agg
 
 
@@ -81,6 +86,32 @@ def _extracted_values(fields):
     """확인 표시와 진단을 제외한 검증 대상 값. 거절된 식별자도 검산 입력이다."""
     return {key: value for key, value in fields.items()
             if not key.startswith("_") or key == "_rejected_identifiers"}
+
+
+def verification_inputs(doc_type, filename, text, fields, company_name):
+    """검증의 전체 입력 스냅샷. _sources 등 검증에 쓰지 않는 표시는 제외한다."""
+    # verify_extraction은 현재 추출값에 없는 미확인 자동반영값도 검산한다.
+    # 같은 추출값의 사람 확인은 입력 변경이 아니다. 확인자/상태 전체를 비교하면
+    # 다른 필드의 유효한 실패 판정과 회수까지 막으므로 추가 검산값만 복사한다.
+    autofill_values = {}
+    for change in ((fields.get("_autofill") or {}).get("changes") or {}).values():
+        scope, key = change.get("scope"), change.get("field")
+        if change.get("status") != "applied" or scope == "facility_link":
+            continue
+        if scope in ("facility", "facility_profile"):
+            key = {"reg_no": "factory_reg_no", "address": "factory_address", "city": "factory_city",
+                   "country": "factory_country", "zip": "factory_zip", "phone": "factory_phone"}.get(key, key)
+        elif scope == "profile":
+            key = {"office_phone": "phone", "total_employee": "employee_count"}.get(key, key)
+        value = change.get("value")
+        if key and value != fields.get(key, _MISSING):
+            values = autofill_values.setdefault(key, [])
+            if value not in values:
+                values.append(value)
+    return deepcopy({"doc_type": doc_type, "filename": filename, "text": text or "",
+                     "fields": _extracted_values(fields), "company_name": company_name,
+                     "autofill_values": autofill_values,
+                     "ai_budget": fields.get("_ai_budget")})
 
 
 def _decision_value(record):
@@ -226,9 +257,8 @@ def write_document_fields(db, doc_or_id, *, base_fields, new_fields, source, ana
         if state.persistent and state.session is not db:
             raise ValueError("Document belongs to a different session")
         if state.persistent:
-            database.lock_chain_tail(db, "wf:" + doc.case_id)
-            # 케이스 행도 잠그되 profile_ext 등 호출자의 미저장 편집은 refresh하지 않는다.
-            db.query(models.CaseApplication.case_id).filter_by(case_id=doc.case_id).with_for_update().one()
+            document_id, case_id = doc.document_id, doc.case_id
+            database.lock_cases(db, [case_id])
             transaction = db.get_nested_transaction() or db.get_transaction()
             staged = state.info.get(_STAGED_FIELDS)
             pending = (deepcopy(doc.fields) if staged and staged[0]() is transaction
@@ -237,7 +267,7 @@ def write_document_fields(db, doc_or_id, *, base_fields, new_fields, source, ana
             # fields 이외의 명시적 로컬 변경만 재적용하고 오래된 JSON은 가져오지 않는다.
             local = {attr.key: deepcopy(attr.value) for attr in state.attrs
                      if attr.key != "fields" and attr.history.has_changes()}
-            doc = db.get(models.DocumentAsset, doc.document_id,
+            doc = db.get(models.DocumentAsset, document_id,
                          populate_existing=True, with_for_update=True)
             if doc is None:
                 raise NoResultFound("Document not found")

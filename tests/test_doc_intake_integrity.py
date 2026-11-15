@@ -484,7 +484,7 @@ def test_검증_중_갱신된_필드를_보존하고_LLM_대기에는_트랜잭�
         m._verify_doc(db, d, c)
     with m.SessionLocal() as db:
         fields = db.get(models.DocumentAsset, did).fields
-        assert fields["_verify"]["verdict"] == "ok"
+        assert "_verify" not in fields
         assert {k: v for k, v in fields.items() if k != "_verify"} == latest
 
 

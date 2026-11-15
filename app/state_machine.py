@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from sqlalchemy.orm import object_session
 from .db import lock_chain_tail
+from . import db as database
 from .models import (CaseApplication, Material, PenyeliaHalal,
                      PendampingAssignment, ExternalIdentity, WorkflowEvent)
 
@@ -146,7 +147,7 @@ def lock_scope(db, case):
     """추출 대기 중 동결된 경우도 최신 잠금을 확인한다. 커밋까지 쓰기와 동결을 직렬화."""
     # 발급/종결과 같은 순서로 잡는다. scope → wf 역순이면 PostgreSQL에서
     # 원재료 저장과 인증서 발급이 서로의 잠금을 기다릴 수 있다.
-    lock_chain_tail(db, "wf:" + case.case_id)
+    database.lock_cases(db, [case.case_id])
     lock_chain_tail(db, "scope:" + case.case_id)
     db.refresh(case, ["scope_frozen"])
 
@@ -901,7 +902,7 @@ def chain_row_matches(prev, body, stored):
 
 def record_event(db, case, frm, to, action, actor_type="system", actor_id=None, payload=None):
     # MA4: 꼬리 조회 전에 DB 쓰기 락(커밋까지 유지)을 잡아 다른 세션과 직렬화 — 근거는 db.lock_chain_tail.
-    lock_chain_tail(db, "wf:" + case.case_id)
+    database.lock_cases(db, [case.case_id])
     prev = _last_hash(db, case.case_id)
     body = json.dumps({"case": case.case_id, "from": frm, "to": to, "action": action,
                        "payload": payload or {}}, sort_keys=True, ensure_ascii=False)

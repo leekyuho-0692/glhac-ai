@@ -1,7 +1,7 @@
 """DB 세션/엔진 (M0). SQLite 시작 → 추후 Postgres 승격 (설계 D.1)."""
 import os
 from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import Session, sessionmaker, declarative_base
 
 DB_URL = os.environ.get("GLHAC_DB_URL", "sqlite:///./glhac.db")
 engine = create_engine(
@@ -62,3 +62,148 @@ def lock_chain_tail(db, key):
     elif name == "postgresql":
         from sqlalchemy import text
         db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": key})
+
+
+def lock_sqlite_writer(db):
+    """실제 연결의 루트에서 확보한 SQLite writer 잠금만 재사용한다."""
+    from fastapi import HTTPException
+    from sqlalchemy.exc import OperationalError
+
+    transaction = db.get_transaction() or db.begin()
+    conn = db.connection()
+    raw = conn.connection.driver_connection
+    root = (transaction, conn.get_transaction())
+    if db.info.get("sqlite_case_writer") == root and raw.in_transaction:
+        return
+    db.info.pop("sqlite_case_writer", None)
+    try:
+        if not raw.in_transaction:
+            lock_chain_tail(db, "case-writer")
+        else:
+            # BEGIN/SELECT와 SAVEPOINT도 in_transaction=True다. 값은 바꾸지
+            # 않는 DML로 writer로 승격해야 읽기 트랜잭션을 잠금으로 오인하지 않는다.
+            conn.exec_driver_sql("UPDATE case_application SET case_id = case_id WHERE 0")
+    except OperationalError as exc:
+        db.rollback()
+        if "locked" in str(exc).lower():
+            raise HTTPException(409, {"code": "CONCURRENT_REQUEST"}) from exc
+        raise
+    # pysqlite의 최상위 SAVEPOINT는 RELEASE 시 실제 트랜잭션까지 끝낸다.
+    # SAVEPOINT 안에서 확보한 writer는 루트 잠금의 근거로 남기지 않는다.
+    if not db.in_nested_transaction() and not conn.in_nested_transaction():
+        db.info["sqlite_case_writer"] = root
+
+
+def lock_cases(db, case_ids):
+    """SQLite는 단일 writer 잠금, 행 잠금 DB는 ID 정렬 → wf advisory → 행 잠금.
+
+    identity map을 갱신하거나 flush하지 않는다. 이미 보유한 잠금은 재획득하지
+    않으며 역순 확장은 SQL을 실행하기 전에 거절한다. 동적 집합은 아래의
+    lock_case_set에서 쓰기 시작 전에 확정해야 한다.
+    """
+    from fastapi import HTTPException
+    from sqlalchemy.exc import OperationalError
+    from .models import CaseApplication
+
+    ids = sorted(set(cid for cid in case_ids if cid))
+    if not ids:
+        return set(db.info.get("case_locks", (None, set()))[1])
+    with db.no_autoflush:
+        transaction = db.get_transaction() or db.begin()
+        state = db.info.get("case_locks")
+        if state is None or state[0] is not transaction:
+            state = (transaction, set())
+            db.info["case_locks"] = state
+        held = state[1]
+        owners = db.info.setdefault("case_lock_owners", {})
+        if db.get_bind().dialect.name == "sqlite":
+            lock_sqlite_writer(db)
+            for cid in set(ids) - held:
+                owners[cid] = db.get_nested_transaction() or transaction
+            held.update(ids)
+            return set(held)
+        if set(ids) <= held:
+            return set(held)
+        # WorkflowEvent는 초대·심사자 프로필에도 사용된다. 케이스 행이 없는
+        # 이벤트 체인은 케이스 집합 순서에 섞지 않는다(동일 helper로 직렬화).
+        existing = {cid for cid, in db.query(CaseApplication.case_id).filter(CaseApplication.case_id.in_(ids))}
+        chains = db.info.setdefault("event_chain_locks", set())
+        new = sorted(set(ids) - held - chains)
+        new_cases = sorted(set(new) & existing)
+        # 행별 잠금을 쓰는 DB에서는 역순 확장을 SQL 실행 전에 차단한다.
+        if new_cases and held and new_cases[0] < max(held):
+            raise HTTPException(409, {"code": "CASE_LOCK_ORDER", "message": "케이스 잠금 집합을 다시 계산해야 합니다"})
+        try:
+            for cid in new:
+                lock_chain_tail(db, "wf:" + cid)
+                db.query(CaseApplication.case_id).filter_by(case_id=cid).with_for_update().all()
+                (held if cid in existing else chains).add(cid)
+                owners[cid] = db.get_nested_transaction() or transaction
+        except OperationalError as exc:
+            db.rollback()
+            if "locked" in str(exc).lower() or getattr(exc.orig, "pgcode", None) in ("40P01", "40001", "55P03"):
+                raise HTTPException(409, {"code": "CONCURRENT_REQUEST"}) from exc
+            raise
+    return set(held)
+
+
+def lock_case_set(db, resolve_ids, *, attempts=3):
+    """외부 작업 이후, 변경 이전에 동적 잠금 집합을 확정한다.
+
+    대기 중 후보/연결이 바뀌어 집합이 커지면 추가 잠금 없이 전체 rollback 후
+    합집합을 다시 정렬한다. 이미 변경을 시작한 호출자는 재시도할 수 없다.
+    """
+    from fastapi import HTTPException
+
+    def rollback_for_retry():
+        # flush 후 new/dirty/deleted는 비어도 쓰기 이력은 루트 트랜잭션에 남는다.
+        # 아직 flush하지 않은 로컬 변경 역시 재시도로 조용히 버리지 않는다.
+        started = db.info.get("transaction_write_started", False)
+        pending = bool(db.new or db.dirty or db.deleted)
+        db.rollback()
+        if started or pending:
+            raise HTTPException(409, {"code": "CONCURRENT_CHANGE_RETRY"})
+
+    with db.no_autoflush:
+        wanted = set(resolve_ids())
+        for _ in range(attempts):
+            held = db.info.get("case_locks", (None, set()))[1]
+            if held and not wanted <= held:
+                rollback_for_retry()
+            lock_cases(db, wanted)
+            latest = set(resolve_ids())
+            if latest <= wanted:
+                return wanted
+            rollback_for_retry()
+            wanted |= latest
+    raise HTTPException(409, {"code": "CASE_LOCK_SET_CHANGED"})
+
+
+@event.listens_for(Session, "after_flush")
+def _remember_transaction_write(db, flush_context):
+    db.info["transaction_write_started"] = True
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _clear_case_locks(db, transaction):
+    if transaction.parent is None:
+        db.info.pop("case_locks", None)
+        db.info.pop("event_chain_locks", None)
+        db.info.pop("case_lock_owners", None)
+        db.info.pop("sqlite_case_writer", None)
+        db.info.pop("case_close_lineage", None)
+        db.info.pop("transaction_write_started", None)
+
+
+@event.listens_for(Session, "after_soft_rollback")
+def _forget_savepoint_locks(db, previous):
+    # PostgreSQL은 SAVEPOINT 이후 획득한 행/advisory 잠금도 그 SAVEPOINT의
+    # rollback에서 해제한다. 바깥 트랜잭션의 잠금만 남기고 다시 획득하게 한다.
+    owners = db.info.get("case_lock_owners", {})
+    for cid, owner in list(owners.items()):
+        while owner is not None and owner is not previous:
+            owner = owner.parent
+        if owner is previous:
+            db.info.get("case_locks", (None, set()))[1].discard(cid)
+            db.info.get("event_chain_locks", set()).discard(cid)
+            del owners[cid]

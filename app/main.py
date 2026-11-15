@@ -27,11 +27,13 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, load_only
 from sqlalchemy.orm.attributes import flag_modified
 from .db import Base, engine, get_db, SessionLocal, lock_chain_tail
+from . import db as database
+from .case_write_service import case_snapshot, case_write_base, new_case, refresh_case, write_case
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from . import nav8
 from . import intake
 from .intake_write_service import (aggregate_document_fields, normalize_document_fields,
-                                   reanalysis_document_fields, write_document_fields)
+                                   reanalysis_document_fields, verification_inputs, write_document_fields)
 from .document_extraction import document_budget, current_budget
 # 앱의 주소 외부 전송은 명시적으로 켠 환경에서만 허용한다(선행 import에도 적용).
 intake._ZIP_LOOKUP = os.environ.get("GLHAC_ZIP_LOOKUP", "0") == "1"
@@ -73,14 +75,7 @@ def _lock_case(db, case_id):
     SQLite는 BEGIN IMMEDIATE, PostgreSQL은 트랜잭션 advisory lock과 FOR UPDATE.
     identity map의 오래된 객체를 그대로 사용하지 않는다. 변경 전에만 호출한다.
     """
-    try:
-        lock_chain_tail(db, "wf:" + case_id)
-        return db.get(models.CaseApplication, case_id, populate_existing=True, with_for_update=True)
-    except OperationalError as exc:
-        db.rollback()
-        if "locked" in str(exc).lower() or getattr(exc.orig, "pgcode", None) in ("40P01", "40001", "55P03"):
-            raise HTTPException(409, {"code": "CONCURRENT_REQUEST"}) from exc
-        raise
+    return refresh_case(db, case_id)
 
 
 def _guard_case_mutation(db, case_id, *, allow_closed=False):
@@ -98,10 +93,10 @@ def _recheck_case_writes(db, *args):
     중간 commit/rollback으로 최초 가드의 잠금이 풀린 핸들러도 새 트랜잭션에서
     다시 검사한다. 현재 트랜잭션에서 _close_case가 승인한 종결만 예외다.
     """
+    database.lock_cases(db, db.info.get("case_write_ids", ()))
     for case_id in sorted(db.info.get("case_write_ids", ())):
-        lock_chain_tail(db, "wf:" + case_id)
         status = (db.query(models.CaseApplication.status).filter_by(case_id=case_id)
-                  .with_for_update().scalar())
+                  .scalar())
         if status in sm.TERMINAL_STATES and case_id not in db.info.get("case_closures", ()):
             raise HTTPException(409, {"code": "CASE_CLOSED", "status": status,
                                       "message": "종결된 케이스는 변경할 수 없습니다"})
@@ -1222,6 +1217,7 @@ def _assert_facility_scope_open(db, facility_id=None, case=None):
         for cid, ids in db.query(models.CaseApplication.case_id, models.CaseApplication.facility_ids):
             if facility_id in (ids or []):
                 cases[cid] = db.get(models.CaseApplication, cid)
+    database.lock_cases(db, cases)
     for c in sorted(cases.values(), key=lambda c: c.case_id):
         _assert_case_open(c)
         _assert_scope_open(c)
@@ -1321,6 +1317,7 @@ def _assert_unique_case_identity(db, c):
 @event.listens_for(SessionLocal, "before_flush")
 def _guard_case_identity_writes(db, flush_context, instances):
     """저장 경계에서 검사하여 프로필·등록·자동채움·후보 선택의 우회를 막는다."""
+    database.lock_cases(db, [c.case_id for c in db.dirty if isinstance(c, models.CaseApplication)])
     for c in list(db.new) + list(db.dirty):
         if not isinstance(c, models.CaseApplication):
             continue
@@ -2144,8 +2141,7 @@ def _notify_problem_documents(db, c, force=False, actor=None):
     with _problem_doc_notify_lock:
         try:
             # 다중 요청도 같은 케이스의 마지막 지문을 읽고 기록하도록 기존 감사체인 DB 락 재사용.
-            from .db import lock_chain_tail
-            lock_chain_tail(db, "wf:" + c.case_id)
+            database.lock_cases(db, [c.case_id])
             db.refresh(c)
             result = _queue_problem_documents(db, c, force, actor)
             db.commit()
@@ -3259,7 +3255,7 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
                 continue
             for key, value in contact.model_dump(exclude_none=True).items():
                 _profile[prefix + "_" + key] = value
-        c = models.CaseApplication(org_id=org, company_name=company_name or "My Company",
+        c = new_case(db, source="register", org_id=org, company_name=company_name or "My Company",
                                    nib=body.nib, responsible_person=body.responsible_person,
                                    address=body.address, factory_address=body.factory_address,
                                    scheme=_reg_scheme, logistics_scope=_reg_scope,
@@ -3267,7 +3263,7 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
                                    profile_ext=_profile or None,
                                    is_msme=True)
         if not c.phone and _profile.get("pic_phone"):
-            c.phone = _profile["pic_phone"]
+            write_case(db, c, base=case_snapshot(c), changes={"phone": _profile["pic_phone"]}, source="register_phone")
         db.add(c)
         db.flush()
         sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id,
@@ -4101,7 +4097,7 @@ def audit_verify(case_id: str, user=Depends(auth.get_current_user), db: Session 
     import hashlib
     import json as _json
     _get_case(db, case_id, user)
-    lock_chain_tail(db, "wf:" + case_id)  # 행 목록과 앵커를 같은 커밋 경계에서 비교
+    database.lock_cases(db, [case_id])  # 행 목록과 앵커를 같은 커밋 경계에서 비교
     evs = (db.query(models.WorkflowEvent).filter_by(case_id=case_id)
            .order_by(models.WorkflowEvent.created_at, models.WorkflowEvent.event_id).all())
     r = _verify_wf_chain(evs, db=db, case_id=case_id)
@@ -5823,9 +5819,9 @@ def set_case_sector(case_id: str, body: dict = None,
     sectors = [s for s in (b.get("sectors") or ([b.get("sector")] if b.get("sector") else [])) if s in intake.SECTORS]
     if not sectors:
         raise HTTPException(422, {"code": "BAD_SECTOR", "allowed": list(intake.SECTORS)})
-    pe = dict(c.profile_ext or {})
-    pe["sector"], pe["sectors"] = sectors[0], sectors
-    c.profile_ext = pe
+    c = write_case(db, c, base=None, changes=lambda latest: {
+        "profile_ext": {**(latest["profile_ext"] or {}), "sector": sectors[0], "sectors": sectors}}, source="set_case_sector")
+    _assert_case_open(c)
     if (c.status or "onboarding") in ("onboarding", "application_draft") and not c.scheme_frozen:
         scheme, scope = intake.sector_defaults(sectors[0])
         c.scheme = scheme
@@ -6182,7 +6178,7 @@ def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("appli
         _scope = body.logistics_scope
     if _sector:
         oext = dict(oext, sector=_sector, sectors=_sectors)
-    c = models.CaseApplication(
+    c = new_case(db, source="create_case",
         org_id=org, is_msme=bool(body.is_msme),
         company_name=body.company_name or oext.get("company_name") or (org_row.name if org_row else None),
         scheme=_scheme,
@@ -6201,9 +6197,9 @@ def create_case(body: schemas.CaseCreate, user=Depends(auth.require_roles("appli
             continue
         if not _same_company and k in _identity:
             continue          # 다른 회사의 신원값은 물려받지 않는다
-        setattr(c, k, oext[k])
+        write_case(db, c, base=case_snapshot(c), changes={k: oext[k]}, source="create_case_inherit")
     if not c.email and oext.get("company_email"):
-        c.email = oext["company_email"]
+        write_case(db, c, base=case_snapshot(c), changes={"email": oext["company_email"]}, source="create_case_email")
         c.notify_consent = (oext.get("email_consent") or {}).get("agreed") is True
     # 공장도 org 자산 상속(오피스 1:N 공장) — 새 신청에 org 공장 자동 연결(회사프로필 상속과 대칭).
     # 단 다른 회사가 이미 쓰는 공장은 상속하지 않는다(_facilities_for_case 주석 참조).
@@ -7633,7 +7629,8 @@ def delete_product(case_id: str, product_id: str, force: bool = False, merge_int
         db.query(models.ProductMaterial).filter_by(product_id=product_id).delete()
     if target or product_id in aliases:
         aliases.pop(product_id, None)
-        c.profile_ext = {**(c.profile_ext or {}), "product_aliases": aliases}
+        write_case(db, c, base=case_snapshot(c), changes={"profile_ext": {
+            **(c.profile_ext or {}), "product_aliases": aliases}}, source="delete_product")
     db.delete(p)
     db.commit()
     return {"deleted": product_id,
@@ -7942,7 +7939,7 @@ def _autofill_current_source(db, c, field, value, exclude_document_id=None):
     return source
 
 
-def _apply_owned_autofill(db, c, doc):
+def _apply_owned_autofill(db, c, doc, *, base_case=None):
     """문서 단위 원문·소유권·검증 게이트. 단건/ZIP/재처리는 이 규칙만 쓴다.
 
     사업자번호가 일치하는 등록증은 회사명·번호·주소의 정본이며, 그 외에는 빈 칸만 채운다.
@@ -7952,12 +7949,15 @@ def _apply_owned_autofill(db, c, doc):
     if doc.doc_type not in intake._APPLICANT_DOCS:
         return {}
     # 재진입 시 앞서 반영한 변경은 먼저 저장하고, 문서 JSON도 잠금 이후 다시 읽는다.
-    lock_chain_tail(db, "wf:" + c.case_id)
+    case_id, document_id = c.case_id, doc.document_id
+    persisted = inspect(doc).persistent
+    _lock_autofill_cases(db, case_id)
     db.flush()
-    c = _lock_case(db, c.case_id)
+    c = _lock_case(db, case_id)
     _assert_case_open(c)
-    if inspect(doc).persistent:
-        doc = db.get(models.DocumentAsset, doc.document_id, populate_existing=True, with_for_update=True)
+    base_case = case_write_base(db, case_id, base_case)
+    if persisted:
+        doc = db.get(models.DocumentAsset, document_id, populate_existing=True, with_for_update=True)
         if doc is None:
             return {"skipped": "document_missing"}
         if doc.doc_type not in intake._APPLICANT_DOCS:
@@ -8046,6 +8046,11 @@ def _apply_owned_autofill(db, c, doc):
         if current == value or (not authoritative and _autofill_key(current, src) == _autofill_key(value, src)):
             return
         blocked = reason
+        if base_case is not None and scope in ("case", "profile"):
+            before = ((base_case.get("profile_ext") or {}).get(field) if scope == "profile"
+                      else base_case.get(field))
+            if current != before:
+                blocked = "value_conflict"
         if not blocked and changes.get(key, {}).get("status") == "reverted":
             blocked = "verify_failed"   # 실패로 회수된 후보는 사람이 확인해야 다시 반영한다.
         if (not blocked and not authoritative and current not in (None, "")
@@ -8074,6 +8079,9 @@ def _apply_owned_autofill(db, c, doc):
             changes[key]["facility_id"] = facility_id or obj.facility_id
         if isinstance(obj, dict):
             obj[field] = value
+        elif isinstance(obj, models.CaseApplication):
+            write_case(db, obj, base=base_case if base_case is not None else case_snapshot(obj),
+                       changes={field: value}, source="owned_autofill")
         else:
             setattr(obj, field, value)
         applied[key] = value
@@ -8089,7 +8097,8 @@ def _apply_owned_autofill(db, c, doc):
         fill(pe, k, v, scope="profile", source_field=dict(profile_keys)[k])
     profile_updates = {k: pe[k] for k in profile if "profile." + k in applied}
     if profile_updates:
-        c.profile_ext = {**(c.profile_ext or {}), **profile_updates}
+        write_case(db, c, base=base_case if base_case is not None else case_snapshot(c), changes={"profile_ext": {
+            **(c.profile_ext or {}), **profile_updates}}, source="owned_autofill_profile")
 
     # 신청 업체와 일치하는 공장만 조직 자산으로 등록한다. OEM 등은 사람이 선택한다.
     if not is_nib and reason in (None, "factory_conflict") and candidates and company_matches:
@@ -8136,13 +8145,29 @@ def _apply_owned_autofill(db, c, doc):
     return applied
 
 
+def _autofill_org_case_ids(db, org_id):
+    """문서 보호 대상 + 조직 시설을 공유하는 다른 조직의 케이스도 포함한다."""
+    facilities = {fid for fid, in db.query(models.Facility.facility_id).filter_by(org_id=org_id)}
+    return {cid for cid, org, ids in db.query(models.CaseApplication.case_id,
+            models.CaseApplication.org_id, models.CaseApplication.facility_ids)
+            if org == org_id or facilities.intersection(ids or [])}
+
+
 def _lock_autofill_org_cases(db, org_id):
-    """시설 확인은 조직 문서 전체를 갱신하므로 최초 케이스 잠금부터 순서를 맞춘다."""
-    if db.get_bind().dialect.name != "postgresql":
-        return  # SQLite의 기존 BEGIN IMMEDIATE 경로는 그대로 둔다.
-    for cid, in (db.query(models.CaseApplication.case_id).filter_by(org_id=org_id)
-                 .order_by(models.CaseApplication.case_id)):
-        lock_chain_tail(db, "wf:" + cid)
+    if db.get_bind().dialect.name == "sqlite":
+        database.lock_sqlite_writer(db)
+        return
+    database.lock_case_set(db, lambda: _autofill_org_case_ids(db, org_id))
+
+
+def _lock_autofill_cases(db, case_id):
+    if db.get_bind().dialect.name == "sqlite":
+        database.lock_cases(db, [case_id])
+        return
+    def resolve():
+        org_id = db.query(models.CaseApplication.org_id).filter_by(case_id=case_id).scalar()
+        return {case_id} | (_autofill_org_case_ids(db, org_id) if org_id else set())
+    database.lock_case_set(db, resolve)
 
 
 def _mark_autofill_confirmed(db, doc, keys, user_id, obj, *, facility_id=None):
@@ -8180,8 +8205,7 @@ def _protect_autofill(db, keys, user_id, *, case_id=None, facility_id=None):
         docs = docs.filter(models.DocumentAsset.case_id == case_id)
         obj = db.get(models.CaseApplication, case_id)
     case_ids = sorted({row.case_id for row in docs.with_entities(models.DocumentAsset.case_id)})
-    for cid in case_ids:
-        lock_chain_tail(db, "wf:" + cid)
+    database.lock_cases(db, case_ids)
     db.flush()  # 수동 편집을 refresh로 지우지 않는다.
     for cid in case_ids:
         _lock_case(db, cid)
@@ -8224,9 +8248,15 @@ def _revert_failed_autofill(db, c, doc):
                 profile[field] = before
             else:
                 profile.pop(field, None)
-            obj.profile_ext = profile
+            if isinstance(obj, models.CaseApplication):
+                write_case(db, obj, base=case_snapshot(obj), changes={"profile_ext": profile}, source="revert_failed_autofill")
+            else:
+                obj.profile_ext = profile
         else:
-            setattr(obj, field, before)
+            if isinstance(obj, models.CaseApplication):
+                write_case(db, obj, base=case_snapshot(obj), changes={field: before}, source="revert_failed_autofill")
+            else:
+                setattr(obj, field, before)
         conflict = {"field": field, "scope": scope, "current": before, "proposed": value,
                     "reason": "verify_failed", "status": "pending", "document_id": doc.document_id,
                     "filename": doc.filename, "current_source": {"source": "profile"}}
@@ -8370,7 +8400,8 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
     for pid, values in aliases.items():
         latest_aliases[pid] = list(dict.fromkeys(latest_aliases.get(pid, []) + values))
     if latest_aliases != profile.get("product_aliases", {}):
-        c.profile_ext = {**profile, "product_aliases": latest_aliases}
+        write_case(db, c, base=case_snapshot(c), changes={"profile_ext": {
+            **profile, "product_aliases": latest_aliases}}, source="autofill_products")
     for item in agg.get("pending", []):
         if item["kind"] == "product_names" and documents:
             known = {_norm_material(item["value"])}
@@ -8391,16 +8422,18 @@ def _material_source_names(fields):
              if item["kind"] == "material_names"])
 
 
-def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None):
+def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None, base_case=None):
     """목록 집계만 직접 반영한다. 업체·공장은 원문 문서별 소유권 게이트를 통과해야 한다."""
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0,
                "profile": [], "pending": len(agg.get("pending") or [])}
+    if any(d.doc_type in intake._APPLICANT_DOCS for d in documents):
+        _lock_autofill_cases(db, c.case_id)
     rejected_products = sm.rejected_product_autofill_names(db, c.case_id) if documents else set()
     if (agg.get("products") or agg.get("product_aliases") or rejected_products or
             any(x["kind"] == "product_names" for x in agg.get("pending", []))):
         # 분석 대기 중 끝난 합치기·프로필 저장을 제품 판정 전에 읽는다.
         # 제품 작업이 없는 원료 전용 업로드는 기존처럼 스크리닝 이후에 잠근다.
-        lock_chain_tail(db, "wf:" + c.case_id)
+        database.lock_cases(db, [c.case_id])
         db.flush()  # 같은 트랜잭션의 수동 확인·문서 갱신을 refresh로 잃지 않는다.
         c = _lock_case(db, c.case_id)
         rejected_products = sm.rejected_product_autofill_names(db, c.case_id) if documents else set()
@@ -8446,7 +8479,7 @@ def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None):
     if not documents and agg.get("nib") and c.nib and _autofill_key(agg["nib"], "nib") != _autofill_key(c.nib, "nib"):
         applied["nib_conflict"] = True   # 구 집계 호출도 충돌은 알리되 원문 없이 값을 쓰지 않는다
     for doc in documents:
-        own = _apply_owned_autofill(db, c, doc)
+        own = _apply_owned_autofill(db, c, doc, base_case=base_case)
         applied["company_set"] |= "company_name" in own
         applied["nib_set"] |= "nib" in own
         applied["profile"] += [k for k in own if k not in ("company_name", "nib", "conflicts", "skipped", "facility")]
@@ -8468,7 +8501,7 @@ def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None):
         except HTTPException as exc:
             if exc.detail.get("code") != "SCOPE_FROZEN" or not documents:
                 raise
-            return _apply_agg_to_case(db, c, agg, documents=documents, material_sources=material_sources)
+            return _apply_agg_to_case(db, c, agg, documents=documents, material_sources=material_sources, base_case=base_case)
     applied["products"], deferred = _autofill_products(db, c, agg, documents, rejected_products)
     applied["pending"] += deferred
     have_m = {_norm_material(m.name) for m in db.query(models.Material).filter_by(case_id=c.case_id)}
@@ -8510,7 +8543,7 @@ def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None):
         except HTTPException as exc:
             if exc.detail.get("code") != "SCOPE_FROZEN" or not documents:
                 raise
-            return _apply_agg_to_case(db, c, agg, documents=documents, material_sources=material_sources)
+            return _apply_agg_to_case(db, c, agg, documents=documents, material_sources=material_sources, base_case=base_case)
         applied["materials"] += int(created)
         if created:
             created_material_ids.append(saved_material.material_id)
@@ -8646,6 +8679,7 @@ def _verify_doc(db, d, c):
     case_id = c.case_id
     text, fields, company = d.text_full or "", deepcopy(d.fields or {}), c.company_name
     base_fields = deepcopy(fields)
+    inputs = verification_inputs(doc_type, filename, text, fields, company)
     # 읽기 트랜잭션을 끝내고 모델을 기다린다. 300자 발췌는 전문 대신 쓸 수 없다.
     db.rollback()
     try:
@@ -8655,6 +8689,7 @@ def _verify_doc(db, d, c):
         log.exception("문서 검증 응답 처리 실패 %s", doc_id)
         res = intake.normalise_verification(None)
     # LLM 대기 중 사람의 저장·확인이 끝났을 수 있다. 최신 값과 출처를 다시 읽는다.
+    _lock_autofill_cases(db, case_id)
     c = _lock_case(db, case_id)
     if c is None or sm.is_terminal(c.status):
         # 검증 결과/자동 반영 이력도 종결 기록이다. LLM 대기 중 종결되면 모두 보존.
@@ -8666,6 +8701,10 @@ def _verify_doc(db, d, c):
         db.rollback()
         return
     fl = dict(d.fields or {})
+    if verification_inputs(d.doc_type, d.filename, d.text_full, fl, c.company_name) != inputs:
+        # 새 추출본의 검증으로 이전 입력의 판정을 저장하지 않는다. 진단도 함께 폐기.
+        db.rollback()
+        return
     # 실제 상호 불일치는 보존하되, 법인 형태 차이로 생긴 이전 오경고는 제거한다.
     previous = intake.normalise_verification(fl.get("_verify"), internal=True)
     current_name = _autofill_company_key(fl.get("company_name"))
@@ -8765,6 +8804,7 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     filename, doc_type = intake._nfc(d.filename), d.doc_type
     data = base64.b64decode(d.content_b64.split(",")[-1])
     base_fields = deepcopy(d.fields or {})
+    base_case = case_snapshot(c)
     # 모델/OCR 대기 중 종결·수동 확인이 가능하도록 쓰기와 잠금은 뒤로 미룬다.
     db.rollback()
     text = parse_file(filename, data, dpi=dpi)
@@ -8801,6 +8841,8 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     # AI 호출이 실패했으면 그 사실을 문서에 남긴다. 남기지 않으면 '분석했는데 아무것도
     # 없는 서류'와 구분되지 않아, 사람이 다시 돌려야 한다는 걸 알 방법이 없다.
     # 검증 큐와 같은 잠금·종결 판정으로 최신 상태를 확인한 뒤에만 저장한다.
+    if apply:
+        _lock_autofill_cases(db, case_id)
     c = _lock_case(db, case_id)
     if c is None or sm.is_terminal(c.status):
         db.rollback()
@@ -8821,11 +8863,11 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     d.text_full = text or ""
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
     # 병합에서 삭제·교체된 후보를 되살리지 않는다. 잠금 중 재집계는 외부 조회 없이 한다.
-    agg = aggregate_document_fields([d]) if apply else None
+    agg = aggregate_document_fields([d], lookup_result=agg) if apply else None
     # 저장 요청에서 OCR하지 않는다. 큐가 이미 추출한 본문으로만 편철한다.
     if apply:
         _autofile_evidence(db, c.case_id, d, allow_parse=False)
-    applied = (_apply_agg_to_case(db, c, agg, documents=[d])
+    applied = (_apply_agg_to_case(db, c, agg, documents=[d], base_case=base_case)
                if apply else {"skipped": True})
     if apply:
         count = _apply_document_measurements(db, c, d)
@@ -8869,13 +8911,19 @@ def _pending_autofill(db, case_id):
 
 def _lock_autofill_choice_cases(db, c, choices):
     """엔드포인트의 범위 잠금보다 먼저 시설 후보가 보호할 케이스 집합을 확보한다."""
-    if db.get_bind().dialect.name != "postgresql" or not isinstance(choices, list):
+    case_id = c.case_id
+    if db.get_bind().dialect.name == "sqlite":
+        database.lock_cases(db, [case_id])
         return
-    selected = {x["conflict_id"] for x in choices
+    selected = {x["conflict_id"] for x in (choices if isinstance(choices, list) else [])
                 if isinstance(x, dict) and isinstance(x.get("conflict_id"), str)}
-    if any(x["conflict_id"] in selected and x["scope"] in ("facility", "facility_profile")
-           for x in _pending_autofill(db, c.case_id)):
-        _lock_autofill_org_cases(db, c.org_id)
+    def resolve():
+        if any(x["conflict_id"] in selected and x["scope"] in ("facility", "facility_profile")
+               for x in _pending_autofill(db, case_id)):
+            org_id = db.query(models.CaseApplication.org_id).filter_by(case_id=case_id).scalar()
+            return {case_id} | _autofill_org_case_ids(db, org_id)
+        return {case_id}
+    database.lock_case_set(db, resolve)
 
 
 def _confirm_autofill(db, c, choices, user):
@@ -8886,7 +8934,7 @@ def _confirm_autofill(db, c, choices, user):
         raise HTTPException(403, {"code": "AUTOFILL_PROFILE_FORBIDDEN"})
     if choices:
         _lock_autofill_choice_cases(db, c, choices)
-        lock_chain_tail(db, "wf:" + c.case_id)
+        database.lock_cases(db, [c.case_id])
         db.flush()
         c = _lock_case(db, c.case_id)
     pending = {x["conflict_id"]: x for x in _pending_autofill(db, c.case_id)}
@@ -8936,7 +8984,12 @@ def _confirm_autofill(db, c, choices, user):
             except ValueError:
                 raise HTTPException(422, {"code": "INVALID_AUTOFILL_SELECTION"})
             # 중복·발급 후 동결 검사는 _guard_case_identity_writes가 모든 저장 경로에 적용한다.
-        if scope in ("profile", "facility_profile"):
+        if scope == "profile":
+            write_case(db, obj, base=case_snapshot(obj), changes={"profile_ext": {
+                **(obj.profile_ext or {}), field: value}}, source="confirm_autofill")
+        elif scope == "case":
+            write_case(db, obj, base=case_snapshot(obj), changes={field: value}, source="confirm_autofill")
+        elif scope == "facility_profile":
             obj.profile_ext = {**(obj.profile_ext or {}), field: value}
         else:
             setattr(obj, field, value)
@@ -9035,6 +9088,8 @@ def apply_pending_extractions(case_id: str, body: dict = None,
     _assert_case_open(c)
     b = body or {}
     _lock_autofill_choice_cases(db, c, b.get("autofill_choices", []))
+    c = _lock_case(db, case_id)
+    _assert_case_open(c)
     _assert_scope_open(c)
     reason = _extraction_review_reason(user, b)
     choices = _confirm_autofill(db, c, b.get("autofill_choices", []), user)
@@ -9078,7 +9133,7 @@ def apply_pending_extractions(case_id: str, body: dict = None,
     # 원래 추출값을 기억해야 이름을 고치거나 등록하지 않은 항목도 다시 나타나지 않는다.
     pe["pending_handled"] = list(dict.fromkeys(
         (pe.get("pending_handled") or []) + [_norm_material(x["value"]) for x in items]))[-2000:]
-    c.profile_ext = pe
+    write_case(db, c, base=case_snapshot(c), changes={"profile_ext": pe}, source="apply_pending_extractions")
     if renames or dismiss or (reason and user["role"] in sm.REVIEWER_ROLES):
         sm.record_event(db, c, c.status, c.status, "extraction.review", user["role"], user["uid"],
                         {"items": items, "renames": renames, "dismiss": dismiss, "reason": reason})
@@ -9466,13 +9521,14 @@ def _sha256_b64(content_b64):
     return _hl.sha256(_raw).hexdigest()
 
 
-def _apply_intake_autofill(db, c, res, base_fields_by_id):
+def _apply_intake_autofill(db, c, res, base_fields_by_id, base_case=None):
     """분류 결과 → DocumentAsset 저장 + 신청서 자동채움(회사/NIB/제품/원재료). 임시저장(commit은 호출측).
     중복 방지: 같은 케이스에 동일 내용(file_hash) 또는 동일 파일명(내용없는 문서)은 재저장하지 않는다.
     base_fields_by_id는 파싱 전 스냅샷이며, 당시 문서가 없었으면 빈 dict를 전달한다."""
     if base_fields_by_id is None:
         raise ValueError("A base_fields_by_id snapshot is required before intake analysis")
     from sqlalchemy.orm import defer
+    _lock_autofill_cases(db, c.case_id)
     c = _lock_case(db, c.case_id)
     _assert_case_open(c)
     _ex = (db.query(models.DocumentAsset).options(defer(models.DocumentAsset.content_b64))
@@ -9528,9 +9584,9 @@ def _apply_intake_autofill(db, c, res, base_fields_by_id):
             _seen_n[_nm] = doc
     db.flush()
     # 중복 업로드의 병합과 같은 묶음의 재진입까지 끝난 실제 저장값으로만 집계한다.
-    agg = aggregate_document_fields(saved)
+    agg = aggregate_document_fields(saved, lookup_result=res.get("extracted"))
     res["extracted"] = agg
-    applied = _apply_agg_to_case(db, c, agg, documents=saved)
+    applied = _apply_agg_to_case(db, c, agg, documents=saved, base_case=base_case)
     applied["dup_skipped"] = dup_skipped
     res["_verify_ids"] = [d.document_id for d in saved]
     # 집계 단계에서 이번에 생성한 원료만 연결했다. 기존 원료를 다시 훑지 않는다.
@@ -9550,6 +9606,14 @@ def _apply_intake_autofill(db, c, res, base_fields_by_id):
     res["applied"] = applied
     for row, doc in saved_rows:
         row["fields"], row["doc_type"], row["confidence"] = doc.fields, doc.doc_type, doc.confidence
+    if "checklist" in res:
+        found = {doc.doc_type for doc in saved if (doc.text_full or "").strip() and not
+                 any((doc.fields or {}).get(key) for key in ("_empty", "_ocr_error", "_llm_error"))}
+        res["checklist"] = [{"doc_type": dt, "doc_type_ko": intake.DOC_KO[dt], "satisfied": dt in found,
+                             "files": [row["filename"] for row, doc in saved_rows if doc.doc_type == dt]}
+                            for dt in intake.REQUIRED_DOCS]
+        res["missing"] = [row["doc_type_ko"] for row in res["checklist"] if not row["satisfied"]]
+        res["complete"] = not res["missing"]
     return applied
 
 
@@ -9572,6 +9636,7 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     """압축파일 업로드 → 파일 전수 파싱 → AI 분류 → 필수서류 라우팅 (Document Intake AI)."""
     deadline = intake.archive_deadline()
     c = _get_case(db, case_id, user)
+    base_case = case_snapshot(c) if db is not None else None
     # ZIP 크기 검증 — 업로드 상한과 동일하게 적용
     b64_str = body.zip_b64.split(",")[-1]
     if len(b64_str) > _UPLOAD_MAX_BYTES * 4 // 3 + 4:  # base64는 raw보다 ~33% 큼(패딩 포함)
@@ -9589,7 +9654,7 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     except ArchiveError as e:
         raise HTTPException(400, {"code": "BAD_ARCHIVE",
                                   "message": str(e)})
-    applied = _apply_intake_autofill(db, c, res, base_fields_by_id)
+    applied = _apply_intake_autofill(db, c, res, base_fields_by_id, base_case)
     sm.record_event(db, c, c.status, c.status, "documents.intake", "ai", user["uid"],
                     {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
     _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
@@ -9686,6 +9751,7 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
                 stopped.set()
     c = _get_case(db, case_id, user)
     _b64 = body.zip_b64.split(",")[-1]
+    base_case = case_snapshot(c) if db is not None else None
     if len(_b64) > _UPLOAD_MAX_BYTES * 4 // 3 + 4:   # base64 는 원본보다 ~33% 크다
         raise HTTPException(413, {"code": "ZIP_TOO_LARGE",
                                   "message": "파일이 너무 큽니다 (최대 20MB)"})
@@ -9747,7 +9813,7 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
         if res is None:
             yield ev({"type": "error", "message": "인테이크 결과가 없습니다"})
             return
-        applied = _apply_intake_autofill(db, c, res, base_fields_by_id)
+        applied = _apply_intake_autofill(db, c, res, base_fields_by_id, base_case)
         sm.record_event(db, c, c.status, c.status, "documents.intake", "ai", user["uid"],
                         {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
         _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
@@ -9831,6 +9897,7 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
                    user=Depends(auth.require_roles("applicant", "consultant")),
                    db: Session = Depends(get_db)):
     c = _get_case(db, case_id, user)
+    c = _lock_case(db, case_id)
     _assert_case_open(c)
     # 비운 칸은 '지운 것'으로 본다.
     #
@@ -9840,13 +9907,19 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
     # 인도네시아 업체는 한국 사업자등록번호가 없고 NIB 도 발급 전일 수 있어, 비워 두는 것이
     # 정상적인 상태다. 보낸 적 없는 필드(model_fields_set 밖)는 그대로 둔다.
     _sent = body.model_fields_set
+    columns = {}
     for f in ("company_name", "nib", "responsible_person", "halal_supervisor", "email",
               "phone", "address", "factory_reg_no", "factory_address", "due_date"):
         v = getattr(body, f)
         if v is not None:
-            setattr(c, f, v)
+            columns[f] = v
         elif f in _sent:
-            setattr(c, f, None)
+            columns[f] = None
+    if body.phone is not None:
+        columns["phone"] = _normalize_phone(body.phone)
+    if body.profile_ext is not None:
+        columns["profile_ext"] = {**(c.profile_ext or {}), **body.profile_ext}
+    write_case(db, c, base=case_snapshot(c), changes=columns, source="update_profile")
     # 인증 종류 변경(신청 단계) — 서류·심사항목·부록이 통째로 바뀐다.
     # scheme_frozen(서류 요구가 갈리는 순간 잠금) 이후에는 바꿀 수 없다 — 이미 받은
     # 증빙이 다른 세트라 갈아치우면 고아가 된다. 바꾸려면 새 케이스로.
@@ -9875,10 +9948,7 @@ def update_profile(case_id: str, body: schemas.CaseProfileReq,
             c.logistics_scope = sel
     if body.notify_consent is not None:
         c.notify_consent = bool(body.notify_consent)
-    if body.phone is not None:
-        c.phone = _normalize_phone(body.phone)   # 국가코드 정규화
     if body.profile_ext is not None:
-        c.profile_ext = {**(c.profile_ext or {}), **body.profile_ext}  # 확장 양식 병합 저장
         # BPJPH 자기선언 정량 필드 → 컬럼 미러(가드 판정용).
         # 값 검증은 이제 스키마(CaseProfileReq._v_ext)가 앞에서 한다 — 여기 도달하는 값은
         # 이미 int 또는 None 이다. 아래 try 는 옛 데이터·직접 호출 대비 잔여 방어일 뿐이라
@@ -10027,11 +10097,13 @@ def autofill_profile(case_id: str, force: bool = False,
     force도 소유권·충돌 게이트를 우회하지 않는다. 번호가 일치하는 등록증 외의 충돌은 확인 대기에서 선택한다."""
     from .intake import parse_file, classify, aggregate_fields
     c = _get_case(db, case_id, user)
+    base_case = case_snapshot(c)
     docs = (db.query(models.DocumentAsset).filter_by(case_id=case_id)
             .filter(models.DocumentAsset.doc_type.in_(
                 ["nib_business_license", "factory_registration"])).all())
     analyses, classified = {}, []
     base_fields_by_id = {d.document_id: deepcopy(d.fields or {}) for d in docs}
+    document_ids = list(base_fields_by_id)
     for d in docs:
         fields = deepcopy(base_fields_by_id[d.document_id])
         doc_type = d.doc_type
@@ -10053,13 +10125,13 @@ def autofill_profile(case_id: str, force: bool = False,
         classified.append({"fields": fields, "doc_type": doc_type})
     # 집계의 Nominatim 주소 조회까지 잠금 밖에서 끝낸다. 이후에는 최신 DB와 병합만 한다.
     agg = aggregate_fields(classified)
-    lock_chain_tail(db, "wf:" + case_id)
+    _lock_autofill_cases(db, case_id)
     db.flush()
     c = _lock_case(db, case_id)
     _assert_case_open(c)
     fresh_docs = []
-    for d in docs:
-        current = db.get(models.DocumentAsset, d.document_id, populate_existing=True, with_for_update=True)
+    for document_id in document_ids:
+        current = db.get(models.DocumentAsset, document_id, populate_existing=True, with_for_update=True)
         if current is not None:
             fresh_docs.append(current)
     docs = fresh_docs
@@ -10087,10 +10159,10 @@ def autofill_profile(case_id: str, force: bool = False,
                     d.text_excerpt = (text or "")[:300]
                     d.text_full = text or ""
                     reprocessed.append(d.document_id)
-    agg = aggregate_document_fields(docs)
+    agg = aggregate_document_fields(docs, lookup_result=agg)
     applied = []
     for d in docs:
-        own = _apply_owned_autofill(db, c, d)
+        own = _apply_owned_autofill(db, c, d, base_case=base_case)
         applied.extend(k for k in own if k not in ("conflicts", "skipped"))
     _audit(db, user, "profile.autofill", "case", case_id, case_id,
            {"applied": applied, "force": force})
@@ -10265,6 +10337,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                   db: Session = Depends(get_db)):
     """개별 파일 업로드 → 문서 종류 교차검증 → 해당 필드 자동채움."""
     c = _get_case(db, case_id, user)
+    base_case = case_snapshot(c)
     _assert_case_open(c)
     _assert_scope_open(c, lock=False)   # OCR 대기는 잠금 없이, 실제 목록 쓰기는 공통 반영부에서 잠금
     body.filename = intake._nfc(body.filename)
@@ -10302,9 +10375,11 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                                text_excerpt=r.get("excerpt"), text_full=text,
                                content_b64=_b64,
                                content_type=_ctype(body.filename))
+    if eff_type in intake._APPLICANT_DOCS:
+        _lock_autofill_cases(db, case_id)
     if eff_type in intake._MATERIAL_SRC | intake._PRODUCT_SRC:
         agg = intake.aggregate_fields([{"doc_type": eff_type, "fields": f, "text_full": text}])
-        added = _apply_agg_to_case(db, c, agg, documents=[doc])
+        added = _apply_agg_to_case(db, c, agg, documents=[doc], base_case=base_case)
         for bucket, kind, allowed in (("materials", "material_names", intake._MATERIAL_SRC),
                                       ("products", "product_names", intake._PRODUCT_SRC)):
             if eff_type in allowed:
@@ -10313,7 +10388,7 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     # 원재료 스크리닝 전에 문서를 flush하면 동시 업로드 전체를 쓰기 잠금으로 막는다.
     db.add(doc)
     db.flush()
-    own = _apply_owned_autofill(db, c, doc)
+    own = _apply_owned_autofill(db, c, doc, base_case=base_case)
     # 확장 프로필의 변경 이력은 문서에 보관하고, 등록증 응답은 회사 필드 반영값을 반환한다.
     applied.update({k: v for k, v in own.items()
                     if eff_type != "nib_business_license" or not k.startswith("profile.")})
@@ -10967,6 +11042,8 @@ def put_halal_org(case_id: str, body: dict = None,
                   db: Session = Depends(get_db)):
     """부분 업데이트 — members(부서대표) / penyelia_quals(자격) 각각 선택 저장. 기존 필드는 불변."""
     c = _get_case(db, case_id, user)
+    c = _lock_case(db, case_id)
+    _assert_case_open(c)
     b = body or {}
     pe = dict(c.profile_ext or {})
     ho = dict(pe.get("halal_org") or {})
@@ -10990,8 +11067,7 @@ def put_halal_org(case_id: str, body: dict = None,
                                 for k, v in b["penyelia_quals"].items() if isinstance(v, dict)}
     ho["updated_at"] = datetime.utcnow().isoformat()
     pe["halal_org"] = ho
-    c.profile_ext = pe
-    flag_modified(c, "profile_ext")
+    write_case(db, c, base=case_snapshot(c), changes={"profile_ext": pe}, source="put_halal_org")
     sm.record_event(db, c, c.status, c.status, "halal_org.update", user["role"], user["uid"],
                     {"members": n_mem, "quals": len(ho.get("penyelia_quals") or {})})
     db.commit()
@@ -11796,7 +11872,7 @@ FATWA_PROXY_KEY = "auditor"
 
 def _assert_fatwa_mutable(db, c, *, final=False):
     """샤리아 결정·투표·서명의 공통 상태/발급 동결 검사."""
-    lock_chain_tail(db, "wf:" + c.case_id)
+    database.lock_cases(db, [c.case_id])
     db.refresh(c)
     _assert_case_open(c)
     if _own_cert(db, c.case_id):
@@ -14209,10 +14285,11 @@ def classify_factories(case_id, user=Depends(auth.get_current_user), db=Depends(
     """공장등록증(factory_registration) 문서를 등록번호 우선 dedup으로 분류 → Facility 생성/갱신.
     문서·공장 없으면 빈 공장1 자동 생성."""
     c = _get_case(db, case_id, user)
+    _lock_autofill_cases(db, case_id)
     _assert_facility_scope_open(db, case=c)
     for fid in c.facility_ids or []:
         _assert_facility_scope_open(db, fid)
-    _audit(db, user, "factory.classify", "case", case_id, case_id)
+    _audit(db, user, "factory.classify", "case", case_id, case_id, commit=False)
     docs = db.query(models.DocumentAsset).filter_by(case_id=case_id, doc_type="factory_registration").all()
     groups = {}
     for d in docs:
@@ -16884,6 +16961,8 @@ def _claim_approval(db, approval_id, user, decision, reason=None):
     if not ar:
         raise HTTPException(404, {"code": "APPROVAL_NOT_FOUND"})
     if ar.case_id:
+        if ar.action_type == "certificate.revoke" and decision == "approved":
+            _lock_renewal_lineage(db, ar.case_id)
         _guard_case_mutation(db, ar.case_id, allow_closed=ar.action_type == "certificate.revoke")
     else:
         lock_chain_tail(db, "approval:" + approval_id)
@@ -17250,7 +17329,7 @@ def renew_request(case_id: str, body: schemas.RenewRequestReq = schemas.RenewReq
     """문서 P0: 갱신 신청(신청↔승인 분리) — 신청자/컨설턴트가 갱신 의사를 등록. 실제 파생은 operator 승인."""
     src = _get_case(db, case_id, user)
     _assert_case_open(src)
-    lock_chain_tail(db, "wf:" + case_id)
+    database.lock_cases(db, [case_id])
     db.refresh(src)
     if src.status not in sm.REVOKE_ENTRY_STATES:
         raise HTTPException(400, {"code": "NOT_ISSUED", "detail": "인증서 발급 케이스만 갱신 신청 가능합니다."})
@@ -17269,7 +17348,8 @@ def renew_case(case_id: str, user=Depends(rbac.require_action("certificate.renew
     P3: 원 케이스는 renewal_preparation으로 전진(사후관리 체인 경유) — 고아 상태였던
     renewal_preparation에 비즈니스 트리거 부여. 갱신은 사후관리·변경영향 상태에서도 허용."""
     src = _get_case(db, case_id, user)
-    lock_chain_tail(db, "wf:" + case_id)
+    new_id = models.uid()
+    database.lock_cases(db, [case_id, new_id])
     db.refresh(src)
     _assert_case_open(src)
     if src.status not in ("certificate_issued", "post_certification_monitoring",
@@ -17282,8 +17362,7 @@ def renew_case(case_id: str, user=Depends(rbac.require_action("certificate.renew
                     "products_copied": db.query(models.Product).filter_by(case_id=child.case_id).count(),
                     "materials_copied": db.query(models.Material).filter_by(case_id=child.case_id).count()}
     import uuid
-    new_id = uuid.uuid4().hex
-    new_c = models.CaseApplication(
+    new_c = new_case(db, source="renew_case",
         case_id=new_id, org_id=src.org_id,
         company_name=src.company_name, nib=src.nib,
         scheme=src.scheme, logistics_scope=src.logistics_scope,
@@ -18446,6 +18525,7 @@ def _revoke_guards(db, case_id):
 
 def _do_revoke_certificate(db, c, user, reason=None, *, commit=True):
     """실제 인증서 철회 실행(가드 통과 후). user=실행자(2인승인 시 승인자=admin). 되돌릴 수 없음·통지."""
+    _lock_renewal_lineage(db, c.case_id)
     c, cert = _mutate_certificate(db, c.case_id, "revoke", reason)
     sm.record_event(db, c, c.status, c.status, "certificate.revoke", user["role"], user["uid"],
                     {"certificate_no": cert.certificate_no, "reason": (reason or "").strip() or None})
@@ -23721,8 +23801,33 @@ def _renewal_root(db, case_id):
     return case_id
 
 
+def _lock_renewal_lineage(db, case_id):
+    """최초 변경 전에 전체 계보를 정렬 잠금하고 종결 재귀에서 재사용한다."""
+    cached = db.info.get("case_close_lineage")
+    state = db.info.get("case_locks")
+    if (cached and state and cached[0] is db.get_transaction() is state[0]
+            and case_id in cached[1] and cached[1] <= state[1]):
+        return cached[1]
+
+    def resolve():
+        ids, pending = set(), [case_id]
+        while pending:
+            cid = pending.pop()
+            if cid in ids:
+                continue
+            ids.add(cid)
+            pending.extend(child.case_id for child in _renewal_children(db, cid))
+        return ids
+
+    ids = database.lock_case_set(db, resolve)
+    db.info["case_close_lineage"] = (db.get_transaction(), ids)
+    return ids
+
+
 def _cancel_pending_renewals(db, c, user, reason):
+    _lock_renewal_lineage(db, c.case_id)
     for child in _renewal_children(db, c.case_id):
+        child = refresh_case(db, child)
         if not sm.is_terminal(child.status) and not _own_cert(db, child.case_id):
             _close_case(db, child, user, "cancelled", "부모 케이스 종결: " + reason,
                         action="case.renew.cancelled")
@@ -23733,6 +23838,7 @@ def _close_case(db, c, user, to_status, reason, action="case.close", keep_approv
     ① WorkflowEvent(사유 포함) ② 미결 인보이스(draft/invoice_created/waiting_payment) → cancelled
     ③ 진행 중 승인요청(pending) → cancelled(keep_approval_actions 의 액션은 호출자가 직접 마무리하므로 둔다)
     ④ 신청자·컨설턴트 알림. 상태 전이 가능 여부는 호출자가 sm.allowed 로 먼저 검사한다."""
+    _lock_renewal_lineage(db, c.case_id)
     c = _guard_case_mutation(db, c.case_id)
     if not sm.allowed(c.status, to_status):
         raise HTTPException(409, {"code": "INVALID_TRANSITION", "from": c.status, "to": to_status})
