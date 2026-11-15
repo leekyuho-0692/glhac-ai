@@ -1,0 +1,268 @@
+"""DocumentAsset.fields의 유일한 저장 경계. flush/commit은 호출자가 소유한다.
+
+OCR/LLM/주소 조회 전에 깊은 복사한 base_fields와 저장할 new_fields를 전달한다.
+잠금 뒤 최신값과 3-way 병합하며 같은 트랜잭션의 앞선 미커밋 결정도 읽는다.
+"""
+from copy import deepcopy
+from weakref import ref
+
+from sqlalchemy import inspect
+from sqlalchemy.orm.exc import NoResultFound
+
+from . import db as database, models
+from .intake import aggregate_fields
+
+
+# 양쪽이 바꾼 키의 충돌 정책. '*'와 표에 없는 예약 키는 새 추출값을 쓴다.
+# 새 예약 키 누락은 tests/test_doc_write_service.py의 소스 검사로 검출한다.
+FIELD_POLICIES = {
+    "*": "replace",
+    "_sources": "replace",
+    "_field_meta": "replace",
+    "_classification": "replace",
+    "_rule_omissions": "replace",
+    "_measurement_excluded": "replace",
+    "_rejected_identifiers": "replace",
+    "_missing_fields": "replace",
+    "_empty": "replace",
+    "_cert_not_valid": "replace",
+    "_analysis": "replace",
+    "_ai_budget": "replace",
+    "_truncated": "replace",
+    "_truncations": "replace",
+    "_tail_screening": "replace",
+    "_gpt_read_spans": "replace",
+    "_original_not_stored": "replace",
+    "_llm_error": "error",
+    "_ocr_error": "error",
+    "_verify": "verification",
+    "_autofill": "decision",
+    "_autofill.applied": "decision",
+    "_autofill.changes": "decision",
+    "_autofill.conflicts": "decision",
+    "_autofill.product_pending": "decision",
+    "_scope_pending": "decision",
+    "_counts_as_evidence": "evidence",  # 원본 문서의 증빙 지정: 같은 원본의 재추출에서도 보존
+    "_upload_id": "preserve",
+}
+_STAGED_FIELDS = "intake_write_service.fields"
+_MISSING = object()
+_DECISION_POLICIES = {"decision", "verification", "preserve", "evidence"}
+
+
+def aggregate_document_fields(documents):
+    """저장된 문서만 집계한다. 잠금 중에는 주소의 외부 우편번호 조회를 하지 않는다.
+
+    집계기의 조회 옵션이 없으므로 주소를 제외한 목록·식별값을 먼저 계산하고,
+    주소는 같은 선택·완성 규칙의 순수 계산으로 복원한다. 문서 JSON은 바꾸지 않는다.
+    """
+    from . import intake
+
+    rows, addresses = [], {"address": None, "factory_address": None}
+    for doc in documents:
+        fields = doc.fields or {}
+        rows.append({"doc_type": doc.doc_type, "text_full": doc.text_full,
+                     "fields": {key: value for key, value in fields.items()
+                                if key not in ("address", "factory_address")}})
+        if doc.doc_type in intake._APPLICANT_DOCS or doc.doc_type is None:
+            if not addresses["address"] and doc.doc_type != "factory_registration":
+                addresses["address"] = fields.get("address")
+            if not addresses["factory_address"]:
+                addresses["factory_address"] = (fields.get("factory_address") or
+                    (fields.get("address") if doc.doc_type == "factory_registration" else None))
+    agg = aggregate_fields(rows)
+    for key, prefix in (("address", ""), ("factory_address", "factory_")):
+        agg[key] = intake._complete_address(addresses[key], agg[prefix + "city"],
+                                            agg[prefix + "province"], agg[prefix + "country"])
+    return agg
+
+
+def _extracted_values(fields):
+    """확인 표시와 진단을 제외한 검증 대상 값. 거절된 식별자도 검산 입력이다."""
+    return {key: value for key, value in fields.items()
+            if not key.startswith("_") or key == "_rejected_identifiers"}
+
+
+def _decision_value(record):
+    return record.get("selected", record.get("value"))
+
+
+def reanalysis_document_fields(base_fields, extracted_fields):
+    """원본의 결정·회수 이력을 유지하려는 재분석의 쓰기 의도를 만든다.
+
+    최신 DB가 아닌 시작 스냅샷만 사용한다. 검증 무효화는 병합 전에 처리한다.
+    일반 저장의 누락 키는 삭제이므로 이 보존 의도는 호출부에서 명시한다.
+    """
+    return deepcopy({**{key: value for key, value in base_fields.items()
+                        if FIELD_POLICIES.get(key) in _DECISION_POLICIES},
+                     **extracted_fields})
+
+
+def _merge_value(base, latest, mine, *, prefer_latest):
+    if latest == base:
+        return mine
+    if mine == base or prefer_latest:
+        return latest
+    return mine
+
+
+def _replacement_autofill_fields(base, latest, mine):
+    """다른 값에 대한 확인을 새 적용값의 확인으로 옮기지 않는다."""
+    replaced = set()
+    for key, candidate in (mine.get("changes") or {}).items():
+        current = (latest.get("changes") or {}).get(key) or {}
+        original = (base.get("changes") or {}).get(key) or {}
+        if not all(isinstance(value, dict) for value in (candidate, current, original)):
+            continue
+        applied = mine.get("applied") or {}
+        value_changed = (_decision_value(candidate) != _decision_value(original) or
+                         key in applied and applied[key] != (base.get("applied") or {}).get(key, _MISSING))
+        if (candidate.get("status") == "applied" and current.get("status") == "confirmed"
+                and all(candidate.get(part) == current.get(part)
+                        for part in ("scope", "field", "facility_id"))
+                and _decision_value(candidate) != _decision_value(current)
+                and value_changed):
+            replaced.add(key)
+    return replaced
+
+
+def _merge_autofill(base, latest, mine, *, entries=False, replacements=()):
+    if latest == base:
+        return mine
+    if mine == base:
+        return latest
+    if not all(value is _MISSING or isinstance(value, dict) for value in (base, latest, mine)):
+        return latest
+    before, current, incoming = ({} if value is _MISSING else value for value in (base, latest, mine))
+    replaced = replacements if entries else _replacement_autofill_fields(before, current, incoming)
+    merged = {}
+    for key in before.keys() | current.keys() | incoming.keys():
+        values = tuple(fields.get(key, _MISSING) for fields in (before, current, incoming))
+        if not entries and key in ("changes", "applied"):
+            value = _merge_autofill(*values, entries=True, replacements=replaced)
+        else:
+            value = _merge_value(*values, prefer_latest=not (entries and key in replaced))
+        if value is not _MISSING:
+            merged[key] = deepcopy(value)
+    return _MISSING if not merged and (mine is _MISSING or latest is _MISSING) else merged
+
+
+def normalize_document_fields(new_fields, *, base_fields=None, current_fields=None, analysis=None, text=None,
+                              decision_keys=(),
+                              clear_verification=False, inputs_changed=False,
+                              prune_product_pending=False):
+    """쓰기 의도 정규화 → 3-way 병합. 누락과 None은 구분하고 입력을 바꾸지 않는다."""
+    if current_fields is not None and base_fields is None:
+        raise ValueError("A base_fields snapshot is required for existing documents")
+    base = base_fields or {}
+    current = current_fields or {}
+    incoming = deepcopy(dict(new_fields or {}))
+    inputs_changed = inputs_changed or (base_fields is not None and
+                                       _extracted_values(base) != _extracted_values(incoming))
+    error_keys = [key for key, policy in FIELD_POLICIES.items() if policy == "error"]
+    errors = {key: incoming[key] for key in error_keys if key in incoming}
+    if analysis is not None:
+        for source in (analysis.get("fields") or {}, getattr(text, "parse_fields", {})):
+            errors.update({key: source[key] for key in error_keys if key in source})
+        for key in error_keys:
+            if analysis.get(key[1:]) is not None:
+                errors[key] = analysis[key[1:]]
+    succeeded = (analysis is not None and bool((text or "").strip()) and not errors
+                 and not incoming.get("_empty") and not (incoming.get("_analysis") or {}).get("partial"))
+    for path in decision_keys:
+        if FIELD_POLICIES.get(path) not in _DECISION_POLICIES:
+            raise ValueError(f"Not a document decision key: {path}")
+    # base의 검증만 무효화한다. 병합 뒤 지우면 대기 중 커밋된 검증까지 잃는다.
+    if "_verify" not in decision_keys and (inputs_changed or (clear_verification and succeeded)):
+        incoming.pop("_verify", None)
+    if prune_product_pending:
+        from .intake import _prune_product_pending
+        incoming = _prune_product_pending(incoming)
+    fields = {}
+    for key in base.keys() | current.keys() | incoming.keys() | errors.keys():
+        policy = FIELD_POLICIES.get(key, FIELD_POLICIES["*"])
+        values = tuple(source.get(key, _MISSING) for source in (base, current, incoming))
+        if policy == "error":
+            value = errors.get(key, _MISSING if succeeded else current.get(key, _MISSING))
+        elif key == "_autofill":
+            value = _merge_autofill(*values)
+        else:
+            value = _merge_value(*values, prefer_latest=policy in _DECISION_POLICIES)
+        if value is not _MISSING:
+            fields[key] = deepcopy(value)
+    return fields
+
+
+def write_document_fields(db, doc_or_id, *, base_fields, new_fields, source, analysis=None, text=None,
+                          decision_keys=(),
+                          clear_verification=False, prune_product_pending=False,
+                          next_doc_type=None, next_text=None):
+    """케이스 잠금 → 최신 문서 조회 → 정책 → 대입. 저장한 fields를 반환한다.
+
+    new_fields는 dict 또는 최신 fields를 받아 dict를 만드는 순수 함수이다.
+    함수 안에서 외부 호출하거나 ORM 객체를 수정하지 않는다. 이 서비스는
+    autoflush도 막으므로 호출자의 여러 확인 명령을 중간 상태로 저장하지 않는다.
+    next_doc_type/next_text는 호출 직후 저장할 유형·본문도 유효성 비교에 포함한다.
+    text는 오류 정규화용 파서 결과이므로 실제로 저장할 본문과 구분한다.
+    base_fields=None은 잠금 후 최신값으로 즉시 계산하는 순수 함수에만 허용한다.
+    """
+    if not source:
+        raise ValueError("Document write source is required")
+    if base_fields is None and not callable(new_fields):
+        raise ValueError("A base_fields snapshot is required for precomputed fields")
+    base = deepcopy(base_fields)
+    # 호출자가 전달한 dict가 identity map의 JSON과 같은 객체여도 재조회에 안전하다.
+    incoming = new_fields if callable(new_fields) else deepcopy(new_fields)
+    with db.no_autoflush:
+        doc = db.get(models.DocumentAsset, doc_or_id) if isinstance(doc_or_id, str) else doc_or_id
+        if doc is None:
+            raise NoResultFound("Document not found")
+        state = inspect(doc)
+        if state.detached:
+            doc = db.get(models.DocumentAsset, doc.document_id)
+            if doc is None:
+                raise NoResultFound("Document not found")
+            state = inspect(doc)
+        if state.persistent and state.session is not db:
+            raise ValueError("Document belongs to a different session")
+        if state.persistent:
+            database.lock_chain_tail(db, "wf:" + doc.case_id)
+            # 케이스 행도 잠그되 profile_ext 등 호출자의 미저장 편집은 refresh하지 않는다.
+            db.query(models.CaseApplication.case_id).filter_by(case_id=doc.case_id).with_for_update().one()
+            transaction = db.get_nested_transaction() or db.get_transaction()
+            staged = state.info.get(_STAGED_FIELDS)
+            pending = (deepcopy(doc.fields) if staged and staged[0]() is transaction
+                       and state.dict.get("fields") is staged[1] else None)
+            # populate_existing은 confidence/review_status 등의 변경 추적도 지운다.
+            # fields 이외의 명시적 로컬 변경만 재적용하고 오래된 JSON은 가져오지 않는다.
+            local = {attr.key: deepcopy(attr.value) for attr in state.attrs
+                     if attr.key != "fields" and attr.history.has_changes()}
+            doc = db.get(models.DocumentAsset, doc.document_id,
+                         populate_existing=True, with_for_update=True)
+            if doc is None:
+                raise NoResultFound("Document not found")
+            current = pending if pending is not None else deepcopy(doc.fields or {})
+            previous_input = (doc.doc_type, doc.filename, doc.text_full or "")
+            for key, value in local.items():
+                setattr(doc, key, value)
+        else:
+            # 아직 INSERT하지 않은 문서에는 잠글 행이 없다(생성자와 같은 정책).
+            current = deepcopy(doc.fields or {})
+            previous_input = (doc.doc_type, doc.filename, doc.text_full or "")
+        if callable(incoming):
+            if base is None:
+                base = deepcopy(current)
+            incoming = incoming(deepcopy(current))
+        inputs_changed = previous_input != (
+            next_doc_type if next_doc_type is not None else doc.doc_type,
+            doc.filename, next_text if next_text is not None else (doc.text_full or ""))
+        fields = normalize_document_fields(
+            incoming, base_fields=base, current_fields=current, analysis=analysis, text=text,
+            decision_keys=decision_keys,
+            clear_verification=clear_verification, inputs_changed=inputs_changed,
+            prune_product_pending=prune_product_pending)
+        doc.fields = fields
+        transaction = db.get_nested_transaction() or db.get_transaction()
+        if transaction is not None:
+            inspect(doc).info[_STAGED_FIELDS] = (ref(transaction), fields)
+        return fields

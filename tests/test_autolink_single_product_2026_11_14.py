@@ -1,5 +1,6 @@
 """제품 합치기·엄격한 문서별 자동연결·프로필 저장 경합의 운영 회귀."""
 import base64
+import copy
 import io
 import json
 import threading
@@ -285,7 +286,9 @@ def ingest(case, http, docs, route):
     db, c, _, _ = case
     if route == 'aggregate':
         result = m._apply_intake_autofill(db, c, {
-            'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+            'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+            base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+                db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
         db.commit()
         return result
     db.add_all([models.DocumentAsset(case_id=c.case_id, **doc) for doc in docs])
@@ -786,7 +789,9 @@ def test_extraction_retries_clear_errors_only_after_success(case, http, monkeypa
         monkeypatch.setattr(intake, 'parse_typed_text', lambda *args, **kwargs: result)
         if route == 'reupload':
             row = {**result, 'filename': doc.filename, 'content_b64': content, 'text_full': parsed_text}
-            applied = m._apply_intake_autofill(db, c, {'classified': [row], 'extracted': {}})
+            applied = m._apply_intake_autofill(db, c, {'classified': [row], 'extracted': {}},
+                base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+                    db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
             assert applied['dup_skipped'] == 1
             db.commit()
         else:
@@ -1050,6 +1055,7 @@ def test_reupload_preserves_fields_committed_by_frozen_reanalysis(case, http, mo
             upload_case = upload_db.get(models.CaseApplication, case_id)
             stale = upload_db.get(models.DocumentAsset, document_id)
             assert '_scope_pending' not in stale.fields
+            snapshot = copy.deepcopy(stale.fields)
             cached.set()
             assert resume.wait(10), '동결 재분석이 완료되지 않았습니다'
             assert '_scope_pending' not in stale.fields  # identity map은 여전히 이전 값이다.
@@ -1059,7 +1065,8 @@ def test_reupload_preserves_fields_committed_by_frozen_reanalysis(case, http, mo
                 incoming['content_b64'] = content
             docs = [incoming, document('face-MSDS.txt', [MSDS_NAME], ['Water', 'Salt'])]
             applied = m._apply_intake_autofill(upload_db, upload_case, {
-                'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+                'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+                base_fields_by_id={document_id: snapshot})
             upload_db.commit()
             return applied
 

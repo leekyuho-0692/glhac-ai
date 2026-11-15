@@ -30,6 +30,8 @@ from .db import Base, engine, get_db, SessionLocal, lock_chain_tail
 from . import models, schemas, state_machine as sm, screening, ai_local, auth, rbac
 from . import nav8
 from . import intake
+from .intake_write_service import (aggregate_document_fields, normalize_document_fields,
+                                   reanalysis_document_fields, write_document_fields)
 from .document_extraction import document_budget, current_budget
 # 앱의 주소 외부 전송은 명시적으로 켠 환경에서만 허용한다(선행 import에도 적용).
 intake._ZIP_LOOKUP = os.environ.get("GLHAC_ZIP_LOOKUP", "0") == "1"
@@ -7887,27 +7889,6 @@ def reclassify_document(document_id: str, body: schemas.DocTypeReq,
     return {"document_id": document_id, "doc_type": d.doc_type}
 
 
-def _set_document_fields(doc, fields, *, analysis=None, text=None):
-    """필드 교체·검토 갱신은 오류를 보존하고, 성공한 재분석만 이전 오류를 해제한다."""
-    fields = dict(fields or {})
-    errors = {key: fields[key] for key in ("_llm_error", "_ocr_error") if key in fields}
-    if analysis is not None:
-        for source in (analysis.get("fields") or {}, getattr(text, "parse_fields", {})):
-            errors.update({key: source[key] for key in ("_llm_error", "_ocr_error") if key in source})
-        for key in ("llm_error", "ocr_error"):
-            if analysis.get(key) is not None:
-                errors["_" + key] = analysis[key]
-    succeeded = (analysis is not None and bool((text or "").strip()) and not errors
-                 and not fields.get("_empty") and not (fields.get("_analysis") or {}).get("partial"))
-    for key in ("_llm_error", "_ocr_error"):
-        if key in errors:
-            fields[key] = errors[key]
-        elif not succeeded and key in (doc.fields or {}):
-            fields[key] = doc.fields[key]
-    doc.fields = fields
-    return fields
-
-
 def _autofill_key(value, field=""):
     return re.sub(r"\D" if field == "nib" else r"[\W_]+", "", str(value or "")).casefold()
 
@@ -8146,7 +8127,8 @@ def _apply_owned_autofill(db, c, doc):
     confirmed = [x for x in previous.get("conflicts", []) if x.get("status") == "confirmed"]
     f["_autofill"] = {**previous, "applied": {**(previous.get("applied") or {}), **applied},
                       "changes": changes, "conflicts": confirmed + conflicts}
-    _set_document_fields(doc, f)
+    write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=f, source="owned_autofill",
+                          decision_keys=("_autofill.applied", "_autofill.changes", "_autofill.conflicts"))
     if reason:
         applied["skipped"] = reason
     if conflicts:
@@ -8163,8 +8145,8 @@ def _lock_autofill_org_cases(db, org_id):
         lock_chain_tail(db, "wf:" + cid)
 
 
-def _mark_autofill_confirmed(doc, keys, user_id, obj, *, facility_id=None):
-    """이미 최신 조회한 문서에 확인 이력만 병합한다. 재조회·flush는 호출자가 맡는다."""
+def _mark_autofill_confirmed(db, doc, keys, user_id, obj, *, facility_id=None):
+    """확인 이력 변경만 공통 쓰기 서비스에 전달한다. flush는 호출자가 맡는다."""
     fields = dict(doc.fields or {})
     meta = dict(fields.get("_autofill") or {})
     changes = {k: dict(v) for k, v in meta.get("changes", {}).items()}
@@ -8181,7 +8163,8 @@ def _mark_autofill_confirmed(doc, keys, user_id, obj, *, facility_id=None):
             touched = True
     if touched:
         fields["_autofill"] = {**meta, "changes": changes}
-        _set_document_fields(doc, fields)
+        write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=fields,
+                              source="mark_autofill_confirmed", decision_keys=("_autofill.changes",))
 
 
 def _protect_autofill(db, keys, user_id, *, case_id=None, facility_id=None):
@@ -8203,7 +8186,7 @@ def _protect_autofill(db, keys, user_id, *, case_id=None, facility_id=None):
     for cid in case_ids:
         _lock_case(db, cid)
     for doc in docs.populate_existing():
-        _mark_autofill_confirmed(doc, keys, user_id, obj, facility_id=facility_id)
+        _mark_autofill_confirmed(db, doc, keys, user_id, obj, facility_id=facility_id)
 
 
 def _revert_failed_autofill(db, c, doc):
@@ -8253,13 +8236,15 @@ def _revert_failed_autofill(db, c, doc):
         change["status"] = "reverted"
     if changes:
         fields["_autofill"] = {**meta, "changes": changes, "conflicts": conflicts}
-        _set_document_fields(doc, fields)
+        write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=fields, source="revert_failed_autofill",
+                              decision_keys=("_autofill.changes", "_autofill.conflicts"))
 
 
 def _autofill_products(db, c, agg, documents, rejected_names=()):
     """명시적 병기만 별칭으로 저장한다. 문서 간 언어 차이는 기존 확인대기로 보낸다."""
     for doc in documents:
-        _set_document_fields(doc, intake._prune_product_pending(doc.fields or {}))
+        write_document_fields(db, doc, base_fields=None, new_fields=intake._prune_product_pending,
+                              source="prune_product_pending", decision_keys=("_autofill.product_pending",))
         if rejected_names:
             fields = dict(doc.fields)
             meta = dict(fields.get("_autofill") or {})
@@ -8267,7 +8252,8 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
                 meta["product_pending"] = [x for x in meta["product_pending"]
                                            if _norm_material(x["value"]) not in rejected_names]
                 fields["_autofill"] = meta
-            _set_document_fields(doc, fields)
+            write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=fields, source="reject_product_pending",
+                                  decision_keys=("_autofill.product_pending",))
     if not (agg.get("products") or agg.get("product_aliases") or rejected_names or
             any(x["kind"] == "product_names" for x in agg.get("pending", []))):
         return 0, 0
@@ -8341,7 +8327,8 @@ def _autofill_products(db, c, agg, documents, rejected_names=()):
                             "possible_product_ids": [p.product_id for p in matches]})
             meta["product_pending"] = pending
             f["_autofill"] = meta
-            _set_document_fields(doc, f)
+            write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=f, source="defer_product",
+                                  decision_keys=("_autofill.product_pending",))
 
     added, deferred = 0, 0
     material_keys = {_norm_material(n) for n in agg.get("materials", [])}
@@ -8438,7 +8425,11 @@ def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None):
             raise
         for doc in documents:
             fields = dict(doc.fields or {})
-            extracted = intake.aggregate_fields([{"doc_type": doc.doc_type, "fields": fields,
+            # 동결 보류에는 목록만 필요하다. 잠금 안에서 주소 조회를 다시 하지 않는다.
+            list_fields = {k: v for k, v in fields.items() if k in (
+                "product_names", "product_name_ko", "product_name_en", "material_names",
+                "_sources", "_rule_omissions")}
+            extracted = intake.aggregate_fields([{"doc_type": doc.doc_type, "fields": list_fields,
                                                   "text_full": doc.text_full}],
                                                  rejected_product_names=rejected_products)
             deferred = list(fields.get("_scope_pending") or []) + list(extracted.get("pending") or [])
@@ -8447,7 +8438,8 @@ def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None):
                              for value in extracted.get(bucket, [])]
             fields["_scope_pending"] = list({(x["kind"], x["value"]): x for x in deferred
                 if x["kind"] != "product_names" or _norm_material(x["value"]) not in rejected_products}.values())
-            _set_document_fields(doc, fields)
+            write_document_fields(db, doc, base_fields=deepcopy(doc.fields or {}), new_fields=fields, source="defer_scope",
+                                  decision_keys=("_scope_pending",))
         applied.update(scope_frozen=True, requires_scope_unlock=True,
                        pending=sum(len((d.fields or {}).get("_scope_pending") or []) for d in documents))
         return applied
@@ -8652,7 +8644,8 @@ def _verify_doc(db, d, c):
     """비동기 판정을 저장하고 실패한 문서의 미확인 자동 반영만 되돌린다."""
     doc_id, doc_type, filename = d.document_id, d.doc_type, d.filename
     case_id = c.case_id
-    text, fields, company = d.text_full or "", dict(d.fields or {}), c.company_name
+    text, fields, company = d.text_full or "", deepcopy(d.fields or {}), c.company_name
+    base_fields = deepcopy(fields)
     # 읽기 트랜잭션을 끝내고 모델을 기다린다. 300자 발췌는 전문 대신 쓸 수 없다.
     db.rollback()
     try:
@@ -8691,11 +8684,12 @@ def _verify_doc(db, d, c):
     for marker in res.get("_truncations", [res.get("_truncated")]):
         if isinstance(marker, dict) and marker.get("kind") == "verify_input":
             intake._record_truncation(fl, **marker)
-    _set_document_fields(d, fl)   # JSON 변경 감지를 위해 새 dict 를 대입한다
+    fl = write_document_fields(db, d, base_fields=base_fields, new_fields=fl, source="verify",
+                               decision_keys=("_verify",))
     unchanged = (d.doc_type == doc_type and (d.text_full or "") == text and
                  {k: v for k, v in fl.items() if not k.startswith("_")} ==
                  {k: v for k, v in fields.items() if not k.startswith("_")})
-    if c is not None and unchanged and res.get("verdict") == "fail":
+    if c is not None and unchanged and (fl.get("_verify") or {}).get("verdict") == "fail":
         _revert_failed_autofill(db, c, d)
     db.commit()
 
@@ -8770,6 +8764,7 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     doc_id, case_id = d.document_id, c.case_id
     filename, doc_type = intake._nfc(d.filename), d.doc_type
     data = base64.b64decode(d.content_b64.split(",")[-1])
+    base_fields = deepcopy(d.fields or {})
     # 모델/OCR 대기 중 종결·수동 확인이 가능하도록 쓰기와 잠금은 뒤로 미룬다.
     db.rollback()
     text = parse_file(filename, data, dpi=dpi)
@@ -8801,6 +8796,8 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     _fs = r.get("field_sources") or {}
     if _fs:
         fl["_sources"] = _fs
+    # 집계의 주소 조회도 쓰기 잠금 전에 끝낸다.
+    agg = aggregate_fields([{"doc_type": doc_type, "fields": fl, "text_full": text}]) if apply else None
     # AI 호출이 실패했으면 그 사실을 문서에 남긴다. 남기지 않으면 '분석했는데 아무것도
     # 없는 서류'와 구분되지 않아, 사람이 다시 돌려야 한다는 걸 알 방법이 없다.
     # 검증 큐와 같은 잠금·종결 판정으로 최신 상태를 확인한 뒤에만 저장한다.
@@ -8816,18 +8813,19 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     prev = d.doc_type
     d.filename, d.doc_type = filename, doc_type
     d.confidence = float(r.get("confidence") or 0)
-    for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id"):
-        if key in (d.fields or {}):
-            fl[key] = d.fields[key]   # 재처리로 동결대기·검토 이력을 지우지 않는다.
-    _set_document_fields(d, intake._prune_product_pending(fl), analysis=r, text=text)
+    write_document_fields(db, d, base_fields=base_fields,
+                          new_fields=reanalysis_document_fields(base_fields, fl),
+                          source="reprocess", analysis=r, text=text,
+                          clear_verification=True, prune_product_pending=True, next_text=text or "")
     d.text_excerpt = (text or "")[:300]
     d.text_full = text or ""
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
+    # 병합에서 삭제·교체된 후보를 되살리지 않는다. 잠금 중 재집계는 외부 조회 없이 한다.
+    agg = aggregate_document_fields([d]) if apply else None
     # 저장 요청에서 OCR하지 않는다. 큐가 이미 추출한 본문으로만 편철한다.
     if apply:
         _autofile_evidence(db, c.case_id, d, allow_parse=False)
-    applied = (_apply_agg_to_case(db, c, aggregate_fields([{"doc_type": d.doc_type,
-                                                            "fields": d.fields, "text_full": d.text_full}]), documents=[d])
+    applied = (_apply_agg_to_case(db, c, agg, documents=[d])
                if apply else {"skipped": True})
     if apply:
         count = _apply_document_measurements(db, c, d)
@@ -8950,7 +8948,8 @@ def _confirm_autofill(db, c, choices, user):
         records[index].update(status="confirmed", selected=value, confirmed_by=user["uid"])
         meta["conflicts"] = records
         fields["_autofill"] = meta
-        _set_document_fields(d, fields)
+        write_document_fields(db, d, base_fields=deepcopy(d.fields or {}), new_fields=fields,
+                              source="confirm_autofill", decision_keys=("_autofill.conflicts",))
         key = (scope + "." if scope != "case" else "") + field
         protections.setdefault(conflict.get("facility_id"), set()).update(
             {key, "facility"} if scope.startswith("facility") else {key})
@@ -8959,7 +8958,7 @@ def _confirm_autofill(db, c, choices, user):
     for fid, keys in protections.items():
         for doc in documents.values():
             if fid or doc.case_id == c.case_id:
-                _mark_autofill_confirmed(doc, keys, user["uid"], facilities[fid] if fid else c,
+                _mark_autofill_confirmed(db, doc, keys, user["uid"], facilities[fid] if fid else c,
                                          facility_id=fid)
     if choices:
         db.flush()  # 최종 회사명+NIB와 모든 선택 이력을 함께 검증·저장한다.
@@ -9467,9 +9466,12 @@ def _sha256_b64(content_b64):
     return _hl.sha256(_raw).hexdigest()
 
 
-def _apply_intake_autofill(db, c, res):
+def _apply_intake_autofill(db, c, res, base_fields_by_id):
     """분류 결과 → DocumentAsset 저장 + 신청서 자동채움(회사/NIB/제품/원재료). 임시저장(commit은 호출측).
-    중복 방지: 같은 케이스에 동일 내용(file_hash) 또는 동일 파일명(내용없는 문서)은 재저장하지 않는다."""
+    중복 방지: 같은 케이스에 동일 내용(file_hash) 또는 동일 파일명(내용없는 문서)은 재저장하지 않는다.
+    base_fields_by_id는 파싱 전 스냅샷이며, 당시 문서가 없었으면 빈 dict를 전달한다."""
+    if base_fields_by_id is None:
+        raise ValueError("A base_fields_by_id snapshot is required before intake analysis")
     from sqlalchemy.orm import defer
     c = _lock_case(db, c.case_id)
     _assert_case_open(c)
@@ -9491,14 +9493,14 @@ def _apply_intake_autofill(db, c, res):
             db.flush()
             doc = db.get(models.DocumentAsset, doc.document_id, populate_existing=True)
             dup_skipped += 1
+            base_fields = deepcopy(base_fields_by_id.get(doc.document_id, {}))
             # 같은 원본 재업로드도 새 파서 결과는 반영하되 문서 식별자는 유지한다.
-            for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id"):
-                if key in (doc.fields or {}):
-                    fields[key] = doc.fields[key]
             doc.doc_type = d["doc_type"]
             doc.confidence = float(d.get("confidence") or 0)
-            _set_document_fields(doc, intake._prune_product_pending(fields), analysis=d,
-                                 text=d.get("text_full"))
+            write_document_fields(db, doc, base_fields=base_fields,
+                                  new_fields=reanalysis_document_fields(base_fields, fields), source="intake", analysis=d,
+                                  text=d.get("text_full"), clear_verification=True,
+                                  prune_product_pending=True, next_text=d.get("text_full") or "")
             doc.text_full = d.get("text_full") or ""
             doc.text_excerpt = d.get("excerpt") or ""
             doc.ocr_lines = d.get("ocr_lines")
@@ -9511,12 +9513,12 @@ def _apply_intake_autofill(db, c, res):
                 saved.append(doc)
             saved_rows.append((d, doc))
             continue
+        fields = normalize_document_fields(fields, analysis=d, text=d.get("text_full"))
         doc = models.DocumentAsset(case_id=c.case_id, filename=_nm, filename_en=_fn_en(_nm), doc_type=d["doc_type"],
-                                   confidence=float(d.get("confidence") or 0), fields=d.get("fields"),
+                                   confidence=float(d.get("confidence") or 0), fields=fields,
                                    text_excerpt=d.get("excerpt"), text_full=d.get("text_full") or "",
                                    ocr_lines=d.get("ocr_lines"), content_b64=d.get("content_b64"),
                                    content_type=d.get("content_type"), file_hash=_h)
-        _set_document_fields(doc, fields, analysis=d, text=d.get("text_full"))
         db.add(doc)
         saved.append(doc)
         saved_rows.append((d, doc))
@@ -9525,16 +9527,17 @@ def _apply_intake_autofill(db, c, res):
         else:
             _seen_n[_nm] = doc
     db.flush()
-    # 회사·공장 정보는 원문이 있는 개별 문서로만 반영한다. 무출처 집계는 목록에만 사용한다.
-    agg = res.get("extracted", {})
+    # 중복 업로드의 병합과 같은 묶음의 재진입까지 끝난 실제 저장값으로만 집계한다.
+    agg = aggregate_document_fields(saved)
+    res["extracted"] = agg
     applied = _apply_agg_to_case(db, c, agg, documents=saved)
     applied["dup_skipped"] = dup_skipped
     res["_verify_ids"] = [d.document_id for d in saved]
     # 집계 단계에서 이번에 생성한 원료만 연결했다. 기존 원료를 다시 훑지 않는다.
     applied.setdefault("links", 0)
     # 문서 타입별 개별 프로세서 — 공정흐름도/할랄인증서/SJPH매뉴얼을 각 엔티티로 매핑
-    for _d in res.get("classified", []):
-        _process_doc(db, c, _d, applied)
+    for doc in saved:
+        _process_doc(db, c, {"doc_type": doc.doc_type, "fields": doc.fields}, applied)
     # 출처 문서별 누적. 다른 CoA와 수동 입력의 fail을 뒤의 pass로 덮지 않는다.
     _mcount = sum(_apply_document_measurements(db, c, doc) for doc in saved)
     if _mcount:
@@ -9546,7 +9549,7 @@ def _apply_intake_autofill(db, c, res):
             c.draft_state = "saved"
     res["applied"] = applied
     for row, doc in saved_rows:
-        row["fields"], row["confidence"] = doc.fields, doc.confidence
+        row["fields"], row["doc_type"], row["confidence"] = doc.fields, doc.doc_type, doc.confidence
     return applied
 
 
@@ -9577,13 +9580,16 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     raw = base64.b64decode(b64_str)
     # ZIP 파일 검증
     from .intake import intake_zip, ArchiveError
+    base_fields_by_id = ({did: deepcopy(fields or {}) for did, fields in
+                         db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=case_id)}
+                        if db is not None else {})
     try:
         files = _validate_archive_upload(raw, deadline=deadline)
         res = intake_zip(raw, files=files, deadline=deadline)
     except ArchiveError as e:
         raise HTTPException(400, {"code": "BAD_ARCHIVE",
                                   "message": str(e)})
-    applied = _apply_intake_autofill(db, c, res)
+    applied = _apply_intake_autofill(db, c, res, base_fields_by_id)
     sm.record_event(db, c, c.status, c.status, "documents.intake", "ai", user["uid"],
                     {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
     _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
@@ -9702,6 +9708,10 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
         # 파일 시그니처 오류(HTTPException)는 여기서 415로 반환한다.
         archive_error = str(exc)
 
+    base_fields_by_id = ({did: deepcopy(fields or {}) for did, fields in
+                         db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=case_id)}
+                        if db is not None else {})
+
     def gen():
         """진행상황은 파일이 끝나는 즉시 흘려보낸다.
 
@@ -9737,7 +9747,7 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
         if res is None:
             yield ev({"type": "error", "message": "인테이크 결과가 없습니다"})
             return
-        applied = _apply_intake_autofill(db, c, res)
+        applied = _apply_intake_autofill(db, c, res, base_fields_by_id)
         sm.record_event(db, c, c.status, c.status, "documents.intake", "ai", user["uid"],
                         {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
         _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
@@ -10021,8 +10031,9 @@ def autofill_profile(case_id: str, force: bool = False,
             .filter(models.DocumentAsset.doc_type.in_(
                 ["nib_business_license", "factory_registration"])).all())
     analyses, classified = {}, []
+    base_fields_by_id = {d.document_id: deepcopy(d.fields or {}) for d in docs}
     for d in docs:
-        fields = d.fields or {}
+        fields = deepcopy(base_fields_by_id[d.document_id])
         doc_type = d.doc_type
         # 구 추출본에 주소가 없으면 원본 재추출·재분류로 보강
         if d.content_b64 and not fields.get("address"):
@@ -10056,22 +10067,27 @@ def autofill_profile(case_id: str, force: bool = False,
     for d in docs:
         fields = d.fields or {}
         if d.document_id in analyses:
+            base_fields = base_fields_by_id[d.document_id]
             r, text = analyses[d.document_id]
             if text is None:
-                fields = _set_document_fields(d, fields, analysis=r)
+                fields = write_document_fields(db, d, base_fields=base_fields, new_fields=base_fields,
+                                               source="profile_autofill", analysis=r)
             else:
                 updated = (dict(r["fields"]) if r.get("fields") else
-                           {k: v for k, v in fields.items() if k not in ("_llm_error", "_ocr_error")})
-                for key in ("_autofill", "_scope_pending", "_counts_as_evidence", "_upload_id", "_verify"):
-                    if key in fields:
-                        updated[key] = fields[key]
-                fields = _set_document_fields(d, updated, analysis=r, text=text)
+                           {k: v for k, v in base_fields.items() if k not in ("_llm_error", "_ocr_error")})
+                fields = write_document_fields(db, d, base_fields=base_fields,
+                                               new_fields=reanalysis_document_fields(base_fields, updated),
+                                               source="profile_autofill", analysis=r, text=text,
+                                               clear_verification=True,
+                                               next_doc_type=r.get("doc_type", d.doc_type) if r.get("fields") else d.doc_type,
+                                               next_text=(text or "") if r.get("fields") else (d.text_full or ""))
                 if r.get("fields"):
                     d.doc_type = r.get("doc_type", d.doc_type)
                     d.confidence = float(r.get("confidence") or 0)
                     d.text_excerpt = (text or "")[:300]
                     d.text_full = text or ""
                     reprocessed.append(d.document_id)
+    agg = aggregate_document_fields(docs)
     applied = []
     for d in docs:
         own = _apply_owned_autofill(db, c, d)
@@ -10279,13 +10295,13 @@ def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
     applied = {}
     from .intake import _ctype
     _b64 = _validate_upload(body.file_b64, body.filename)
+    f = normalize_document_fields(f, analysis=r, text=text)
     doc = models.DocumentAsset(document_id=models.uid(), case_id=case_id, filename=body.filename,
                                filename_en=_fn_en(body.filename), doc_type=eff_type,
                                confidence=float(r.get("confidence") or 0), fields=f,
                                text_excerpt=r.get("excerpt"), text_full=text,
                                content_b64=_b64,
                                content_type=_ctype(body.filename))
-    f = _set_document_fields(doc, f, analysis=r, text=text)
     if eff_type in intake._MATERIAL_SRC | intake._PRODUCT_SRC:
         agg = intake.aggregate_fields([{"doc_type": eff_type, "fields": f, "text_full": text}])
         added = _apply_agg_to_case(db, c, agg, documents=[doc])
@@ -10401,7 +10417,8 @@ def review_document(document_id: str, body: schemas.DocReviewReq,
         meta["changes"] = {k: {**v, "status": "confirmed", "confirmed_by": user["uid"]}
                            for k, v in meta.get("changes", {}).items()}
         fields["_autofill"] = meta
-        _set_document_fields(d, fields)
+        write_document_fields(db, d, base_fields=deepcopy(d.fields or {}), new_fields=fields,
+                              source="review_document", decision_keys=("_autofill.changes",))
     linked_ids = _certificate_material_ids(db, c.case_id, document_id)
     mats = db.query(models.Material).filter(models.Material.case_id == c.case_id,
                                             models.Material.material_id.in_(linked_ids)).all()

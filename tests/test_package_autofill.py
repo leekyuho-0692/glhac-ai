@@ -260,7 +260,9 @@ def test_distinct_document_names_in_one_upload_stay_pending(case,monkeypatch):
     docs=[{'doc_type':'product_list','filename':filename,'text_full':text,
            'fields':{'product_names':[name]},'confidence':.95}
           for filename,name,text in [('ko.txt',KO,'Product name: '+KO),('en.txt',EN,'Product name: '+EN)]]
-    m._apply_intake_autofill(db,c,{'classified':docs,'extracted':intake.aggregate_fields(docs)})
+    m._apply_intake_autofill(db,c,{'classified':docs,'extracted':intake.aggregate_fields(docs)},
+        base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     db.commit()
     assert names(db,c,models.Product)==[KO]
     assert any(x['value']==EN and x['reason']=='possible_same_product' for x in m._pending_extractions(db,c.case_id))
@@ -352,7 +354,9 @@ def test_p1_1_explicit_screening_risks_stay_pending(case, name):
     docs = [{'doc_type': 'material_list', 'filename': 'ingredients.txt',
              'text_full': f'Ingredients\nWater | 90%\n{name} | 10%',
              'fields': {'material_names': ['Water', name], '_sources': {'material_names': 'ai'}}}]
-    m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+    m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+        base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     db.commit()
     assert names(db, c, models.Material) == ['Water']
     assert name in {x['value'] for x in m._pending_extractions(db, c.case_id)}
@@ -372,7 +376,9 @@ def test_p1_2_non_ingredient_evidence_stays_pending(case, text, candidates):
     db, c = case
     docs = [{'doc_type': 'coa_msds', 'filename': 'coa.txt', 'text_full': text,
              'fields': {'material_names': candidates, '_sources': {'material_names': 'ai'}}}]
-    m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+    m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+        base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     db.commit()
     assert not names(db, c, models.Material)
     assert set(candidates) <= {x['value'] for x in m._pending_extractions(db, c.case_id)}
@@ -442,7 +448,9 @@ def test_p1_4_conflicting_aliases_across_documents_stay_pending(case, existing, 
             paired_document('바디용 세럼', 'Shared Serum', 'body.txt')]
     if reverse:
         docs.reverse()
-    m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+    m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+        base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     db.commit()
     assert names(db, c, models.Product) == ([existing] if existing else [])
     assert not (c.profile_ext or {}).get('product_aliases')
@@ -459,7 +467,9 @@ def test_p1_4_later_conflicting_document_cannot_extend_existing_alias(case, reve
         ko_names.reverse()
     for i, ko in enumerate(ko_names):
         docs = [paired_document(ko, 'Shared Serum', f'{i}.txt')]
-        m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+        m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+            base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+                db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
         db.commit()
     product = db.query(models.Product).filter_by(case_id=c.case_id).one()
     assert product.name == ko_names[0]
@@ -471,7 +481,9 @@ def test_p1_4_later_conflicting_document_cannot_extend_existing_alias(case, reve
 def test_p1_4_repeated_identical_pair_is_not_a_conflict(case):
     db, c = case
     docs = [paired_document(KO, EN, f'{i}.txt') for i in range(2)]
-    m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+    m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+        base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     db.commit()
     product = db.query(models.Product).filter_by(case_id=c.case_id).one()
     assert product.name == KO
@@ -498,7 +510,9 @@ def test_p2_6_reextract_clears_product_pending(case, monkeypatch, route):
     if route == 'intake':
         docs = [{'filename': doc.filename, 'doc_type': 'product_list', 'text_full': text,
                  'fields': {'product_names': ['Body Lotion']}}]
-        m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+        m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+            base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+                db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
         db.commit()
     else:
         reprocess(case, monkeypatch, text, {'product_names': ['Body Lotion']},
@@ -645,7 +659,9 @@ def test_r5_screening_failures_keep_ai_candidates_pending(case, monkeypatch, fai
     agg = intake.aggregate_fields([doc])
     assert agg['materials'] == []
     assert [item['value'] for item in agg['pending']] == ['1,2-Hexanediol']
-    m._apply_intake_autofill(db, c, {'classified': [doc], 'extracted': agg})
+    m._apply_intake_autofill(db, c, {'classified': [doc], 'extracted': agg},
+        base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     db.commit()
     assert not names(db, c, models.Material)
     assert [item['value'] for item in m._pending_extractions(db, c.case_id)] == ['1,2-Hexanediol']
@@ -673,7 +689,9 @@ def test_r5_screening_exception_after_aggregation_defers_registration(case, monk
     def unavailable(*args, **kwargs):
         raise RuntimeError('screening unavailable during registration')
     monkeypatch.setattr(m.screening, 'screen_merged', unavailable)
-    m._apply_intake_autofill(db, c, {'classified': [doc], 'extracted': agg})
+    m._apply_intake_autofill(db, c, {'classified': [doc], 'extracted': agg},
+        base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     db.commit()
     assert not names(db, c, models.Material)
     assert [item['value'] for item in m._pending_extractions(db, c.case_id)] == ['Water']
@@ -702,7 +720,9 @@ def _round3_ingest(case, monkeypatch, route, text, candidates):
     if route == 'aggregate':
         doc = {'doc_type': 'coa_msds', 'filename': 'MSDS.txt', 'text_full': text, 'fields': fields}
         agg = intake.aggregate_fields([doc])
-        applied = m._apply_intake_autofill(db, c, {'classified': [doc], 'extracted': agg})
+        applied = m._apply_intake_autofill(db, c, {'classified': [doc], 'extracted': agg},
+            base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+                db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
         db.commit()
         return applied
     if route == 'reprocess':
@@ -828,7 +848,9 @@ def test_round3_structural_save_also_validates_response_without_changing_parser(
     agg = intake.aggregate_fields([doc])
     assert agg['materials'] == ['Water'] and agg['pending'] == []
     monkeypatch.setattr(m.screening, 'screen_merged', lambda *args, **kwargs: failure)
-    applied = m._apply_intake_autofill(db, c, {'classified': [doc], 'extracted': agg})
+    applied = m._apply_intake_autofill(db, c, {'classified': [doc], 'extracted': agg},
+        base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     db.commit()
     assert applied['materials'] == 0 and applied['pending'] == 1
     assert not names(db, c, models.Material)
@@ -1151,7 +1173,9 @@ def test_round4_rejected_shared_alias_does_not_connect_unrelated_survivors(case,
     docs = [paired_document(name, shared, str(i) + '.txt') for i, name in enumerate(['얼굴용 세럼', '바디용 세럼'])]
     for doc in docs:
         doc['doc_type'] = kind
-    m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+    m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+        base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     db.commit()
     assert set(names(db, c, models.Product)) == ({'얼굴용 세럼', '바디용 세럼'} if kind == 'product_list' else set())
     assert {x['value'] for x in m._pending_extractions(db, c.case_id)} == (
@@ -1624,7 +1648,9 @@ def _p1_ingest(case, monkeypatch, http, route, text, fields):
     if route == 'aggregate':
         doc = {'doc_type': 'coa_msds', 'filename': 'MSDS.txt', 'text_full': text, 'fields': fields}
         result = m._apply_intake_autofill(db, c, {
-            'classified': [doc], 'extracted': intake.aggregate_fields([doc])})
+            'classified': [doc], 'extracted': intake.aggregate_fields([doc])},
+            base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+                db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
         db.commit()
         return result
     if route == 'reprocess':
@@ -1842,7 +1868,9 @@ def test_p1_each_material_uses_its_own_document_product(case):
              'text_full': f'Product name: {product_name}\nIngredients\n{name} 100%',
              'fields': {'material_names': [name], 'product_names': [product_name]}}
             for name, product_name in [('Water', 'Face Serum'), ('Salt', 'Body Serum')]]
-    applied = m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+    applied = m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+        base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+            db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     db.flush()
     water = db.query(models.Material).filter_by(case_id=c.case_id, name='Water').one()
     assert applied['materials'] == 2
@@ -1938,7 +1966,9 @@ def test_r3_shared_material_keeps_each_documents_uncertain_or_conflicting_produc
              'text_full': product_text + 'Ingredients\nSalt 100%', 'fields': {'material_names': ['Salt']}}
             for index, product_text in enumerate(product_texts)]
     if route == 'aggregate':
-        m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)})
+        m._apply_intake_autofill(db, c, {'classified': docs, 'extracted': intake.aggregate_fields(docs)},
+            base_fields_by_id={did: copy.deepcopy(fields or {}) for did, fields in
+                db.query(models.DocumentAsset.document_id, models.DocumentAsset.fields).filter_by(case_id=c.case_id)})
     else:
         for doc in docs:
             reprocess(case, monkeypatch, doc['text_full'], doc['fields'], apply=False)
