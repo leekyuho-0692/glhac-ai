@@ -3,6 +3,7 @@
 import os
 import sys
 import json
+import gc
 import httpx
 import threading
 from functools import wraps
@@ -12,8 +13,10 @@ from .document_extraction import document_lock, ai_concurrency, check_document_s
 OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # gemma3:12b — 한국어 성분명 garble 내성 우수(추출 정확도), 다국어 140+ (vs qwen2.5:7b 비교 결과)
 MODEL = os.environ.get("GLHAC_LLM", "gemma3:12b")
+# 이전 진단·테스트와의 호환용 이름. 엔진 참조는 _ocr_engines에만 보관한다.
 _ocr = None
-_ocr_lang = None   # 현재 _ocr 엔진의 언어 — 언어가 바뀌면 엔진을 교체한다(메모리는 1개만 유지)
+_ocr_lang = None
+_ocr_engines = {}  # 삽입 순서가 LRU 순서(오래된 언어 → 최근 사용 언어).
 _ocr_lock = threading.Lock()
 
 
@@ -21,9 +24,14 @@ def _serialized_ocr(fn):
     @wraps(fn)
     def locked(*args, **kwargs):
         from .intake import _check_archive_work
-        # 생성·언어 교체·predict의 지연 결과 순회까지 같은 락으로 보호한다.
+        # 캐시 조회·생성·축출·predict의 지연 결과 순회까지 같은 락으로 보호한다.
         with document_lock(_ocr_lock, check=_check_archive_work):
-            return fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
+            if not result["ok"]:
+                lang = kwargs.get("lang", args[1] if len(args) > 1 else "korean")
+                # 본체 반환 뒤에 회수해야 예외 traceback·지연 결과의 엔진 참조도 사라진다.
+                _discard_ocr_engine(lang)
+            return result
     return locked
 
 # 홍익AI/CHU-1 장기기억(장기 컨텍스트) — RAG 연동. 장애 시 로컬 폴백(차단 없음).
@@ -331,24 +339,46 @@ def _ocr_kwargs(lang):
                 enable_mkldnn=_OCR_MKLDNN)
 
 
+def _ocr_engine_cache_size():
+    # 메모리가 작은 환경은 1로 제한할 수 있다. 잘못된 설정도 OCR을 막지 않는다.
+    try:
+        return max(1, int(os.environ.get("GLHAC_OCR_ENGINE_CACHE_SIZE", "2")))
+    except ValueError:
+        return 2
+
+
+def _discard_ocr_engine(lang):
+    """_ocr_lock 안에서 캐시 참조를 먼저 끊고 predictor 순환 참조까지 회수한다."""
+    if lang in _ocr_engines:
+        del _ocr_engines[lang]
+        gc.collect()
+
+
+def _get_ocr_engine(lang):
+    """두 OCR 경로가 공유하는 언어별 LRU. 호출자는 _ocr_lock을 보유해야 한다."""
+    limit = _ocr_engine_cache_size()
+    eng = _ocr_engines.pop(lang, None)
+    # 새 엔진을 만들기 전에 축출해 교체 중에도 상한을 넘겨 보관하지 않는다.
+    # hit도 끝에 다시 삽입하므로 최근 사용 순서와 낮아진 상한을 함께 반영한다.
+    while len(_ocr_engines) >= limit:
+        _discard_ocr_engine(next(iter(_ocr_engines)))
+    if eng is None:
+        from paddleocr import PaddleOCR
+        try:
+            eng = PaddleOCR(**_ocr_kwargs(lang))
+        except TypeError:
+            # 옛 버전은 일부 인자를 모른다 — 언어만 주고 간다.
+            eng = PaddleOCR(lang=lang)
+    # 생성 성공 후에만 저장한다. ru 요청에 korean 엔진을 재사용하면 키릴을 오독한다.
+    _ocr_engines[lang] = eng
+    return eng
+
+
 @_serialized_ocr
 def _ocr_image_inproc(path, lang="korean"):
     """워커 안에서 실제로 도는 본체(그리고 GLHAC_OCR_MODE=inproc 경로)."""
-    global _ocr, _ocr_lang
     try:
-        # 언어가 바뀌면 엔진을 새로 만든다 — 예전엔 최초 언어(korean)로 고정돼, 상주 워커가
-        # 이후 lang=ru 요청도 korean 엔진으로 처리해 키릴을 라틴으로 오독했다(실측).
-        # 엔진은 한 번에 하나만 유지한다(korean+eslav 동시 상주 시 8GB 서버 메모리 초과 위험).
-        if _ocr is None or _ocr_lang != lang:
-            from paddleocr import PaddleOCR
-            _ocr = None   # 이전 엔진 참조 해제 후 생성 — 교체 중 이중 상주 최소화
-            try:
-                _ocr = PaddleOCR(**_ocr_kwargs(lang))
-            except TypeError:
-                # 옛 버전은 일부 인자를 모른다 — 언어만 주고 간다
-                _ocr = PaddleOCR(lang=lang)
-            _ocr_lang = lang
-        result = _ocr.predict(path)
+        result = _get_ocr_engine(lang).predict(path)
         lines = []
         for r in result:
             data = r if isinstance(r, dict) else getattr(r, "json", {}) or {}
@@ -373,24 +403,12 @@ def _ocr_image_inproc(path, lang="korean"):
 
 
 # ── B-5: 언어별 엔진 캐시 + 다국어 OCR 병합 (조직도 인니/한글 혼재 대응) ──
-# 기존 전역 _ocr(단일 엔진·최초 lang 고정)와 분리 — reconcile가 korean/latin을 함께 인식.
-_ocr_engines = {}
-
-
 @_serialized_ocr
 def ocr_image_lang(path, lang):
-    """언어별 엔진 캐시로 OCR(전역 _ocr 미오염). 미설치/실패 시 graceful.
+    """단일 언어 OCR과 같은 언어별 LRU로 인식. 미설치/실패 시 graceful.
     워커 프로세스 안에서 호출된다 — 여기서 다시 워커를 부르면 무한 재귀다."""
     try:
-        eng = _ocr_engines.get(lang)
-        if eng is None:
-            from paddleocr import PaddleOCR
-            try:
-                eng = PaddleOCR(**_ocr_kwargs(lang))
-            except TypeError:
-                eng = PaddleOCR(lang=lang)
-            _ocr_engines[lang] = eng
-        result = eng.predict(path)
+        result = _get_ocr_engine(lang).predict(path)
         lines = []
         for r in result:
             data = r if isinstance(r, dict) else getattr(r, "json", {}) or {}
@@ -409,6 +427,7 @@ def ocr_image_lang(path, lang):
 #   GLHAC_OCR_MODE      worker(기본) | inproc      — inproc 는 예전 동작(디버깅용)
 #   GLHAC_OCR_IDLE_SEC  유휴 종료 시간(기본 180초)
 #   GLHAC_OCR_TIMEOUT   한 건 제한시간(기본 180초)
+#   GLHAC_OCR_ENGINE_CACHE_SIZE  프로세스당 언어 엔진 상한(기본 2, 최소 1, LRU)
 OCR_MODE = (os.environ.get("GLHAC_OCR_MODE") or "worker").strip().lower()
 OCR_IDLE_SEC = float(os.environ.get("GLHAC_OCR_IDLE_SEC", "180"))
 OCR_TIMEOUT = float(os.environ.get("GLHAC_OCR_TIMEOUT", "180"))
