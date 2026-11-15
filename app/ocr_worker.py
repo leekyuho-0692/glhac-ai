@@ -20,6 +20,7 @@
 """
 import contextlib
 import json
+import logging
 import os
 import sys
 
@@ -30,6 +31,14 @@ def _run():
     with contextlib.redirect_stdout(sys.stderr):
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from app import ai_local
+
+    # Paddle의 대량 stderr와 구분되는 앱 경고만 부모가 journal로 전달한다.
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.WARNING)
+    handler.setFormatter(logging.Formatter(ai_local._OCR_WARNING_PREFIX + "%(message)s"))
+    ai_local._logger.handlers = [handler]
+    ai_local._logger.setLevel(logging.WARNING)
+    ai_local._logger.propagate = False
 
     for line in sys.stdin:
         line = line.strip()

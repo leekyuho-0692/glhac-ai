@@ -1,7 +1,9 @@
 """모델 다운로드 없이 inproc와 실제 상주 워커의 언어별 엔진 수명을 검증한다."""
 import gc
 import json
+import logging
 import os
+import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -62,9 +64,21 @@ class PaddleOCR:
     def predict(self, path):
         if self.failure == "predict":
             raise RuntimeError("poisoned predictor")
-        return self.results()
+        if path == "predict-corrupt.png":
+            raise Exception("Image read Error: predict-corrupt.png")
+        return self.results(path)
 
-    def results(self):
+    def results(self, path):
+        if path == "corrupt.png":
+            raise Exception("Image read Error: corrupt.png")
+        if path == "undecodable.png":
+            raise OSError("cannot identify image file 'undecodable.png'")
+        if path == "missing.png":
+            raise FileNotFoundError(2, "No such file or directory", path)
+        if path == "unreadable.png":
+            raise PermissionError(13, "Permission denied", path)
+        if path == "paddlex-missing.png":
+            raise Exception("Not found any files in path: paddlex-missing.png")
         text = {"korean": "한국어 판독", "ru": "Русский текст", "id": "Bahasa Indonesia"}
         result = Result(rec_texts=[text[self.lang]],
                         rec_scores=[BadScore() if self.failure == "decode" else 0.98],
@@ -330,3 +344,108 @@ def test_successful_cache_hits_do_not_collect(cyclic_ocr, monkeypatch):
         cyclic_ocr.recognize(lang, multi=bool(index % 2))
     assert collections == []
     assert cyclic_ocr.releases() == []
+
+
+@pytest.mark.parametrize("multi", [False, True])
+@pytest.mark.parametrize("path", ["corrupt.png", "predict-corrupt.png", "undecodable.png",
+                                  "missing.png", "unreadable.png", "paddlex-missing.png"])
+def test_input_failure_preserves_cached_engine(cyclic_ocr, multi, path):
+    cyclic_ocr.recognize("korean", multi=multi)
+    process = ai_local._w["proc"] if cyclic_ocr.mode == "worker" else None
+    result = (ai_local.ocr_text_multi(path, ["korean"]) if multi
+              else ai_local.ocr_image(path, "korean"))
+    assert result["ok"] is False
+    if multi:
+        assert result == {"ok": False, "text": "", "langs_used": []}
+    else:
+        assert result["error_kind"] == "input"
+    assert cyclic_ocr.releases() == []
+    cyclic_ocr.recognize("korean", multi=multi)
+    assert [e["lang"] for e in cyclic_ocr.events()] == ["korean"]
+    if cyclic_ocr.mode == "worker":
+        assert ai_local._w["proc"] is process
+
+
+@pytest.mark.parametrize("entry", [ai_local._ocr_image_inproc, ai_local.ocr_image_lang])
+@pytest.mark.parametrize("failure", ["constructor", "model_file", "unknown"])
+def test_engine_failures_are_not_misclassified_as_input(monkeypatch, entry, failure):
+    engines = []
+
+    class Engine:
+        def __init__(self, **kwargs):
+            engines.append(self)
+            if failure == "constructor":
+                raise RuntimeError("Image read Error: model initialization")
+
+        def predict(self, path):
+            if failure == "model_file":
+                raise FileNotFoundError(2, "No such file or directory", "model.json")
+            raise RuntimeError("unrecognized inference failure")
+
+    monkeypatch.setattr(ai_local, "_ocr_engines", {})
+    monkeypatch.setitem(sys.modules, "paddleocr", SimpleNamespace(PaddleOCR=Engine))
+    for _ in range(2):
+        result = entry("image.png", "korean")
+        assert result["ok"] is False
+        assert result.get("error_kind") != "input"
+        assert ai_local._ocr_engines == {}
+    assert len(engines) == 2
+
+
+@pytest.mark.parametrize("cached_ocr", ["worker"], indirect=True)
+@pytest.mark.parametrize("warning", ["constructor", "recognition"])
+def test_worker_app_warnings_reach_parent_logger(cached_ocr, monkeypatch, caplog, warning):
+    if warning == "constructor":
+        monkeypatch.setenv("GLHAC_TEST_OCR_LEGACY", "1")
+        expected = "PaddleOCR constructor TypeError"
+    else:
+        monkeypatch.setenv("GLHAC_OCR_DET_MODEL", "test_detection_model")
+        expected = "cannot resolve the default recognition model"
+    with caplog.at_level(logging.WARNING, logger="app.ai_local"):
+        cached_ocr.recognize("korean")
+        reader = ai_local._w["stderr_reader"]
+        ai_local._worker_stop()
+    assert not reader.is_alive()
+    messages = [r.getMessage() for r in caplog.records if r.name == "app.ai_local"]
+    assert sum(expected in message for message in messages) == 1
+
+
+@pytest.mark.parametrize("stop", ["normal", "force", "exit"])
+def test_worker_drains_noisy_stderr_and_reader_exits(monkeypatch, caplog, stop):
+    ai_local._worker_stop(force=True)
+    monkeypatch.setattr(ai_local, "OCR_TIMEOUT", 10)
+    # stderr의 파이프 용량보다 훨씬 많은 비경고 출력 뒤에도 JSON 응답이 와야 한다.
+    script = '''
+import os, sys
+for line in sys.stdin:
+    for _ in range(256):
+        os.write(2, b"paddle progress " + b"x" * 8192 + b"\\xff\\n")
+    os.write(2, b"third-party WARNING: discard this\\n")
+    os.write(2, b"GLHAC_OCR_WARN test warning from child\\n")
+    print('{"ok": true}', flush=True)
+    if sys.argv[1] == "exit":
+        break
+'''
+    popen = subprocess.Popen
+
+    def fake_worker(command, **kwargs):
+        return popen([sys.executable, "-u", "-c", script, stop], **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_worker)
+    try:
+        with caplog.at_level(logging.WARNING, logger="app.ai_local"):
+            assert ai_local._worker_call({"op": "ping"}) == {"ok": True}
+            process, reader = ai_local._w["proc"], ai_local._w["stderr_reader"]
+            assert reader.daemon
+            if stop == "exit":
+                process.wait(timeout=5)
+                reader.join(timeout=1)
+                assert not reader.is_alive()
+            ai_local._worker_stop(force=stop == "force")
+        assert process.poll() is not None
+        assert not reader.is_alive()
+        assert process.stderr.closed
+        assert [r.getMessage() for r in caplog.records if r.name == "app.ai_local"] == [
+            "OCR worker: test warning from child"]
+    finally:
+        ai_local._worker_stop(force=True)

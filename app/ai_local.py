@@ -20,6 +20,31 @@ _ocr_lang = None
 _ocr_engines = {}  # 삽입 순서가 LRU 순서(오래된 언어 → 최근 사용 언어).
 _ocr_lock = threading.Lock()
 _logger = logging.getLogger(__name__)
+_OCR_WARNING_PREFIX = "GLHAC_OCR_WARN "
+# PaddleX/OpenCV/Pillow의 알려진 입력 읽기·디코딩 실패만 예외로 둔다.
+# 여기에 없는 predict 오류는 엔진 손상 가능성이 있으므로 기존처럼 폐기한다.
+_OCR_INPUT_ERROR_MESSAGES = (
+    "image read error", "cannot identify image file", "image file is truncated",
+    "broken data stream when reading image file", "failed to decode image",
+    "could not decode image", "cannot decode image",
+    "not found any files in path:", "not found any file in ",
+)
+
+
+def _ocr_failure(exc, path, *, engine_ready):
+    result = {"ok": False, "error": str(exc)}
+    if engine_ready:
+        # 모델 파일이 없거나 읽히지 않는 경우를 입력 파일 오류로 오인하지 않는다.
+        input_file_error = (
+            isinstance(exc, (FileNotFoundError, PermissionError, IsADirectoryError))
+            and exc.filename is not None
+            and isinstance(path, (str, bytes, os.PathLike))
+            and os.path.abspath(os.fsdecode(exc.filename)) == os.path.abspath(os.fsdecode(path))
+        )
+        if input_file_error or any(message in str(exc).lower()
+                                   for message in _OCR_INPUT_ERROR_MESSAGES):
+            result["error_kind"] = "input"
+    return result
 
 
 def _serialized_ocr(fn):
@@ -29,7 +54,7 @@ def _serialized_ocr(fn):
         # 캐시 조회·생성·축출·predict의 지연 결과 순회까지 같은 락으로 보호한다.
         with document_lock(_ocr_lock, check=_check_archive_work):
             result = fn(*args, **kwargs)
-            if not result["ok"]:
+            if not result["ok"] and result.get("error_kind") != "input":
                 lang = kwargs.get("lang", args[1] if len(args) > 1 else "korean")
                 # 본체 반환 뒤에 회수해야 예외 traceback·지연 결과의 엔진 참조도 사라진다.
                 _discard_ocr_engine(lang)
@@ -414,8 +439,10 @@ def _get_ocr_engine(lang):
 @_serialized_ocr
 def _ocr_image_inproc(path, lang="korean"):
     """워커 안에서 실제로 도는 본체(그리고 GLHAC_OCR_MODE=inproc 경로)."""
+    engine = None
     try:
-        result = _get_ocr_engine(lang).predict(path)
+        engine = _get_ocr_engine(lang)
+        result = engine.predict(path)
         lines = []
         for r in result:
             data = r if isinstance(r, dict) else getattr(r, "json", {}) or {}
@@ -436,7 +463,7 @@ def _ocr_image_inproc(path, lang="korean"):
                 lines.append(item)
         return {"ok": True, "lines": lines}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)}
+        return _ocr_failure(e, path, engine_ready=engine is not None)
 
 
 # ── B-5: 언어별 엔진 캐시 + 다국어 OCR 병합 (조직도 인니/한글 혼재 대응) ──
@@ -444,8 +471,10 @@ def _ocr_image_inproc(path, lang="korean"):
 def ocr_image_lang(path, lang):
     """단일 언어 OCR과 같은 언어별 LRU로 인식. 미설치/실패 시 graceful.
     워커 프로세스 안에서 호출된다 — 여기서 다시 워커를 부르면 무한 재귀다."""
+    engine = None
     try:
-        result = _get_ocr_engine(lang).predict(path)
+        engine = _get_ocr_engine(lang)
+        result = engine.predict(path)
         lines = []
         for r in result:
             data = r if isinstance(r, dict) else getattr(r, "json", {}) or {}
@@ -455,7 +484,7 @@ def ocr_image_lang(path, lang):
                 lines.append({"text": t, "confidence": float(s)})
         return {"ok": True, "lines": lines}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)}
+        return _ocr_failure(e, path, engine_ready=engine is not None)
 
 
 # ── OCR 워커 ────────────────────────────────────────────────────────────
@@ -469,7 +498,7 @@ OCR_MODE = (os.environ.get("GLHAC_OCR_MODE") or "worker").strip().lower()
 OCR_IDLE_SEC = float(os.environ.get("GLHAC_OCR_IDLE_SEC", "180"))
 OCR_TIMEOUT = float(os.environ.get("GLHAC_OCR_TIMEOUT", "180"))
 
-_w = {"proc": None, "last": 0.0, "reaper": None}
+_w = {"proc": None, "last": 0.0, "reaper": None, "stderr_reader": None}
 _w_lock = threading.Lock()
 
 
@@ -482,6 +511,18 @@ def _worker_alive():
     return p is not None and p.poll() is None
 
 
+def _drain_worker_stderr(stream):
+    """진행 로그도 계속 읽어 파이프를 비우고 앱 경고만 부모 로그에 남긴다."""
+    try:
+        with stream:
+            for line in stream:
+                if line.startswith(_OCR_WARNING_PREFIX):
+                    _logger.warning("OCR worker: %s", line[len(_OCR_WARNING_PREFIX):].rstrip())
+    except (OSError, ValueError):
+        # 종료 중 닫힌 파이프는 워커 오류로 다시 보고하지 않는다.
+        pass
+
+
 def _worker_start():
     import subprocess
     import threading
@@ -490,7 +531,11 @@ def _worker_start():
     _w["proc"] = subprocess.Popen(
         [sys.executable, "-m", "app.ocr_worker"], cwd=root,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1)
+    # 전역 proc를 다시 조회하지 않아 이전 워커의 reader가 새 워커를 건드리지 않는다.
+    _w["stderr_reader"] = threading.Thread(
+        target=_drain_worker_stderr, args=(_w["proc"].stderr,), daemon=True)
+    _w["stderr_reader"].start()
     _w["last"] = _t.time()
 
     def reap():
@@ -512,7 +557,9 @@ def _worker_start():
 def _worker_stop(*, force=False):
     import subprocess
     p = _w["proc"]
+    reader = _w.get("stderr_reader")
     _w["proc"] = None
+    _w["stderr_reader"] = None
     if p is None:
         return
     try:
@@ -539,6 +586,9 @@ def _worker_stop(*, force=False):
                     pipe.close()
                 except OSError:
                     pass
+        if reader is not None:
+            # 자식 종료 후 EOF까지 drain하고 reader가 자신의 stderr를 닫게 한다.
+            reader.join(timeout=1)
 
 
 def ocr_worker_status():
