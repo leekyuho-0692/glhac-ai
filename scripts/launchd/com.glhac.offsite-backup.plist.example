@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.glhac.offsite-backup</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>&lt;REPO_PATH&gt;/scripts/offsite_backup_pull.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>4</integer>
+        <key>Minute</key><integer>30</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>TZ</key><string>Asia/Seoul</string>
+        <key>GLHAC_BACKUP_HOST</key><string>&lt;HOST&gt;</string>
+        <key>GLHAC_BACKUP_USER</key><string>rocky</string>
+        <key>GLHAC_BACKUP_KEY</key><string>&lt;KEY_PATH&gt;</string>
+        <key>GLHAC_BACKUP_REMOTE_DIR</key><string>/var/backups/glhac</string>
+        <key>GLHAC_BACKUP_LOCAL_DIR</key><string>&lt;LOCAL_DIR&gt;</string>
+        <key>GLHAC_BACKUP_MAX_AGE_HOURS</key><string>36</string>
+        <key>GLHAC_BACKUP_NOTIFY</key><string>1</string>
+    </dict>
+    <key>StandardOutPath</key><string>&lt;LOCAL_DIR&gt;/offsite-backup.stdout.log</string>
+    <key>StandardErrorPath</key><string>&lt;LOCAL_DIR&gt;/offsite-backup.stderr.log</string>
+    <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>
