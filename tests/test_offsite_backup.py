@@ -979,8 +979,9 @@ def test_launchd_example_schedule_and_absolute_paths():
         config = plistlib.load(stream)
     assert config["Label"] == "com.glhac.offsite-backup"
     assert config["StartCalendarInterval"] == {"Hour": 4, "Minute": 30}
-    assert config["ProgramArguments"] == ["/bin/bash", "<REPO_PATH>/scripts/offsite_backup_pull.sh"]
+    assert config["ProgramArguments"] == ["<INSTALL_DIR>/glhac-offsite-backup"]
     assert config["EnvironmentVariables"]["GLHAC_BACKUP_HOST"] == "<HOST>"
     assert config["EnvironmentVariables"]["GLHAC_BACKUP_KEY"] == "<KEY_PATH>"
+    assert config["EnvironmentVariables"]["GLHAC_BACKUP_MIRROR_DIR"] == "<MIRROR_DIR>"
     for key in ("StandardOutPath", "StandardErrorPath"):
         assert config[key].startswith("<LOCAL_DIR>/")

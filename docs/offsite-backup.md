@@ -4,7 +4,7 @@
 
 ## 설정
 
-macOS 기본 Bash 3.2, ssh, rsync, gzip, `/usr/bin/sqlite3`, shasum, osascript와 기본 파일 도구를 사용한다. Homebrew/Python은 실행에 필요 없다.
+macOS 기본 Bash 3.2, ssh, rsync, gzip, `/usr/bin/sqlite3`, shasum, osascript와 기본 파일 도구를 사용한다. Homebrew/Python은 실행에 필요 없다. 전용 런처를 빌드할 때만 Xcode Command Line Tools의 `cc`와 macOS의 `codesign`이 필요하다.
 
 | 환경변수 | 기본값 / 의미 |
 |---|---|
@@ -31,7 +31,41 @@ macOS 기본 Bash 3.2, ssh, rsync, gzip, `/usr/bin/sqlite3`, shasum, osascript�
 
 아래 명령은 설치자가 맥미니에서 실행할 절차다. 예제 파일만 생성한 상태에서는 작업이 등록되거나 서버에 접속하지 않는다.
 
-1. 보관 디렉터리를 먼저 만든다. launchd는 스크립트 시작 전에 stdout/stderr 파일을 열기 때문에 경로가 미리 있어야 한다.
+1. 신뢰하는 소스에서 백업 스크립트를 **바이너리에 내장하여 빌드**한다. `sudo` 없이 실행한다. 아래 기본 호출은 저장소의 `scripts/offsite_backup_pull.sh`를 읽는다. 빌드 스크립트의 두 번째 인자로 다른 소스 스크립트 경로를 지정할 수 있으며, 개발 테스트는 이 방법으로 가짜 스크립트만 내장·실행한다.
+
+   ```bash
+   launcher_build_dir=$(mktemp -d "${TMPDIR:-/tmp}/glhac-offsite-build.XXXXXX")
+   /bin/bash /Users/dany/glhac-wt-residual/scripts/launcher/build_launcher.sh \
+     "$launcher_build_dir/glhac-offsite-backup"
+   ```
+
+   빌드 스크립트는 소스를 임시 복사하고 같은 바이트로 C 헤더의 배열과 SHA-256을 만든다. 빈 스크립트, NUL 바이트, 64KiB(65,536바이트) 초과 입력은 거부한다. `cc -O2 -Wall -Wextra`로 컴파일한 뒤 `codesign --force --sign - --options runtime --identifier com.glhac.offsite-backup.launcher`로 애드혹 서명한다. `codesign -dv` 출력에 `runtime` 플래그와 `0x10000` 비트가 있는지 확인하며, 없으면 실패한다. macOS에 따라 `flags=0x10000(runtime)` 또는 `flags=0x10002(adhoc,runtime)`으로 표시될 수 있다. 서명도 `codesign --verify --strict`로 검증한다. 엔타이틀먼트는 추가하지 않으며 `disable-library-validation`, `allow-dyld-environment-variables` 예외도 사용하지 않는다.
+
+   빌드 출력에 내장 스크립트 크기와 SHA-256을 남기고, `<output-path>.sha256`에는 **내장한 스크립트 원문의 해시** 한 줄을 저장한다. 바이너리 자체의 해시가 아니며, 런처는 이 기록 파일을 실행 시 읽지 않는다.
+
+2. 로그인한 사용자 소유의 고정 설치 디렉터리에 서명된 런처와 해시 기록을 설치한다. 설치 디렉터리는 0700으로 유지하고, `~/Downloads`나 외장 볼륨 대신 내장 디스크의 아래 경로를 사용한다.
+
+   ```bash
+   launcher_dir="$HOME/Library/Application Support/GLHAC/offsite-backup"
+   mkdir -p "$launcher_dir"
+   chmod 700 "$launcher_dir"
+   install -m 700 "$launcher_build_dir/glhac-offsite-backup" \
+     "$launcher_dir/glhac-offsite-backup"
+   install -m 600 "$launcher_build_dir/glhac-offsite-backup.sha256" \
+     "$launcher_dir/glhac-offsite-backup.sha256"
+   ```
+
+   외부 `offsite_backup_pull.sh`는 설치하지 않는다. 런처는 파일 경로를 찾거나 `lstat`로 검사하지 않고 `/bin/bash --noprofile --norc -c <내장스크립트> glhac-offsite-backup`으로 실행한다. 현재 작업 디렉터리, 원본 소스나 인접 파일의 변경·삭제는 이미 빌드한 실행 내용에 영향을 주지 않는다. `--version`을 포함해 인자를 하나라도 주면 종료코드 2로 거부한다.
+
+   **스크립트를 수정하면 반드시 런처를 재빌드·재설치하고 전체 디스크 접근 권한(FDA)을 다시 등록한다.** 외부 `.sh` 파일 복사만으로 실행 내용은 갱신되지 않는다.
+
+3. **시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한 → + → 설치된 `glhac-offsite-backup` 런처 파일 선택** 순서로 FDA를 등록하고, 해당 항목을 켠다. 파일 선택 창에서 `⌘⇧G`를 눌러 설치 디렉터리의 절대경로를 입력할 수 있다. 선택 대상은 위에서 설치한 실행 파일이다. **`/bin/bash`에 권한을 주지 않는다.**
+
+   launchd가 서명된 런처를 직접 실행하도록 아래 plist를 설정한다. 런처는 `/bin/bash`를 `posix_spawn`으로 자식으로 띄우고 종료할 때까지 살아 있어 TCC 책임 프로세스로 유지되도록 설계했다. 자신을 `exec`로 Bash로 교체하지 않으며, 실제 TCC 귀속과 볼륨 접근은 설치 후 launchd 실행으로 확인한다. SIGTERM/SIGINT/SIGHUP을 자식에게 전달하고 `waitpid`로 회수한다. 자식 종료코드는 그대로, 신호 종료는 `128 + 신호 번호`로 반환한다.
+
+   자식 환경에는 `GLHAC_BACKUP_*`와 정확히 `HOME`, `TZ`, `LANG`, `LC_ALL`, `USER`, `LOGNAME`, `TMPDIR`인 변수만 복사하고, `PATH`는 `/usr/bin:/bin:/usr/sbin:/sbin`으로 고정한다. `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `BASH_FUNC_*`, `DYLD_*`, `LD_*` 등은 전달하지 않는다. 허용된 값의 개행·빈 문자열은 그대로 전달하며 백업 스크립트가 값을 검증한다. 실행 전 내장 스크립트와 허용 환경의 크기를 `ARG_MAX`와 비교하고 한도를 넘으면 종료코드 2로 거부한다.
+
+4. 보관 디렉터리를 만들고 plist 예제를 복사한다. launchd는 런처 시작 전에 stdout/stderr 파일을 열기 때문에 로그 경로가 미리 있어야 한다. 로그는 아래처럼 내장 디스크에 둔다.
 
    ```bash
    mkdir -p "$HOME/Backups/glhac-offsite" "$HOME/Library/LaunchAgents"
@@ -40,16 +74,16 @@ macOS 기본 Bash 3.2, ssh, rsync, gzip, `/usr/bin/sqlite3`, shasum, osascript�
      "$HOME/Library/LaunchAgents/com.glhac.offsite-backup.plist"
    ```
 
-2. 복사한 plist의 `<HOST>`, `<KEY_PATH>`, `<REPO_PATH>`, `<LOCAL_DIR>`를 실제 값으로 바꾼다. `<REPO_PATH>` 예: `/Users/dany/glhac-wt-residual`, `<LOCAL_DIR>` 예: `/Users/dany/Backups/glhac-offsite`. XML 텍스트에서는 자리표시자가 `&lt;HOST&gt;`처럼 보인다. `~`, `$HOME`, `$LOCAL_DIR`는 plist에서 확장되지 않는다. 경로에 `&`가 있으면 `&amp;`로 쓴다. 키 권한은 0600을 권장한다.
+5. 복사한 plist의 `<INSTALL_DIR>`, `<HOST>`, `<KEY_PATH>`, `<LOCAL_DIR>`, `<MIRROR_DIR>`를 실제 값으로 바꾼다. `<INSTALL_DIR>` 예: `/Users/dany/Library/Application Support/GLHAC/offsite-backup`, `<LOCAL_DIR>` 예: `/Users/dany/Backups/glhac-offsite`, `<MIRROR_DIR>` 예: `/Volumes/MGTEC/GLHAC_Backups`. XML 텍스트에서는 자리표시자가 `&lt;HOST&gt;`처럼 보인다. `~`, `$HOME`, `$launcher_dir`는 plist에서 확장되지 않는다. 경로에 `&`가 있으면 `&amp;`로 쓴다. 키 권한은 0600을 권장한다.
 
-   미러를 쓰려면 `EnvironmentVariables` 딕셔너리에 다음을 추가한다.
+   `ProgramArguments`에는 `<INSTALL_DIR>/glhac-offsite-backup` **한 항목만** 둔다. 예제에 포함된 `GLHAC_BACKUP_MIRROR_DIR` 값은 미러를 쓸 때 다음처럼 설정하고, 쓰지 않으면 `<string></string>`으로 비우거나 해당 키/값을 삭제한다. `<MIRROR_DIR>` 자리표시자를 그대로 남기지 않는다.
 
    ```xml
    <key>GLHAC_BACKUP_MIRROR_DIR</key>
    <string>/Volumes/MGTEC/GLHAC_Backups</string>
    ```
 
-3. 문법을 확인하고 등록한다.
+6. **빌드 → 설치 → FDA 등록을 마친 뒤** 문법을 확인하고 작업을 등록한다. 기존 `/bin/bash` 방식으로 등록된 작업은 이 문서의 되돌리기 절차처럼 `bootout`한 뒤 변경한 plist를 다시 등록한다. 실행 중인 백업이 있다면 종료된 뒤 갱신한다.
 
    ```bash
    plutil -lint "$HOME/Library/LaunchAgents/com.glhac.offsite-backup.plist"
@@ -57,12 +91,21 @@ macOS 기본 Bash 3.2, ssh, rsync, gzip, `/usr/bin/sqlite3`, shasum, osascript�
    launchctl print "gui/$(id -u)/com.glhac.offsite-backup"
    ```
 
-사용자 로그인 세션에서 실행된다. `StartCalendarInterval`은 잠자기 중 놓친 실행을 깨어난 뒤 한 번 실행한다. 전원이 꺼져 있거나 로그아웃된 동안의 모든 일자를 소급 실행하는 기능은 아니다. 즉시 수동 점검할 때는 다음을 실행한다. 이 명령은 실제 서버에서 백업을 가져온다.
+등록 후 `kickstart`로 점검한다. 이 명령은 실제 서버에서 백업을 가져온다.
 
 ```bash
 launchctl kickstart "gui/$(id -u)/com.glhac.offsite-backup"
 tail -20 "$HOME/Backups/glhac-offsite/offsite-backup.log"
 ```
+
+사용자 로그인 세션에서 실행된다. `StartCalendarInterval`은 잠자기 중 놓친 실행을 깨어난 뒤 한 번 실행한다. 전원이 꺼져 있거나 로그아웃된 동안의 모든 일자를 소급 실행하는 기능은 아니다.
+
+### TCC 접근 차단과 재빌드 주의사항
+
+- `~/Downloads`의 스크립트·키 파일이나 `/Volumes/MGTEC` 같은 외장 볼륨은 파일의 Unix 권한이 맞아도 TCC가 `Operation not permitted`로 차단할 수 있다. `chmod`만으로 해결되지 않는다. 설치본은 위의 내장 디스크 경로에 두고, 외장 볼륨 접근에는 런처의 전체 디스크 접근 권한을 사용한다.
+- **`/bin/bash`에 전체 디스크 접근 권한을 주지 않는다.** 범용 인터프리터에 권한을 주면 다른 Bash 스크립트까지 범위가 넓어진다. 이 백업 작업 전용 런처 하나에만 부여한다.
+- **스크립트 수정 시 재빌드·재설치·FDA 재등록이 필요하다.** 런처 소스 변경이나 바이너리 교체에도 FDA를 다시 부여한다. 고정 식별자를 써도 애드혹 서명은 새 바이너리의 TCC 정체성을 보장하지 않는다. 기존 런처 항목을 제거한 뒤 같은 설치 경로의 새 파일을 `+`로 다시 추가하고 켠다. 책임 프로세스와 서명 정체성의 배경은 [Apple의 파일 시스템 권한 설명](https://developer.apple.com/forums/thread/678819)을 참고한다.
+- 터미널에서 성공했어도 터미널의 권한으로 실행된 결과일 수 있다. 설치자는 권한 부여 후 위의 launchd 수동 점검 절차로 실제 실행 경로와 로컬 로그, 외장 미러를 확인한다. 개발 테스트는 TCC 권한을 변경하거나 launchd 실행을 검증하지 않는다.
 
 ## 검증과 보관
 
@@ -110,9 +153,12 @@ rm "$HOME/Library/LaunchAgents/com.glhac.offsite-backup.plist"
 
 macOS에서 실행한다. SSH와 원격 다운로드, osascript는 가짜 도구로 대체하며 실제 네트워크와 알림을 사용하지 않는다. 미러는 래퍼가 인자를 검사한 뒤 **실제 `/usr/bin/rsync`를 로컬 경로 사이에서만 실행**한다. SQLite fixture는 `PRAGMA journal_mode=WAL` 후 `.backup`한 파일을 압축하고 WAL 헤더를 확인한다. 로컬·미러의 모든 tier에서 손상·체크섬 누락 시 전체 삭제 중단, 미러 daily의 오래된 정상본 1개와 최신 손상본 13개 보존, 손상 월별본의 대표본 제외, 로그·TMPDIR 쓰기 실패 시 알림 시도를 회귀 검증한다. 월별 수신 테스트는 지난달 3일·6일을 사용하고 두 번째 수신도 확인한다. 미러 이력·보관 개수·교체와 부분 전송 오류, 미래 파일명, SSH/rsync 전체 시간 제한과 자식 프로세스 종료, 단계별 장치 변경도 확인한다. `--noconftest`로 공통 conftest의 import와 DB 초기화·종료 정리를 막는다. SQLite 검사·gzip·체크섬·BSD date는 실제 기본 도구로 확인하며 장치 변경 테스트에서만 stat 결과를 대체한다.
 
+런처 테스트는 임시 디렉터리에서 실제 `build_launcher.sh`와 `cc`·`codesign`으로 가짜 스크립트를 내장·서명해 실행한다. 기본 소스 경로 테스트는 실제 백업 스크립트를 빌드만 하고 실행하지 않는다. 환경 주입 차단, PATH 고정, 허용 값·개행 보존, 원본·인접 파일 변조와 삭제의 무영향, 인자 거부, 종료코드·SIGTERM/SIGINT/SIGHUP 전달과 자식 회수를 검증한다. 실제 서명의 runtime 플래그·엔타이틀먼트 부재, runtime 없는 서명의 빌드 실패, 스크립트 크기·NUL·SHA-256 및 `ARG_MAX`도 확인한다. `cc`가 없으면 런처 테스트는 건너뛴다. 전체 디스크 접근 권한 부여나 `launchctl` 실행, 운영 서버 접속은 하지 않는다.
+
 ```bash
-GLHAC_DEV=1 GLHAC_NOTIFY_WORKER=0 GLHAC_RATE_LIMIT_PER_MIN=0 \
-  .venv/bin/python -m pytest -q -p no:cacheprovider --noconftest tests/test_offsite_backup.py
+GLHAC_DEV=1 .venv/bin/python -m pytest -q -p no:cacheprovider --noconftest \
+  tests/test_offsite_backup_launcher.py tests/test_offsite_backup.py
+bash -n scripts/launcher/build_launcher.sh
 bash -n scripts/offsite_backup_pull.sh
 bash -n scripts/offsite_backup_restore_check.sh
 plutil -lint scripts/launchd/com.glhac.offsite-backup.plist.example

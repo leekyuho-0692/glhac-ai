@@ -4,10 +4,19 @@
 <dict>
     <key>Label</key>
     <string>com.glhac.offsite-backup</string>
+    <!--
+      설치: build_launcher.sh가 백업 스크립트를 내장한 런처를 빌드·서명한다.
+      사용자 소유의 INSTALL_DIR(0700)에 런처(0700)와 .sha256 기록(0600)을 설치한다.
+      실행할 외부 .sh 파일은 설치하지 않는다.
+      시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에서
+      glhac-offsite-backup 파일만 추가한 뒤 작업을 등록하고 kickstart로 점검한다.
+      /bin/bash에 권한을 주지 않는다. 스크립트 수정 시 재빌드·재설치·FDA 재등록한다.
+      INSTALL_DIR, HOST, KEY_PATH, LOCAL_DIR, MIRROR_DIR를 실제 절대경로/값으로 바꾼다.
+      미러를 쓰지 않으면 MIRROR_DIR 값은 빈 문자열로 둔다. 자세한 절차: docs/offsite-backup.md
+    -->
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>&lt;REPO_PATH&gt;/scripts/offsite_backup_pull.sh</string>
+        <string>&lt;INSTALL_DIR&gt;/glhac-offsite-backup</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -23,6 +32,7 @@
         <key>GLHAC_BACKUP_KEY</key><string>&lt;KEY_PATH&gt;</string>
         <key>GLHAC_BACKUP_REMOTE_DIR</key><string>/var/backups/glhac</string>
         <key>GLHAC_BACKUP_LOCAL_DIR</key><string>&lt;LOCAL_DIR&gt;</string>
+        <key>GLHAC_BACKUP_MIRROR_DIR</key><string>&lt;MIRROR_DIR&gt;</string>
         <key>GLHAC_BACKUP_MAX_AGE_HOURS</key><string>36</string>
         <key>GLHAC_BACKUP_NOTIFY</key><string>1</string>
     </dict>
