@@ -16,9 +16,10 @@
 #   bash scripts/deploy.sh --dry-run       # 뭘 보낼지만 보여 준다
 #   bash scripts/deploy.sh --rollback      # 직전 백업으로 되돌린다
 #   bash scripts/deploy.sh --check-deps    # (선택) requirements.lock 과 운영 venv 차이를 경고만 한다(배포는 그대로)
+# 보관: health 200 배포 성공 후 종류별 최신 GLHAC_DEPLOY_KEEP개(기본 5, 1~50) 유지 + 이번 TS 보호; 실패·rollback은 정리하지 않는다.
 #
 # 환경변수(없으면 아래 기본값):
-#   GLHAC_SSH_KEY  GLHAC_SSH_HOST  GLHAC_HOME_SRC
+#   GLHAC_SSH_KEY  GLHAC_SSH_HOST  GLHAC_HOME_SRC  GLHAC_DEPLOY_KEEP
 set -euo pipefail
 
 KEY="${GLHAC_SSH_KEY:-$HOME/Downloads/SSH_KeyPair-260908134815.pem}"
@@ -157,7 +158,7 @@ if [ "\$result" != "ok" ]; then
 fi
 sudo tar czf /opt/glhac-app-bak-$TS.tgz -C /opt/glhac app
 sudo tar czf /opt/glhac-home-bak-$TS.tgz -C /var/www glhac-home
-# Backup retention is handled separately; deployment preserves existing recovery points.
+# 배포 성공을 확인한 뒤에만 오래된 배포 백업을 정리한다.
 EOS
 
 # ── 전송 ──────────────────────────────────────────────────────────────────
@@ -208,6 +209,11 @@ if [ "\$APPLIED" = 1 ]; then
   fi
   (cd $REMOTE_APP && find . -type f ! -path '*/__pycache__/*' ! -name '*.pyc' ! -name '*.bak-*' ! -name '*.db*' ! -name '.DS_Store' -print0 | sort -z | xargs -0 sha256sum) | sudo tee /opt/glhac/.app-deploy-checksums >/dev/null
   sudo chmod 644 /opt/glhac/.app-deploy-checksums
+else
+  # 홈페이지만 배포해도 health 200을 확인해야 백업 정리를 허용한다.
+  code=\$(curl -s -o /dev/null -w '%{http_code}' $HEALTH || echo 000)
+  echo "  health: \$code"
+  [ "\$code" = "200" ] || exit 1
 fi
 echo "  ui:   \$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8800/ui/)"
 
@@ -228,4 +234,22 @@ say "── 공개 확인 ──"
 for u in https://glhac.co.kr/ui/ https://glhac.com/ https://glhac.com/board/; do
   say "$u → $(curl -s -o /dev/null -w '%{http_code}' -m 20 "$u")"
 done
+
+# ── 배포 백업 정리 — 위 배포/health 확인이 성공한 경로에서만 실행 ──────────────
+DEPLOY_KEEP="${GLHAC_DEPLOY_KEEP-5}"
+# ssh는 원격 명령 인자를 다시 셸로 해석하므로 숫자 검증을 전송 전에 마친다.
+if [[ ! "$DEPLOY_KEEP" =~ ^([1-9]|[1-4][0-9]|50)$ ]]; then
+  say "경고: GLHAC_DEPLOY_KEEP은 1~50 정수여야 합니다 — 백업 정리 생략" >&2
+elif ! PRUNE_SCRIPT="$(cat "$APP_SRC/scripts/deploy_prune_remote.sh")"; then
+  say "경고: 백업 정리 스크립트를 읽지 못했습니다 — 정리 생략" >&2
+else
+  say "배포 백업 정리 (종류별 최신 ${DEPLOY_KEEP}개 + 이번 태그 $TS 보호)"
+  if ! "${SSH[@]}" sudo bash -s -- / "$TS" "$DEPLOY_KEEP" <<EOS
+set -euo pipefail
+$PRUNE_SCRIPT
+EOS
+  then
+    say "경고: 배포 백업 정리에 실패했습니다 — 배포 성공은 유지합니다" >&2
+  fi
+fi
 say "배포 완료 (백업 태그 $TS · 되돌리려면 bash scripts/deploy.sh --rollback)"
