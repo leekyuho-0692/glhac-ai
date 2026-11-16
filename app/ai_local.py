@@ -18,6 +18,8 @@ MODEL = os.environ.get("GLHAC_LLM", "gemma3:12b")
 _ocr = None
 _ocr_lang = None
 _ocr_engines = {}  # 삽입 순서가 LRU 순서(오래된 언어 → 최근 사용 언어).
+# 언어 엔진 LRU와 별도로 인식 모델 1개(eslav mobile rec)가 추가 상주한다.
+_cyrillic_recognizer = None
 _ocr_lock = threading.Lock()
 _logger = logging.getLogger(__name__)
 _OCR_WARNING_PREFIX = "GLHAC_OCR_WARN "
@@ -47,17 +49,27 @@ def _ocr_failure(exc, path, *, engine_ready):
     return result
 
 
-def _serialized_ocr(fn):
+def _serialized_ocr(fn=None, *, probe=False):
+    if fn is None:
+        return lambda wrapped: _serialized_ocr(wrapped, probe=probe)
     @wraps(fn)
     def locked(*args, **kwargs):
-        from .intake import _check_archive_work
+        from .intake import ArchiveError, _check_archive_work
         # 캐시 조회·생성·축출·predict의 지연 결과 순회까지 같은 락으로 보호한다.
         with document_lock(_ocr_lock, check=_check_archive_work):
-            result = fn(*args, **kwargs)
-            if not result["ok"] and result.get("error_kind") != "input":
-                lang = kwargs.get("lang", args[1] if len(args) > 1 else "korean")
-                # 본체 반환 뒤에 회수해야 예외 traceback·지연 결과의 엔진 참조도 사라진다.
-                _discard_ocr_engine(lang)
+            try:
+                result = fn(*args, **kwargs)
+            except (CancelledError, ArchiveError):
+                if probe:
+                    _discard_cyrillic_recognizer()
+                raise
+            if not result["ok"]:
+                # 본체 반환 뒤 회수해야 traceback·지연 결과의 참조도 사라진다.
+                if probe:
+                    _discard_cyrillic_recognizer()
+                elif result.get("error_kind") != "input":
+                    lang = kwargs.get("lang", args[1] if len(args) > 1 else "korean")
+                    _discard_ocr_engine(lang)
             return result
     return locked
 
@@ -352,6 +364,16 @@ def ocr_image(path, lang="korean"):
     return r
 
 
+def ocr_cyrillic_probe(path, polys):
+    """선택한 원래 줄 polygon만 ru 인식기로 읽는다. 실패는 전체 OCR로 폴백.
+
+    worker 모드에서는 통신 실패에도 웹 프로세스에 인식기를 올리지 않는다.
+    """
+    if OCR_MODE == "inproc":
+        return _ocr_cyrillic_probe_inproc(path, polys)
+    return _worker_call({"op": "ocr_cyrillic_probe", "path": os.fspath(path), "polys": polys})
+
+
 # oneDNN(MKL-DNN) 가속 경로가 서버 CPU 빌드에서 터진다 —
 #   NotImplementedError: ConvertPirAttribute2RuntimeAttribute not support
 #   (Rocky 8 · Xeon Silver 4510 · paddlepaddle 3.3.1 에서 실측)
@@ -436,6 +458,132 @@ def _get_ocr_engine(lang):
     return eng
 
 
+def _discard_cyrillic_recognizer():
+    """_ocr_lock 안에서 샘플 인식기 참조와 predictor 순환 참조를 회수한다."""
+    global _cyrillic_recognizer
+    _cyrillic_recognizer = None
+    gc.collect()
+
+
+def _get_cyrillic_recognizer():
+    global _cyrillic_recognizer
+    if _cyrillic_recognizer is None:
+        from paddleocr import TextRecognition
+        model = _ocr_recognition_model("ru")
+        if model is None:
+            raise RuntimeError("CYRILLIC_PROBE_UNSUPPORTED")
+        _cyrillic_recognizer = TextRecognition(model_name=model, enable_mkldnn=_OCR_MKLDNN)
+    return _cyrillic_recognizer
+
+
+def _cyrillic_probe_limit():
+    try:
+        return min(12, max(1, int(os.environ.get("GLHAC_OCR_CYRILLIC_PROBE_LINES", "12"))))
+    except ValueError:
+        return 12
+
+
+def _clear_probe_tracebacks(exc):
+    """보관·재전파되는 예외의 predictor/self 참조도 끊는다(호출자는 지역 참조 해제)."""
+    import traceback
+    pending, seen = [exc], set()
+    while pending:
+        error = pending.pop()
+        if id(error) in seen:
+            continue
+        seen.add(id(error))
+        traceback.clear_frames(error.__traceback__)
+        # Python 3.11의 frame.clear() 뒤에도 중첩 generator 함수의 closure가
+        # self를 붙들 수 있다. 원인 예외까지 traceback 연결을 끊어 회수한다.
+        error.__traceback__ = None
+        pending.extend(linked for linked in (error.__cause__, error.__context__) if linked is not None)
+
+
+@_serialized_ocr(probe=True)
+def _ocr_cyrillic_probe_inproc(path, polys):
+    """PaddleOCR 3.x TextRecognition만 사용한다. 검출/회전 모델은 생성하지 않는다."""
+    import math
+    import time
+    from .intake import ArchiveError, _check_archive_work
+
+    deadline = time.monotonic() + OCR_TIMEOUT
+    recognizer = results = result = data = None
+
+    def check():
+        check_document_stopped()
+        _check_archive_work()
+        if time.monotonic() >= deadline:
+            raise TimeoutError("CYRILLIC_PROBE_TIMEOUT")
+
+    try:
+        # 무거운 패키지와 이미지 데이터는 worker(또는 명시적 inproc) 안에서만 다룬다.
+        import cv2
+        import numpy as np
+        from paddlex.inference.pipelines.components.common.crop_image_regions import CropByPolys
+        check()
+        if not isinstance(polys, (list, tuple)) or not polys:
+            raise ValueError("CYRILLIC_PROBE_NO_POLYGONS")
+        # 인테이크를 거치지 않은 워커 입력도 설정값과 절대 상한 12를 지킨다.
+        polygons = []
+        for poly in polys[:_cyrillic_probe_limit()]:
+            check()
+            points = np.asarray(poly, dtype=np.float32)
+            if (points.shape != (4, 2) or not np.isfinite(points).all()
+                    or np.ptp(points[:, 0]) <= 0 or np.ptp(points[:, 1]) < 8
+                    or cv2.contourArea(points) <= 0):
+                raise ValueError("CYRILLIC_PROBE_INVALID_POLYGON")
+            polygons.append(points)
+        # 전체 OCR의 PaddleX ReadImage와 같은 EXIF 회전·BGR 좌표계를 쓴다.
+        image = cv2.imread(os.fspath(path), cv2.IMREAD_COLOR)
+        if image is None:
+            return {"ok": False, "error": "CYRILLIC_PROBE_IMAGE_READ_ERROR"}
+        # 전체 general OCR과 같은 원근 보정·세로 줄 회전. bbox crop으로 대체하지 않는다.
+        crops = list(CropByPolys(det_box_type="quad")(image, polygons))
+        del image  # 모델 로딩 전에 쪽 전체 픽셀은 반납하고 작은 샘플만 보관한다.
+        if len(crops) != len(polygons) or any(crop.size == 0 for crop in crops):
+            raise ValueError("CYRILLIC_PROBE_INCOMPLETE_CROPS")
+        crops = [np.ascontiguousarray(crop) for crop in crops]
+        recognizer = _get_cyrillic_recognizer()
+        check()
+        # 기존 inproc OCR과 같이 동기 추론을 중단하지 못한다. 설치된 predict()는
+        # 결과를 list로 모두 소비하므로 타임아웃·취소 검사는 추론 종료 후 작동한다.
+        # worker 모드의 부모 프로세스는 기한 초과·취소 때 워커 자체를 종료한다.
+        results = recognizer.predict(input=crops)
+        check()
+        sampled = cyrillic_lines = cyrillic_chars = 0
+        for result in results:
+            check()
+            data = result if isinstance(result, dict) else getattr(result, "json", {})
+            if isinstance(data, dict) and "res" in data:
+                data = data["res"]
+            if not isinstance(data, dict) or not isinstance(data.get("rec_text"), str):
+                raise ValueError("CYRILLIC_PROBE_INVALID_RESULT")
+            if not math.isfinite(float(data["rec_score"])):
+                raise ValueError("CYRILLIC_PROBE_INVALID_SCORE")
+            text = data["rec_text"]
+            if not text.strip():
+                raise ValueError("CYRILLIC_PROBE_INCOMPLETE_RESULT")
+            count = sum("\u0400" <= char <= "\u04ff" for char in text)
+            cyrillic_lines += bool(count)
+            cyrillic_chars += count
+            sampled += 1
+        check()
+        if sampled != len(crops):
+            raise ValueError("CYRILLIC_PROBE_INCOMPLETE_RESULT")
+        return {"ok": True, "has_cyrillic": cyrillic_lines >= 2 or cyrillic_chars >= 10,
+                "sampled_lines": sampled, "cyrillic_lines": cyrillic_lines,
+                "cyrillic_chars": cyrillic_chars}
+    except Exception as exc:  # 미지원 버전·인식 실패는 전체 ru OCR로 복구한다.
+        recognizer = results = result = data = None
+        _clear_probe_tracebacks(exc)
+        if isinstance(exc, (CancelledError, ArchiveError)):
+            raise
+        return {"ok": False, "error": str(exc)}
+    finally:
+        # 재전파 traceback이 이 frame을 보관해도 인식기/결과를 붙잡지 않는다.
+        recognizer = results = result = data = None
+
+
 @_serialized_ocr
 def _ocr_image_inproc(path, lang="korean"):
     """워커 안에서 실제로 도는 본체(그리고 GLHAC_OCR_MODE=inproc 경로)."""
@@ -450,7 +598,11 @@ def _ocr_image_inproc(path, lang="korean"):
             scores = data.get("rec_scores", []) or []
             # 좌표를 함께 넘긴다. 표 사진은 좌표 없이 열이 섞여 행 복원이 불가능하다
             # (실측: 인니 구매·검사·보관 기록 사진에서 재료명과 담당자가 엉켰다).
-            polys = data.get("rec_polys") or data.get("dt_polys") or []
+            polys = data.get("rec_polys")
+            if polys is None or len(polys) == 0:
+                polys = data.get("dt_polys")
+            if polys is None:
+                polys = []
             for i, (t, sc) in enumerate(zip(texts, scores)):
                 item = {"text": t, "confidence": float(sc)}
                 if i < len(polys):
@@ -458,6 +610,7 @@ def _ocr_image_inproc(path, lang="korean"):
                         xs = [float(pt[0]) for pt in polys[i]]
                         ys = [float(pt[1]) for pt in polys[i]]
                         item["box"] = [min(xs), min(ys), max(xs), max(ys)]
+                        item["poly"] = [[x, y] for x, y in zip(xs, ys)]
                     except Exception:  # noqa: BLE001
                         pass
                 lines.append(item)

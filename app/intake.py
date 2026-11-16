@@ -771,8 +771,9 @@ _OCR_DPI = int(os.environ.get("GLHAC_OCR_DPI", "140"))   # 깨끗한 스캔은 1
 # 기본 OCR 은 한국어 모델이다 — 한글이 아닌 스크립트(키릴/러시아어)는 못 읽는다.
 # 함정: korean 모델은 키릴을 '빈 값'이 아니라 라틴 유사문자로 자신있게 오독한다
 # (실측: 'МОЛОКО'→'MonoKo', 평균 confidence 0.82). 그래서 길이·신뢰도 임계만으론
-# 폴백 트리거가 안 걸린다. 대신 korean 결과에 한글이 없으면(=한국어 문서가 아니면)
-# 아래 언어로도 읽어 평균 신뢰도가 가장 높은 결과를 채택한다. ru→eslav(동슬라브) 모델.
+# 폴백 트리거가 안 걸린다. 한글 없는 쪽은 기존 줄 상자를 ru→eslav로 샘플 인식해
+# 키릴이 있을 때만 ru 전체 OCR 후 평균 신뢰도를 비교한다. 판정 실패 시에도 전체 OCR.
+# ru 외 사용자가 지정한 언어는 종전처럼 전체 OCR한다.
 # 한글이 있으면 한국어 문서이므로 재-OCR 하지 않아 기존 속도를 유지한다.
 _OCR_FALLBACK_LANGS = [s.strip() for s in
                        os.environ.get("GLHAC_OCR_FALLBACK_LANGS", "ru").split(",") if s.strip()]
@@ -798,6 +799,143 @@ def _ocr_kept(lines):
 def _ocr_score(lines, kept):
     """OCR 결과 품질 점수 — 내용이 없으면 -1(항상 탈락), 있으면 평균 신뢰도."""
     return _mean_conf(lines) if "".join(kept).strip() else -1.0
+
+
+def _cyrillic_probe_lines(lines, page_width=None):
+    """실제 열을 모두 대표하고, 빈 판독 우선으로 열별 세로 구간을 순회한다."""
+    limit = ai_local._cyrillic_probe_limit()
+    candidates = {}
+    for line in lines:
+        try:
+            box = tuple(map(float, line.get("box", ())))
+            x0, y0, x1, y1 = box
+            if not all(math.isfinite(v) for v in box) or x1 <= x0 or y1 <= y0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if y1 - y0 < 8:
+            return []  # 유효하지만 프로브에서 제외할 작은 줄이 있으면 전체 ru OCR.
+        blank = not (line.get("text") or "").strip()
+        # 같은 상자가 중복되면 빈 판독 쪽의 우선순위를 보존한다.
+        if box not in candidates or blank:
+            candidates[box] = (box, (x0 + x1) / 2, (y0 + y1) / 2, line, blank)
+    if not candidates:
+        return []
+    candidates = sorted(candidates.values(), key=lambda c: c[0])
+    limit = min(limit, len(candidates))
+    # OCR 좌표계의 쪽 너비를 모르면 결과 상자의 범위로 추정하지 않는다.
+    if page_width is None or not math.isfinite(page_width) or page_width <= 0:
+        return []
+    # x 구간이 겹치거나 쪽 너비의 1% 이내로 가까우면 같은 열로 병합한다.
+    columns, spanning, right = [], [], -math.inf
+    for candidate in candidates:
+        x0, _, x1, _ = candidate[0]
+        # L과 겹치는 다른 줄을 x0 순으로 스캔한다. 앞선 끝점의 최솟값보다
+        # 다음 시작점이 크면 서로 겹치지 않는 A, B가 있으므로 L은 가로지른다.
+        # 끝점에서 닿는 구간은 기존처럼 겹침으로 본다. 전체 O(n²).
+        min_overlap_right, is_spanning = math.inf, False
+        for other in candidates:
+            other_x0, _, other_x1, _ = other[0]
+            if other_x0 > x1:
+                break
+            if other is candidate or other_x1 < x0:
+                continue
+            if other_x0 > min_overlap_right:
+                is_spanning = True
+                break
+            min_overlap_right = min(min_overlap_right, other_x1)
+        if is_spanning:
+            spanning.append(candidate)
+            continue  # 제목·병합 셀이 본문 열들을 하나로 합치지 않게 한다.
+        if not columns or x0 > right + page_width * 0.01:
+            columns.append([])
+            right = x1
+        else:
+            right = max(right, x1)
+        columns[-1].append(candidate)
+    if spanning:
+        columns.append(spanning)  # 가로지르는 줄도 별도 그룹으로 대표 샘플을 예약한다.
+    if len(columns) > limit:
+        return []  # 모든 열을 대표할 수 없으면 전체 ru OCR.
+
+    # 열마다 1개를 먼저 예약한 뒤, 빈 판독에 남은 몫을 우선 배정한다.
+    quotas = [1] * len(columns)
+    for capacities in ([sum(c[4] for c in column) for column in columns],
+                       [len(column) for column in columns]):
+        while sum(quotas) < limit:
+            added = False
+            for i, capacity in enumerate(capacities):
+                if quotas[i] < capacity:
+                    quotas[i] += 1
+                    added = True
+                    if sum(quotas) == limit:
+                        break
+            if not added:
+                break
+
+    selected = []
+    for column, quota in zip(columns, quotas):
+        top, bottom = min(c[2] for c in column), max(c[2] for c in column)
+        middle = (min(c[0][0] for c in column) + max(c[0][2] for c in column)) / 2
+        cells, picked = [[] for _ in range(quota)], [[] for _ in range(quota)]
+        for candidate in column:
+            band = min(quota - 1, int((candidate[2] - top) / (bottom - top) * quota)) if bottom > top else 0
+            cells[band].append(candidate)
+        count = 0
+        for blank in (True, False):
+            while count < quota:
+                added = False
+                # 빈 구간은 건너뛰고 다음 순회에서 남은 구간에 재분배한다.
+                for band, cell in enumerate(cells):
+                    available = [c for c in cell if c[4] == blank]
+                    if not available:
+                        continue
+                    target = top + (band + 0.5) / quota * (bottom - top)
+                    if quota > 1 and band in (0, quota - 1):
+                        target = top if band == 0 else bottom
+                    # 첫 선택은 구간 대표점/열 중앙, 재방문은 이미 고른 줄에서
+                    # 가장 먼 줄을 택해 같은 셀의 위쪽·왼쪽 편향을 피한다.
+                    candidate = min(available, key=lambda c: (
+                        -min(abs(c[2] - p[2]) for p in picked[band]) if picked[band]
+                        else abs(c[2] - target), abs(c[1] - middle), c[0]))
+                    cell.remove(candidate)
+                    picked[band].append(candidate)
+                    selected.append(candidate)
+                    count += 1
+                    added = True
+                    if count == quota:
+                        break
+                if not added:
+                    break
+    return [c[3] for c in sorted(selected, key=lambda c: not c[4])]
+
+
+def _needs_russian_ocr(path, korean_lines):
+    """성공한 '키릴 없음' 판정만 ru 전체 OCR을 생략한다. 취소는 폴백하지 않는다."""
+    if os.environ.get("GLHAC_OCR_CYRILLIC_PROBE", "1").strip() == "0":
+        return True
+    _check_intake_stopped()
+    try:
+        if os.path.splitext(path)[1].lower() in {".tif", ".tiff"}:
+            return True
+        from PIL import Image
+        with Image.open(path) as image:
+            if getattr(image, "n_frames", 1) != 1:
+                return True
+            # 전체 OCR과 crop이 쓰는 EXIF 회전 후 좌표계의 너비.
+            page_width = image.height if image.getexif().get(274, 1) in (5, 6, 7, 8) else image.width
+        samples = _cyrillic_probe_lines(korean_lines, page_width=page_width)
+        if not samples or any(line.get("poly") is None for line in samples):
+            return True
+        result = ai_local.ocr_cyrillic_probe(path, [line["poly"] for line in samples])
+        _check_intake_stopped()
+        return not (isinstance(result, dict) and result.get("ok") is True
+                    and not result.get("error") and result.get("has_cyrillic") is False)
+    except (CancelledError, ArchiveError):
+        raise
+    except Exception:
+        _check_intake_stopped()
+        return True
 
 
 class _ParsedText(str):
@@ -1248,13 +1386,15 @@ def _ocr_bytes(data, ext, sink=None):
         with os.fdopen(fd, "wb") as f:
             f.write(data)
         lines = recognize()
+        korean_lines = lines
         kept = _ocr_kept(lines)
         joined = "".join(kept).strip()
-        # 한글이 없으면(=한국어 문서가 아니면) 다른 스크립트로도 읽어 신뢰도 최고를 채택.
-        # 빈 결과(스캔 실패)도 여기 들어와 폴백 언어로 재시도된다.
+        # 쪽마다 판정한다. 빈 결과는 샘플 없이 기존대로 전체 OCR로 재시도한다.
         if (not joined) or (not _has_hangul(joined)):
             best = _ocr_score(lines, kept)
             for lg in _OCR_FALLBACK_LANGS:
+                if lg == "ru" and joined and not _needs_russian_ocr(path, korean_lines):
+                    continue
                 alt = recognize(lg)
                 alt_kept = _ocr_kept(alt)
                 sc = _ocr_score(alt, alt_kept)

@@ -122,6 +122,7 @@ def cached_ocr(request, monkeypatch, tmp_path):
             result = ai_local.ocr_image("fake.png", lang)
             assert result == {"ok": True, "lines": [{
                 "text": _TEXTS[lang], "confidence": 0.98, "box": [1, 2, 11, 12],
+                "poly": [[1, 2], [11, 2], [11, 12], [1, 12]],
             }]}
         if request.param == "worker":
             assert ai_local._worker_alive(), "워커 실패 후 inproc 폴백으로 성공하면 안 된다"

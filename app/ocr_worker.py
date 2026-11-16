@@ -14,6 +14,7 @@
 
 규약: stdin 으로 JSON 한 줄을 받고 stdout 으로 JSON 한 줄을 돌려준다.
     {"op":"ocr","path":"...","langs":["id"]}  →  {"ok":true,"text":"...","langs_used":[...]}
+    {"op":"ocr_cyrillic_probe","path":"...","polys":[...]} → {"ok":true,"has_cyrillic":false,...}
     {"op":"ping"}                             →  {"ok":true}
 표준출력은 결과 전용이다. PaddleOCR 이 진행 로그를 stdout 에 찍으므로, 워커는
 그것을 stderr 로 돌려 결과 줄이 오염되지 않게 한다.
@@ -56,12 +57,15 @@ def _run():
         if op == "shutdown":
             _emit({"ok": True})
             return
-        if op not in ("ocr", "ocr_lines"):
+        if op not in ("ocr", "ocr_lines", "ocr_cyrillic_probe"):
             _emit({"ok": False, "error": "UNKNOWN_OP"})
             continue
         try:
             with contextlib.redirect_stdout(sys.stderr):
-                if op == "ocr_lines":
+                if op == "ocr_cyrillic_probe":
+                    res = ai_local._ocr_cyrillic_probe_inproc(req.get("path"),
+                                                              req.get("polys") or [])
+                elif op == "ocr_lines":
                     res = ai_local._ocr_image_inproc(req.get("path"),
                                                      req.get("lang") or "korean")
                 else:
