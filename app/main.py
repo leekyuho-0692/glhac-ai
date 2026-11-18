@@ -9679,7 +9679,7 @@ def intake_zip_ep(case_id: str, body: schemas.ZipIntakeReq,
     base_fields_by_id = (document_snapshots(db, case_id) if db is not None else {})
     try:
         files = _validate_archive_upload(raw, deadline=deadline)
-        res = intake_zip(raw, files=files, deadline=deadline)
+        res = intake_zip(raw, files=files)
     except ArchiveError as e:
         raise HTTPException(400, {"code": "BAD_ARCHIVE",
                                   "message": str(e)})
@@ -9697,12 +9697,15 @@ _INTAKE_HEARTBEAT_SECONDS = 10
 
 
 def _intake_zip_events(raw, files=None, stopped=None, *, deadline=None):
-    """목록 검사/압축 해제부터 heartbeat·취소·전체 기한을 감시한다. DB는 소비자만 접근."""
+    """해제 기한과 heartbeat·취소를 감시한다. 처리 기한의 부분 결과는 intake가 만든다."""
     import queue
     import threading
     events = queue.Queue(maxsize=1)
     stopped = stopped if stopped is not None else threading.Event()
     deadline = intake.archive_deadline() if deadline is None else deadline
+    extracted = threading.Event()
+    if files is not None:
+        extracted.set()
 
     def put(event):
         while not stopped.is_set():
@@ -9718,7 +9721,8 @@ def _intake_zip_events(raw, files=None, stopped=None, *, deadline=None):
         try:
             validated = (_validate_archive_upload(raw, stopped=stopped, deadline=deadline)
                          if files is None else files)
-            parser = intake.intake_zip_iter(raw, files=validated, stopped=stopped, deadline=deadline)
+            extracted.set()
+            parser = intake.intake_zip_iter(raw, files=validated, stopped=stopped)
             for event in parser:
                 if not put(event):
                     break
@@ -9734,7 +9738,8 @@ def _intake_zip_events(raw, files=None, stopped=None, *, deadline=None):
     completed = False
     try:
         while not stopped.is_set():
-            intake.check_archive_work(stopped, deadline)
+            # 해제 후에는 intake의 요청 기한이 정상 부분 result를 돌려줄 때까지 받는다.
+            intake.check_archive_work(stopped, None if extracted.is_set() else deadline)
             try:
                 event = events.get(timeout=min(0.1, _INTAKE_HEARTBEAT_SECONDS))
             except queue.Empty:

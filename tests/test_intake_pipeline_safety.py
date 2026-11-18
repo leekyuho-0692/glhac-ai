@@ -314,20 +314,29 @@ def test_archive_cancel_between_members_stops_before_next_process(monkeypatch, f
 
 
 def test_archive_deadline_covers_ai_stage(monkeypatch):
-    entered, release = threading.Event(), threading.Event()
+    entered, release, exited = threading.Event(), threading.Event(), threading.Event()
 
     def classify(name, text):
         entered.set()
-        assert release.wait(2)
-        return result(name, text)
+        try:
+            assert release.wait(2)
+            return {"doc_type": "nib_business_license", "fields": {}, "confidence": 0.9}
+        finally:
+            exited.set()
 
     monkeypatch.setattr(intake, "classify", classify)
+    monkeypatch.setenv("GLHAC_INTAKE_FILE_TIMEOUT", "0.15")
     try:
-        with pytest.raises(intake.ArchiveError, match="전체 처리 시간"):
-            intake.intake_zip(b"", files=[("a.txt", b"text")], deadline=time.monotonic() + 0.15)
+        output = intake.intake_zip(b"", files=[("a.txt", b"text")])
         assert entered.is_set()
+        assert not output["timed_out"]
+        doc = output["classified"][0]
+        assert doc["fields"]["_llm_error"] == "TIMEOUT"
+        assert base64.b64decode(doc["content_b64"]) == b"text"
+        assert not any(row["satisfied"] for row in output["checklist"])
     finally:
         release.set()
+        assert exited.wait(1)
 
 
 def test_pdf_extraction_does_not_spawn_process(monkeypatch):

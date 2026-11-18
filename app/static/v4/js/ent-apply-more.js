@@ -13,6 +13,8 @@ const ENTA_I18N = {
   "upload.skip.UNSUPPORTED_TYPE": ["지원하지 않는 형식", "Unsupported format", "Format tidak didukung"],
   "upload.skip.DEPTH_LIMIT": ["중첩 압축 깊이 제한(최대 2)", "Archive depth limit (maximum 2)", "Batas kedalaman arsip (maksimal 2)"],
   "upload.skip.ENTRY_LIMIT": ["압축 전체 파일 수 제한", "Archive file count limit", "Batas jumlah berkas arsip"],
+  "upload.skip.TIME_LIMIT": ["처리 시간 초과 — 다시 올려 주세요", "Processing time limit — please upload again", "Batas waktu pemrosesan — unggah ulang"],
+  "upload.timed_out": ["처리 시간이 초과되어 완료된 서류만 저장했습니다. 건너뛴 파일을 다시 올려 주세요.", "The time limit was reached. Completed documents were saved; please upload skipped files again.", "Batas waktu tercapai. Dokumen yang selesai telah disimpan; silakan unggah ulang berkas yang dilewati."],
   "upload.new_version": ["새 버전", "New version", "Versi baru"],
   "upload.status.queued": ["대기", "Queued", "Antrean"],
   "upload.status.uploading": ["올리는 중", "Uploading", "Mengunggah"],
@@ -481,6 +483,7 @@ App.entaZip = async function(file,options={}){
   const previous=S.entaSkipped;
   S.entaSkipped={cid,owner,items:[...(previous?.cid===cid && previous.owner===owner?previous.items:[]),...(result.skipped_files||[])]};
   S.entaProg = ENTA_t('upload.text_033');
+  if(result.timed_out) S.entaProg+=' '+ENTA_t('upload.timed_out');
   if(options.bulk) return result;
   try{
     const pending=await apiFetch(`/cases/${cid}/pending-extractions`);

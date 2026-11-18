@@ -174,18 +174,20 @@ def test_pipeline_consumer_and_extractor_leave_delayed_ocr(monkeypatch, delayed_
             finished.set()
 
     monkeypatch.setattr(intake, "_extract_document", tracked)
-    deadline = time.monotonic() + (10 if cancel else 0.7)
+    # 해제 후 OCR 은 파일별 기한을 따른다 — 초과하면 그 파일만 TIMEOUT 문서로 남고 워커는 회수된다.
+    monkeypatch.setenv("GLHAC_INTAKE_FILE_TIMEOUT", "10" if cancel else "0.7")
     with ThreadPoolExecutor(1) as pool:
         job = pool.submit(lambda: list(intake.intake_zip_iter(
-            b"", files=[("scan.pdf", raw)], stopped=stopped, deadline=deadline)))
+            b"", files=[("scan.pdf", raw)], stopped=stopped)))
         try:
             wait_for(lambda: delayed_worker.markers and delayed_worker.markers[0].exists())
             if cancel:
                 stopped.set()
                 assert [kind for kind, _ in job.result(timeout=1)] == ["start"]
             else:
-                with pytest.raises(intake.ArchiveError, match="전체 처리 시간"):
-                    job.result(timeout=1)
+                events = job.result(timeout=2)
+                assert events[-1][0] == "result"
+                assert events[-1][1]["classified"][0]["fields"]["_ocr_error"] == "TIMEOUT"
             assert finished.wait(0.5)
             assert delayed_worker.children[0].poll() is not None
         finally:

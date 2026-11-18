@@ -11,7 +11,7 @@ import zlib
 import threading
 import time
 import queue
-from concurrent.futures import CancelledError, ThreadPoolExecutor, TimeoutError as FutureTimeout
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
 from contextvars import ContextVar
 from contextlib import contextmanager
 from xml.etree.ElementTree import ParseError
@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 # 업로드 검증/단일 업로드/재처리도 같은 PDF 락을 사용한다.
 PDF_LOCK = threading.RLock()
 _ARCHIVE_CONTROL = ContextVar("archive_control", default=(None, None))
+_INTAKE_TOTAL_DEADLINE = ContextVar("intake_total_deadline", default=None)
 
 # ZIP 추출 상한 — 압축폭탄 방어
 # 업로드 1건 상한 20MB (SRS NFR-05) — main.py 의 _UPLOAD_MAX_BYTES 와 원본 보관(content_b64) 상한이 같은 상수를 쓴다.
@@ -308,6 +309,18 @@ class ArchiveContentMismatch(ArchiveError):
     """중첩 압축의 확장자와 시그니처가 다름(415로 반환)."""
 
 
+class IntakeFileTimeout(ArchiveError):
+    """해제 후 한 파일의 추출·분류 기한 초과. 해당 파일만 재처리 대상으로 남긴다."""
+
+
+class IntakeTotalTimeout(ArchiveError):
+    """해제 후 요청 기한 초과. 완료 문서는 저장하고 미완료 파일만 건너뛴다."""
+
+    def __init__(self, skipped_files=()):
+        super().__init__("인테이크 전체 처리 시간이 초과되었습니다")
+        self.skipped_files = list(skipped_files)
+
+
 class _NativeArchiveError(ArchiveError):
     """libarchive 부재/형식/읽기 실패만 폴백한다. 안전 가드 거부는 해당하지 않는다."""
 
@@ -326,6 +339,24 @@ def archive_deadline():
     return time.monotonic() + seconds
 
 
+def _intake_deadline(env, default):
+    try:
+        seconds = float(os.getenv(env, str(default)))
+        if not math.isfinite(seconds) or seconds <= 0:
+            seconds = default
+    except ValueError:
+        seconds = default
+    return time.monotonic() + seconds
+
+
+def intake_file_deadline():
+    return _intake_deadline("GLHAC_INTAKE_FILE_TIMEOUT", 240)
+
+
+def intake_total_deadline():
+    return _intake_deadline("GLHAC_INTAKE_TOTAL_DEADLINE", 1800)
+
+
 def check_archive_work(stopped=None, deadline=None):
     if stopped is not None and stopped.is_set():
         raise CancelledError()
@@ -334,7 +365,36 @@ def check_archive_work(stopped=None, deadline=None):
 
 
 def _check_archive_work():
-    check_archive_work(*_ARCHIVE_CONTROL.get())
+    stopped, deadline = _ARCHIVE_CONTROL.get()
+    total_deadline = _INTAKE_TOTAL_DEADLINE.get()
+    if total_deadline is None:
+        check_archive_work(stopped, deadline)
+    else:
+        _check_intake_work(stopped, total_deadline)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise IntakeFileTimeout("파일 처리 시간이 초과되었습니다")
+
+
+def _check_intake_work(stopped, deadline):
+    if stopped.is_set():
+        raise CancelledError()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise IntakeTotalTimeout()
+
+
+@contextmanager
+def _intake_control(stopped, cancelled, deadline, total_deadline):
+    token = _INTAKE_STOPPED.set(cancelled)
+    archive_token = _ARCHIVE_CONTROL.set((stopped, deadline))
+    total_token = _INTAKE_TOTAL_DEADLINE.set(total_deadline)
+    try:
+        _check_intake_stopped()
+        _check_archive_work()
+        yield
+    finally:
+        _INTAKE_TOTAL_DEADLINE.reset(total_token)
+        _ARCHIVE_CONTROL.reset(archive_token)
+        _INTAKE_STOPPED.reset(token)
 
 
 def _check_zip_limits(infos, max_entries=None):
@@ -3952,15 +4012,22 @@ def _extract_document(name, raw):
 def _intake_document(name, raw, text, _lines):
     """추출 완료된 텍스트의 AI 분류/필드 추출만 병렬 실행한다. DB는 만지지 않는다."""
     _check_intake_stopped()
+    _check_archive_work()
     try:
         cl = classify(name, text)
-    except CancelledError:
+    except (CancelledError, ArchiveError):
         raise
     except Exception:
         log.exception("인테이크 파일 분류 실패: %s", name)
         cl = {"doc_type": "other", "confidence": 0.0,
               "fields": dict(getattr(text, "parse_fields", {})), "llm_error": "ERROR"}
     _check_intake_stopped()
+    _check_archive_work()
+    return _intake_document_result(name, raw, text, _lines, cl)
+
+
+def _intake_document_result(name, raw, text, _lines, cl):
+    """정상/시간 초과 문서 모두 같은 원본 보관·재처리 형식을 사용한다."""
     fields = dict(cl.get("fields") or {})
     if cl.get("field_sources"):
         fields["_sources"] = cl["field_sources"]
@@ -3995,99 +4062,189 @@ def _intake_documents(files, stopped, deadline=None):
     """추출 생산자 1개 → AI 풀. 진행/결과는 입력 순서, 대기 문서도 N개 이내."""
     if not files:
         return
+    deadline = intake_total_deadline() if deadline is None else deadline
     concurrency = min(_intake_concurrency(), AI_CONCURRENCY, len(files))
     pool = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="intake-ai")
     pending = queue.Queue(maxsize=concurrency)
     slots = threading.BoundedSemaphore(concurrency)
+    work_stopped = threading.Event()
+    jobs, consumed = [], set()
+    jobs_lock = threading.Lock()
+
+    def check():
+        if work_stopped.is_set():
+            raise CancelledError()
+        _check_intake_work(stopped, deadline)
 
     def put(item):
-        while not stopped.is_set():
+        while not stopped.is_set() and not work_stopped.is_set():
             try:
                 pending.put(item, timeout=0.1)
-                return
+                return True
             except queue.Full:
                 continue
+        return False
 
-    def classify_text(item, text, lines):
-        token = _INTAKE_STOPPED.set(stopped)
-        try:
-            check_archive_work(stopped, deadline)
-            return _intake_document(*item, text, lines)
-        finally:
-            _INTAKE_STOPPED.reset(token)
+    def classify_text(job, text, lines):
+        # 분류 기한은 풀 워커가 실제로 잡힌 시점부터 잰다. 앞 파일의 시간 초과 스레드가
+        # 워커를 붙잡고 있는 동안의 대기까지 이 파일의 기한으로 치면 연쇄 TIMEOUT 이 난다.
+        job["ai_deadline"] = min(intake_file_deadline(), deadline)
+        with _intake_control(stopped, job["stopped"], job["ai_deadline"], deadline):
+            return _intake_document(*job["item"], text, lines)
 
     def extract():
-        token = _INTAKE_STOPPED.set(stopped)
-        archive_token = _ARCHIVE_CONTROL.set((stopped, deadline))
         try:
-            for item in files:
+            for index, item in enumerate(files):
                 while True:
-                    check_archive_work(stopped, deadline)
+                    check()
                     if slots.acquire(timeout=0.1):
                         break
-                text, lines = _extract_document(*item)
-                check_archive_work(stopped, deadline)
-                put(pool.submit(classify_text, item, text, lines))
+                with jobs_lock:
+                    if work_stopped.is_set() or stopped.is_set():
+                        slots.release()
+                        return
+                    job = {"index": index, "item": item, "parsed": Future(),
+                           "deadline": min(intake_file_deadline(), deadline),
+                           "stopped": threading.Event(), "released": False}
+                    jobs.append(job)
+                # 추출 중에도 소비자가 파일/요청 기한을 감시할 수 있게 먼저 전달한다.
+                if not put(job):
+                    return
+                try:
+                    with _intake_control(stopped, job["stopped"], job["deadline"], deadline):
+                        text, lines = _extract_document(*item)
+                        check()
+                        future = pool.submit(classify_text, job, text, lines)
+                        job["parsed"].set_result((text, lines, future))
+                except (IntakeFileTimeout, CancelledError) as exc:
+                    job["parsed"].set_exception(exc)
+                    check()
+                except Exception as exc:
+                    job["parsed"].set_exception(exc)
+                    raise
         except Exception as exc:
             put(exc)
         finally:
-            _ARCHIVE_CONTROL.reset(archive_token)
-            _INTAKE_STOPPED.reset(token)
             put(None)
+
+    def release(job):
+        with jobs_lock:
+            if not job["released"]:
+                job["released"] = True
+                slots.release()
+
+    def wait_for(future, job, wait, key="deadline"):
+        while True:
+            if stopped.is_set():
+                raise CancelledError()
+            # 기한 전에 끝난 결과는 앞 파일을 기다리다가 기한이 지나도 보존한다.
+            if future.done():
+                return future.result()
+            _check_intake_work(stopped, deadline)
+            limit = job.get(key)
+            if limit is None:
+                remaining = 0.1   # 분류가 아직 풀에서 대기 중 — 요청 전체 기한만 적용
+            else:
+                remaining = limit - time.monotonic()
+                if remaining <= 0:
+                    raise IntakeFileTimeout()
+            if not wait:
+                return None
+            try:
+                return future.result(timeout=min(0.1, remaining))
+            except FutureTimeout:
+                continue
+
+    def resolve(job, wait=True):
+        text, lines, future = "", [], None
+        stage = "_ocr_error"
+        try:
+            parsed = wait_for(job["parsed"], job, wait)
+            if parsed is None:
+                return None
+            text, lines, future = parsed
+            stage = "_llm_error"
+            return wait_for(future, job, wait, "ai_deadline")
+        except IntakeFileTimeout:
+            job["stopped"].set()
+            if future is not None:
+                future.cancel()
+            fields = dict(getattr(text, "parse_fields", {}))
+            fields[stage] = "TIMEOUT"
+            return _intake_document_result(*job["item"], text, lines, {
+                "doc_type": "other", "confidence": 0.0, "fields": fields,
+                "llm_error": "TIMEOUT" if stage == "_llm_error" else None})
 
     producer = threading.Thread(target=extract, name="intake-file-extract", daemon=True)
     producer.start()
-    finished = False
     try:
         while not stopped.is_set():
-            check_archive_work(stopped, deadline)
+            _check_intake_work(stopped, deadline)
             try:
-                future = pending.get(timeout=0.1)
+                job = pending.get(timeout=0.1)
             except queue.Empty:
                 continue
-            if future is None:
-                finished = True
+            if job is None:
                 return
-            if isinstance(future, Exception):
-                raise future
-            while True:
-                check_archive_work(stopped, deadline)
-                try:
-                    document = future.result(timeout=0.1)
-                    break
-                except FutureTimeout:
-                    continue
-            check_archive_work(stopped, deadline)
-            slots.release()
+            if isinstance(job, Exception):
+                raise job
+            document = resolve(job)
+            consumed.add(job["index"])
+            release(job)
             yield document
+    except IntakeTotalTimeout:
+        with jobs_lock:
+            work_stopped.set()
+            remaining_jobs = list(jobs)
+        # 입력 순서상 앞선 파일이 느려도 이미 끝난 뒷 파일을 유실하지 않는다.
+        for job in remaining_jobs:
+            if job["index"] in consumed:
+                continue
+            try:
+                document = resolve(job, wait=False)
+            except (IntakeTotalTimeout, CancelledError):
+                document = None
+            if document is not None:
+                consumed.add(job["index"])
+                yield document
+        if not stopped.is_set():
+            raise IntakeTotalTimeout({"filename": name, "reason": "TIME_LIMIT"}
+                                     for i, (name, _) in enumerate(files) if i not in consumed)
     except CancelledError:
         return
     finally:
-        if not finished:
-            stopped.set()
-        # 실행 중 호출은 기존 timeout까지 정리된다. 다음 추출/AI 진입은 차단한다.
+        # 연결 끊김과 내부 종료는 구별한다. 전체 기한 초과도 정상 result를 저장해야 한다.
+        with jobs_lock:
+            work_stopped.set()
+            remaining_jobs = list(jobs)
+        for job in remaining_jobs:
+            job["stopped"].set()
+            release(job)
+        # 실행 중 스레드는 강제 종료하지 않는다. 대기 작업 및 다음 AI 진입은 차단한다.
         pool.shutdown(wait=False, cancel_futures=True)
 
 
 def intake_zip_iter(data, limit=200, *, files=None, stopped=None, deadline=None):
     """추출은 순차, AI만 병렬. progress/집계/DB는 기존 파일 순서로 소비한다."""
     stopped = stopped if stopped is not None else threading.Event()
-    deadline = archive_deadline() if deadline is None else deadline
     if stopped.is_set():
         return
     files = extract_zip(data, stopped=stopped, deadline=deadline) if files is None else files
-    check_archive_work(stopped, deadline)
+    total_deadline = intake_total_deadline()
     total = len(files[:limit])
     docs = []
     if stopped.is_set():
         return
     yield ("start", {"total": total})
-    documents = _intake_documents(files[:limit], stopped, deadline)
+    timed_out, timeout_skips = False, []
+    documents = _intake_documents(files[:limit], stopped, total_deadline)
     try:
         for i, d in enumerate(documents, 1):
             docs.append(d)
             yield ("progress", {"done": i, "total": total, "file": d["filename"],
                                 "doc_type_ko": d["doc_type_ko"]})
+    except IntakeTotalTimeout as exc:
+        timed_out, timeout_skips = True, exc.skipped_files
     finally:
         documents.close()
     if stopped.is_set():
@@ -4098,18 +4255,18 @@ def intake_zip_iter(data, limit=200, *, files=None, stopped=None, deadline=None)
                   "files": [d["filename"] for d in docs if d["doc_type"] == dt]}
                  for dt in REQUIRED_DOCS]
     missing = [c["doc_type_ko"] for c in checklist if not c["satisfied"]]
-    skipped = getattr(files, "skipped", 0) + max(0, len(files) - limit)
+    skipped = getattr(files, "skipped", 0) + max(0, len(files) - limit) + len(timeout_skips)
     if skipped:
         log.warning("인테이크 대상 초과: %d개 건너뜀", skipped)
     skipped_files = list(getattr(files, "skipped_files", []))
     skipped_files.extend({"filename": name, "reason": "ENTRY_LIMIT"} for name, _ in files[limit:])
+    skipped_files.extend(timeout_skips)
     extracted = aggregate_fields(docs)
     if stopped.is_set():
         return
-    check_archive_work(stopped, deadline)
     yield ("result", {"file_count": len(files), "skipped_entries": skipped, "skipped_files": skipped_files, "classified": docs, "checklist": checklist,
                       "missing": missing, "complete": len(missing) == 0,
-                      "extracted": extracted})
+                      "extracted": extracted, "timed_out": timed_out})
 
 
 def intake_zip(data, *, files=None, deadline=None):
