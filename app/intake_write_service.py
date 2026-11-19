@@ -60,7 +60,7 @@ def document_snapshots(db, case_id):
                      models.DocumentAsset.row_version).filter_by(case_id=case_id)}
 
 
-def aggregate_document_fields(documents, *, lookup_result=None):
+def aggregate_document_fields(documents, *, lookup_result=None, lang="ko"):
     """저장된 문서만 집계한다. 잠금 중에는 주소의 외부 우편번호 조회를 하지 않는다.
 
     집계기의 조회 옵션이 없으므로 주소를 제외한 목록·식별값을 먼저 계산하고,
@@ -80,7 +80,7 @@ def aggregate_document_fields(documents, *, lookup_result=None):
             if not addresses["factory_address"]:
                 addresses["factory_address"] = (fields.get("factory_address") or
                     (fields.get("address") if doc.doc_type == "factory_registration" else None))
-    agg = aggregate_fields(rows)
+    agg = aggregate_fields(rows, lang=lang)
     for key, prefix in (("address", ""), ("factory_address", "factory_")):
         agg[key] = intake._complete_address(addresses[key], agg[prefix + "city"],
                                             agg[prefix + "province"], agg[prefix + "country"])

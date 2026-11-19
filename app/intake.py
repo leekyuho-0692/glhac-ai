@@ -1856,6 +1856,12 @@ _CLASSIFY_SYS = (
     "factory_address는 공장 주소, factory_city/factory_province/factory_country/factory_zip은 공장 주소의 도시/도(주)/국가/우편번호. "
     "factory_reg_no는 공장등록번호(Plant Registration No. — 공장 고유번호, 예: G20026130). "
     "responsible_person은 대표자/책임자 이름. "
+    "company_name·company_name_en·responsible_person·address·address_en 등 이름과 주소는 "
+    "서류에 적힌 언어와 표기를 그대로 보존하세요. 번역·음차·로마자화하지 마세요. "
+    "국문과 영문이 병기된 경우 company_name·responsible_person·address 주 필드에는 국문을, "
+    "company_name_en·responsible_person_en·address_en에는 서류에 있는 영문을 각각 넣으세요. "
+    "영문만 있는 서류는 가입을 포함한 모든 경로에서 company_name·responsible_person·address에도 "
+    "영문 원문을 넣으세요. 없는 언어의 표기를 만들지 마세요. "
     "phone은 회사 전화번호, factory_phone은 공장 전화번호(Tel). "
     "business_type은 사업의 종류/업태(예: 제조업, 도소매업). "
     "employee_count는 총 직원 수(숫자만, 남녀 합계). "
@@ -2956,8 +2962,68 @@ def _reference_document(result, filename, text):
     return result
 
 
+# 한영 표에서 끼어드는 인접 셀의 라벨·값(재현 패턴은 수십 자)을 허용한다.
+# 정규화 후 문자 수 기준 200자 생략 예산으로 먼 안내문/다른 항목까지 이어 붙이지 못하게 한다.
+_EVIDENCE_MAX_SKIPPED_CHARS = 200
+# 반복 라벨로 탐색 비용이 커지는 문서는 2000개 후보까지만 검증하고 보수적으로 거절한다.
+_EVIDENCE_MAX_START_CANDIDATES = 2000
+
+
+def _evidence_quote_in_source(quote, value, source_text):
+    """정규화 연속 인용 또는 실제 값을 포함하는 짧은 순서 보존 표 구간만 인정한다."""
+    if not isinstance(quote, str) or not (quoted := normalized_text(quote)):
+        return False
+    if quoted in source_text:
+        return True
+    parts = [part for token in quote.split() if (part := normalized_text(token))]
+    if len(parts) < 2 or isinstance(value, bool):
+        return False  # 단일 조각과 의미 판정이 필요한 불리언은 기존 연속 인용만 허용한다.
+    items = value if isinstance(value, list) else [value]
+    quoted_values = sorted((quoted.index(v), v) for item in items
+                           if (v := normalized_text(item)) and v in quoted)
+    # 어절 사이 정규화(예: 날짜)로 위치가 달라지면 조각의 범위를 추측하지 않는다.
+    if not quoted_values or "".join(parts) != quoted:
+        return False
+    ordered_parts = []
+    part_index = part_offset = previous_value_end = 0
+    for value_start, item in quoted_values:
+        value_end = value_start + len(item)
+        if value_start < previous_value_end:
+            return False  # 목록의 값끼리도 같은 인용 구간을 겹쳐 쓰지 않는다.
+        # 인용에서 값 앞에 끝나는 조각은 유지하고, 값과 겹치는 조각은 연속 값으로 대체한다.
+        while part_index < len(parts) and part_offset + len(parts[part_index]) <= value_start:
+            ordered_parts.append(parts[part_index])
+            part_offset += len(parts[part_index])
+            part_index += 1
+        while part_index < len(parts) and part_offset < value_end:
+            part_offset += len(parts[part_index])
+            part_index += 1
+        ordered_parts.append(item)
+        previous_value_end = value_end
+    # 남은 뒤 조각까지 한 순서로 검색하므로 앞 조각·각 값·뒤 조각은 원문에서도 겹치지 않는다.
+    parts = ordered_parts + parts[part_index:]
+    start = source_text.find(parts[0])
+    attempts = 0
+    while start >= 0:
+        if attempts >= _EVIDENCE_MAX_START_CANDIDATES:
+            return False
+        attempts += 1
+        limit = start + len(quoted) + _EVIDENCE_MAX_SKIPPED_CHARS
+        cursor = start + len(parts[0])
+        for part in parts[1:]:
+            position = source_text.find(part, cursor, limit)
+            if position < 0:
+                break
+            cursor = position + len(part)
+        else:
+            return True
+        start = source_text.find(parts[0], start + 1)
+    return False
+
+
 def _checked_fields(values, evidence, rules, text, source="ai", conflicts=()):
     fields, meta = {}, {}
+    source_text = normalized_text(text)
     for key, value in values.items():
         if key.startswith("_"):
             fields[key] = value
@@ -2966,8 +3032,7 @@ def _checked_fields(values, evidence, rules, text, source="ai", conflicts=()):
             continue
         quote = evidence.get(key)
         quotes = quote if isinstance(quote, list) else [quote] if isinstance(quote, str) else []
-        quote_ok = bool(quotes) and all(isinstance(q, str) and normalized_text(q)
-                         and normalized_text(q) in normalized_text(text) for q in quotes)
+        quote_ok = bool(quotes) and all(_evidence_quote_in_source(q, value, source_text) for q in quotes)
         grounded = _field_value_grounded(key, value, text)
         # Evidence의 구절 안에도 값이 있어야 엉뚱한 인용으로 검산을 우회하지 못한다.
         if quote_ok and isinstance(value, bool):
@@ -3829,13 +3894,15 @@ def _material_autofill_allowed(name):
         return False
 
 
-def aggregate_fields(docs, *, rejected_product_names=()):
+def aggregate_fields(docs, *, rejected_product_names=(), lang="ko"):
     """분류 문서들의 추출 필드를 신청서용으로 집계.
     회사명·NIB·주소·책임자·공장등록번호는 신청기업 서류(사업자/공장등록증)에서만 취함(공급사 제외).
 
     제품 목록의 제품명과 구조 파서 목록은 즉시 반영한다.
-    AI 단독 성분은 성분 문맥의 원문 대조와 위험 판정을 통과해야 반영한다."""
+    AI 단독 성분은 성분 문맥의 원문 대조와 위험 판정을 통과해야 반영한다.
+    lang은 기존 신청자 언어 설정이다. 언어별 원문은 보존하고 대표값의 우선순위만 바꾼다."""
     from .models import normalize_material_name as norm
+    docs = list(docs)
     agg = {"company_name": None, "company_name_ko": None, "company_name_en": None,
            "nib": None, "address": None, "factory_address": None,
            "city": None, "province": None, "country": None, "zip": None,
@@ -3850,19 +3917,27 @@ def aggregate_fields(docs, *, rejected_product_names=()):
     _pk = set()   # 제품 중복 판정 키(대소문자 무시)
     _mk = set()   # 원재료 중복 판정 키
     _pend_pk, _pend_mk = set(), set()
+    # 모든 신청기업 문서의 명시적 언어 필드를 먼저 모아 문서 순서와 무관하게 추정값보다 우선한다.
+    for d in docs:
+        if d.get("doc_type") not in _APPLICANT_DOCS and d.get("doc_type") is not None:
+            continue
+        f = d.get("fields") or {}
+        for key in ("company_name", "responsible_person"):
+            for suffix in ("_ko", "_en"):
+                if f.get(key + suffix) and not agg[key + suffix]:
+                    agg[key + suffix] = str(f[key + suffix]).strip()
     for d in docs:
         f = d.get("fields") or {}
         text = d.get("text_full") or d.get("text") or ""
         applicant = d.get("doc_type") in _APPLICANT_DOCS or d.get("doc_type") is None
         if applicant:
-            # 회사명 국문/영문 분리 — 한글 포함이면 국문(정식상호), 아니면 영문. 주 필드는 국문 우선.
-            if f.get("company_name"):
-                _cn = str(f["company_name"]).strip()
-                if re.search(r'[가-힣]', _cn):
-                    if not agg["company_name_ko"]:
-                        agg["company_name_ko"] = _cn
-                elif not agg["company_name_en"]:
-                    agg["company_name_en"] = _cn
+            # 한 문서의 병기 필드와 여러 문서의 단일 언어 값을 모두 보존한다. 번역은 하지 않는다.
+            for key in ("company_name", "responsible_person"):
+                if f.get(key):
+                    name = str(f[key]).strip()
+                    suffix = "_ko" if re.search(r"[가-힣]", name) else "_en"
+                    if not agg[key + suffix]:
+                        agg[key + suffix] = name
             if not agg["nib"] and f.get("nib"):
                 agg["nib"] = f["nib"]
             # 회사 주소(NIB)와 공장 주소(공장등록증)를 분리 — 뭉치면 회사주소가 공장주소로 잘못 저장됨
@@ -3878,14 +3953,6 @@ def aggregate_fields(docs, *, rejected_product_names=()):
             for _fc in ("factory_city", "factory_province", "factory_country", "factory_zip"):   # 공장 도시/도/국가/우편(공장등록증)
                 if not agg[_fc] and f.get(_fc):
                     agg[_fc] = f[_fc]
-            # 대표자 국문/영문 분리 — 한글 포함이면 국문, 아니면 영문. 주 필드는 국문 우선.
-            if f.get("responsible_person"):
-                _rp = str(f["responsible_person"]).strip()
-                if re.search(r'[가-힣]', _rp):
-                    if not agg["responsible_person_ko"]:
-                        agg["responsible_person_ko"] = _rp
-                elif not agg["responsible_person_en"]:
-                    agg["responsible_person_en"] = _rp
             if not agg["factory_reg_no"] and f.get("factory_reg_no"):
                 agg["factory_reg_no"] = f["factory_reg_no"]
             # 전화 엄격 분리(오피스↔공장 혼입 방지): 회사 전화(office_phone)=사업자등록증(NIB)에서만,
@@ -3962,9 +4029,11 @@ def aggregate_fields(docs, *, rejected_product_names=()):
         if f.get("cert_no"):
             agg["certificates"].append({"cert_no": f.get("cert_no"), "issuer": f.get("issuer"),
                                         "expiry": f.get("expiry_date")})
-    # 회사명·대표자 주 필드 = 국문 우선(없으면 영문)
-    agg["company_name"] = agg["company_name_ko"] or agg["company_name_en"]
-    agg["responsible_person"] = agg["responsible_person_ko"] or agg["responsible_person_en"]
+    # 영어·인니어 신청자는 영문 우선. 언어 설정이 없으면 기존 국문 우선으로 둔다.
+    language = str(lang or "ko").lower().replace("_", "-").split("-")[0]
+    preferred, fallback = ("_en", "_ko") if language in ("en", "id") else ("_ko", "_en")
+    for key in ("company_name", "responsible_person"):
+        agg[key] = agg[key + preferred] or agg[key + fallback]
     conflicts = _product_alias_conflicts(agg["product_aliases"])
     aliases = []
     for group in agg["product_aliases"]:

@@ -8892,7 +8892,8 @@ def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id
     d.text_full = text or ""
     d.translations = None  # 원문 재추출 → 기존 번역 캐시 무효화
     # 병합에서 삭제·교체된 후보를 되살리지 않는다. 잠금 중 재집계는 외부 조회 없이 한다.
-    agg = aggregate_document_fields([d], lookup_result=agg) if apply else None
+    agg = aggregate_document_fields([d], lookup_result=agg,
+        lang=_problem_documents_language(db, c, "applicant")) if apply else None
     # 저장 요청에서 OCR하지 않는다. 큐가 이미 추출한 본문으로만 편철한다.
     if apply:
         _autofile_evidence(db, c.case_id, d, allow_parse=False)
@@ -9618,7 +9619,8 @@ def _apply_intake_autofill(db, c, res, base_fields_by_id, base_case=None):
             _seen_n[_nm] = doc
     db.flush()
     # 중복 업로드의 병합과 같은 묶음의 재진입까지 끝난 실제 저장값으로만 집계한다.
-    agg = aggregate_document_fields(saved, lookup_result=res.get("extracted"))
+    agg = aggregate_document_fields(saved, lookup_result=res.get("extracted"),
+        lang=_problem_documents_language(db, c, "applicant"))
     res["extracted"] = agg
     applied = _apply_agg_to_case(db, c, agg, documents=saved, base_case=base_case)
     applied["dup_skipped"] = dup_skipped
@@ -10229,7 +10231,8 @@ def autofill_profile(case_id: str, force: bool = False,
                     d.text_excerpt = (text or "")[:300]
                     d.text_full = text or ""
                     reprocessed.append(d.document_id)
-    agg = aggregate_document_fields(docs, lookup_result=agg)
+    agg = aggregate_document_fields(docs, lookup_result=agg,
+        lang=_problem_documents_language(db, c, "applicant"))
     applied = []
     for d in docs:
         own = _apply_owned_autofill(db, c, d, base_case=base_case)
