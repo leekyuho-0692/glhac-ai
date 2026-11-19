@@ -37,8 +37,15 @@ const ENTA_I18N = {
   "upload.file_error": ["파일 읽기 또는 서버 연결 실패", "Could not read the file or connect to the server", "Gagal membaca berkas atau menghubungi server"],
   "upload.analysis_wait": ["자동 분석 대기 — 재처리가 필요할 수 있습니다.", "Waiting for automatic analysis; reprocessing may be needed.", "Menunggu analisis otomatis; pemrosesan ulang mungkin diperlukan."],
   "upload.analysis_failed": ["AI 분석 실패 — 재처리 필요", "AI analysis failed; reprocessing needed", "Analisis AI gagal; perlu diproses ulang"],
+  "upload.analysis_progress": ["AI 분석 중 — 완료 {done}/{total}, 경과 {m}분", "AI analysis in progress — completed {done}/{total}, elapsed {m} min", "Analisis AI berlangsung — selesai {done}/{total}, waktu berlalu {m} menit"],
+  "upload.analysis_done": ["AI 분석 완료 — {done}/{total}", "AI analysis complete — {done}/{total}", "Analisis AI selesai — {done}/{total}"],
+  "upload.ocr.CORRUPT": ["파일이 손상되어 읽을 수 없습니다. 원본을 다시 받아 올려 주세요.", "The file is damaged and cannot be read. Obtain the original file again and upload it.", "Berkas rusak dan tidak dapat dibaca. Dapatkan kembali berkas asli lalu unggah ulang."],
+  "upload.ocr.ENCRYPTED": ["암호가 걸린 파일입니다. 암호를 풀어 다시 올려 주세요.", "The file is password protected. Remove the password and upload it again.", "Berkas dilindungi kata sandi. Hapus kata sandinya lalu unggah ulang."],
+  "upload.ocr.TIMEOUT": ["판독 시간이 초과되었습니다. 자동 재처리 대상입니다.", "The reading time limit was exceeded. The file is eligible for automatic reprocessing.", "Batas waktu pembacaan terlampaui. Berkas akan diproses ulang secara otomatis."],
+  "upload.ocr.ERROR": ["파일을 읽지 못했습니다. 다시 올려 주세요.", "The file could not be read. Please upload it again.", "Berkas tidak dapat dibaca. Silakan unggah ulang."],
+  "upload.unreadable_count": ["판독 불가 {n}건 — 목록의 사유를 확인해 주세요", "{n} unreadable files — check the reasons in the list", "{n} berkas tidak dapat dibaca — periksa alasannya dalam daftar"],
   "upload.progress_failed": ["진행 상황을 불러오지 못했습니다. 문서함에서 다시 확인해 주세요.", "Could not load progress. Check the document library.", "Gagal memuat progres. Periksa kembali di pustaka dokumen."],
-  "upload.timeout": ["3분간 확인했습니다. 분석 대기 서류는 문서함에서 다시 확인해 주세요.", "Checked for three minutes. Review documents awaiting analysis in the document library.", "Pemeriksaan berlangsung tiga menit. Periksa dokumen yang menunggu analisis di pustaka dokumen."],
+  "upload.timeout": ["서버에서 계속 분석 중입니다. 완료되면 문서함에 반영되고, 읽을 수 없는 파일은 알림으로 안내됩니다. 이 창을 닫아도 됩니다.", "Analysis is continuing on the server. Completed results will appear in the document library, and you will be notified of unreadable files. You may close this window.", "Analisis masih berlangsung di server. Hasil yang selesai akan muncul di pustaka dokumen, dan berkas yang tidak dapat dibaca akan diberitahukan melalui notifikasi. Anda boleh menutup jendela ini."],
   "upload.interrupted": ["업로드 중단", "Upload interrupted", "Unggahan dihentikan"],
   "upload.check_error": ["서류 정보를 확인하지 못했습니다. 다시 불러와 주세요.", "Could not read document information. Please reload.", "Informasi dokumen tidak dapat dibaca. Silakan muat ulang."],
   "upload.draft_saved": ["기업 정보를 임시저장했습니다. 품목·공장·조직은 각 등록 버튼으로 저장해 주세요.", "Company draft saved. Save products, facilities and team changes using their own buttons.", "Draf perusahaan tersimpan. Simpan produk, fasilitas, dan tim dengan tombol masing-masing."],
@@ -285,7 +292,7 @@ App.entaRetry = async function(i){
   if(!it || it.status!=='failed' || !it.file) return;
   ENTA_cancelBulk(previous);
   const bulk={...previous,busy:true,cancelled:false,note:'',controller:new AbortController(),wake:null};
-  it.status='queued'; it.reason=''; it.document_id=null; it.verdict=null; it.doc_type_ko='';
+  it.status='queued'; it.reason=''; it.document_id=null; it.verdict=null; it.doc_type_ko=''; it.ocrError=null;
   S.entaBulk=bulk; render();
   await ENTA_runBulk(bulk,[it],true);
 };
@@ -355,15 +362,27 @@ async function ENTA_runBulk(bulk, items, retry=false){
 }
 function ENTA_applyParsedStatus(it,d){
   it.doc_type_ko=d.doc_type_ko||d.doc_type; it.verdict=(d.verify||{}).verdict;
-  if((d.fields||{})._llm_error==='LLM_UNAVAILABLE'){ it.status='complete'; it.verdict='unknown'; it.reason=ENTA_t('docs.ai_unavailable'); }
-  else if((d.fields||{})._llm_error){ it.status='failed'; it.reason=ENTA_t('upload.analysis_failed'); }
+  it.ocrError=(d.fields||{})._ocr_error||null;
+  if(it.ocrError){
+    const code=['CORRUPT','ENCRYPTED','TIMEOUT'].includes(it.ocrError)?it.ocrError:'ERROR';
+    it.status='failed'; it.verdict='unknown'; it.reason=ENTA_t('upload.ocr.'+code);
+  }
+  else if((d.fields||{})._llm_error==='LLM_UNAVAILABLE'){ it.status='complete'; it.verdict='unknown'; it.reason=ENTA_t('docs.ai_unavailable'); }
+  else if((d.fields||{})._llm_error){ it.status='failed'; it.verdict='unknown'; it.reason=ENTA_t('upload.analysis_failed'); }
   else if(d.confidence!=null){ it.status='complete'; it.reason=''; }
 }
 async function ENTA_pollBulk(bulk, active){
-  const end=Date.now()+180000;
+  const started=Date.now(), pending=bulk.items.filter(it=>it.status==='pending').length;
+  const end=started+Math.max(180000,Math.min(pending*60000,1800000));
+  const progress=()=>ENTA_t('upload.analysis_progress',{
+    done:bulk.items.filter(it=>it.status!=='pending').length,total:bulk.items.length,m:Math.floor((Date.now()-started)/60000)
+  });
+  let progressError='';
+  if(active() && pending){ bulk.note=progress(); render(); }
   while(active() && Date.now()<end && bulk.items.some(it=>it.document_id && it.status==='pending')){
     await new Promise(resolve=>{
-      const timer=setTimeout(done, Math.min(3000,end-Date.now()));
+      const interval=Date.now()-started<180000?3000:10000;
+      const timer=setTimeout(done, Math.min(interval,end-Date.now()));
       function done(){ clearTimeout(timer); bulk.wake=null; resolve(); }
       bulk.wake=done;
     });
@@ -371,11 +390,16 @@ async function ENTA_pollBulk(bulk, active){
     try{
       const r=await apiFetch(`/cases/${bulk.cid}/documents?lang=${encodeURIComponent(ENTA_LANG())}`, {signal:AbortSignal.any([bulk.controller.signal,AbortSignal.timeout(end-Date.now())])});
       if(!active()) return;
-      if(!r.ok){ bulk.note=ENTA_t('upload.progress_error')+await ENTA_uploadError(r); if(r.status===403) break; }
+      if(!r.ok){
+        const reason=await ENTA_uploadError(r);
+        if(!active()) return;
+        progressError=ENTA_t('upload.progress_error')+reason;
+        if(r.status===403) break;
+      }
       else{
         const docs=await r.json();
         if(!active()) return;
-        bulk.note='';
+        progressError='';
         for(const it of bulk.items){
           if(it.status==='duplicate') continue;
           const d=docs.find(x=>x.document_id===it.document_id);
@@ -383,11 +407,17 @@ async function ENTA_pollBulk(bulk, active){
           ENTA_applyParsedStatus(it,d);
         }
       }
-    }catch(e){ bulk.note=ENTA_t('upload.progress_failed'); }
+    }catch(e){ if(!active()) return; progressError=ENTA_t('upload.progress_failed'); }
+    bulk.note=progress()+(progressError?' '+progressError:'');
     if(active()) render();
   }
   if(!active()) return;
-  if(bulk.items.some(it=>it.status==='pending')) bulk.note=bulk.note||ENTA_t('upload.timeout');
+  bulk.note=bulk.items.some(it=>it.status==='pending')
+    ? (Date.now()>=end?ENTA_t('upload.timeout'):progressError||ENTA_t('upload.timeout')) : progressError||ENTA_t('upload.analysis_done',{
+      done:bulk.items.filter(it=>it.status!=='pending').length,total:bulk.items.length
+    });
+  const unreadable=bulk.items.filter(it=>it.status==='failed' && it.ocrError).length;
+  if(unreadable) bulk.note+=(bulk.note?' ':'')+ENTA_t('upload.unreadable_count',{n:unreadable});
   if(Date.now()>=end) return;
   try{
     const r=await apiFetch(`/cases/${bulk.cid}/pending-extractions`, {signal:bulk.controller.signal});
@@ -418,18 +448,24 @@ App.entaSaveDraft = async function(){
 };
 
 App.entaZip = async function(file,options={}){
-  const cid = ENTA_CASE();
+  const cid = options.cid || ENTA_CASE();
   if(!cid) return toast(ENTA_t('upload.text_025'));
   if(!file || !canCall('POST','/cases/{}/intake-zip-stream')) return;
-  const active=()=>options.bulk?ENTA_bulkActive(options.bulk):(ENTA_CASE()===cid && AUTH.username===owner);
   const owner=AUTH.username;
+  const active=()=>options.bulk?ENTA_bulkActive(options.bulk):((options.cid || ENTA_CASE())===cid && AUTH.username===owner);
+  const visible=()=>active() && (!options.isCurrent || options.isCurrent());
+  const progress = text => {
+    if(!visible()) return;
+    S.entaProg=text; render();
+    if(typeof options.onProgress==='function') options.onProgress(text);
+  };
   const fail = msg => {
-    if(active()){ S.entaProg=ENTA_t('upload.zip_error')+msg; render(); if(!options.bulk) toast(msg); }
+    if(visible()){ progress(ENTA_t('upload.zip_error')+msg); if(!options.bulk && !options.onProgress) toast(msg); }
     if(options.bulk) throw Object.assign(new Error(msg),{uploadReason:msg});
     return null;
   };
   if(file.size>20*1024*1024) return fail(ENTA_t('upload.too_large'));
-  S.entaProg = ENTA_t('upload.text_028'); render();
+  progress(ENTA_t('upload.text_028'));
   let b64;
   try{
     const buf = await file.arrayBuffer();
@@ -454,10 +490,13 @@ App.entaZip = async function(file,options={}){
   let buf='', errMsg=null, result=null;
   const handle = (obj) => {
     if(!active()) return;
-    if(obj.type==='start'){ S.entaProg=ENTA_t('upload.starting',{count:obj.file_count||obj.total||0}); render(); }
-    else if(obj.type==='progress'){ S.entaProg=ENTA_t('upload.processing',{index:obj.index||obj.done||0,total:obj.total||obj.file_count||0,filename:obj.filename||obj.file||''}); render(); }
-    else if(obj.type==='error'){ errMsg = ENTA_errorText(obj.code||obj.message||obj.detail||ENTA_t('upload.text_031')); }
-    else if(obj.type==='result'){ result=obj; S.entaProg=ENTA_t('upload.text_032'); render(); }
+    if(obj.type==='start'){ progress(ENTA_t('upload.starting',{count:obj.file_count||obj.total||0})); }
+    else if(obj.type==='progress'){ progress(ENTA_t('upload.processing',{index:obj.index||obj.done||0,total:obj.total||obj.file_count||0,filename:obj.filename||obj.file||''})); }
+    else if(obj.type==='error'){
+      errMsg = ENTA_errorText(obj.code||obj.message||obj.detail||ENTA_t('upload.text_031'));
+      progress(ENTA_t('upload.zip_error')+errMsg);
+    }
+    else if(obj.type==='result'){ result=obj; progress(ENTA_t('upload.text_032')); }
   };
   try{
     const reader = r.body.getReader();
@@ -480,21 +519,25 @@ App.entaZip = async function(file,options={}){
 
   if(!active()) return null;
   if(errMsg || !result) return fail(errMsg||ENTA_t('upload.zip_no_result'));
+  if(!visible()) return result;
   const previous=S.entaSkipped;
   S.entaSkipped={cid,owner,items:[...(previous?.cid===cid && previous.owner===owner?previous.items:[]),...(result.skipped_files||[])]};
-  S.entaProg = ENTA_t('upload.text_033');
-  if(result.timed_out) S.entaProg+=' '+ENTA_t('upload.timed_out');
+  let message = ENTA_t('upload.text_033');
+  if(result.timed_out) message+=' '+ENTA_t('upload.timed_out');
+  progress(message);
   if(options.bulk) return result;
   try{
     const pending=await apiFetch(`/cases/${cid}/pending-extractions`);
     if(pending.ok){
       const n=((await pending.json()).items||[]).filter(it=>it.kind==='material_names').length;
-      if(n) S.entaProg+=' '+ENTA_t('upload.materials_pending',{count:n});
+      if(n) progress(message+' '+ENTA_t('upload.materials_pending',{count:n}));
     }
   }catch(e){ /* 처리 결과는 유지한다. */ }
+  if(options.refresh===false || !visible()) return result;
   await loadEnt();
+  if(!visible()) return result;
   if(typeof PKG_load==='function') await PKG_load(cid);
-  if(active()){ render(); toast(ENTA_t('upload.text_033')); }
+  if(visible()){ render(); if(!options.onProgress) toast(ENTA_t('upload.text_033')); }
   return result;
 };
 

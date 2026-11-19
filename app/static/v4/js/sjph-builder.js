@@ -205,6 +205,7 @@ App.sjbMove = async function(cid, i, d){
 App.sjbImg = async function(cid, i){
   const file = await SJB_pick('image/*,.pdf');
   if(!file) return;
+  if(/\.(zip|rar|7z)$/i.test(file.name)) return toast(t('upload.zip_documents_hint'));
   let dataURL;
   try{ dataURL = await SJB_dataURL(file); }catch(e){ toast('파일을 읽을 수 없습니다.'); return; }
   let document_id;
@@ -252,6 +253,7 @@ App.sjbSigner = async function(cid, j){
 App.sjbStamp = async function(cid, j){
   const file = await SJB_pick('image/*');
   if(!file) return;
+  if(/\.(zip|rar|7z)$/i.test(file.name)) return toast(t('upload.zip_documents_hint'));
   let dataURL;
   try{ dataURL = await SJB_dataURL(file); }catch(e){ toast('파일을 읽을 수 없습니다.'); return; }
   let document_id;

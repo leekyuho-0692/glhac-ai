@@ -168,7 +168,7 @@ test('분석 대기 폴링은 3분을 넘지 않고 있는 검증 배지는 표�
   await c.App.entaUpload([file('scan.pdf')]);
   assert.equal(polls,59);
   assert.equal(c.S.entaBulk.busy,false);
-  assert.match(c.S.entaBulk.note,/3분/);
+  assert.match(c.S.entaBulk.note,/계속 분석 중/);
   assert.match(c.ENTA_applyPanel(),/확인 필요/);
 });
 

@@ -230,7 +230,7 @@ function PKG_materialRender(s){
     </tbody></table></div>
     ${edit?`<div class="row-act"><button class="btn" ${disabled} onclick="App.pkgMaterialAddRow()">행 추가</button><button class="btn btn-primary" ${disabled} onclick="App.pkgMaterialSave()">모두 저장</button></div>`:''}
     <hr><h4>파일로 일괄 등록</h4><p class="muted">원료 리스트·성분표를 올리면 구조 파서가 읽은 값은 등록되고, AI 추출값은 위 목록에서 확인합니다.</p>
-    ${edit&&canCall('POST','/cases/{}/parse-file')?`<input class="in" type="file" aria-label="원료 리스트·성분표 파일" accept=".xlsx,.xls,.pdf,.csv,.docx,.doc,.txt,.hwp,.jpg,.jpeg,.png" ${disabled} onchange="App.pkgMaterialFile(this.files[0])">`:'<p class="muted">파일 업로드는 신청기업·컨설턴트 계정에서 할 수 있습니다.</p>'}
+    ${edit&&canCall('POST','/cases/{}/parse-file')?`<input class="in" type="file" aria-label="원료 리스트·성분표 파일" accept=".xlsx,.xls,.pdf,.csv,.docx,.doc,.txt,.hwp,.jpg,.jpeg,.png,.zip,.rar,.7z" ${disabled} onchange="App.pkgMaterialFile(this.files[0])">`:'<p class="muted">파일 업로드는 신청기업·컨설턴트 계정에서 할 수 있습니다.</p>'}
     ${s.fileResult?`<p class="note">${esc(s.fileResult)}</p>`:''}
     ${s.notice?`<p class="note" role="status">${esc(s.notice)}</p>`:''}`;
 }
@@ -295,6 +295,27 @@ App.pkgMaterialSave = async function(){
 App.pkgMaterialFile = async function(file){
   const s=S.pkgMaterial;
   if(!file || !s || s.busy || !PKG_canEdit() || !canCall('POST','/cases/{}/materials') || !canCall('POST','/cases/{}/parse-file')) return;
+  if(/\.(zip|rar|7z)$/i.test(file.name)){
+    if(!canCall('POST','/cases/{}/intake-zip-stream')){
+      s.fileResult=t('upload.zip_permission'); PKG_materialRender(s);
+      return toast(s.fileResult);
+    }
+    s.busy=true; s.fileResult='';
+    let progressError='';
+    try{
+      const result=await App.entaZip(file,{cid:s.cid,onProgress:text=>{
+        if(text.startsWith(t('upload.zip_error'))) progressError=text;
+        s.fileResult=text; PKG_materialRender(s);
+      }});
+      if(!result) return;
+      s.fileResult=file.name+' — '+tf('upload.archive_done',{count:result.classified?.length??result.file_count??0})+' '+t('upload.archive_review');
+      if(result.timed_out) s.fileResult+=' '+t('upload.timed_out');
+      delete RS.entDocs[s.cid]; await loadEntDocs(s.cid); await loadEnt();
+      await PKG_materialUpdated(s);
+    }catch(e){ s.fileResult=e?.message?t('upload.zip_error')+e.message:progressError||t('upload.zip_error')+t('upload.file_error'); }
+    finally{ s.busy=false; PKG_materialRender(s); }
+    return;
+  }
   if(file.size>20*1024*1024){ s.fileResult='실패: 용량 초과(파일당 최대 20MB)'; return PKG_materialRender(s); }
   s.busy=true; s.fileResult=file.name+' — 읽는 중…'; PKG_materialRender(s);
   try{

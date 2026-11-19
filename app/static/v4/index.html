@@ -733,7 +733,7 @@ const UIV4_I18N = {
   "upload.analysis_wait": ["자동 분석 대기 — 재처리가 필요할 수 있습니다.", "Waiting for automatic analysis; reprocessing may be needed.", "Menunggu analisis otomatis; pemrosesan ulang mungkin diperlukan."],
   "upload.analysis_failed": ["AI 분석 실패 — 재처리 필요", "AI analysis failed; reprocessing needed", "Analisis AI gagal; perlu diproses ulang"],
   "upload.progress_failed": ["진행 상황을 불러오지 못했습니다. 문서함에서 다시 확인해 주세요.", "Could not load progress. Check the document library.", "Gagal memuat progres. Periksa kembali di pustaka dokumen."],
-  "upload.timeout": ["3분간 확인했습니다. 분석 대기 서류는 문서함에서 다시 확인해 주세요.", "Checked for three minutes. Review documents awaiting analysis in the document library.", "Pemeriksaan berlangsung tiga menit. Periksa dokumen yang menunggu analisis di pustaka dokumen."],
+  "upload.timeout": ["서버에서 계속 분석 중입니다. 완료되면 문서함에 반영되고, 읽을 수 없는 파일은 알림으로 안내됩니다. 이 창을 닫아도 됩니다.", "Analysis is continuing on the server. Completed results will appear in the document library, and you will be notified of unreadable files. You may close this window.", "Analisis masih berlangsung di server. Hasil yang selesai akan muncul di pustaka dokumen, dan berkas yang tidak dapat dibaca akan diberitahukan melalui notifikasi. Anda boleh menutup jendela ini."],
   "upload.interrupted": ["업로드 중단", "Upload interrupted", "Unggahan dihentikan"],
   "upload.check_error": ["서류 정보를 확인하지 못했습니다. 다시 불러와 주세요.", "Could not read document information. Please reload.", "Informasi dokumen tidak dapat dibaca. Silakan muat ulang."],
   "upload.draft_saved": ["기업 정보를 임시저장했습니다. 품목·공장·조직은 각 등록 버튼으로 저장해 주세요.", "Company draft saved. Save products, facilities and team changes using their own buttons.", "Draf perusahaan tersimpan. Simpan produk, fasilitas, dan tim dengan tombol masing-masing."],
@@ -990,6 +990,10 @@ const UIV4_I18N = {
   "ui.text_150": ["없음", "None", "Tidak ada"],
   "ui.text_151": ["회수됨", "Revoked", "Dicabut"],
   "docs.uploaded": ["서류를 올렸습니다.", "Document uploaded.", "Dokumen diunggah."],
+  "upload.zip_documents_hint": ["압축 파일은 서류 올리기의 ZIP 버튼으로 올려 주세요.", "Use the ZIP button in Document upload to upload archives.", "Gunakan tombol ZIP di Unggah dokumen untuk mengunggah arsip."],
+  "upload.zip_permission": ["압축 파일은 ZIP 올리기 권한이 있는 계정(업체·컨설턴트)만 올릴 수 있습니다", "Only accounts with ZIP upload permission (companies and consultants) can upload archives.", "Hanya akun dengan izin unggah ZIP (perusahaan dan konsultan) yang dapat mengunggah arsip."],
+  "upload.zip_busy": ["압축 파일 처리 중입니다. 잠시 기다려 주세요.", "The archive is being processed. Please wait.", "Arsip sedang diproses. Harap tunggu."],
+  "upload.archive_review": ["확인 대기 원재료가 있으면 위 목록에서 확인해 주세요.", "Review any raw materials awaiting confirmation in the list above.", "Periksa bahan yang menunggu konfirmasi pada daftar di atas."],
   "docs.no_number": ["없음", "Missing", "Tidak ada"],
   "sys": ["AI 할랄인증 지원시스템", "AI Halal Certification Support System", "Sistem Dukungan Sertifikasi Halal AI"],
   "nav.ent-home": ["종합 정보", "Overview", "Informasi Terpadu"],
@@ -3049,7 +3053,7 @@ VIEWS['ent-docs'] = () => {
   <section class="panel"><div class="panel-head"><h2>${t('ui.text_115')}</h2><span class="muted">${t('ui.text_116')}</span></div>
     <div class="inline" style="flex-wrap:wrap">
       <select class="in" id="doc-type" style="flex:1 1 200px" onchange="S.docType=this.value;S.docTypeCase='${cid}'">${DOC_TYPES.map(([v,l])=>`<option value="${v}" ${dt===v?'selected':''}>${t(l)}</option>`).join('')}</select>
-      <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" style="flex:2 1 240px">
+      <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.zip,.rar,.7z" style="flex:2 1 240px">
       ${canCall('POST','/cases/{}/parse-file')?`<button class="btn btn-primary" onclick="App.docUpload('${cid}')">${t('ui.text_117')}</button>`:`<span class="muted">${t('ui.text_118')}</span>`}
     </div>
   </section>
@@ -3064,15 +3068,44 @@ VIEWS['ent-docs'] = () => {
   </section>`;
 };
 App.docSearch = function(v){ S.docQ=v; render(); };
-App.docUpload = function(cid){
+App.docUpload = async function(cid){
+  if(S.docZipBusy) return toast(t('upload.zip_busy'));
   const dt=_docTypeForCase(cid);
   S.docType=dt;   // 업로드 뒤 render() 가 돌아도 마지막으로 고른 칸을 유지한다
   const inp=$('#doc-file'); if(!inp||!inp.files||!inp.files[0]) return toast(t('ui.text_126'));
-  const f=inp.files[0]; toast(t('ui.text_127'));
+  const f=inp.files[0];
+  if(/\.(zip|rar|7z)$/i.test(f.name)){
+    if(!canCall('POST','/cases/{}/intake-zip-stream')) return toast(t('upload.zip_permission'));
+    const currentCase=()=>{
+      const list=Array.isArray(RS.cases)?RS.cases:[];
+      return (S.view==='cons-docs' && list.find(c=>c.case_id===S.selDocCo) || list[0])?.case_id;
+    };
+    const view=S.view, owner=AUTH.username, selectedCase=currentCase();
+    const isCurrent=()=>S.view===view && AUTH.username===owner && currentCase()===selectedCase;
+    S.docZipBusy=true;
+    try{
+      const result=await App.entaZip(f,{cid,onProgress:text=>toast(text),isCurrent,refresh:false});
+      if(!result) return;
+      delete RS.entDocs[cid];
+      if(!isCurrent()) return;
+      await loadEntDocs(cid);
+      if(!isCurrent()) return;
+      await loadEnt();
+      if(!isCurrent()) return;
+      if(typeof PKG_load==='function') await PKG_load(cid);
+      if(isCurrent()) render();
+    }catch(e){ if(isCurrent()) toast(e?.message||t('upload.file_error')); }
+    finally{
+      S.docZipBusy=false;
+      if(!isCurrent()) delete RS.entDocs[cid];
+    }
+    return;
+  }
+  toast(t('ui.text_127'));
   const rd=new FileReader();
   rd.onload=async()=>{ const b64=(rd.result||'').toString().split(',')[1]||'';
     const r=await apiFetch('/cases/'+cid+'/parse-file',{method:'POST',body:JSON.stringify({doc_type:dt,filename:f.name,file_b64:b64})});
-    if(!r.ok){ const d=await r.json().catch(()=>({})); return toast(t('ui.text_128')+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
+    if(!r.ok){ const d=await r.json().catch(()=>({})); return toast((d.detail&&d.detail.message)||t('ui.text_128')+((d.detail&&d.detail.code)?(' ('+d.detail.code+')'):'')); }
     const res=await r.json(); const ap=res.applied||{};
     delete RS.entDocs[cid]; await loadEntDocs(cid); await loadEnt();
     if(typeof PKG_load==='function') await PKG_load(cid);
@@ -3228,7 +3261,7 @@ function _docVaultBody(cid, docs){
   <section class="panel"><div class="panel-head"><h2>${t('ui.text_115')}</h2><span class="muted">${t('docs.for_company')}</span></div>
     <div class="inline" style="flex-wrap:wrap">
       <select class="in" id="doc-type" style="flex:1 1 200px" onchange="S.docType=this.value;S.docTypeCase='${cid}'">${DOC_TYPES.map(([v,l])=>`<option value="${v}" ${dt===v?'selected':''}>${t(l)}</option>`).join('')}</select>
-      <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" style="flex:2 1 240px">
+      <input class="in" id="doc-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.zip,.rar,.7z" style="flex:2 1 240px">
       ${canCall('POST','/cases/{}/parse-file')?`<button class="btn btn-primary" onclick="App.docUpload('${cid}')">${t('ui.text_117')}</button>`:''}</div></section>
   <section class="panel"><div class="panel-head"><h2>${t('ui.text_119')} ${tf('docs.items_count',{count:docs.length})}</h2>${canCall('POST','/cases/{}/documents/verify')?`<button class="btn btn-ghost" onclick="App.docVerify('${cid}')">${t('docs.reverify')}</button>`:''}<input class="in" style="max-width:240px" placeholder="${t('ui.text_124')}" value="${esc(S.docQ||'')}" oninput="App.docSearch(this.value)"></div>
     ${typeof PDN_panel==='function'?PDN_panel(cid):''}
@@ -4364,7 +4397,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 </script>
 <!-- v4 모듈: 기능 묶음별 파일(js/*.js). 메인 스크립트의 전역(RS·S·VIEWS·App·NAV…)을 그대로 쓴다. -->
 <script src="js/rbac.js"></script>
-<script src="js/ent-tasks.js"></script>
+<script src="js/ent-tasks.js?v=20261119-zip"></script>
 <script src="js/sha-decide.js"></script>
 <script src="js/approvals.js"></script>
 <script src="js/adm-cert-post.js"></script>
@@ -4393,7 +4426,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <script src="js/pay-docs.js"></script>
 <script src="js/chat.js"></script>
 <script src="js/sha-opinion.js"></script>
-<script src="js/ent-apply-more.js?v=20261023-ux3"></script>
+<script src="js/ent-apply-more.js?v=20261119-zip"></script>
 <script src="js/adm-review.js?v=20261023-ux3"></script>
 <script src="js/adm-cert-more.js"></script>
 <script src="js/ops-tenant.js"></script>
@@ -4408,7 +4441,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <script src="js/renew.js"></script>
 <script src="js/case-close.js"></script>
 <script src="js/users.js"></script>
-<script src="js/package-check.js"></script>
+<script src="js/package-check.js?v=20261119-zip"></script>
 <script src="js/two-person.js"></script>
 <script src="js/formal-app.js"></script>
 <script src="js/billing-adm.js"></script>
@@ -4423,7 +4456,7 @@ document.addEventListener('DOMContentLoaded', () => { initLang(); if(S.auth==='l
 <script src="js/demo-login.js"></script>
 <script src="js/stage-list.js"></script>
 <script src="js/mat-tools.js"></script>
-<script src="js/sjph-builder.js"></script>
+<script src="js/sjph-builder.js?v=20261119-zip"></script>
 <script src="js/audit-deploy.js"></script>
 <script src="js/case-insight.js?v=20261023-ux3"></script>
 <script src="js/mat-insight.js"></script>

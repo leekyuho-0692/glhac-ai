@@ -751,7 +751,10 @@ def _validate_upload_type(raw, filename):
     if ext and ext not in _UPLOAD_EXT_ALLOW:
         code = "UNSUPPORTED_TYPE"
         log.warning("업로드 거절 %s: %s (ext=%s)", code, filename, ext)
-        raise HTTPException(415, {"code": code, "ext": ext})
+        detail = {"code": code, "ext": ext}
+        if ext in {"zip", "rar", "7z"}:
+            detail["message"] = "압축 파일은 ZIP 올리기로 올려 주세요."
+        raise HTTPException(415, detail)
     kind = _upload_kind(raw)
     expect = {"pdf": "pdf", "png": "png", "jpg": "jpg", "jpeg": "jpg", "gif": "gif", "webp": "webp",
               "docx": "zip", "xlsx": "zip", "doc": "ole", "xls": "ole", "hwp": "ole",

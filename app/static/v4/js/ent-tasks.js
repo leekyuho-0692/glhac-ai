@@ -187,6 +187,7 @@ App.enttAccept = async function(idx){
 
 App.enttUpload = function(idx, file){
   const c = (RS.cases || [])[0]; if(!c || !file) return;
+  if(/\.(zip|rar|7z)$/i.test(file.name)) return toast(t('upload.zip_documents_hint'));
   const cid = c.case_id;
   const cache = RS.entt[cid]; if(!cache || !cache.mock) return;
   const secs = cache.mock.sections || [];
