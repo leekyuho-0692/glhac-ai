@@ -93,6 +93,27 @@ class Notification(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ChangeRecord(Base):
+    """직원의 업체 데이터 변경. 원본 삭제 후에도 보존하므로 FK를 두지 않는다."""
+    __tablename__ = "change_record"
+    __table_args__ = (Index("ix_change_record_pending_batch", "notified_at", "batch_key", "created_at"),)
+    id = Column(String, primary_key=True, default=uid)
+    org_id = Column(String, nullable=False, index=True)
+    case_id = Column(String, index=True)
+    actor_id = Column(String, nullable=False)
+    actor_role = Column(String, nullable=False)
+    actor_name = Column(String)  # 이메일 대신 표시 이름을 스냅샷으로 보존
+    resource_type = Column(String, nullable=False)
+    resource_id = Column(String, nullable=False)
+    label = Column(String)
+    op = Column(String, nullable=False)  # update|delete
+    changes = Column(JSON, nullable=False, default=dict)
+    value_hashes = Column(JSON)  # 200자 절단 뒤에도 원복 여부를 정확히 판단
+    batch_key = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    notified_at = Column(DateTime)
+
+
 class ChangeImpact(Base):
     """인증서 변경영향 분석 이력 — 사후관리(설계 8.3)."""
     __tablename__ = "change_impact"
