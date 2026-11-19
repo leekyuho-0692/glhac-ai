@@ -9765,7 +9765,9 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
                          user=Depends(auth.require_roles("applicant", "consultant")),
                          db: Session = Depends(get_db)):
     """스트리밍 인테이크 — 파일별 진행률(NDJSON) + 마지막에 자동채움/임시저장 결과."""
+    started = time.monotonic()
     import json as _json
+    from collections import Counter
     from fastapi.responses import StreamingResponse
     deadline = intake.archive_deadline()
     stopped = threading.Event()
@@ -9823,36 +9825,69 @@ def intake_zip_stream_ep(case_id: str, body: schemas.ZipIntakeReq,
             # 몰려 도착 / SSE 는 0.1·1.2·2.3·3.4·4.5초로 정상). 본문 형식은 그대로 JSON.
             return "data: " + _json.dumps(obj, ensure_ascii=False) + "\n\n"
 
-        if archive_error:
-            yield ev({"type": "error", "message": archive_error})
-            return
-        res = None
+        def archive_log_message(message):
+            # intake의 고정 오류 문구 뒤에는 파일명·외부 라이브러리 상세가 붙을 수 있다.
+            return message.split(":", 1)[0].split(" (", 1)[0]
+
         try:
-            for kind, payload in _intake_zip_events(raw, files, stopped, deadline=deadline):
-                if kind in ("start", "progress", "heartbeat"):
-                    yield ev({"type": kind, **payload})
-                elif kind == "result":
-                    res = payload
-        except ArchiveError as e:
-            yield ev({"type": "error", "message": str(e)})
-            return
-        except HTTPException as e:
-            yield ev({"type": "error", "status": e.status_code,
-                      "message": "압축 내부 파일 형식이 올바르지 않습니다", "detail": e.detail})
-            return
-        if stopped.is_set():
-            return
-        if res is None:
-            yield ev({"type": "error", "message": "인테이크 결과가 없습니다"})
-            return
-        applied = _apply_intake_autofill(db, c, res, base_fields_by_id, base_case)
-        sm.record_event(db, c, c.status, c.status, "documents.intake", "ai", user["uid"],
-                        {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
-        _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
-        db.commit()
-        for document_id in res.pop("_verify_ids", []):
-            verify_enqueue(document_id)
-        yield ev(_document_visible_fields({"type": "result", **res}, user["role"]))
+            if archive_error:
+                log.warning("ZIP 인테이크 실패 case_id=%s role=%s reason=archive_error message=%s elapsed=%.1fs",
+                            case_id, user["role"], archive_log_message(archive_error), time.monotonic() - started)
+                yield ev({"type": "error", "message": archive_error})
+                return
+            res = None
+            try:
+                for kind, payload in _intake_zip_events(raw, files, stopped, deadline=deadline):
+                    if kind in ("start", "progress", "heartbeat"):
+                        yield ev({"type": kind, **payload})
+                    elif kind == "result":
+                        res = payload
+            except ArchiveError as e:
+                log.warning("ZIP 인테이크 실패 case_id=%s role=%s reason=archive message=%s elapsed=%.1fs",
+                            case_id, user["role"], archive_log_message(str(e)), time.monotonic() - started)
+                yield ev({"type": "error", "message": str(e)})
+                return
+            except HTTPException as e:
+                log.warning("ZIP 인테이크 실패 case_id=%s role=%s reason=bad_inner_file message=%s elapsed=%.1fs",
+                            case_id, user["role"], "압축 내부 파일 형식이 올바르지 않습니다", time.monotonic() - started)
+                yield ev({"type": "error", "status": e.status_code,
+                          "message": "압축 내부 파일 형식이 올바르지 않습니다", "detail": e.detail})
+                return
+            if stopped.is_set():
+                log.warning("ZIP 인테이크 중단(연결 끊김) case_id=%s role=%s elapsed=%.1fs",
+                            case_id, user["role"], time.monotonic() - started)
+                return
+            if res is None:
+                log.warning("ZIP 인테이크 실패 case_id=%s role=%s reason=no_result message=%s elapsed=%.1fs",
+                            case_id, user["role"], "인테이크 결과가 없습니다", time.monotonic() - started)
+                yield ev({"type": "error", "message": "인테이크 결과가 없습니다"})
+                return
+            applied = _apply_intake_autofill(db, c, res, base_fields_by_id, base_case)
+            sm.record_event(db, c, c.status, c.status, "documents.intake", "ai", user["uid"],
+                            {"file_count": res["file_count"], "missing": res["missing"], "applied": applied})
+            _notify_package_gaps(db, c)   # 업체·제품·성분·공장 묶음 점검 → 빠졌거나 판독 불가면 오디터 통보
+            db.commit()
+            # _apply_intake_autofill이 실제 저장·갱신한 중복 없는 문서 ID들이다.
+            saved_count = len(res.get("_verify_ids", []))
+            for document_id in res.pop("_verify_ids", []):
+                verify_enqueue(document_id)
+            skipped_reasons = Counter(item["reason"] for item in res.get("skipped_files", []))
+            ocr_errors = sum(bool((d.get("fields") or {}).get("_ocr_error")) for d in res["classified"])
+            llm_errors = sum(bool((d.get("fields") or {}).get("_llm_error")) for d in res["classified"])
+            level = logging.WARNING if skipped_reasons.get("TIME_LIMIT") or ocr_errors or llm_errors else logging.INFO
+            log.log(level, "ZIP 인테이크 완료 case_id=%s role=%s file_count=%d saved_documents=%d "
+                    "skipped=%d skipped_reasons=%s _ocr_error=%d _llm_error=%d elapsed=%.1fs",
+                    case_id, user["role"], res["file_count"], saved_count, res.get("skipped_entries", 0),
+                    ", ".join(f"{reason} {count}" for reason, count in sorted(skipped_reasons.items())) or "-",
+                    ocr_errors, llm_errors, time.monotonic() - started)
+            yield ev(_document_visible_fields({"type": "result", **res}, user["role"]))
+        except Exception as exc:
+            # 예외 문자열·연쇄 예외의 SQL/문서 내용은 숨기고 타입과 traceback만 기록한다.
+            safe_exc = RuntimeError(f"{type(exc).__name__} (상세 생략)")
+            log.exception("ZIP 인테이크 예외 case_id=%s role=%s elapsed=%.1fs",
+                          case_id, user["role"], time.monotonic() - started,
+                          exc_info=(type(safe_exc), safe_exc, exc.__traceback__))
+            raise
 
     return IntakeResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
