@@ -8035,7 +8035,7 @@ def _apply_owned_autofill(db, c, doc, *, base_case=None):
                     ("office_phone", "phone"), ("business_type", "business_type"),
                     ("establishment_date", "establishment_date"), ("corporate_reg_no", "corporate_reg_no"),
                     ("company_name_ko", "company_name_ko"), ("company_name_en", "company_name_en"),
-                    ("responsible_person_en", "responsible_person_en"),
+                    ("responsible_person_en", "responsible_person_en"), ("address_en", "address_en"),
                     ("total_employee", "employee_count")) if is_nib else (("total_employee", "employee_count"),)
     profile = {k: f.get(src) for k, src in profile_keys}
     if is_nib:
@@ -9028,7 +9028,7 @@ def _confirm_autofill(db, c, choices, user):
     case_base, case_changes = case_snapshot(c), {}
     allowed = {"case": {"company_name", "nib", "address", "responsible_person", "factory_reg_no", "factory_address"},
                "profile": {"city", "country", "zip", "office_phone", "business_type", "establishment_date",
-                           "corporate_reg_no", "company_name_ko", "company_name_en", "responsible_person_en", "total_employee"},
+                           "corporate_reg_no", "company_name_ko", "company_name_en", "responsible_person_en", "address_en", "total_employee"},
                "facility": {"reg_no", "address", "city", "country", "zip"}, "facility_profile": {"phone"}}
     for choice in choices:
         if not isinstance(choice.get("conflict_id"), str):
@@ -10290,7 +10290,8 @@ def autofill_profile(case_id: str, force: bool = False,
         verify_enqueue(document_id)   # 신청기업 서류 보강도 커밋된 추출값을 검증한다
     return {"applied": applied,
             "extracted": {k: agg.get(k) for k in ("company_name", "nib", "address",
-                                                  "responsible_person", "factory_reg_no")}}
+                                                  "responsible_person", "factory_reg_no",
+                                                  "responsible_person_en", "company_name_en", "address_en")}}
 
 
 # BPJPH SIHALAL 공개조회(비공식·참고용) — 사업자 할랄시스템 등록 확인

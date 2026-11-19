@@ -3336,8 +3336,8 @@ def _classify_text(name, text):
 
 # 개별 업로드 컨텍스트 파싱 — doc_type별 추출 필드 스펙
 _FIELD_SPEC = {
-    "nib_business_license": ("회사명, NIB(사업자등록번호), 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 회사 전화번호, 사업의 종류/업태, 개업일(YYYY-MM-DD), 법인등록번호",
-                             '{"company_name":null,"nib":null,"address":null,"city":null,"province":null,"country":null,"zip":null,"phone":null,"business_type":null,"establishment_date":null,"corporate_reg_no":null}'),
+    "nib_business_license": ("회사명, NIB(사업자등록번호), 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 회사 전화번호, 사업의 종류/업태, 개업일(YYYY-MM-DD), 법인등록번호, 대표자(성명), 영문 대표자명, 영문 회사명, 영문 주소",
+                             '{"company_name":null,"nib":null,"address":null,"city":null,"province":null,"country":null,"zip":null,"phone":null,"business_type":null,"establishment_date":null,"corporate_reg_no":null,"responsible_person":null,"responsible_person_en":null,"company_name_en":null,"address_en":null}'),
     "factory_registration": ("등록된 회사명, 사업자번호(있으면), 공장등록번호, 공장 주소(도·시·국가 전체), 도시, 도(주), 국가, 우편번호, 공장 전화번호(Tel), 총 직원 수(숫자)",
                              '{"company_name":null,"nib":null,"factory_reg_no":null,"factory_address":null,"factory_city":null,"factory_province":null,"factory_country":null,"factory_zip":null,"factory_phone":null,"employee_count":null}'),
     "halal_certificate": ("인증번호, 발급기관, 만료일, 대상(제품/원재료)",
@@ -3904,7 +3904,7 @@ def aggregate_fields(docs, *, rejected_product_names=(), lang="ko"):
     from .models import normalize_material_name as norm
     docs = list(docs)
     agg = {"company_name": None, "company_name_ko": None, "company_name_en": None,
-           "nib": None, "address": None, "factory_address": None,
+           "nib": None, "address": None, "address_en": None, "factory_address": None,
            "city": None, "province": None, "country": None, "zip": None,
            "factory_city": None, "factory_province": None, "factory_country": None, "factory_zip": None,
            "responsible_person": None, "responsible_person_ko": None, "responsible_person_en": None,
@@ -3943,6 +3943,8 @@ def aggregate_fields(docs, *, rejected_product_names=(), lang="ko"):
             # 회사 주소(NIB)와 공장 주소(공장등록증)를 분리 — 뭉치면 회사주소가 공장주소로 잘못 저장됨
             if not agg["address"] and f.get("address") and d.get("doc_type") != "factory_registration":
                 agg["address"] = f["address"]
+            if not agg["address_en"] and f.get("address_en") and d.get("doc_type") != "factory_registration":
+                agg["address_en"] = f["address_en"]
             if not agg["factory_address"] and f.get("factory_address"):
                 agg["factory_address"] = f["factory_address"]
             if d.get("doc_type") == "factory_registration" and not agg["factory_address"] and f.get("address"):

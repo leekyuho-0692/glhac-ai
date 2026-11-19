@@ -1,4 +1,5 @@
 """표 텍스트층의 셀 사이 인용과 원문 언어 보존. 모든 업체·인명은 합성값이다."""
+import json
 from copy import deepcopy
 from uuid import uuid4
 
@@ -49,6 +50,38 @@ def reply(monkeypatch, fields, evidence, doc_type="nib_business_license"):
 def signup(monkeypatch, text):
     monkeypatch.setattr(intake, "parse_file", lambda *a, **kw: text)
     return m._auth_ocr_extract_file(b"%PDF-synthetic", allow_ai=True)
+
+
+def test_business_license_spec_appends_representative_and_english_fields():
+    desc, fmt = intake._FIELD_SPEC["nib_business_license"]
+    original_keys = ["company_name", "nib", "address", "city", "province", "country", "zip",
+                     "phone", "business_type", "establishment_date", "corporate_reg_no"]
+    added_keys = ["responsible_person", "responsible_person_en", "company_name_en", "address_en"]
+    assert list(json.loads(fmt).items()) == [(key, None) for key in original_keys + added_keys]
+    for label in ("대표자(성명)", "영문 대표자명", "영문 회사명", "영문 주소"):
+        assert label in desc
+
+
+def test_signup_keeps_representative_and_english_fields_from_ai(monkeypatch):
+    fields = {**TABLE_FIELDS, "nib": "123-45-67890", "responsible_person_en": "Kim Gasang",
+              "address": "가상시 샘플로 14", "address_en": "14 Sample Road, Example City"}
+    quotes = {**TABLE_QUOTES, "nib": "Business Taxpayer ID Number 123-45-67890",
+              "responsible_person_en": "Name of Representative Kim Gasang",
+              "address": "사업장 소재지: 가상시 샘플로 14",
+              "address_en": "Business Address: 14 Sample Road, Example City"}
+    text = TABLE_TEXT + "\n" + quotes["address"] + "\n" + quotes["address_en"]
+    calls = reply(monkeypatch, fields, quotes)
+    result = signup(monkeypatch, text)
+    assert result["fields"] == fields
+    assert set(result["filled"]) == set(fields) and result["missing"] == []
+    assert "llm_error" not in result
+    for key in fields:
+        assert result["field_sources"][key] == "ai"
+        assert result["field_meta"][key]["accepted"]
+        assert result["field_meta"][key]["checks"]["evidence"]
+    assert len(calls) == 1
+    desc, fmt = intake._FIELD_SPEC["nib_business_license"]
+    assert desc in calls[0][0] and fmt in calls[0][0]
 
 
 @pytest.mark.parametrize("stage", ["signup", "classify", "parse"])
@@ -208,6 +241,15 @@ def test_missing_preferred_language_uses_available_original(lang, fields):
                                    lang=lang)["company_name"] == fields["company_name"]
 
 
+@pytest.mark.parametrize("doc_type,accepted", [("nib_business_license", True),
+                                             ("factory_registration", False),
+                                             ("supplier_declaration", False)])
+def test_aggregate_english_address_only_comes_from_company_document(doc_type, accepted):
+    address = "14 Sample Road, Example City"
+    agg = intake.aggregate_fields([{"doc_type": doc_type, "fields": {"address_en": address}}])
+    assert agg.get("address_en") == (address if accepted else None)
+
+
 @pytest.mark.parametrize("case_profile,org_profile,english", [
     ({"lang": "en-US"}, {}, True),
     ({}, {"language": "id"}, True),
@@ -221,7 +263,9 @@ def test_existing_language_path_reaches_case_aggregation(case_profile, org_profi
     digits = str(uuid4().int)[:10]
     nib = digits[:3] + "-" + digits[3:5] + "-" + digits[5:]
     text = TABLE_TEXT.replace("123-45-67890", nib)
-    fields = {**TABLE_FIELDS, "responsible_person_en": "Kim Gasang", "nib": nib}
+    fields = {**TABLE_FIELDS, "responsible_person_en": "Kim Gasang", "nib": nib,
+              "address_en": "14 Sample Road, Example City"}
+    text += "\nBusiness Address: " + fields["address_en"]
     with m.SessionLocal() as db:
         db.add(models.Org(org_id=org_id, name=TABLE_FIELDS["company_name"], profile_ext=org_profile))
         case = models.CaseApplication(org_id=org_id, company_name=TABLE_FIELDS["company_name"],
@@ -241,9 +285,40 @@ def test_existing_language_path_reaches_case_aggregation(case_profile, org_profi
                 user={"role": "applicant", "org_id": org_id, "uid": "applicant1"})
         assert result["extracted"]["company_name"] == fields["company_name_en" if english else "company_name"]
         assert result["extracted"]["responsible_person"] == fields["responsible_person_en" if english else "responsible_person"]
+        for key in ("responsible_person_en", "company_name_en", "address_en"):
+            assert result["extracted"][key] == fields[key]
         # 신청서의 국문/영문 별도 칸은 그대로 채우며 대표 집계값만 언어를 따른다.
         assert case.profile_ext["company_name_ko"] == fields["company_name"]
         assert case.profile_ext["company_name_en"] == fields["company_name_en"]
+        assert case.responsible_person == fields["responsible_person"]
+        assert case.profile_ext["responsible_person_en"] == fields["responsible_person_en"]
+        assert case.profile_ext["address_en"] == fields["address_en"]
+
+
+def test_english_address_conflict_can_be_confirmed_without_overwriting_manual_value():
+    org_id = "evidence-layout-" + uuid4().hex
+    digits = str(uuid4().int)[:10]
+    nib = digits[:3] + "-" + digits[3:5] + "-" + digits[5:]
+    address = "14 Sample Road, Example City"
+    with m.SessionLocal() as db:
+        db.add(models.Org(org_id=org_id, name=TABLE_FIELDS["company_name"]))
+        case = models.CaseApplication(org_id=org_id, company_name=TABLE_FIELDS["company_name"],
+                                      nib=nib, profile_ext={"address_en": "Previous manual address"})
+        db.add(case)
+        db.flush()
+        doc = models.DocumentAsset(case_id=case.case_id, filename="사업자등록증명.txt",
+            doc_type="nib_business_license", fields={"company_name": case.company_name,
+                "nib": nib, "address_en": address},
+            text_full=TABLE_TEXT.replace("123-45-67890", nib) + "\nBusiness Address: " + address)
+        db.add(doc)
+        db.commit()
+        m._apply_owned_autofill(db, case, doc)
+        assert case.profile_ext["address_en"] == "Previous manual address"
+        [conflict] = [c for c in m._pending_autofill(db, case.case_id) if c["field"] == "address_en"]
+        assert conflict["scope"] == "profile" and conflict["reason"] == "value_conflict"
+        m._confirm_autofill(db, case, [{"conflict_id": conflict["conflict_id"], "value": address}],
+                           {"role": "applicant", "uid": "applicant1"})
+        assert case.profile_ext["address_en"] == address
 
 
 @pytest.mark.parametrize("text,quote,accepted", [
