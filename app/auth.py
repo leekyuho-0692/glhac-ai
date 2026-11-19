@@ -16,6 +16,7 @@ import secrets
 from fastapi import Depends, HTTPException, Header
 from . import models
 from .db import get_db
+from .change_context import set_authenticated_actor
 
 _DEFAULT_SECRET = "dev-secret-change-me"
 SECRET = os.environ.get("GLHAC_SECRET", _DEFAULT_SECRET).encode()
@@ -216,6 +217,7 @@ def get_current_user(authorization: str = Header(None), db=Depends(get_db)):
            .order_by(models.WorkflowEvent.created_at.desc()).first())
     if _ev and (_ev.payload or {}).get("status") == "suspended":
         raise HTTPException(403, {"code": "USER_SUSPENDED"})
+    set_authenticated_actor(u)
     return payload  # {uid, username, role, org_id, typ, tv}
 
 

@@ -42,6 +42,9 @@ from . import observability as obs
 from . import domain_dict as _dd_mod
 from . import mail_features as _mail_features
 from . import mail_log as _mail_log
+from . import staff_change_notify as staff_changes
+from .staff_change_notify import queue_staff_change_notifications
+from .change_context import ChangeActorMiddleware, automatic
 from .ontology_seed import seed
 
 # 종결 케이스의 예외는 메서드·라우트 단위로만 허용한다. 정지/재개는 종결이
@@ -203,6 +206,7 @@ app = FastAPI(
 
 # GZip 압축 — 451KB index.html 등 정적/JSON 응답 전송 최적화(1KB 이상만 압축).
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.add_middleware(ChangeActorMiddleware)
 
 # CORS — 기본은 동일 출처만. GLHAC_CORS_ORIGINS(콤마구분)로 SPA 출처 명시 허용.
 _cors_env = os.environ.get("GLHAC_CORS_ORIGINS", "").strip()
@@ -1004,12 +1008,25 @@ def _notify_worker_loop(interval=30):
         try:
             db = SessionLocal()
             try:
-                queue_problem_document_notifications(db)
-                drain_notifications(db)
+                try:
+                    queue_problem_document_notifications(db)
+                except Exception:
+                    log.exception("notification worker: queue_problem_document_notifications failed")
+                    db.rollback()
+                try:
+                    queue_staff_change_notifications(db)
+                except Exception:
+                    log.exception("notification worker: queue_staff_change_notifications failed")
+                    db.rollback()
+                try:
+                    drain_notifications(db)
+                except Exception:
+                    log.exception("notification worker: drain_notifications failed")
+                    db.rollback()
             finally:
                 db.close()
         except Exception:  # noqa: BLE001
-            pass
+            log.exception("notification worker: iteration failed")
 
 
 def _seed_auditor_profiles(db):
@@ -1274,6 +1291,7 @@ def _assert_materials_safe(db, c):
         raise HTTPException(409, blockers[0])
 
 
+@automatic(when=lambda arguments: arguments.get("persist", True))
 def _screen_reviewed_material(db, material, *, persist=True):
     old = material.cert_no
     docs = None
@@ -1735,6 +1753,8 @@ def notify_text(n, lang="ko"):
     본문 템플릿이 None 이면 사람이 쓴 원문을 그대로 둔다."""
     lang = lang if lang in ("ko", "en", "id") else "ko"
     pl = n.payload if isinstance(n.payload, dict) else None
+    if (pl or {}).get("key") == staff_changes.EVENT:
+        return staff_changes.render(pl.get("params") or {}, lang)
     tmpl = NOTIFY_MSG.get((pl or {}).get("key") or "", {}).get(lang)
     if not tmpl:
         # These assignment events predate payload-based notifications. Translate
@@ -2273,6 +2293,8 @@ def _notification_contacts(db, n):
     그 외 역할은 해당 담당자의 연락처만 쓰고, 찾지 못하면 빈 연락처({} → no_contact)로 두어
     업체로 새지 않게 한다. 직원 연락처는 User.contact_email/contact_phone(암호화)에서 읽는다.
     webhook 은 시스템 연동 주소(역할 무관)라 그대로 둔다."""
+    if n.event_type == staff_changes.EVENT:
+        return staff_changes.notification_contacts(db, n)
     webhook = os.environ.get("GLHAC_WEBHOOK_URL")
     c = db.get(models.CaseApplication, n.case_id) if n.case_id else None
     if n.role in _NOTIFY_COMPANY_ROLES:
@@ -2406,6 +2428,7 @@ def drain_notifications(db, batch=50, max_attempts=3):
 @app.post("/admin/notify-drain")
 def notify_drain(user=Depends(auth.require_roles()), db: Session = Depends(get_db)):
     """미발송 알림 큐 드레인(관리자/cron 트리거) — 운영 시 주기 실행."""
+    queue_staff_change_notifications(db)
     return drain_notifications(db)
 
 
@@ -2421,6 +2444,7 @@ def _save_ai_extraction(db, case_id, source, extracted, confidence=None, evidenc
     return row
 
 
+@automatic
 def _register_from_judgment(db, c, res):
     from . import screening
     _assert_scope_open(c)
@@ -3749,6 +3773,7 @@ def admin_delete_user(user_id: str, user=Depends(auth.require_roles()),
         if u.username == "admin":
             raise HTTPException(400, {"code": "CANNOT_DELETE_ADMIN"})
         try:
+            staff_changes.record_deletions(db, [u])
             db.delete(u)
             db.commit()
         except IntegrityError:
@@ -3987,7 +4012,7 @@ def _case_scoped_models():
         t = getattr(m, "__table__", None)
         if t is None or name.startswith("_"):
             continue
-        if "case_id" in t.columns and m is not models.AuditLog and m is not models.CaseApplication:
+        if "case_id" in t.columns and m not in (models.AuditLog, models.ChangeRecord, models.MailLog, models.CaseApplication):
             out.append((t.name, m))
     return _fk_delete_order(out)
 
@@ -4064,7 +4089,9 @@ def admin_cases_purge(body: schemas.CasePurgeReq, user=Depends(auth.require_role
 
     deleted = {}
     for c in targets:
+        staff_changes.record_deletions(db, [c])
         for tname, m in scoped:   # 자식 먼저
+            staff_changes.record_bulk_deletions(db, db.query(m).filter(m.case_id == c.case_id))
             n = db.query(m).filter(m.case_id == c.case_id).delete(synchronize_session=False)
             if n:
                 deleted[tname] = deleted.get(tname, 0) + n
@@ -4501,6 +4528,7 @@ def _notif_scope(db, user, q):
     예전엔 자기 조직만 봐서, org_demo 소속 오디터에게 업체 조직의 알림이 보이지 않았다."""
     if user["role"] in CERTIFIER_ROLES:
         return q
+    targeted = models.Notification.payload["recipient_user_id"].as_string() == user["uid"]
     if user["role"] in ASSIGNED_ROLES:
         ids = _assigned_case_ids(db, user["uid"])
         orgs = _my_client_org_ids(db, user["uid"])
@@ -4509,14 +4537,17 @@ def _notif_scope(db, user, q):
             conds.append(models.Notification.case_id.in_(ids))
         if orgs:
             conds.append(models.Notification.org_id.in_(orgs))
-        return q.filter(or_(*conds))
-    return q.filter_by(org_id=user["org_id"])
+        return q.filter(or_(targeted, *conds))
+    return q.filter(or_(targeted, models.Notification.org_id == user["org_id"]))
 
 
 def _my_notifs(db, user):
     q = _notif_scope(db, user, db.query(models.Notification))
     out = []
     for n in q.order_by(models.Notification.created_at.desc()).limit(200).all():
+        recipient = (n.payload or {}).get("recipient_user_id") if isinstance(n.payload, dict) else None
+        if recipient and recipient != user["uid"]:
+            continue
         if n.role and n.role != user["role"]:
             continue
         aid = (n.payload or {}).get("auditor_id") if isinstance(n.payload, dict) else None
@@ -4554,6 +4585,9 @@ def read_notification(nid: str, user=Depends(auth.get_current_user), db: Session
     n = db.get(models.Notification, nid)
     if not n:
         raise HTTPException(404, {"code": "NOTIF_NOT_FOUND"})
+    recipient = (n.payload or {}).get("recipient_user_id") if isinstance(n.payload, dict) else None
+    if recipient and recipient != user["uid"] and user["role"] != "admin":
+        raise HTTPException(403, {"code": "FORBIDDEN_ORG"})
     if user["role"] != "admin" and not _notif_scope(db, user, db.query(models.Notification)).filter(
             models.Notification.notification_id == nid).count():
         raise HTTPException(403, {"code": "FORBIDDEN_ORG"})
@@ -4575,6 +4609,7 @@ def admin_drain_notifications(user=Depends(auth.require_roles("operator")),
                               db: Session = Depends(get_db)):
     """미발송 알림 큐를 즉시 발송(drain) — 관리자 수동 트리거(워커 미기동 시에도 실발송).
     채널별 실제 결과를 합산하며, 크리덴셜 누락은 실패로 기록한다."""
+    queue_staff_change_notifications(db)
     stats = drain_notifications(db)
     _audit(db, user, "notification.drain", "notification", None, None, stats)
     return stats
@@ -4723,7 +4758,7 @@ def _org_scoped_models():
         t = getattr(m, "__table__", None)
         if t is None or name.startswith("_"):
             continue
-        if ("org_id" in t.columns and m is not models.AuditLog
+        if ("org_id" in t.columns and m not in (models.AuditLog, models.ChangeRecord)
                 and m is not models.CaseApplication and m is not models.Org):
             out.append((t.name, m))
     return _fk_delete_order(out)
@@ -4813,7 +4848,9 @@ def admin_purge_orphan_orgs(body: dict = None, user=Depends(auth.require_roles("
     db.commit()
     for item in plan:
         oid = item["org_id"]
+        staff_changes.record_deletions(db, [db.get(models.Org, oid)])
         for tname, m in scoped:
+            staff_changes.record_bulk_deletions(db, db.query(m).filter(m.org_id == oid))
             db.query(m).filter(m.org_id == oid).delete(synchronize_session=False)
         db.query(models.Org).filter(models.Org.org_id == oid).delete(
             synchronize_session=False)
@@ -6919,6 +6956,7 @@ def delete_material(material_id: str,
                 "cert_no": m.cert_no}, commit=False)
         # MA5: 같은 트랜잭션에서 고아행 정리 — 제품-원재료 연결과 문서↔원재료 링크는 삭제,
         # 증빙 문서(DocumentAsset)는 보존하고 원재료 연결만 해제한다(문서는 증거라 지우지 않는다).
+        staff_changes.record_deletions(db, [m])
         db.query(models.ProductMaterial).filter_by(material_id=material_id).delete(synchronize_session=False)
         db.query(models.MaterialEvidenceLink).filter_by(material_id=material_id).delete(synchronize_session=False)
         db.query(models.DocumentAsset).filter_by(material_id=material_id).update(
@@ -7165,6 +7203,7 @@ def _case_blockers(db, c):
     return sm.evaluate_blocking(db, c) + _quant_blockers(db, c.case_id)
 
 
+@automatic
 def _apply_document_measurements(db, c, doc):
     """자동 추출을 (출처 문서, 항목, 결과 순번)별 보존한다. 수동 입력은 유지한다."""
     import json
@@ -7648,6 +7687,7 @@ def delete_product(case_id: str, product_id: str, force: bool = False, merge_int
         # 제품 CASCADE 삭제 전에 이전·중복 제거를 확정한다(커밋은 아래에서 한 번만).
         db.flush()
     else:
+        staff_changes.record_bulk_deletions(db, db.query(models.ProductMaterial).filter_by(product_id=product_id))
         db.query(models.ProductMaterial).filter_by(product_id=product_id).delete()
     if target or product_id in aliases:
         aliases.pop(product_id, None)
@@ -7961,6 +8001,7 @@ def _autofill_current_source(db, c, field, value, exclude_document_id=None):
     return source
 
 
+@automatic
 def _apply_owned_autofill(db, c, doc, *, base_case=None):
     """문서 단위 원문·소유권·검증 게이트. 단건/ZIP/재처리는 이 규칙만 쓴다.
 
@@ -8237,6 +8278,7 @@ def _protect_autofill(db, keys, user_id, *, case_id=None, facility_id=None):
         _mark_autofill_confirmed(db, doc, keys, user_id, obj, facility_id=facility_id)
 
 
+@automatic
 def _revert_failed_autofill(db, c, doc):
     """이 문서가 쓴 뒤 사람 손을 거치지 않은 값만 복구하고 확인 대기로 보낸다."""
     fields = dict(doc.fields or {})
@@ -8451,6 +8493,7 @@ def _material_source_names(fields):
              if item["kind"] == "material_names"])
 
 
+@automatic(when=lambda arguments: bool(arguments.get("documents")))
 def _apply_agg_to_case(db, c, agg, documents=(), *, material_sources=None, base_case=None):
     """목록 집계만 직접 반영한다. 업체·공장은 원문 문서별 소유권 게이트를 통과해야 한다."""
     applied = {"company_set": False, "nib_set": False, "products": 0, "materials": 0,
@@ -8822,6 +8865,7 @@ def doc_verify_status(user=Depends(auth.get_current_user)):
 
 
 @document_budget
+@automatic
 def _reprocess_doc(db, d, c, dpi=None, apply=True, actor_role="system", actor_id="auto",
                    keep_doc_type=False):
     """문서 1건 재추출·재분류 — 사람이 누른 재처리와 자동 큐가 같은 코드를 쓴다.
@@ -9555,6 +9599,7 @@ def _sha256_b64(content_b64):
     return _hl.sha256(_raw).hexdigest()
 
 
+@automatic
 def _apply_intake_autofill(db, c, res, base_fields_by_id, base_case=None):
     """분류 결과 → DocumentAsset 저장 + 신청서 자동채움(회사/NIB/제품/원재료). 임시저장(commit은 호출측).
     중복 방지: 같은 케이스에 동일 내용(file_hash) 또는 동일 파일명(내용없는 문서)은 재저장하지 않는다.
@@ -10160,6 +10205,7 @@ def company_check(case_id: str, user=Depends(auth.get_current_user), db: Session
 
 
 @app.post("/cases/{case_id}/profile/autofill")
+@automatic
 def autofill_profile(case_id: str, force: bool = False,
                      user=Depends(auth.require_roles("applicant", "consultant")),
                      db: Session = Depends(get_db)):
@@ -10402,6 +10448,7 @@ def _normalize_phone(p):
 
 @app.post("/cases/{case_id}/parse-file")
 @document_budget
+@automatic
 def parse_file_ep(case_id: str, body: schemas.ParseFileReq,
                   user=Depends(auth.require_roles("applicant", "consultant")),
                   db: Session = Depends(get_db)):
@@ -23789,6 +23836,7 @@ def _selfdeclare_entry_warn(db, c, user):
     return w
 
 
+@automatic
 def _auto_advance(db, c, to_state, user, action):
     """서브플로우 완료 훅 — 조건 충족 시 케이스 상태 자동 전진(전수검사 P2: '서브플로우는 끝나는데
     케이스가 안 넘어감' 7곳 해소). /transition과 동일 규칙(PROTECTED 제외·역할 게이트 admin 우회·
