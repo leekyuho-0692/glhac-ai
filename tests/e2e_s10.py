@@ -3,6 +3,7 @@ import sys
 import sqlite3
 import httpx
 from _target import base, db_path   # 대상 서버·DB 는 GLHAC_E2E_BASE / GLHAC_DB_URL 로만 지정(라이브 오염 방지)
+from _e2e_helpers import assign_auditor, pdf_b64
 
 DB_PATH = db_path()   # 서버와 동일한 GLHAC_DB_URL 에서 해석(상대경로 하드코딩이 깨지던 원인)
 B = base()
@@ -69,10 +70,9 @@ if MID2:
     ok("NEEDS_EVIDENCE 원재료 조회됨", len(needs) >= 1, [m.get("name") for m in needs])
     ok("NEEDS_EVIDENCE 원재료 name 확인", any("E471" in (m.get("name") or "") for m in needs), [m.get("name") for m in needs])
 
-# 증빙 업로드 (base64 더미)
+# 증빙 업로드 (최소 유효 PDF — 서버가 내용 시그니처를 검사한다)
 if MID2:
-    import base64
-    dummy_b64 = base64.b64encode(b"dummy-pdf-content").decode()
+    dummy_b64 = pdf_b64("HALAL CERTIFICATE")
     r_evup = httpx.post(f"{B}/cases/{CID}/materials/{MID2}/evidence", headers=HC,
                         json={"evidence_type": "halal_cert", "file_b64": dummy_b64, "filename": "cert.pdf"})
     ok("증빙 업로드", r_evup.status_code == 200, r_evup.status_code)
@@ -158,11 +158,15 @@ ok("minor 지적 ≥1건", len(minors) >= 1, len(minors))
 opens = [f for f in fnds if f.get("status") == "open"]
 ok("open 상태 지적 ≥1건", len(opens) >= 1, len(opens))
 
-# closed 상태 필터 확인 — 하나 종결
-if fnd_a.status_code == 200:
-    fid_a = fnd_a.json().get("finding_id", "")
-    if fid_a:
-        httpx.patch(f"{B}/findings/{fid_a}", headers=HC, json={"status": "closed"})
+# closed 상태 필터 확인 — 하나 종결. 종결은 오디터만 하고(finding.update), 중대(major) 지적은 검증된
+# CAR 없이는 닫히지 않으므로(MAJOR_NC_REQUIRES_AUDITOR_VERIFICATION) 경미(minor) 지적을 닫는다.
+HU = assign_auditor(B, CID)
+ok("오디터 배정", HU is not None)
+if fnd_b.status_code == 200 and HU:
+    fid_b = fnd_b.json().get("finding_id", "")
+    if fid_b:
+        r_cl = httpx.patch(f"{B}/findings/{fid_b}", headers=HU, json={"status": "closed"})
+        ok("minor 지적 종결(오디터) → 200", r_cl.status_code == 200, r_cl.text)
         fnds2 = httpx.get(f"{B}/cases/{CID}/findings", headers=HC).json()
         closes = [f for f in fnds2 if f.get("status") == "closed"]
         ok("closed 필터 시뮬 ≥1건", len(closes) >= 1, len(closes))

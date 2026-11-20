@@ -97,7 +97,9 @@ NEW_CID = rn.get("new_case_id", "")
 if NEW_CID:
     nd = httpx.get(f"{B}/cases/{NEW_CID}", headers=HC).json()
     ok("갱신 케이스 status=onboarding", nd.get("status") == "onboarding", nd.get("status"))
-    ok("갱신 케이스 company_name Renewal 포함", "Renewal" in (nd.get("company_name") or ""), nd.get("company_name"))
+    # 갱신은 같은 업체의 별도 신청이라 회사명·사업자번호를 그대로 잇는다(07f7647 — 예전의 "Renewal: " 접두는
+    # 업체 신원을 바꿔 중복 신원 검사·발급 후 신원 고정과 어긋났다). 갱신 여부는 parent_case_id 로 본다.
+    ok("갱신 케이스 company_name 원 케이스와 동일", nd.get("company_name") == "S8 Test Co", nd.get("company_name"))
     # 원재료 복사 확인
     mats = httpx.get(f"{B}/cases/{NEW_CID}/materials", headers=HC).json()
     ok("갱신 케이스 원재료 복사됨", len(mats) >= 2, len(mats))

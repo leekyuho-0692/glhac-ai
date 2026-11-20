@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import importlib.util
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -21,6 +22,9 @@ def detection_override(monkeypatch):
 
 @pytest.fixture(scope="module")
 def real_configs(tmp_path_factory):
+    # 설치된 paddleocr 의 실제 설정 병합을 본다 — CI 는 paddle 을 빼고 설치하므로 거기선 건너뛴다.
+    if importlib.util.find_spec("paddleocr") is None:
+        pytest.skip("paddleocr 미설치 — paddle 포함 venv 에서 실행")
     # 별도 프로세스라 다른 테스트의 가짜 paddleocr와 전역 캐시가 섞이지 않는다.
     cache = tmp_path_factory.mktemp("paddleocr_config")
     env = os.environ.copy()

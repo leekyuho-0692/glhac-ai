@@ -52,12 +52,23 @@ mid = httpx.post(f"{B}/cases/{cid}/materials", headers=H,
 m0 = [m for m in httpx.get(f"{B}/cases/{cid}/materials", headers=H).json() if m["material_id"] == mid][0]
 ok("원재료 초기 NEEDS_EVIDENCE", m0["result"] == "NEEDS_EVIDENCE", m0["result"])
 ok("evidence_count 필드", m0.get("evidence_count") == 0)
-b64 = base64.b64encode(b"HALAL CERT - fish gelatin").decode()
+# 할랄 인증서 증빙은 번호·유효기간 판독 + AI 검증 통과가 있어야 인정된다(certificate_evidence_issues) —
+# 러너엔 Ollama 가 없어 검증이 'unknown' 이 되므로, 여기선 AI 검증이 필요 없는 원산지 확인 서류(CoA)로 C1 을 본다.
+b64 = base64.b64encode(b"CERTIFICATE OF ANALYSIS\nProduct: gelatin\nSource: fish (Pangasius) skin\n").decode()
 res = httpx.post(f"{B}/cases/{cid}/materials/{mid}/evidence", headers=H,
-                 json={"evidence_type": "halal_certificate", "file_b64": b64, "filename": "c.txt"}).json()
-ok("증빙 업로드 → 재스크리닝 CLEARED(C1)", res["screen_result"] == "CLEARED" and res["recleared"], res)
+                 json={"evidence_type": "coa", "file_b64": b64, "filename": "c.txt"}).json()
+# 증빙은 '검토 대기'로 보관만 한다 — 올린 것만으로 CLEARED 가 되면 검토자 승인 없이 위험 원료가
+# 풀린다(add_material_evidence). 해소는 문서 검토 승인(PATCH /documents/{id}/review)에서 일어난다.
+ok("증빙 업로드 → 검토 대기(아직 해소 안 됨)",
+   res.get("review_status") == "pending" and res["screen_result"] == "NEEDS_EVIDENCE" and not res["recleared"], res)
+docs = httpx.get(f"{B}/cases/{cid}/materials/{mid}/evidence", headers=H).json()
+ok("증빙 문서 1건(pending)", len(docs) == 1 and docs[0]["review_status"] == "pending", docs)
+rv = httpx.patch(f"{B}/documents/{docs[0]['document_id']}/review", headers=H,
+                 json={"review_status": "approved"}) if docs else None
+ok("증빙 검토 승인 → 200", rv is not None and rv.status_code == 200, rv.text if rv is not None else "")
 m1 = [m for m in httpx.get(f"{B}/cases/{cid}/materials", headers=H).json() if m["material_id"] == mid][0]
-ok("원재료 CLEARED + evidence_count 1", m1["result"] == "CLEARED" and m1["evidence_count"] == 1)
+ok("승인 후 재스크리닝 CLEARED(C1) + evidence_count 1",
+   m1["result"] == "CLEARED" and m1["evidence_count"] == 1, {k: m1.get(k) for k in ("result", "evidence_count")})
 
 print(f"\n=== 결과 === PASS {len(P)} / FAIL {len(F)}")
 if F:

@@ -102,6 +102,21 @@ def test_auditor_needs_assignment(tmp_path):
     assert _can(db, u, "c_new")
 
 
+def test_co_auditor_assignment_opens_the_case(tmp_path):
+    """서브(동반) 오디터는 2인 확인의 승인자다. 운영자가 메인을 배정하면 서브가 CaseAuditor 로 자동
+    배정되는데, 접근 판정이 메인 배정 이벤트만 봐서 업체 조직 케이스를 열거나 승인하면 403 이 났다."""
+    db = _db(tmp_path)
+    u = _user("auditor", "aud2")
+    assert not _can(db, u, "c_new")
+    db.add(models.CaseAuditor(case_id="c_new", user_id="aud2", role="co", assigned_by="op1"))
+    db.commit()
+    assert _can(db, u, "c_new")
+    # 다른 케이스의 서브 배정은 이 케이스를 열지 않는다.
+    db.add(models.CaseApplication(case_id="c_other", org_id="org_third", company_name="제3 업체"))
+    db.commit()
+    assert not _can(db, u, "c_other")
+
+
 def test_consultant_needs_assignment(tmp_path):
     """컨설턴트도 마찬가지 — 배정 개념이 없어 신규 업체를 아예 못 받던 문제."""
     db = _db(tmp_path)

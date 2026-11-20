@@ -3,6 +3,7 @@ import base64
 import copy
 import io
 import json
+import os
 from time import perf_counter
 import zipfile
 
@@ -12,6 +13,11 @@ from openpyxl import Workbook
 
 import app.main as m
 from app import intake, models
+
+# 20만 자 입력의 처리 시간 상한(선형성 회귀 감시). 3초는 개발 맥 기준이고, 공유 CI 러너는 같은 선형 작업이
+# 2배 남짓 느리다(재처리 경로 실측: 맥 2.3초 · GitHub 러너 5.3초). 러너에선 GLHAC_PERF_SCALE 로 배율을 준다 —
+# 역추적·이차 시간 회귀는 20만 자에서 수십 초~분 단위라 배율을 줘도 그대로 잡힌다.
+PERF_BUDGET = 3.0 * float(os.environ.get('GLHAC_PERF_SCALE', '1'))
 
 KO = '닥토필 프로페셔널 포 페이스'
 EN = 'DactorPeel Professional for Face'
@@ -1382,7 +1388,7 @@ def test_flat_msds_long_repeated_tail_stays_pending_within_time_limit(case, monk
     started = perf_counter()
     applied = _round3_ingest(case, monkeypatch, route, text, ['Water', 'Salt'])
     elapsed = perf_counter() - started
-    assert elapsed < 3.0, (route, repeat, elapsed)
+    assert elapsed < PERF_BUDGET, (route, repeat, elapsed)
     assert applied['materials'] == 0
     assert names(db, c, models.Material) == []
     assert {item['value'] for item in m._pending_extractions(db, c.case_id)} == {'Water', 'Salt'}
@@ -1396,7 +1402,7 @@ def test_flat_msds_end_label_search_has_bounded_candidates(repeat, size):
     boundary = intake._AUTOFILL_INLINE_END.search(text)
     elapsed = perf_counter() - started
     assert boundary is None
-    assert elapsed < 3.0, (repeat, size, elapsed)
+    assert elapsed < PERF_BUDGET, (repeat, size, elapsed)
 
 
 @pytest.mark.parametrize('repeat', ['Ingredients/', 'Ingredients / ', 'Composition/Ingredients/', '전성분/'])
@@ -1408,7 +1414,7 @@ def test_flat_msds_repeated_heading_without_colon_has_bounded_candidates(repeat)
     elapsed = perf_counter() - started
     assert headers == []
     assert evidence == ''
-    assert elapsed < 3.0, (repeat, elapsed)
+    assert elapsed < PERF_BUDGET, (repeat, elapsed)
 
 
 @pytest.mark.parametrize('size', [19999, 20000, 20001])
@@ -1797,7 +1803,7 @@ def test_p1_200k_numeric_metadata_is_pending_within_three_seconds(case, monkeypa
     started = perf_counter()
     applied = _round3_ingest(case, monkeypatch, route, text, ['Water'])
     elapsed = perf_counter() - started
-    assert elapsed < 3.0, (route, repeat, elapsed)
+    assert elapsed < PERF_BUDGET, (route, repeat, elapsed)
     assert applied['materials'] == 0
     assert names(db, c, models.Material) == []
     assert {item['value'] for item in m._pending_extractions(db, c.case_id)} == {'Water'}

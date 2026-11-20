@@ -1,8 +1,10 @@
 """GL-HAC AI 전체 E2E 점검 — 인프라·인증·RBAC/ABAC·이중경로 생애주기·가드·감사·보고서·Copilot."""
+import base64
 import os
 import sys
 import httpx
 from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
+from _e2e_helpers import link_all_materials
 
 B = base()
 P, F = [], []
@@ -19,6 +21,9 @@ def login(u, p):
 
 def H(t):
     return {"Authorization": f"Bearer {t}"}
+
+
+PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 
 
 def tr(t, cid, to):
@@ -86,6 +91,8 @@ ok("가드: 신청 미완비 → submit-application 409",
 SD_NIB = "9876543210987"
 httpx.patch(f"{B}/cases/{sd}/profile", headers=H(ct), json={"nib": SD_NIB})
 httpx.post(f"{B}/cases/{sd}/products", headers=H(ct), json={"name": "Sambal SD"})
+# 발급 가드는 제품마다 실제 원재료 연결을 요구한다(PRODUCT_MATERIAL_LINKS_MISSING) — 범위가 열려 있을 때 잇는다.
+ok("SD 제품-원재료 연결", link_all_materials(B, H(ct), sd) == 0)
 sub = httpx.post(f"{B}/cases/{sd}/submit-application", headers=H(ct)).json()
 ok("신청 제출 → 경로판정 대기", sub.get("status") == "pathway_determination", sub.get("status"))
 a = httpx.post(f"{B}/cases/{sd}/pathway/assess", headers=H(ct)).json()
@@ -124,6 +131,7 @@ _rg_acc = httpx.post(f"{B}/orgs/{rg_org}/accounts", headers=H(ct),
 rt = login(_rg_acc["username"], _rg_acc["temp_password"])
 httpx.post(f"{B}/cases/{rg}/products", headers=H(ct), json={"name": "Sambal RG"})
 httpx.post(f"{B}/cases/{rg}/materials", headers=H(ct), json={"name": "gelatin"})  # critical
+ok("RG 제품-원재료 연결", link_all_materials(B, H(ct), rg) == 0)
 ei2 = httpx.post(f"{B}/cases/{rg}/sihalal/identity/link", headers=H(ct), json={"external_email": "rg@x.com"}).json()
 httpx.post(f"{B}/sihalal/identity/{ei2['external_identity_id']}/verify", headers=H(ct), json={"expected_identifier": "rg@x.com"})
 # NOTE: submit-application은 한 트랜잭션에 이벤트 4건을 쌓아 해시체인이 끊김(앱 이슈 의심 — autoflush=False).
@@ -169,43 +177,98 @@ ok("가드: 미결제 → 사전심사검토 409 UNPAID_INVOICE", g1.status_code
 httpx.patch(f"{B}/invoices/{inv['invoice_id']}/pay", headers=H(ot))   # 결제 확정은 운영자(감사 K2 — 신청자·컨설턴트 자기결제 차단)
 g2 = tr(ct, rg, "document_pre_audit_in_review")
 ok("결제 후 사전심사검토 전이 OK", g2.status_code == 200)
-tr(ot, rg, "document_pre_audit_approved")   # 모의심사 승인은 오디터·운영자(감사 K4 — 컨설턴트 자기승인 차단)
-httpx.post(f"{B}/cases/{rg}/lph-assignment", headers=H(ft), json={"lph_name": "LPH Sucofindo"})
-g3 = tr(ft, rg, "lph_assignment")   # lph_assignment 전이 = fatwa_liaison/operator
-ok("LPH 배정 전이 OK(fatwa_liaison)", g3.status_code == 200, g3.json() if g3.status_code != 200 else "")
 # 오디터는 배정받은 케이스만 연다 — 업체 조직의 케이스라 운영자가 먼저 배정한다(조직 분리 10/04 이후).
 # 같은 서버를 여러 시나리오가 쓰면 담당 한도(AUDITOR_OVERLOADED)에 걸릴 수 있어 e2e_srs_cycle 처럼 후보를 돈다.
+# 배정하면 서브 오디터가 자동으로 붙는다(2인 확인의 checker).
 _aud_ids = {u.get("username"): u.get("user_id") for u in httpx.get(f"{B}/admin/users", headers=H(adt)).json()}
+_main = None
 for _cand in ("auditor1", "auditor2", "auditor3"):
     if _aud_ids.get(_cand) and httpx.post(f"{B}/ops/cases/{rg}/assign-auditor", headers=H(ot),
                                           json={"auditor_id": _aud_ids[_cand]}).status_code == 200:
-        aut = login(_cand, "pw")
+        _main = _cand
         break
+ok("오디터 배정(메인+서브)", bool(_main), _main)
+aut = login(_main or "auditor1", "pw")
+_co = httpx.get(f"{B}/cases/{rg}/auditors", headers=H(ot)).json().get("co") or []
+a2t = login(_co[0]["name"], "pw") if _co else None
+ok("서브 오디터 자동 배정", bool(a2t), _co)
+
+
+def checked(t, r):
+    """2인 확인(maker-checker) — 승인 요청이 나오면 서브 오디터가 승인한다."""
+    j = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+    aid = j.get("approval_id") if isinstance(j, dict) else None
+    if aid and t:
+        return httpx.post(f"{B}/approvals/{aid}/approve", headers=H(t), json={})
+    return r
+
+
+# 모의심사 승인은 원시 전이로 못 한다(USE_DEDICATED_ENDPOINT) — 준비서류 확인 → 준비 완료 → 모의심사 결정(2인 확인).
+_prep = httpx.get(f"{B}/cases/{rg}/prep", headers=H(aut)).json()
+_prep = _prep.get("items", []) if isinstance(_prep, dict) else _prep
+_pf = sum(httpx.patch(f"{B}/cases/{rg}/prep/{i['item_key']}", headers=H(aut),
+                      json={"status": "confirmed"}).status_code != 200 for i in _prep)
+ok("준비서류 확인(오디터)", _prep and _pf == 0, f"items={len(_prep)} fail={_pf}")
+httpx.post(f"{B}/cases/{rg}/education-docs/issue", headers=H(ot), json={})
+httpx.post(f"{B}/cases/{rg}/education-docs/consent", headers=H(rt),
+           json={"agree": True, "name": "RG 대표", "image": PNG})
+pc_r = checked(a2t, httpx.post(f"{B}/cases/{rg}/prep/complete", headers=H(aut), json={}))
+ok("준비 완료(2인 확인)", pc_r.status_code == 200, pc_r.text[:200])
+ma = checked(a2t, httpx.post(f"{B}/cases/{rg}/mock-audit/decision", headers=H(aut), json={"result": "pass"}))
+st_rg = httpx.get(f"{B}/cases/{rg}", headers=H(ct)).json()["status"]
+ok("모의심사 통과 → document_pre_audit_approved", ma.status_code == 200 and st_rg == "document_pre_audit_approved",
+   f"{ma.status_code} status={st_rg}")
+# gelatin(임계 원재료)은 검토자가 승인한 증빙이 있어야 발급된다.
+for _m in httpx.get(f"{B}/cases/{rg}/materials", headers=H(ct)).json():
+    if _m["name"] == "gelatin":
+        httpx.post(f"{B}/cases/{rg}/materials/{_m['material_id']}/evidence", headers=H(ct), json={
+            "filename": "gelatin_source.txt", "evidence_type": "source_declaration",
+            "file_b64": base64.b64encode(b"Gelatin supplier source declaration (bovine, halal slaughter).").decode()})
+        _ev = httpx.get(f"{B}/cases/{rg}/materials/{_m['material_id']}/evidence", headers=H(aut)).json()
+        _rv = httpx.patch(f"{B}/documents/{_ev[0]['document_id']}/review", headers=H(aut),
+                          json={"review_status": "approved"})
+        ok("gelatin 증빙 오디터 승인", _rv.status_code == 200, _rv.text[:200])
+httpx.post(f"{B}/cases/{rg}/lph-assignment", headers=H(ft), json={"lph_name": "LPH Sucofindo"})
+g3 = tr(ft, rg, "lph_assignment")   # lph_assignment 전이 = fatwa_liaison/operator
+ok("LPH 배정 전이 OK(fatwa_liaison)", g3.status_code == 200, g3.json() if g3.status_code != 200 else "")
 tr(aut, rg, "onsite_audit_scheduled")     # onsite 계열 = auditor
 tr(aut, rg, "onsite_audit_in_progress")
-fid = httpx.post(f"{B}/cases/{rg}/findings", headers=H(ct), json={"finding": "교차오염", "severity": "major"}).json()["finding_id"]
+fid = httpx.post(f"{B}/cases/{rg}/findings", headers=H(ct), json={"finding": "교차오염", "severity": "minor"}).json()["finding_id"]
 # 가드: 미해결(open) finding 상태에서는 audit_closed 전이 차단(OPEN_FINDINGS)
 g_open = tr(aut, rg, "audit_closed")
 g_open_codes = [b.get("code") for b in (g_open.json().get("detail", {}).get("blockers") or [])] if g_open.status_code == 409 else []
 ok("가드: 미해결 finding → audit_closed 409 OPEN_FINDINGS", g_open.status_code == 409 and "OPEN_FINDINGS" in g_open_codes, g_open_codes)
-httpx.patch(f"{B}/findings/{fid}", headers=H(ct), json={"status": "closed"})
+# 지적 종결은 오디터만(finding.update). 중대(major) 지적은 검증된 CAR 가 있어야 닫혀 여기선 경미 지적을 쓴다.
+fc = httpx.patch(f"{B}/findings/{fid}", headers=H(aut), json={"status": "closed"})
+ok("finding 종결(오디터)", fc.status_code == 200, fc.text[:200])
 g_close = tr(aut, rg, "audit_closed")
 ok("finding 종결 후 audit_closed OK", g_close.status_code == 200)
 tr(aut, rg, "hpas_evaluation_ready")
 g5 = tr(ft, rg, "final_package_preparation")   # final_package = fatwa_liaison/operator
 ok("최종패키지 전이 OK", g5.status_code == 200)
-tr(ft, rg, "fatwa_review")
+# 샤리아 심의 상정도 원시 전이로 못 한다 — 심사보고서 작성·서명 → send-fatwa(2인 확인)가 fatwa_review 로 넘긴다.
+ar = httpx.post(f"{B}/cases/{rg}/audit-report", headers=H(aut), json={}).json()
+if ar.get("gen_doc_id"):
+    httpx.post(f"{B}/gen-docs/{ar['gen_doc_id']}/approve", headers=H(adt), json={})
+for el in ("commitment", "materials", "process", "product", "monitoring"):
+    httpx.patch(f"{B}/cases/{rg}/sjph", headers=H(adt), json={"element": el, "status": "ok"})
+httpx.post(f"{B}/orgs/{rg_org}/penyelia", headers=H(ct), json={"name": "Pen RG", "training_cert": "PH-2"})
+httpx.post(f"{B}/cases/{rg}/audit-report/sign", headers=H(aut), json={"name": "Auditor Kim"})
+httpx.post(f"{B}/cases/{rg}/audit-report/client-sign", headers=H(rt), json={"name": "RG 대표", "image": PNG, "signature": PNG})
+sf = checked(a2t, httpx.post(f"{B}/cases/{rg}/audit-report/send-fatwa", headers=H(aut), json={}))
+st_rg = httpx.get(f"{B}/cases/{rg}", headers=H(ct)).json()["status"]
+ok("심사보고서 송부 → fatwa_review", sf.status_code == 200 and st_rg == "fatwa_review", f"{sf.status_code} status={st_rg} {sf.text[:200]}")
 # fatwa 미승인 시 인증서 발급 차단 (발급 요청은 operator 전용)
 c1 = httpx.post(f"{B}/cases/{rg}/certificate/issue", headers=H(ot))
 ok("가드: fatwa 미승인 → 인증서 발급 409", c1.status_code == 409, c1.json().get("detail", {}).get("code"))
 # 2단계 승인: 샤리아 가승인(provisional) → operator 최종승인
 fw1 = httpx.patch(f"{B}/cases/{rg}/fatwa", headers=H(ft), json={"decision": "approved", "committee_note": "충족"}).json()
-ok("샤리아 가승인 → provisional", fw1.get("fatwa_status") == "provisional", fw1.get("fatwa_status"))
+ok("샤리아 가승인 → provisional", fw1.get("fatwa_status") == "provisional", fw1)
 fw2 = httpx.post(f"{B}/cases/{rg}/fatwa/final-approve", headers=H(ot)).json()
 ok("operator 최종승인 → approved", fw2.get("fatwa_status") == "approved", fw2)
 # 인증서 발급 = 2인 승인(operator 요청 → fatwa_liaison 승인)
 cert = issue_cert_2person(ot, ft, rg)
-ok("fatwa 승인 후 인증서 발급(2인 승인)", bool(cert.get("certificate_no")), cert.get("certificate_no"))
+ok("fatwa 승인 후 인증서 발급(2인 승인)", bool(cert.get("certificate_no")), cert)
 
 print("=== E. 횡단 (감사·보고서·Copilot·SJPH) ===")
 av = httpx.get(f"{B}/cases/{rg}/audit-verify", headers=H(ct)).json()

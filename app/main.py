@@ -1094,6 +1094,9 @@ def _assigned_staff(db, case_id):
         for k in ("auditor_id", "consultant_id", "user_id", "uid"):
             if p.get(k):
                 out.add(str(p[k]))
+    # 서브(동반) 오디터 — 2인 확인의 승인자다. 목록(_visible_cases)엔 보이는데 여기서 빠져 있어
+    # 업체 조직 케이스(10/04 조직 분리 이후 전부)를 열거나 승인하면 ORG_FORBIDDEN 이 났다.
+    out.update(str(r.user_id) for r in db.query(models.CaseAuditor).filter_by(case_id=case_id))
     return out
 
 

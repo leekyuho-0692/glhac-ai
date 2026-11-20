@@ -1,8 +1,10 @@
 """S3 검증 — 현장체크리스트·파트와위원회·인증동결/언락·Excel·심사원풀·LPH레퍼런스."""
 import os
+import sqlite3
 import sys
 import httpx
-from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
+from _target import base, db_path   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
+from _e2e_helpers import link_all_materials
 
 B = base()
 P, F = [], []
@@ -49,11 +51,17 @@ ok("nonconformity count = 1", cl2.get("nonconformity") == 1, cl2.get("nonconform
 
 # ── S3-2: 파트와 위원회 구성 + 제품 scope ──────────────────
 print(f"\n=== S3-2 파트와 위원회 (case={cid[:8]}) ===")
-# 제품 추가
-pid = httpx.post(f"{B}/cases/{cid}/products", headers=HC,
+# 샤리아 결정·위원회 구성은 심의 단계(fatwa_review)에서만 저장된다(07f7647 — FATWA_INVALID_STATE).
+# 여기서 보는 것은 위원회·범위 저장이라 별도 케이스를 심의 단계에 두고 본다(상정 절차는 e2e.py·e2e_srs_cycle).
+# 공용 케이스(cid)는 아래 S3-3 에서 자기선언 경로로 발급까지 가야 해서 건드리지 않는다.
+fcid = httpx.post(f"{B}/cases", headers=HC, json={"company_name": "S3Fatwa", "org_id": "org_demo"}).json()["case_id"]
+pid = httpx.post(f"{B}/cases/{fcid}/products", headers=HC,
                  json={"name": "HalalNoodle", "category": "food"}).json()["product_id"]
-
-r_fw = httpx.patch(f"{B}/cases/{cid}/fatwa", headers=HA, json={
+_conn = sqlite3.connect(db_path())
+_conn.execute("UPDATE case_application SET status='fatwa_review' WHERE case_id=?", (fcid,))
+_conn.commit()
+_conn.close()
+r_fw = httpx.patch(f"{B}/cases/{fcid}/fatwa", headers=HA, json={
     "decision": "approved",
     "committee_head": "Dr. Ahmad",
     "committee_secretary": "Budi",
@@ -62,7 +70,7 @@ r_fw = httpx.patch(f"{B}/cases/{cid}/fatwa", headers=HA, json={
 }).json()
 ok("PATCH fatwa 성공", "decision" in r_fw or r_fw.get("ok") is True, r_fw)
 
-fw = httpx.get(f"{B}/cases/{cid}/fatwa", headers=HA).json()
+fw = httpx.get(f"{B}/cases/{fcid}/fatwa", headers=HA).json()
 ok("committee_head 저장", fw.get("committee_head") == "Dr. Ahmad", fw.get("committee_head"))
 ok("committee_secretary 저장", fw.get("committee_secretary") == "Budi", fw.get("committee_secretary"))
 ok("committee_members 3명", isinstance(fw.get("committee_members"), list) and
@@ -80,6 +88,9 @@ _case_org = httpx.get(f"{B}/cases/{cid}", headers=HC).json().get("org_id")
 httpx.post(f"{B}/orgs/{_case_org}/penyelia", headers=HC,
            json={"name": "Budi", "training_cert": "PH-1"})
 httpx.post(f"{B}/cases/{cid}/materials", headers=HC, json={"name": "citric acid"})
+httpx.post(f"{B}/cases/{cid}/products", headers=HC, json={"name": "HalalNoodle", "category": "food"})
+# 발급 가드는 제품마다 실제 원재료 연결을 요구한다(PRODUCT_MATERIAL_LINKS_MISSING) — 범위가 열려 있을 때 잇는다.
+ok("제품-원재료 연결", link_all_materials(B, HC, cid) == 0)
 _ei = httpx.post(f"{B}/cases/{cid}/sihalal/identity/link", headers=HC,
                  json={"external_email": "s3@x.com"}).json()
 httpx.post(f"{B}/sihalal/identity/{_ei['external_identity_id']}/verify", headers=HC,
@@ -102,14 +113,15 @@ HP = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
       json={"username": "pendamping1", "password": "pw"}).json()["token"]}
 httpx.post(f"{B}/cases/{cid}/pendamping/verify", headers=HP, json={"decision": "verified"})
 httpx.post(f"{B}/cases/{cid}/transition", headers=HO, json={"to_state": "committee_verification"})
-httpx.post(f"{B}/cases/{cid}/committee/decide", headers=HF,
-           json={"decision": "approve", "reason": "S3 동결 검증용"})
+r_cd = httpx.post(f"{B}/cases/{cid}/committee/decide", headers=HF,
+                  json={"decision": "approve", "reason": "S3 동결 검증용"})
 ok("발급 전 상태 = committee_verification",
    httpx.get(f"{B}/cases/{cid}", headers=HC).json().get("status") == "committee_verification",
    httpx.get(f"{B}/cases/{cid}", headers=HC).json().get("status"))
-# 2단계 파트와: PATCH(approved)=가승인(provisional) → operator 최종승인 후에야 발급 가능
-r_fa = httpx.post(f"{B}/cases/{cid}/fatwa/final-approve", headers=HO).json()
-ok("파트와 최종승인(operator)", r_fa.get("fatwa_status") == "approved", r_fa)
+# 자기선언 경로는 위원회(KFPH) 승인이 곧 판정 승인이다(committee/decide → fatwa_status=approved).
+# 운영자 최종승인(final-approve)은 정규 경로의 샤리아 심의 단계 전용이라 여기선 쓰지 않는다.
+ok("위원회 승인 → fatwa approved", r_cd.status_code == 200 and r_cd.json().get("fatwa_status") == "approved",
+   r_cd.text[:200])
 # 인증서 발급은 2인 승인(maker-checker) 구조: operator가 요청 후 fatwa_liaison이 승인해야 실제 발급됨
 rc = httpx.post(f"{B}/cases/{cid}/certificate/issue", headers=HO).json()
 rc_dict = rc if isinstance(rc, dict) else {}
@@ -130,6 +142,13 @@ cert_dict = cert if isinstance(cert, dict) else {}
 ok("frozen_product_ids 존재", "frozen_product_ids" in cert_dict, cert_dict)
 ok("frozen_material_ids 존재", "frozen_material_ids" in cert_dict, cert_dict)
 
+# 활성 인증서가 있는 채로 범위를 풀면 발급된 범위와 실제가 어긋난다 — 언락 전에 정지가 먼저다
+# (76e4999 · CERTIFICATE_MUST_BE_SUSPENDED).
+ru0 = httpx.post(f"{B}/cases/{cid}/certificate/unlock", headers=HO, json={"reason": "S3 활성 상태 언락 시도"})
+ok("활성 인증서 언락 → 409 CERTIFICATE_MUST_BE_SUSPENDED", ru0.status_code == 409 and
+   "CERTIFICATE_MUST_BE_SUSPENDED" in ru0.text, ru0.text[:200])
+rs = httpx.post(f"{B}/cases/{cid}/certificate/suspend", headers=HO, json={"reason": "S3 재인증 위한 정지"})
+ok("인증서 정지(operator)", rs.status_code == 200, rs.text[:200])
 # unlock (operator 전용 + 사유 필수)
 ru = httpx.post(f"{B}/cases/{cid}/certificate/unlock", headers=HO,
                 json={"reason": "S3 재인증 언락 테스트"}).json()

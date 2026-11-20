@@ -3,6 +3,7 @@ import base64
 import sys
 import httpx
 from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
+from _e2e_helpers import pdf_b64, png_b64
 
 B = base()
 P, F = [], []
@@ -25,7 +26,7 @@ cid = httpx.post(f"{B}/cases", headers=H,
 print(f"=== S2-1 제품 사진 업로드 (case={cid[:8]}) ===")
 pid = httpx.post(f"{B}/cases/{cid}/products", headers=H,
                  json={"name": "CookiePro", "category": "bakery"}).json()["product_id"]
-img = base64.b64encode(b"\x89PNG dummy image bytes").decode()
+img = png_b64()
 r = httpx.post(f"{B}/cases/{cid}/products/{pid}/photo", headers=H,
                json={"file_b64": img, "filename": "front.png"}).json()
 ok("사진 업로드 → ok 반환", r.get("ok") is True or "document_id" in r, r)
@@ -39,7 +40,7 @@ me = [p for p in prods if p["product_id"] == pid]
 ok("products 목록에 photo_count=1", me and me[0].get("photo_count") == 1, me[:1])
 
 print("=== S2-2 문서 재분류 ===")
-b64 = base64.b64encode(b"dummy doc content").decode()
+b64 = pdf_b64("Halal supervisor appointment letter")
 intake_body = base64.b64encode(b"PK dummy zip").decode()
 # 직접 document_asset 생성을 위해 SJPH 증빙 경로 사용
 se = httpx.post(f"{B}/cases/{cid}/sjph-evidence", headers=H,
@@ -68,7 +69,7 @@ ok("10개 항목 존재", len(items) == 10, f"count={len(items)}")
 hs = next((x for x in items if x["item_key"] == "halal_supervisor"), None)
 ok("halal_supervisor 항목 uploaded=True", hs is not None and hs.get("uploaded") is True, hs)
 
-b64b = base64.b64encode(b"flow diagram data").decode()
+b64b = pdf_b64("Production flow diagram")
 r3 = httpx.post(f"{B}/cases/{cid}/sjph-evidence", headers=H,
                 json={"item_key": "production_flow", "file_b64": b64b, "filename": "flow.pdf"}).json()
 ok("두 번째 SJPH 증빙 업로드", "item_key" in r3 or "uploaded_at" in r3, r3)

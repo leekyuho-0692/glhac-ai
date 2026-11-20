@@ -10,9 +10,20 @@ import weakref
 from concurrent.futures import CancelledError, ThreadPoolExecutor
 from types import ModuleType, SimpleNamespace
 
-from PIL import Image
-import numpy as np
+import importlib.util
+
 import pytest
+
+# 실제 OCR 스택(numpy·cv2·paddlex 의 CropByPolys)을 쓰는 테스트다. CI 는 무거운 paddle 을 빼고 설치하므로
+# (ci.yml '무거운 OCR 은 제외') 거기선 건너뛰고, 스택이 있는 로컬·운영 venv 에서 돈다.
+_MISSING_OCR = [m for m in ("numpy", "cv2", "paddlex") if importlib.util.find_spec(m) is None]
+# 모듈 단위 skip 은 '수집 0건'(pytest 종료코드 5)이라 파일별 격리 러너가 실패로 센다 — 테스트별로 건너뛴다.
+pytestmark = pytest.mark.skipif(bool(_MISSING_OCR), reason="OCR 스택 미설치(%s) — paddle 포함 venv 에서 실행"
+                                % ", ".join(_MISSING_OCR))
+
+from PIL import Image  # noqa: E402
+if not _MISSING_OCR:
+    import numpy as np  # noqa: E402
 
 from app import ai_local, document_extraction as extraction, intake
 

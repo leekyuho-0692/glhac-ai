@@ -4,6 +4,7 @@ import sqlite3
 from datetime import date, timedelta
 import httpx
 from _target import base   # 라이브(8800) 오염 방지 — 대상 서버는 GLHAC_E2E_BASE 로만 지정
+from _e2e_helpers import assign_auditor
 
 B = base()
 P, F = [], []
@@ -78,8 +79,11 @@ fut_items = [f for f in fnd if f.get("due_date") == future_date]
 ok("정상기한 지적 조회됨", len(fut_items) >= 1, fut_items)
 
 # 종결된 지적은 기한 경보 제외 대상 (closed 처리)
-if fid_ovd:
-    r_close = httpx.patch(f"{B}/findings/{fid_ovd}", headers=HC,
+# 종결은 배정된 오디터만 한다(finding.update · 조직 분리).
+HU = assign_auditor(B, CID)
+ok("오디터 배정", HU is not None)
+if fid_ovd and HU:
+    r_close = httpx.patch(f"{B}/findings/{fid_ovd}", headers=HU,
                           json={"status": "closed"})
     ok("기한초과 지적 종결", r_close.status_code == 200, r_close.status_code)
     # 재조회 → closed 확인

@@ -23,18 +23,6 @@ def force_status(case_id, status):
     conn.close()
 
 
-def force_paid_invoice(case_id):
-    """발급 가드의 '확정 결제 1건 이상'(2026-10 감사 K4 — 인보이스 0건 발급 차단)을 미리 채운다.
-    이 시나리오가 보려는 것은 문서 가드라, 상태처럼 결제 조건도 충족시켜 두고 문서 가드만 남긴다."""
-    import uuid
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("INSERT INTO invoice (invoice_id, case_id, invoice_no, service_type, amount, ppn, total, status, created_at) "
-                 "VALUES (?, ?, ?, 'pre_audit', 100, 10, 110, 'paid', CURRENT_TIMESTAMP)",
-                 (uuid.uuid4().hex, case_id, "INV-S13PAID"))
-    conn.commit()
-    conn.close()
-
-
 HC = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
       json={"username": "consultant1", "password": "pw"}).json()["token"]}
 HA = {"Authorization": "Bearer " + httpx.post(f"{B}/auth/login",
@@ -115,6 +103,10 @@ ok("checklist 항목 ≥1", len(ck.get("checklist", [])) >= 1, len(ck.get("check
 # ── S13-2: Fatwa 결정문 생성 + (다운로드용 응답 필드) ───────────
 print("\n=== S13-2 Fatwa 결정문 ===")
 
+# 샤리아 결정은 심의 단계(fatwa_review)에서만 저장된다(07f7647 — FATWA_INVALID_STATE). 이 시나리오가 보는 것은
+# 결정·위원회 저장과 결정문이므로, 상정 절차(심사보고서→send-fatwa)는 e2e.py·e2e_srs_cycle 에 맡기고 상태만 맞춘다.
+force_status(CID, "fatwa_review")
+
 # fatwa 결정 저장
 r_fatwa = httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HA,
                       json={"decision": "approved",
@@ -175,26 +167,13 @@ if PID:
     httpx.patch(f"{B}/cases/{CID}/fatwa", headers=HA,
                 json={"decision": "approved", "product_scope": [PID]})
 
-# 2단계 파트와: PATCH(approved)=가승인(provisional) → 최종승인(operator/admin) 필요
-r_fa = httpx.post(f"{B}/cases/{CID}/fatwa/final-approve", headers=HA)
-ok("파트와 최종승인 → 200", r_fa.status_code == 200, r_fa.json() if r_fa.status_code != 200 else 200)
-
-# 발급 가드는 상태(committee_verification)를 먼저 본다 — 2026-08-14 추가된 조건.
-# 여기서 보려는 것은 '문서 가드'이므로, 상태 조건은 충족시켜 놓고 문서 가드만 남긴다.
-force_status(CID, "committee_verification")
-force_paid_invoice(CID)
-
-# 발급 가드: rejected/rework 문서가 남아있으면 409 DOCUMENTS_NOT_APPROVED
-r_blocked = httpx.post(f"{B}/cases/{CID}/certificate/issue", headers=HA)
-ok("미승인 문서 잔존 → 발급 409", r_blocked.status_code == 409 and
-   "DOCUMENTS_NOT_APPROVED" in str(r_blocked.json()), r_blocked.status_code)
-
-# 잔여 rework/rejected 문서 승인 처리 후 발급
+# 발급 문서 가드(rejected/rework 문서 잔존 → 409 DOCUMENTS_NOT_APPROVED)는 이제 범위 동결 스냅샷·심의 근거
+# (review_subject/review_basis) 뒤에 있어, 이 케이스처럼 DB 로 상태만 맞춘 케이스로는 거기까지 닿지 않는다
+# (그 앞단을 DB 로 꾸미려면 해시체인 이벤트까지 위조해야 한다). 가드 자체는
+# tests/test_final_e1_concurrency.py(problem=document)가, 정상 발급 전 과정은 e2e.py·e2e_srs_cycle 이 본다.
+# 여기선 남은 문서를 정리만 하고, 만료 경보용 인증서는 아래에서 DB 로 직접 넣는다.
 for did in (doc_ids[0], doc_ids[2]):
     httpx.patch(f"{B}/documents/{did}/review", headers=HC, json={"review_status": "approved"})
-r_issue = httpx.post(f"{B}/cases/{CID}/certificate/issue", headers=HA)
-ok("인증서 발급 → 200", r_issue.status_code == 200, r_issue.json() if r_issue.status_code != 200 else
-   r_issue.json().get("certificate_no"))
 
 # 직접 DB에 cert 레코드 삽입 (발급 가드 우회)
 conn2 = sqlite3.connect(DB_PATH)
