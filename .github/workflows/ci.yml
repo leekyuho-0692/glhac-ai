@@ -19,6 +19,7 @@ defaults:
 env:
   GLHAC_DEV: '1'                         # 데모 계정 시드(테스트용)
   GLHAC_RATE_LIMIT_PER_MIN: '0'          # 레이트리밋 비활성 — 연속 호출 안전
+  GLHAC_PERF_SCALE: '3'                  # 처리시간 상한 배율 — 러너가 개발 맥보다 2배 남짓 느리다(모든 테스트 단계 공통)
   GLHAC_SECRET: 'ci-test-secret-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
 
 jobs:
@@ -67,7 +68,6 @@ jobs:
           GLHAC_E2E_BASE: http://127.0.0.1:8899
           GLHAC_DB_URL: sqlite:///${{ runner.temp }}/ci_e2e.db   # 위 서버와 같은 파일이어야 한다
           GLHAC_E2E_SKIP_OLLAMA: '1'                             # 러너에 Ollama 가 없다
-          GLHAC_PERF_SCALE: '3'                                  # 처리시간 상한 배율 — 러너가 개발 맥보다 2배 남짓 느리다
         run: bash tests/run_isolated.sh
 
       # e2e_srs_cycle 은 정식 흐름(SRS) 전 과정이라 GLHAC_FORMAL_FLOW=1 서버가 필요하다(운영과 같은 조건).
