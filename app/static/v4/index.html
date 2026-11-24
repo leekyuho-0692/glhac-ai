@@ -1541,6 +1541,7 @@ function tf(key,params={}){ return t(key).replace(/\{(\w+)\}/g,(m,k)=>params[k]?
 
 const S = {lang:'ko',role:null,userId:null,view:null,auth:'login',loginRole:'enterprise',loginEmail:null,
   signup:null,consPick:null,dupEmail:null,lastInvite:null,
+  bizDocB64:null,bizDocName:null,bizDocFile:null,bizDocRead:null,bizExtractionReceipt:null,
   selCompany:'e1',selChat:'e1',selQuote:'e1',drafts:{e1:{type:'신규',field:'식품',country:'인도네시아',productKo:'프리미엄 홍삼 스틱',productEn:'Premium Red Ginseng Stick',items:'1',brand:'가나다 홍삼',factory:'가나다식품 음성공장',addr:'충북 음성군 대소면 산업단지로 00',volume:'연 120,000 box'}},savedAt:{},uploads:{}};
 
 /* ---------- helpers ---------- */
@@ -2056,8 +2057,12 @@ const App = {
     const email = val('es-id').toLowerCase();
     const btn = e.target.querySelector('button[type=submit]'); if(btn) btn.disabled=true;
     try{
+      const bizFile=S.bizDocFile;
+      await S.bizDocRead;
+      if(S.bizDocFile!==bizFile) return;
       const body = { username: email, password: val('es-pw'), company_email, email_consent };
       if(S.bizExtractionReceipt) body.extraction_receipt=S.bizExtractionReceipt;
+      if(S.bizDocB64){ body.biz_doc_b64=S.bizDocB64; body.biz_doc_filename=S.bizDocName; }
       [['company_name','es-name'],['responsible_person','es-ceo'],['address','es-addr'],
        ['nib','es-biz'],['company_name_en','es-name-en']].forEach(([key,id])=>{ if(val(id)) body[key]=val(id); });
       const sector=val('es-cat');
@@ -2092,6 +2097,7 @@ const App = {
       const d = await r.json();
       /* register 가 토큰을 반환 → 즉시 로그인 */
       AUTH.access=d.token; AUTH.refresh=d.refresh_token; AUTH.role=d.role; AUTH.uiRole=uiRoleFromServer(d.role); AUTH.username=d.username; AUTH.org_id=d.org_id; authSave();
+      S.bizDocB64=S.bizDocName=S.bizDocFile=S.bizDocRead=S.bizExtractionReceipt=null;
       consumeSignupLink();
       const ui=AUTH.uiRole||'ent'; const rk=Object.keys(ROLES).find(k=>ROLES[k].code===ui);
       S.role=ui; S.view=ROLES[rk].home; S.userId=null;
@@ -2144,20 +2150,28 @@ const App = {
     if(e.dataTransfer.files.length>1) toast(t('signup.biz_one_file'));
     App.bizPicked(f); },
   bizPicked(f){ if(!f) return;
-    S.bizExtractionReceipt=null;
+    S.bizDocB64=S.bizDocName=S.bizDocFile=S.bizDocRead=S.bizExtractionReceipt=null;
     if(!/\.(pdf|jpe?g|png)$/i.test(f.name)) return toast(t('signup.biz_types'));
+    S.bizDocFile=f;
+    S.bizDocRead=new Promise((res,rej)=>{ const rd=new FileReader(); rd.onload=()=>res(String(rd.result)); rd.onerror=()=>rej(rd.error); rd.readAsDataURL(f); })
+      .then(b64=>{ if(S.bizDocFile===f){ S.bizDocB64=b64; S.bizDocName=f.name; } return b64; },
+            ()=>{ if(S.bizDocFile===f) toast(t('signup.biz_failed')); return null; });
     try{ const dt = new DataTransfer(); dt.items.add(f); $('#biz-up').files = dt.files; }catch(err){}
     const nm = $('#biz-name'); nm.textContent = `✓ ${f.name}`; nm.closest('.dropzone').style.borderStyle='solid';
     toast(t('signup.biz_selected')); },
   async bizAutofill(){
-    const f = $('#biz-up').files[0]; const msg = $('#biz-msg');
+    const f = S.bizDocFile || $('#biz-up').files[0]; const msg = $('#biz-msg');
     if(!f){ msg.textContent = t('signup.biz_required'); return; }
     msg.textContent = t('signup.biz_reading');
     try{
-      const b64 = await new Promise((res,rej)=>{ const rd = new FileReader(); rd.onload = ()=>res(String(rd.result)); rd.onerror = ()=>rej(rd.error); rd.readAsDataURL(f); });
+      if(S.bizDocFile!==f) App.bizPicked(f);
+      const b64 = await S.bizDocRead;
+      if(S.bizDocFile!==f || !b64) return;
       const r = await fetch(API_BASE+'/auth/ocr-extract', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({image_b64:b64, doc_type:'business_registration'})});
+      if(S.bizDocFile!==f) return;
       if(!r.ok){ msg.textContent = r.status===413 ? t('signup.biz_large') : t('signup.biz_failed'); return; }
       const d = await r.json(); const fl = d.fields || {};
+      if(S.bizDocFile!==f) return;
       S.bizExtractionReceipt=d.extraction_receipt||null;
       const map = [['es-name','company_name',t('signup.company_name')],['es-biz','nib',t('ui.text_076')],['es-ceo','responsible_person',t('signup.representative')],['es-addr','address',t('ui.text_038')],['es-name-en','company_name_en',t('ui.text_105')]];
       map.forEach(([id,key])=>{ const el = $('#'+id); if(!el) return; el.value = fl[key] || ''; if(fl[key]) markAuto(el); else el.classList.remove('auto');
@@ -2171,7 +2185,7 @@ const App = {
       const missing = (d.missing || []).filter(k=>labels[k]).map(k=>labels[k]);
       msg.textContent = filled.length ? tf('signup.biz_filled',{fields:filled.join(', ')}) : t('signup.biz_empty');
       if(missing.length) msg.textContent += ' ' + tf('signup.biz_missing',{fields:missing.join(', ')});
-    }catch(e){ msg.textContent = t('signup.biz_network'); }
+    }catch(e){ if(S.bizDocFile===f) msg.textContent = t('signup.biz_network'); }
   },
 
   

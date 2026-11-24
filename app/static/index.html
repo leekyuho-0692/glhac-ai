@@ -738,10 +738,15 @@ function regOcrPick(){
   // 사업자등록증은 PDF로 오는 경우가 더 많다. 서버가 PDF 본문·이미지 OCR을 모두 처리한다.
   const inp=document.createElement("input");inp.type="file";inp.accept="image/*,.pdf";
   inp.onchange=async()=>{const file=inp.files[0];if(!file)return;
+    const doc={filename:file.name,b64:null,extractionReceipt:null,ready:fileB64(file)};
+    window.regBizDoc=doc;
     const st=document.getElementById("regOcrStatus");
     st.textContent=T("AI 추출 중… 잠시 기다려 주세요");
-    const b64=await fileB64(file);
-    try{const r=await API("/auth/ocr-extract",{method:"POST",body:JSON.stringify({image_b64:b64})});
+    try{const b64=doc.b64=await doc.ready;
+      if(window.regBizDoc!==doc)return;
+      const r=await API("/auth/ocr-extract",{method:"POST",body:JSON.stringify({image_b64:b64})});
+      if(window.regBizDoc!==doc)return;
+      doc.extractionReceipt=r.extraction_receipt||null;
       // 실패 사유를 그대로 보여준다 — 예전에는 무슨 이유든 'OCR 엔진 미설치'로 떠서 원인을 감췄다.
       if(!r.ocr_available){st.innerHTML='<span style="color:var(--warn)">⚠ '+
         T("자동추출 실패 — 아래 필드를 직접 입력하세요")+
@@ -750,7 +755,7 @@ function regOcrPick(){
       const f=r.fields||{},set=(id,val)=>{if(val){const el=document.getElementById(id);if(el)el.value=val;}};
       set("regCompany",f.company_name);set("regNib",f.nib);set("regResp",f.responsible_person);set("regAddr",f.address);set("regFactory",f.factory_address);
       st.innerHTML='<span style="color:var(--ok)">✓ '+Object.keys(f).length+T('개')+' 필드 자동추출됨 — 확인 후 가입</span>';
-    }catch(e){st.textContent="추출 실패";}};
+    }catch(e){if(window.regBizDoc===doc)st.textContent="추출 실패";}};
   inp.click();
 }
 async function checkUsername(){
@@ -783,7 +788,15 @@ async function doRegister(e){
   const body={username,password,company_name,company_email,email_consent,nib:v("regNib"),responsible_person:v("regResp"),address:v("regAddr"),factory_address:v("regFactory"),
               invite_code:(v("regInvite")||"").trim().toUpperCase()||null};
   try{
+    const doc=window.regBizDoc;
+    if(doc){
+      await doc.ready;
+      if(window.regBizDoc!==doc)return;
+      if(doc.b64){body.biz_doc_b64=doc.b64;body.biz_doc_filename=doc.filename;}
+      if(doc.extractionReceipt)body.extraction_receipt=doc.extractionReceipt;
+    }
     const j=await API("/auth/register",{method:"POST",body:JSON.stringify(body)});
+    window.regBizDoc=null;
     localStorage.setItem(TK,j.token);localStorage.setItem("glhac_role",j.role);
     localStorage.setItem("glhac_org",j.org_id||"");localStorage.setItem("glhac_user",j.username||username);
     // 코드가 잘못돼도 가입은 된다 — 관계만 안 붙는다. 그 사실을 숨기지 않는다.

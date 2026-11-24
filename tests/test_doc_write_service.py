@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 INITIALIZERS = {
     ("app/main.py", "add_material_evidence"),
     ("app/main.py", "_apply_intake_autofill"),
+    ("app/main.py", "_save_signup_document"),
     ("app/main.py", "parse_file_ep"),
     ("app/main.py", "upload_case_document"),
 }

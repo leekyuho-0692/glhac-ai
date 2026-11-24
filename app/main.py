@@ -3078,7 +3078,8 @@ def logout(user=Depends(auth.get_current_user), db: Session = Depends(get_db)):
 from .biz_doc import _parse_biz_doc
 
 
-# 캐시는 워커 메모리에만 둔다. 원본 파일/전체 본문을 보관하지 않으며 크기와 TTL을 제한한다.
+# 캐시는 워커 메모리에만 둔다. 가입 서류 저장용 본문·판독 결과도 짧게 재사용하되
+# 원본 파일은 보관하지 않고 항목 수와 TTL을 제한한다. 내부 판독 결과는 공개 응답에서 뺀다.
 from collections import OrderedDict
 from copy import deepcopy
 _OCR_EXTRACT_CACHE = OrderedDict()
@@ -3091,9 +3092,15 @@ _OCR_EXTRACT_CACHE_MAX = 32
 @app.post("/auth/ocr-extract")
 def auth_ocr_extract(body: schemas.OCRExtractReq, request: Request):
     """공개 자동채움: AI 전체 추출 → 원문/규칙 검산. AI 불가 시에만 규칙 후보 사용."""
+    raw = base64.b64decode(_validate_upload(body.image_b64, None))
+    result = _cached_auth_ocr_extract(raw, request=request)
+    return {k: v for k, v in result.items() if k != "signup_document"}
+
+
+def _cached_auth_ocr_extract(raw, request=None, filename=None):
+    """가입 OCR과 서류 저장이 같은 파일의 본문·AI 판독을 공유한다."""
     import hashlib
     import time
-    raw = base64.b64decode(_validate_upload(body.image_b64, None))
     provider = ai_local.provider()
     digest = hashlib.sha256(raw).hexdigest()
     key = (digest, provider, ai_local.OPENAI_MODEL if provider == "openai" else ai_local.MODEL)
@@ -3107,12 +3114,14 @@ def auth_ocr_extract(body: schemas.OCRExtractReq, request: Request):
             if cached:
                 _OCR_EXTRACT_CACHE.move_to_end(key)
                 return {**deepcopy(cached[1]), "cached": True}
-        ip = _extract_real_ip(request)
-        with _OCR_EXTRACT_CACHE_LOCK:
-            allow_ai = not auth.check_username_rate_limited(ip)
-            if allow_ai:
-                auth.record_username_check(ip)
-        result = _auth_ocr_extract_file(raw, allow_ai)
+        allow_ai = True
+        if request is not None:
+            ip = _extract_real_ip(request)
+            with _OCR_EXTRACT_CACHE_LOCK:
+                allow_ai = not auth.check_username_rate_limited(ip)
+                if allow_ai:
+                    auth.record_username_check(ip)
+        result = _auth_ocr_extract_file(raw, allow_ai, filename=filename)
         if result.get("ocr_available") and allow_ai and not result.get("llm_error"):
             with _OCR_EXTRACT_CACHE_LOCK:
                 _OCR_EXTRACT_CACHE[key] = (time.monotonic(), deepcopy(result))
@@ -3121,9 +3130,9 @@ def auth_ocr_extract(body: schemas.OCRExtractReq, request: Request):
         return {**result, "cached": False}
 
 
-def _auth_ocr_extract_file(raw, allow_ai):
+def _auth_ocr_extract_file(raw, allow_ai, filename=None):
     wanted = ("company_name", "nib", "responsible_person", "address", "company_name_en")
-    name = "upload.pdf" if raw[:5] == b"%PDF-" else "upload.png"
+    name = filename or ("upload.pdf" if raw[:5] == b"%PDF-" else "upload.png")
     try:
         text = intake.parse_file(name, raw) or ""
     except Exception as exc:
@@ -3149,7 +3158,40 @@ def _auth_ocr_extract_file(raw, allow_ai):
             "missing": [k for k in wanted if not fields.get(k)], "filled": list(fields),
             "source": "pdf_text" if name.endswith(".pdf") else "ocr",
             **({"llm_error": extracted["llm_error"]} if extracted.get("llm_error") else {}),
-            "raw": text[:1500]}
+            "raw": text[:1500],
+            "signup_document": {**extracted, "text": text, "excerpt": text[:300]}}
+
+
+def _save_signup_document(db, case, user, body):
+    """등록증을 서류로만 보존한다. 가입 폼·서명 영수증으로 정한 케이스 값은 건드리지 않는다."""
+    import hashlib
+    filename = intake._nfc(body.biz_doc_filename or "")
+    b64 = _validate_upload(body.biz_doc_b64, filename)
+    raw = base64.b64decode(b64)
+    filename = filename or "upload." + _upload_kind(raw)
+    result = _cached_auth_ocr_extract(raw, filename=filename)
+    if not result.get("ocr_available"):
+        raise HTTPException(422, {"code": "DOCUMENT_UNREADABLE", "message": result.get("error")})
+    parsed = result["signup_document"]
+    if parsed["doc_type"] not in intake._APPLICANT_DOCS:
+        return
+    text = parsed["text"]
+    fields = dict(parsed.get("fields") or {})
+    if parsed.get("field_sources"):
+        fields["_sources"] = parsed["field_sources"]
+    # parse-file 업로드와 같은 정규화·본문 보존만 재사용하고 자동입력은 호출하지 않는다.
+    fields = normalize_document_fields(fields, analysis=parsed, text=text)
+    doc = models.DocumentAsset(document_id=models.uid(), case_id=case.case_id,
+                               filename=filename, filename_en=_fn_en(filename),
+                               doc_type=parsed["doc_type"], confidence=float(parsed.get("confidence") or 0),
+                               fields=fields, text_excerpt=parsed["excerpt"], text_full=text,
+                               content_b64=b64, content_type=intake._ctype(filename), review_status="pending",
+                               uploaded_by=user.user_id, uploader_role=user.role,
+                               file_hash=hashlib.sha256(raw).hexdigest())
+    db.add(doc)
+    db.flush()
+    sm.record_event(db, case, case.status, case.status, "documents.signup_upload", user.role, user.user_id,
+                    {"document_id": doc.document_id, "doc_type": doc.doc_type})
 
 
 @app.get("/auth/check-username")
@@ -3314,6 +3356,17 @@ def register(body: schemas.RegisterReq, db: Session = Depends(get_db)):
         db.flush()
         sm.record_event(db, c, None, "onboarding", "case.create.register", "applicant", u.user_id,
                         {"nib": body.nib})   # 이후 AI 반영값과 구분되는 가입 당시 대조 기준
+        if body.biz_doc_b64:
+            try:
+                with db.begin_nested():
+                    _save_signup_document(db, c, u, body)
+            except Exception as exc:
+                # 파일 검증·판독·flush 실패는 서류만 롤백하고 계정·케이스 가입은 보존한다.
+                payload = {"filename": body.biz_doc_filename, "error": type(exc).__name__}
+                if isinstance(exc, HTTPException):
+                    payload["detail"] = exc.detail
+                sm.record_event(db, c, c.status, c.status, "documents.signup_upload_failed", u.role, u.user_id,
+                                payload)
     db.commit()
     _ref = None
     if inv and (getattr(inv, "kind", "consultant") or "consultant") == "client":
