@@ -2818,6 +2818,7 @@ def _boolean_supported(key, value, text):
                 return True
     return False
 _NUMBER_FIELDS = {"employee_count", "product_count", "annual_revenue", "production_capacity"}
+_ADDRESS_FIELDS = {"address", "factory_address", "address_en"}
 _TEXT_FIELDS = {"nib", "cert_no", "certificate_no", "factory_reg_no", "corporate_reg_no", "company_name",
                 "address", "city", "province", "country", "zip", "factory_address", "factory_city",
                 "factory_province", "factory_country", "factory_zip", "phone", "email", "issuer",
@@ -2965,18 +2966,32 @@ def _reference_document(result, filename, text):
 # 한영 표에서 끼어드는 인접 셀의 라벨·값(재현 패턴은 수십 자)을 허용한다.
 # 정규화 후 문자 수 기준 200자 생략 예산으로 먼 안내문/다른 항목까지 이어 붙이지 못하게 한다.
 _EVIDENCE_MAX_SKIPPED_CHARS = 200
+# 주소 조각은 더 좁은 정규화 구간에서만, 전화는 라벨 뒤 원문 60자 안에서만 찾는다.
+_ADDRESS_MAX_SKIPPED_CHARS = 60
+_PHONE_MAX_SKIPPED_CHARS = 60
 # 반복 라벨로 탐색 비용이 커지는 문서는 2000개 후보까지만 검증하고 보수적으로 거절한다.
 _EVIDENCE_MAX_START_CANDIDATES = 2000
 
 
-def _evidence_quote_in_source(quote, value, source_text):
+def _address_value_parts(value):
+    """짧은 조각도 버리지 않되, 구두점으로 나뉜 주소에 충분한 근거가 있어야 한다."""
+    if not isinstance(value, str):
+        return []
+    parts = [part for token in re.split(r"[,.]", unicodedata.normalize("NFKC", value))
+             if (part := normalized_text(token))]
+    return parts if (len(parts) >= 2 and any(len(part) > 2 for part in parts)
+                     and "".join(parts) == normalized_text(value)) else []
+
+
+def _evidence_quote_in_source(quote, value, source_text, field=None):
     """정규화 연속 인용 또는 실제 값을 포함하는 짧은 순서 보존 표 구간만 인정한다."""
     if not isinstance(quote, str) or not (quoted := normalized_text(quote)):
         return False
     if quoted in source_text:
         return True
+    address_parts = _address_value_parts(value) if field in _ADDRESS_FIELDS else []
     parts = [part for token in quote.split() if (part := normalized_text(token))]
-    if len(parts) < 2 or isinstance(value, bool):
+    if (len(parts) < 2 and not (address_parts and quoted == normalized_text(value))) or isinstance(value, bool):
         return False  # 단일 조각과 의미 판정이 필요한 불리언은 기존 연속 인용만 허용한다.
     items = value if isinstance(value, list) else [value]
     quoted_values = sorted((quoted.index(v), v) for item in items
@@ -2985,6 +3000,7 @@ def _evidence_quote_in_source(quote, value, source_text):
     if not quoted_values or "".join(parts) != quoted:
         return False
     ordered_parts = []
+    address_part_start = 0
     part_index = part_offset = previous_value_end = 0
     for value_start, item in quoted_values:
         value_end = value_start + len(item)
@@ -2998,22 +3014,31 @@ def _evidence_quote_in_source(quote, value, source_text):
         while part_index < len(parts) and part_offset < value_end:
             part_offset += len(parts[part_index])
             part_index += 1
-        ordered_parts.append(item)
+        # 주소만 구성 조각 사이의 표 셀을 허용하고, 나머지 값은 연속 구간을 유지한다.
+        if address_parts:
+            address_part_start = len(ordered_parts)
+        ordered_parts.extend(address_parts or [item])
         previous_value_end = value_end
     # 남은 뒤 조각까지 한 순서로 검색하므로 앞 조각·각 값·뒤 조각은 원문에서도 겹치지 않는다.
     parts = ordered_parts + parts[part_index:]
+    if address_parts and "".join(parts) != quoted:
+        return False  # 값과 붙어 있는 라벨/접미사를 조각 치환 중 누락하지 않는다.
+    max_skipped = _ADDRESS_MAX_SKIPPED_CHARS if field in _ADDRESS_FIELDS else _EVIDENCE_MAX_SKIPPED_CHARS
     start = source_text.find(parts[0])
     attempts = 0
     while start >= 0:
         if attempts >= _EVIDENCE_MAX_START_CANDIDATES:
             return False
         attempts += 1
-        limit = start + len(quoted) + _EVIDENCE_MAX_SKIPPED_CHARS
+        limit = start + len(quoted) + max_skipped
         cursor = start + len(parts[0])
-        for part in parts[1:]:
+        for part_index, part in enumerate(parts[1:], 1):
             position = source_text.find(part, cursor, limit)
             if position < 0:
                 break
+            if (address_part_start < part_index < address_part_start + len(address_parts)
+                    and any(char.isdigit() for char in source_text[cursor:position])):
+                break  # 주소 조각 사이의 번지·우편번호를 건너뛰어 다른 주소와 섞지 않는다.
             cursor = position + len(part)
         else:
             return True
@@ -3032,7 +3057,7 @@ def _checked_fields(values, evidence, rules, text, source="ai", conflicts=()):
             continue
         quote = evidence.get(key)
         quotes = quote if isinstance(quote, list) else [quote] if isinstance(quote, str) else []
-        quote_ok = bool(quotes) and all(_evidence_quote_in_source(q, value, source_text) for q in quotes)
+        quote_ok = bool(quotes) and all(_evidence_quote_in_source(q, value, source_text, field=key) for q in quotes)
         grounded = _field_value_grounded(key, value, text)
         # Evidence의 구절 안에도 값이 있어야 엉뚱한 인용으로 검산을 우회하지 못한다.
         if quote_ok and isinstance(value, bool):
@@ -3390,6 +3415,8 @@ def autofill_value_in_text(field, value, text):
         "nib": r"\bNIB\b|nomor\s+induk\s+berusaha|사\s*업\s*자\s*등\s*록\s*번\s*호|사업자\s*번호|"
                r"business\s+(?:registration|license)\s*(?:no\.?|number)",
         "factory_reg_no": r"factory\s*(?:registration\s*)?(?:no\.?|number)|공장\s*등록\s*번호|"
+                          r"공장\s*관리\s*번호|factory\s*management\s*(?:no\.?|number)|"
+                          r"plant\s*registration\s*(?:no\.?|number)|"
                           r"nomor\s+(?:registrasi\s+)?pabrik|izin\s+usaha\s+industri",
     }
     if field == "nib" and re.search(r"사업자\s*등록|사\s*업\s*자\s*등\s*록|business\s*(?:registration|taxpayer)", text, re.I):
@@ -3490,14 +3517,21 @@ def _field_value_grounded(key, value, text):
         def phone_key(phone):
             digits = re.sub(r"\D", "", phone)
             return "0" + digits[2:] if digits.startswith(("62", "82")) else digits
-        candidates = re.findall(r"(?:tel(?:ephone|p)?|phone|전화|연락처)\s*(?:no\.?|number)?\s*[:：]?\s*([+\d(][\d() .-]+)", text, re.I)
-        return any(phone_key(value) == phone_key(candidate) for candidate in candidates)
+        # Tel.과 번호 사이에 같은 행의 업체명 셀이 끼어들 수 있다. 다른 번호/행/라벨은 넘지 않는다.
+        candidates = re.finditer(r"(?:tel(?:ephone|p)?|phone|전화|연락처)\.?"
+                                 r"(\s*(?:no\.?|number)?\s*[:：]?\s*"
+                                 rf"[^\d+\r\n|;:：]{{0,{_PHONE_MAX_SKIPPED_CHARS}}})([+\d(][\d() .-]+)", text, re.I)
+        return any(len(candidate[1]) <= _PHONE_MAX_SKIPPED_CHARS
+                   and not re.search(r"\b(?:fax|facsimile|팩스|전송|mobile|hp|h\.p|휴대|e-?mail)\b", candidate[1], re.I)
+                   and phone_key(value) == phone_key(candidate[2]) for candidate in candidates)
     if key == "company_name":
         labels = list(re.finditer(r"(?:nama\s+perusahaan|company\s*name|applicant|신청업체|업체명|회사명)\s*[:：]\s*([^\n|]+)", text, re.I))
         if labels:
             return any(company_key(value) == company_key(label[1]) for label in labels)
     if key in _NUMBER_FIELDS:
         return bool(re.search(r"(?<![\w.])" + re.escape(str(value)) + r"(?![\w.])", text))
+    if key in _ADDRESS_FIELDS:
+        return _evidence_quote_in_source(value, value, _text_value_key(text), field=key)
     values = value if isinstance(value, list) else [value]
     return all(_text_value_key(item) in _text_value_key(text) for item in values)
 
