@@ -13,6 +13,14 @@ from app.db import SessionLocal
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_bpom_sidebar_regressions():
+    result = subprocess.run(
+        ['node', '--test', '--test-name-pattern=BPOM', str(ROOT / 'tests/uiv4_regressions.test.cjs')],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.fixture(scope='module')
 def payloads():
     result = subprocess.run(['node', str(ROOT / 'tests/fixtures/uiv4_frontend.cjs')],
@@ -25,6 +33,22 @@ def client(monkeypatch):
     monkeypatch.setattr(main, 'autoparse_enqueue', lambda *a, **k: False)
     with TestClient(main.app) as c:
         yield c
+
+
+def test_bpom_assets_and_csp(client):
+    page = client.get('/ui/v4/index.html')
+    script = client.get('/ui/v4/js/bpom-link.js')
+    assert page.status_code == script.status_code == 200
+    assert '<script src="js/bpom-link.js"></script>' in page.text
+    assert 'javascript' in script.headers['content-type']
+    assert script.text == (ROOT / 'app/static/v4/js/bpom-link.js').read_text()
+    directives = {
+        parts[0]: parts[1:]
+        for item in page.headers['content-security-policy'].split(';')
+        if (parts := item.split())
+    }
+    assert "'self'" in directives['script-src']
+    assert not {'navigate-to', 'sandbox'} & directives.keys()
 
 
 def login(client, username, password='pw'):
