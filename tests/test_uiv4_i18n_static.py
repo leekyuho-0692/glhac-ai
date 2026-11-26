@@ -12,9 +12,10 @@ import re
 ROOT = Path(__file__).resolve().parents[1]
 UI = ROOT / 'app/static/v4'
 ALLOWLIST = Path(__file__).with_name('fixtures') / 'uiv4_hangul_allowlist.json'
-DICTIONARIES = ('UIV4_I18N', 'ENTA_I18N', 'UIV4_AUDIT_I18N')
+DICTIONARIES = ('UIV4_I18N', 'ENTA_I18N', 'UIV4_AUDIT_I18N', 'BPOM_I18N')
 STRICT_REGIONS = {
     'js/ent-profile.js': [(None, None)],
+    'js/bpom-link.js': [(None, None)],
     'index.html': [
         ("VIEWS['ent-apply'] =", 'App.entAddProduct ='),
         ("VIEWS['adm-assign'] =", 'App.selAssign ='),

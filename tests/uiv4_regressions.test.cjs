@@ -3,6 +3,78 @@ const {harness,signup,between,source}=require('./fixtures/uiv4_frontend.cjs');
 const {createHash}=require('node:crypto');
 const digest=s=>createHash('sha256').update(s).digest('hex');
 const file=(name,content)=>({name,size:Buffer.byteLength(content),arrayBuffer:async()=>new TextEncoder().encode(content).buffer});
+function bpomHarness(lang='ko'){
+ const h=harness(lang);
+ h.c.run(source.match(/^const SHELL_EXT = .*$/m)[0]);
+ h.c.fetch=h.c.apiFetch=()=>assert.fail('The BPOM link must not make network requests');
+ h.c.load('legacy-link.js');h.c.load('bpom-link.js');
+ return h;
+}
+test('BPOM loads once after the shell extension and legacy link as an external script',()=>{
+ const scripts=[...source.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>\s*<\/script>/g)];
+ const bpom=scripts.filter(m=>m[1]==='js/bpom-link.js');
+ assert.equal(bpom.length,1);
+ assert.equal(bpom[0][0],'<script src="js/bpom-link.js"></script>');
+ assert.ok(source.indexOf('const SHELL_EXT =')<bpom[0].index);
+ assert.equal(scripts[scripts.indexOf(bpom[0])-1][1],'js/legacy-link.js');
+});
+for(const [lang,label,notice] of [
+ ['ko','BPOM 인증자동화 (시연)','별도 시연 시스템 · 합성 데이터 · GL-HAC 계정과 연동되지 않음'],
+ ['en','BPOM automation (demo)','Separate demo system · Synthetic data · Not linked to GL-HAC accounts'],
+ ['id','Otomasi BPOM (demo)','Sistem demo terpisah · Data sintetis · Tidak terhubung dengan akun GL-HAC'],
+])test('BPOM '+lang+' admin footer renders the translated label and notice with a safe fixed URL',()=>{
+ const {c}=bpomHarness(lang);c.S.role='adm';
+ const html=c.run('SHELL_EXT.sideFoot[1]()');
+ assert.match(html,/<a\b/);
+ assert.match(html,/href="https:\/\/bpom-automation\.ngrok-free\.dev\/"/);
+ assert.match(html,/target="_blank"/);assert.match(html,/rel="noopener noreferrer"/);
+ assert.ok(html.includes('>'+label+'</a>'));assert.ok(html.includes('title="'+notice+'"'));
+ assert.doesNotMatch(html,/\bon\w+=|<script|<iframe/);
+ if(lang!=='ko')assert.doesNotMatch(html,/[가-힣]/);
+ assert.match(c.run('SHELL_EXT.sideFoot[0]()'),/href="\/ui\/index.html"/);
+ assert.throws(()=>c.run("BPOM_DEMO_URL='javascript:alert(1)'"),/constant/i);
+ c.S.bpomUrl='javascript:alert(1)';c.RS.bpomUrl='https://untrusted.invalid/';
+ c.location=new URL('http://localhost/ui/v4/?bpomUrl=javascript:alert(1)');
+ assert.equal(c.run('SHELL_EXT.sideFoot[1]()'),html);
+});
+test('BPOM evaluates the current UI role on every render, including logout and login screens',()=>{
+ const {c}=bpomHarness();
+ for(const lang of ['ko','en','id'])for(const role of ['ent','cons','aud','sha','pen',null,undefined,'','admin']){
+  c.S.lang=lang;c.S.role=role;c.AUTH.role='admin';
+  assert.equal(c.run('SHELL_EXT.sideFoot[1]()'),'');
+ }
+ c.S.role='adm';assert.match(c.run('SHELL_EXT.sideFoot[1]()'),/BPOM/);
+ c.S.role=null;c.S.auth='login';assert.equal(c.run('SHELL_EXT.sideFoot[1]()'),'');
+ c.S.auth='signup-ent';assert.equal(c.run('SHELL_EXT.sideFoot[1]()'),'');
+});
+test('BPOM translations follow language changes after the module loads',()=>{
+ const {c}=bpomHarness();c.S.role='adm';
+ for(const [lang,label] of [['en','BPOM automation (demo)'],['id','Otomasi BPOM (demo)'],['ko','BPOM 인증자동화 (시연)']]){
+  c.App.setLang(lang);assert.ok(c.run('SHELL_EXT.sideFoot[1]()').includes('>'+label+'</a>'));
+ }
+});
+test('BPOM is placed in the admin sidebar by the real shell and disappears on logout',()=>{
+ const {c,dom}=bpomHarness();
+ c.run(between('const ROLES =', '/* 단계별 담당'));
+ c.run(between('const NAV =', '/* ---------- chat'));
+ c.run(between('function render(){', '/* ===== P1:'));
+ c.run(between('const ROLE_MAP =', '/* 로그인 직후'));
+ c.brand=c.langSelect=c.navCount=()=>'';c.renderLogin=()=>'<form>Login</form>';
+ c.document.documentElement={};dom.app={};
+ for(const role of ['admin','operator','ops']){
+  c.S.role=c.uiRoleFromServer(role);c.S.view='adm-home';c.VIEWS['adm-home']=()=>'';
+  c.render();assert.match(dom.app.innerHTML,/<div class="side-foot">[\s\S]*BPOM 인증자동화 \(시연\)/);
+ }
+ for(const role of ['ent','cons','aud','sha','pen']){
+  c.S.role=role;c.S.view=role+'-home';c.VIEWS[c.S.view]=()=>'';
+  c.render();assert.doesNotMatch(dom.app.innerHTML,/BPOM/);
+ }
+ c.run('App.logout=({'+source.match(/^  logout\(\).*$/m)[0]+'}).logout;');
+ c.authClear=()=>{c.AUTH.access=null};c.closeModal=()=>{};
+ c.S.role='adm';c.AUTH.access=null;c.App.logout();
+ assert.equal(c.S.role,null);assert.equal(dom.app.innerHTML,'<form>Login</form>');
+ assert.equal(c.run('SHELL_EXT.sideFoot[1]()'),'');
+});
 function uploadHarness(){
  const h=harness();h.c.load('ent-apply-more.js');h.c.run('ENTA_pollBulk=async()=>{}');
  h.docs=[];h.posts=[];h.c.apiFetch=async(url,opts={})=>{
